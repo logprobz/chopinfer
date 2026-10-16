@@ -487,3 +487,63 @@ fn a_forced_enumeration_value_reads_back_or_is_refused() {
         );
     }
 }
+
+/// One call to `f` with `arguments` in order, as each fixture's template
+/// writes it.
+fn call_with(descriptor: &FormatDescriptorV1, arguments: &[(&str, &str)]) -> String {
+    let parser = &descriptor.parser;
+    let mut text = [
+        parser.tool_call_open.as_str(),
+        &parser.function_open,
+        "f",
+        &parser.function_name_close,
+    ]
+    .concat();
+    for (name, value) in arguments {
+        text.extend([
+            parser.parameter_open.as_str(),
+            name,
+            &parser.parameter_name_close,
+            &parser.parameter_value_open,
+            value,
+            &parser.parameter_close,
+        ]);
+    }
+    text.extend([parser.function_close.as_str(), &parser.tool_call_close]);
+    text
+}
+
+/// An additional property never takes a declared name, which the parser
+/// reads by the declared schema instead. Before this held, a forced call
+/// could write the additional enumeration value `"open` under the integer
+/// `x`, which scans the quote as a JSON string that never closes, and the
+/// call read back as `f({})`.
+#[test]
+fn an_additional_property_never_takes_a_declared_name() {
+    for descriptor in [framed(), unframed(), key_value()] {
+        let tools = [tool(json!({"type": "object",
+                                 "properties": {"x": {"type": "integer"}},
+                                 "additionalProperties": {"type": "str", "enum": ["\"open"]}}))];
+        let admits = |arguments: &[(&str, &str)]| {
+            required_admits(&descriptor, &tools, &call_with(&descriptor, arguments)).unwrap()
+        };
+        assert!(!admits(&[("x", "\"open")]));
+        assert!(!admits(&[("x", "42"), ("x", "\"open")]));
+        for (arguments, expected) in [
+            (&[("x", "42")][..], json!({"x": 42})),
+            (&[("y", "\"open")], json!({"y": "\"open"})),
+            (
+                &[("x", "42"), ("xx", "\"open")],
+                json!({"x": 42, "xx": "\"open"}),
+            ),
+        ] {
+            assert!(admits(arguments), "{arguments:?}");
+            assert_reads(
+                &descriptor,
+                &tools,
+                &call_with(&descriptor, arguments),
+                &expected,
+            );
+        }
+    }
+}

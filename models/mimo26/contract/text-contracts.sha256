@@ -1,0 +1,10 @@
+# SHA-256 (runtime_bundle::rank_index::contract_sha256) of the text image
+# contracts that model_mimo26_contract::text_views derives from
+# projections.json, per geometry and rank count. validate_text checks a
+# pinned topology's rank indexes against these digests; geometries without
+# pins derive their contracts. The test text_contract_pins derives every
+# pinned topology and fails on any difference. After an intended contract
+# change, regenerate this file with
+#   CHOPINFER_UPDATE_TEXT_CONTRACT_PINS=1 cargo test -p model-mimo26-contract --lib text_contract_pins
+v26-flash 2 9ccfcbfdce8c00347d75b50edc89ad0fc2b6b20d5bc03cb4e8d76a1f6788728a
+v26-flash 4 1efe412976c9ff5b701513a57493cafcc32cfa10cb85bf753ac8e0154dd798ad

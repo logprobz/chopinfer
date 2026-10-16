@@ -1,0 +1,35 @@
+[package]
+name = "bundle-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[features]
+test-support = []
+
+[dependencies]
+runtime-bundle-abi.workspace = true
+runtime-bundle-sdk.workspace = true
+kernel-core = { workspace = true, features = ["precision-serde"] }
+encoder-spec.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+# SM120 offers and catalogs the projection and encoder tests prepare and
+# compare the backend path with. Production source names no kernel set.
+kernels-sm120.workspace = true
+# Catalog entry parameters, for comparing the backend path with resolved
+# kernels.
+kernel-build.workspace = true
+# Graph and rank tests run against the host's own resource bookkeeping, over
+# its host-memory device.
+runtime-host.workspace = true
+# The package maximum a manifest may declare, checked against MAX_ITEMS.
+runtime-bundle.workspace = true
+# A test registered encoder variant, decoded as the registry decodes one.
+serde.workspace = true
+
+[lints]
+workspace = true

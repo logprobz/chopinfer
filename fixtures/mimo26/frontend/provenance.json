@@ -1,0 +1,13 @@
+{
+  "api_reasoning_field": "reasoning",
+  "checkpoint_files": {
+    "chat_template.jinja": "11ea52e156de38a458e6b7720ad45915d65b97d4ec979a09f55e3c9bd1b4d059",
+    "preprocessor_config.json": "b269e51bdc1c53ef7c82522984378513f462869cf83c4c75ec3f98bd92aa7972",
+    "tokenizer.json": "ff15eb925890d6b71b5160de4b846fbd13178438ab463b38ecc953e8cd1dcb3e",
+    "tokenizer_config.json": "413a7845f52943ccf4de0e5c838414507d16c44dbf573da9e20bc8902b384d06"
+  },
+  "images": {},
+  "source": "HF transformers templates, tokenizers and processors",
+  "tool_call_reasoning_content_fallback": false,
+  "transformers": "5.16.1"
+}

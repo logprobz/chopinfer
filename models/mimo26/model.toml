@@ -1,0 +1,170 @@
+# Model inventory, checked by tests/bundle-boundary.sh (tests/model_inventory.py).
+# Each role is the crate in the directory of that name. List every bin and
+# cdylib target exactly; libraries are not listed.
+schema = "chopinfer-model-inventory-v1"
+# CPU CI reads CHOPINFER_MIMO_CHECKPOINT and CHOPINFER_MIMO_TOKENIZER_DIR.
+checkpoint_env = "MIMO"
+
+[bundle]
+package = "bundle-mimo26"
+cdylib = ["bundle_mimo26"]
+
+[compiler]
+package = "model-mimo26"
+bin = ["chopinfer-model-mimo26", "mimo26-package"]
+
+[contract]
+package = "model-mimo26-contract"
+
+[release]
+enabled = true
+bins = ["mimo26-package", "chopinfer-model-mimo26"]
+cdylibs = ["bundle_mimo26"]
+
+[contributor]
+roots = ["model-mimo26", "model-mimo26-contract"]
+fixtures = [
+  "models/mimo26/compiler/fixtures/config.json",
+  "fixtures/mimo26/frontend/chat-renders.json",
+  "fixtures/mimo26/multimodal/processor/processor-manifest.json",
+]
+clear_env = ["CHOPINFER_MIMO_FIXTURES"]
+
+[[contributor.tests]]
+name = "compile MiMo fixtures"
+phase = "compile"
+package = "model-mimo26"
+lib = true
+bins = ["mimo26-package"]
+suites = ["chat_goldens", "decode_goldens", "reasoning_controls", "structured_tool_calls", "tool_choice", "media_declaration", "media_recipes", "weight_plan"]
+compile = true
+
+[[contributor.tests]]
+name = "pure admission contract"
+phase = "contract"
+package = "model-mimo26-contract"
+lib = true
+
+[[contributor.tests]]
+phase = "config"
+package = "model-mimo26"
+lib = true
+cases = [
+  { name = "compatible text and encoder config", case = "config::tests::portable_config_admits_the_text_and_encoder_profile" },
+  { name = "unsupported dimensions and layer drift", case = "config::tests::portable_config_rejects_geometry_and_layer_drift" },
+  { name = "encoder profile drift", case = "config::tests::rejects_profile_drift" },
+]
+
+# Tests deleted with the code they covered, now covered by the pure
+# admission contract run above (model-mimo26-contract's library): the
+# placement slicer's (1ba9f2b62, 2026-10-06; rank placement is the projection
+# derivation, checked by the served-graph tests) and the encoder weight views'
+# (b9ea87bf8, 2026-09-30; encoders::prepared, checked by
+# the_image_holds_every_program_view_once_in_its_kernels_layout).
+[[contributor.tests]]
+phase = "mapping"
+package = "model-mimo26"
+lib = true
+cases = [
+  { name = "tensor mapping and refusals", case = "catalog::tests::portable_mapping_accepts_complete_metadata_and_rejects_drift" },
+  { name = "source ownership and confinement", case = "catalog::tests::indexed_layout_checks_ownership_size_missing_tensors_and_symlinks" },
+]
+
+[[contributor.tests]]
+phase = "frontend"
+package = "model-mimo26"
+suites = ["chat_goldens"]
+cases = [
+  "captured_chat_prompts_match_text",
+  "final_assistant_continuation_extends_the_generation_prefix",
+  "tool_defaults_and_message_tool_blocks_follow_the_template",
+  "generation_prefix_is_optional_and_text_format_does_not_change_the_prompt",
+  "earlier_reasoning_always_renders_and_the_parser_keeps_blank_content",
+]
+
+[[contributor.tests]]
+name = "decode_goldens"
+phase = "frontend"
+package = "model-mimo26"
+suites = ["decode_goldens"]
+
+[[contributor.tests]]
+name = "reasoning_controls"
+phase = "frontend"
+package = "model-mimo26"
+suites = ["reasoning_controls"]
+
+[[contributor.tests]]
+name = "tool_choice"
+phase = "frontend"
+package = "model-mimo26"
+suites = ["tool_choice"]
+
+[[contributor.tests]]
+name = "media_declaration"
+phase = "frontend"
+package = "model-mimo26"
+suites = ["media_declaration"]
+
+[[contributor.tests]]
+name = "structured tool grammar"
+phase = "frontend"
+package = "model-mimo26"
+suites = ["structured_tool_calls"]
+case = "forced_tool_calls_parse_back_with_their_declared_arguments"
+
+[[contributor.tests]]
+phase = "host_media"
+package = "model-mimo26"
+suites = ["media_recipes"]
+cases = [
+  "declared_image_recipe_runs_with_raw_rgb_scale",
+  "solid_images_give_constant_rows_at_every_size",
+  "split_images_keep_row_and_channel_order",
+  "declared_audio_recipe_has_the_checkpoint_frame_rule",
+  "declared_video_recipe_contains_the_host_image_recipe",
+  "frozen_processor_image_rows_match_host_recipe",
+  "frozen_processor_video_rows_match_host_recipe",
+]
+
+[[contributor.tests]]
+name = "planned pieces at every topology"
+phase = "mapping"
+package = "model-mimo26"
+suites = ["weight_plan"]
+
+[[contributor.tests]]
+phase = "package_including_verify"
+package = "model-mimo26"
+bins = ["mimo26-package"]
+cases = [
+  { name = "image_free_packages_plan_every_image", case = "package::tests::image_free_packages_plan_every_image" },
+  { name = "the_package_declares_bf16_and_fp8_kv_and_prefers_bf16", case = "package::tests::the_package_declares_bf16_and_fp8_kv_and_prefers_bf16" },
+  { name = "each_topology_declares_its_ids_ranks_and_per_rank_resources", case = "package::tests::each_topology_declares_its_ids_ranks_and_per_rank_resources" },
+  { name = "speculation_limits_and_capabilities_follow_the_drafter", case = "package::tests::speculation_limits_and_capabilities_follow_the_drafter" },
+]
+
+[checks]
+reference_tests = ["test_reference.py", "test_encoder_reference.py", "test_frontend_corpus.py"]
+compile_inputs = ["reference*.py", "encoder_reference.py"]
+
+[[checks.profile_targets]]
+package = "model-mimo26"
+kind = "bin"
+target = "chopinfer-model-mimo26"
+
+[[checks.profile_targets]]
+package = "model-mimo26"
+kind = "bin"
+target = "mimo26-package"
+
+[kernel_lab]
+catalog = true
+
+# tests/model-geometry-recipe.sh: one `--ci` leg per fixture under
+# fixtures/mimo26/geometries/.
+[geometry_recipe]
+stage = "bundle"
+fixtures = ["synthetic-small"]
+architecture = "MiMoGeometryRecipeForCausalLM"
+contract_tests = ["kernel_rank_catalog", "kernel_cuda_geometry", "kernel_engine", "kernel_moe_build", "kernel_moe_selection", "kernel_comm", "encoder_geometry_build"]

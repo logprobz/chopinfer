@@ -1,0 +1,74 @@
+[
+  {
+    "name": "model.language_model.layers.0.attn_hyper_connection.hc_norm.weight",
+    "dtype": "BF16",
+    "shape": [
+      10240
+    ]
+  },
+  {
+    "name": "model.language_model.layers.0.linear_attn.in_proj_a.weight",
+    "dtype": "BF16",
+    "shape": [
+      48,
+      2560
+    ]
+  },
+  {
+    "name": "model.language_model.layers.0.mlp.experts.0.gate_proj.input_scale",
+    "dtype": "F32",
+    "shape": []
+  },
+  {
+    "name": "model.language_model.layers.0.mlp.experts.0.gate_proj.weight",
+    "dtype": "U8",
+    "shape": [
+      640,
+      1280
+    ]
+  },
+  {
+    "name": "model.language_model.layers.0.mlp.experts.0.gate_proj.weight_scale",
+    "dtype": "F8_E4M3",
+    "shape": [
+      640,
+      160
+    ]
+  },
+  {
+    "name": "model.language_model.layers.0.mlp.experts.0.gate_proj.weight_scale_2",
+    "dtype": "F32",
+    "shape": []
+  },
+  {
+    "name": "model.language_model.layers.1.ple.ple_embedding.ngram_embedding.shard_0.weight",
+    "dtype": "F8_E4M3",
+    "shape": [
+      2500012,
+      160
+    ]
+  },
+  {
+    "name": "model.language_model.layers.1.ple.ple_embedding.ngram_embedding.weight_scale",
+    "dtype": "BF16",
+    "shape": [
+      1
+    ]
+  },
+  {
+    "name": "mtp.layers.0.mlp.experts.0.gate_proj.weight",
+    "dtype": "F8_E4M3",
+    "shape": [
+      640,
+      2560
+    ]
+  },
+  {
+    "name": "mtp.layers.0.mlp.experts.0.gate_proj.weight_scale_inv",
+    "dtype": "BF16",
+    "shape": [
+      5,
+      20
+    ]
+  }
+]

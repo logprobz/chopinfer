@@ -1,0 +1,9 @@
+{
+ "source": "The pinned vLLM image's image processor as fixtures/qwen38/capture/processor_cpu.py recorded it (processor.json of the capture): the identity a reference runner workload keys for pixel rows it made (code_sha256 is the SHA256 of this identity's canonical JSON).",
+ "identity": {
+  "transformers": "5.15.1",
+  "fast_class": "Qwen2VLImageProcessor",
+  "fast_resample": "3",
+  "fast_resize_source": "    def resize(\n        self,\n        images: \"torch.Tensor\",\n        size: SizeDict,\n        resample: \"PILImageResampling | tvF.InterpolationMode | int | None\",\n        factor: int,\n        **kwargs,\n    ) -> \"torch.Tensor\":\n        \"\"\"Resize dynamically based on input image aspect ratio.\"\"\"\n        if not size.shortest_edge or not size.longest_edge:\n            raise ValueError(f\"`size` dict must contain 'shortest_edge' and 'longest_edge' keys but got {size}.\")\n\n        height, width = images.shape[-2:]\n        resized_height, resized_width = smart_resize(\n            height,\n            width,\n            factor=factor,\n            min_pixels=size.shortest_edge,\n            max_pixels=size.longest_edge,\n        )\n        return super().resize(\n            image=images,\n            size=SizeDict(height=resized_height, width=resized_width),\n            resample=resample,\n        )\n"
+ }
+}

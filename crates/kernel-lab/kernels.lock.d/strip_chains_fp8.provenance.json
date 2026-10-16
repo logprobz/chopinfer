@@ -1,0 +1,30 @@
+[
+  {
+    "name": "strip_chain_fp8_mutants_sm120",
+    "source_closure_sha256": "5cdd69a124cd356fcd7eb510d709408dc9707cbf8bf4e17a59cd672a4cc44778"
+  },
+  {
+    "name": "strip_chains_fp8_n1536_k4096_sm120",
+    "source_closure_sha256": "d742dfa63523d75fdf07f70540a0e9006e89c1c7b66b755028c3f17b736ce395"
+  },
+  {
+    "name": "strip_chains_fp8_n4096_k1536_sm120",
+    "source_closure_sha256": "6dda919f0c8c49fb385d9ff9e98279c2f4a9124403cdedeae4e4f3172d28c469"
+  },
+  {
+    "name": "strip_chains_fp8_n4096_k3072_f32_sm120",
+    "source_closure_sha256": "32a4418a7f31b6fd8e4cb4d83ca64764a7d34a0e5c5c301b95076bd1fa23dcc8"
+  },
+  {
+    "name": "strip_chains_fp8_n4096_k4096_f32_sm120",
+    "source_closure_sha256": "57365b967c085e3add5041e5ed4c629a90e4496f429218527785800ce4ee25f7"
+  },
+  {
+    "name": "strip_chains_fp8_n4096_k512_f32_residual_sm120",
+    "source_closure_sha256": "86915d22b912bd5bfae7b66919c9ca4175e09060c37b0228c4597503aca7ad54"
+  },
+  {
+    "name": "strip_chains_fp8_n512_k4096_sm120",
+    "source_closure_sha256": "68dd43879f154b5ee4fddba32f9d86792d7ffe062720009b132ff0cef44ae5ea"
+  }
+]

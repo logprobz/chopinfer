@@ -1,0 +1,18 @@
+[
+  {
+    "name": "latent_merge_columns_descending_latent_h16_l512_sm120",
+    "source_closure_sha256": "ac03a3aeb832213922919807a9f5de9066a9bd5a0c5871f8c4b06194c01037ba"
+  },
+  {
+    "name": "latent_merge_columns_late_wait_latent_h16_l512_sm120",
+    "source_closure_sha256": "852931f089ce961fc49877ef63e4250b2df0e69adcf953cf784230b88c0d953a"
+  },
+  {
+    "name": "latent_merge_columns_latent_h16_l512_sm120",
+    "source_closure_sha256": "6f874ffd68335795861c116adf7b38eb4bc1b37856f97224d48d4ad55a5891a7"
+  },
+  {
+    "name": "latent_merge_columns_skip_last_latent_h16_l512_sm120",
+    "source_closure_sha256": "f406ece9fd0519b47175d115add855668b5f78feed2de23959aa30472a5a5d1f"
+  }
+]

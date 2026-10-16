@@ -1,0 +1,228 @@
+{
+ "description": "Inputs to the lossless JSON reader of chat requests, with the value or refusal each reads to. The transport's reader (runtime-frontend's json_reader test) and the declared format's copy (frontend-format's json_reader test) both read them. A value is tagged: null and booleans as themselves, a number as {\"number\": its text}, a string as {\"string\": it}, an array as {\"array\": [...]} and an object as {\"object\": [[key, value], ...]} in key order. A case with object_entries reads an object of that many integer entries, and one with nested_arrays that many nested empty arrays. A value read from text must also read back the same from the serde_json value it converts to, owned and borrowed.",
+ "cases": [
+  {
+   "name": "object keys keep their order",
+   "text": "{\"b\":1,\"a\":[true,false,null],\"c\":{\"z\":\"x\",\"y\":{}}}",
+   "value": {
+    "object": [
+     [
+      "b",
+      {
+       "number": "1"
+      }
+     ],
+     [
+      "a",
+      {
+       "array": [
+        true,
+        false,
+        null
+       ]
+      }
+     ],
+     [
+      "c",
+      {
+       "object": [
+        [
+         "z",
+         {
+          "string": "x"
+         }
+        ],
+        [
+         "y",
+         {
+          "object": []
+         }
+        ]
+       ]
+      }
+     ]
+    ]
+   }
+  },
+  {
+   "name": "an integer past u64 keeps its digits",
+   "text": "18446744073709551617",
+   "value": {
+    "number": "18446744073709551617"
+   }
+  },
+  {
+   "name": "an integer below i64 keeps its digits",
+   "text": "-9223372036854775809",
+   "value": {
+    "number": "-9223372036854775809"
+   }
+  },
+  {
+   "name": "a forty-digit integer keeps its digits",
+   "text": "1234567890123456789012345678901234567890",
+   "value": {
+    "number": "1234567890123456789012345678901234567890"
+   }
+  },
+  {
+   "name": "a fraction keeps its trailing zeros",
+   "text": "1.23000",
+   "value": {
+    "number": "1.23000"
+   }
+  },
+  {
+   "name": "an exponent keeps its spelling",
+   "text": "1e-7",
+   "value": {
+    "number": "1e-7"
+   }
+  },
+  {
+   "name": "the largest double",
+   "text": "1.7976931348623157e308",
+   "value": {
+    "number": "1.7976931348623157e308"
+   }
+  },
+  {
+   "name": "negative zero",
+   "text": "-0.0",
+   "value": {
+    "number": "-0.0"
+   }
+  },
+  {
+   "name": "string escapes decode",
+   "text": "\"q\\\"b\\\\s\\/n\\nt\\tu\\u00e9\\ud83d\\ude00z\\u0000\"",
+   "value": {
+    "string": "q\"b\\s/n\nt\tu\u00e9\ud83d\ude00z\u0000"
+   }
+  },
+  {
+   "name": "the private number marker is an ordinary key",
+   "text": "{\"$serde_json::private::Number\":\"18446744073709551617\"}",
+   "value": {
+    "object": [
+     [
+      "$serde_json::private::Number",
+      {
+       "string": "18446744073709551617"
+      }
+     ]
+    ]
+   }
+  },
+  {
+   "name": "the private number marker after another key",
+   "text": "{\"a\":1,\"$serde_json::private::Number\":\"2\"}",
+   "value": {
+    "object": [
+     [
+      "a",
+      {
+       "number": "1"
+      }
+     ],
+     [
+      "$serde_json::private::Number",
+      {
+       "string": "2"
+      }
+     ]
+    ]
+   }
+  },
+  {
+   "name": "containers nest",
+   "text": "[{\"x\":[1,{\"y\":\"z\"}]},[]]",
+   "value": {
+    "array": [
+     {
+      "object": [
+       [
+        "x",
+        {
+         "array": [
+          {
+           "number": "1"
+          },
+          {
+           "object": [
+            [
+             "y",
+             {
+              "string": "z"
+             }
+            ]
+           ]
+          }
+         ]
+        }
+       ]
+      ]
+     },
+     {
+      "array": []
+     }
+    ]
+   }
+  },
+  {
+   "name": "a duplicate key is refused",
+   "text": "{\"a\":1,\"a\":2}",
+   "error": "duplicate field `a`"
+  },
+  {
+   "name": "a nested duplicate key is refused",
+   "text": "{\"o\":{\"k\":1,\"k\":2}}",
+   "error": "duplicate field `k`"
+  },
+  {
+   "name": "NaN is not JSON",
+   "text": "NaN",
+   "error": "expected value"
+  },
+  {
+   "name": "Infinity is not JSON",
+   "text": "Infinity",
+   "error": "expected value"
+  },
+  {
+   "name": "negative Infinity is not JSON",
+   "text": "-Infinity",
+   "error": "invalid number"
+  },
+  {
+   "name": "an overflowing exponent is refused",
+   "text": "1e400",
+   "error": "non-finite JSON number"
+  },
+  {
+   "name": "a negative overflowing exponent is refused",
+   "text": "-1e400",
+   "error": "non-finite JSON number"
+  },
+  {
+   "name": "an object may hold 4096 entries",
+   "object_entries": 4096,
+   "entries": 4096
+  },
+  {
+   "name": "an object may not hold 4097 entries",
+   "object_entries": 4097,
+   "error": "JSON object entry limit exceeded"
+  },
+  {
+   "name": "arrays nest 127 deep",
+   "nested_arrays": 127,
+   "depth": 127
+  },
+  {
+   "name": "arrays may not nest 128 deep",
+   "nested_arrays": 128,
+   "error": "recursion limit exceeded"
+  }
+ ]
+}

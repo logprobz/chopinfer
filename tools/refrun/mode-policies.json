@@ -1,0 +1,24 @@
+{
+  "f32": {
+    "dequant": "exact",
+    "policy_sha256": {
+      "exact": "e58f0932ed77dca45edf2d288d0fba3f69829bc8d6a9f489c69df4fb49dc8b7f",
+      "rounded": "6726eb76912bc0558479635150342351783927bd4e2ff311dc2962aa8743aa46",
+      "hf-bf16": "1f9411698e33455d4c3b554c8d6145408d965c93fa95247e767ebcb2bd994ff7"
+    }
+  },
+  "f64": {
+    "dequant": "exact",
+    "policy_sha256": {
+      "exact": "1f82e993b2678e506abb3cf1edd4dac146d9c1afee360328fcaa340d6a13580e",
+      "rounded": "cce9e8e1e93ad6ac44d021a58a53935a713002973fa92a9094fa2d48d5217eaa",
+      "hf-bf16": "4d991d62b618db9e3583b46a3b5b7f96946b66d44edd3124c77cc13f6677a5e5"
+    }
+  },
+  "bf16": {
+    "dequant": "hf-bf16",
+    "policy_sha256": {
+      "hf-bf16": "fe052bd30dc42991608053074a76d2b14248ff427a9c83e660217e0943f85b4d"
+    }
+  }
+}

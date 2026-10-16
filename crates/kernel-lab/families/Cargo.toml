@@ -1,0 +1,19 @@
+[package]
+name = "kernel-lab-families"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# One module per kernel-lab lock family: each `<family>.rs` beside this
+# manifest is a family of `crates/kernel-lab/kernels.lock.d`. build.rs lists
+# them, so adding a family adds files and edits no shared list.
+
+[dependencies]
+kernel-build.workspace = true
+kernel-core.workspace = true
+kernels-sm120.workspace = true
+
+[lints]
+workspace = true

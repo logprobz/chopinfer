@@ -1,0 +1,63 @@
+{
+ "source": "transformers 5.15.1 Qwen2VLImageProcessor (torchvision backend) as run by the pinned vLLM image; captured by fixtures/qwen38/capture/processor_cpu.sh. smart_resize cases are from transformers 5.16.1 (same function).",
+ "recipe": {
+  "factor": 32,
+  "minimum_pixels": 65536,
+  "maximum_pixels": 16777216,
+  "upscale_small_side": false,
+  "interpolation": "bicubic-antialias",
+  "patch": 16,
+  "temporal_patch": 2,
+  "merge": 2,
+  "value_scale": 0.00392156862745098,
+  "mean": [0.5, 0.5, 0.5],
+  "std": [0.5, 0.5, 0.5]
+ },
+ "smart_resize": [
+  [10, 1000, 32, 2560],
+  [20, 1000, 64, 1824],
+  [31, 31, 256, 256],
+  [40, 1000, 64, 1280],
+  [517, 333, 512, 320],
+  [60, 100, 224, 352],
+  [4000, 4500, 3840, 4320],
+  [1, 150, 32, 3136],
+  [5000, 5000, 4096, 4096],
+  [4096, 4096, 4096, 4096],
+  [100, 19000, 96, 19008],
+  [255, 257, 256, 256],
+  [48, 48, 256, 256]
+ ],
+ "images": {
+  "blue-square": {
+   "width": 256,
+   "height": 256,
+   "grid": [1, 16, 16],
+   "pixels_sha256": "ba2eaadbe70a06560ce6220b584799bfdf238c9b6ec17641f0d92b89a8fda3ae"
+  },
+  "gradient-333x517": {
+   "width": 333,
+   "height": 517,
+   "grid": [1, 32, 20],
+   "pixels_sha256": "fcb415572fff589144564f3dedf42e2989492e71e728c2a7dc49bf33af5ed4ea"
+  },
+  "large-4500x4000": {
+   "width": 4500,
+   "height": 4000,
+   "grid": [1, 240, 270],
+   "pixels_sha256": "1f14a6a0d711f398ccaa5bf76216ac520ff44863a983c21b1dd092d8a845b14b"
+  },
+  "small-100x60": {
+   "width": 100,
+   "height": 60,
+   "grid": [1, 14, 22],
+   "pixels_sha256": "8eb3312f836376a6d530d1e48791af5c2c4a43b2212757b25159e0628ff6de43"
+  },
+  "wide-1000x40": {
+   "width": 1000,
+   "height": 40,
+   "grid": [1, 4, 80],
+   "pixels_sha256": "ecd7c1e877cfb4d6226fcc746015b7d2744a2c438ea79127d4eb61fb00159a00"
+  }
+ }
+}

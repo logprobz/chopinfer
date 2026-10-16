@@ -1,0 +1,28 @@
+{
+  "repository": "Qwen/Qwen3.8-Flash-Next-FP8",
+  "revision": "236dfdf285828023ca3bcd3f37366c58a3469b13",
+  "definition": {
+    "name": "tokenizer.json",
+    "byte_length": 12809320,
+    "sha256": "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3"
+  },
+  "configuration": {
+    "name": "tokenizer_config.json",
+    "byte_length": 17928,
+    "sha256": "b11349aafa7cdc6a320767cf7ceb29ed82f7eda5d65e8e0819e76f0ce947bf27"
+  },
+  "dialect": {
+    "kind": "qwen2-nfc-v1"
+  },
+  "base_vocabulary_size": 248044,
+  "merge_count": 247587,
+  "added_token_count": 33,
+  "vocabulary_size": 248077,
+  "model_max_length": 262144,
+  "bos_token": null,
+  "eos_token": "<|im_end|>",
+  "pad_token": "<|endoftext|>",
+  "pretokenizer_patterns": [
+    "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?[\\p{L}\\p{M}]+|\\p{N}| ?[^\\s\\p{L}\\p{M}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"
+  ]
+}

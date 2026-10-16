@@ -1,0 +1,325 @@
+[
+ {
+  "name": "full",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": true
+ },
+ {
+  "name": "minimal",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[]}",
+  "valid": true
+ },
+ {
+  "name": "whitespace",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\", \n\"bundle_id\":\"fixture.v1\", \n\"knob_prefixes\":[\"FIXTURE_\"], \n\"drafters\":[\"mtp\", \n\"dflash\"], \n\"booleans\":[\"FIXTURE_FLAG\", \n\"FIXTURE_GROUP\"], \n\"presence\":[\"FIXTURE_TRACE\"], \n\"numbers\":{\"FIXTURE_COUNT\":[0, \n8]}, \n\"multiples\":{\"FIXTURE_COUNT\":2}, \n\"taps\":[\"FIXTURE_DUMP\"], \n\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]}, \n\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\", \n\"value\":\"0\", \n\"prefix\":\"FIXTURE_GROUP_\", \n\"reason\":\"the group is off\"}]}",
+  "valid": true
+ },
+ {
+  "name": "large but bounded",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": true,
+  "padding": 200000
+ },
+ {
+  "name": "over the bound",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false,
+  "padding": 262144
+ },
+ {
+  "name": "byte order mark",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false,
+  "prefix": "bom"
+ },
+ {
+  "name": "repeated top-level member",
+  "document": "{\"bundle_id\":\"fixture.v1\",\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "repeated numbers member",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8],\"FIXTURE_COUNT\":[0,4]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "repeated multiples member",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2,\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "repeated drafter_only member",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"],\"FIXTURE_FLAG\":[\"dflash\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "repeated member in a disabled_by rule",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"value\":\"1\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "repeated drafter_only kind",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\",\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "two drafter_only kinds",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\",\"dflash\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": true
+ },
+ {
+  "name": "repeated drafter",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"mtp\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "repeated prefix",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\",\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "repeated boolean",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "repeated tap",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\",\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "a variable of two kinds",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\",\"FIXTURE_FLAG\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "unknown member",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"unknown\":1,\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "unknown rule member",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"note\":\"x\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "missing drafters",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"]}",
+  "valid": false
+ },
+ {
+  "name": "null optional member",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[],\"booleans\":null}",
+  "valid": false
+ },
+ {
+  "name": "other schema",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v2\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "invalid bundle ID",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"../x\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "no prefixes",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "prefix without underscore",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "lowercase variable",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_trace\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "variable outside the prefixes",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"OTHER_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "empty range",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[9,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "float bound",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8.0]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "exponent bound",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,1e1]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "negative bound",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[-1,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "negative zero bound",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[-0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "boolean bound",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[false,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "largest bound",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,18446744073709551615]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": true
+ },
+ {
+  "name": "bound past 64 bits",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,18446744073709551616]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "three bounds",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,4,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "NaN bound",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,NaN]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "zero multiple",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":0},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "multiple of no number",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_FLAG\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "drafter_only of an undeclared drafter",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"eagle\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "drafter_only of a tap",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_DUMP\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "drafter_only of no drafter",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "disabled_by of another prefix",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"OTHER_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "disabled_by of a tap",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_DUMP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "disabled_by without a reason",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"\"}]}",
+  "valid": false
+ },
+ {
+  "name": "a path",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[],\"paths\":[\"FIXTURE_DIR\"]}",
+  "valid": true
+ },
+ {
+  "name": "a path outside the prefixes",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[],\"paths\":[\"OTHER_DIR\"]}",
+  "valid": false
+ },
+ {
+  "name": "a path that is also a boolean",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"paths\":[\"FIXTURE_FLAG\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "a prefix covering shared variables",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\",\"MAX_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "a shared number redeclared",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"MAX_\"],\"drafters\":[],\"numbers\":{\"MAX_SEQUENCES\":[1,8]}}",
+  "valid": false
+ },
+ {
+  "name": "a prefix covering shared taps",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"TAPS_\"],\"drafters\":[]}",
+  "valid": false
+ },
+ {
+  "name": "a prefix covering a retired variable",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"BUNDLE_\"],\"drafters\":[]}",
+  "valid": false
+ },
+ {
+  "name": "a prefix covering a shared path",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"DEBUG_\"],\"drafters\":[]}",
+  "valid": false
+ },
+ {
+  "name": "encoder capture under its own prefix",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"ENCODER_\"],\"drafters\":[],\"paths\":[\"ENCODER_CAPTURE_DIR\"],\"booleans\":[\"ENCODER_CAPTURE_ALL_LAYERS\"]}",
+  "valid": true
+ },
+ {
+  "name": "lone high surrogate escape",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"off \\ud800\"}]}",
+  "valid": false
+ },
+ {
+  "name": "lone low surrogate escape",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"off \\udc00\"}]}",
+  "valid": false
+ },
+ {
+  "name": "reversed surrogate escapes",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"off \\ude00\\ud83d\"}]}",
+  "valid": false
+ },
+ {
+  "name": "lone surrogate escape in a value",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"\\ud800\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]}",
+  "valid": false
+ },
+ {
+  "name": "high surrogate escape before a letter",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"off \\ud83dx\"}]}",
+  "valid": false
+ },
+ {
+  "name": "escaped surrogate pair",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"off \\ud83d\\ude00\"}]}",
+  "valid": true
+ },
+ {
+  "name": "escaped character",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"off \\u00e9\"}]}",
+  "valid": true
+ },
+ {
+  "name": "trailing data",
+  "document": "{\"schema\":\"chopinfer-deployment-policy-v1\",\"bundle_id\":\"fixture.v1\",\"knob_prefixes\":[\"FIXTURE_\"],\"drafters\":[\"mtp\",\"dflash\"],\"booleans\":[\"FIXTURE_FLAG\",\"FIXTURE_GROUP\"],\"presence\":[\"FIXTURE_TRACE\"],\"numbers\":{\"FIXTURE_COUNT\":[0,8]},\"multiples\":{\"FIXTURE_COUNT\":2},\"taps\":[\"FIXTURE_DUMP\"],\"drafter_only\":{\"FIXTURE_FLAG\":[\"mtp\"]},\"disabled_by\":[{\"variable\":\"FIXTURE_GROUP\",\"value\":\"0\",\"prefix\":\"FIXTURE_GROUP_\",\"reason\":\"the group is off\"}]} {}",
+  "valid": false
+ },
+ {
+  "name": "not an object",
+  "document": "[]",
+  "valid": false
+ }
+]

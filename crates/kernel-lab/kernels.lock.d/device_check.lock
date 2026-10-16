@@ -1,0 +1,103 @@
+[
+  {
+    "name": "probe_device_check_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_probe_device_check_fill_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "buffer",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U64",
+            "name": "bytes"
+          },
+          {
+            "kind": "U32",
+            "name": "word"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_probe_device_check_compare_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "want",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "got",
+            "cxx_type": "const uint4"
+          },
+          {
+            "kind": "U64",
+            "name": "live_words"
+          },
+          {
+            "kind": "U64",
+            "name": "vectors"
+          },
+          {
+            "kind": "U32",
+            "name": "poison"
+          },
+          {
+            "kind": "U32",
+            "name": "element_bytes"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "slot"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "eeb5990a88373dd1f0a37ee40ab6fcdeafd0904afd9551f79c32ad770f96c1f0",
+    "resources": [
+      {
+        "symbol": "chop_probe_device_check_fill_v1",
+        "registers": 38,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_probe_device_check_compare_v1",
+        "registers": 23,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

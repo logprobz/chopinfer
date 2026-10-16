@@ -1,0 +1,14 @@
+[
+  {
+    "name": "sinkhorn_hc_hc4x4096_mix_norm_exact_late_wait_sm120",
+    "source_closure_sha256": "448bd65efdbb65c9d9784ba377ceb2b9763e82bfdc73c06eafa803bc1b2cc4ed"
+  },
+  {
+    "name": "sinkhorn_hc_hc4x4096_mix_norm_exact_sm120",
+    "source_closure_sha256": "d214e9f09b01c79ffa7442ed36d945c4ffd8d4821f6b35503f122ed3c92e01fe"
+  },
+  {
+    "name": "sinkhorn_hc_hc4x4096_mix_norm_exact_ties_away_sm120",
+    "source_closure_sha256": "887b0adef501b8edc51ba4aef557d1a216084a8a32185e1534b5a4f947448aec"
+  }
+]

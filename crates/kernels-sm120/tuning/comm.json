@@ -1,0 +1,24 @@
+{
+  "targets": {
+    "12.0:188": {
+      "decode": { "one_shot_max_bytes": 262144, "threads": 256 },
+      "prefill": { "one_shot_max_bytes": 262144, "threads": 256 },
+      "push": {
+        "low_latency_cluster": 2,
+        "cluster": 8,
+        "wide_block_rows": 16,
+        "wide_workers": 64,
+        "ranks": {
+          "1": { "low_latency_max_rows": 2, "one_shot_max_rows": 32, "wide_max_rows": 256 },
+          "2": { "low_latency_max_rows": 2, "one_shot_max_rows": 32, "wide_max_rows": 256 },
+          "3": { "low_latency_max_rows": 0, "one_shot_max_rows": 32, "wide_max_rows": 0 },
+          "4": { "low_latency_max_rows": 2, "one_shot_max_rows": 16, "wide_max_rows": 256 },
+          "5": { "low_latency_max_rows": 0, "one_shot_max_rows": 32, "wide_max_rows": 0 },
+          "6": { "low_latency_max_rows": 0, "one_shot_max_rows": 32, "wide_max_rows": 0 },
+          "7": { "low_latency_max_rows": 0, "one_shot_max_rows": 32, "wide_max_rows": 0 },
+          "8": { "low_latency_max_rows": 2, "one_shot_max_rows": 16, "wide_max_rows": 256 }
+        }
+      }
+    }
+  }
+}

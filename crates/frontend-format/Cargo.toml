@@ -1,0 +1,31 @@
+[package]
+name = "frontend-format"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[features]
+test-support = []
+
+[dependencies]
+runtime-bundle-abi.workspace = true
+runtime-frontend-contract.workspace = true
+runtime-grammar.workspace = true
+serde.workspace = true
+# Request numbers keep every digit and floats read back exactly from this
+# crate's own features, not through whatever else a build links.
+serde_json = { workspace = true, features = ["float_roundtrip", "arbitrary_precision"] }
+
+# Renders the parser fixtures with the test-support fixture format.
+[[test]]
+name = "document_numbers"
+required-features = ["test-support"]
+
+[[test]]
+name = "fixture_format"
+required-features = ["test-support"]
+
+[lints]
+workspace = true

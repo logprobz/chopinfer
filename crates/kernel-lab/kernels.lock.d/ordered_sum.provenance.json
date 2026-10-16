@@ -1,0 +1,14 @@
+[
+  {
+    "name": "ordered_sum_no_fallback_sm120",
+    "source_closure_sha256": "73e24e3b88f5446c2302650990a4be7dfe51293f89e614437cb65183bc435174"
+  },
+  {
+    "name": "ordered_sum_sm120",
+    "source_closure_sha256": "3cbc35aeacbd621bd5a7618e2461e7330ad331619e1c712abd3ed6ee9171f6ca"
+  },
+  {
+    "name": "ordered_sum_ties_away_sm120",
+    "source_closure_sha256": "6ff3cfe8e1e1ac87eaf657f5925053e98fcd42c5ae95b491457f80c4263167d4"
+  }
+]

@@ -1,0 +1,20 @@
+# SHA-256 of the retired rank slicer's TP4 rank-local QKV subwindows: the native
+# rank piece's bytes (bytes.rs reference_bytes) cropped to each window, recorded
+# at 58f0840d8 "Record the retired MiMo rank slicer's outputs for the served
+# comparisons" by registered_rank_local_qkv_windows_match_native_records_and_bytes.
+103cfb9853729f24b10c02e538e6f408b71afe5441b68445562f1e92285eae89  qkv-window-bytes tp4 rank1 start3584 Codes
+4a94709ed16e30e3f6d8def568242670f6422ad35ff2268b03695fa1ef12315b  qkv-window-bytes tp4 rank0 start128 LocalScales
+53f2d94bc0434fd620fc445748588c78260ee9e516ce18b1b4baba6536db62b9  qkv-window-bytes tp4 rank3 start3584 Codes
+599ebba08eb9d6d45d9cebdda1ede38e12e47ee92d017c2dd215d294d37d81de  qkv-window-bytes tp4 rank2 start128 LocalScales
+70ae6fc60d72a4fa653a4772d30d8d52dc78a4d0754523c6661a74aa8d49e383  qkv-window-bytes tp4 rank2 start3584 Codes
+8656d92ade3e823137cf4d13256d6e30f8ee96c1d1572dd8716b80df9de5a92a  qkv-window-bytes tp4 rank2 start3584 LocalScales
+88b467a0f4d5a78a82b0f65b11fae556b7643c7a820b898d2da92b4af354d872  qkv-window-bytes tp4 rank0 start3584 LocalScales
+a60b50856439522657bf6296e80c94ac724f6db34286873b39f1f8222a5321a7  qkv-window-bytes tp4 rank3 start128 Codes
+b619e764252633f5ba84a2b82cf7f58d0eb95e35a268bbc15dd39d49579d9efe  qkv-window-bytes tp4 rank1 start3584 LocalScales
+bc1a041db7765112342dc2f7f662cf583d32801e3c032677d9fb91c5477e73c6  qkv-window-bytes tp4 rank3 start128 LocalScales
+c1d37635e956443faabb96c7df5b9cea1d6c3ed6b5d0246406cdb5ac2ec5e3d4  qkv-window-bytes tp4 rank0 start128 Codes
+c3721282761144135207a9ca9c40c89641e609ab888f428ab97e00c43337b7ee  qkv-window-bytes tp4 rank3 start3584 LocalScales
+e1bdb3aa20d14c1ca3124d3d2ea09c097f0690f3e2b6a280e340419c74b39130  qkv-window-bytes tp4 rank1 start128 LocalScales
+f0f29f6786ee2bc02ac93fb0e1be45f624f8519698c813b26482912180799f39  qkv-window-bytes tp4 rank2 start128 Codes
+f7ff779907ac10bc7a18618a5f95eaf8a443ed36f26272cfbd18082a9d3f2752  qkv-window-bytes tp4 rank0 start3584 Codes
+ff033ab80cfe0f868ef54ca809efe62188eee4db07ed08f11384a4229d90222a  qkv-window-bytes tp4 rank1 start128 Codes

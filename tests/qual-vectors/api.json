@@ -1,0 +1,1375 @@
+{
+ "kind": "api",
+ "schema": "chopinfer-qual-vectors/v1",
+ "vectors": [
+  {
+   "check": {
+    "rules": [
+     {
+      "op": "eq",
+      "path": [
+       "passed"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     }
+    ]
+   },
+   "covers": [],
+   "expected": {
+    "metrics": {
+     "passed": true,
+     "rows": [
+      {
+       "latency_seconds": 0.01,
+       "name": "choice_single_False",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "multiple_choices_False_False",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "multiple_choices_False_True",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "choice_single_True",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "multiple_choices_True_False",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "multiple_choices_True_True",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "generated_token_ids_False_False",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "generated_token_ids_False_True",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "generated_token_ids_True_False",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "generated_token_ids_True_True",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "tokenize",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "batch_single",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "batch_False_False",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "batch_False_True",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "batch_single",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "batch_True_False",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "batch_True_True",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "add_special_tokens_False_False",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "add_special_tokens_True_False",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "add_special_tokens_False_True",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "add_special_tokens_True_True",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "detokenize",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "stop_token_ids",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "generation_prompt_control",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "hidden_reasoning",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "ignore_eos",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "nullable_flags",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "unknown_extension",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "sampling_extensions",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "chat_token_limit_precedence",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "continuous_usage",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "stream_usage",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "stop",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "completion_logprobs",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "reasoning_True",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "reasoning_False",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "stream_tool_arguments",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "tool_call",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "tool_result",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "metrics_compatibility",
+       "passed": true
+      }
+     ]
+    },
+    "status": "pass"
+   },
+   "name": "pass",
+   "receipt": {
+    "check": "api",
+    "errors": [],
+    "mechanics_only": false,
+    "passed": true,
+    "rows": [
+     {
+      "latency_seconds": 0.01,
+      "name": "choice_single_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "multiple_choices_False_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "multiple_choices_False_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "choice_single_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "multiple_choices_True_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "multiple_choices_True_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "generated_token_ids_False_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "generated_token_ids_False_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "generated_token_ids_True_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "generated_token_ids_True_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "tokenize",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "batch_single",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "batch_False_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "batch_False_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "batch_single",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "batch_True_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "batch_True_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "add_special_tokens_False_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "add_special_tokens_True_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "add_special_tokens_False_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "add_special_tokens_True_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "detokenize",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "stop_token_ids",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "generation_prompt_control",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "hidden_reasoning",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "ignore_eos",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "nullable_flags",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "unknown_extension",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "sampling_extensions",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "chat_token_limit_precedence",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "continuous_usage",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "stream_usage",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "stop",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "completion_logprobs",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "reasoning_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "reasoning_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "stream_tool_arguments",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "tool_call",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "tool_result",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "metrics_compatibility",
+      "passed": true
+     }
+    ],
+    "schema": "chopinfer-qualification/v1",
+    "skipped": [],
+    "stream_text": "Hello"
+   },
+   "reference": null
+  },
+  {
+   "check": {
+    "rules": [
+     {
+      "op": "eq",
+      "path": [
+       "passed"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     }
+    ]
+   },
+   "covers": [],
+   "expected": {
+    "error": "check reported errors",
+    "status": "fail"
+   },
+   "name": "fail: a case failed",
+   "receipt": {
+    "check": "api",
+    "errors": [
+     {
+      "error": "missing choice",
+      "name": "choice_single_True"
+     }
+    ],
+    "mechanics_only": false,
+    "passed": false,
+    "rows": [
+     {
+      "latency_seconds": 0.01,
+      "name": "choice_single_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "multiple_choices_False_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "multiple_choices_False_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "choice_single_True",
+      "passed": false
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "multiple_choices_True_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "multiple_choices_True_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "generated_token_ids_False_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "generated_token_ids_False_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "generated_token_ids_True_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "generated_token_ids_True_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "tokenize",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "batch_single",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "batch_False_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "batch_False_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "batch_single",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "batch_True_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "batch_True_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "add_special_tokens_False_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "add_special_tokens_True_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "add_special_tokens_False_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "add_special_tokens_True_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "detokenize",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "stop_token_ids",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "generation_prompt_control",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "hidden_reasoning",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "ignore_eos",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "nullable_flags",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "unknown_extension",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "sampling_extensions",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "chat_token_limit_precedence",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "continuous_usage",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "stream_usage",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "stop",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "completion_logprobs",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "reasoning_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "reasoning_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "stream_tool_arguments",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "tool_call",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "tool_result",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "metrics_compatibility",
+      "passed": true
+     }
+    ],
+    "schema": "chopinfer-qualification/v1",
+    "skipped": [],
+    "stream_text": "Hello"
+   },
+   "reference": null
+  },
+  {
+   "check": {
+    "rules": [
+     {
+      "op": "eq",
+      "path": [
+       "passed"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     }
+    ]
+   },
+   "covers": [],
+   "expected": {
+    "error": "threshold predicate failed",
+    "metrics": {
+     "passed": false,
+     "rows": [
+      {
+       "latency_seconds": 0.01,
+       "name": "choice_single_False",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "multiple_choices_False_False",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "multiple_choices_False_True",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "choice_single_True",
+       "passed": false
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "multiple_choices_True_False",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "multiple_choices_True_True",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "generated_token_ids_False_False",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "generated_token_ids_False_True",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "generated_token_ids_True_False",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "generated_token_ids_True_True",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "tokenize",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "batch_single",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "batch_False_False",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "batch_False_True",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "batch_single",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "batch_True_False",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "batch_True_True",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "add_special_tokens_False_False",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "add_special_tokens_True_False",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "add_special_tokens_False_True",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "add_special_tokens_True_True",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "detokenize",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "stop_token_ids",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "generation_prompt_control",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "hidden_reasoning",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "ignore_eos",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "nullable_flags",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "unknown_extension",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "sampling_extensions",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "chat_token_limit_precedence",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "continuous_usage",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "stream_usage",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "stop",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "completion_logprobs",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "reasoning_True",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "reasoning_False",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "stream_tool_arguments",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "tool_call",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "tool_result",
+       "passed": true
+      },
+      {
+       "latency_seconds": 0.01,
+       "name": "metrics_compatibility",
+       "passed": true
+      }
+     ]
+    },
+    "status": "fail"
+   },
+   "name": "fail: a failed case under a passing verdict is recomputed",
+   "receipt": {
+    "check": "api",
+    "errors": [],
+    "mechanics_only": false,
+    "passed": true,
+    "rows": [
+     {
+      "latency_seconds": 0.01,
+      "name": "choice_single_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "multiple_choices_False_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "multiple_choices_False_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "choice_single_True",
+      "passed": false
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "multiple_choices_True_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "multiple_choices_True_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "generated_token_ids_False_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "generated_token_ids_False_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "generated_token_ids_True_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "generated_token_ids_True_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "tokenize",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "batch_single",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "batch_False_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "batch_False_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "batch_single",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "batch_True_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "batch_True_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "add_special_tokens_False_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "add_special_tokens_True_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "add_special_tokens_False_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "add_special_tokens_True_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "detokenize",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "stop_token_ids",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "generation_prompt_control",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "hidden_reasoning",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "ignore_eos",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "nullable_flags",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "unknown_extension",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "sampling_extensions",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "chat_token_limit_precedence",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "continuous_usage",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "stream_usage",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "stop",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "completion_logprobs",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "reasoning_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "reasoning_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "stream_tool_arguments",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "tool_call",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "tool_result",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "metrics_compatibility",
+      "passed": true
+     }
+    ],
+    "schema": "chopinfer-qualification/v1",
+    "skipped": [],
+    "stream_text": "Hello"
+   },
+   "reference": null
+  },
+  {
+   "check": {
+    "rules": [
+     {
+      "op": "eq",
+      "path": [
+       "passed"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     }
+    ]
+   },
+   "covers": [],
+   "expected": {
+    "error": "the rows are not the 40 api.v1 cases in order",
+    "status": "insufficient"
+   },
+   "name": "insufficient: a case missing",
+   "receipt": {
+    "check": "api",
+    "errors": [],
+    "mechanics_only": false,
+    "passed": true,
+    "rows": [
+     {
+      "latency_seconds": 0.01,
+      "name": "choice_single_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "multiple_choices_False_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "multiple_choices_False_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "choice_single_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "multiple_choices_True_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "multiple_choices_True_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "generated_token_ids_False_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "generated_token_ids_False_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "generated_token_ids_True_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "generated_token_ids_True_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "tokenize",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "batch_single",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "batch_False_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "batch_False_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "batch_single",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "batch_True_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "batch_True_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "add_special_tokens_False_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "add_special_tokens_True_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "add_special_tokens_False_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "add_special_tokens_True_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "detokenize",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "stop_token_ids",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "generation_prompt_control",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "hidden_reasoning",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "ignore_eos",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "nullable_flags",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "unknown_extension",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "sampling_extensions",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "chat_token_limit_precedence",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "continuous_usage",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "stream_usage",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "stop",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "completion_logprobs",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "reasoning_True",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "reasoning_False",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "stream_tool_arguments",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "tool_call",
+      "passed": true
+     },
+     {
+      "latency_seconds": 0.01,
+      "name": "tool_result",
+      "passed": true
+     }
+    ],
+    "schema": "chopinfer-qualification/v1",
+    "skipped": [],
+    "stream_text": "Hello"
+   },
+   "reference": null
+  },
+  {
+   "check": {
+    "rules": [
+     {
+      "op": "eq",
+      "path": [
+       "passed"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     }
+    ]
+   },
+   "covers": [],
+   "expected": {
+    "error": "the rows are not the 40 api.v1 cases in order",
+    "status": "insufficient"
+   },
+   "name": "insufficient: no cases",
+   "receipt": {
+    "check": "api",
+    "errors": [],
+    "mechanics_only": false,
+    "passed": true,
+    "rows": [],
+    "schema": "chopinfer-qualification/v1",
+    "skipped": [],
+    "stream_text": "Hello"
+   },
+   "reference": null
+  }
+ ],
+ "version": "api.v1"
+}

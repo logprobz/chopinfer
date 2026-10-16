@@ -1,0 +1,728 @@
+{
+ "kind": "frontend_goldens",
+ "schema": "chopinfer-qual-vectors/v1",
+ "vectors": [
+  {
+   "check": {
+    "rules": [
+     {
+      "op": "eq",
+      "path": [
+       "chat-renders.json",
+       "agrees"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     },
+     {
+      "op": "eq",
+      "path": [
+       "tokenizer-golden.json",
+       "agrees"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     }
+    ]
+   },
+   "covers": [
+    "golden equality"
+   ],
+   "expected": {
+    "metrics": {
+     "chat-renders.json": {
+      "agrees": true,
+      "key": "chat-renders.json",
+      "media_refused": [],
+      "mismatches": [],
+      "reference_rows": 2,
+      "rows": 2
+     },
+     "reference": {
+      "files": {
+       "chat-renders.json": {
+        "file": "chat-renders.json",
+        "input": "frontend_capture",
+        "rows": 2,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+       },
+       "tokenizer-golden.json": {
+        "file": "",
+        "input": "tokenizer_goldens",
+        "rows": 2,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+       }
+      }
+     },
+     "tokenizer-golden.json": {
+      "agrees": true,
+      "key": "tokenizer-golden.json",
+      "media_refused": [],
+      "mismatches": [],
+      "reference_rows": 2,
+      "rows": 2
+     }
+    },
+    "status": "pass"
+   },
+   "name": "exact IDs",
+   "receipt": {
+    "chat-renders.json": {
+     "agrees": true,
+     "key": "chat-renders.json",
+     "media_refused": [],
+     "mismatches": [],
+     "reference_rows": 2,
+     "rows": 2
+    },
+    "reference": {
+     "files": {
+      "chat-renders.json": {
+       "file": "chat-renders.json",
+       "input": "frontend_capture",
+       "rows": 2,
+       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "tokenizer-golden.json": {
+       "file": "",
+       "input": "tokenizer_goldens",
+       "rows": 2,
+       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+     }
+    },
+    "tokenizer-golden.json": {
+     "agrees": true,
+     "key": "tokenizer-golden.json",
+     "media_refused": [],
+     "mismatches": [],
+     "reference_rows": 2,
+     "rows": 2
+    }
+   },
+   "reference": {
+    "files": {
+     "chat-renders.json": {
+      "file": "chat-renders.json",
+      "input": "frontend_capture",
+      "rows": 2,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     },
+     "tokenizer-golden.json": {
+      "file": "",
+      "input": "tokenizer_goldens",
+      "rows": 2,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     }
+    }
+   }
+  },
+  {
+   "check": {
+    "rules": [
+     {
+      "op": "eq",
+      "path": [
+       "chat-renders.json",
+       "agrees"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     },
+     {
+      "op": "eq",
+      "path": [
+       "tokenizer-golden.json",
+       "agrees"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     }
+    ]
+   },
+   "covers": [
+    "golden mismatch"
+   ],
+   "expected": {
+    "error": "threshold predicate failed",
+    "metrics": {
+     "chat-renders.json": {
+      "agrees": false,
+      "key": "chat-renders.json",
+      "media_refused": [],
+      "mismatches": [
+       1
+      ],
+      "reference_rows": 2,
+      "rows": 2
+     },
+     "reference": {
+      "files": {
+       "chat-renders.json": {
+        "file": "chat-renders.json",
+        "input": "frontend_capture",
+        "rows": 2,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+       },
+       "tokenizer-golden.json": {
+        "file": "",
+        "input": "tokenizer_goldens",
+        "rows": 2,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+       }
+      }
+     },
+     "tokenizer-golden.json": {
+      "agrees": true,
+      "key": "tokenizer-golden.json",
+      "media_refused": [],
+      "mismatches": [],
+      "reference_rows": 2,
+      "rows": 2
+     }
+    },
+    "status": "fail"
+   },
+   "name": "mismatched IDs",
+   "receipt": {
+    "chat-renders.json": {
+     "agrees": false,
+     "key": "chat-renders.json",
+     "media_refused": [],
+     "mismatches": [
+      1
+     ],
+     "reference_rows": 2,
+     "rows": 2
+    },
+    "reference": {
+     "files": {
+      "chat-renders.json": {
+       "file": "chat-renders.json",
+       "input": "frontend_capture",
+       "rows": 2,
+       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "tokenizer-golden.json": {
+       "file": "",
+       "input": "tokenizer_goldens",
+       "rows": 2,
+       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+     }
+    },
+    "tokenizer-golden.json": {
+     "agrees": true,
+     "key": "tokenizer-golden.json",
+     "media_refused": [],
+     "mismatches": [],
+     "reference_rows": 2,
+     "rows": 2
+    }
+   },
+   "reference": {
+    "files": {
+     "chat-renders.json": {
+      "file": "chat-renders.json",
+      "input": "frontend_capture",
+      "rows": 2,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     },
+     "tokenizer-golden.json": {
+      "file": "",
+      "input": "tokenizer_goldens",
+      "rows": 2,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     }
+    }
+   }
+  },
+  {
+   "check": {
+    "rules": [
+     {
+      "op": "eq",
+      "path": [
+       "chat-renders.json",
+       "agrees"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     },
+     {
+      "op": "eq",
+      "path": [
+       "tokenizer-golden.json",
+       "agrees"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     }
+    ]
+   },
+   "covers": [
+    "golden missing"
+   ],
+   "expected": {
+    "error": "tokenizer-golden.json: no compared rows",
+    "status": "insufficient"
+   },
+   "name": "missing tokenizer",
+   "receipt": {
+    "chat-renders.json": {
+     "agrees": true,
+     "key": "chat-renders.json",
+     "media_refused": [],
+     "mismatches": [],
+     "reference_rows": 2,
+     "rows": 2
+    },
+    "reference": {
+     "files": {
+      "chat-renders.json": {
+       "file": "chat-renders.json",
+       "input": "frontend_capture",
+       "rows": 2,
+       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "tokenizer-golden.json": {
+       "file": "",
+       "input": "tokenizer_goldens",
+       "rows": 2,
+       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+     }
+    }
+   },
+   "reference": {
+    "files": {
+     "chat-renders.json": {
+      "file": "chat-renders.json",
+      "input": "frontend_capture",
+      "rows": 2,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     },
+     "tokenizer-golden.json": {
+      "file": "",
+      "input": "tokenizer_goldens",
+      "rows": 2,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     }
+    }
+   }
+  },
+  {
+   "check": {
+    "rules": [
+     {
+      "op": "eq",
+      "path": [
+       "chat-renders.json",
+       "agrees"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     },
+     {
+      "op": "eq",
+      "path": [
+       "tokenizer-golden.json",
+       "agrees"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     }
+    ]
+   },
+   "covers": [
+    "golden empty"
+   ],
+   "expected": {
+    "error": "chat-renders.json: no compared rows",
+    "status": "insufficient"
+   },
+   "name": "zero renders",
+   "receipt": {
+    "chat-renders.json": {
+     "agrees": true,
+     "key": "chat-renders.json",
+     "media_refused": [],
+     "mismatches": [],
+     "reference_rows": 2,
+     "rows": 0
+    },
+    "reference": {
+     "files": {
+      "chat-renders.json": {
+       "file": "chat-renders.json",
+       "input": "frontend_capture",
+       "rows": 2,
+       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "tokenizer-golden.json": {
+       "file": "",
+       "input": "tokenizer_goldens",
+       "rows": 2,
+       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+     }
+    },
+    "tokenizer-golden.json": {
+     "agrees": true,
+     "key": "tokenizer-golden.json",
+     "media_refused": [],
+     "mismatches": [],
+     "reference_rows": 2,
+     "rows": 2
+    }
+   },
+   "reference": {
+    "files": {
+     "chat-renders.json": {
+      "file": "chat-renders.json",
+      "input": "frontend_capture",
+      "rows": 2,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     },
+     "tokenizer-golden.json": {
+      "file": "",
+      "input": "tokenizer_goldens",
+      "rows": 2,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     }
+    }
+   }
+  },
+  {
+   "check": {
+    "rules": [
+     {
+      "op": "eq",
+      "path": [
+       "chat-renders.json",
+       "agrees"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     },
+     {
+      "op": "eq",
+      "path": [
+       "tokenizer-golden.json",
+       "agrees"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     }
+    ]
+   },
+   "covers": [
+    "golden binding"
+   ],
+   "expected": {
+    "error": "the receipt compared other frontend goldens",
+    "status": "insufficient"
+   },
+   "name": "wrong golden binding",
+   "receipt": {
+    "chat-renders.json": {
+     "agrees": true,
+     "key": "chat-renders.json",
+     "media_refused": [],
+     "mismatches": [],
+     "reference_rows": 2,
+     "rows": 2
+    },
+    "reference": {
+     "files": {
+      "chat-renders.json": {
+       "file": "chat-renders.json",
+       "input": "frontend_capture",
+       "rows": 2,
+       "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "tokenizer-golden.json": {
+       "file": "",
+       "input": "tokenizer_goldens",
+       "rows": 2,
+       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+     }
+    },
+    "tokenizer-golden.json": {
+     "agrees": true,
+     "key": "tokenizer-golden.json",
+     "media_refused": [],
+     "mismatches": [],
+     "reference_rows": 2,
+     "rows": 2
+    }
+   },
+   "reference": {
+    "files": {
+     "chat-renders.json": {
+      "file": "chat-renders.json",
+      "input": "frontend_capture",
+      "rows": 2,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     },
+     "tokenizer-golden.json": {
+      "file": "",
+      "input": "tokenizer_goldens",
+      "rows": 2,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     }
+    }
+   }
+  },
+  {
+   "check": {
+    "rules": [
+     {
+      "op": "eq",
+      "path": [
+       "chat-renders.json",
+       "agrees"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     },
+     {
+      "op": "eq",
+      "path": [
+       "tokenizer-golden.json",
+       "agrees"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     }
+    ]
+   },
+   "covers": [
+    "golden counts"
+   ],
+   "expected": {
+    "error": "chat-renders.json: reference row count differs",
+    "status": "insufficient"
+   },
+   "name": "unequal golden counts",
+   "receipt": {
+    "chat-renders.json": {
+     "agrees": true,
+     "key": "chat-renders.json",
+     "media_refused": [],
+     "mismatches": [],
+     "reference_rows": 3,
+     "rows": 2
+    },
+    "reference": {
+     "files": {
+      "chat-renders.json": {
+       "file": "chat-renders.json",
+       "input": "frontend_capture",
+       "rows": 2,
+       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "tokenizer-golden.json": {
+       "file": "",
+       "input": "tokenizer_goldens",
+       "rows": 2,
+       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+     }
+    },
+    "tokenizer-golden.json": {
+     "agrees": true,
+     "key": "tokenizer-golden.json",
+     "media_refused": [],
+     "mismatches": [],
+     "reference_rows": 2,
+     "rows": 2
+    }
+   },
+   "reference": {
+    "files": {
+     "chat-renders.json": {
+      "file": "chat-renders.json",
+      "input": "frontend_capture",
+      "rows": 2,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     },
+     "tokenizer-golden.json": {
+      "file": "",
+      "input": "tokenizer_goldens",
+      "rows": 2,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     }
+    }
+   }
+  },
+  {
+   "check": {
+    "rules": [
+     {
+      "op": "eq",
+      "path": [
+       "chat-renders.json",
+       "agrees"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     },
+     {
+      "op": "eq",
+      "path": [
+       "tokenizer-golden.json",
+       "agrees"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     }
+    ]
+   },
+   "covers": [
+    "golden pinned counts"
+   ],
+   "expected": {
+    "error": "chat-renders.json: reference row count differs",
+    "status": "insufficient"
+   },
+   "name": "forged reference count",
+   "receipt": {
+    "chat-renders.json": {
+     "agrees": true,
+     "key": "chat-renders.json",
+     "media_refused": [],
+     "mismatches": [],
+     "reference_rows": 1,
+     "rows": 1
+    },
+    "reference": {
+     "files": {
+      "chat-renders.json": {
+       "file": "chat-renders.json",
+       "input": "frontend_capture",
+       "rows": 2,
+       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "tokenizer-golden.json": {
+       "file": "",
+       "input": "tokenizer_goldens",
+       "rows": 2,
+       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+     }
+    },
+    "tokenizer-golden.json": {
+     "agrees": true,
+     "key": "tokenizer-golden.json",
+     "media_refused": [],
+     "mismatches": [],
+     "reference_rows": 2,
+     "rows": 2
+    }
+   },
+   "reference": {
+    "files": {
+     "chat-renders.json": {
+      "file": "chat-renders.json",
+      "input": "frontend_capture",
+      "rows": 2,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     },
+     "tokenizer-golden.json": {
+      "file": "",
+      "input": "tokenizer_goldens",
+      "rows": 2,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     }
+    }
+   }
+  },
+  {
+   "check": {
+    "rules": [
+     {
+      "op": "eq",
+      "path": [
+       "chat-renders.json",
+       "agrees"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     },
+     {
+      "op": "eq",
+      "path": [
+       "tokenizer-golden.json",
+       "agrees"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     }
+    ]
+   },
+   "covers": [
+    "golden consistency"
+   ],
+   "expected": {
+    "error": "chat-renders.json: agrees with mismatched IDs",
+    "status": "insufficient"
+   },
+   "name": "contradictory equality",
+   "receipt": {
+    "chat-renders.json": {
+     "agrees": true,
+     "key": "chat-renders.json",
+     "media_refused": [],
+     "mismatches": [
+      1
+     ],
+     "reference_rows": 2,
+     "rows": 2
+    },
+    "reference": {
+     "files": {
+      "chat-renders.json": {
+       "file": "chat-renders.json",
+       "input": "frontend_capture",
+       "rows": 2,
+       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "tokenizer-golden.json": {
+       "file": "",
+       "input": "tokenizer_goldens",
+       "rows": 2,
+       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+     }
+    },
+    "tokenizer-golden.json": {
+     "agrees": true,
+     "key": "tokenizer-golden.json",
+     "media_refused": [],
+     "mismatches": [],
+     "reference_rows": 2,
+     "rows": 2
+    }
+   },
+   "reference": {
+    "files": {
+     "chat-renders.json": {
+      "file": "chat-renders.json",
+      "input": "frontend_capture",
+      "rows": 2,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     },
+     "tokenizer-golden.json": {
+      "file": "",
+      "input": "tokenizer_goldens",
+      "rows": 2,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     }
+    }
+   }
+  }
+ ],
+ "version": "frontend_goldens.v1"
+}

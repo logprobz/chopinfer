@@ -1,0 +1,14 @@
+[
+  {
+    "name": "sinkhorn_epilogue_split_tree_distances_reversed_hc4x4096_sm120",
+    "source_closure_sha256": "b58ce9c9e4c362b2e0cc46b36ac500f3295e06c284bcbf37a21a064073f427fe"
+  },
+  {
+    "name": "sinkhorn_epilogue_split_tree_hc4x4096_sm120",
+    "source_closure_sha256": "ff1d1872e98cd64df71a84087e92c7038e90a1ac173f277367de306770d6fd11"
+  },
+  {
+    "name": "sinkhorn_epilogue_split_tree_late_wait_hc4x4096_sm120",
+    "source_closure_sha256": "4d7d78d90df1b5b6b0cabcc5c00951909bf3e4aba442fe16ac11477dba0eaea8"
+  }
+]

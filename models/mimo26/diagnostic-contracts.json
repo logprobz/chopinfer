@@ -1,0 +1,1 @@
+{"mimo26.layer-cosine.v1":{"authority":"crates/kernel-core/src/oracle.rs::check_layer_cosine","minimum_cosine":0.9999},"gemm.w-fp8-block128-f32.a-bf16.acc-f32.v1":{"authority":"crates/kernel-core/src/oracle.rs::numeric_bound","output":"BF16","reduction_length":4096,"rounding":"half-bf16-ulp","accumulation_factor":2.384185791015625e-7}}

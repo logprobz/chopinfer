@@ -1,0 +1,1374 @@
+{
+  "schema": "chopinfer.projection.v1",
+  "namespace": "qwen38",
+  "use_profiles": {
+    "dense": [
+      {"phase": "Prefill", "capacity": 8192, "graph": false, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 1}},
+      {"phase": "Decode", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 2}},
+      {"phase": "Decode", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Decode", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Decode", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Decode", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Decode", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 1}},
+      {"phase": "Verify", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 2}},
+      {"phase": "Verify", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Verify", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Verify", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Verify", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Verify", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}}
+    ],
+    "experts": [
+      {"phase": "Prefill", "capacity": 8192, "graph": false, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-routed-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-routed-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 1}},
+      {"phase": "Decode", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-routed-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 2}},
+      {"phase": "Decode", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-routed-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Decode", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-routed-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Decode", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-routed-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Decode", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-routed-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Decode", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-routed-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-routed-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-routed-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-routed-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 1}},
+      {"phase": "Verify", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-routed-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 2}},
+      {"phase": "Verify", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-routed-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Verify", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-routed-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Verify", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-routed-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Verify", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-routed-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Verify", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-routed-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-routed-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-routed-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}}
+    ],
+    "router": [
+      {"phase": "Prefill", "capacity": 8192, "graph": false, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 1}},
+      {"phase": "Decode", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 2}},
+      {"phase": "Decode", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Decode", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Decode", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Decode", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Decode", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 1}},
+      {"phase": "Verify", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 2}},
+      {"phase": "Verify", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Verify", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Verify", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Verify", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Verify", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}}
+    ],
+    "global-dense": [
+      {"phase": "Prefill", "capacity": 8192, "graph": false, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 1}},
+      {"phase": "Decode", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 2}},
+      {"phase": "Decode", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Decode", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Decode", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Decode", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Decode", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 1}},
+      {"phase": "Verify", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 2}},
+      {"phase": "Verify", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Verify", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Verify", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Verify", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Verify", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}}
+    ],
+    "mtp-global-dense": [
+      {"phase": "Prefill", "capacity": 8192, "graph": false, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 1}},
+      {"phase": "Decode", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 2}},
+      {"phase": "Decode", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Decode", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Decode", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Decode", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Decode", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 1}},
+      {"phase": "Verify", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 2}},
+      {"phase": "Verify", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Verify", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Verify", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Verify", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Verify", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}}
+    ],
+    "embedding": [
+      {"phase": "Prefill", "capacity": 8192, "graph": false, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 64, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 128, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 256, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 64, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 128, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 256, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}}
+    ],
+    "head": [
+      {"phase": "Prefill", "capacity": 8192, "graph": false, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 1}},
+      {"phase": "Decode", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 2}},
+      {"phase": "Decode", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Decode", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Decode", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Decode", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Decode", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 1}},
+      {"phase": "Verify", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 2}},
+      {"phase": "Verify", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Verify", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Verify", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Verify", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Verify", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Prefill", "capacity": 8192, "graph": false, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "qwen38.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "qwen38.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 1}},
+      {"phase": "Decode", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "qwen38.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 2}},
+      {"phase": "Decode", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "qwen38.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Decode", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "qwen38.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Decode", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "qwen38.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Decode", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "qwen38.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Decode", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "qwen38.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "qwen38.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "qwen38.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "qwen38.head.f32.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 1}},
+      {"phase": "Verify", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "qwen38.head.f32.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 2}},
+      {"phase": "Verify", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "qwen38.head.f32.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Verify", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "qwen38.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Verify", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "qwen38.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Verify", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "qwen38.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Verify", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "qwen38.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "qwen38.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "qwen38.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}}
+    ],
+    "mtp-fc-hidden": [
+      {"phase": "Prefill", "capacity": 8192, "graph": false, "contract": {"compiled_capacity": 8192, "row_multiplier": 4, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 4, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Decode", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 4, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Decode", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 4, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Decode", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 4, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Decode", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 4, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 4, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 4, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 4, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 4, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 4, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Verify", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 4, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Verify", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 4, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Verify", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 4, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Verify", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 4, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 4, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 4, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 4, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 4, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-dense-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}}
+    ],
+    "ngram": [
+      {"phase": "Prefill", "capacity": 8192, "graph": false, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 64, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 128, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 256, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 64, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 128, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 256, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "qwen38.source-lookup-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}}
+    ]
+  },
+  "layer_stems": [
+    {
+      "id": "linear",
+      "template": "model.language_model.layers.{i}.linear_attn",
+      "indices": {"kind": "range", "start": 0, "end": "linear_layers"}
+    },
+    {
+      "id": "full",
+      "template": "model.language_model.layers.{i}.self_attn",
+      "indices": {"kind": "range", "start": 0, "end": "full_layers"}
+    },
+    {
+      "id": "mtp",
+      "template": "mtp.layers.{i}.self_attn",
+      "indices": {"kind": "range", "start": 0, "end": "mtp_layers"},
+      "execution": {"indices": ["layers"], "aliases": [{"execution_index": "layers", "source_index": 0}]}
+    },
+    {
+      "id": "main-mlp",
+      "template": "model.language_model.layers.{i}.mlp",
+      "indices": {"kind": "range", "start": 0, "end": "layers"}
+    },
+    {
+      "id": "main-attn-hc",
+      "template": "model.language_model.layers.{i}.attn_hyper_connection",
+      "indices": {"kind": "range", "start": 0, "end": "layers"}
+    },
+    {
+      "id": "main-mlp-hc",
+      "template": "model.language_model.layers.{i}.mlp_hyper_connection",
+      "indices": {"kind": "range", "start": 0, "end": "layers"}
+    },
+    {
+      "id": "mtp-mlp",
+      "template": "mtp.layers.{i}.mlp",
+      "indices": {"kind": "range", "start": 0, "end": "mtp_layers"},
+      "execution": {"indices": ["layers"], "aliases": [{"execution_index": "layers", "source_index": 0}]}
+    },
+    {
+      "id": "mtp-attn-hc",
+      "template": "mtp.layers.{i}.attn_hyper_connection",
+      "indices": {"kind": "range", "start": 0, "end": "mtp_layers"},
+      "execution": {"indices": ["layers"], "aliases": [{"execution_index": "layers", "source_index": 0}]}
+    },
+    {
+      "id": "mtp-mlp-hc",
+      "template": "mtp.layers.{i}.mlp_hyper_connection",
+      "indices": {"kind": "range", "start": 0, "end": "mtp_layers"},
+      "execution": {"indices": ["layers"], "aliases": [{"execution_index": "layers", "source_index": 0}]}
+    },
+    {
+      "id": "ple",
+      "template": "model.language_model.layers.{i}.ple",
+      "indices": {"kind": "range", "start": 0, "end": "ple_layers"}
+    },
+    {"id": "external-0", "template": "model.visual.blocks.{i}", "indices": {"kind": "range", "start": 0, "end": "vision_layers"}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}
+  ],
+  "projections": [
+    {
+      "id": "linear.qkv",
+      "offers": ["bf16", "mxfp8"],
+      "source": {"stem": "linear", "tensor": "{stem}.in_proj_qkv.weight"},
+      "shape": [{"op": "sum", "terms": [{"op": "product", "factors": [2, "linear_key_heads", "linear_head"]}, {"op": "product", "factors": ["linear_heads", "linear_value_head"]}]}, "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"heads": {"op": "sum", "terms": [{"op": "product", "factors": [2, "linear_key_heads"]}, "linear_heads"]}, "head_dim": "linear_head", "tile": 16, "class": "head_grouped"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}, "mxfp8": {"numerical_contract": "qwen38.mxfp8-scaled-operand.v1", "a16_recipe": "scaled_weight"}}},
+      "parts": [
+        {"id": "q", "rows": {"op": "product", "factors": ["linear_key_heads", "linear_head"]}, "heads": "linear_key_heads", "range": {"start": 0, "length": {"op": "product", "factors": ["linear_key_heads", "linear_head"]}}, "scale_origin": [0, 0]},
+        {"id": "k", "rows": {"op": "product", "factors": ["linear_key_heads", "linear_head"]}, "heads": "linear_key_heads", "range": {"start": {"op": "product", "factors": ["linear_key_heads", "linear_head"]}, "length": {"op": "product", "factors": ["linear_key_heads", "linear_head"]}}, "scale_origin": [0, 0]},
+        {"id": "v", "rows": "linear_value", "heads": "linear_heads", "range": {"start": {"op": "product", "factors": [2, "linear_key_heads", "linear_head"]}, "length": "linear_value"}, "scale_origin": [0, 0]}
+      ],
+      "use_profile": "dense"
+    },
+    {
+      "id": "linear.z",
+      "offers": ["bf16", "mxfp8"],
+      "source": {"stem": "linear", "tensor": "{stem}.in_proj_z.weight"},
+      "shape": ["linear_value", "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "head_grouped", "heads": "linear_heads", "head_dim": "linear_value_head", "tile": 16},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}, "mxfp8": {"numerical_contract": "qwen38.mxfp8-scaled-operand.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "linear.a",
+      "offers": ["bf16", "mxfp8"],
+      "source": {"stem": "linear", "tensor": "{stem}.in_proj_a.weight"},
+      "shape": ["linear_heads", "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "column"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}, "mxfp8": {"numerical_contract": "qwen38.mxfp8-scaled-operand.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "linear.b",
+      "offers": ["bf16", "mxfp8"],
+      "source": {"stem": "linear", "tensor": "{stem}.in_proj_b.weight"},
+      "shape": ["linear_heads", "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "column"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}, "mxfp8": {"numerical_contract": "qwen38.mxfp8-scaled-operand.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "linear.output",
+      "offers": ["bf16", "mxfp8"],
+      "source": {"stem": "linear", "tensor": "{stem}.out_proj.weight"},
+      "shape": ["hidden", "linear_value"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "row"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}, "mxfp8": {"numerical_contract": "qwen38.mxfp8-scaled-operand.v1", "a16_recipe": "scaled_weight"}},
+        "implementations": {
+          "bf16": {
+            "id": "qwen38/legacy-fused-dense.v1",
+            "parameters": {"operation": "linear.output", "rows": "hidden", "k": "linear_value", "scale_order": "scale_then_code", "input_gate": {"projection": "linear.z", "activation": "sigmoid", "order": "norm-then-gate"}},
+            "numerical_contract": "qwen38.bf16-projection.v1",
+            "inputs": [{"id": "activation", "binding": "activation", "dtype": "Bf16", "shape": [1, "linear_value"], "state": false}],
+            "outputs": [{"id": "output", "binding": "output", "dtype": "Bf16", "shape": [1, "hidden"], "state": false}]
+          }
+        }
+      },
+      "use_profile": "dense"
+    },
+    {
+      "id": "full.q",
+      "offers": ["bf16", "mxfp8"],
+      "source": {"stem": "full", "tensor": "{stem}.q_proj.weight"},
+      "shape": [{"op": "product", "factors": [2, "attention_heads", "attention_head"]}, "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "head_grouped", "heads": "attention_heads", "head_dim": {"op": "product", "factors": [2, "attention_head"]}, "tile": 16},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}, "mxfp8": {"numerical_contract": "qwen38.mxfp8-scaled-operand.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "full.k",
+      "offers": ["bf16", "mxfp8"],
+      "source": {"stem": "full", "tensor": "{stem}.k_proj.weight"},
+      "shape": [{"op": "product", "factors": ["attention_kv_heads", "attention_head"]}, "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"heads": "attention_kv_heads", "head_dim": "attention_head", "tile": 16, "class": "head_grouped"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}, "mxfp8": {"numerical_contract": "qwen38.mxfp8-scaled-operand.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "full.v",
+      "offers": ["bf16", "mxfp8"],
+      "source": {"stem": "full", "tensor": "{stem}.v_proj.weight"},
+      "shape": [{"op": "product", "factors": ["attention_kv_heads", "attention_head"]}, "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"heads": "attention_kv_heads", "head_dim": "attention_head", "tile": 16, "class": "head_grouped"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}, "mxfp8": {"numerical_contract": "qwen38.mxfp8-scaled-operand.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "full.index",
+      "offers": ["bf16", "mxfp8"],
+      "source": {"stem": "full", "tensor": "{stem}.indexer.index_qk_proj.weight"},
+      "shape": ["index_row", "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}, "mxfp8": {"numerical_contract": "qwen38.mxfp8-scaled-operand.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "full.output",
+      "offers": ["bf16", "mxfp8"],
+      "source": {"stem": "full", "tensor": "{stem}.o_proj.weight"},
+      "shape": ["hidden", "attention_value"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "row"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}, "mxfp8": {"numerical_contract": "qwen38.mxfp8-scaled-operand.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "mtp.q",
+      "publishes_as": "full.q",
+      "source": {"stem": "mtp", "tensor": "{stem}.q_proj.weight"},
+      "shape": [{"op": "product", "factors": [2, "attention_heads", "attention_head"]}, "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "head_grouped", "heads": "attention_heads", "head_dim": {"op": "product", "factors": [2, "attention_head"]}, "tile": 16},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "mtp.k",
+      "publishes_as": "full.k",
+      "source": {"stem": "mtp", "tensor": "{stem}.k_proj.weight"},
+      "shape": [{"op": "product", "factors": ["attention_kv_heads", "attention_head"]}, "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"heads": "attention_kv_heads", "head_dim": "attention_head", "tile": 16, "class": "head_grouped"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "mtp.v",
+      "publishes_as": "full.v",
+      "source": {"stem": "mtp", "tensor": "{stem}.v_proj.weight"},
+      "shape": [{"op": "product", "factors": ["attention_kv_heads", "attention_head"]}, "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"heads": "attention_kv_heads", "head_dim": "attention_head", "tile": 16, "class": "head_grouped"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "mtp.index",
+      "publishes_as": "full.index",
+      "source": {"stem": "mtp", "tensor": "{stem}.indexer.index_qk_proj.weight"},
+      "shape": ["index_row", "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "mtp.output",
+      "publishes_as": "full.output",
+      "source": {"stem": "mtp", "tensor": "{stem}.o_proj.weight"},
+      "shape": ["hidden", "attention_value"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "row"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "main.experts.gate-up",
+      "offers": ["nvfp4"],
+      "source": {"stem": "main-mlp", "tensor": "{stem}.experts.{expert}.{operand}.weight"},
+      "shape": ["expert_intermediate", "hidden"],
+      "kind": {"kind": "expert_bank", "experts": "experts", "top_k": "top_k"},
+      "split": {"tile": 16, "class": "expert_owned"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": "ConcatenatedHalves", "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-routed-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "fp8_block128": {"numerical_contract": "qwen38.experts.fp8-fragment.bf16.block-scale-after-mma.v1", "a16_recipe": "scale_after_block_mma"},
+          "nvfp4": {"numerical_contract": "qwen38.experts.nvfp4.scaled-weight.v1", "a16_recipe": "scaled_weight"},
+          "nvfp4_weight_only": {"numerical_contract": "qwen38.experts.nvfp4.scaled-weight.v1", "a16_recipe": "scaled_weight"}
+        },
+        "implementations": {
+          "fp8_block128": {
+            "id": "qwen38/legacy-fragment-experts.v1",
+            "parameters": {"experts": "experts", "top_k": "top_k", "scale_order": "block_scale_after_mma", "route_weight": "after-down"},
+            "numerical_contract": "qwen38.experts.fp8-fragment.bf16.block-scale-after-mma.v1",
+            "inputs": [{"id": "activation", "binding": "activation", "dtype": "Bf16", "shape": [1, "hidden"], "state": false}],
+            "outputs": [{"id": "output", "binding": "output", "dtype": "Bf16", "shape": [1, "expert_intermediate"], "state": false}]
+          }
+        }
+      },
+      "stem": "main-mlp",
+      "operands": ["gate_proj", "up_proj"],
+      "use_profile": "experts"
+    },
+    {
+      "id": "main.experts.down",
+      "offers": ["nvfp4"],
+      "source": {"stem": "main-mlp", "tensor": "{stem}.experts.{expert}.down_proj.weight"},
+      "shape": ["hidden", "expert_intermediate"],
+      "kind": {"kind": "expert_bank", "experts": "experts", "top_k": "top_k"},
+      "split": {"tile": 16, "class": "expert_owned"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": true},
+      "numerical_contract": "qwen38.source-routed-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "fp8_block128": {"numerical_contract": "qwen38.experts.fp8-fragment.bf16.block-scale-after-mma.v1", "a16_recipe": "scale_after_block_mma"},
+          "nvfp4": {"numerical_contract": "qwen38.experts.nvfp4.scaled-weight.v1", "a16_recipe": "scaled_weight"},
+          "nvfp4_weight_only": {"numerical_contract": "qwen38.experts.nvfp4.scaled-weight.v1", "a16_recipe": "scaled_weight"}
+        },
+        "implementations": {
+          "fp8_block128": {
+            "id": "qwen38/legacy-fragment-experts.v1",
+            "parameters": {"experts": "experts", "top_k": "top_k", "scale_order": "block_scale_after_mma", "route_weight": "after-down"},
+            "numerical_contract": "qwen38.experts.fp8-fragment.bf16.block-scale-after-mma.v1",
+            "inputs": [{"id": "activation", "binding": "activation", "dtype": "Bf16", "shape": [1, "expert_intermediate"], "state": false}],
+            "outputs": [{"id": "output", "binding": "output", "dtype": "Bf16", "shape": [1, "hidden"], "state": false}]
+          }
+        }
+      },
+      "use_profile": "experts"
+    },
+    {
+      "id": "main.shared.gate-up",
+      "offers": ["bf16", "mxfp8"],
+      "source": {"stem": "main-mlp", "tensor": "{stem}.shared_expert.{operand}.weight"},
+      "shape": ["shared_intermediate", "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 128, "class": "column"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": "ConcatenatedHalves", "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}, "mxfp8": {"numerical_contract": "qwen38.mxfp8-scaled-operand.v1", "a16_recipe": "scaled_weight"}}},
+      "stem": "main-mlp",
+      "operands": ["gate_proj", "up_proj"],
+      "use_profile": "dense"
+    },
+    {
+      "id": "main.shared.down",
+      "offers": ["bf16", "mxfp8"],
+      "source": {"stem": "main-mlp", "tensor": "{stem}.shared_expert.down_proj.weight"},
+      "shape": ["hidden", "shared_intermediate"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 128, "class": "row"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}, "mxfp8": {"numerical_contract": "qwen38.mxfp8-scaled-operand.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "main.router",
+      "source": {"stem": "main-mlp", "tensor": "{stem}.gate.weight"},
+      "shape": ["experts", "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "router"
+    },
+    {
+      "id": "main.shared.router-gate",
+      "source": {"stem": "main-mlp", "tensor": "{stem}.shared_expert_gate.weight"},
+      "shape": [1, "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "main.attn.input_mix_weight_down",
+      "source": {"stem": "main-attn-hc", "tensor": "{stem}.input_mix_weight_down.weight"},
+      "shape": ["hc_rank", "wide"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "main.attn.input_mix_weight_up",
+      "source": {"stem": "main-attn-hc", "tensor": "{stem}.input_mix_weight_up.weight"},
+      "shape": ["wide", "hc_rank"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "implementation": {
+          "id": "qwen38/legacy-fused-dense.v1",
+          "parameters": {"operation": "main.attn.input_mix_weight_up", "rows": "wide", "k": "hc_rank", "scale_order": "scale_then_code", "stream_mix": {"streams": "streams", "mean_divisor": "streams", "activation": "sigmoid"}},
+          "numerical_contract": "qwen38.bf16-projection.v1",
+          "inputs": [{"id": "activation", "binding": "activation", "dtype": "Bf16", "shape": [1, "hc_rank"], "state": false}],
+          "outputs": [{"id": "output", "binding": "output", "dtype": "Bf16", "shape": [1, "wide"], "state": false}]
+        },
+        "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}
+      },
+      "use_profile": "dense"
+    },
+    {
+      "id": "main.attn.block_inject_weight",
+      "source": {"stem": "main-attn-hc", "tensor": "{stem}.block_inject_weight.weight"},
+      "shape": ["streams", "wide"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "main.mlp.input_mix_weight_down",
+      "source": {"stem": "main-mlp-hc", "tensor": "{stem}.input_mix_weight_down.weight"},
+      "shape": ["hc_rank", "wide"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "main.mlp.input_mix_weight_up",
+      "source": {"stem": "main-mlp-hc", "tensor": "{stem}.input_mix_weight_up.weight"},
+      "shape": ["wide", "hc_rank"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "implementation": {
+          "id": "qwen38/legacy-fused-dense.v1",
+          "parameters": {"operation": "main.mlp.input_mix_weight_up", "rows": "wide", "k": "hc_rank", "scale_order": "scale_then_code", "stream_mix": {"streams": "streams", "mean_divisor": "streams", "activation": "sigmoid"}},
+          "numerical_contract": "qwen38.bf16-projection.v1",
+          "inputs": [{"id": "activation", "binding": "activation", "dtype": "Bf16", "shape": [1, "hc_rank"], "state": false}],
+          "outputs": [{"id": "output", "binding": "output", "dtype": "Bf16", "shape": [1, "wide"], "state": false}]
+        },
+        "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}
+      },
+      "use_profile": "dense"
+    },
+    {
+      "id": "main.mlp.block_inject_weight",
+      "source": {"stem": "main-mlp-hc", "tensor": "{stem}.block_inject_weight.weight"},
+      "shape": ["streams", "wide"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "main.mixer.input_mix_weight_down",
+      "source": {"tensor": "model.language_model.hyper_connection_mixer.input_mix_weight_down.weight"},
+      "shape": ["hc_rank", "wide"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "global-dense"
+    },
+    {
+      "id": "main.mixer.input_mix_weight_up",
+      "source": {"tensor": "model.language_model.hyper_connection_mixer.input_mix_weight_up.weight"},
+      "shape": ["wide", "hc_rank"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "implementation": {
+          "id": "qwen38/legacy-fused-dense.v1",
+          "parameters": {"operation": "main.mixer.input_mix_weight_up", "rows": "wide", "k": "hc_rank", "scale_order": "scale_then_code", "stream_mix": {"streams": "streams", "mean_divisor": "streams", "activation": "sigmoid"}},
+          "numerical_contract": "qwen38.bf16-projection.v1",
+          "inputs": [{"id": "activation", "binding": "activation", "dtype": "Bf16", "shape": [1, "hc_rank"], "state": false}],
+          "outputs": [{"id": "output", "binding": "output", "dtype": "Bf16", "shape": [1, "wide"], "state": false}]
+        },
+        "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}
+      },
+      "use_profile": "global-dense"
+    },
+    {
+      "id": "mtp.experts.gate-up",
+      "publishes_as": "main.experts.gate-up",
+      "source": {"stem": "mtp-mlp", "tensor": "{stem}.experts.{expert}.{operand}.weight"},
+      "shape": ["expert_intermediate", "hidden"],
+      "kind": {"kind": "expert_bank", "experts": "experts", "top_k": "top_k"},
+      "split": {"tile": 16, "class": "expert_owned"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": "ConcatenatedHalves", "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-routed-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "fp8_block128": {"numerical_contract": "qwen38.experts.fp8-fragment.bf16.block-scale-after-mma.v1", "a16_recipe": "scale_after_block_mma"},
+          "nvfp4": {"numerical_contract": "qwen38.experts.nvfp4.scaled-weight.v1", "a16_recipe": "scaled_weight"},
+          "nvfp4_weight_only": {"numerical_contract": "qwen38.experts.nvfp4.scaled-weight.v1", "a16_recipe": "scaled_weight"}
+        },
+        "implementations": {
+          "fp8_block128": {
+            "id": "qwen38/legacy-fragment-experts.v1",
+            "parameters": {"experts": "experts", "top_k": "top_k", "scale_order": "block_scale_after_mma", "route_weight": "after-down"},
+            "numerical_contract": "qwen38.experts.fp8-fragment.bf16.block-scale-after-mma.v1",
+            "inputs": [{"id": "activation", "binding": "activation", "dtype": "Bf16", "shape": [1, "hidden"], "state": false}],
+            "outputs": [{"id": "output", "binding": "output", "dtype": "Bf16", "shape": [1, "expert_intermediate"], "state": false}]
+          }
+        }
+      },
+      "stem": "mtp-mlp",
+      "operands": ["gate_proj", "up_proj"],
+      "use_profile": "experts"
+    },
+    {
+      "id": "mtp.experts.down",
+      "publishes_as": "main.experts.down",
+      "source": {"stem": "mtp-mlp", "tensor": "{stem}.experts.{expert}.down_proj.weight"},
+      "shape": ["hidden", "expert_intermediate"],
+      "kind": {"kind": "expert_bank", "experts": "experts", "top_k": "top_k"},
+      "split": {"tile": 16, "class": "expert_owned"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": true},
+      "numerical_contract": "qwen38.source-routed-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "fp8_block128": {"numerical_contract": "qwen38.experts.fp8-fragment.bf16.block-scale-after-mma.v1", "a16_recipe": "scale_after_block_mma"},
+          "nvfp4": {"numerical_contract": "qwen38.experts.nvfp4.scaled-weight.v1", "a16_recipe": "scaled_weight"},
+          "nvfp4_weight_only": {"numerical_contract": "qwen38.experts.nvfp4.scaled-weight.v1", "a16_recipe": "scaled_weight"}
+        },
+        "implementations": {
+          "fp8_block128": {
+            "id": "qwen38/legacy-fragment-experts.v1",
+            "parameters": {"experts": "experts", "top_k": "top_k", "scale_order": "block_scale_after_mma", "route_weight": "after-down"},
+            "numerical_contract": "qwen38.experts.fp8-fragment.bf16.block-scale-after-mma.v1",
+            "inputs": [{"id": "activation", "binding": "activation", "dtype": "Bf16", "shape": [1, "expert_intermediate"], "state": false}],
+            "outputs": [{"id": "output", "binding": "output", "dtype": "Bf16", "shape": [1, "hidden"], "state": false}]
+          }
+        }
+      },
+      "use_profile": "experts"
+    },
+    {
+      "id": "mtp.shared.gate-up",
+      "publishes_as": "main.shared.gate-up",
+      "source": {"stem": "mtp-mlp", "tensor": "{stem}.shared_expert.{operand}.weight"},
+      "shape": ["shared_intermediate", "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 128, "class": "column"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": "ConcatenatedHalves", "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "stem": "mtp-mlp",
+      "operands": ["gate_proj", "up_proj"],
+      "use_profile": "dense"
+    },
+    {
+      "id": "mtp.shared.down",
+      "publishes_as": "main.shared.down",
+      "source": {"stem": "mtp-mlp", "tensor": "{stem}.shared_expert.down_proj.weight"},
+      "shape": ["hidden", "shared_intermediate"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 128, "class": "row"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "mtp.router",
+      "source": {"stem": "mtp-mlp", "tensor": "{stem}.gate.weight"},
+      "shape": ["experts", "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "router"
+    },
+    {
+      "id": "mtp.shared.router-gate",
+      "source": {"stem": "mtp-mlp", "tensor": "{stem}.shared_expert_gate.weight"},
+      "shape": [1, "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "mtp.attn.input_mix_weight_down",
+      "source": {"stem": "mtp-attn-hc", "tensor": "{stem}.input_mix_weight_down.weight"},
+      "shape": ["hc_rank", "wide"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "mtp.attn.input_mix_weight_up",
+      "source": {"stem": "mtp-attn-hc", "tensor": "{stem}.input_mix_weight_up.weight"},
+      "shape": ["wide", "hc_rank"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "implementation": {
+          "id": "qwen38/legacy-fused-dense.v1",
+          "parameters": {"operation": "mtp.attn.input_mix_weight_up", "rows": "wide", "k": "hc_rank", "scale_order": "scale_then_code", "stream_mix": {"streams": "streams", "mean_divisor": "streams", "activation": "sigmoid"}},
+          "numerical_contract": "qwen38.bf16-projection.v1",
+          "inputs": [{"id": "activation", "binding": "activation", "dtype": "Bf16", "shape": [1, "hc_rank"], "state": false}],
+          "outputs": [{"id": "output", "binding": "output", "dtype": "Bf16", "shape": [1, "wide"], "state": false}]
+        },
+        "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}
+      },
+      "use_profile": "dense"
+    },
+    {
+      "id": "mtp.attn.block_inject_weight",
+      "source": {"stem": "mtp-attn-hc", "tensor": "{stem}.block_inject_weight.weight"},
+      "shape": ["streams", "wide"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "mtp.mlp.input_mix_weight_down",
+      "source": {"stem": "mtp-mlp-hc", "tensor": "{stem}.input_mix_weight_down.weight"},
+      "shape": ["hc_rank", "wide"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "mtp.mlp.input_mix_weight_up",
+      "source": {"stem": "mtp-mlp-hc", "tensor": "{stem}.input_mix_weight_up.weight"},
+      "shape": ["wide", "hc_rank"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "implementation": {
+          "id": "qwen38/legacy-fused-dense.v1",
+          "parameters": {"operation": "mtp.mlp.input_mix_weight_up", "rows": "wide", "k": "hc_rank", "scale_order": "scale_then_code", "stream_mix": {"streams": "streams", "mean_divisor": "streams", "activation": "sigmoid"}},
+          "numerical_contract": "qwen38.bf16-projection.v1",
+          "inputs": [{"id": "activation", "binding": "activation", "dtype": "Bf16", "shape": [1, "hc_rank"], "state": false}],
+          "outputs": [{"id": "output", "binding": "output", "dtype": "Bf16", "shape": [1, "wide"], "state": false}]
+        },
+        "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}
+      },
+      "use_profile": "dense"
+    },
+    {
+      "id": "mtp.mlp.block_inject_weight",
+      "source": {"stem": "mtp-mlp-hc", "tensor": "{stem}.block_inject_weight.weight"},
+      "shape": ["streams", "wide"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "mtp.mixer.input_mix_weight_down",
+      "source": {"tensor": "mtp.hyper_connection_mixer.input_mix_weight_down.weight"},
+      "shape": ["hc_rank", "wide"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "mtp-global-dense"
+    },
+    {
+      "id": "mtp.mixer.input_mix_weight_up",
+      "source": {"tensor": "mtp.hyper_connection_mixer.input_mix_weight_up.weight"},
+      "shape": ["wide", "hc_rank"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "implementation": {
+          "id": "qwen38/legacy-fused-dense.v1",
+          "parameters": {"operation": "mtp.mixer.input_mix_weight_up", "rows": "wide", "k": "hc_rank", "scale_order": "scale_then_code", "stream_mix": {"streams": "streams", "mean_divisor": "streams", "activation": "sigmoid"}},
+          "numerical_contract": "qwen38.bf16-projection.v1",
+          "inputs": [{"id": "activation", "binding": "activation", "dtype": "Bf16", "shape": [1, "hc_rank"], "state": false}],
+          "outputs": [{"id": "output", "binding": "output", "dtype": "Bf16", "shape": [1, "wide"], "state": false}]
+        },
+        "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}
+      },
+      "use_profile": "mtp-global-dense"
+    },
+    {
+      "id": "embedding",
+      "source": {"tensor": "model.language_model.embed_tokens.weight"},
+      "shape": ["vocab", "hidden"],
+      "kind": {"kind": "lookup_table"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-lookup-recipe.v1",
+      "use_profile": "embedding"
+    },
+    {
+      "id": "head",
+      "source": {"tensor": "lm_head.weight"},
+      "shape": ["vocab", "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "column"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "head"
+    },
+    {
+      "id": "mtp.fc-hidden",
+      "source": {"tensor": "mtp.fc_hidden.weight"},
+      "shape": ["hidden", "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "mtp-fc-hidden",
+      "inputs": [{"operand": "weight", "binding": "fc-input", "segments": [{"source": "normalized-hidden", "selection": {"select": "rows", "rows": {"start": 0, "length": "hidden"}}}]}]
+    },
+    {
+      "id": "mtp.fc-embedding",
+      "source": {"tensor": "mtp.fc_embedding.weight"},
+      "shape": ["hidden", "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "mtp-global-dense",
+      "inputs": [{"operand": "weight", "binding": "fc-input", "segments": [{"source": "normalized-embedding", "selection": {"select": "rows", "rows": {"start": 0, "length": "hidden"}}}]}]
+    },
+    {
+      "id": "ple.key",
+      "source": {"stem": "ple", "tensor": "{stem}.key_proj.weight"},
+      "shape": ["wide", "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "ple.value",
+      "source": {"stem": "ple", "tensor": "{stem}.value_proj.weight"},
+      "shape": ["hidden", "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-dense-recipe.v1",
+      "composition": {"pre": [], "post": [], "numerical_contracts": {"bf16": {"numerical_contract": "qwen38.bf16-projection.v1", "a16_recipe": "scaled_weight"}}},
+      "use_profile": "dense"
+    },
+    {
+      "id": "ngram",
+      "offers": ["nvfp4"],
+      "shape": ["ngram_rows", "ngram_width"],
+      "kind": {"kind": "lookup_table"},
+      "split": {"tile": 128, "class": "vocab_sharded"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "qwen38.source-lookup-recipe.v1",
+      "lookup": {
+        "shards": {"count": "ngram_parts", "source": {"stem": "ple", "tensor": "{stem}.ple_embedding.ngram_embedding.shard_{shard}.weight"}, "rows": {"start": {"op": "product", "factors": ["shard", "ngram_shard_rows"]}, "length": "ngram_shard_rows"}},
+        "heads": [
+          {"id": "head-0", "vocabulary": {"start": "ngram-start-0", "length": "ngram-size-0"}},
+          {"id": "head-1", "vocabulary": {"start": "ngram-start-1", "length": "ngram-size-1"}},
+          {"id": "head-2", "vocabulary": {"start": "ngram-start-2", "length": "ngram-size-2"}},
+          {"id": "head-3", "vocabulary": {"start": "ngram-start-3", "length": "ngram-size-3"}},
+          {"id": "head-4", "vocabulary": {"start": "ngram-start-4", "length": "ngram-size-4"}},
+          {"id": "head-5", "vocabulary": {"start": "ngram-start-5", "length": "ngram-size-5"}},
+          {"id": "head-6", "vocabulary": {"start": "ngram-start-6", "length": "ngram-size-6"}},
+          {"id": "head-7", "vocabulary": {"start": "ngram-start-7", "length": "ngram-size-7"}},
+          {"id": "head-8", "vocabulary": {"start": "ngram-start-8", "length": "ngram-size-8"}},
+          {"id": "head-9", "vocabulary": {"start": "ngram-start-9", "length": "ngram-size-9"}},
+          {"id": "head-10", "vocabulary": {"start": "ngram-start-10", "length": "ngram-size-10"}},
+          {"id": "head-11", "vocabulary": {"start": "ngram-start-11", "length": "ngram-size-11"}},
+          {"id": "head-12", "vocabulary": {"start": "ngram-start-12", "length": "ngram-size-12"}},
+          {"id": "head-13", "vocabulary": {"start": "ngram-start-13", "length": "ngram-size-13"}},
+          {"id": "head-14", "vocabulary": {"start": "ngram-start-14", "length": "ngram-size-14"}},
+          {"id": "head-15", "vocabulary": {"start": "ngram-start-15", "length": "ngram-size-15"}}
+        ],
+        "padding_owner": {"owner": "last_rank"},
+        "companions": {"default": {"local": "shard", "global": "table"}, "formats": {"fp8_per_tensor": {"local": "table", "global": "table"}}}
+      },
+      "composition": {
+        "pre": [
+          {
+            "id": "ngram-hash",
+            "contract": {
+              "id": "qwen38/ngram-hash.v1",
+              "parameters": {"orders": 3, "heads": 16, "heads_per_order": 8, "history_tokens": 2, "eos": 248044, "integer_arithmetic": "wrapping-u64-xor", "phase_addressing": ["prefill-contiguous", "decode-item-stride", "verify-cu-rows"]},
+              "numerical_contract": "qwen38.ngram-hash.v1",
+              "inputs": [
+                {"id": "tokens", "binding": "tokens", "dtype": "I32", "shape": [8192], "state": false, "interpretation": "unsigned"},
+                {"id": "history", "binding": "history", "dtype": "I32", "shape": [2], "state": true, "interpretation": "unsigned"},
+                {"id": "multipliers", "binding": "multipliers", "dtype": "I64", "shape": [3], "state": false, "interpretation": "unsigned"},
+                {"id": "sizes", "binding": "sizes", "dtype": "I64", "shape": [16], "state": false, "interpretation": "unsigned"},
+                {"id": "offsets", "binding": "offsets", "dtype": "I64", "shape": [16], "state": false, "interpretation": "unsigned"}
+              ],
+              "outputs": [{"id": "ids", "binding": "ids", "dtype": "I64", "shape": [8192, 16], "state": false, "interpretation": "unsigned"}, {"id": "history", "binding": "history", "dtype": "I32", "shape": [2], "state": true, "interpretation": "unsigned"}]
+            },
+            "phases": ["Prefill", "Decode", "Verify"],
+            "mutates": ["history"]
+          }
+        ],
+        "post": []
+      },
+      "stem": "ple",
+      "use_profile": "ngram"
+    }
+  ],
+  "fusion_groups": [
+    {
+      "id": "linear.input-fusion",
+      "input": "linear.normalized",
+      "members": ["linear.qkv", "linear.z", "linear.a", "linear.b"],
+      "eligibility": {"predicate": "all", "formats": ["bf16"], "activation": "Bf16", "phases": []},
+      "fallback": "separate",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "implementation": {
+          "id": "qwen38/legacy-input-fusion.v1",
+          "numerical_contract": "qwen38.bf16-projection.v1",
+          "parameters": {"prefill_groups": [["linear.qkv"], ["linear.z"], ["linear.a", "linear.b"]], "decode_group": ["linear.qkv", "linear.z", "linear.a", "linear.b"]},
+          "inputs": [{"id": "activation", "binding": "activation", "dtype": "Bf16", "shape": [1, "hidden"], "state": false}],
+          "outputs": [{"id": "qkv", "binding": "qkv", "dtype": "Bf16", "shape": [1, {"op": "sum", "terms": [{"op": "product", "factors": [2, "linear_key_heads", "linear_head"]}, {"op": "product", "factors": ["linear_heads", "linear_value_head"]}]}], "state": false}, {"id": "z", "binding": "z", "dtype": "Bf16", "shape": [1, "linear_value"], "state": false}, {"id": "ab", "binding": "ab", "dtype": "Bf16", "shape": [1, {"op": "product", "factors": [2, "linear_heads"]}], "state": false}]
+        }
+      },
+      "outputs": [
+        {"buffer": "qkv", "member": "linear.qkv", "offset": 0, "row_stride": {"op": "sum", "terms": [{"op": "product", "factors": [2, "linear_key_heads", "linear_head"]}, {"op": "product", "factors": ["linear_heads", "linear_value_head"]}]}, "live_columns": {"op": "sum", "terms": [{"op": "product", "factors": [2, "linear_key_heads", "linear_head"]}, {"op": "product", "factors": ["linear_heads", "linear_value_head"]}]}},
+        {"buffer": "z", "member": "linear.z", "offset": 0, "row_stride": "linear_value", "live_columns": "linear_value"},
+        {"buffer": "ab", "member": "linear.a", "offset": 0, "row_stride": {"op": "product", "factors": [2, "linear_heads"]}, "live_columns": "linear_heads"},
+        {"buffer": "ab", "member": "linear.b", "offset": "linear_heads", "row_stride": {"op": "product", "factors": [2, "linear_heads"]}, "live_columns": "linear_heads"}
+      ]
+    },
+    {
+      "id": "full.input-fusion",
+      "input": "full.normalized",
+      "members": ["full.q", "full.k", "full.v", "full.index"],
+      "eligibility": {"predicate": "all", "formats": ["bf16"], "activation": "Bf16", "phases": []},
+      "fallback": "separate",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "implementation": {
+          "id": "qwen38/legacy-input-fusion.v1",
+          "numerical_contract": "qwen38.bf16-projection.v1",
+          "parameters": {"prefill_groups": [["full.q", "full.k", "full.v"], ["full.index"]], "decode_group": ["full.q", "full.k", "full.v", "full.index"]},
+          "inputs": [{"id": "activation", "binding": "activation", "dtype": "Bf16", "shape": [1, "hidden"], "state": false}],
+          "outputs": [{"id": "qkv", "binding": "qkv", "dtype": "Bf16", "shape": [1, {"op": "product", "factors": [{"op": "sum", "terms": [{"op": "product", "factors": [2, "attention_heads"]}, {"op": "product", "factors": [2, "attention_kv_heads"]}]}, "attention_head"]}], "state": false}, {"id": "index", "binding": "index", "dtype": "Bf16", "shape": [1, "index_row"], "state": false}]
+        }
+      },
+      "outputs": [
+        {"buffer": "qkv", "member": "full.q", "offset": 0, "row_stride": {"op": "product", "factors": [{"op": "sum", "terms": [{"op": "product", "factors": [2, "attention_heads"]}, {"op": "product", "factors": [2, "attention_kv_heads"]}]}, "attention_head"]}, "live_columns": {"op": "product", "factors": [2, "attention_heads", "attention_head"]}},
+        {"buffer": "qkv", "member": "full.k", "offset": {"op": "product", "factors": [2, "attention_heads", "attention_head"]}, "row_stride": {"op": "product", "factors": [{"op": "sum", "terms": [{"op": "product", "factors": [2, "attention_heads"]}, {"op": "product", "factors": [2, "attention_kv_heads"]}]}, "attention_head"]}, "live_columns": {"op": "product", "factors": ["attention_kv_heads", "attention_head"]}},
+        {"buffer": "qkv", "member": "full.v", "offset": {"op": "product", "factors": [{"op": "sum", "terms": [{"op": "product", "factors": [2, "attention_heads"]}, "attention_kv_heads"]}, "attention_head"]}, "row_stride": {"op": "product", "factors": [{"op": "sum", "terms": [{"op": "product", "factors": [2, "attention_heads"]}, {"op": "product", "factors": [2, "attention_kv_heads"]}]}, "attention_head"]}, "live_columns": {"op": "product", "factors": ["attention_kv_heads", "attention_head"]}},
+        {"buffer": "index", "member": "full.index", "offset": 0, "row_stride": "index_row", "live_columns": "index_row"}
+      ]
+    },
+    {
+      "id": "mtp.input-fusion",
+      "input": "mtp.normalized",
+      "members": ["mtp.q", "mtp.k", "mtp.v", "mtp.index"],
+      "eligibility": {"predicate": "all", "formats": ["bf16"], "activation": "Bf16", "phases": []},
+      "fallback": "separate",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "implementation": {
+          "id": "qwen38/legacy-input-fusion.v1",
+          "numerical_contract": "qwen38.bf16-projection.v1",
+          "parameters": {"prefill_groups": [["mtp.q", "mtp.k", "mtp.v"], ["mtp.index"]], "decode_group": ["mtp.q", "mtp.k", "mtp.v", "mtp.index"]},
+          "inputs": [{"id": "activation", "binding": "activation", "dtype": "Bf16", "shape": [1, "hidden"], "state": false}],
+          "outputs": [{"id": "qkv", "binding": "qkv", "dtype": "Bf16", "shape": [1, {"op": "product", "factors": [{"op": "sum", "terms": [{"op": "product", "factors": [2, "attention_heads"]}, {"op": "product", "factors": [2, "attention_kv_heads"]}]}, "attention_head"]}], "state": false}, {"id": "index", "binding": "index", "dtype": "Bf16", "shape": [1, "index_row"], "state": false}]
+        }
+      },
+      "outputs": [
+        {"buffer": "qkv", "member": "mtp.q", "offset": 0, "row_stride": {"op": "product", "factors": [{"op": "sum", "terms": [{"op": "product", "factors": [2, "attention_heads"]}, {"op": "product", "factors": [2, "attention_kv_heads"]}]}, "attention_head"]}, "live_columns": {"op": "product", "factors": [2, "attention_heads", "attention_head"]}},
+        {"buffer": "qkv", "member": "mtp.k", "offset": {"op": "product", "factors": [2, "attention_heads", "attention_head"]}, "row_stride": {"op": "product", "factors": [{"op": "sum", "terms": [{"op": "product", "factors": [2, "attention_heads"]}, {"op": "product", "factors": [2, "attention_kv_heads"]}]}, "attention_head"]}, "live_columns": {"op": "product", "factors": ["attention_kv_heads", "attention_head"]}},
+        {"buffer": "qkv", "member": "mtp.v", "offset": {"op": "product", "factors": [{"op": "sum", "terms": [{"op": "product", "factors": [2, "attention_heads"]}, "attention_kv_heads"]}, "attention_head"]}, "row_stride": {"op": "product", "factors": [{"op": "sum", "terms": [{"op": "product", "factors": [2, "attention_heads"]}, {"op": "product", "factors": [2, "attention_kv_heads"]}]}, "attention_head"]}, "live_columns": {"op": "product", "factors": ["attention_kv_heads", "attention_head"]}},
+        {"buffer": "index", "member": "mtp.index", "offset": 0, "row_stride": "index_row", "live_columns": "index_row"}
+      ]
+    },
+    {
+      "id": "main.attn.hc-input-fusion",
+      "input": "main.attn.normalized",
+      "members": ["main.attn.input_mix_weight_down", "main.attn.block_inject_weight"],
+      "eligibility": {"predicate": "all", "formats": ["bf16"], "activation": "Bf16", "phases": ["Decode", "Verify"]},
+      "fallback": "separate",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "implementation": {
+          "id": "qwen38/legacy-input-fusion.v1",
+          "numerical_contract": "qwen38.bf16-projection.v1",
+          "parameters": {"prefill_groups": [["main.attn.input_mix_weight_down"], ["main.attn.block_inject_weight"]], "decode_group": ["main.attn.input_mix_weight_down", "main.attn.block_inject_weight"]},
+          "inputs": [{"id": "activation", "binding": "activation", "dtype": "Bf16", "shape": [1, "wide"], "state": false}],
+          "outputs": [{"id": "down", "binding": "down", "dtype": "Bf16", "shape": [1, "hc_rank"], "state": false}, {"id": "inject", "binding": "inject", "dtype": "Bf16", "shape": [1, "streams"], "state": false}]
+        }
+      },
+      "outputs": [{"buffer": "down", "member": "main.attn.input_mix_weight_down", "offset": 0, "row_stride": "hc_rank", "live_columns": "hc_rank"}, {"buffer": "inject", "member": "main.attn.block_inject_weight", "offset": 0, "row_stride": "streams", "live_columns": "streams"}]
+    },
+    {
+      "id": "main.mlp.hc-input-fusion",
+      "input": "main.mlp.normalized",
+      "members": ["main.mlp.input_mix_weight_down", "main.mlp.block_inject_weight"],
+      "eligibility": {"predicate": "all", "formats": ["bf16"], "activation": "Bf16", "phases": ["Decode", "Verify"]},
+      "fallback": "separate",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "implementation": {
+          "id": "qwen38/legacy-input-fusion.v1",
+          "numerical_contract": "qwen38.bf16-projection.v1",
+          "parameters": {"prefill_groups": [["main.mlp.input_mix_weight_down"], ["main.mlp.block_inject_weight"]], "decode_group": ["main.mlp.input_mix_weight_down", "main.mlp.block_inject_weight"]},
+          "inputs": [{"id": "activation", "binding": "activation", "dtype": "Bf16", "shape": [1, "wide"], "state": false}],
+          "outputs": [{"id": "down", "binding": "down", "dtype": "Bf16", "shape": [1, "hc_rank"], "state": false}, {"id": "inject", "binding": "inject", "dtype": "Bf16", "shape": [1, "streams"], "state": false}]
+        }
+      },
+      "outputs": [{"buffer": "down", "member": "main.mlp.input_mix_weight_down", "offset": 0, "row_stride": "hc_rank", "live_columns": "hc_rank"}, {"buffer": "inject", "member": "main.mlp.block_inject_weight", "offset": 0, "row_stride": "streams", "live_columns": "streams"}]
+    },
+    {
+      "id": "mtp.attn.hc-input-fusion",
+      "input": "mtp.attn.normalized",
+      "members": ["mtp.attn.input_mix_weight_down", "mtp.attn.block_inject_weight"],
+      "eligibility": {"predicate": "all", "formats": ["bf16"], "activation": "Bf16", "phases": ["Decode", "Verify"]},
+      "fallback": "separate",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "implementation": {
+          "id": "qwen38/legacy-input-fusion.v1",
+          "numerical_contract": "qwen38.bf16-projection.v1",
+          "parameters": {"prefill_groups": [["mtp.attn.input_mix_weight_down"], ["mtp.attn.block_inject_weight"]], "decode_group": ["mtp.attn.input_mix_weight_down", "mtp.attn.block_inject_weight"]},
+          "inputs": [{"id": "activation", "binding": "activation", "dtype": "Bf16", "shape": [1, "wide"], "state": false}],
+          "outputs": [{"id": "down", "binding": "down", "dtype": "Bf16", "shape": [1, "hc_rank"], "state": false}, {"id": "inject", "binding": "inject", "dtype": "Bf16", "shape": [1, "streams"], "state": false}]
+        }
+      },
+      "outputs": [{"buffer": "down", "member": "mtp.attn.input_mix_weight_down", "offset": 0, "row_stride": "hc_rank", "live_columns": "hc_rank"}, {"buffer": "inject", "member": "mtp.attn.block_inject_weight", "offset": 0, "row_stride": "streams", "live_columns": "streams"}]
+    },
+    {
+      "id": "mtp.mlp.hc-input-fusion",
+      "input": "mtp.mlp.normalized",
+      "members": ["mtp.mlp.input_mix_weight_down", "mtp.mlp.block_inject_weight"],
+      "eligibility": {"predicate": "all", "formats": ["bf16"], "activation": "Bf16", "phases": ["Decode", "Verify"]},
+      "fallback": "separate",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "implementation": {
+          "id": "qwen38/legacy-input-fusion.v1",
+          "numerical_contract": "qwen38.bf16-projection.v1",
+          "parameters": {"prefill_groups": [["mtp.mlp.input_mix_weight_down"], ["mtp.mlp.block_inject_weight"]], "decode_group": ["mtp.mlp.input_mix_weight_down", "mtp.mlp.block_inject_weight"]},
+          "inputs": [{"id": "activation", "binding": "activation", "dtype": "Bf16", "shape": [1, "wide"], "state": false}],
+          "outputs": [{"id": "down", "binding": "down", "dtype": "Bf16", "shape": [1, "hc_rank"], "state": false}, {"id": "inject", "binding": "inject", "dtype": "Bf16", "shape": [1, "streams"], "state": false}]
+        }
+      },
+      "outputs": [{"buffer": "down", "member": "mtp.mlp.input_mix_weight_down", "offset": 0, "row_stride": "hc_rank", "live_columns": "hc_rank"}, {"buffer": "inject", "member": "mtp.mlp.block_inject_weight", "offset": 0, "row_stride": "streams", "live_columns": "streams"}]
+    }
+  ],
+  "side_tensors": [
+    {"id": "linear.norm-norm", "source": {"stem": "linear", "tensor": "{stem}.norm.weight"}, "shape": ["linear_value_head"], "kind": "norm", "consumer": {"kernel": "linear.gated_norm"}, "dtypes": ["Bf16"]},
+    {
+      "id": "linear.a_log",
+      "source": {"stem": "linear", "tensor": "{stem}.A_log"},
+      "shape": ["linear_heads"],
+      "kind": "state",
+      "dtypes": ["Bf16"],
+      "consumer": "linear.qkv",
+      "views": [{"consumer": "linear.qkv", "dtype": "F32", "conversion": "widen_bf16_f32"}],
+      "placement": {"axis": 0, "split": {"class": "column", "tile": 1}}
+    },
+    {
+      "id": "linear.dt_bias",
+      "source": {"stem": "linear", "tensor": "{stem}.dt_bias"},
+      "shape": ["linear_heads"],
+      "kind": "state",
+      "dtypes": ["Bf16"],
+      "consumer": "linear.qkv",
+      "views": [{"consumer": "linear.qkv", "dtype": "F32", "conversion": "widen_bf16_f32"}],
+      "placement": {"axis": 0, "split": {"class": "column", "tile": 1}}
+    },
+    {
+      "id": "linear.conv",
+      "source": {"stem": "linear", "tensor": "{stem}.conv1d.weight"},
+      "shape": [{"op": "sum", "terms": [{"op": "product", "factors": [2, "linear_key_heads", "linear_head"]}, {"op": "product", "factors": ["linear_heads", "linear_value_head"]}]}, 1, "conv_taps"],
+      "kind": "conv",
+      "dtypes": ["Bf16"],
+      "consumer": "linear.qkv",
+      "placement": {
+        "axis": 0,
+        "split": {
+          "class": "segmented_heads",
+          "segments": [{"id": "q", "heads": "linear_key_heads", "head_dim": "linear_head", "ranges": [{"start": 0, "length": {"op": "product", "factors": ["linear_key_heads", "linear_head"]}}]}, {"id": "k", "heads": "linear_key_heads", "head_dim": "linear_head", "ranges": [{"start": {"op": "product", "factors": ["linear_key_heads", "linear_head"]}, "length": {"op": "product", "factors": ["linear_key_heads", "linear_head"]}}]}, {"id": "v", "heads": "linear_heads", "head_dim": "linear_head", "ranges": [{"start": {"op": "product", "factors": [2, "linear_key_heads", "linear_head"]}, "length": "linear_value"}]}],
+          "order": "source",
+          "tile": 1
+        }
+      }
+    },
+    {"id": "full.q-norm-norm", "source": {"stem": "full", "tensor": "{stem}.q_norm.weight"}, "shape": ["attention_head"], "kind": "norm", "consumer": {"kernel": "attention.query_norm_rope"}, "dtypes": ["Bf16"]},
+    {"id": "full.k-norm-norm", "source": {"stem": "full", "tensor": "{stem}.k_norm.weight"}, "shape": ["attention_head"], "kind": "norm", "consumer": {"kernel": "attention.key_norm_rope"}, "dtypes": ["Bf16"]},
+    {"id": "full.indexer.q-layernorm-norm", "source": {"stem": "full", "tensor": "{stem}.indexer.q_layernorm.weight"}, "shape": ["index_dim"], "kind": "norm", "consumer": {"kernel": "attention.index_query"}, "dtypes": ["Bf16"]},
+    {"id": "full.indexer.k-layernorm-norm", "source": {"stem": "full", "tensor": "{stem}.indexer.k_layernorm.weight"}, "shape": ["index_dim"], "kind": "norm", "consumer": {"kernel": "attention.index_key"}, "dtypes": ["Bf16"]},
+    {"id": "mtp.q-norm-norm", "source": {"stem": "mtp", "tensor": "{stem}.q_norm.weight"}, "shape": ["attention_head"], "kind": "norm", "consumer": {"kernel": "attention.query_norm_rope"}, "dtypes": ["Bf16"]},
+    {"id": "mtp.k-norm-norm", "source": {"stem": "mtp", "tensor": "{stem}.k_norm.weight"}, "shape": ["attention_head"], "kind": "norm", "consumer": {"kernel": "attention.key_norm_rope"}, "dtypes": ["Bf16"]},
+    {"id": "mtp.indexer.q-layernorm-norm", "source": {"stem": "mtp", "tensor": "{stem}.indexer.q_layernorm.weight"}, "shape": ["index_dim"], "kind": "norm", "consumer": {"kernel": "attention.index_query"}, "dtypes": ["Bf16"]},
+    {"id": "mtp.indexer.k-layernorm-norm", "source": {"stem": "mtp", "tensor": "{stem}.indexer.k_layernorm.weight"}, "shape": ["index_dim"], "kind": "norm", "consumer": {"kernel": "attention.index_key"}, "dtypes": ["Bf16"]},
+    {
+      "id": "main.attn.hc-norm",
+      "source": {"stem": "main-attn-hc", "tensor": "{stem}.hc_norm.weight"},
+      "shape": ["wide"],
+      "kind": "norm",
+      "consumer": "main.attn.input_mix_weight_down",
+      "norm": {"reduction_width": "hidden", "groups": "streams", "affine": "per_group", "reduction": "shuffle_down", "epsilon_bits": 897988541, "one_plus_weight": true, "weight_dtypes": ["Bf16", "F32"]}
+    },
+    {
+      "id": "main.mlp.hc-norm",
+      "source": {"stem": "main-mlp-hc", "tensor": "{stem}.hc_norm.weight"},
+      "shape": ["wide"],
+      "kind": "norm",
+      "consumer": "main.mlp.input_mix_weight_down",
+      "norm": {"reduction_width": "hidden", "groups": "streams", "affine": "per_group", "reduction": "shuffle_down", "epsilon_bits": 897988541, "one_plus_weight": true, "weight_dtypes": ["Bf16", "F32"]}
+    },
+    {
+      "id": "main.mixer.norm",
+      "source": {"tensor": "model.language_model.hyper_connection_mixer.hc_norm.weight"},
+      "shape": ["wide"],
+      "kind": "norm",
+      "consumer": "main.mixer.input_mix_weight_down",
+      "norm": {"reduction_width": "hidden", "groups": "streams", "affine": "per_group", "reduction": "shuffle_down", "epsilon_bits": 897988541, "one_plus_weight": true, "weight_dtypes": ["Bf16", "F32"]}
+    },
+    {
+      "id": "mtp.attn.hc-norm",
+      "source": {"stem": "mtp-attn-hc", "tensor": "{stem}.hc_norm.weight"},
+      "shape": ["wide"],
+      "kind": "norm",
+      "consumer": "mtp.attn.input_mix_weight_down",
+      "norm": {"reduction_width": "hidden", "groups": "streams", "affine": "per_group", "reduction": "shuffle_down", "epsilon_bits": 897988541, "one_plus_weight": true, "weight_dtypes": ["Bf16"]}
+    },
+    {
+      "id": "mtp.mlp.hc-norm",
+      "source": {"stem": "mtp-mlp-hc", "tensor": "{stem}.hc_norm.weight"},
+      "shape": ["wide"],
+      "kind": "norm",
+      "consumer": "mtp.mlp.input_mix_weight_down",
+      "norm": {"reduction_width": "hidden", "groups": "streams", "affine": "per_group", "reduction": "shuffle_down", "epsilon_bits": 897988541, "one_plus_weight": true, "weight_dtypes": ["Bf16"]}
+    },
+    {
+      "id": "mtp.mixer.norm",
+      "source": {"tensor": "mtp.hyper_connection_mixer.hc_norm.weight"},
+      "shape": ["wide"],
+      "kind": "norm",
+      "consumer": "mtp.mixer.input_mix_weight_down",
+      "norm": {"reduction_width": "hidden", "groups": "streams", "affine": "per_group", "reduction": "shuffle_down", "epsilon_bits": 897988541, "one_plus_weight": true, "weight_dtypes": ["Bf16"]}
+    },
+    {
+      "id": "mtp.pre-fc-hidden",
+      "source": {"tensor": "mtp.pre_fc_norm_hidden.weight"},
+      "shape": ["wide"],
+      "kind": "norm",
+      "consumer": "mtp.fc-hidden",
+      "norm": {"reduction_width": "wide", "groups": 1, "affine": "shared", "reduction": "xor_then_serial", "epsilon_bits": 897988541, "one_plus_weight": true, "weight_dtypes": ["Bf16"]}
+    },
+    {
+      "id": "mtp.pre-fc-embedding",
+      "source": {"tensor": "mtp.pre_fc_norm_embedding.weight"},
+      "shape": ["hidden"],
+      "kind": "norm",
+      "consumer": "mtp.fc-embedding",
+      "norm": {"reduction_width": "hidden", "groups": 1, "affine": "shared", "reduction": "xor_then_serial", "epsilon_bits": 897988541, "one_plus_weight": true, "weight_dtypes": ["Bf16"]}
+    },
+    {
+      "id": "ple.norm-key",
+      "source": {"stem": "ple", "tensor": "{stem}.norm_key.weight"},
+      "shape": ["wide"],
+      "kind": "norm",
+      "consumer": "ple.key",
+      "norm": {"reduction_width": "hidden", "groups": "streams", "affine": "per_group", "reduction": "shuffle_down", "epsilon_bits": 897988541, "one_plus_weight": true, "weight_dtypes": ["Bf16", "F32"]}
+    },
+    {
+      "id": "ple.norm-conv",
+      "source": {"stem": "ple", "tensor": "{stem}.norm_conv.weight"},
+      "shape": ["wide"],
+      "kind": "norm",
+      "consumer": "ple.key",
+      "norm": {"reduction_width": "hidden", "groups": "streams", "affine": "per_group", "reduction": "shuffle_down", "epsilon_bits": 897988541, "one_plus_weight": true, "weight_dtypes": ["Bf16", "F32"]}
+    },
+    {
+      "id": "ple.norm-query",
+      "source": {"stem": "ple", "tensor": "{stem}.norm_query.weight"},
+      "shape": ["wide"],
+      "kind": "norm",
+      "consumer": "ple.key",
+      "norm": {"reduction_width": "hidden", "groups": "streams", "affine": "per_group", "reduction": "shuffle_down", "epsilon_bits": 897988541, "one_plus_weight": true, "weight_dtypes": ["Bf16", "F32"]}
+    },
+    {"id": "ple.conv", "source": {"stem": "ple", "tensor": "{stem}.conv1d.weight"}, "shape": ["wide", 1, "ple_conv_taps"], "kind": "conv", "dtypes": ["Bf16"], "consumer": "ple.key"},
+    {"id": "ngram.layer_multipliers", "source": {"stem": "ple", "tensor": "{stem}.ple_embedding.layer_multipliers"}, "shape": [3], "kind": "state", "dtypes": ["I64"], "consumer": "ngram"},
+    {"id": "ngram.ngram_heads_offsets", "source": {"stem": "ple", "tensor": "{stem}.ple_embedding.ngram_heads_offsets"}, "shape": [16], "kind": "state", "dtypes": ["I64"], "consumer": "ngram"},
+    {"id": "ngram.ngram_heads_vocab_sizes", "source": {"stem": "ple", "tensor": "{stem}.ple_embedding.ngram_heads_vocab_sizes"}, "shape": [16], "kind": "state", "dtypes": ["I64"], "consumer": "ngram"}
+  ],
+  "external_tensors": [
+    {"id": "external-role-0", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-0", "tensor": "{stem}.attn.proj.bias"}, "shape": ["vision_hidden"], "dtype": "Bf16", "optional": true},
+    {"id": "external-role-1", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-0", "tensor": "{stem}.attn.proj.weight"}, "shape": ["vision_hidden", "vision_hidden"], "dtype": "Bf16", "optional": true},
+    {"id": "external-role-2", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-0", "tensor": "{stem}.attn.qkv.bias"}, "shape": [{"op": "product", "factors": [3, "vision_hidden"]}], "dtype": "Bf16", "optional": true},
+    {"id": "external-role-3", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-0", "tensor": "{stem}.attn.qkv.weight"}, "shape": [{"op": "product", "factors": [3, "vision_hidden"]}, "vision_hidden"], "dtype": "Bf16", "optional": true},
+    {"id": "external-role-4", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-0", "tensor": "{stem}.mlp.linear_fc1.bias"}, "shape": ["vision_intermediate"], "dtype": "Bf16", "optional": true},
+    {"id": "external-role-5", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-0", "tensor": "{stem}.mlp.linear_fc1.weight"}, "shape": ["vision_intermediate", "vision_hidden"], "dtype": "Bf16", "optional": true},
+    {"id": "external-role-6", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-0", "tensor": "{stem}.mlp.linear_fc2.bias"}, "shape": ["vision_hidden"], "dtype": "Bf16", "optional": true},
+    {"id": "external-role-7", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-0", "tensor": "{stem}.mlp.linear_fc2.weight"}, "shape": ["vision_hidden", "vision_intermediate"], "dtype": "Bf16", "optional": true},
+    {"id": "external-role-8", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-0", "tensor": "{stem}.norm1.bias"}, "shape": ["vision_hidden"], "dtype": "Bf16", "optional": true},
+    {"id": "external-role-9", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-0", "tensor": "{stem}.norm1.weight"}, "shape": ["vision_hidden"], "dtype": "Bf16", "optional": true},
+    {"id": "external-role-10", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-0", "tensor": "{stem}.norm2.bias"}, "shape": ["vision_hidden"], "dtype": "Bf16", "optional": true},
+    {"id": "external-role-11", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-0", "tensor": "{stem}.norm2.weight"}, "shape": ["vision_hidden"], "dtype": "Bf16", "optional": true},
+    {"id": "external-role-12", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"tensor": "model.visual.merger.linear_fc1.bias"}, "shape": [{"op": "product", "factors": ["vision_hidden", "vision_merge", "vision_merge"]}], "dtype": "Bf16", "optional": true},
+    {"id": "external-role-13", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"tensor": "model.visual.merger.linear_fc1.weight"}, "shape": [{"op": "product", "factors": ["vision_hidden", "vision_merge", "vision_merge"]}, {"op": "product", "factors": ["vision_hidden", "vision_merge", "vision_merge"]}], "dtype": "Bf16", "optional": true},
+    {"id": "external-role-14", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"tensor": "model.visual.merger.linear_fc2.bias"}, "shape": ["vision_out"], "dtype": "Bf16", "optional": true},
+    {"id": "external-role-15", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"tensor": "model.visual.merger.linear_fc2.weight"}, "shape": ["vision_out", {"op": "product", "factors": ["vision_hidden", "vision_merge", "vision_merge"]}], "dtype": "Bf16", "optional": true},
+    {"id": "external-role-16", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"tensor": "model.visual.merger.norm.bias"}, "shape": ["vision_hidden"], "dtype": "Bf16", "optional": true},
+    {"id": "external-role-17", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"tensor": "model.visual.merger.norm.weight"}, "shape": ["vision_hidden"], "dtype": "Bf16", "optional": true},
+    {"id": "external-role-18", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"tensor": "model.visual.patch_embed.proj.bias"}, "shape": ["vision_hidden"], "dtype": "Bf16", "optional": true},
+    {"id": "external-role-19", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"tensor": "model.visual.patch_embed.proj.weight"}, "shape": ["vision_hidden", "vision_channels", "vision_temporal_patch", "vision_patch", "vision_patch"], "dtype": "Bf16", "optional": true},
+    {"id": "external-role-20", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"tensor": "model.visual.pos_embed.weight"}, "shape": ["vision_positions", "vision_hidden"], "dtype": "Bf16", "optional": true}
+  ],
+  "drafters": [
+    {
+      "id": "mtp",
+      "stems": ["mtp", "mtp-mlp", "mtp-attn-hc", "mtp-mlp-hc"],
+      "projections": ["mtp.mixer.input_mix_weight_down", "mtp.mixer.input_mix_weight_up", "mtp.fc-hidden", "mtp.fc-embedding"],
+      "operations": ["mtp.q", "mtp.k", "mtp.v", "mtp.index", "mtp.output", "mtp.shared.gate-up", "mtp.shared.down", "mtp.experts.gate-up", "mtp.experts.down"]
+    }
+  ]
+}

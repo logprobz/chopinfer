@@ -1,0 +1,24 @@
+ chopinfer-top   5 instances: 3 ready  1 unreachable  1 starting   sources: proc
+
+┌─ Instances  tok/s over the last 3 polls; ratios and TTFT over 60s ───────────┐
+│ SOURCE          ADDRESS          MODEL            STATE          DECODE      │
+│ target          127.0.0.1:8431   Qwen3.8-Flash    ready             956      │
+│ target          192.0.2.10:8310  -                unreachable         -      │
+│▌proc 48211      127.0.0.1:8311   MiMo-V2.6-Flash  ready           1,795      │
+│ proc 51022      -                Qwen3.8-Flash    starting            -      │
+│ docker glm-tp4  127.0.0.1:8600   GLM-5.3-Flash    ready idle          0      │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌─ Events ─────────────────────────────────────────────────────────────────────┐
+│  5m00s ago  proc 48211          discovered: serve process listening on 127.0 │
+│  5m00s ago  proc 51022          discovered: serve process, no listener yet ( │
+│  5m00s ago  docker glm-tp4      discovered: container running serve, reached │
+│  4m59s ago  target 192.0.2.10:83unreachable: connection refused; retrying ev │
+│  5m00s ago  proc 48211          answering at 127.0.0.1:8311                  │
+│  5m00s ago  target 127.0.0.1:843answering at 127.0.0.1:8431                  │
+│  5m00s ago  docker glm-tp4      answering at 127.0.0.1:8600                  │
+│    30s ago  target 127.0.0.1:843restarted: new startup nonce; counters re-ba │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+ ↑↓ jk select   Enter details   w window   r rescan   p pause   ? help   q quit

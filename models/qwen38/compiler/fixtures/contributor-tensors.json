@@ -1,0 +1,5 @@
+[
+  {"name":"model.language_model.layers.0.linear_attn.norm.weight","dtype":"BF16","shape":[128]},
+  {"name":"model.language_model.layers.0.mlp.experts.257.gate_proj.weight","dtype":"F8_E4M3","shape":[640,2560]},
+  {"name":"model.language_model.layers.0.mlp.experts.257.gate_proj.weight_scale_inv","dtype":"BF16","shape":[5,20]}
+]

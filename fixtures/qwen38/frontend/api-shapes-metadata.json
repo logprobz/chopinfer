@@ -1,0 +1,8 @@
+{
+ "source": "tools/refrun F32 greedy; HF templates and tokenizer",
+ "answer_cases": 9,
+ "surface_cases": 6,
+ "shapes_sha256": "b09d1d5325122fa6e21d3e8aa493336df969399ca0a098f300d7fe804977992d",
+ "generation_reference_sha256": "692fed0e23fc4de6ad48e816f8585523b4d91950c53365873131fcdd1331541a",
+ "completion-n2-seeded": "shape from F32 greedy at the same max_tokens; sampling parameters exercised by the server only"
+}

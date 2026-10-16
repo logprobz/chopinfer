@@ -1,0 +1,6 @@
+{
+  "schema": "chopinfer-deployment-policy-v1",
+  "bundle_id": "glm5next.v1",
+  "knob_prefixes": ["GLM5NEXT_"],
+  "drafters": ["mtp"]
+}

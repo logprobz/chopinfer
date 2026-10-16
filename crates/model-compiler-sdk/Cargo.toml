@@ -1,0 +1,23 @@
+[package]
+name = "model-compiler-sdk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# A model compiler emits one canonical bundle directory and nothing else, so
+# this crate depends on the canonical parser and a digest, and on no model,
+# kernel catalog, or CUDA toolchain.
+[dependencies]
+projection-spec.workspace = true
+kernel-core = { workspace = true, features = ["precision-serde"] }
+serde_json.workspace = true
+serde.workspace = true
+runtime-bundle.workspace = true
+runtime-bundle-abi.workspace = true
+runtime-weights.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true

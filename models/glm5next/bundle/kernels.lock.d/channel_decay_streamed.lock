@@ -1,0 +1,157 @@
+[
+  {
+    "name": "channel_decay_streamed_glm5next_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_channel_decay_glm5next_delta_prefill_prepare_streamed_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "qkv",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "U32",
+            "name": "qkv_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "f",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "U32",
+            "name": "f_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "b",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "U32",
+            "name": "b_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "a_log",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "dt_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cu_seqlens",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "start_positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_sequences",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_channel_decay_glm5next_delta_prefill_scan_streamed_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "state",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cu_seqlens",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "start_positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "slot_ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "initial",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "anchor_ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_sequences",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "68b4fe6314e6b3b9560da679d400b905cec374eba1f24c6b7d597cc9193783c2",
+    "resources": [
+      {
+        "symbol": "chop_channel_decay_glm5next_delta_prefill_prepare_streamed_v1",
+        "registers": 147,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_channel_decay_glm5next_delta_prefill_scan_streamed_v1",
+        "registers": 252,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

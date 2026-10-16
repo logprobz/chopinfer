@@ -1,0 +1,4 @@
+# SHA-256 of every "models/<m>/<file> <item>" (or "examples/<e>/...") line that the
+# models' sm120_reexports.txt lists hold, and no other: the re-exports and includes of SM120 items outside sm120 modules,
+# frozen 2026-10-10 (tools/model_sdk/core_policy.py, check_frozen_lines).
+# Remove a hash together with its line; never add one.

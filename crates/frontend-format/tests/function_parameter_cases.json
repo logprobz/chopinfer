@@ -1,0 +1,223 @@
+{
+  "description": "xml-function-parameters-v1 completions that runtime-frontend's function_parameter_tool_grammar.rs and tools/qual's test_agentic_markup.py both read, in the format.parser section given here. Each text follows a reasoning close and precedes the stop token; content and calls are what the served parser returns for it with the tools (none when undeclared), and qual is the agentic raw re-parse's class of the text against those calls.",
+  "parser": {
+    "tool_grammar": "xml-function-parameters-v1",
+    "json_encoding": "python-json-v1",
+    "reasoning_open": "<think>",
+    "reasoning_close": "</think>",
+    "tool_call_open": "<tool_call>\n",
+    "tool_call_close": "</tool_call>",
+    "function_open": "<function=",
+    "function_name_close": ">\n",
+    "function_close": "</function>\n",
+    "parameter_open": "<parameter=",
+    "parameter_name_close": ">\n",
+    "parameter_close": "\n</parameter>\n",
+    "turn_open": ["A[", "U["],
+    "assistant_header": "A["
+  },
+  "stop": "[EOS]",
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "read",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "filter": {
+              "type": "object"
+            },
+            "list": {
+              "type": "array"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "filter"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "loose",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "filter": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "cases": [
+    {
+      "name": "a parameter close inside a JSON string",
+      "text": "<tool_call>\n<function=read>\n<parameter=filter>\n{\"pattern\": \"</parameter>\"}\n</parameter>\n</function>\n</tool_call>",
+      "content": "",
+      "calls": [
+        [
+          "read",
+          "{\"filter\": {\"pattern\": \"</parameter>\"}}"
+        ]
+      ],
+      "qual": "calls agree"
+    },
+    {
+      "name": "a function close inside a JSON string",
+      "text": "<tool_call>\n<function=read>\n<parameter=filter>\n{\"pattern\": \"</function>\"}\n</parameter>\n</function>\n</tool_call>",
+      "content": "",
+      "calls": [
+        [
+          "read",
+          "{\"filter\": {\"pattern\": \"</function>\"}}"
+        ]
+      ],
+      "qual": "calls agree"
+    },
+    {
+      "name": "a parameter open inside a JSON string",
+      "text": "<tool_call>\n<function=read>\n<parameter=filter>\n{\"pattern\": \"<parameter=x>\"}\n</parameter>\n</function>\n</tool_call>",
+      "content": "",
+      "calls": [
+        [
+          "read",
+          "{\"filter\": {\"pattern\": \"<parameter=x>\"}}"
+        ]
+      ],
+      "qual": "calls agree"
+    },
+    {
+      "name": "escaped quotes, a tool close and arrays, with a raw string between JSON values",
+      "text": "<tool_call>\n<function=read>\n<parameter=filter>\n{\"m\": \"a\\\"</parameter>\\\\\", \"n\": [\"</function>\\n</tool_call>\"]}\n</parameter>\n<parameter=text>\nplain\n</parameter>\n<parameter=list>\n[\"<parameter=y>\\n\", {\"k\": \"\\n</parameter>\\n\"}]\n</parameter>\n</function>\n</tool_call>",
+      "content": "",
+      "calls": [
+        [
+          "read",
+          "{\"filter\": {\"m\": \"a\\\"</parameter>\\\\\", \"n\": [\"</function>\\n</tool_call>\"]}, \"text\": \"plain\", \"list\": [\"<parameter=y>\\n\", {\"k\": \"\\n</parameter>\\n\"}]}"
+        ]
+      ],
+      "qual": "calls agree"
+    },
+    {
+      "name": "two regions with closes inside JSON strings",
+      "text": "<tool_call>\n<function=read>\n<parameter=filter>\n{\"a\": \"</function>\"}\n</parameter>\n</function>\n</tool_call>\n<tool_call>\n<function=read>\n<parameter=text>\nb\n</parameter>\n<parameter=list>\n[\"</parameter>\"]\n</parameter>\n</function>\n</tool_call>",
+      "content": "",
+      "calls": [
+        [
+          "read",
+          "{\"filter\": {\"a\": \"</function>\"}}"
+        ],
+        [
+          "read",
+          "{\"text\": \"b\", \"list\": [\"</parameter>\"]}"
+        ]
+      ],
+      "qual": "calls agree"
+    },
+    {
+      "name": "a raw string value ends at its first parameter close",
+      "text": "<tool_call>\n<function=read>\n<parameter=text>\na \"b</parameter>c\n</parameter>\n<parameter=filter>\n{}\n</parameter>\n</function>\n</tool_call>",
+      "content": "",
+      "calls": [
+        [
+          "read",
+          "{\"text\": \"a \\\"b\", \"filter\": {}}"
+        ]
+      ],
+      "qual": "malformed call region"
+    },
+    {
+      "name": "a raw string value ends at the first function close",
+      "text": "<tool_call>\n<function=read>\n<parameter=text>\nx</function>y\n</parameter>\n<parameter=filter>\n{}\n</parameter>\n</function>\n</tool_call>",
+      "content": "",
+      "calls": [
+        [
+          "read",
+          "{}"
+        ]
+      ],
+      "qual": "calls differ"
+    },
+    {
+      "name": "a tool with strict false reads raw values",
+      "text": "<tool_call>\n<function=loose>\n<parameter=filter>\n{\"pattern\": \"</parameter>\"}\n</parameter>\n</function>\n</tool_call>",
+      "content": "",
+      "calls": [
+        [
+          "loose",
+          "{\"filter\": \"{\\\"pattern\\\": \\\"\"}"
+        ]
+      ],
+      "qual": "malformed call region"
+    },
+    {
+      "name": "a tool with strict false ends at the first function close",
+      "text": "<tool_call>\n<function=loose>\n<parameter=filter>\n{\"pattern\": \"</function>\"}\n</parameter>\n</function>\n</tool_call>",
+      "content": "",
+      "calls": [
+        [
+          "loose",
+          "{}"
+        ]
+      ],
+      "qual": "calls differ"
+    },
+    {
+      "name": "an undeclared function reads raw values",
+      "undeclared": true,
+      "text": "<tool_call>\n<function=read>\n<parameter=filter>\n{\"pattern\": \"</parameter>\"}\n</parameter>\n</function>\n</tool_call>",
+      "content": "",
+      "calls": [
+        [
+          "read",
+          "{\"filter\": \"{\\\"pattern\\\": \\\"\"}"
+        ]
+      ],
+      "qual": "malformed call region"
+    },
+    {
+      "name": "an unterminated JSON string keeps the call open",
+      "text": "<tool_call>\n<function=read>\n<parameter=list>\n[1]\n</parameter>\n<parameter=filter>\n{\"m\": \"x\n</parameter>\n</function>\n</tool_call>",
+      "content": "",
+      "calls": [
+        [
+          "read",
+          "{\"list\": [1]}"
+        ]
+      ],
+      "qual": "malformed call region"
+    },
+    {
+      "name": "a string value keeps its own newlines inside the framing",
+      "text": "<tool_call>\n<function=read>\n<parameter=text>\n\n\ntext\r\n\n\n</parameter>\n<parameter=filter>\n{}\n</parameter>\n</function>\n</tool_call>",
+      "content": "",
+      "calls": [
+        [
+          "read",
+          "{\"text\": \"\\n\\ntext\\r\\n\\n\", \"filter\": {}}"
+        ]
+      ],
+      "qual": "calls agree"
+    },
+    {
+      "name": "an empty string value is the framing alone",
+      "text": "<tool_call>\n<function=read>\n<parameter=text>\n\n</parameter>\n<parameter=filter>\n{}\n</parameter>\n</function>\n</tool_call>",
+      "content": "",
+      "calls": [
+        [
+          "read",
+          "{\"text\": \"\", \"filter\": {}}"
+        ]
+      ],
+      "qual": "calls agree"
+    }
+  ]
+}

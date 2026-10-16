@@ -1,0 +1,22 @@
+[
+  {
+    "name": "comm_ll_bf16_late_wait_sm120",
+    "source_closure_sha256": "587b0c6f9e803909daacab2a0c2a8f538152070b1e28a70f01463e377d88edb4"
+  },
+  {
+    "name": "comm_ll_bf16_no_wait_sm120",
+    "source_closure_sha256": "75f0c688f30c9860994435c763985021208ad110ccab6bce1e7b3786112279ba"
+  },
+  {
+    "name": "comm_ll_bf16_own_f32_sm120",
+    "source_closure_sha256": "696b674a28017fed2f89c3636e1e2e5e32a37e59d705c840b2fad2268976ec5f"
+  },
+  {
+    "name": "comm_ll_bf16_sm120",
+    "source_closure_sha256": "6998c8cb4646a53fad4e4bd1075d43f73b9868533b61c63973994b0ceb7cec50"
+  },
+  {
+    "name": "comm_ll_bf16_stale_sm120",
+    "source_closure_sha256": "546bc052f607b613f5c0839d6ddddcfd03b06b6d7d8050e38d852a13bd9de9ee"
+  }
+]

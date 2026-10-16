@@ -1,0 +1,1059 @@
+[
+  {
+    "name": "projections_stacked_glm5next_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_gemm_stacked_glm5next_kda_inputs_m1_s4x1_pf_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a0"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a1"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a2"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a3"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a4"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a5"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output0",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output1",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output2",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output3",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output4",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output5",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "U32",
+            "name": "n0"
+          },
+          {
+            "kind": "U32",
+            "name": "n1"
+          },
+          {
+            "kind": "U32",
+            "name": "n2"
+          },
+          {
+            "kind": "U32",
+            "name": "n3"
+          },
+          {
+            "kind": "U32",
+            "name": "n4"
+          },
+          {
+            "kind": "U32",
+            "name": "n5"
+          },
+          {
+            "kind": "U32",
+            "name": "width0"
+          },
+          {
+            "kind": "U32",
+            "name": "width1"
+          },
+          {
+            "kind": "U32",
+            "name": "width2"
+          },
+          {
+            "kind": "U32",
+            "name": "width3"
+          },
+          {
+            "kind": "U32",
+            "name": "width4"
+          },
+          {
+            "kind": "U32",
+            "name": "width5"
+          },
+          {
+            "kind": "U32",
+            "name": "stride0"
+          },
+          {
+            "kind": "U32",
+            "name": "stride1"
+          },
+          {
+            "kind": "U32",
+            "name": "stride2"
+          },
+          {
+            "kind": "U32",
+            "name": "stride3"
+          },
+          {
+            "kind": "U32",
+            "name": "stride4"
+          },
+          {
+            "kind": "U32",
+            "name": "stride5"
+          }
+        ],
+        "max_threads": 160,
+        "min_blocks": 2,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_gemm_stacked_glm5next_kda_inputs_m2_s4x1_pf_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a0"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a1"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a2"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a3"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a4"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a5"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output0",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output1",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output2",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output3",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output4",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output5",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "U32",
+            "name": "n0"
+          },
+          {
+            "kind": "U32",
+            "name": "n1"
+          },
+          {
+            "kind": "U32",
+            "name": "n2"
+          },
+          {
+            "kind": "U32",
+            "name": "n3"
+          },
+          {
+            "kind": "U32",
+            "name": "n4"
+          },
+          {
+            "kind": "U32",
+            "name": "n5"
+          },
+          {
+            "kind": "U32",
+            "name": "width0"
+          },
+          {
+            "kind": "U32",
+            "name": "width1"
+          },
+          {
+            "kind": "U32",
+            "name": "width2"
+          },
+          {
+            "kind": "U32",
+            "name": "width3"
+          },
+          {
+            "kind": "U32",
+            "name": "width4"
+          },
+          {
+            "kind": "U32",
+            "name": "width5"
+          },
+          {
+            "kind": "U32",
+            "name": "stride0"
+          },
+          {
+            "kind": "U32",
+            "name": "stride1"
+          },
+          {
+            "kind": "U32",
+            "name": "stride2"
+          },
+          {
+            "kind": "U32",
+            "name": "stride3"
+          },
+          {
+            "kind": "U32",
+            "name": "stride4"
+          },
+          {
+            "kind": "U32",
+            "name": "stride5"
+          }
+        ],
+        "max_threads": 160,
+        "min_blocks": 2,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_gemm_stacked_glm5next_kda_inputs_m4_s4x1_pf_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a0"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a1"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a2"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a3"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a4"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a5"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output0",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output1",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output2",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output3",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output4",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output5",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "U32",
+            "name": "n0"
+          },
+          {
+            "kind": "U32",
+            "name": "n1"
+          },
+          {
+            "kind": "U32",
+            "name": "n2"
+          },
+          {
+            "kind": "U32",
+            "name": "n3"
+          },
+          {
+            "kind": "U32",
+            "name": "n4"
+          },
+          {
+            "kind": "U32",
+            "name": "n5"
+          },
+          {
+            "kind": "U32",
+            "name": "width0"
+          },
+          {
+            "kind": "U32",
+            "name": "width1"
+          },
+          {
+            "kind": "U32",
+            "name": "width2"
+          },
+          {
+            "kind": "U32",
+            "name": "width3"
+          },
+          {
+            "kind": "U32",
+            "name": "width4"
+          },
+          {
+            "kind": "U32",
+            "name": "width5"
+          },
+          {
+            "kind": "U32",
+            "name": "stride0"
+          },
+          {
+            "kind": "U32",
+            "name": "stride1"
+          },
+          {
+            "kind": "U32",
+            "name": "stride2"
+          },
+          {
+            "kind": "U32",
+            "name": "stride3"
+          },
+          {
+            "kind": "U32",
+            "name": "stride4"
+          },
+          {
+            "kind": "U32",
+            "name": "stride5"
+          }
+        ],
+        "max_threads": 160,
+        "min_blocks": 2,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_gemm_stacked_glm5next_kda_inputs_m8_s4x1_pf_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a0"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a1"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a2"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a3"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a4"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a5"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output0",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output1",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output2",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output3",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output4",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output5",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "U32",
+            "name": "n0"
+          },
+          {
+            "kind": "U32",
+            "name": "n1"
+          },
+          {
+            "kind": "U32",
+            "name": "n2"
+          },
+          {
+            "kind": "U32",
+            "name": "n3"
+          },
+          {
+            "kind": "U32",
+            "name": "n4"
+          },
+          {
+            "kind": "U32",
+            "name": "n5"
+          },
+          {
+            "kind": "U32",
+            "name": "width0"
+          },
+          {
+            "kind": "U32",
+            "name": "width1"
+          },
+          {
+            "kind": "U32",
+            "name": "width2"
+          },
+          {
+            "kind": "U32",
+            "name": "width3"
+          },
+          {
+            "kind": "U32",
+            "name": "width4"
+          },
+          {
+            "kind": "U32",
+            "name": "width5"
+          },
+          {
+            "kind": "U32",
+            "name": "stride0"
+          },
+          {
+            "kind": "U32",
+            "name": "stride1"
+          },
+          {
+            "kind": "U32",
+            "name": "stride2"
+          },
+          {
+            "kind": "U32",
+            "name": "stride3"
+          },
+          {
+            "kind": "U32",
+            "name": "stride4"
+          },
+          {
+            "kind": "U32",
+            "name": "stride5"
+          }
+        ],
+        "max_threads": 160,
+        "min_blocks": 2,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_gemm_stacked_glm5next_kda_inputs_m16_s4x1_pf_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a0"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a1"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a2"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a3"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a4"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a5"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output0",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output1",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output2",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output3",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output4",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output5",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "U32",
+            "name": "n0"
+          },
+          {
+            "kind": "U32",
+            "name": "n1"
+          },
+          {
+            "kind": "U32",
+            "name": "n2"
+          },
+          {
+            "kind": "U32",
+            "name": "n3"
+          },
+          {
+            "kind": "U32",
+            "name": "n4"
+          },
+          {
+            "kind": "U32",
+            "name": "n5"
+          },
+          {
+            "kind": "U32",
+            "name": "width0"
+          },
+          {
+            "kind": "U32",
+            "name": "width1"
+          },
+          {
+            "kind": "U32",
+            "name": "width2"
+          },
+          {
+            "kind": "U32",
+            "name": "width3"
+          },
+          {
+            "kind": "U32",
+            "name": "width4"
+          },
+          {
+            "kind": "U32",
+            "name": "width5"
+          },
+          {
+            "kind": "U32",
+            "name": "stride0"
+          },
+          {
+            "kind": "U32",
+            "name": "stride1"
+          },
+          {
+            "kind": "U32",
+            "name": "stride2"
+          },
+          {
+            "kind": "U32",
+            "name": "stride3"
+          },
+          {
+            "kind": "U32",
+            "name": "stride4"
+          },
+          {
+            "kind": "U32",
+            "name": "stride5"
+          }
+        ],
+        "max_threads": 160,
+        "min_blocks": 2,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_gemm_stacked_glm5next_kda_inputs_m32_s4x1_pf_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a0"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a1"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a2"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a3"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a4"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_a5"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output0",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output1",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output2",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output3",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output4",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output5",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "U32",
+            "name": "n0"
+          },
+          {
+            "kind": "U32",
+            "name": "n1"
+          },
+          {
+            "kind": "U32",
+            "name": "n2"
+          },
+          {
+            "kind": "U32",
+            "name": "n3"
+          },
+          {
+            "kind": "U32",
+            "name": "n4"
+          },
+          {
+            "kind": "U32",
+            "name": "n5"
+          },
+          {
+            "kind": "U32",
+            "name": "width0"
+          },
+          {
+            "kind": "U32",
+            "name": "width1"
+          },
+          {
+            "kind": "U32",
+            "name": "width2"
+          },
+          {
+            "kind": "U32",
+            "name": "width3"
+          },
+          {
+            "kind": "U32",
+            "name": "width4"
+          },
+          {
+            "kind": "U32",
+            "name": "width5"
+          },
+          {
+            "kind": "U32",
+            "name": "stride0"
+          },
+          {
+            "kind": "U32",
+            "name": "stride1"
+          },
+          {
+            "kind": "U32",
+            "name": "stride2"
+          },
+          {
+            "kind": "U32",
+            "name": "stride3"
+          },
+          {
+            "kind": "U32",
+            "name": "stride4"
+          },
+          {
+            "kind": "U32",
+            "name": "stride5"
+          }
+        ],
+        "max_threads": 160,
+        "min_blocks": 2,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "9e1bdc4ac74ac886d918f15e93d553b88add12adae22b8a7f86b56f166e1a26e",
+    "resources": [
+      {
+        "symbol": "chop_gemm_stacked_glm5next_kda_inputs_m1_s4x1_pf_v1",
+        "registers": 84,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 160,
+        "min_blocks": 2
+      },
+      {
+        "symbol": "chop_gemm_stacked_glm5next_kda_inputs_m2_s4x1_pf_v1",
+        "registers": 84,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 160,
+        "min_blocks": 2
+      },
+      {
+        "symbol": "chop_gemm_stacked_glm5next_kda_inputs_m4_s4x1_pf_v1",
+        "registers": 84,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 160,
+        "min_blocks": 2
+      },
+      {
+        "symbol": "chop_gemm_stacked_glm5next_kda_inputs_m8_s4x1_pf_v1",
+        "registers": 84,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 160,
+        "min_blocks": 2
+      },
+      {
+        "symbol": "chop_gemm_stacked_glm5next_kda_inputs_m16_s4x1_pf_v1",
+        "registers": 84,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 160,
+        "min_blocks": 2
+      },
+      {
+        "symbol": "chop_gemm_stacked_glm5next_kda_inputs_m32_s4x1_pf_v1",
+        "registers": 92,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 160,
+        "min_blocks": 2
+      }
+    ]
+  }
+]

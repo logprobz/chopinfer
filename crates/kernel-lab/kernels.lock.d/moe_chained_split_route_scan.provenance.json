@@ -1,0 +1,10 @@
+[
+  {
+    "name": "chop_moe_chain_lab_split_route_scan",
+    "source_closure_sha256": "0249abe693b43a3242ed5d6b7053ba4f6b7285706be7cb78ab786d2c952bb985"
+  },
+  {
+    "name": "chop_moe_chain_lab_split_route_scan_no_wait",
+    "source_closure_sha256": "fee6b3c25346f8f515f2d7240bcb36ef30abd688fc05d68a248398b05560932c"
+  }
+]

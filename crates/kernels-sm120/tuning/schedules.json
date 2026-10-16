@@ -1,0 +1,5 @@
+{
+  "schema": "chopinfer-tuning-v1",
+  "target": {"compute_capability": 120, "sm_count": 188},
+  "rows": []
+}

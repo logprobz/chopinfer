@@ -1,0 +1,30 @@
+[
+  {
+    "name": "strip_chains_stacked_copies_sm120",
+    "source_closure_sha256": "bcccc3b07080e5d29c88d9756133dbd3558dbc443f90cde07b2ecea5c49c5b5a"
+  },
+  {
+    "name": "strip_chains_stacked_mutants_sm120",
+    "source_closure_sha256": "e90f95601008db71d39a7df1c04e3808737a3d63b83ac6829eacad973c789ca7"
+  },
+  {
+    "name": "strip_chains_stacked_n2048x3_n128_n64w16_n128_sm120",
+    "source_closure_sha256": "7330d9bbb7d4f6fcade8db33afbf674dd33dc733a5c74fbbdd0c2d8f8b668e28"
+  },
+  {
+    "name": "strip_chains_stacked_n2048x3_sm120",
+    "source_closure_sha256": "8c196f4fb12b61c65bcce773cb2aa6f54de6badbcb8901b5097779c8bceff9ab"
+  },
+  {
+    "name": "strip_chains_stacked_parts_sm120",
+    "source_closure_sha256": "4f696a57c98e8a0f63a30456ea13112f34c9f5b64641847bba113f30994e88ec"
+  },
+  {
+    "name": "strip_chains_stacked_prefetch_sm120",
+    "source_closure_sha256": "3bcb0b8bf34556a9811ce676a377a3b7f5b11377442c99e30f3d92c8f09ff513"
+  },
+  {
+    "name": "strip_chains_stacked_window_sm120",
+    "source_closure_sha256": "fcb89a1f60e9815ebd515def6e47f19cd1977519e48c1d4b288f568bdca0e974"
+  }
+]

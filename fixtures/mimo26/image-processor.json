@@ -1,0 +1,88 @@
+{
+  "schema": "chopinfer.image-preprocessing-probes.v1",
+  "processor": "Qwen2VLImageProcessor",
+  "versions": {
+    "torch": "2.14.0+cu130",
+    "torchvision": "0.29.0+cu130",
+    "transformers": "5.16.1",
+    "pillow": "12.3.0",
+    "numpy": "2.5.3"
+  },
+  "checkpoint_config_sha256": "b269e51bdc1c53ef7c82522984378513f462869cf83c4c75ec3f98bd92aa7972",
+  "overrides": {
+    "image_mean": [
+      0.485,
+      0.456,
+      0.406
+    ],
+    "image_std": [
+      0.229,
+      0.224,
+      0.225
+    ],
+    "max_pixels": 1048576,
+    "min_pixels": 8192
+  },
+  "images": [
+    {
+      "width": 256,
+      "height": 256,
+      "grid": [
+        1,
+        16,
+        16
+      ],
+      "integer_patch_sha256": "7b8a48271cff1589408fe1e2c55ac477cf3a8afe238815e092932d465b063b0a"
+    },
+    {
+      "width": 17,
+      "height": 19,
+      "grid": [
+        1,
+        6,
+        6
+      ],
+      "integer_patch_sha256": "0a60dea915e55001f2423584f050bc6b3f2f54f3d62c35405d62f97b2356f26a"
+    },
+    {
+      "width": 100,
+      "height": 60,
+      "grid": [
+        1,
+        6,
+        8
+      ],
+      "integer_patch_sha256": "e8d95bb0371f6edefdfc4079f5f93a8eb8d7baf37bfb138eaa247425ba340351"
+    },
+    {
+      "width": 333,
+      "height": 517,
+      "grid": [
+        1,
+        32,
+        20
+      ],
+      "integer_patch_sha256": "3b7d0a94505eb6bf2646e064e8780cc09cc721d8430e35a89e437164db8491e1"
+    },
+    {
+      "width": 1000,
+      "height": 40,
+      "grid": [
+        1,
+        2,
+        62
+      ],
+      "integer_patch_sha256": "64250d89d097a4d4f9c749e94651bf266f220d8798101902cbd9da94f42cca69"
+    },
+    {
+      "width": 4500,
+      "height": 4000,
+      "grid": [
+        1,
+        60,
+        66
+      ],
+      "integer_patch_sha256": "d94baa156fb9412de740b6ceb202f49b4f6beed1dd39cf2958866bcf1da4ae91"
+    }
+  ]
+}

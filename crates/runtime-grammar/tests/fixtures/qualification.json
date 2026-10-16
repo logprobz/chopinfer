@@ -1,0 +1,297 @@
+[
+  {
+    "name": "json_schema_strict",
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "age",
+        "status",
+        "kind",
+        "address",
+        "tags",
+        "active",
+        "nickname",
+        "note"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "age": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 150
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "inactive",
+            "pending"
+          ]
+        },
+        "kind": {
+          "const": "person"
+        },
+        "address": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "city",
+            "zip"
+          ],
+          "properties": {
+            "city": {
+              "type": "string",
+              "maxLength": 40
+            },
+            "zip": {
+              "type": "string",
+              "maxLength": 10
+            }
+          }
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 20
+          },
+          "minItems": 1,
+          "maxItems": 3
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "nickname": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 20
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "note": {
+          "type": "null"
+        }
+      }
+    }
+  },
+  {
+    "name": "json_schema_compact",
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "age",
+        "status",
+        "kind",
+        "address",
+        "tags",
+        "active",
+        "nickname",
+        "note"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "age": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 150
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "inactive",
+            "pending"
+          ]
+        },
+        "kind": {
+          "const": "person"
+        },
+        "address": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "city",
+            "zip"
+          ],
+          "properties": {
+            "city": {
+              "type": "string",
+              "maxLength": 40
+            },
+            "zip": {
+              "type": "string",
+              "maxLength": 10
+            }
+          }
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 20
+          },
+          "minItems": 1,
+          "maxItems": 3
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "nickname": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 20
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "note": {
+          "type": "null"
+        }
+      }
+    },
+    "compact": true
+  },
+  {
+    "name": "get_weather",
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "city"
+      ],
+      "properties": {
+        "city": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string",
+          "enum": [
+            "celsius",
+            "fahrenheit"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "get_time",
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timezone"
+      ],
+      "properties": {
+        "timezone": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "client_query",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "table_name": {
+          "type": "string",
+          "enum": [
+            "orders"
+          ]
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "id",
+              "status",
+              "ordered_at"
+            ]
+          }
+        },
+        "conditions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "column": {
+                "type": "string"
+              },
+              "operator": {
+                "enum": [
+                  "=",
+                  ">",
+                  "<"
+                ]
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "column",
+              "operator",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "table_name",
+        "columns",
+        "conditions"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "client_weather",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "location": {
+          "type": "string",
+          "description": "City and state"
+        },
+        "unit": {
+          "type": "string",
+          "enum": [
+            "celsius",
+            "fahrenheit"
+          ]
+        }
+      },
+      "required": [
+        "location",
+        "unit"
+      ],
+      "additionalProperties": false
+    }
+  }
+]

@@ -1,0 +1,381 @@
+[
+  {
+    "text": "Hello world",
+    "token_ids": [
+      9419,
+      1814
+    ]
+  },
+  {
+    "text": "The quick brown fox jumps over the lazy dog.",
+    "token_ids": [
+      760,
+      3841,
+      13477,
+      37550,
+      33075,
+      888,
+      279,
+      15217,
+      5388,
+      13
+    ]
+  },
+  {
+    "text": "1234567890",
+    "token_ids": [
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      15
+    ]
+  },
+  {
+    "text": "  hello\n\nworld\t",
+    "token_ids": [
+      220,
+      23066,
+      271,
+      14194,
+      197
+    ]
+  },
+  {
+    "text": "é é",
+    "token_ids": [
+      933,
+      3825
+    ]
+  },
+  {
+    "text": "नमस्ते दुनिया",
+    "token_ids": [
+      58069,
+      84237,
+      150104,
+      153348,
+      184642,
+      235886
+    ]
+  },
+  {
+    "text": "العربية",
+    "token_ids": [
+      179415,
+      151479
+    ]
+  },
+  {
+    "text": "中文测试",
+    "token_ids": [
+      99986,
+      99449
+    ]
+  },
+  {
+    "text": "한글 日本語",
+    "token_ids": [
+      22836,
+      80418,
+      220,
+      247359
+    ]
+  },
+  {
+    "text": "👩‍💻 😀",
+    "token_ids": [
+      9008,
+      239,
+      102,
+      373,
+      235,
+      88995,
+      119,
+      87209
+    ]
+  },
+  {
+    "text": "ạ́̈",
+    "token_ids": [
+      19614,
+      52033,
+      136,
+      230
+    ]
+  },
+  {
+    "text": "<think>Plan</think><tool_call>",
+    "token_ids": [
+      248068,
+      19860,
+      248069,
+      248058
+    ]
+  },
+  {
+    "text": "<|im_start|>user\nHi<|im_end|>\n",
+    "token_ids": [
+      248045,
+      846,
+      198,
+      12675,
+      248046,
+      198
+    ]
+  },
+  {
+    "text": "I'm we'll you've can't",
+    "token_ids": [
+      40,
+      2688,
+      567,
+      3172,
+      488,
+      2908,
+      628,
+      914
+    ]
+  },
+  {
+    "text": "\r\n\t  \n",
+    "token_ids": [
+      317,
+      37050
+    ]
+  },
+  {
+    "text": "a<|image_pad|>b",
+    "token_ids": [
+      64,
+      248056,
+      65
+    ]
+  },
+  {
+    "text": "<parameter=x>\n{\"x\": true}\n</parameter>",
+    "token_ids": [
+      27,
+      15704,
+      24582,
+      29,
+      198,
+      4754,
+      87,
+      763,
+      804,
+      92,
+      198,
+      510,
+      15704,
+      29
+    ]
+  },
+  {
+    "text": "",
+    "token_ids": []
+  },
+  {
+    "text": "<|endoftext|>",
+    "token_ids": [
+      248044
+    ]
+  },
+  {
+    "text": "<|im_start|>",
+    "token_ids": [
+      248045
+    ]
+  },
+  {
+    "text": "<|im_end|>",
+    "token_ids": [
+      248046
+    ]
+  },
+  {
+    "text": "<|object_ref_start|>",
+    "token_ids": [
+      248047
+    ]
+  },
+  {
+    "text": "<|object_ref_end|>",
+    "token_ids": [
+      248048
+    ]
+  },
+  {
+    "text": "<|box_start|>",
+    "token_ids": [
+      248049
+    ]
+  },
+  {
+    "text": "<|box_end|>",
+    "token_ids": [
+      248050
+    ]
+  },
+  {
+    "text": "<|quad_start|>",
+    "token_ids": [
+      248051
+    ]
+  },
+  {
+    "text": "<|quad_end|>",
+    "token_ids": [
+      248052
+    ]
+  },
+  {
+    "text": "<|vision_start|>",
+    "token_ids": [
+      248053
+    ]
+  },
+  {
+    "text": "<|vision_end|>",
+    "token_ids": [
+      248054
+    ]
+  },
+  {
+    "text": "<|vision_pad|>",
+    "token_ids": [
+      248055
+    ]
+  },
+  {
+    "text": "<|image_pad|>",
+    "token_ids": [
+      248056
+    ]
+  },
+  {
+    "text": "<|video_pad|>",
+    "token_ids": [
+      248057
+    ]
+  },
+  {
+    "text": "<tool_call>",
+    "token_ids": [
+      248058
+    ]
+  },
+  {
+    "text": "</tool_call>",
+    "token_ids": [
+      248059
+    ]
+  },
+  {
+    "text": "<|fim_prefix|>",
+    "token_ids": [
+      248060
+    ]
+  },
+  {
+    "text": "<|fim_middle|>",
+    "token_ids": [
+      248061
+    ]
+  },
+  {
+    "text": "<|fim_suffix|>",
+    "token_ids": [
+      248062
+    ]
+  },
+  {
+    "text": "<|fim_pad|>",
+    "token_ids": [
+      248063
+    ]
+  },
+  {
+    "text": "<|repo_name|>",
+    "token_ids": [
+      248064
+    ]
+  },
+  {
+    "text": "<|file_sep|>",
+    "token_ids": [
+      248065
+    ]
+  },
+  {
+    "text": "<tool_response>",
+    "token_ids": [
+      248066
+    ]
+  },
+  {
+    "text": "</tool_response>",
+    "token_ids": [
+      248067
+    ]
+  },
+  {
+    "text": "<think>",
+    "token_ids": [
+      248068
+    ]
+  },
+  {
+    "text": "</think>",
+    "token_ids": [
+      248069
+    ]
+  },
+  {
+    "text": "<|audio_start|>",
+    "token_ids": [
+      248070
+    ]
+  },
+  {
+    "text": "<|audio_end|>",
+    "token_ids": [
+      248071
+    ]
+  },
+  {
+    "text": "<tts_pad>",
+    "token_ids": [
+      248072
+    ]
+  },
+  {
+    "text": "<tts_text_bos>",
+    "token_ids": [
+      248073
+    ]
+  },
+  {
+    "text": "<tts_text_eod>",
+    "token_ids": [
+      248074
+    ]
+  },
+  {
+    "text": "<tts_text_bos_single>",
+    "token_ids": [
+      248075
+    ]
+  },
+  {
+    "text": "<|audio_pad|>",
+    "token_ids": [
+      248076
+    ]
+  }
+]

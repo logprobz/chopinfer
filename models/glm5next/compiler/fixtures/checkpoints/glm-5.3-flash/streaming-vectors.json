@@ -1,0 +1,5 @@
+[
+{"id": "reasoning-and-two-key-value-calls", "request": {"messages": [{"role": "user", "content": "Hi"}], "tools": [{"type": "function", "function": {"name": "get_weather", "parameters": {"type": "object", "properties": {"city": {"type": "string"}, "days": {"type": "string"}}}}}]}, "token_ids": [3973, 2176, 13, 154842, 154843, 455, 68852, 154847, 8923, 154848, 154849, 59190, 154850, 154847, 13769, 154848, 154849, 18, 154850, 154844, 154843, 455, 68852, 154847, 8923, 154848, 154849, 99334, 154850, 154844, 154829], "expect": {"reasoning": "Check both.", "tool_calls": [{"name": "get_weather", "arguments": "{\"city\": \"Paris\", \"days\": \"3\"}"}, {"name": "get_weather", "arguments": "{\"city\": \"北京\"}"}], "finish_reason": "tool_calls"}},
+{"id": "answer-then-endoftext", "request": {"messages": [{"role": "user", "content": "Hi"}]}, "token_ids": [81, 154842, 17429, 13, 154820], "expect": {"reasoning": "r", "content": "Done.", "finish_reason": "stop"}},
+{"id": "answer-then-user", "request": {"messages": [{"role": "user", "content": "Hi"}]}, "token_ids": [81, 154842, 17429, 13, 154827], "expect": {"reasoning": "r", "content": "Done.", "finish_reason": "stop"}}
+]

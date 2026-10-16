@@ -1,0 +1,17 @@
+{
+  "weight_map": {
+    "model.language_model.layers.0.attn_hyper_connection.hc_norm.weight": "synthetic.safetensors",
+    "model.language_model.layers.0.linear_attn.in_proj_a.weight": "synthetic.safetensors",
+    "model.language_model.layers.0.linear_attn.in_proj_a.weight_scale": "synthetic.safetensors",
+    "model.language_model.layers.0.mlp.experts.0.gate_proj.input_scale": "synthetic.safetensors",
+    "model.language_model.layers.0.mlp.experts.0.gate_proj.weight": "synthetic.safetensors",
+    "model.language_model.layers.0.mlp.experts.0.gate_proj.weight_scale": "synthetic.safetensors",
+    "model.language_model.layers.0.mlp.experts.0.gate_proj.weight_scale_2": "synthetic.safetensors",
+    "model.language_model.layers.1.ple.ple_embedding.ngram_embedding.shard_0.weight": "synthetic.safetensors",
+    "model.language_model.layers.1.ple.ple_embedding.ngram_embedding.shard_0.weight_scale": "synthetic.safetensors",
+    "model.language_model.layers.1.ple.ple_embedding.ngram_embedding.weight_scale_2": "synthetic.safetensors",
+    "mtp.layers.0.mlp.experts.0.gate_proj.weight": "synthetic.safetensors",
+    "mtp.layers.0.mlp.experts.0.gate_proj.weight_scale": "synthetic.safetensors",
+    "mtp.layers.0.mlp.experts.0.gate_proj.weight_scale_2": "synthetic.safetensors"
+  }
+}

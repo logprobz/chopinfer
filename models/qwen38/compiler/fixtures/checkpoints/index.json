@@ -1,0 +1,10 @@
+[
+  {
+    "name": "qwen3.8-flash-next-fp8",
+    "geometry": "flash",
+    "checkpoint_env": "CHOPINFER_QWEN38_CHECKPOINT",
+    "tokenizer_env": "CHOPINFER_QWEN38_TOKENIZER_DIR",
+    "tokenizer_cases": 51,
+    "chat_cases": 19
+  }
+]

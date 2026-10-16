@@ -1,0 +1,47 @@
+{
+  "model": "mimo26",
+  "schema": "chopinfer.encoder-parity-inputs.v1",
+  "root": {
+    "env": "CHOPINFER_DATA",
+    "path": "refrun/g9-min8192-no-audio"
+  },
+  "workload": {
+    "path": "inputs/encoder-workload.json",
+    "sha256": "7c3b08fedfb176a54918d70fbfd24b594706dc0ebc9d7f544fcf58633d2855db"
+  },
+  "workload_files_sha256": "089522d63449e05e1d4c114a3dabbfaea801e17c60ff364bb80d1f472cfc05a7",
+  "requests": [
+    {
+      "name": "single-image",
+      "path": "inputs/bodies/single-image.json",
+      "sha256": "68ebfdb66c9a19c2d52797abf9a376478c08e8009d077ba5b1ce9086c45ca9a7"
+    },
+    {
+      "name": "two-images",
+      "path": "inputs/bodies/two-images.json",
+      "sha256": "1e32db7b08b6cbba8ddb099f4da080c83b515c942a05f7d3fe8e0a8938e5acfb"
+    },
+    {
+      "name": "two-resized-images",
+      "path": "inputs/bodies/two-resized-images.json",
+      "sha256": "a0a6c1ebe8787a842132b226da01252163cc55d477473a2f8da71e42d265c5f0"
+    },
+    {
+      "name": "image-video",
+      "path": "inputs/bodies/image-video.json",
+      "sha256": "1a82847a6446f8f39cd4e481fb19d511a17e72671f938f9d91b37fde760dd681"
+    },
+    {
+      "name": "32-images",
+      "path": "inputs/bodies/32-images.json",
+      "sha256": "7c25c37b4cc7dd74f056280eccf291df451525fbd29e64ed8854745f77aac265"
+    }
+  ],
+  "references": [
+    {
+      "path": "encoder-reference/mimo26/vision",
+      "files_sha256": "60dcde07a91c44fb197c235c104dcaeb830eccb6dd8abb065257bdde1e0760e0",
+      "source": "ec183d563d58c261b62b941cc32e2290ef27a38b"
+    }
+  ]
+}

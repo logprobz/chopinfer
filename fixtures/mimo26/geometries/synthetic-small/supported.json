@@ -1,0 +1,10 @@
+{
+  "geometries": [
+    {
+      "id": "synthetic-small",
+      "file": "geometry.json",
+      "kernel_tag": "mimo_synthetic_small",
+      "encoders": true
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+schema = "chopinfer-model-validation-v1"
+profiles = "profiles.json"
+capabilities = ["graph", "speculation", "prefix", "multimodal", "offload"]
+locks = ["models/mimo26/bundle/kernels.lock", "crates/kernel-lab/kernels.lock"]
+kernel_commands = [["cargo", "test", "-p", "bundle-mimo26", "--lib", "--locked", "--offline"], ["cargo", "test", "-p", "kernel-lab", "--test", "mimo_bundle_kernels", "--test", "mimo_ring", "--test", "mimo_layers", "--locked", "--offline"]]
+
+[[rules]]
+paths = ["compiler/src/frontend*", "compiler/src/chat*", "compiler/src/decode*", "compiler/src/tokenizer*", "compiler/tests/*goldens*", "compiler/tests/streaming*"]
+class = "frontend"
+[[rules]]
+paths = ["bundle/src/encoders/*"]
+class = "encoder"
+[[rules]]
+paths = ["bundle/cuda/*", "bundle/kernels.lock", "bundle/sm120/build.rs"]
+class = "local_kernel"
+[[rules]]
+paths = ["compiler/*"]
+class = "packing"
+[[rules]]
+paths = ["bundle/*", "contract/*"]
+class = "program"

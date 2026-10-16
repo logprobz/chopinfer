@@ -1,0 +1,19 @@
+/target
+/dist/
+/local.env
+# Machine-specific leak guard patterns (tests/leak_guard.py).
+/leak-denylist.local
+*.prof
+*.sqlite
+__pycache__/
+*.pyc
+/.pytest_cache/
+/.venv/
+*.log
+# Evaluation data, receipts, traces and profiles belong under $CHOPINFER_DATA.
+/fixtures/kernel-lab/
+/fixtures/*/qual/
+/receipts/
+*.nsys-rep
+*.ncu-rep
+*.qdrep

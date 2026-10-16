@@ -1,0 +1,85 @@
+{
+ "chat-thinking": {
+  "status": 200,
+  "finish_reason": "stop",
+  "content": true,
+  "reasoning": true,
+  "tool_calls": []
+ },
+ "chat-effort-low": {
+  "status": 200,
+  "finish_reason": "stop",
+  "content": true,
+  "reasoning": true,
+  "tool_calls": []
+ },
+ "chat-effort-medium": {
+  "status": 200,
+  "finish_reason": "stop",
+  "content": true,
+  "reasoning": true,
+  "tool_calls": []
+ },
+ "chat-effort-xhigh": {
+  "status": 200,
+  "finish_reason": "stop",
+  "content": true,
+  "reasoning": true,
+  "tool_calls": []
+ },
+ "chat-nothink": {
+  "status": 200,
+  "finish_reason": "stop",
+  "content": true,
+  "reasoning": false,
+  "tool_calls": []
+ },
+ "tool-call": {
+  "status": 200,
+  "finish_reason": "tool_calls",
+  "content": false,
+  "reasoning": true,
+  "tool_calls": [
+   "get_weather"
+  ]
+ },
+ "tool-result": {
+  "status": 200,
+  "finish_reason": "stop",
+  "content": true,
+  "reasoning": true,
+  "tool_calls": []
+ },
+ "completion-logprobs": {
+  "status": 200,
+  "finish_reason": "length",
+  "content": true,
+  "reasoning": false,
+  "tool_calls": []
+ },
+ "completion-n2-seeded": {
+  "status": 200,
+  "finish_reason": "length",
+  "content": true,
+  "reasoning": false,
+  "tool_calls": []
+ },
+ "chat-effort-high": {
+  "status": 400
+ },
+ "error-video": {
+  "status": 400
+ },
+ "error-five-images": {
+  "status": 400
+ },
+ "error-too-long": {
+  "status": 400
+ },
+ "tool-call-stream": {
+  "status": 200
+ },
+ "chat-stream": {
+  "status": 200
+ }
+}

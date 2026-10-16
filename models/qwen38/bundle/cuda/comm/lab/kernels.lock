@@ -1,0 +1,2073 @@
+[
+  {
+    "name": "comm_qwen38",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_LL_MAX_ROWS",
+        "2"
+      ],
+      [
+        "CHOP_COMM_LL_CLUSTER",
+        "2"
+      ],
+      [
+        "CHOP_COMM_PUSH_CLUSTER",
+        "8"
+      ],
+      [
+        "CHOP_COMM_TWO_SHOT_MIN_RANKS",
+        "4"
+      ],
+      [
+        "CHOP_COMM_ONE_SHOT_BASE",
+        "1048576"
+      ],
+      [
+        "CHOP_COMM_TWO_SHOT_BASE",
+        "5242880"
+      ],
+      [
+        "CHOP_COMM_PHASED_BASE",
+        "8388608"
+      ],
+      [
+        "CHOP_COMM_TWO_SHOT_FLAGS",
+        "82"
+      ],
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ],
+      [
+        "CHOP_COMM_WIDE_MAX_ROWS",
+        "256"
+      ],
+      [
+        "CHOP_COMM_WIDE_BLOCK_ROWS",
+        "16"
+      ],
+      [
+        "CHOP_COMM_WIDE_GATHER_BASE",
+        "5767168"
+      ],
+      [
+        "CHOP_COMM_WIDE_SCATTER_BASE",
+        "8388608"
+      ],
+      [
+        "CHOP_COMM_WIDE_FLAGS",
+        "98"
+      ],
+      [
+        "CHOP_COMM_LL_ROWS_BY_RANKS",
+        "0x0200000002000202ull"
+      ],
+      [
+        "CHOP_COMM_ONESHOT_ROWS_BY_RANKS",
+        "0x1020202010202020ull"
+      ],
+      [
+        "CHOP_QWEN38_HIDDEN",
+        "2560"
+      ],
+      [
+        "CHOP_QWEN38_STREAMS",
+        "4"
+      ],
+      [
+        "CHOP_QWEN38_HC_RANK",
+        "320"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_comm_qwen38_allreduce_hc_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual_out",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "capacity"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_qwen38_reduce_scatter_v2",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "capacity"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_qwen38_allgather_hc_v2",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual_out",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "capacity"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "source_closure_sha256": "84135da63cf899eb8d9d3548fd06d4fb64d6ef11d4820eb018b0849f23ebd8e3",
+    "cubin_sha256": "7c0f64eb690ac9110e1713939bab8a80c2afdcab26c032e7580759ec76dbdd89",
+    "resources": [
+      {
+        "symbol": "chop_comm_qwen38_allreduce_hc_v1",
+        "registers": 96,
+        "shared_static_bytes": 1120,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_qwen38_reduce_scatter_v2",
+        "registers": 93,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_qwen38_allgather_hc_v2",
+        "registers": 72,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "comm_qwen38_decode",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_LL_MAX_ROWS",
+        "2"
+      ],
+      [
+        "CHOP_COMM_LL_CLUSTER",
+        "2"
+      ],
+      [
+        "CHOP_COMM_PUSH_CLUSTER",
+        "8"
+      ],
+      [
+        "CHOP_COMM_TWO_SHOT_MIN_RANKS",
+        "4"
+      ],
+      [
+        "CHOP_COMM_ONE_SHOT_BASE",
+        "1048576"
+      ],
+      [
+        "CHOP_COMM_TWO_SHOT_BASE",
+        "5242880"
+      ],
+      [
+        "CHOP_COMM_PHASED_BASE",
+        "8388608"
+      ],
+      [
+        "CHOP_COMM_TWO_SHOT_FLAGS",
+        "82"
+      ],
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ],
+      [
+        "CHOP_COMM_WIDE_MAX_ROWS",
+        "256"
+      ],
+      [
+        "CHOP_COMM_WIDE_BLOCK_ROWS",
+        "16"
+      ],
+      [
+        "CHOP_COMM_WIDE_GATHER_BASE",
+        "5767168"
+      ],
+      [
+        "CHOP_COMM_WIDE_SCATTER_BASE",
+        "8388608"
+      ],
+      [
+        "CHOP_COMM_WIDE_FLAGS",
+        "98"
+      ],
+      [
+        "CHOP_COMM_LL_ROWS_BY_RANKS",
+        "0x0200000002000202ull"
+      ],
+      [
+        "CHOP_COMM_ONESHOT_ROWS_BY_RANKS",
+        "0x1020202010202020ull"
+      ],
+      [
+        "CHOP_QWEN38_LL_MAX_ROWS",
+        "2"
+      ],
+      [
+        "CHOP_QWEN38_HIDDEN",
+        "2560"
+      ],
+      [
+        "CHOP_QWEN38_STREAMS",
+        "4"
+      ],
+      [
+        "CHOP_QWEN38_HC_RANK",
+        "320"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_comm_qwen38_allreduce_hc_decode_r2_v2",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual_out",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 2,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 2,
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epochs",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_qwen38_allreduce_hc_decode_r4_v2",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual_out",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 4,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 4,
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epochs",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_qwen38_allreduce_hc_decode_r8_v2",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual_out",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epochs",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_qwen38_allreduce_hc_decode_r2_v3",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual_out",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 2,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 2,
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epochs",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_qwen38_allreduce_hc_decode_r4_v3",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual_out",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 4,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 4,
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epochs",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_qwen38_allreduce_hc_decode_r8_v3",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual_out",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epochs",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "source_closure_sha256": "5267c207e4f57646a9a222965fabf8afe739bca05cd9f6c8b966b2a1aa35b0ef",
+    "cubin_sha256": "98cc582fea4ce55339522f7f0f05437871854260f4e8d8fbfcb99cc0574ae0e0",
+    "resources": [
+      {
+        "symbol": "chop_comm_qwen38_allreduce_hc_decode_r2_v2",
+        "registers": 72,
+        "shared_static_bytes": 13904,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_qwen38_allreduce_hc_decode_r4_v2",
+        "registers": 92,
+        "shared_static_bytes": 16464,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_qwen38_allreduce_hc_decode_r8_v2",
+        "registers": 127,
+        "shared_static_bytes": 21584,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_qwen38_allreduce_hc_decode_r2_v3",
+        "registers": 72,
+        "shared_static_bytes": 16448,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_qwen38_allreduce_hc_decode_r4_v3",
+        "registers": 90,
+        "shared_static_bytes": 26688,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_qwen38_allreduce_hc_decode_r8_v3",
+        "registers": 127,
+        "shared_static_bytes": 47168,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "comm_qwen38_decode_skew",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_LL_MAX_ROWS",
+        "2"
+      ],
+      [
+        "CHOP_COMM_LL_CLUSTER",
+        "2"
+      ],
+      [
+        "CHOP_COMM_PUSH_CLUSTER",
+        "8"
+      ],
+      [
+        "CHOP_COMM_TWO_SHOT_MIN_RANKS",
+        "4"
+      ],
+      [
+        "CHOP_COMM_ONE_SHOT_BASE",
+        "1048576"
+      ],
+      [
+        "CHOP_COMM_TWO_SHOT_BASE",
+        "5242880"
+      ],
+      [
+        "CHOP_COMM_PHASED_BASE",
+        "8388608"
+      ],
+      [
+        "CHOP_COMM_TWO_SHOT_FLAGS",
+        "82"
+      ],
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ],
+      [
+        "CHOP_COMM_WIDE_MAX_ROWS",
+        "256"
+      ],
+      [
+        "CHOP_COMM_WIDE_BLOCK_ROWS",
+        "16"
+      ],
+      [
+        "CHOP_COMM_WIDE_GATHER_BASE",
+        "5767168"
+      ],
+      [
+        "CHOP_COMM_WIDE_SCATTER_BASE",
+        "8388608"
+      ],
+      [
+        "CHOP_COMM_WIDE_FLAGS",
+        "98"
+      ],
+      [
+        "CHOP_COMM_LL_ROWS_BY_RANKS",
+        "0x0200000002000202ull"
+      ],
+      [
+        "CHOP_COMM_ONESHOT_ROWS_BY_RANKS",
+        "0x1020202010202020ull"
+      ],
+      [
+        "CHOP_QWEN38_LL_MAX_ROWS",
+        "2"
+      ],
+      [
+        "CHOP_QWEN38_HIDDEN",
+        "2560"
+      ],
+      [
+        "CHOP_QWEN38_STREAMS",
+        "4"
+      ],
+      [
+        "CHOP_QWEN38_HC_RANK",
+        "320"
+      ],
+      [
+        "CHOP_COMM_TEST_SKEW_NS",
+        "20000"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_comm_qwen38_skew_allreduce_hc_decode_r2_v2",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual_out",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 2,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 2,
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epochs",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_qwen38_skew_allreduce_hc_decode_r4_v2",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual_out",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 4,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 4,
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epochs",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_qwen38_skew_allreduce_hc_decode_r8_v2",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual_out",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epochs",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_qwen38_skew_allreduce_hc_decode_r2_v3",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual_out",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 2,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 2,
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epochs",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_qwen38_skew_allreduce_hc_decode_r4_v3",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual_out",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 4,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 4,
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epochs",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_qwen38_skew_allreduce_hc_decode_r8_v3",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual_out",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epochs",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "source_closure_sha256": "7f592cad01381b7fbeef8e588d5f072d3c6de9e2af70c38942c66b91a37bcc87",
+    "cubin_sha256": "44c0120f7195404166530093b6a0b9ef03e44dc726f8b6d92bbc4ccddfe2a61c",
+    "resources": [
+      {
+        "symbol": "chop_comm_qwen38_skew_allreduce_hc_decode_r2_v2",
+        "registers": 72,
+        "shared_static_bytes": 13904,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_qwen38_skew_allreduce_hc_decode_r4_v2",
+        "registers": 92,
+        "shared_static_bytes": 16464,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_qwen38_skew_allreduce_hc_decode_r8_v2",
+        "registers": 127,
+        "shared_static_bytes": 21584,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_qwen38_skew_allreduce_hc_decode_r2_v3",
+        "registers": 72,
+        "shared_static_bytes": 16448,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_qwen38_skew_allreduce_hc_decode_r4_v3",
+        "registers": 90,
+        "shared_static_bytes": 26688,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_qwen38_skew_allreduce_hc_decode_r8_v3",
+        "registers": 127,
+        "shared_static_bytes": 47168,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "comm_qwen38_skew",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_LL_MAX_ROWS",
+        "2"
+      ],
+      [
+        "CHOP_COMM_LL_CLUSTER",
+        "2"
+      ],
+      [
+        "CHOP_COMM_PUSH_CLUSTER",
+        "8"
+      ],
+      [
+        "CHOP_COMM_TWO_SHOT_MIN_RANKS",
+        "4"
+      ],
+      [
+        "CHOP_COMM_ONE_SHOT_BASE",
+        "1048576"
+      ],
+      [
+        "CHOP_COMM_TWO_SHOT_BASE",
+        "5242880"
+      ],
+      [
+        "CHOP_COMM_PHASED_BASE",
+        "8388608"
+      ],
+      [
+        "CHOP_COMM_TWO_SHOT_FLAGS",
+        "82"
+      ],
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ],
+      [
+        "CHOP_COMM_WIDE_MAX_ROWS",
+        "256"
+      ],
+      [
+        "CHOP_COMM_WIDE_BLOCK_ROWS",
+        "16"
+      ],
+      [
+        "CHOP_COMM_WIDE_GATHER_BASE",
+        "5767168"
+      ],
+      [
+        "CHOP_COMM_WIDE_SCATTER_BASE",
+        "8388608"
+      ],
+      [
+        "CHOP_COMM_WIDE_FLAGS",
+        "98"
+      ],
+      [
+        "CHOP_COMM_LL_ROWS_BY_RANKS",
+        "0x0200000002000202ull"
+      ],
+      [
+        "CHOP_COMM_ONESHOT_ROWS_BY_RANKS",
+        "0x1020202010202020ull"
+      ],
+      [
+        "CHOP_QWEN38_HIDDEN",
+        "2560"
+      ],
+      [
+        "CHOP_QWEN38_STREAMS",
+        "4"
+      ],
+      [
+        "CHOP_QWEN38_HC_RANK",
+        "320"
+      ],
+      [
+        "CHOP_COMM_TEST_SKEW_NS",
+        "20000"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_comm_qwen38_skew_allreduce_hc_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual_out",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "capacity"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_qwen38_skew_reduce_scatter_v2",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "capacity"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_qwen38_skew_allgather_hc_v2",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual_out",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "capacity"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "source_closure_sha256": "6a009475397768ce2e32b11f3d4f7928c67c9db2a84ad4ac6f0e80774b41bb4b",
+    "cubin_sha256": "92df4ac918d0dcd21619be2db3774d80c0f9faab97d3c65d6c7cefb54f5c3ba9",
+    "resources": [
+      {
+        "symbol": "chop_comm_qwen38_skew_allreduce_hc_v1",
+        "registers": 96,
+        "shared_static_bytes": 1120,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_qwen38_skew_reduce_scatter_v2",
+        "registers": 93,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_qwen38_skew_allgather_hc_v2",
+        "registers": 72,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "zz_norm_weights_v3_legacy_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_LL_MAX_ROWS",
+        "2"
+      ],
+      [
+        "CHOP_COMM_LL_CLUSTER",
+        "2"
+      ],
+      [
+        "CHOP_COMM_PUSH_CLUSTER",
+        "8"
+      ],
+      [
+        "CHOP_COMM_TWO_SHOT_MIN_RANKS",
+        "4"
+      ],
+      [
+        "CHOP_COMM_ONE_SHOT_BASE",
+        "1048576"
+      ],
+      [
+        "CHOP_COMM_TWO_SHOT_BASE",
+        "5242880"
+      ],
+      [
+        "CHOP_COMM_PHASED_BASE",
+        "8388608"
+      ],
+      [
+        "CHOP_COMM_TWO_SHOT_FLAGS",
+        "82"
+      ],
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ],
+      [
+        "CHOP_COMM_WIDE_MAX_ROWS",
+        "256"
+      ],
+      [
+        "CHOP_COMM_WIDE_BLOCK_ROWS",
+        "16"
+      ],
+      [
+        "CHOP_COMM_WIDE_GATHER_BASE",
+        "5767168"
+      ],
+      [
+        "CHOP_COMM_WIDE_SCATTER_BASE",
+        "8388608"
+      ],
+      [
+        "CHOP_COMM_WIDE_FLAGS",
+        "98"
+      ],
+      [
+        "CHOP_COMM_LL_ROWS_BY_RANKS",
+        "0x0200000002000202ull"
+      ],
+      [
+        "CHOP_COMM_ONESHOT_ROWS_BY_RANKS",
+        "0x1020202010202020ull"
+      ],
+      [
+        "CHOP_QWEN38_HIDDEN",
+        "2560"
+      ],
+      [
+        "CHOP_QWEN38_STREAMS",
+        "4"
+      ],
+      [
+        "CHOP_QWEN38_HC_RANK",
+        "320"
+      ],
+      [
+        "CHOP_COMM_TEST_SKEW_NS",
+        "20000"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_lab_norm_comm_legacy_bf16_m0_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual_out",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_lab_norm_comm_legacy_bf16_m1_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual_out",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_lab_norm_comm_legacy_bf16_m2_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual_out",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "normed",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "source_closure_sha256": "ec0b8ef808ec39dda897488ea11172c5bde50a18cfb4205b8f8e7a01d97ec7cf",
+    "cubin_sha256": "e5d23ebe7bcebf491cb279800a0b056e94bfb071fca1820d6dbbb7a50fc3e0d2",
+    "resources": [
+      {
+        "symbol": "chop_lab_norm_comm_legacy_bf16_m0_v1",
+        "registers": 55,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_lab_norm_comm_legacy_bf16_m1_v1",
+        "registers": 56,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_lab_norm_comm_legacy_bf16_m2_v1",
+        "registers": 72,
+        "shared_static_bytes": 1056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

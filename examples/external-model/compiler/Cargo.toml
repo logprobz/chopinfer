@@ -1,0 +1,28 @@
+[package]
+name = "example-compiler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[features]
+# The precision helper prepares direct packages; `runtime-bundle-abi` is
+# for its weight-plan byte-equality test.
+precision-exercise = ["example-contract/precision", "dep:kernel-core", "dep:projection-spec", "dep:runtime-bundle-abi", "dep:serde"]
+
+[[bin]]
+name = "example-compile"
+path = "src/main.rs"
+
+[dependencies]
+example-contract.workspace = true
+model-compiler-sdk.workspace = true
+runtime-bundle.workspace = true
+runtime-weights.workspace = true
+runtime-frontend-contract.workspace = true
+serde_json.workspace = true
+kernel-core = { workspace = true, optional = true, features = ["precision-serde"] }
+projection-spec = { workspace = true, optional = true }
+runtime-bundle-abi = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }

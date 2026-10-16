@@ -1,0 +1,18 @@
+[package]
+name = "runtime-cuda"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[lints]
+workspace = true
+
+[features]
+fake-driver-tests = []
+
+# This crate owns the CUDA Driver API and nothing else. It reads no manifest, no
+# compiled image, and no kernel contract, so it links no workspace crate.
+[dependencies]

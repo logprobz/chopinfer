@@ -1,0 +1,1047 @@
+{
+  "schema": "chopinfer.projection.v1",
+  "namespace": "mimo26",
+  "use_profiles": {
+    "served": [
+      {"phase": "Prefill", "capacity": 8192, "graph": false, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 1}},
+      {"phase": "Decode", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 2}},
+      {"phase": "Decode", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Decode", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Decode", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Decode", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Decode", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 1}},
+      {"phase": "Verify", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 2}},
+      {"phase": "Verify", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Verify", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Verify", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Verify", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Verify", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}}
+    ],
+    "router": [
+      {"phase": "Prefill", "capacity": 8192, "graph": false, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 1}},
+      {"phase": "Decode", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 2}},
+      {"phase": "Decode", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Decode", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Decode", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Decode", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Decode", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 1}},
+      {"phase": "Verify", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 2}},
+      {"phase": "Verify", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Verify", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Verify", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Verify", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Verify", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}}
+    ],
+    "embedding": [
+      {"phase": "Prefill", "capacity": 8192, "graph": false, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 64, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 128, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Decode", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 256, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": null, "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": null, "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": null, "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": null, "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 64, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 128, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}},
+      {"phase": "Verify", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 256, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": null, "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]}}
+    ],
+    "head": [
+      {"phase": "Prefill", "capacity": 8192, "graph": false, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 1}},
+      {"phase": "Decode", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 2}},
+      {"phase": "Decode", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Decode", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Decode", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Decode", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Decode", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 1}},
+      {"phase": "Verify", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 2}},
+      {"phase": "Verify", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Verify", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Verify", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Verify", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Verify", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Prefill", "capacity": 8192, "graph": false, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "mimo26.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "mimo26.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 1}},
+      {"phase": "Decode", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "mimo26.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 2}},
+      {"phase": "Decode", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "mimo26.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Decode", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "mimo26.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Decode", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "mimo26.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Decode", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "mimo26.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Decode", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "mimo26.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "mimo26.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Decode", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": null, "aggregate_verify": null, "output_dtype": "F32", "numerical_contract": "mimo26.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "mimo26.head.f32.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 1}},
+      {"phase": "Verify", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "mimo26.head.f32.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 2}},
+      {"phase": "Verify", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "mimo26.head.f32.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Verify", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "mimo26.head.f32.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Verify", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "mimo26.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Verify", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "mimo26.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Verify", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "mimo26.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "mimo26.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "F32", "numerical_contract": "mimo26.head.f32.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}}
+    ],
+    "dflash-block": [
+      {"phase": "Verify", "capacity": 1, "graph": true, "contract": {"compiled_capacity": 1, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 1}},
+      {"phase": "Verify", "capacity": 2, "graph": true, "contract": {"compiled_capacity": 2, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 2}},
+      {"phase": "Verify", "capacity": 4, "graph": true, "contract": {"compiled_capacity": 4, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 4}},
+      {"phase": "Verify", "capacity": 8, "graph": true, "contract": {"compiled_capacity": 8, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": true, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8}},
+      {"phase": "Verify", "capacity": 16, "graph": true, "contract": {"compiled_capacity": 16, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 16}},
+      {"phase": "Verify", "capacity": 32, "graph": true, "contract": {"compiled_capacity": 32, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 32}},
+      {"phase": "Verify", "capacity": 64, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 128, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}},
+      {"phase": "Verify", "capacity": 256, "graph": true, "contract": {"compiled_capacity": 8192, "row_multiplier": 1, "per_item_verify": 8, "aggregate_verify": 256, "output_dtype": "Bf16", "numerical_contract": "mimo26.source-recipe.v1", "activation": "Bf16", "exact_rows": false, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "chunk_rows": 8192}}
+    ]
+  },
+  "layer_stems": [
+    {"id": "ga", "template": "model.layers.{i}.self_attn", "indices": {"kind": "range", "start": 0, "end": "ga_layers"}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]},
+    {"id": "swa", "template": "model.layers.{i}.self_attn", "indices": {"kind": "range", "start": 0, "end": "swa_layers"}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]},
+    {"id": "mtp", "template": "model.mtp.layers.{i}.self_attn", "indices": {"kind": "range", "start": 0, "end": "mtp_layers"}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "execution": {"indices": [0], "aliases": []}},
+    {"id": "dense", "template": "model.layers.{i}.mlp", "indices": {"kind": "range", "start": 0, "end": "dense_layers"}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]},
+    {"id": "moe", "template": "model.layers.{i}.mlp", "indices": {"kind": "range", "start": "dense_layers", "end": "layers"}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]},
+    {"id": "mtp-mlp", "template": "model.mtp.layers.{i}.mlp", "indices": {"kind": "range", "start": 0, "end": "mtp_layers"}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "execution": {"indices": [0], "aliases": []}},
+    {"id": "input_layernorm", "template": "model.layers.{i}.input_layernorm", "indices": {"kind": "range", "start": 0, "end": "layers"}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]},
+    {"id": "post_attention_layernorm", "template": "model.layers.{i}.post_attention_layernorm", "indices": {"kind": "range", "start": 0, "end": "layers"}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]},
+    {"id": "mtp-enorm", "template": "model.mtp.layers.{i}.enorm", "indices": {"kind": "range", "start": 0, "end": "mtp_layers"}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "execution": {"indices": [0], "aliases": []}},
+    {"id": "mtp-hnorm", "template": "model.mtp.layers.{i}.hnorm", "indices": {"kind": "range", "start": 0, "end": "mtp_layers"}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "execution": {"indices": [0], "aliases": []}},
+    {"id": "mtp-input_layernorm", "template": "model.mtp.layers.{i}.input_layernorm", "indices": {"kind": "range", "start": 0, "end": "mtp_layers"}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "execution": {"indices": [0], "aliases": []}},
+    {"id": "mtp-pre_mlp_layernorm", "template": "model.mtp.layers.{i}.pre_mlp_layernorm", "indices": {"kind": "range", "start": 0, "end": "mtp_layers"}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "execution": {"indices": [0], "aliases": []}},
+    {"id": "mtp-final_layernorm", "template": "model.mtp.layers.{i}.final_layernorm", "indices": {"kind": "range", "start": 0, "end": "mtp_layers"}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "execution": {"indices": [0], "aliases": []}},
+    {"id": "mtp-eh", "template": "model.mtp.layers.{i}", "indices": {"kind": "range", "start": 0, "end": "mtp_layers"}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}], "execution": {"indices": [0], "aliases": []}},
+    {"id": "dflash", "template": "layers.{i}", "indices": {"kind": "range", "start": 0, "end": "dflash_layers"}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]},
+    {"id": "external-0", "template": "audio_encoder.input_local_transformer.layers.{i}", "indices": {"kind": "range", "start": 0, "end": 6}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]},
+    {"id": "external-13", "template": "audio_encoder.projection.mlp.{i}", "indices": {"kind": "range", "start": 2, "end": 3}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]},
+    {"id": "external-14", "template": "audio_encoder.projection.mlp.{i}", "indices": {"kind": "range", "start": 0, "end": 1}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]},
+    {"id": "external-19", "template": "encoder.down_sample_layer.{i}", "indices": {"kind": "range", "start": 0, "end": 1}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]},
+    {"id": "external-24", "template": "encoder.layers.{i}", "indices": {"kind": "range", "start": 0, "end": 24}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]},
+    {"id": "external-39", "template": "encoder.quantizer.vq.layers.{i}", "indices": {"kind": "range", "start": 3, "end": 20}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]},
+    {"id": "external-40", "template": "encoder.quantizer.vq.layers.{i}", "indices": {"kind": "range", "start": 2, "end": 3}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]},
+    {"id": "external-41", "template": "encoder.quantizer.vq.layers.{i}", "indices": {"kind": "range", "start": 0, "end": 2}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]},
+    {"id": "external-42", "template": "speech_embeddings.{i}", "indices": {"kind": "range", "start": 0, "end": 20}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]},
+    {"id": "external-43", "template": "visual.blocks.{i}", "indices": {"kind": "range", "start": 0, "end": 28}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]},
+    {"id": "external-47", "template": "visual.blocks.{i}", "indices": {"kind": "list", "indices": [1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17, 19, 20, 21, 22, 23, 24, 25, 26]}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]},
+    {"id": "external-57", "template": "visual.merger.mlp.{i}", "indices": {"kind": "range", "start": 2, "end": 3}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]},
+    {"id": "external-58", "template": "visual.merger.mlp.{i}", "indices": {"kind": "range", "start": 0, "end": 1}, "support": [{"ranks": [2, 4], "formats": [], "phases": [], "enabled": true}]},
+    {"id": "mtp-attention-adapter", "template": "model.layers.{i}.self_attn", "indices": {"kind": "list", "indices": [1]}, "execution": {"indices": [1], "aliases": [{"execution_index": 1, "source_index": 0, "source_stem": "mtp"}]}},
+    {"id": "mtp-mlp-adapter", "template": "model.layers.{i}.mlp", "indices": {"kind": "list", "indices": [0]}, "execution": {"indices": [0], "aliases": [{"execution_index": 0, "source_index": 0, "source_stem": "mtp-mlp"}]}},
+    {"id": "mtp-input-norm-adapter", "template": "model.layers.{i}.post_attention_layernorm", "indices": {"kind": "list", "indices": [0]}, "execution": {"indices": [0], "aliases": [{"execution_index": 0, "source_index": 0, "source_stem": "mtp-input_layernorm"}]}},
+    {"id": "mtp-pre-mlp-norm-adapter", "template": "model.layers.{i}.post_attention_layernorm", "indices": {"kind": "list", "indices": [1]}, "execution": {"indices": [1], "aliases": [{"execution_index": 1, "source_index": 0, "source_stem": "mtp-pre_mlp_layernorm"}]}},
+    {"id": "mtp-final-norm-adapter", "template": "model.layers.{i}.input_layernorm", "indices": {"kind": "list", "indices": [1]}, "execution": {"indices": [1], "aliases": [{"execution_index": 1, "source_index": 0, "source_stem": "mtp-final_layernorm"}]}}
+  ],
+  "projections": [
+    {
+      "id": "ga.qkv",
+      "source": {"stem": "ga", "tensor": "{stem}.qkv_proj.weight"},
+      "shape": ["ga_qkv_rows", "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {
+        "class": "segmented_heads",
+        "segments": [
+          {"id": "q", "heads": "ga_q_heads", "head_dim": "ga_qk_dim", "ranges": [{"start": 0, "length": "ga_chunk_q_rows"}, {"start": "ga_chunk_rows", "length": "ga_chunk_q_rows"}, {"start": {"op": "product", "factors": [2, "ga_chunk_rows"]}, "length": "ga_chunk_q_rows"}, {"start": {"op": "product", "factors": [3, "ga_chunk_rows"]}, "length": "ga_chunk_q_rows"}]},
+          {"id": "k", "heads": "ga_kv_heads", "head_dim": "ga_qk_dim", "ranges": [{"start": "ga_chunk_q_rows", "length": "ga_chunk_k_rows"}, {"start": {"op": "sum", "terms": ["ga_chunk_rows", "ga_chunk_q_rows"]}, "length": "ga_chunk_k_rows"}, {"start": {"op": "sum", "terms": [{"op": "product", "factors": [2, "ga_chunk_rows"]}, "ga_chunk_q_rows"]}, "length": "ga_chunk_k_rows"}, {"start": {"op": "sum", "terms": [{"op": "product", "factors": [3, "ga_chunk_rows"]}, "ga_chunk_q_rows"]}, "length": "ga_chunk_k_rows"}]},
+          {"id": "v", "heads": "ga_kv_heads", "head_dim": "ga_v_dim", "ranges": [{"start": {"op": "sum", "terms": ["ga_chunk_q_rows", "ga_chunk_k_rows"]}, "length": "ga_chunk_v_rows"}, {"start": {"op": "sum", "terms": ["ga_chunk_rows", "ga_chunk_q_rows", "ga_chunk_k_rows"]}, "length": "ga_chunk_v_rows"}, {"start": {"op": "sum", "terms": [{"op": "product", "factors": [2, "ga_chunk_rows"]}, "ga_chunk_q_rows", "ga_chunk_k_rows"]}, "length": "ga_chunk_v_rows"}, {"start": {"op": "sum", "terms": [{"op": "product", "factors": [3, "ga_chunk_rows"]}, "ga_chunk_q_rows", "ga_chunk_k_rows"]}, "length": "ga_chunk_v_rows"}]}
+        ],
+        "order": {"segments": ["q", "k", "v"]},
+        "tile": 16
+      },
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "parts": [
+        {
+          "id": "chunk-0",
+          "rows": "ga_chunk_rows",
+          "range": {"start": 0, "length": "ga_chunk_rows"},
+          "scale_origin": [0, 0],
+          "head_runs": [{"id": "q", "rows": {"start": 0, "length": "ga_chunk_q_rows"}, "heads": "ga_chunk_q_heads", "head_dim": "ga_qk_dim"}, {"id": "k", "rows": {"start": "ga_chunk_q_rows", "length": "ga_chunk_k_rows"}, "heads": "ga_chunk_kv_heads", "head_dim": "ga_qk_dim"}, {"id": "v", "rows": {"start": {"op": "sum", "terms": ["ga_chunk_q_rows", "ga_chunk_k_rows"]}, "length": "ga_chunk_v_rows"}, "heads": "ga_chunk_kv_heads", "head_dim": "ga_v_dim"}]
+        },
+        {
+          "id": "chunk-1",
+          "rows": "ga_chunk_rows",
+          "range": {"start": "ga_chunk_rows", "length": "ga_chunk_rows"},
+          "scale_origin": [0, 0],
+          "head_runs": [{"id": "q", "rows": {"start": 0, "length": "ga_chunk_q_rows"}, "heads": "ga_chunk_q_heads", "head_dim": "ga_qk_dim"}, {"id": "k", "rows": {"start": "ga_chunk_q_rows", "length": "ga_chunk_k_rows"}, "heads": "ga_chunk_kv_heads", "head_dim": "ga_qk_dim"}, {"id": "v", "rows": {"start": {"op": "sum", "terms": ["ga_chunk_q_rows", "ga_chunk_k_rows"]}, "length": "ga_chunk_v_rows"}, "heads": "ga_chunk_kv_heads", "head_dim": "ga_v_dim"}]
+        },
+        {
+          "id": "chunk-2",
+          "rows": "ga_chunk_rows",
+          "range": {"start": {"op": "product", "factors": [2, "ga_chunk_rows"]}, "length": "ga_chunk_rows"},
+          "scale_origin": [0, 0],
+          "head_runs": [{"id": "q", "rows": {"start": 0, "length": "ga_chunk_q_rows"}, "heads": "ga_chunk_q_heads", "head_dim": "ga_qk_dim"}, {"id": "k", "rows": {"start": "ga_chunk_q_rows", "length": "ga_chunk_k_rows"}, "heads": "ga_chunk_kv_heads", "head_dim": "ga_qk_dim"}, {"id": "v", "rows": {"start": {"op": "sum", "terms": ["ga_chunk_q_rows", "ga_chunk_k_rows"]}, "length": "ga_chunk_v_rows"}, "heads": "ga_chunk_kv_heads", "head_dim": "ga_v_dim"}]
+        },
+        {
+          "id": "chunk-3",
+          "rows": "ga_chunk_rows",
+          "range": {"start": {"op": "product", "factors": [3, "ga_chunk_rows"]}, "length": "ga_chunk_rows"},
+          "scale_origin": [0, 0],
+          "head_runs": [{"id": "q", "rows": {"start": 0, "length": "ga_chunk_q_rows"}, "heads": "ga_chunk_q_heads", "head_dim": "ga_qk_dim"}, {"id": "k", "rows": {"start": "ga_chunk_q_rows", "length": "ga_chunk_k_rows"}, "heads": "ga_chunk_kv_heads", "head_dim": "ga_qk_dim"}, {"id": "v", "rows": {"start": {"op": "sum", "terms": ["ga_chunk_q_rows", "ga_chunk_k_rows"]}, "length": "ga_chunk_v_rows"}, "heads": "ga_chunk_kv_heads", "head_dim": "ga_v_dim"}]
+        }
+      ],
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"},
+          "fp8_block128": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"},
+          "fp8_rows64": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"}
+        }
+      },
+      "source_transforms": [
+        {
+          "id": "mimo26/qkv-scale-regroup.v1",
+          "parameters": {"chunks": 4, "chunk_rows": "ga_chunk_rows", "block_rows": 128, "k_block": 128, "output_group_rows": 64, "rank_counts": [2], "member_order": ["q", "k", "v"], "bypass_ranks": [4], "q_heads": "ga_q_heads", "kv_heads": "ga_kv_heads", "qk_head_dim": "ga_qk_dim", "value_head_dim": "ga_v_dim"},
+          "numerical_contract": "mimo26.qkv-scale-regroup.v1",
+          "inputs": [{"id": "codes", "binding": "codes", "dtype": "Fp8E4M3", "shape": ["ga_qkv_rows", "hidden"], "state": false, "format": "fp8_block128"}, {"id": "scales", "binding": "scales", "dtype": "F32", "shape": ["ga_scale_rows", {"op": "quotient", "numerator": "hidden", "denominator": 128}], "state": false}],
+          "outputs": [
+            {"id": "codes", "binding": "codes", "dtype": "Fp8E4M3", "shape": [{"op": "quotient", "numerator": "ga_qkv_rows", "denominator": "tp"}, "hidden"], "state": false, "format": "fp8_rows64"},
+            {"id": "scales", "binding": "scales", "dtype": "F32", "shape": [{"op": "quotient", "numerator": {"op": "quotient", "numerator": "ga_qkv_rows", "denominator": "tp"}, "denominator": 64}, {"op": "quotient", "numerator": "hidden", "denominator": 128}], "state": false}
+          ]
+        }
+      ],
+      "use_profile": "served"
+    },
+    {
+      "id": "ga.output",
+      "source": {"stem": "ga", "tensor": "{stem}.o_proj.weight"},
+      "shape": ["hidden", "ga_output_k"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "row"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"},
+          "fp8_block128": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"},
+          "fp8_rows64": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"}
+        }
+      },
+      "use_profile": "served"
+    },
+    {
+      "id": "swa.qkv",
+      "source": {"stem": "swa", "tensor": "{stem}.qkv_proj.weight"},
+      "shape": ["swa_qkv_rows", "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {
+        "class": "segmented_heads",
+        "segments": [
+          {"id": "q", "heads": "swa_q_heads", "head_dim": "swa_qk_dim", "ranges": [{"start": 0, "length": "swa_chunk_q_rows"}, {"start": "swa_chunk_rows", "length": "swa_chunk_q_rows"}, {"start": {"op": "product", "factors": [2, "swa_chunk_rows"]}, "length": "swa_chunk_q_rows"}, {"start": {"op": "product", "factors": [3, "swa_chunk_rows"]}, "length": "swa_chunk_q_rows"}]},
+          {"id": "k", "heads": "swa_kv_heads", "head_dim": "swa_qk_dim", "ranges": [{"start": "swa_chunk_q_rows", "length": "swa_chunk_k_rows"}, {"start": {"op": "sum", "terms": ["swa_chunk_rows", "swa_chunk_q_rows"]}, "length": "swa_chunk_k_rows"}, {"start": {"op": "sum", "terms": [{"op": "product", "factors": [2, "swa_chunk_rows"]}, "swa_chunk_q_rows"]}, "length": "swa_chunk_k_rows"}, {"start": {"op": "sum", "terms": [{"op": "product", "factors": [3, "swa_chunk_rows"]}, "swa_chunk_q_rows"]}, "length": "swa_chunk_k_rows"}]},
+          {"id": "v", "heads": "swa_kv_heads", "head_dim": "swa_v_dim", "ranges": [{"start": {"op": "sum", "terms": ["swa_chunk_q_rows", "swa_chunk_k_rows"]}, "length": "swa_chunk_v_rows"}, {"start": {"op": "sum", "terms": ["swa_chunk_rows", "swa_chunk_q_rows", "swa_chunk_k_rows"]}, "length": "swa_chunk_v_rows"}, {"start": {"op": "sum", "terms": [{"op": "product", "factors": [2, "swa_chunk_rows"]}, "swa_chunk_q_rows", "swa_chunk_k_rows"]}, "length": "swa_chunk_v_rows"}, {"start": {"op": "sum", "terms": [{"op": "product", "factors": [3, "swa_chunk_rows"]}, "swa_chunk_q_rows", "swa_chunk_k_rows"]}, "length": "swa_chunk_v_rows"}]}
+        ],
+        "order": {"segments": ["q", "k", "v"]},
+        "tile": 16
+      },
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "parts": [
+        {
+          "id": "chunk-0",
+          "rows": "swa_chunk_rows",
+          "range": {"start": 0, "length": "swa_chunk_rows"},
+          "scale_origin": [0, 0],
+          "head_runs": [{"id": "q", "rows": {"start": 0, "length": "swa_chunk_q_rows"}, "heads": "swa_chunk_q_heads", "head_dim": "swa_qk_dim"}, {"id": "k", "rows": {"start": "swa_chunk_q_rows", "length": "swa_chunk_k_rows"}, "heads": "swa_chunk_kv_heads", "head_dim": "swa_qk_dim"}, {"id": "v", "rows": {"start": {"op": "sum", "terms": ["swa_chunk_q_rows", "swa_chunk_k_rows"]}, "length": "swa_chunk_v_rows"}, "heads": "swa_chunk_kv_heads", "head_dim": "swa_v_dim"}]
+        },
+        {
+          "id": "chunk-1",
+          "rows": "swa_chunk_rows",
+          "range": {"start": "swa_chunk_rows", "length": "swa_chunk_rows"},
+          "scale_origin": [0, 0],
+          "head_runs": [{"id": "q", "rows": {"start": 0, "length": "swa_chunk_q_rows"}, "heads": "swa_chunk_q_heads", "head_dim": "swa_qk_dim"}, {"id": "k", "rows": {"start": "swa_chunk_q_rows", "length": "swa_chunk_k_rows"}, "heads": "swa_chunk_kv_heads", "head_dim": "swa_qk_dim"}, {"id": "v", "rows": {"start": {"op": "sum", "terms": ["swa_chunk_q_rows", "swa_chunk_k_rows"]}, "length": "swa_chunk_v_rows"}, "heads": "swa_chunk_kv_heads", "head_dim": "swa_v_dim"}]
+        },
+        {
+          "id": "chunk-2",
+          "rows": "swa_chunk_rows",
+          "range": {"start": {"op": "product", "factors": [2, "swa_chunk_rows"]}, "length": "swa_chunk_rows"},
+          "scale_origin": [0, 0],
+          "head_runs": [{"id": "q", "rows": {"start": 0, "length": "swa_chunk_q_rows"}, "heads": "swa_chunk_q_heads", "head_dim": "swa_qk_dim"}, {"id": "k", "rows": {"start": "swa_chunk_q_rows", "length": "swa_chunk_k_rows"}, "heads": "swa_chunk_kv_heads", "head_dim": "swa_qk_dim"}, {"id": "v", "rows": {"start": {"op": "sum", "terms": ["swa_chunk_q_rows", "swa_chunk_k_rows"]}, "length": "swa_chunk_v_rows"}, "heads": "swa_chunk_kv_heads", "head_dim": "swa_v_dim"}]
+        },
+        {
+          "id": "chunk-3",
+          "rows": "swa_chunk_rows",
+          "range": {"start": {"op": "product", "factors": [3, "swa_chunk_rows"]}, "length": "swa_chunk_rows"},
+          "scale_origin": [0, 0],
+          "head_runs": [{"id": "q", "rows": {"start": 0, "length": "swa_chunk_q_rows"}, "heads": "swa_chunk_q_heads", "head_dim": "swa_qk_dim"}, {"id": "k", "rows": {"start": "swa_chunk_q_rows", "length": "swa_chunk_k_rows"}, "heads": "swa_chunk_kv_heads", "head_dim": "swa_qk_dim"}, {"id": "v", "rows": {"start": {"op": "sum", "terms": ["swa_chunk_q_rows", "swa_chunk_k_rows"]}, "length": "swa_chunk_v_rows"}, "heads": "swa_chunk_kv_heads", "head_dim": "swa_v_dim"}]
+        }
+      ],
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"},
+          "fp8_block128": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"},
+          "fp8_rows64": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"}
+        }
+      },
+      "source_transforms": [
+        {
+          "id": "mimo26/qkv-scale-regroup.v1",
+          "parameters": {"chunks": 4, "chunk_rows": "swa_chunk_rows", "block_rows": 128, "k_block": 128, "output_group_rows": 64, "rank_counts": [2], "member_order": ["q", "k", "v"], "bypass_ranks": [4], "q_heads": "swa_q_heads", "kv_heads": "swa_kv_heads", "qk_head_dim": "swa_qk_dim", "value_head_dim": "swa_v_dim"},
+          "numerical_contract": "mimo26.qkv-scale-regroup.v1",
+          "inputs": [{"id": "codes", "binding": "codes", "dtype": "Fp8E4M3", "shape": ["swa_qkv_rows", "hidden"], "state": false, "format": "fp8_block128"}, {"id": "scales", "binding": "scales", "dtype": "F32", "shape": ["swa_scale_rows", {"op": "quotient", "numerator": "hidden", "denominator": 128}], "state": false}],
+          "outputs": [
+            {"id": "codes", "binding": "codes", "dtype": "Fp8E4M3", "shape": [{"op": "quotient", "numerator": "swa_qkv_rows", "denominator": "tp"}, "hidden"], "state": false, "format": "fp8_rows64"},
+            {"id": "scales", "binding": "scales", "dtype": "F32", "shape": [{"op": "quotient", "numerator": {"op": "quotient", "numerator": "swa_qkv_rows", "denominator": "tp"}, "denominator": 64}, {"op": "quotient", "numerator": "hidden", "denominator": 128}], "state": false}
+          ]
+        }
+      ],
+      "use_profile": "served"
+    },
+    {
+      "id": "swa.output",
+      "source": {"stem": "swa", "tensor": "{stem}.o_proj.weight"},
+      "shape": ["hidden", "swa_output_k"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "row"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"},
+          "fp8_block128": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"},
+          "fp8_rows64": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"}
+        }
+      },
+      "use_profile": "served"
+    },
+    {
+      "id": "mtp.qkv",
+      "source": {"stem": "mtp", "tensor": "{stem}.qkv_proj.weight"},
+      "shape": ["swa_qkv_rows", "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {
+        "class": "segmented_heads",
+        "segments": [
+          {"id": "q", "heads": "swa_q_heads", "head_dim": "swa_qk_dim", "ranges": [{"start": 0, "length": "swa_chunk_q_rows"}, {"start": "swa_chunk_rows", "length": "swa_chunk_q_rows"}, {"start": {"op": "product", "factors": [2, "swa_chunk_rows"]}, "length": "swa_chunk_q_rows"}, {"start": {"op": "product", "factors": [3, "swa_chunk_rows"]}, "length": "swa_chunk_q_rows"}]},
+          {"id": "k", "heads": "swa_kv_heads", "head_dim": "swa_qk_dim", "ranges": [{"start": "swa_chunk_q_rows", "length": "swa_chunk_k_rows"}, {"start": {"op": "sum", "terms": ["swa_chunk_rows", "swa_chunk_q_rows"]}, "length": "swa_chunk_k_rows"}, {"start": {"op": "sum", "terms": [{"op": "product", "factors": [2, "swa_chunk_rows"]}, "swa_chunk_q_rows"]}, "length": "swa_chunk_k_rows"}, {"start": {"op": "sum", "terms": [{"op": "product", "factors": [3, "swa_chunk_rows"]}, "swa_chunk_q_rows"]}, "length": "swa_chunk_k_rows"}]},
+          {"id": "v", "heads": "swa_kv_heads", "head_dim": "swa_v_dim", "ranges": [{"start": {"op": "sum", "terms": ["swa_chunk_q_rows", "swa_chunk_k_rows"]}, "length": "swa_chunk_v_rows"}, {"start": {"op": "sum", "terms": ["swa_chunk_rows", "swa_chunk_q_rows", "swa_chunk_k_rows"]}, "length": "swa_chunk_v_rows"}, {"start": {"op": "sum", "terms": [{"op": "product", "factors": [2, "swa_chunk_rows"]}, "swa_chunk_q_rows", "swa_chunk_k_rows"]}, "length": "swa_chunk_v_rows"}, {"start": {"op": "sum", "terms": [{"op": "product", "factors": [3, "swa_chunk_rows"]}, "swa_chunk_q_rows", "swa_chunk_k_rows"]}, "length": "swa_chunk_v_rows"}]}
+        ],
+        "order": {"segments": ["q", "k", "v"]},
+        "tile": 16
+      },
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "parts": [
+        {
+          "id": "chunk-0",
+          "rows": "swa_chunk_rows",
+          "range": {"start": 0, "length": "swa_chunk_rows"},
+          "scale_origin": [0, 0],
+          "head_runs": [{"id": "q", "rows": {"start": 0, "length": "swa_chunk_q_rows"}, "heads": "swa_chunk_q_heads", "head_dim": "swa_qk_dim"}, {"id": "k", "rows": {"start": "swa_chunk_q_rows", "length": "swa_chunk_k_rows"}, "heads": "swa_chunk_kv_heads", "head_dim": "swa_qk_dim"}, {"id": "v", "rows": {"start": {"op": "sum", "terms": ["swa_chunk_q_rows", "swa_chunk_k_rows"]}, "length": "swa_chunk_v_rows"}, "heads": "swa_chunk_kv_heads", "head_dim": "swa_v_dim"}]
+        },
+        {
+          "id": "chunk-1",
+          "rows": "swa_chunk_rows",
+          "range": {"start": "swa_chunk_rows", "length": "swa_chunk_rows"},
+          "scale_origin": [0, 0],
+          "head_runs": [{"id": "q", "rows": {"start": 0, "length": "swa_chunk_q_rows"}, "heads": "swa_chunk_q_heads", "head_dim": "swa_qk_dim"}, {"id": "k", "rows": {"start": "swa_chunk_q_rows", "length": "swa_chunk_k_rows"}, "heads": "swa_chunk_kv_heads", "head_dim": "swa_qk_dim"}, {"id": "v", "rows": {"start": {"op": "sum", "terms": ["swa_chunk_q_rows", "swa_chunk_k_rows"]}, "length": "swa_chunk_v_rows"}, "heads": "swa_chunk_kv_heads", "head_dim": "swa_v_dim"}]
+        },
+        {
+          "id": "chunk-2",
+          "rows": "swa_chunk_rows",
+          "range": {"start": {"op": "product", "factors": [2, "swa_chunk_rows"]}, "length": "swa_chunk_rows"},
+          "scale_origin": [0, 0],
+          "head_runs": [{"id": "q", "rows": {"start": 0, "length": "swa_chunk_q_rows"}, "heads": "swa_chunk_q_heads", "head_dim": "swa_qk_dim"}, {"id": "k", "rows": {"start": "swa_chunk_q_rows", "length": "swa_chunk_k_rows"}, "heads": "swa_chunk_kv_heads", "head_dim": "swa_qk_dim"}, {"id": "v", "rows": {"start": {"op": "sum", "terms": ["swa_chunk_q_rows", "swa_chunk_k_rows"]}, "length": "swa_chunk_v_rows"}, "heads": "swa_chunk_kv_heads", "head_dim": "swa_v_dim"}]
+        },
+        {
+          "id": "chunk-3",
+          "rows": "swa_chunk_rows",
+          "range": {"start": {"op": "product", "factors": [3, "swa_chunk_rows"]}, "length": "swa_chunk_rows"},
+          "scale_origin": [0, 0],
+          "head_runs": [{"id": "q", "rows": {"start": 0, "length": "swa_chunk_q_rows"}, "heads": "swa_chunk_q_heads", "head_dim": "swa_qk_dim"}, {"id": "k", "rows": {"start": "swa_chunk_q_rows", "length": "swa_chunk_k_rows"}, "heads": "swa_chunk_kv_heads", "head_dim": "swa_qk_dim"}, {"id": "v", "rows": {"start": {"op": "sum", "terms": ["swa_chunk_q_rows", "swa_chunk_k_rows"]}, "length": "swa_chunk_v_rows"}, "heads": "swa_chunk_kv_heads", "head_dim": "swa_v_dim"}]
+        }
+      ],
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"},
+          "fp8_block128": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"},
+          "fp8_rows64": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"}
+        }
+      },
+      "source_transforms": [
+        {
+          "id": "mimo26/qkv-scale-regroup.v1",
+          "parameters": {"chunks": 4, "chunk_rows": "swa_chunk_rows", "block_rows": 128, "k_block": 128, "output_group_rows": 64, "rank_counts": [2], "member_order": ["q", "k", "v"], "bypass_ranks": [4], "q_heads": "swa_q_heads", "kv_heads": "swa_kv_heads", "qk_head_dim": "swa_qk_dim", "value_head_dim": "swa_v_dim"},
+          "numerical_contract": "mimo26.qkv-scale-regroup.v1",
+          "inputs": [{"id": "codes", "binding": "codes", "dtype": "Fp8E4M3", "shape": ["swa_qkv_rows", "hidden"], "state": false, "format": "fp8_block128"}, {"id": "scales", "binding": "scales", "dtype": "F32", "shape": ["swa_scale_rows", {"op": "quotient", "numerator": "hidden", "denominator": 128}], "state": false}],
+          "outputs": [
+            {"id": "codes", "binding": "codes", "dtype": "Fp8E4M3", "shape": [{"op": "quotient", "numerator": "swa_qkv_rows", "denominator": "tp"}, "hidden"], "state": false, "format": "fp8_rows64"},
+            {"id": "scales", "binding": "scales", "dtype": "F32", "shape": [{"op": "quotient", "numerator": {"op": "quotient", "numerator": "swa_qkv_rows", "denominator": "tp"}, "denominator": 64}, {"op": "quotient", "numerator": "hidden", "denominator": 128}], "state": false}
+          ]
+        }
+      ],
+      "use_profile": "served"
+    },
+    {
+      "id": "mtp.output",
+      "source": {"stem": "mtp", "tensor": "{stem}.o_proj.weight"},
+      "shape": ["hidden", "swa_output_k"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "row"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"},
+          "fp8_block128": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"},
+          "fp8_rows64": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"}
+        }
+      },
+      "use_profile": "served"
+    },
+    {
+      "id": "dense.mlp.gate-up",
+      "source": {"stem": "dense", "tensor": "{stem}.{operand}.weight"},
+      "shape": ["dense_intermediate", "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "column"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": "ConcatenatedHalves", "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"},
+          "fp8_block128": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"},
+          "fp8_rows64": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"}
+        },
+        "implementation": {
+          "id": "mimo26/legacy-fused-dense.v1",
+          "numerical_contract": "mimo26.source-recipe.v1",
+          "parameters": {"operation": "dense.mlp.gate-up", "rows": "dense_intermediate", "k": "hidden", "scale_order": "block_scale_after_mma"},
+          "inputs": [{"id": "activation", "binding": "activation", "dtype": "Bf16", "shape": [1, "hidden"], "state": false}],
+          "outputs": [{"id": "output", "binding": "output", "dtype": "Bf16", "shape": [1, "dense_intermediate"], "state": false}]
+        }
+      },
+      "stem": "dense",
+      "operands": ["gate_proj", "up_proj"],
+      "use_profile": "served"
+    },
+    {
+      "id": "dense.down",
+      "source": {"stem": "dense", "tensor": "{stem}.down_proj.weight"},
+      "shape": ["hidden", "dense_intermediate"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "row"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"},
+          "fp8_block128": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"},
+          "fp8_rows64": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"}
+        }
+      },
+      "use_profile": "served"
+    },
+    {
+      "id": "moe.experts.gate-up",
+      "source": {"stem": "moe", "tensor": "{stem}.experts.{expert}.{operand}.weight"},
+      "shape": ["expert_intermediate", "hidden"],
+      "kind": {"kind": "expert_bank", "experts": "experts", "top_k": "top_k"},
+      "split": {"axis": "rows", "tile": 16, "class": "expert_sharded"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": "ConcatenatedHalves", "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"}
+        }
+      },
+      "stem": "moe",
+      "operands": ["gate_proj", "up_proj"],
+      "use_profile": "served"
+    },
+    {
+      "id": "moe.experts.down",
+      "source": {"stem": "moe", "tensor": "{stem}.experts.{expert}.down_proj.weight"},
+      "shape": ["hidden", "expert_intermediate"],
+      "kind": {"kind": "expert_bank", "experts": "experts", "top_k": "top_k"},
+      "split": {"axis": "k", "tile": 32, "class": "expert_sharded"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": true},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [
+          {
+            "id": "reduce",
+            "contract": {
+              "id": "mimo26/legacy-combine.v1",
+              "parameters": {"route_order": "ascending-route", "rank_order": "ascending-rank", "route_rounding": "bf16-before-combine", "residual_rounding": "once-after-sum"},
+              "numerical_contract": "mimo26.combine.v1",
+              "inputs": [{"id": "routes", "binding": "routes", "dtype": "Bf16", "shape": [8, "hidden"], "state": false}],
+              "outputs": [{"id": "hidden", "binding": "hidden", "dtype": "Bf16", "shape": [1, "hidden"], "state": false}]
+            },
+            "phases": ["Prefill", "Decode", "Verify"],
+            "mutates": []
+          }
+        ],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"}
+        }
+      },
+      "use_profile": "served"
+    },
+    {
+      "id": "router",
+      "source": {"stem": "moe", "tensor": "{stem}.gate.weight"},
+      "shape": ["experts", "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [
+          {
+            "id": "route",
+            "contract": {
+              "id": "mimo26/legacy-routing.v1",
+              "parameters": {"experts": "experts", "top_k": 8, "capacities": [1, 2, 4, 8], "score": "sigmoid-correction", "ties": "lower-index"},
+              "numerical_contract": "mimo26.routing.v1",
+              "inputs": [{"id": "activation", "binding": "activation", "dtype": "Bf16", "shape": [32, "hidden"], "state": false}, {"id": "bias", "binding": "bias", "dtype": "F32", "shape": ["experts"], "state": false}],
+              "outputs": [{"id": "ids", "binding": "ids", "dtype": "I32", "shape": [32, 8], "state": false}, {"id": "weights", "binding": "weights", "dtype": "F32", "shape": [32, 8], "state": false}]
+            },
+            "phases": ["Prefill", "Decode", "Verify"],
+            "mutates": []
+          }
+        ],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"},
+          "fp8_block128": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"},
+          "fp8_rows64": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"}
+        }
+      },
+      "use_profile": "router"
+    },
+    {
+      "id": "mtp-mlp.mlp.gate-up",
+      "source": {"stem": "mtp-mlp", "tensor": "{stem}.{operand}.weight"},
+      "shape": ["dense_intermediate", "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "column"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": "ConcatenatedHalves", "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"},
+          "fp8_block128": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"},
+          "fp8_rows64": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"}
+        },
+        "implementation": {
+          "id": "mimo26/legacy-fused-dense.v1",
+          "numerical_contract": "mimo26.source-recipe.v1",
+          "parameters": {"operation": "mtp-mlp.mlp.gate-up", "rows": "dense_intermediate", "k": "hidden", "scale_order": "block_scale_after_mma"},
+          "inputs": [{"id": "activation", "binding": "activation", "dtype": "Bf16", "shape": [1, "hidden"], "state": false}],
+          "outputs": [{"id": "output", "binding": "output", "dtype": "Bf16", "shape": [1, "dense_intermediate"], "state": false}]
+        }
+      },
+      "stem": "mtp-mlp",
+      "operands": ["gate_proj", "up_proj"],
+      "use_profile": "served"
+    },
+    {
+      "id": "mtp-mlp.down",
+      "source": {"stem": "mtp-mlp", "tensor": "{stem}.down_proj.weight"},
+      "shape": ["hidden", "dense_intermediate"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "row"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"},
+          "fp8_block128": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"},
+          "fp8_rows64": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"}
+        }
+      },
+      "use_profile": "served"
+    },
+    {
+      "id": "mtp.eh",
+      "source": {"stem": "mtp-eh", "tensor": "{stem}.eh_proj.weight"},
+      "shape": ["hidden", {"op": "product", "factors": [2, "hidden"]}],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "row"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"},
+          "fp8_block128": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"},
+          "fp8_rows64": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"}
+        }
+      },
+      "inputs": [
+        {
+          "operand": "weight",
+          "binding": "eh-input",
+          "segments": [
+            {"source": "normalized-embedding", "origin": 0, "length": "hidden", "selection": {"select": "rank_k", "projection": "mtp.eh", "operand": "weight"}},
+            {"source": "normalized-hidden", "origin": "hidden", "length": "hidden", "selection": {"select": "rank_k", "projection": "mtp.eh", "operand": "weight"}}
+          ]
+        }
+      ],
+      "use_profile": "served"
+    },
+    {
+      "id": "embedding",
+      "source": {"tensor": "model.embed_tokens.weight"},
+      "shape": ["vocab", "hidden"],
+      "kind": {"kind": "lookup_table"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"},
+          "fp8_block128": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"},
+          "fp8_rows64": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"}
+        }
+      },
+      "use_profile": "embedding"
+    },
+    {
+      "id": "head",
+      "source": {"tensor": "lm_head.weight"},
+      "shape": ["vocab", "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "column"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"},
+          "fp8_block128": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"},
+          "fp8_rows64": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"}
+        }
+      },
+      "use_profile": "head"
+    },
+    {
+      "id": "dflash.q",
+      "source": {"stem": "dflash", "tensor": "{stem}.self_attn.q_proj.weight"},
+      "shape": ["dflash_q_rows", "dflash_hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "column"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"},
+          "fp8_block128": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"},
+          "fp8_rows64": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"}
+        }
+      },
+      "use_profile": "dflash-block"
+    },
+    {
+      "id": "dflash.k",
+      "source": {"stem": "dflash", "tensor": "{stem}.self_attn.k_proj.weight"},
+      "shape": ["dflash_kv_rows", "dflash_hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "column"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"},
+          "fp8_block128": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"},
+          "fp8_rows64": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"}
+        }
+      },
+      "use_profile": "dflash-block"
+    },
+    {
+      "id": "dflash.v",
+      "source": {"stem": "dflash", "tensor": "{stem}.self_attn.v_proj.weight"},
+      "shape": ["dflash_v_rows", "dflash_hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "column"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"},
+          "fp8_block128": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"},
+          "fp8_rows64": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"}
+        }
+      },
+      "use_profile": "dflash-block"
+    },
+    {
+      "id": "dflash.output",
+      "source": {"stem": "dflash", "tensor": "{stem}.self_attn.o_proj.weight"},
+      "shape": ["dflash_hidden", "dflash_output_k"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "row"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"},
+          "fp8_block128": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"},
+          "fp8_rows64": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"}
+        }
+      },
+      "use_profile": "dflash-block"
+    },
+    {
+      "id": "dflash.mlp.gate-up",
+      "source": {"stem": "dflash", "tensor": "{stem}.mlp.{operand}.weight"},
+      "shape": ["dflash_intermediate", "dflash_hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "column"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": "ConcatenatedHalves", "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"},
+          "fp8_block128": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"},
+          "fp8_rows64": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"}
+        },
+        "implementation": {
+          "id": "mimo26/legacy-fused-dense.v1",
+          "numerical_contract": "mimo26.source-recipe.v1",
+          "parameters": {"operation": "dflash.mlp.gate-up", "rows": "dflash_intermediate", "k": "dflash_hidden", "scale_order": "scale_then_code"},
+          "inputs": [{"id": "activation", "binding": "activation", "dtype": "Bf16", "shape": [1, "dflash_hidden"], "state": false}],
+          "outputs": [{"id": "output", "binding": "output", "dtype": "Bf16", "shape": [1, "dflash_intermediate"], "state": false}]
+        }
+      },
+      "stem": "dflash",
+      "operands": ["gate_proj", "up_proj"],
+      "use_profile": "dflash-block"
+    },
+    {
+      "id": "dflash.down",
+      "source": {"stem": "dflash", "tensor": "{stem}.mlp.down_proj.weight"},
+      "shape": ["dflash_hidden", "dflash_intermediate"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "row"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"},
+          "fp8_block128": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"},
+          "fp8_rows64": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"}
+        }
+      },
+      "use_profile": "dflash-block"
+    },
+    {
+      "id": "dflash.qkv",
+      "shape": ["dflash_qkv_rows", "dflash_hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "column"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"},
+          "fp8_block128": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"},
+          "fp8_rows64": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"}
+        }
+      },
+      "assembly": [
+        {"projection": "dflash.q", "layer": "current", "operand": "weight", "rows": {"start": 0, "length": "dflash_q_rows"}, "coordinates": "global", "inherit_split": true},
+        {"projection": "dflash.k", "layer": "current", "operand": "weight", "rows": {"start": 0, "length": "dflash_kv_rows"}, "coordinates": "global", "inherit_split": true},
+        {"projection": "dflash.v", "layer": "current", "operand": "weight", "rows": {"start": 0, "length": "dflash_v_rows"}, "coordinates": "global", "inherit_split": true}
+      ],
+      "source": {"stem": "dflash", "tensor": "{stem}.self_attn.qkv_proj.weight"},
+      "use_profile": "dflash-block"
+    },
+    {
+      "id": "dflash.context-kv",
+      "source": {"tensor": "context_kv_proj.weight"},
+      "shape": ["dflash_context_kv_rows", "dflash_hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "column"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"},
+          "fp8_block128": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"},
+          "fp8_rows64": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"}
+        }
+      },
+      "assembly": [
+        {"projection": "dflash.k", "layer": 0, "operand": null, "rows": {"start": 0, "length": "dflash_kv_rows"}, "coordinates": "global", "inherit_split": true},
+        {"projection": "dflash.v", "layer": 0, "operand": null, "rows": {"start": 0, "length": "dflash_v_rows"}, "coordinates": "global", "inherit_split": true}
+      ],
+      "use_profile": "served"
+    },
+    {
+      "id": "dflash.fc",
+      "source": {"tensor": "fc.weight"},
+      "shape": ["dflash_hidden", "dflash_fc_k"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "row"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scaled_weight"},
+          "fp8_block128": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"},
+          "fp8_rows64": {"numerical_contract": "mimo26.source-recipe.v1", "a16_recipe": "scale_after_block_mma"}
+        }
+      },
+      "use_profile": "served"
+    },
+    {
+      "shape": ["swa_qkv_rows", "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {
+        "class": "segmented_heads",
+        "segments": [
+          {"id": "q", "heads": "swa_q_heads", "head_dim": "swa_qk_dim", "ranges": [{"start": 0, "length": "swa_chunk_q_rows"}, {"start": "swa_chunk_rows", "length": "swa_chunk_q_rows"}, {"start": {"op": "product", "factors": [2, "swa_chunk_rows"]}, "length": "swa_chunk_q_rows"}, {"start": {"op": "product", "factors": [3, "swa_chunk_rows"]}, "length": "swa_chunk_q_rows"}]},
+          {"id": "k", "heads": "swa_kv_heads", "head_dim": "swa_qk_dim", "ranges": [{"start": "swa_chunk_q_rows", "length": "swa_chunk_k_rows"}, {"start": {"op": "sum", "terms": ["swa_chunk_rows", "swa_chunk_q_rows"]}, "length": "swa_chunk_k_rows"}, {"start": {"op": "sum", "terms": [{"op": "product", "factors": [2, "swa_chunk_rows"]}, "swa_chunk_q_rows"]}, "length": "swa_chunk_k_rows"}, {"start": {"op": "sum", "terms": [{"op": "product", "factors": [3, "swa_chunk_rows"]}, "swa_chunk_q_rows"]}, "length": "swa_chunk_k_rows"}]},
+          {"id": "v", "heads": "swa_kv_heads", "head_dim": "swa_v_dim", "ranges": [{"start": {"op": "sum", "terms": ["swa_chunk_q_rows", "swa_chunk_k_rows"]}, "length": "swa_chunk_v_rows"}, {"start": {"op": "sum", "terms": ["swa_chunk_rows", "swa_chunk_q_rows", "swa_chunk_k_rows"]}, "length": "swa_chunk_v_rows"}, {"start": {"op": "sum", "terms": [{"op": "product", "factors": [2, "swa_chunk_rows"]}, "swa_chunk_q_rows", "swa_chunk_k_rows"]}, "length": "swa_chunk_v_rows"}, {"start": {"op": "sum", "terms": [{"op": "product", "factors": [3, "swa_chunk_rows"]}, "swa_chunk_q_rows", "swa_chunk_k_rows"]}, "length": "swa_chunk_v_rows"}]}
+        ],
+        "order": {"segments": ["q", "k", "v"]},
+        "tile": 16
+      },
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "use_profile": "served",
+      "id": "mtp.attention-adapter.qkv",
+      "stem": "mtp-attention-adapter",
+      "assembly": [{"projection": "mtp.qkv", "layer": 0, "operand": null, "rows": {"start": 0, "length": "swa_qkv_rows"}, "coordinates": "global", "inherit_split": true}]
+    },
+    {
+      "shape": ["hidden", "swa_output_k"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "row"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "use_profile": "served",
+      "id": "mtp.attention-adapter.output",
+      "stem": "mtp-attention-adapter",
+      "assembly": [{"projection": "mtp.output", "layer": 0, "operand": null, "rows": {"start": 0, "length": "hidden"}, "coordinates": "global", "inherit_split": true}]
+    },
+    {
+      "shape": ["dense_intermediate", "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "column"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": "ConcatenatedHalves", "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "use_profile": "served",
+      "id": "mtp.mlp-adapter.gate-up",
+      "stem": "mtp-mlp-adapter",
+      "operands": ["gate_proj", "up_proj"],
+      "assembly": [{"projection": "mtp-mlp.mlp.gate-up", "layer": 0, "operand": null, "rows": {"start": 0, "length": "dense_intermediate"}, "coordinates": "global", "inherit_split": true}]
+    },
+    {
+      "shape": ["hidden", "dense_intermediate"],
+      "kind": {"kind": "dense"},
+      "split": {"tile": 16, "class": "row"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "use_profile": "served",
+      "id": "mtp.mlp-adapter.down",
+      "stem": "mtp-mlp-adapter",
+      "assembly": [{"projection": "mtp-mlp.down", "layer": 0, "operand": null, "rows": {"start": 0, "length": "hidden"}, "coordinates": "global", "inherit_split": true}]
+    },
+    {
+      "shape": ["vocab", "hidden"],
+      "kind": {"kind": "lookup_table"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "mimo26.source-recipe.v1",
+      "id": "dflash.embedding",
+      "assembly": [{"projection": "embedding", "layer": null, "operand": "weight", "rows": {"start": 0, "length": "vocab"}, "coordinates": "global", "inherit_split": true}],
+      "composition": {
+        "pre": [],
+        "post": [
+          {
+            "id": "dflash-mask",
+            "contract": {
+              "id": "mimo26/dflash-mask.v1",
+              "parameters": {
+                "source": "mask_embedding.pt",
+                "width": 4096,
+                "format": "bf16-archive",
+                "adapter": {
+                  "contract": "mimo26/dflash-mask.v1",
+                  "execution": {"kind": "standalone", "symbol": "chop_mimo_dflash_mask_rows_v1"},
+                  "facts": {
+                    "positions": {"kind": "binding", "value": {"view": "positions", "dtype": "I32", "interpretation": null, "offset_bytes": 0, "stride_bytes": null}},
+                    "prefix_len": {"kind": "binding", "value": {"view": "prefix_len", "dtype": "I32", "interpretation": null, "offset_bytes": 0, "stride_bytes": null}},
+                    "token_batch": {"kind": "binding", "value": {"view": "token_batch", "dtype": "I32", "interpretation": null, "offset_bytes": 0, "stride_bytes": null}},
+                    "live_tokens": {"kind": "binding", "value": {"view": "live_tokens", "dtype": "I32", "interpretation": "unsigned", "offset_bytes": 0, "stride_bytes": null}}
+                  }
+                }
+              },
+              "numerical_contract": "mimo26.dflash-mask.v1",
+              "inputs": [{"id": "activation", "binding": "activation", "dtype": "Bf16", "shape": [256, "hidden"], "state": false}, {"id": "mask", "binding": "mask", "dtype": "Bf16", "shape": [4096], "state": false}],
+              "outputs": [{"id": "activation", "binding": "activation", "dtype": "Bf16", "shape": [256, "hidden"], "state": false}]
+            },
+            "phases": ["Verify"],
+            "mutates": []
+          }
+        ]
+      },
+      "use_profile": "dflash-block"
+    }
+  ],
+  "fusion_groups": [],
+  "side_tensors": [
+    {"id": "swa.sink", "source": {"stem": "swa", "tensor": "{stem}.attention_sink_bias"}, "shape": ["swa_q_heads"], "kind": "sink", "dtypes": ["Bf16"], "consumer": "swa.qkv", "placement": {"axis": 0, "split": {"class": "column", "tile": 1}}},
+    {"id": "mtp.sink", "source": {"stem": "mtp", "tensor": "{stem}.attention_sink_bias"}, "shape": ["swa_q_heads"], "kind": "sink", "dtypes": ["Bf16"], "consumer": "mtp.qkv", "placement": {"axis": 0, "split": {"class": "column", "tile": 1}}},
+    {"id": "router.bias", "source": {"stem": "moe", "tensor": "{stem}.gate.e_score_correction_bias"}, "shape": ["experts"], "kind": "bias", "dtypes": ["F32"], "consumer": "router"},
+    {"id": "input_layernorm.weight", "source": {"stem": "input_layernorm", "tensor": "{stem}.weight"}, "shape": ["hidden"], "kind": "norm", "consumer": {"kernel": "row.ordered_rmsnorm"}, "dtypes": ["Bf16"]},
+    {"id": "post_attention_layernorm.weight", "source": {"stem": "post_attention_layernorm", "tensor": "{stem}.weight"}, "shape": ["hidden"], "kind": "norm", "consumer": {"kernel": "mlp.residual_rmsnorm"}, "dtypes": ["Bf16"]},
+    {"id": "mtp.enorm", "source": {"stem": "mtp-enorm", "tensor": "{stem}.weight"}, "shape": ["hidden"], "kind": "norm", "consumer": {"kernel": "row.ordered_rmsnorm"}, "dtypes": ["Bf16"]},
+    {"id": "mtp.hnorm", "source": {"stem": "mtp-hnorm", "tensor": "{stem}.weight"}, "shape": ["hidden"], "kind": "norm", "consumer": {"kernel": "row.ordered_rmsnorm"}, "dtypes": ["Bf16"]},
+    {"id": "mtp.input_layernorm", "source": {"stem": "mtp-input_layernorm", "tensor": "{stem}.weight"}, "shape": ["hidden"], "kind": "norm", "consumer": {"kernel": "mtp.residual_rmsnorm"}, "dtypes": ["Bf16"]},
+    {"id": "mtp.pre_mlp_layernorm", "source": {"stem": "mtp-pre_mlp_layernorm", "tensor": "{stem}.weight"}, "shape": ["hidden"], "kind": "norm", "consumer": {"kernel": "mtp.residual_rmsnorm"}, "dtypes": ["Bf16"]},
+    {"id": "mtp.final_layernorm", "source": {"stem": "mtp-final_layernorm", "tensor": "{stem}.weight"}, "shape": ["hidden"], "kind": "norm", "consumer": {"kernel": "mtp.residual_rmsnorm"}, "dtypes": ["Bf16"]},
+    {"id": "final-norm", "source": {"tensor": "model.norm.weight"}, "shape": ["hidden"], "kind": "norm", "consumer": {"kernel": "mlp.residual_rmsnorm"}, "dtypes": ["Bf16"]},
+    {
+      "id": "dflash.q_norm",
+      "source": {"stem": "dflash", "tensor": "{stem}.self_attn.q_norm.weight"},
+      "shape": ["dflash_head_dim"],
+      "kind": "norm",
+      "consumer": {"kernel": "dflash.q_norm"},
+      "dtypes": ["Bf16"]
+    },
+    {
+      "id": "dflash.k_norm",
+      "source": {"stem": "dflash", "tensor": "{stem}.self_attn.k_norm.weight"},
+      "shape": ["dflash_head_dim"],
+      "kind": "norm",
+      "consumer": {"kernel": "dflash.k_norm"},
+      "dtypes": ["Bf16"]
+    },
+    {"id": "dflash.sink", "source": {"stem": "dflash", "tensor": "{stem}.self_attn.attention_sink_bias"}, "shape": ["dflash_q_heads"], "kind": "sink", "dtypes": ["Bf16"], "consumer": "dflash.q", "placement": {"axis": 0, "split": {"class": "column", "tile": 1}}},
+    {"id": "dflash.input_layernorm", "source": {"stem": "dflash", "tensor": "{stem}.input_layernorm.weight"}, "shape": ["dflash_hidden"], "kind": "norm", "consumer": {"kernel": "dflash.residual_rmsnorm"}, "dtypes": ["Bf16"]},
+    {"id": "dflash.post_attention_layernorm", "source": {"stem": "dflash", "tensor": "{stem}.post_attention_layernorm.weight"}, "shape": ["dflash_hidden"], "kind": "norm", "consumer": {"kernel": "dflash.residual_rmsnorm"}, "dtypes": ["Bf16"]},
+    {"id": "dflash.hidden_norm", "source": {"tensor": "hidden_norm.weight"}, "shape": ["dflash_hidden"], "kind": "norm", "consumer": {"kernel": "dflash.residual_rmsnorm"}, "dtypes": ["Bf16"]},
+    {"id": "dflash.norm", "source": {"tensor": "norm.weight"}, "shape": ["dflash_hidden"], "kind": "norm", "consumer": {"kernel": "dflash.residual_rmsnorm"}, "dtypes": ["Bf16"]}
+  ],
+  "external_tensors": [
+    {"id": "external-role-0", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-0", "tensor": "{stem}.input_layernorm.weight"}, "shape": [1024], "dtype": "Bf16"},
+    {"id": "external-role-1", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-0", "tensor": "{stem}.mlp.down_proj.weight"}, "shape": [1024, 4096], "dtype": "Bf16"},
+    {"id": "external-role-2", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-0", "tensor": "{stem}.mlp.gate_proj.weight"}, "shape": [4096, 1024], "dtype": "Bf16"},
+    {"id": "external-role-3", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-0", "tensor": "{stem}.mlp.up_proj.weight"}, "shape": [4096, 1024], "dtype": "Bf16"},
+    {"id": "external-role-4", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-0", "tensor": "{stem}.post_attention_layernorm.weight"}, "shape": [1024], "dtype": "Bf16"},
+    {"id": "external-role-5", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-0", "tensor": "{stem}.self_attn.k_proj.bias"}, "shape": [1024], "dtype": "Bf16"},
+    {"id": "external-role-6", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-0", "tensor": "{stem}.self_attn.k_proj.weight"}, "shape": [1024, 1024], "dtype": "Bf16"},
+    {"id": "external-role-7", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-0", "tensor": "{stem}.self_attn.o_proj.weight"}, "shape": [1024, 1024], "dtype": "Bf16"},
+    {"id": "external-role-8", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-0", "tensor": "{stem}.self_attn.q_proj.bias"}, "shape": [1024], "dtype": "Bf16"},
+    {"id": "external-role-9", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-0", "tensor": "{stem}.self_attn.q_proj.weight"}, "shape": [1024, 1024], "dtype": "Bf16"},
+    {"id": "external-role-10", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-0", "tensor": "{stem}.self_attn.v_proj.bias"}, "shape": [1024], "dtype": "Bf16"},
+    {"id": "external-role-11", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-0", "tensor": "{stem}.self_attn.v_proj.weight"}, "shape": [1024, 1024], "dtype": "Bf16"},
+    {"id": "external-role-12", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"tensor": "audio_encoder.input_local_transformer.norm.weight"}, "shape": [1024], "dtype": "Bf16"},
+    {"id": "external-role-13", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-13", "tensor": "{stem}.weight"}, "shape": [4096, 16384], "dtype": "Bf16"},
+    {"id": "external-role-14", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-14", "tensor": "{stem}.weight"}, "shape": [16384, 4096], "dtype": "Bf16"},
+    {"id": "external-role-15", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"tensor": "encoder.conv1.bias"}, "shape": [1024], "dtype": "Bf16"},
+    {"id": "external-role-16", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"tensor": "encoder.conv1.weight"}, "shape": [1024, 128, 3], "dtype": "Bf16"},
+    {"id": "external-role-17", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"tensor": "encoder.conv2.bias"}, "shape": [1024], "dtype": "Bf16"},
+    {"id": "external-role-18", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"tensor": "encoder.conv2.weight"}, "shape": [1024, 1024, 3], "dtype": "Bf16"},
+    {"id": "external-role-19", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-19", "tensor": "{stem}.weight"}, "shape": [1024, 1024, 2], "dtype": "Bf16"},
+    {"id": "external-role-20", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"tensor": "encoder.down_sample_norm.bias"}, "shape": [1024], "dtype": "Bf16"},
+    {"id": "external-role-21", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"tensor": "encoder.down_sample_norm.weight"}, "shape": [1024], "dtype": "Bf16"},
+    {"id": "external-role-22", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"tensor": "encoder.layer_norm.bias"}, "shape": [1024], "dtype": "Bf16"},
+    {"id": "external-role-23", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"tensor": "encoder.layer_norm.weight"}, "shape": [1024], "dtype": "Bf16"},
+    {"id": "external-role-24", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-24", "tensor": "{stem}.fc1.bias"}, "shape": [4096], "dtype": "Bf16"},
+    {"id": "external-role-25", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-24", "tensor": "{stem}.fc1.weight"}, "shape": [4096, 1024], "dtype": "Bf16"},
+    {"id": "external-role-26", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-24", "tensor": "{stem}.fc2.bias"}, "shape": [1024], "dtype": "Bf16"},
+    {"id": "external-role-27", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-24", "tensor": "{stem}.fc2.weight"}, "shape": [1024, 4096], "dtype": "Bf16"},
+    {"id": "external-role-28", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-24", "tensor": "{stem}.final_layer_norm.bias"}, "shape": [1024], "dtype": "Bf16"},
+    {"id": "external-role-29", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-24", "tensor": "{stem}.final_layer_norm.weight"}, "shape": [1024], "dtype": "Bf16"},
+    {"id": "external-role-30", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-24", "tensor": "{stem}.self_attn.k_proj.weight"}, "shape": [1024, 1024], "dtype": "Bf16"},
+    {"id": "external-role-31", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-24", "tensor": "{stem}.self_attn.out_proj.bias"}, "shape": [1024], "dtype": "Bf16"},
+    {"id": "external-role-32", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-24", "tensor": "{stem}.self_attn.out_proj.weight"}, "shape": [1024, 1024], "dtype": "Bf16"},
+    {"id": "external-role-33", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-24", "tensor": "{stem}.self_attn.q_proj.bias"}, "shape": [1024], "dtype": "Bf16"},
+    {"id": "external-role-34", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-24", "tensor": "{stem}.self_attn.q_proj.weight"}, "shape": [1024, 1024], "dtype": "Bf16"},
+    {"id": "external-role-35", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-24", "tensor": "{stem}.self_attn.v_proj.bias"}, "shape": [1024], "dtype": "Bf16"},
+    {"id": "external-role-36", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-24", "tensor": "{stem}.self_attn.v_proj.weight"}, "shape": [1024, 1024], "dtype": "Bf16"},
+    {"id": "external-role-37", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-24", "tensor": "{stem}.self_attn_layer_norm.bias"}, "shape": [1024], "dtype": "Bf16"},
+    {"id": "external-role-38", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-24", "tensor": "{stem}.self_attn_layer_norm.weight"}, "shape": [1024], "dtype": "Bf16"},
+    {"id": "external-role-39", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-39", "tensor": "{stem}._codebook.embed"}, "shape": [128, 1024], "dtype": "F32"},
+    {"id": "external-role-40", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-40", "tensor": "{stem}._codebook.embed"}, "shape": [256, 1024], "dtype": "F32"},
+    {"id": "external-role-41", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-41", "tensor": "{stem}._codebook.embed"}, "shape": [1024, 1024], "dtype": "F32"},
+    {"id": "external-role-42", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-42", "tensor": "{stem}.weight"}, "shape": [1280, 1024], "dtype": "Bf16"},
+    {"id": "external-role-43", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-43", "tensor": "{stem}.attn.proj.bias"}, "shape": [1280], "dtype": "Bf16"},
+    {"id": "external-role-44", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-43", "tensor": "{stem}.attn.proj.weight"}, "shape": [1280, 2048], "dtype": "Bf16"},
+    {"id": "external-role-45", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-43", "tensor": "{stem}.attn.qkv.bias"}, "shape": [3072], "dtype": "Bf16"},
+    {"id": "external-role-46", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-43", "tensor": "{stem}.attn.qkv.weight"}, "shape": [3072, 1280], "dtype": "Bf16"},
+    {"id": "external-role-47", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-47", "tensor": "{stem}.attn.sinks"}, "shape": [32], "dtype": "Bf16"},
+    {"id": "external-role-48", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-43", "tensor": "{stem}.mlp.down_proj.bias"}, "shape": [1280], "dtype": "Bf16"},
+    {"id": "external-role-49", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-43", "tensor": "{stem}.mlp.down_proj.weight"}, "shape": [1280, 4608], "dtype": "Bf16"},
+    {"id": "external-role-50", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-43", "tensor": "{stem}.mlp.gate_proj.bias"}, "shape": [4608], "dtype": "Bf16"},
+    {"id": "external-role-51", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-43", "tensor": "{stem}.mlp.gate_proj.weight"}, "shape": [4608, 1280], "dtype": "Bf16"},
+    {"id": "external-role-52", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-43", "tensor": "{stem}.mlp.up_proj.bias"}, "shape": [4608], "dtype": "Bf16"},
+    {"id": "external-role-53", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-43", "tensor": "{stem}.mlp.up_proj.weight"}, "shape": [4608, 1280], "dtype": "Bf16"},
+    {"id": "external-role-54", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-43", "tensor": "{stem}.norm1.weight"}, "shape": [1280], "dtype": "Bf16"},
+    {"id": "external-role-55", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-43", "tensor": "{stem}.norm2.weight"}, "shape": [1280], "dtype": "Bf16"},
+    {"id": "external-role-56", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"tensor": "visual.merger.ln_q.weight"}, "shape": [1280], "dtype": "Bf16"},
+    {"id": "external-role-57", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-57", "tensor": "{stem}.weight"}, "shape": [4096, 5120], "dtype": "Bf16"},
+    {"id": "external-role-58", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"stem": "external-58", "tensor": "{stem}.weight"}, "shape": [5120, 5120], "dtype": "Bf16"},
+    {"id": "external-role-59", "owner": "encoder-spec", "image_role": "encoder-rank-images.v1", "source": {"tensor": "visual.patch_embed.proj.weight"}, "shape": [1280, 3, 2, 16, 16], "dtype": "Bf16"}
+  ]
+}

@@ -1,0 +1,26 @@
+[
+  {
+    "name": "comm_phased_f32_late_wait_sm120",
+    "source_closure_sha256": "d1b47857b98e061084e15d3199a7486c029f614a72c188dc8c87aab44bd82dc3"
+  },
+  {
+    "name": "comm_phased_f32_no_gather_wait_sm120",
+    "source_closure_sha256": "9d216d37c0df28e020ff4282a7c16130356babe712f5f4e0b8047a8ea120a4a0"
+  },
+  {
+    "name": "comm_phased_f32_no_scatter_wait_sm120",
+    "source_closure_sha256": "cc0c24061d872dbb34b7b66c81c84f56dfc975388b9ad119b1caf4e647914536"
+  },
+  {
+    "name": "comm_phased_f32_reversed_sm120",
+    "source_closure_sha256": "033fbcb2eb8c8a1479549f2e1f2f5363bf51b0dea3fd54d79eb0636432c2afbe"
+  },
+  {
+    "name": "comm_phased_f32_shared_parity_sm120",
+    "source_closure_sha256": "0b68d23a97f44fdb9cf0099bf27838746533db04e448038d3e6409c81777be86"
+  },
+  {
+    "name": "comm_phased_f32_sm120",
+    "source_closure_sha256": "48e3f51af9d63fb170fc80ba7a859abeb2c880fa6b264c173a13b5f7a3ad2c2c"
+  }
+]

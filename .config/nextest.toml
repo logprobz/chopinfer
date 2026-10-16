@@ -1,0 +1,91 @@
+# cargo-nextest settings for ci/cpu.sh and ci/quick.sh. Nextest runs every
+# test in its own process and tests from different binaries at once; see
+# docs/testing.md for the groups below.
+nextest-version = { required = "0.9.146" }
+
+[test-groups]
+# Tests that rebuild shared artifacts in the target directory, or run what
+# those builds replace: the fixture libraries and build-*-fixture programs,
+# and chopinfer-host, which runtime-conformance rebuilds for runtime-host only.
+shared-target = { max-threads = 1 }
+# Tests that compile CUDA. Each build starts up to 16 nvcc workers.
+nvcc = { max-threads = 2 }
+
+[profile.default]
+slow-timeout = { period = "60s" }
+
+[[profile.default.overrides]]
+filter = """
+binary_id(bundle-tp4-fixture::fixture_package) | binary_id(bundle-tp4-fixture::served_generation)
+| binary_id(bundle-recurrent-fixture::fixture_package) | binary_id(bundle-recurrent-fixture::kv_dtype_selection)
+| binary_id(runtime-conformance::external_bundle_host) | binary_id(runtime-host::version)
+| (binary_id(runtime-host::host_command_contract) & test(=both_programs_expose_the_same_commands))
+"""
+test-group = "shared-target"
+
+[[profile.default.overrides]]
+filter = """
+binary_id(kernel-build::driver)
+| binary_id(/^kernel-lab::(attention_build|cluster_template_build|gemm_build|row_build|mx_operand_exactness)$/)
+| (binary_id(kernel-lab::ops) & test(/prefill_diagnostics/))
+| binary_id(/^kernels-sm120::(comm_compile|compile_common|moe_build|precision_binding|precision_construction|precision_rows|sampling_compile)$/)
+| (binary_id(kernels-sm120) & test(/encoder::stability/))
+| binary_id(model-mimo26-contract::kernel_moe_build)
+| binary_id(/^model-qwen38-contract::kernel_(comm_extension|gemm_build|linear_build|moe_build|qwen38_comm|qwen38_comm_decode|row_build|sparse_build)$/)
+| binary_id(bundle-qwen38::precision_build)
+"""
+test-group = "nvcc"
+
+[profile.ci]
+# Report every failure in one run, and keep a JUnit inventory of test
+# identities and outcomes under target/nextest/ci.
+fail-fast = false
+# The per-test time budget: a test is reported slow every 60 s and stopped,
+# failing the run, at the tenth period, so no test runs past 10 minutes. A
+# gate test that needs longer gets an override below with its reason and
+# limit; an exhaustive test gets one in the exhaustive profile.
+slow-timeout = { period = "60s", terminate-after = 10 }
+
+[profile.ci.junit]
+path = "junit.xml"
+
+# Load-bound tests (CPU oracles over large buffers, or nvcc builds) that full
+# gates on a shared 48-core host stopped at the 600 s limit at load 87 to 250
+# (2026-10-10 to 10-12). Their passing gate runs from 2026-10-08 to 10-15, the
+# shortest (the nearest to an idle runtime this host gives) and the longest:
+# precision_lifecycles 49 s and 514 s, wide_gated_kv_write 126 s and 585 s,
+# latent_split_merge 36 s and 407 s, nvfp4_exports_overlap 92 s and 436 s,
+# the_layer_lowers 6 s and 332 s. Run alone at load 45 to 63 the kernel-lab
+# three took 209 s, 92 s and 293 s. The limit, 20 minutes, is at least twice
+# each longest pass and 4 times each of those alone runs.
+[[profile.ci.overrides]]
+filter = """
+(binary_id(=bundle-qwen38) & test(=fake_host_tests::snapshot_dump::precision_lifecycles_keep_their_recorded_bytes))
+| (binary_id(=bundle-glm5next) & test(=fake_host_tests::shared_overlap::nvfp4_exports_overlap_alike))
+| (binary_id(=kernel-lab::gated_kv_write_conformance) & test(=wide_gated_kv_write_cases_validate))
+| (binary_id(=kernel-lab::latent_split_merge_conformance) & test(=latent_split_merge_cases_validate))
+| (binary_id(=kernel-lab::glm5next_context_parallel_chain) & test(=the_layer_lowers_to_the_group_stage_sequence))
+"""
+slow-timeout = { period = "60s", terminate-after = 20 }
+
+# The exhaustive comparisons (port proofs and full-graph comparisons) are
+# #[ignore]d out of the gate; `ci/cpu.sh --exhaustive` runs them under this
+# profile with --run-ignored only. Add each new one here. The ci budget and
+# overrides apply unless an override below sets the test's own limit, and the
+# JUnit report goes to target/nextest/exhaustive.
+[profile.exhaustive]
+inherits = "ci"
+default-filter = """
+(binary_id(model-qwen38-contract) & test(=projections::variants::tests::graph::complete_served_graphs_match_native_variant_specs_records_and_stages))
+| (binary_id(model-mimo26-contract) & test(=projections::variants::tests::graph::complete_served_graphs_match_native_variant_specs_records_and_stages))
+| (binary_id(model-qwen38) & test(=projection_comparison::served_dense_operations_and_rank_selections_match_the_current_compiler))
+| (binary_id(model-qwen38) & test(=projection_comparison::served_native_mixed_expert_specs_and_rank_ownership_match_the_current_compiler))
+| (binary_id(model-mimo26) & test(=projection_comparison::served_ordinary_specs_geometry_and_rank_selections_match_the_current_compiler))
+| (binary_id(model-mimo26) & test(=projection_comparison::served_expert_bank_specs_and_every_expert_selection_match_the_current_compiler))
+"""
+
+# Every layer of every served graph: 2,523 s on 2026-10-06 in a full gate on
+# a shared 48-core host. Only this profile runs it, so the limit stays here.
+[[profile.exhaustive.overrides]]
+filter = "binary_id(model-qwen38-contract) & test(=projections::variants::tests::graph::complete_served_graphs_match_native_variant_specs_records_and_stages)"
+slow-timeout = { period = "60s", terminate-after = 60 }

@@ -1,0 +1,6 @@
+[
+{"text": "hello there", "token_ids": [104, 101, 108, 108, 111, 32, 116, 104, 101, 114, 101], "decoded": "hello there"},
+{"text": "Café 123 ✓", "token_ids": [67, 97, 102, 195, 169, 32, 49, 50, 51, 32, 226, 156, 147], "decoded": "Café 123 ✓"},
+{"text": "<user>hi<assistant></think>ok", "token_ids": [259, 104, 105, 260, 263, 111, 107], "decoded": "<user>hi<assistant></think>ok"},
+{"text": "  spaced\n\nlines\t", "token_ids": [32, 32, 115, 112, 97, 99, 101, 100, 10, 10, 108, 105, 110, 101, 115, 9], "decoded": "  spaced\n\nlines\t"}
+]

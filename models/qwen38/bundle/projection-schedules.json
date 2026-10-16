@@ -1,0 +1,1514 @@
+[
+  {
+    "inputs": {
+      "kind": {
+        "Grouped": {
+          "experts": 128,
+          "top_k": 10
+        }
+      },
+      "format": "nvfp4",
+      "geometry": {
+        "rows": 640,
+        "k": 2560
+      },
+      "operands": 2,
+      "target": "Sm120f",
+      "activation": "Bf16",
+      "weight_operand": "Bf16",
+      "accumulator": "F32",
+      "output": "Bf16",
+      "decode_order": "ExactLocalThenGlobal",
+      "rounding": "NearestEven",
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": "ConcatenatedHalves",
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "weight_globals": "Expert",
+      "usage": {
+        "phase": "Decode",
+        "capacity": 1,
+        "graph": true
+      },
+      "lookup": null
+    },
+    "schedule": {
+      "kind": "Typed",
+      "implementation": {
+        "Grouped": {
+          "phase": "Decode",
+          "capacity": 1,
+          "knobs": {
+            "tile_m": 16,
+            "tile_n": 16,
+            "tile_k": 64,
+            "stages": 8,
+            "swizzle": 4,
+            "warps": 2,
+            "split_k_capacity": 1
+          },
+          "scales": {
+            "weight_globals": "ExpertProjection",
+            "activation_globals": "Absent",
+            "shared_gate_up_activation": true
+          },
+          "route_weight": "AfterDown",
+          "swiglu_clamp": null
+        }
+      }
+    }
+  },
+  {
+    "inputs": {
+      "kind": {
+        "Grouped": {
+          "experts": 128,
+          "top_k": 10
+        }
+      },
+      "format": "nvfp4",
+      "geometry": {
+        "rows": 2560,
+        "k": 640
+      },
+      "operands": 1,
+      "target": "Sm120f",
+      "activation": "Bf16",
+      "weight_operand": "Bf16",
+      "accumulator": "F32",
+      "output": "Bf16",
+      "decode_order": "ExactLocalThenGlobal",
+      "rounding": "NearestEven",
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": true
+      },
+      "weight_globals": "Expert",
+      "usage": {
+        "phase": "Decode",
+        "capacity": 1,
+        "graph": true
+      },
+      "lookup": null
+    },
+    "schedule": {
+      "kind": "Typed",
+      "implementation": {
+        "Grouped": {
+          "phase": "Decode",
+          "capacity": 1,
+          "knobs": {
+            "tile_m": 16,
+            "tile_n": 32,
+            "tile_k": 64,
+            "stages": 5,
+            "swizzle": 0,
+            "warps": 2,
+            "split_k_capacity": 1
+          },
+          "scales": {
+            "weight_globals": "ExpertProjection",
+            "activation_globals": "Absent",
+            "shared_gate_up_activation": true
+          },
+          "route_weight": "AfterDown",
+          "swiglu_clamp": null
+        }
+      }
+    }
+  },
+  {
+    "inputs": {
+      "kind": {
+        "Grouped": {
+          "experts": 128,
+          "top_k": 10
+        }
+      },
+      "format": "nvfp4",
+      "geometry": {
+        "rows": 640,
+        "k": 2560
+      },
+      "operands": 2,
+      "target": "Sm120f",
+      "activation": "Bf16",
+      "weight_operand": "Bf16",
+      "accumulator": "F32",
+      "output": "Bf16",
+      "decode_order": "ExactLocalThenGlobal",
+      "rounding": "NearestEven",
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": "ConcatenatedHalves",
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "weight_globals": "Expert",
+      "usage": {
+        "phase": "Decode",
+        "capacity": 2,
+        "graph": true
+      },
+      "lookup": null
+    },
+    "schedule": {
+      "kind": "Typed",
+      "implementation": {
+        "Grouped": {
+          "phase": "Decode",
+          "capacity": 2,
+          "knobs": {
+            "tile_m": 16,
+            "tile_n": 16,
+            "tile_k": 64,
+            "stages": 8,
+            "swizzle": 2,
+            "warps": 2,
+            "split_k_capacity": 1
+          },
+          "scales": {
+            "weight_globals": "ExpertProjection",
+            "activation_globals": "Absent",
+            "shared_gate_up_activation": true
+          },
+          "route_weight": "AfterDown",
+          "swiglu_clamp": null
+        }
+      }
+    }
+  },
+  {
+    "inputs": {
+      "kind": {
+        "Grouped": {
+          "experts": 128,
+          "top_k": 10
+        }
+      },
+      "format": "nvfp4",
+      "geometry": {
+        "rows": 2560,
+        "k": 640
+      },
+      "operands": 1,
+      "target": "Sm120f",
+      "activation": "Bf16",
+      "weight_operand": "Bf16",
+      "accumulator": "F32",
+      "output": "Bf16",
+      "decode_order": "ExactLocalThenGlobal",
+      "rounding": "NearestEven",
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": true
+      },
+      "weight_globals": "Expert",
+      "usage": {
+        "phase": "Decode",
+        "capacity": 2,
+        "graph": true
+      },
+      "lookup": null
+    },
+    "schedule": {
+      "kind": "Typed",
+      "implementation": {
+        "Grouped": {
+          "phase": "Decode",
+          "capacity": 2,
+          "knobs": {
+            "tile_m": 16,
+            "tile_n": 64,
+            "tile_k": 64,
+            "stages": 5,
+            "swizzle": 0,
+            "warps": 4,
+            "split_k_capacity": 1
+          },
+          "scales": {
+            "weight_globals": "ExpertProjection",
+            "activation_globals": "Absent",
+            "shared_gate_up_activation": true
+          },
+          "route_weight": "AfterDown",
+          "swiglu_clamp": null
+        }
+      }
+    }
+  },
+  {
+    "inputs": {
+      "kind": {
+        "Grouped": {
+          "experts": 128,
+          "top_k": 10
+        }
+      },
+      "format": "nvfp4",
+      "geometry": {
+        "rows": 640,
+        "k": 2560
+      },
+      "operands": 2,
+      "target": "Sm120f",
+      "activation": "Bf16",
+      "weight_operand": "Bf16",
+      "accumulator": "F32",
+      "output": "Bf16",
+      "decode_order": "ExactLocalThenGlobal",
+      "rounding": "NearestEven",
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": "ConcatenatedHalves",
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "weight_globals": "Expert",
+      "usage": {
+        "phase": "Decode",
+        "capacity": 4,
+        "graph": true
+      },
+      "lookup": null
+    },
+    "schedule": {
+      "kind": "Typed",
+      "implementation": {
+        "Grouped": {
+          "phase": "Decode",
+          "capacity": 4,
+          "knobs": {
+            "tile_m": 16,
+            "tile_n": 16,
+            "tile_k": 64,
+            "stages": 8,
+            "swizzle": 2,
+            "warps": 2,
+            "split_k_capacity": 1
+          },
+          "scales": {
+            "weight_globals": "ExpertProjection",
+            "activation_globals": "Absent",
+            "shared_gate_up_activation": true
+          },
+          "route_weight": "AfterDown",
+          "swiglu_clamp": null
+        }
+      }
+    }
+  },
+  {
+    "inputs": {
+      "kind": {
+        "Grouped": {
+          "experts": 128,
+          "top_k": 10
+        }
+      },
+      "format": "nvfp4",
+      "geometry": {
+        "rows": 2560,
+        "k": 640
+      },
+      "operands": 1,
+      "target": "Sm120f",
+      "activation": "Bf16",
+      "weight_operand": "Bf16",
+      "accumulator": "F32",
+      "output": "Bf16",
+      "decode_order": "ExactLocalThenGlobal",
+      "rounding": "NearestEven",
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": true
+      },
+      "weight_globals": "Expert",
+      "usage": {
+        "phase": "Decode",
+        "capacity": 4,
+        "graph": true
+      },
+      "lookup": null
+    },
+    "schedule": {
+      "kind": "Typed",
+      "implementation": {
+        "Grouped": {
+          "phase": "Decode",
+          "capacity": 4,
+          "knobs": {
+            "tile_m": 16,
+            "tile_n": 64,
+            "tile_k": 64,
+            "stages": 4,
+            "swizzle": 2,
+            "warps": 4,
+            "split_k_capacity": 1
+          },
+          "scales": {
+            "weight_globals": "ExpertProjection",
+            "activation_globals": "Absent",
+            "shared_gate_up_activation": true
+          },
+          "route_weight": "AfterDown",
+          "swiglu_clamp": null
+        }
+      }
+    }
+  },
+  {
+    "inputs": {
+      "kind": {
+        "Grouped": {
+          "experts": 128,
+          "top_k": 10
+        }
+      },
+      "format": "nvfp4",
+      "geometry": {
+        "rows": 640,
+        "k": 2560
+      },
+      "operands": 2,
+      "target": "Sm120f",
+      "activation": "Bf16",
+      "weight_operand": "Bf16",
+      "accumulator": "F32",
+      "output": "Bf16",
+      "decode_order": "ExactLocalThenGlobal",
+      "rounding": "NearestEven",
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": "ConcatenatedHalves",
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "weight_globals": "Expert",
+      "usage": {
+        "phase": "Decode",
+        "capacity": 8,
+        "graph": true
+      },
+      "lookup": null
+    },
+    "schedule": {
+      "kind": "Typed",
+      "implementation": {
+        "Grouped": {
+          "phase": "Decode",
+          "capacity": 8,
+          "knobs": {
+            "tile_m": 16,
+            "tile_n": 32,
+            "tile_k": 64,
+            "stages": 4,
+            "swizzle": 4,
+            "warps": 2,
+            "split_k_capacity": 1
+          },
+          "scales": {
+            "weight_globals": "ExpertProjection",
+            "activation_globals": "Absent",
+            "shared_gate_up_activation": true
+          },
+          "route_weight": "AfterDown",
+          "swiglu_clamp": null
+        }
+      }
+    }
+  },
+  {
+    "inputs": {
+      "kind": {
+        "Grouped": {
+          "experts": 128,
+          "top_k": 10
+        }
+      },
+      "format": "nvfp4",
+      "geometry": {
+        "rows": 2560,
+        "k": 640
+      },
+      "operands": 1,
+      "target": "Sm120f",
+      "activation": "Bf16",
+      "weight_operand": "Bf16",
+      "accumulator": "F32",
+      "output": "Bf16",
+      "decode_order": "ExactLocalThenGlobal",
+      "rounding": "NearestEven",
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": true
+      },
+      "weight_globals": "Expert",
+      "usage": {
+        "phase": "Decode",
+        "capacity": 8,
+        "graph": true
+      },
+      "lookup": null
+    },
+    "schedule": {
+      "kind": "Typed",
+      "implementation": {
+        "Grouped": {
+          "phase": "Decode",
+          "capacity": 8,
+          "knobs": {
+            "tile_m": 16,
+            "tile_n": 64,
+            "tile_k": 64,
+            "stages": 3,
+            "swizzle": 0,
+            "warps": 4,
+            "split_k_capacity": 1
+          },
+          "scales": {
+            "weight_globals": "ExpertProjection",
+            "activation_globals": "Absent",
+            "shared_gate_up_activation": true
+          },
+          "route_weight": "AfterDown",
+          "swiglu_clamp": null
+        }
+      }
+    }
+  },
+  {
+    "inputs": {
+      "kind": {
+        "Grouped": {
+          "experts": 128,
+          "top_k": 10
+        }
+      },
+      "format": "nvfp4",
+      "geometry": {
+        "rows": 640,
+        "k": 2560
+      },
+      "operands": 2,
+      "target": "Sm120f",
+      "activation": "Bf16",
+      "weight_operand": "Bf16",
+      "accumulator": "F32",
+      "output": "Bf16",
+      "decode_order": "ExactLocalThenGlobal",
+      "rounding": "NearestEven",
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": "ConcatenatedHalves",
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "weight_globals": "Expert",
+      "usage": {
+        "phase": "Decode",
+        "capacity": 16,
+        "graph": true
+      },
+      "lookup": null
+    },
+    "schedule": {
+      "kind": "Typed",
+      "implementation": {
+        "Grouped": {
+          "phase": "Decode",
+          "capacity": 16,
+          "knobs": {
+            "tile_m": 16,
+            "tile_n": 16,
+            "tile_k": 64,
+            "stages": 4,
+            "swizzle": 4,
+            "warps": 1,
+            "split_k_capacity": 1
+          },
+          "scales": {
+            "weight_globals": "ExpertProjection",
+            "activation_globals": "Absent",
+            "shared_gate_up_activation": true
+          },
+          "route_weight": "AfterDown",
+          "swiglu_clamp": null
+        }
+      }
+    }
+  },
+  {
+    "inputs": {
+      "kind": {
+        "Grouped": {
+          "experts": 128,
+          "top_k": 10
+        }
+      },
+      "format": "nvfp4",
+      "geometry": {
+        "rows": 2560,
+        "k": 640
+      },
+      "operands": 1,
+      "target": "Sm120f",
+      "activation": "Bf16",
+      "weight_operand": "Bf16",
+      "accumulator": "F32",
+      "output": "Bf16",
+      "decode_order": "ExactLocalThenGlobal",
+      "rounding": "NearestEven",
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": true
+      },
+      "weight_globals": "Expert",
+      "usage": {
+        "phase": "Decode",
+        "capacity": 16,
+        "graph": true
+      },
+      "lookup": null
+    },
+    "schedule": {
+      "kind": "Typed",
+      "implementation": {
+        "Grouped": {
+          "phase": "Decode",
+          "capacity": 16,
+          "knobs": {
+            "tile_m": 16,
+            "tile_n": 64,
+            "tile_k": 64,
+            "stages": 2,
+            "swizzle": 0,
+            "warps": 4,
+            "split_k_capacity": 1
+          },
+          "scales": {
+            "weight_globals": "ExpertProjection",
+            "activation_globals": "Absent",
+            "shared_gate_up_activation": true
+          },
+          "route_weight": "AfterDown",
+          "swiglu_clamp": null
+        }
+      }
+    }
+  },
+  {
+    "inputs": {
+      "kind": {
+        "Grouped": {
+          "experts": 128,
+          "top_k": 10
+        }
+      },
+      "format": "nvfp4",
+      "geometry": {
+        "rows": 640,
+        "k": 2560
+      },
+      "operands": 2,
+      "target": "Sm120f",
+      "activation": "Bf16",
+      "weight_operand": "Bf16",
+      "accumulator": "F32",
+      "output": "Bf16",
+      "decode_order": "ExactLocalThenGlobal",
+      "rounding": "NearestEven",
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": "ConcatenatedHalves",
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "weight_globals": "Expert",
+      "usage": {
+        "phase": "Decode",
+        "capacity": 32,
+        "graph": true
+      },
+      "lookup": null
+    },
+    "schedule": {
+      "kind": "Typed",
+      "implementation": {
+        "Grouped": {
+          "phase": "Decode",
+          "capacity": 32,
+          "knobs": {
+            "tile_m": 16,
+            "tile_n": 16,
+            "tile_k": 64,
+            "stages": 2,
+            "swizzle": 4,
+            "warps": 1,
+            "split_k_capacity": 1
+          },
+          "scales": {
+            "weight_globals": "ExpertProjection",
+            "activation_globals": "Absent",
+            "shared_gate_up_activation": true
+          },
+          "route_weight": "AfterDown",
+          "swiglu_clamp": null
+        }
+      }
+    }
+  },
+  {
+    "inputs": {
+      "kind": {
+        "Grouped": {
+          "experts": 128,
+          "top_k": 10
+        }
+      },
+      "format": "nvfp4",
+      "geometry": {
+        "rows": 2560,
+        "k": 640
+      },
+      "operands": 1,
+      "target": "Sm120f",
+      "activation": "Bf16",
+      "weight_operand": "Bf16",
+      "accumulator": "F32",
+      "output": "Bf16",
+      "decode_order": "ExactLocalThenGlobal",
+      "rounding": "NearestEven",
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": true
+      },
+      "weight_globals": "Expert",
+      "usage": {
+        "phase": "Decode",
+        "capacity": 32,
+        "graph": true
+      },
+      "lookup": null
+    },
+    "schedule": {
+      "kind": "Typed",
+      "implementation": {
+        "Grouped": {
+          "phase": "Decode",
+          "capacity": 32,
+          "knobs": {
+            "tile_m": 16,
+            "tile_n": 64,
+            "tile_k": 64,
+            "stages": 2,
+            "swizzle": 0,
+            "warps": 4,
+            "split_k_capacity": 1
+          },
+          "scales": {
+            "weight_globals": "ExpertProjection",
+            "activation_globals": "Absent",
+            "shared_gate_up_activation": true
+          },
+          "route_weight": "AfterDown",
+          "swiglu_clamp": null
+        }
+      }
+    }
+  },
+  {
+    "inputs": {
+      "kind": {
+        "Grouped": {
+          "experts": 128,
+          "top_k": 10
+        }
+      },
+      "format": "nvfp4",
+      "geometry": {
+        "rows": 640,
+        "k": 2560
+      },
+      "operands": 2,
+      "target": "Sm120f",
+      "activation": "Bf16",
+      "weight_operand": "Bf16",
+      "accumulator": "F32",
+      "output": "Bf16",
+      "decode_order": "ExactLocalThenGlobal",
+      "rounding": "NearestEven",
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": "ConcatenatedHalves",
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "weight_globals": "Expert",
+      "usage": {
+        "phase": "Verify",
+        "capacity": 1,
+        "graph": true
+      },
+      "lookup": null
+    },
+    "schedule": {
+      "kind": "Typed",
+      "implementation": {
+        "Grouped": {
+          "phase": "Decode",
+          "capacity": 1,
+          "knobs": {
+            "tile_m": 16,
+            "tile_n": 16,
+            "tile_k": 64,
+            "stages": 8,
+            "swizzle": 4,
+            "warps": 2,
+            "split_k_capacity": 1
+          },
+          "scales": {
+            "weight_globals": "ExpertProjection",
+            "activation_globals": "Absent",
+            "shared_gate_up_activation": true
+          },
+          "route_weight": "AfterDown",
+          "swiglu_clamp": null
+        }
+      }
+    }
+  },
+  {
+    "inputs": {
+      "kind": {
+        "Grouped": {
+          "experts": 128,
+          "top_k": 10
+        }
+      },
+      "format": "nvfp4",
+      "geometry": {
+        "rows": 2560,
+        "k": 640
+      },
+      "operands": 1,
+      "target": "Sm120f",
+      "activation": "Bf16",
+      "weight_operand": "Bf16",
+      "accumulator": "F32",
+      "output": "Bf16",
+      "decode_order": "ExactLocalThenGlobal",
+      "rounding": "NearestEven",
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": true
+      },
+      "weight_globals": "Expert",
+      "usage": {
+        "phase": "Verify",
+        "capacity": 1,
+        "graph": true
+      },
+      "lookup": null
+    },
+    "schedule": {
+      "kind": "Typed",
+      "implementation": {
+        "Grouped": {
+          "phase": "Decode",
+          "capacity": 1,
+          "knobs": {
+            "tile_m": 16,
+            "tile_n": 32,
+            "tile_k": 64,
+            "stages": 5,
+            "swizzle": 0,
+            "warps": 2,
+            "split_k_capacity": 1
+          },
+          "scales": {
+            "weight_globals": "ExpertProjection",
+            "activation_globals": "Absent",
+            "shared_gate_up_activation": true
+          },
+          "route_weight": "AfterDown",
+          "swiglu_clamp": null
+        }
+      }
+    }
+  },
+  {
+    "inputs": {
+      "kind": {
+        "Grouped": {
+          "experts": 128,
+          "top_k": 10
+        }
+      },
+      "format": "nvfp4",
+      "geometry": {
+        "rows": 640,
+        "k": 2560
+      },
+      "operands": 2,
+      "target": "Sm120f",
+      "activation": "Bf16",
+      "weight_operand": "Bf16",
+      "accumulator": "F32",
+      "output": "Bf16",
+      "decode_order": "ExactLocalThenGlobal",
+      "rounding": "NearestEven",
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": "ConcatenatedHalves",
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "weight_globals": "Expert",
+      "usage": {
+        "phase": "Verify",
+        "capacity": 2,
+        "graph": true
+      },
+      "lookup": null
+    },
+    "schedule": {
+      "kind": "Typed",
+      "implementation": {
+        "Grouped": {
+          "phase": "Decode",
+          "capacity": 2,
+          "knobs": {
+            "tile_m": 16,
+            "tile_n": 16,
+            "tile_k": 64,
+            "stages": 8,
+            "swizzle": 2,
+            "warps": 2,
+            "split_k_capacity": 1
+          },
+          "scales": {
+            "weight_globals": "ExpertProjection",
+            "activation_globals": "Absent",
+            "shared_gate_up_activation": true
+          },
+          "route_weight": "AfterDown",
+          "swiglu_clamp": null
+        }
+      }
+    }
+  },
+  {
+    "inputs": {
+      "kind": {
+        "Grouped": {
+          "experts": 128,
+          "top_k": 10
+        }
+      },
+      "format": "nvfp4",
+      "geometry": {
+        "rows": 2560,
+        "k": 640
+      },
+      "operands": 1,
+      "target": "Sm120f",
+      "activation": "Bf16",
+      "weight_operand": "Bf16",
+      "accumulator": "F32",
+      "output": "Bf16",
+      "decode_order": "ExactLocalThenGlobal",
+      "rounding": "NearestEven",
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": true
+      },
+      "weight_globals": "Expert",
+      "usage": {
+        "phase": "Verify",
+        "capacity": 2,
+        "graph": true
+      },
+      "lookup": null
+    },
+    "schedule": {
+      "kind": "Typed",
+      "implementation": {
+        "Grouped": {
+          "phase": "Decode",
+          "capacity": 2,
+          "knobs": {
+            "tile_m": 16,
+            "tile_n": 64,
+            "tile_k": 64,
+            "stages": 5,
+            "swizzle": 0,
+            "warps": 4,
+            "split_k_capacity": 1
+          },
+          "scales": {
+            "weight_globals": "ExpertProjection",
+            "activation_globals": "Absent",
+            "shared_gate_up_activation": true
+          },
+          "route_weight": "AfterDown",
+          "swiglu_clamp": null
+        }
+      }
+    }
+  },
+  {
+    "inputs": {
+      "kind": {
+        "Grouped": {
+          "experts": 128,
+          "top_k": 10
+        }
+      },
+      "format": "nvfp4",
+      "geometry": {
+        "rows": 640,
+        "k": 2560
+      },
+      "operands": 2,
+      "target": "Sm120f",
+      "activation": "Bf16",
+      "weight_operand": "Bf16",
+      "accumulator": "F32",
+      "output": "Bf16",
+      "decode_order": "ExactLocalThenGlobal",
+      "rounding": "NearestEven",
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": "ConcatenatedHalves",
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "weight_globals": "Expert",
+      "usage": {
+        "phase": "Verify",
+        "capacity": 4,
+        "graph": true
+      },
+      "lookup": null
+    },
+    "schedule": {
+      "kind": "Typed",
+      "implementation": {
+        "Grouped": {
+          "phase": "Decode",
+          "capacity": 4,
+          "knobs": {
+            "tile_m": 16,
+            "tile_n": 16,
+            "tile_k": 64,
+            "stages": 8,
+            "swizzle": 2,
+            "warps": 2,
+            "split_k_capacity": 1
+          },
+          "scales": {
+            "weight_globals": "ExpertProjection",
+            "activation_globals": "Absent",
+            "shared_gate_up_activation": true
+          },
+          "route_weight": "AfterDown",
+          "swiglu_clamp": null
+        }
+      }
+    }
+  },
+  {
+    "inputs": {
+      "kind": {
+        "Grouped": {
+          "experts": 128,
+          "top_k": 10
+        }
+      },
+      "format": "nvfp4",
+      "geometry": {
+        "rows": 2560,
+        "k": 640
+      },
+      "operands": 1,
+      "target": "Sm120f",
+      "activation": "Bf16",
+      "weight_operand": "Bf16",
+      "accumulator": "F32",
+      "output": "Bf16",
+      "decode_order": "ExactLocalThenGlobal",
+      "rounding": "NearestEven",
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": true
+      },
+      "weight_globals": "Expert",
+      "usage": {
+        "phase": "Verify",
+        "capacity": 4,
+        "graph": true
+      },
+      "lookup": null
+    },
+    "schedule": {
+      "kind": "Typed",
+      "implementation": {
+        "Grouped": {
+          "phase": "Decode",
+          "capacity": 4,
+          "knobs": {
+            "tile_m": 16,
+            "tile_n": 64,
+            "tile_k": 64,
+            "stages": 4,
+            "swizzle": 2,
+            "warps": 4,
+            "split_k_capacity": 1
+          },
+          "scales": {
+            "weight_globals": "ExpertProjection",
+            "activation_globals": "Absent",
+            "shared_gate_up_activation": true
+          },
+          "route_weight": "AfterDown",
+          "swiglu_clamp": null
+        }
+      }
+    }
+  },
+  {
+    "inputs": {
+      "kind": {
+        "Grouped": {
+          "experts": 128,
+          "top_k": 10
+        }
+      },
+      "format": "nvfp4",
+      "geometry": {
+        "rows": 640,
+        "k": 2560
+      },
+      "operands": 2,
+      "target": "Sm120f",
+      "activation": "Bf16",
+      "weight_operand": "Bf16",
+      "accumulator": "F32",
+      "output": "Bf16",
+      "decode_order": "ExactLocalThenGlobal",
+      "rounding": "NearestEven",
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": "ConcatenatedHalves",
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "weight_globals": "Expert",
+      "usage": {
+        "phase": "Verify",
+        "capacity": 8,
+        "graph": true
+      },
+      "lookup": null
+    },
+    "schedule": {
+      "kind": "Typed",
+      "implementation": {
+        "Grouped": {
+          "phase": "Decode",
+          "capacity": 8,
+          "knobs": {
+            "tile_m": 16,
+            "tile_n": 32,
+            "tile_k": 64,
+            "stages": 4,
+            "swizzle": 4,
+            "warps": 2,
+            "split_k_capacity": 1
+          },
+          "scales": {
+            "weight_globals": "ExpertProjection",
+            "activation_globals": "Absent",
+            "shared_gate_up_activation": true
+          },
+          "route_weight": "AfterDown",
+          "swiglu_clamp": null
+        }
+      }
+    }
+  },
+  {
+    "inputs": {
+      "kind": {
+        "Grouped": {
+          "experts": 128,
+          "top_k": 10
+        }
+      },
+      "format": "nvfp4",
+      "geometry": {
+        "rows": 2560,
+        "k": 640
+      },
+      "operands": 1,
+      "target": "Sm120f",
+      "activation": "Bf16",
+      "weight_operand": "Bf16",
+      "accumulator": "F32",
+      "output": "Bf16",
+      "decode_order": "ExactLocalThenGlobal",
+      "rounding": "NearestEven",
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": true
+      },
+      "weight_globals": "Expert",
+      "usage": {
+        "phase": "Verify",
+        "capacity": 8,
+        "graph": true
+      },
+      "lookup": null
+    },
+    "schedule": {
+      "kind": "Typed",
+      "implementation": {
+        "Grouped": {
+          "phase": "Decode",
+          "capacity": 8,
+          "knobs": {
+            "tile_m": 16,
+            "tile_n": 64,
+            "tile_k": 64,
+            "stages": 3,
+            "swizzle": 0,
+            "warps": 4,
+            "split_k_capacity": 1
+          },
+          "scales": {
+            "weight_globals": "ExpertProjection",
+            "activation_globals": "Absent",
+            "shared_gate_up_activation": true
+          },
+          "route_weight": "AfterDown",
+          "swiglu_clamp": null
+        }
+      }
+    }
+  },
+  {
+    "inputs": {
+      "kind": {
+        "Grouped": {
+          "experts": 128,
+          "top_k": 10
+        }
+      },
+      "format": "nvfp4",
+      "geometry": {
+        "rows": 640,
+        "k": 2560
+      },
+      "operands": 2,
+      "target": "Sm120f",
+      "activation": "Bf16",
+      "weight_operand": "Bf16",
+      "accumulator": "F32",
+      "output": "Bf16",
+      "decode_order": "ExactLocalThenGlobal",
+      "rounding": "NearestEven",
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": "ConcatenatedHalves",
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "weight_globals": "Expert",
+      "usage": {
+        "phase": "Verify",
+        "capacity": 16,
+        "graph": true
+      },
+      "lookup": null
+    },
+    "schedule": {
+      "kind": "Typed",
+      "implementation": {
+        "Grouped": {
+          "phase": "Decode",
+          "capacity": 16,
+          "knobs": {
+            "tile_m": 16,
+            "tile_n": 16,
+            "tile_k": 64,
+            "stages": 4,
+            "swizzle": 4,
+            "warps": 1,
+            "split_k_capacity": 1
+          },
+          "scales": {
+            "weight_globals": "ExpertProjection",
+            "activation_globals": "Absent",
+            "shared_gate_up_activation": true
+          },
+          "route_weight": "AfterDown",
+          "swiglu_clamp": null
+        }
+      }
+    }
+  },
+  {
+    "inputs": {
+      "kind": {
+        "Grouped": {
+          "experts": 128,
+          "top_k": 10
+        }
+      },
+      "format": "nvfp4",
+      "geometry": {
+        "rows": 2560,
+        "k": 640
+      },
+      "operands": 1,
+      "target": "Sm120f",
+      "activation": "Bf16",
+      "weight_operand": "Bf16",
+      "accumulator": "F32",
+      "output": "Bf16",
+      "decode_order": "ExactLocalThenGlobal",
+      "rounding": "NearestEven",
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": true
+      },
+      "weight_globals": "Expert",
+      "usage": {
+        "phase": "Verify",
+        "capacity": 16,
+        "graph": true
+      },
+      "lookup": null
+    },
+    "schedule": {
+      "kind": "Typed",
+      "implementation": {
+        "Grouped": {
+          "phase": "Decode",
+          "capacity": 16,
+          "knobs": {
+            "tile_m": 16,
+            "tile_n": 64,
+            "tile_k": 64,
+            "stages": 2,
+            "swizzle": 0,
+            "warps": 4,
+            "split_k_capacity": 1
+          },
+          "scales": {
+            "weight_globals": "ExpertProjection",
+            "activation_globals": "Absent",
+            "shared_gate_up_activation": true
+          },
+          "route_weight": "AfterDown",
+          "swiglu_clamp": null
+        }
+      }
+    }
+  },
+  {
+    "inputs": {
+      "kind": {
+        "Grouped": {
+          "experts": 128,
+          "top_k": 10
+        }
+      },
+      "format": "nvfp4",
+      "geometry": {
+        "rows": 640,
+        "k": 2560
+      },
+      "operands": 2,
+      "target": "Sm120f",
+      "activation": "Bf16",
+      "weight_operand": "Bf16",
+      "accumulator": "F32",
+      "output": "Bf16",
+      "decode_order": "ExactLocalThenGlobal",
+      "rounding": "NearestEven",
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": "ConcatenatedHalves",
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "weight_globals": "Expert",
+      "usage": {
+        "phase": "Verify",
+        "capacity": 32,
+        "graph": true
+      },
+      "lookup": null
+    },
+    "schedule": {
+      "kind": "Typed",
+      "implementation": {
+        "Grouped": {
+          "phase": "Decode",
+          "capacity": 32,
+          "knobs": {
+            "tile_m": 16,
+            "tile_n": 16,
+            "tile_k": 64,
+            "stages": 2,
+            "swizzle": 4,
+            "warps": 1,
+            "split_k_capacity": 1
+          },
+          "scales": {
+            "weight_globals": "ExpertProjection",
+            "activation_globals": "Absent",
+            "shared_gate_up_activation": true
+          },
+          "route_weight": "AfterDown",
+          "swiglu_clamp": null
+        }
+      }
+    }
+  },
+  {
+    "inputs": {
+      "kind": {
+        "Grouped": {
+          "experts": 128,
+          "top_k": 10
+        }
+      },
+      "format": "nvfp4",
+      "geometry": {
+        "rows": 2560,
+        "k": 640
+      },
+      "operands": 1,
+      "target": "Sm120f",
+      "activation": "Bf16",
+      "weight_operand": "Bf16",
+      "accumulator": "F32",
+      "output": "Bf16",
+      "decode_order": "ExactLocalThenGlobal",
+      "rounding": "NearestEven",
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": true
+      },
+      "weight_globals": "Expert",
+      "usage": {
+        "phase": "Verify",
+        "capacity": 32,
+        "graph": true
+      },
+      "lookup": null
+    },
+    "schedule": {
+      "kind": "Typed",
+      "implementation": {
+        "Grouped": {
+          "phase": "Decode",
+          "capacity": 32,
+          "knobs": {
+            "tile_m": 16,
+            "tile_n": 64,
+            "tile_k": 64,
+            "stages": 2,
+            "swizzle": 0,
+            "warps": 4,
+            "split_k_capacity": 1
+          },
+          "scales": {
+            "weight_globals": "ExpertProjection",
+            "activation_globals": "Absent",
+            "shared_gate_up_activation": true
+          },
+          "route_weight": "AfterDown",
+          "swiglu_clamp": null
+        }
+      }
+    }
+  }
+]

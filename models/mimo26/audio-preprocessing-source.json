@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/XiaomiMiMo/MiMo-Audio-Tokenizer",
+  "revision": "b62b59922979bf9f389b373169298a251587653f",
+  "file": "mimo_audio_tokenizer/utils.py",
+  "sha256": "39b9a93362ec990301dd3bb65e587d91f1e93729f45ed5dd235b8c94c26c62ae",
+  "functions": [
+    "load_audio",
+    "mel_spectrogram"
+  ]
+}

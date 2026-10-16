@@ -1,0 +1,47 @@
+[package]
+name = "model-glm5next-contract"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[features]
+# Plan requests for tests (`direct::test_support`).
+test-support = []
+
+[dependencies]
+bundle-runtime.workspace = true
+encoder-spec.workspace = true
+frontend-format.workspace = true
+kernel-build.workspace = true
+kernel-core.workspace = true
+kernels-sm120.workspace = true
+model-compiler-sdk.workspace = true
+projection-spec.workspace = true
+runtime-bundle.workspace = true
+runtime-bundle-abi.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[build-dependencies]
+model-compiler-sdk.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+kernel-core.workspace = true
+kernels-sm120.workspace = true
+
+# Examples and tests that name SM120 items live under examples/sm120 and
+# tests/sm120 and keep their names.
+[[example]]
+name = "projection-symbols"
+path = "examples/sm120/projection-symbols.rs"
+
+[[test]]
+name = "geometry_recipe"
+path = "tests/sm120/geometry_recipe.rs"
+
+[lints]
+workspace = true

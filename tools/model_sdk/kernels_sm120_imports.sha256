@@ -1,0 +1,6 @@
+# SHA-256 of every path ("models/<m>/<path>" or "examples/<e>/<path>") that a
+# model's kernels_sm120_imports.txt may name: the files that named kernels_sm120
+# outside an sm120 module when the lists were frozen, and those of branches in
+# flight then (tools/model_sdk/core_policy.py, check_model_kernel_imports).
+# Remove a hash when its file leaves its list; never add one.
+cc816f1203de85e108630d4036c130c6977a637ecb976245b8c98b7f1a0d9299

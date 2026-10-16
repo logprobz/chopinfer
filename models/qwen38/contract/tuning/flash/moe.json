@@ -1,0 +1,15 @@
+{
+  "compute_capability": 120,
+  "sm_count": 188,
+  "decode": {
+    "1": { "gate_up": [10, 10], "down": [8, 1] },
+    "2": { "gate_up": [10, 10], "down": [8, 1] },
+    "4": { "gate_up": [10, 10], "down": [8, 1] },
+    "8": { "gate_up": [5, 5], "down": [8, 1] },
+    "16": { "gate_up": [5, 5], "down": [4, 1] },
+    "32": { "gate_up": [5, 5], "down": [4, 1] }
+  },
+  "prefill": {
+    "8192": { "weight_stages": 3, "activation_stages": 2 }
+  }
+}

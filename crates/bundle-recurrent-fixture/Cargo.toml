@@ -1,0 +1,68 @@
+[package]
+name = "bundle-recurrent-fixture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# The installable form of this fixture is a native module the host opens with
+# the draft V1 C ABI, so the crate also builds as a shared object.
+# `build-recurrent-fixture` compiles that shared object and packages it beside
+# the manifest it emits.
+[lib]
+crate-type = ["lib", "cdylib"]
+
+[features]
+# The macOS acceptance path names this feature on every crate it builds, so this
+# fixture carries it. It selects nothing here: the crate links no device
+# services and no CUDA either way, which is what the dependency audit checks.
+fake-host-services = []
+
+# Emits the closed `chop-model-bundle-v1` directory this fixture installs from.
+#
+# The name carries the fixture, because one target directory holds one file per
+# binary name and the TP4 fixture emits its own package with a program of
+# its own. Two targets called `build-fixture` would produce one artifact and
+# whichever built last would answer for both.
+[[bin]]
+name = "build-recurrent-fixture"
+path = "src/bin/build-recurrent-fixture.rs"
+
+[dependencies]
+# The chat frontend this fixture's module exports.
+frontend-format.workspace = true
+# The transform identifiers the weight plan names.
+kernel-core.workspace = true
+# The emitter that stages, measures, and publishes the canonical directory.
+model-compiler-sdk.workspace = true
+# The canonical manifest records this fixture declares itself with.
+runtime-bundle.workspace = true
+runtime-bundle-abi.workspace = true
+runtime-bundle-sdk.workspace = true
+# For the digests this fixture declares over its own operation source. It reads
+# no checkpoint and computes no component digest: the emitter does that.
+runtime-weights.workspace = true
+# The synthetic checkpoint's safetensors header.
+serde_json.workspace = true
+
+[dev-dependencies]
+# The test fixture format the stream decoder test parses through.
+frontend-format = { workspace = true, features = ["test-support"] }
+runtime-frontend.workspace = true
+runtime-grammar.workspace = true
+runtime-engine.workspace = true
+runtime-kv.workspace = true
+runtime-model-api.workspace = true
+runtime-sampling.workspace = true
+runtime-scheduler.workspace = true
+# The focused tests drive this fixture through the real host service layer over
+# host memory, so the path they prove is the one an installed bundle takes.
+runtime-host.workspace = true
+# For the host-tier candidate the generic-fallback test offers the resolver.
+runtime-kernels.workspace = true
+# The KV dtype selection test relays the emitted manifest's KV layouts.
+serde_json.workspace = true
+
+[lints]
+workspace = true

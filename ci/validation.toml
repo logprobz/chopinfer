@@ -1,0 +1,331 @@
+schema = "chopinfer-validation-catalog-v1"
+
+[kernel_reports]
+source = "chopinfer"
+
+[[kernel_reports.external]]
+source = "external-model"
+directory = "examples/external-model"
+role = "bundle"
+selections = { "example.kernels.v1" = ["cuda-probe"], "example.precision.v1" = ["precision-exercise"] }
+sdk_dependencies = ["kernel-build", "kernel-core", "kernels-sm120", "projection-spec", "serde_json", "example-contract", "runtime-bundle-sdk"]
+kernel_paths = ["examples/external-model/bundle/*", "examples/external-model/contract/*", "examples/external-model/Cargo.toml", "examples/external-model/Cargo.lock"]
+
+# First matching rule wins. Executable/policy readers are checked before these defaults.
+[[rules]]
+paths = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "ci/*", "models/*/model.toml", "models/*/validation.toml", "models/*/qual.json", "models/*/profiles.json", "tools/model_sdk/*", "tools/qual/validation_evidence.py", "tests/model_inventory.py", "tests/bundle-boundary.sh", "tests/model-neutral-host.sh"]
+class = "validation_policy"
+
+[[rules]]
+paths = ["include/*", "crates/runtime-bundle-abi/*", "crates/runtime-bundle-sdk/*", "crates/bundle-runtime/*", "crates/runtime-model-api/*", "crates/runtime-frontend-contract/*", "BUNDLE_ARCHITECTURE.md", "fixtures/bundle-abi-v1/*"]
+class = "abi"
+
+[[rules]]
+paths = ["crates/runtime-bundle/*"]
+class = "package_schema"
+
+[[rules]]
+paths = ["crates/kernel-core/src/transform/*", "crates/kernel-core/src/topology.rs", "crates/model-compiler-sdk/*", "crates/runtime-weights/*"]
+class = "packing"
+
+[[rules]]
+paths = ["crates/kernels-*/*", "crates/kernel-core/*", "crates/kernel-build/*", "crates/runtime-kernels/*", "docs/numerics.md"]
+class = "shared_kernel"
+
+[[rules]]
+paths = ["crates/runtime-cuda/*"]
+class = "cuda_host"
+
+[[rules]]
+paths = ["crates/runtime-tokenizer/*", "crates/runtime-frontend/*", "crates/frontend-format/*", "crates/runtime-media/*"]
+class = "frontend"
+
+[[rules]]
+paths = ["crates/runtime-*/*", "crates/bundle-*-fixture/*", "crates/fixture-*/*"]
+class = "host"
+
+[[rules]]
+paths = ["deploy/*", "tools/quickstart*"]
+class = "deployment"
+
+[[rules]]
+paths = ["tools/journal_proof/*"]
+class = "evidence_tools"
+
+[[rules]]
+paths = ["docs/*", "README.md", "AGENTS.md", "LICENSE*", ".gitignore", "local.env.example"]
+class = "documentation"
+
+[classes.frontend]
+model_checks = ["frontend", "package", "quality"]
+checks = []
+[classes.packing]
+model_checks = ["package", "fixed_batch", "quality"]
+checks = []
+[classes.program]
+model_checks = ["package", "journal", "fixed_batch", "quality", "service", "lifecycle", "speculation", "prefix"]
+checks = []
+[classes.encoder]
+model_checks = ["frontend", "package", "journal", "fixed_batch", "quality", "service", "lifecycle", "speculation", "prefix"]
+checks = []
+[classes.local_kernel]
+model_checks = ["journal", "kernel_oracle", "fixed_batch", "quality", "service"]
+checks = ["kernel_build"]
+[classes.shared_kernel]
+model_checks = ["journal", "kernel_oracle", "fixed_batch", "quality", "service", "lifecycle", "speculation", "prefix"]
+checks = ["kernel_build", "kernel_oracle", "installed_bundle"]
+[classes.host]
+model_checks = ["fixed_batch", "quality", "service", "lifecycle", "speculation", "prefix"]
+checks = ["host", "installed_bundle"]
+[classes.cuda_host]
+model_checks = ["fixed_batch", "quality", "service", "lifecycle", "speculation", "prefix"]
+checks = ["cuda_fake", "host_cuda_fake", "installed_bundle"]
+[classes.abi]
+model_checks = ["journal", "package", "fixed_batch", "quality", "lifecycle", "speculation", "prefix"]
+checks = ["abi", "boundaries", "installed_bundle"]
+[classes.package_schema]
+model_checks = ["journal", "package", "fixed_batch", "quality", "service", "lifecycle", "speculation", "prefix"]
+checks = ["abi", "boundaries", "host", "installed_bundle"]
+[classes.model_unknown]
+model_checks = ["frontend", "package", "journal", "kernel_oracle", "fixed_batch", "quality", "service", "lifecycle", "speculation", "prefix"]
+checks = ["boundaries"]
+[classes.validation_policy]
+model_checks = ["frontend", "package", "journal", "kernel_oracle", "fixed_batch", "quality", "service", "lifecycle", "speculation", "prefix"]
+checks = ["cpu", "abi", "boundaries", "kernel_build", "kernel_oracle", "host", "installed_bundle", "host_cuda_fake", "cuda_fake", "deployment", "qualification_tools", "evidence_tools"]
+[classes.unknown]
+model_checks = ["frontend", "package", "journal", "kernel_oracle", "fixed_batch", "quality", "service", "lifecycle", "speculation", "prefix"]
+checks = ["cpu", "abi", "boundaries", "kernel_build", "kernel_oracle", "host", "installed_bundle", "host_cuda_fake", "cuda_fake", "deployment", "qualification_tools", "evidence_tools"]
+[classes.documentation]
+model_checks = []
+checks = []
+[classes.qualification]
+model_checks = []
+checks = ["qualification_tools"]
+[classes.deployment]
+model_checks = ["service", "lifecycle"]
+checks = ["deployment"]
+[classes.evidence_tools]
+model_checks = []
+checks = ["evidence_tools"]
+
+[checks.cpu]
+claim = "Standing full CPU checks, including policy, ABI, fixtures and feature variants"
+kind = "cpu_contract"
+commands = [["bash", "ci/cpu.sh"]]
+observes = ["*"]
+targets = ["workspace and explicit feature variants in ci/cpu.sh"]
+prerequisites = ["Rust 1.89.0, CUDA 13.2, locked/offline Cargo", "Inspect nonzero counts and skips; optional asset/device tests do not establish missing evidence"]
+limits = "CPU coverage only; device and absent tokenizer/weight checks remain obligations"
+standing = true
+
+[checks.boundaries]
+claim = "Model inventories and model-neutral host dependency boundaries"
+kind = "cpu_contract"
+commands = [["bash", "tests/bundle-boundary.sh"], ["bash", "tests/model-neutral-host.sh"]]
+observes = ["*/Cargo.toml", "models/*/model.toml"]
+targets = ["all-feature metadata, dependency policies"]
+prerequisites = []
+standing = true
+
+[checks.abi]
+claim = "ABI layout, validation, no-follow verification and compatibility refusal"
+kind = "cpu_contract"
+commands = [["cargo", "test", "-p", "runtime-bundle-abi", "--test", "abi_contract", "--locked", "--offline"]]
+observes = ["crates/runtime-bundle-abi/*", "crates/runtime-bundle-sdk/*", "include/*"]
+targets = ["abi_contract"]
+prerequisites = ["ABI draft stability still needs authentic unchanged-host Linux and SM120 receipts"]
+standing = true
+
+[checks.host]
+claim = "Host and scheduler transaction, cancellation, retirement and preemption contracts"
+kind = "cpu_contract"
+commands = [["cargo", "test", "-p", "runtime-host", "-p", "runtime-engine", "-p", "runtime-scheduler", "--locked", "--offline"]]
+observes = ["crates/runtime-host/*", "crates/runtime-engine/*", "crates/runtime-scheduler/*"]
+targets = ["default features; host, engine and scheduler tests"]
+prerequisites = []
+limits = "Default host tests do not execute optional runtime-cuda paths"
+standing = true
+
+[checks.host_cuda_fake]
+claim = "Host launch arguments and lifecycle through the CUDA fake driver"
+kind = "cpu_contract"
+commands = [["cargo", "test", "-p", "runtime-host", "--features", "cuda-fake-driver-tests", "--lib", "--locked", "--offline"]]
+observes = ["crates/runtime-host/*", "crates/runtime-cuda/*"]
+features = ["cuda-fake-driver-tests"]
+platform = "linux"
+targets = ["runtime-host lib"]
+prerequisites = []
+limits = "Fake driver mechanics are not device correctness"
+standing = true
+
+[checks.cuda_fake]
+claim = "CUDA host ABI, mapped buffers, tensor maps, page copies and decoder refusal"
+kind = "cpu_contract"
+commands = [["cargo", "test", "-p", "runtime-cuda", "--lib", "--no-default-features", "--features", "fake-driver-tests", "--locked", "--offline", "--", "tests::tensor_maps_of_every_rank_validate_before_encoding", "tests::every_tensor_map_element_reaches_the_encoder", "tests::invalid_tensor_maps_cost_no_driver_encode", "nvdec::tests::a_host_without_the_decoder_library_is_refused_cleanly", "tests::mapped_host_buffers_free_only_after_a_successful_fence", "page_copy::tests", "--test-threads=1"]]
+observes = ["crates/runtime-cuda/*"]
+features = ["fake-driver-tests", "no-default-features"]
+platform = "linux"
+targets = ["runtime-cuda lib, explicit serial fake-driver filters"]
+prerequisites = []
+standing = true
+
+[checks.installed_bundle]
+claim = "Fixture packages served with their synthetic checkpoints execute through the host: commit, cancel, drop, refusal and resource cleanup; the TP4 package passes its frontend vectors"
+kind = "cpu_contract"
+commands = [["cargo", "test", "-p", "runtime-conformance", "--locked", "--offline"]]
+observes = ["crates/runtime-host/*", "crates/runtime-bundle/*", "crates/runtime-bundle-abi/*", "crates/runtime-bundle-sdk/*", "crates/bundle-*-fixture/*"]
+artifacts = ["separately built runtime-host and fixture builders"]
+targets = ["external_bundle_host", "abi_v1_stability"]
+prerequisites = []
+limits = "Synthetic fixture packages cover CPU host/ABI mechanics, not model arithmetic or SM120"
+standing = true
+
+[checks.kernel_build]
+claim = "Source closures, generated entries, compiler flags, audits and consuming locks agree"
+kind = "artifact_identity"
+commands = [["cargo", "test", "-p", "kernel-build", "--locked", "--offline"]]
+observes = ["crates/kernel-build/*"]
+targets = ["kernel-build tests"]
+prerequisites = ["Build each selected kernel consumer against its existing lock; do not update locks to hide mismatches"]
+limits = "Producer reports explain membership per consumer and selection; missing or stale evidence retains consumers. Declarations do not qualify arithmetic or deployments"
+standing = true
+
+[checks.evidence_tools]
+claim = "Evidence tools keep their verdicts: journal proofs refuse every recorded false acceptance"
+kind = "cpu_contract"
+commands = [["python3", "-B", "-m", "unittest", "discover", "-s", "tools/journal_proof", "-p", "test_*.py", "-v"]]
+observes = ["tools/journal_proof/*"]
+targets = ["evidence tool Python unit tests"]
+prerequisites = []
+standing = true
+
+[checks.qualification_tools]
+claim = "Qualification validators retain thresholds and receipt semantics"
+kind = "cpu_contract"
+commands = [["cargo", "build", "-p", "runtime-host", "--bin", "chopinfer", "--locked", "--offline"], ["python3", "-B", "-m", "unittest", "discover", "-s", "tools/qual", "-p", "test_*.py", "-v"]]
+observes = ["tools/qual/*", "crates/runtime-eval/*", "tests/qual-vectors/*"]
+targets = ["qualification Python unit tests"]
+prerequisites = ["The shared check kinds score in chopinfer eval: the debug chopinfer binary is built first"]
+standing = true
+
+[checks.kernel_oracle]
+claim = "Shared operation oracles, including host sampling, and all consuming locks"
+kind = "gpu_correctness"
+scope = "kernel_operation"
+commands = [["cargo", "test", "-p", "runtime-kernels", "--locked", "--offline"], ["cargo", "test", "-p", "kernel-lab", "--locked", "--offline"]]
+observes = ["crates/kernels-sm120/*", "crates/kernel-core/*", "crates/kernel-build/*", "crates/runtime-kernels/*", "crates/kernel-harness/*", "crates/kernel-lab/*"]
+locks = ["crates/runtime-kernels/kernels.lock", "crates/kernel-lab/kernels.lock", "crates/kernel-lab/kernels.lock.d"]
+targets = ["runtime-kernels host sampling lock", "whole kernel-lab, including ops::sampling"]
+prerequisites = ["Explicit idle CHOPINFER_KERNEL_GPU or CHOPINFER_KERNEL_GPUS", "All required assets for each named comparison, including checkpoints; no automatic preparation", "Nonzero named oracle comparisons and complete expected coverage; early returns and skipped tests cannot satisfy this check"]
+gap = "Complete shared operation correctness coverage remains unresolved; source membership, model-local recipes and a successful CPU build do not establish it"
+standing = false
+
+[checks.deployment]
+claim = "Deployment artifacts, entrypoint and serving profile selection"
+kind = "cpu_contract"
+commands = [["python3", "-B", "tests/test_deploy_artifacts.py"], ["python3", "-B", "tests/test_deploy_entrypoint.py"], ["python3", "-B", "tests/test_deploy_policy_equality.py"], ["python3", "-B", "tests/test_serve_profiles.py"]]
+observes = ["deploy/*", "tools/dev/*redeploy*", "models/*/profiles.json", "models/*/deploy/*"]
+targets = ["deployment Python tests"]
+prerequisites = ["Existing CLI binaries required by profile tests"]
+standing = true
+
+[model_checks.frontend]
+claim = "Tokenizer, chat, decode and streaming goldens on the actual frontend"
+kind = "frontend_cargo_goldens"
+commands = [["cargo", "test", "-p", "{compiler}", "--test", "tokenizer_goldens", "--test", "chat_goldens", "--test", "decode_goldens", "--test", "streaming_text", "--locked", "--offline"]]
+observes = ["models/{model}/compiler/*", "fixtures/{model}/*", "fixtures/tokenizer-whitespace.json"]
+targets = ["tokenizer_goldens", "chat_goldens", "decode_goldens", "streaming_text"]
+prerequisites = ["CHOPINFER_{checkpoint_env}_TOKENIZER_DIR with authenticated tokenizer assets", "Require nonzero comparisons and all token assertions; partial chat goldens and early returns are missing evidence"]
+standing = true
+
+[model_checks.package]
+claim = "Weight plans, exact transforms and image-free package consistency"
+kind = "cpu_contract"
+commands = [["cargo", "test", "-p", "{compiler}", "--locked", "--offline"]]
+observes = ["models/{model}/compiler/*", "models/{model}/contract/*", "crates/model-compiler-sdk/*", "crates/kernel-core/src/transform/*", "crates/kernel-core/src/topology.rs"]
+targets = ["compiler unit and integration tests"]
+prerequisites = ["CHOPINFER_{checkpoint_env}_CHECKPOINT for checkpoint-dependent weight-plan checks; skipped cases are not evidence"]
+standing = true
+
+[model_checks.journal]
+claim = "Model launch/state journals, mixed prefill/decode, rollback and graph calls"
+kind = "fake_host"
+commands = [["cargo", "test", "-p", "{bundle}", "--lib", "--locked", "--offline"]]
+observes = ["models/{model}/bundle/*", "models/{model}/contract/*", "crates/runtime-bundle-abi/*", "crates/runtime-bundle-sdk/*", "crates/bundle-runtime/*"]
+targets = ["bundle lib fake-host and launch-journal tests"]
+prerequisites = []
+limits = "The model's local FakeHost does not execute runtime-host and cannot clear a host-only change"
+standing = true
+
+[model_checks.kernel_oracle]
+claim = "All consuming kernel locks and matching operation oracles on real devices"
+kind = "gpu_correctness"
+scope = "kernel_operation"
+commands = []
+observes = ["models/{model}/bundle/cuda/*", "crates/kernels-sm120/*", "crates/kernel-core/*"]
+targets = ["model-declared kernel-lab targets"]
+prerequisites = ["Explicit idle CHOPINFER_KERNEL_GPU or CHOPINFER_KERNEL_GPUS", "Nonzero oracle comparisons against exact decoded inputs"]
+standing = false
+
+[model_checks.fixed_batch]
+claim = "Bitwise comparison on identical fixed schedules, including full/partial speculative verify"
+kind = "fixed_batch_exactness"
+commands = [["python3", "-B", "tools/dev/fixed-batch-logits.py", "run-compare", "{idle_devices}", "--root", "{prepared_comparison_root}", "--ranks", "{ranks}"]]
+observes = []
+artifacts = ["baseline and candidate direct packages, the checkpoint both load, host recorder, trace"]
+targets = ["existing C16/C32 fixed-batch package comparison"]
+prerequisites = ["Separately prepare comparison using matching checkpoints, topology, host and trace; existing runner requires external /data root", "Explicit idle devices; actual observed native/package/host identities", "Fixed-schedule exactness is not ordinary service performance or oracle accuracy"]
+standing = false
+
+[model_checks.quality]
+claim = "Affected checkpoint accuracy and frontend/API contracts under the release policy"
+kind = "model_quality"
+commands = []
+observes = []
+artifacts = ["already-running candidate deployment and authenticated reference"]
+targets = ["model-declared gate check IDs"]
+prerequisites = ["Actual checkpoint and direct-package identities; a compatible new checkpoint needs its own accuracy evidence", "Already-running server and all external references/inputs; report never starts or prepares them"]
+standing = false
+
+[model_checks.service]
+claim = "Service quality and performance at the affected topology, capacity and workload"
+kind = "service_performance"
+commands = []
+observes = []
+artifacts = ["already-running deployment, effective settings and reference service"]
+targets = ["release-gate soak and service checks"]
+prerequisites = ["Correctness evidence before performance claims", "Exclusive idle devices and matched workload, capacity, topology, settings and reference"]
+standing = false
+
+[model_checks.lifecycle]
+claim = "Real-device mixed prefill/decode, graph replay, rollback, retirement and preemption across affected profiles"
+kind = "gpu_correctness"
+commands = []
+observes = []
+artifacts = ["candidate host and model bundle on real devices"]
+targets = ["cross-model lifecycle scenarios"]
+prerequisites = ["Matching installed artifacts and checkpoint; explicit idle devices"]
+gap = "No single existing gate establishes all these scenarios. Fixed-batch and CPU conformance cover only their named slices; record the remaining device scenarios."
+standing = false
+
+[model_checks.speculation]
+claim = "Speculative verify/state correctness for profiles that can speculate"
+kind = "model_quality"
+capability = "speculation"
+commands = []
+observes = []
+artifacts = ["candidate and AR reference captures"]
+targets = ["configured verify_exact/spec_verify checks, if present"]
+prerequisites = ["Matched checkpoint, host, schedule, full/partial verify rows and reference"]
+standing = false
+
+[model_checks.prefix]
+claim = "Prefix restoration and cold/warm behavior for profiles that can use a prefix cache"
+kind = "model_quality"
+capability = "prefix"
+commands = []
+observes = []
+artifacts = ["cold baseline, prefix floor and candidate captures"]
+targets = ["configured prefix_cache check, if present"]
+prerequisites = ["Matched checkpoint, chunks, host, workload and reference; preserve experimental profile status"]
+standing = false

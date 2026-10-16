@@ -1,0 +1,18 @@
+[
+  {
+    "name": "comm_sinkhorn_hc4x4096_sm120",
+    "source_closure_sha256": "5ff529b6090d37771ee19006d5cbb2adc84b7f6a3923edd1a116d935820e69b0"
+  },
+  {
+    "name": "comm_sinkhorn_late_wait_hc4x4096_sm120",
+    "source_closure_sha256": "81bb1edba8ddf780a4816960db15636126967dd15cdf7470bd3d660255aa4542"
+  },
+  {
+    "name": "probe_pdl_watch_sm120",
+    "source_closure_sha256": "7e9d148e692e81006131e9d80b2fdbbf100339b4d61eb47217be6eef833c6213"
+  },
+  {
+    "name": "sinkhorn_epilogue_hc4x4096_sm120",
+    "source_closure_sha256": "bb25636bb3db979b4dba62ee1ad5c4a7b8ce07b1ac004b5ea054b26f4df12f95"
+  }
+]

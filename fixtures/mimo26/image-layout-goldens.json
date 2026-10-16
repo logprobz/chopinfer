@@ -1,0 +1,189 @@
+{
+  "format": "chop.mimo26.image-layout-goldens.v1",
+  "source_commit": "b6e032dae",
+  "produced_by": "the pre-port planner (weight_plan::text_views(tensors, None, rank, tp) and drafter_views(tensors, kind, mask, rank, tp) over the retired rank slicer) at main b6e032dae, in a detached worktree with its own target dir: a scratch test holding the placed, mask and canonical functions of models/mimo26/compiler/tests/weight_plan.rs verbatim and the headers below, run as PIN_OUT=<file> cargo --locked --offline test -p model-mimo26 --test image_layout_pin",
+  "headers": "V26_FLASH's synthetic served headers: precision::expected_source_tensors of text_roles and mtp_roles, and catalog::expected_dflash_tensors, each file's tensors laid end to end by decoder layer, then name; DFlash's mask is the bytes (n * 7 + 3) mod 256",
+  "fields": "per image, rank count and rank: arena_bytes, views, pieces, padding_bytes (sum over views), first_view and last_view lines, and sha256 of the canonical lines (image length; each view in arena order with offset, bytes, padding after it, dtype, shape and layout; each piece's arena offset, bytes, transform id, params SHA-256, sources, axis, ranges and stored shape)",
+  "images": {
+    "text": {
+      "2": [
+        {
+          "arena_bytes": 85552652288,
+          "views": 568,
+          "pieces": 72574,
+          "padding_bytes": 386880,
+          "first_view": "view lm_head.weight offset=0 bytes=624951296 padding=0 dtype=BF16 shape=[76288, 4096] layout=bf16_mma_fragments_16x16_v1",
+          "last_view": "view model.layers.47.mlp.experts.down_proj.weight_scale offset=85519097856 bytes=33554432 padding=0 dtype=U8 shape=[256, 4096, 32] layout=mxfp4_moe_fragment_scales_16x64_v2",
+          "sha256": "4811c43462124781d6e44bfa5fce686f685299e460e8c7c646b1243d09600553"
+        },
+        {
+          "arena_bytes": 85552652288,
+          "views": 568,
+          "pieces": 72574,
+          "padding_bytes": 386880,
+          "first_view": "view lm_head.weight offset=0 bytes=624951296 padding=0 dtype=BF16 shape=[76288, 4096] layout=bf16_mma_fragments_16x16_v1",
+          "last_view": "view model.layers.47.mlp.experts.down_proj.weight_scale offset=85519097856 bytes=33554432 padding=0 dtype=U8 shape=[256, 4096, 32] layout=mxfp4_moe_fragment_scales_16x64_v2",
+          "sha256": "d3156f88d8812f712dfdc4a8915d9fcbf4ce0bc96b42b253a52818f79134cb56"
+        }
+      ],
+      "4": [
+        {
+          "arena_bytes": 43450937344,
+          "views": 568,
+          "pieces": 72574,
+          "padding_bytes": 323616,
+          "first_view": "view lm_head.weight offset=0 bytes=312475648 padding=0 dtype=BF16 shape=[38144, 4096] layout=bf16_mma_fragments_16x16_v1",
+          "last_view": "view model.layers.47.mlp.experts.down_proj.weight_scale offset=43434160128 bytes=16777216 padding=0 dtype=U8 shape=[256, 4096, 16] layout=mxfp4_moe_fragment_scales_16x64_v2",
+          "sha256": "f317a2a7aff645107b5715a421fb60537d297ab38289feb55e3a932f2b33ed70"
+        },
+        {
+          "arena_bytes": 43450937344,
+          "views": 568,
+          "pieces": 72574,
+          "padding_bytes": 323616,
+          "first_view": "view lm_head.weight offset=0 bytes=312475648 padding=0 dtype=BF16 shape=[38144, 4096] layout=bf16_mma_fragments_16x16_v1",
+          "last_view": "view model.layers.47.mlp.experts.down_proj.weight_scale offset=43434160128 bytes=16777216 padding=0 dtype=U8 shape=[256, 4096, 16] layout=mxfp4_moe_fragment_scales_16x64_v2",
+          "sha256": "5b614b96121b90986f7a8141fc75e571a8671abc6242cc832d87ee4d64461e10"
+        },
+        {
+          "arena_bytes": 43450937344,
+          "views": 568,
+          "pieces": 72574,
+          "padding_bytes": 323616,
+          "first_view": "view lm_head.weight offset=0 bytes=312475648 padding=0 dtype=BF16 shape=[38144, 4096] layout=bf16_mma_fragments_16x16_v1",
+          "last_view": "view model.layers.47.mlp.experts.down_proj.weight_scale offset=43434160128 bytes=16777216 padding=0 dtype=U8 shape=[256, 4096, 16] layout=mxfp4_moe_fragment_scales_16x64_v2",
+          "sha256": "42aa1f0936ed17bb43ae76facd65574adcdd4774c9ff4fc7f5462eaec5095827"
+        },
+        {
+          "arena_bytes": 43450937344,
+          "views": 568,
+          "pieces": 72574,
+          "padding_bytes": 323616,
+          "first_view": "view lm_head.weight offset=0 bytes=312475648 padding=0 dtype=BF16 shape=[38144, 4096] layout=bf16_mma_fragments_16x16_v1",
+          "last_view": "view model.layers.47.mlp.experts.down_proj.weight_scale offset=43434160128 bytes=16777216 padding=0 dtype=U8 shape=[256, 4096, 16] layout=mxfp4_moe_fragment_scales_16x64_v2",
+          "sha256": "adecb1c04291995bea8ed75233da0ed4c78ff6b3fe736957f282457678bb6cc6"
+        }
+      ]
+    },
+    "mtp": {
+      "2": [
+        {
+          "arena_bytes": 594800640,
+          "views": 42,
+          "pieces": 48,
+          "padding_bytes": 16704,
+          "first_view": "view model.mtp.layers.0.eh_proj.weight offset=0 bytes=33554432 padding=0 dtype=BF16 shape=[4096, 4096] layout=bf16_mma_fragments_16x16_v1",
+          "last_view": "view model.mtp.layers.2.self_attn.qkv_proj.weight_scale_inv offset=594784256 bytes=14848 padding=1536 dtype=F32 shape=[116, 32] layout=fp8_f32_row_scale_64x128_v1",
+          "sha256": "08e62f833e98c38e6372b7897d8fbeac19949e2924de4a2620e975af988affe6"
+        },
+        {
+          "arena_bytes": 594800640,
+          "views": 42,
+          "pieces": 48,
+          "padding_bytes": 16704,
+          "first_view": "view model.mtp.layers.0.eh_proj.weight offset=0 bytes=33554432 padding=0 dtype=BF16 shape=[4096, 4096] layout=bf16_mma_fragments_16x16_v1",
+          "last_view": "view model.mtp.layers.2.self_attn.qkv_proj.weight_scale_inv offset=594784256 bytes=14848 padding=1536 dtype=F32 shape=[116, 32] layout=fp8_f32_row_scale_64x128_v1",
+          "sha256": "a604d9582ff30e1fc59e8e35f409d1224d7b08f9c248dc190849311d9f328d68"
+        }
+      ],
+      "4": [
+        {
+          "arena_bytes": 297455616,
+          "views": 42,
+          "pieces": 48,
+          "padding_bytes": 13344,
+          "first_view": "view model.mtp.layers.0.eh_proj.weight offset=0 bytes=16777216 padding=0 dtype=BF16 shape=[4096, 2048] layout=bf16_mma_fragments_16x16_v1",
+          "last_view": "view model.mtp.layers.2.self_attn.qkv_proj.weight_scale_inv offset=297451520 bytes=3712 padding=384 dtype=F32 shape=[29, 32] layout=fp8_f32_block_scale_128x128_v1",
+          "sha256": "4c48bc9ac63c7c577f0b09aa408891e1daf9e67330ea3b2794f7199cfe99f068"
+        },
+        {
+          "arena_bytes": 297455616,
+          "views": 42,
+          "pieces": 48,
+          "padding_bytes": 13344,
+          "first_view": "view model.mtp.layers.0.eh_proj.weight offset=0 bytes=16777216 padding=0 dtype=BF16 shape=[4096, 2048] layout=bf16_mma_fragments_16x16_v1",
+          "last_view": "view model.mtp.layers.2.self_attn.qkv_proj.weight_scale_inv offset=297451520 bytes=3712 padding=384 dtype=F32 shape=[29, 32] layout=fp8_f32_block_scale_128x128_v1",
+          "sha256": "e94319a848a12e006850f938085eb7572da32d38741db043bf01feaead037004"
+        },
+        {
+          "arena_bytes": 297455616,
+          "views": 42,
+          "pieces": 48,
+          "padding_bytes": 13344,
+          "first_view": "view model.mtp.layers.0.eh_proj.weight offset=0 bytes=16777216 padding=0 dtype=BF16 shape=[4096, 2048] layout=bf16_mma_fragments_16x16_v1",
+          "last_view": "view model.mtp.layers.2.self_attn.qkv_proj.weight_scale_inv offset=297451520 bytes=3712 padding=384 dtype=F32 shape=[29, 32] layout=fp8_f32_block_scale_128x128_v1",
+          "sha256": "642fa5b92720bd57df28d3ad9fbf903f3085758a374ffbc4a63a770ea30c7eef"
+        },
+        {
+          "arena_bytes": 297455616,
+          "views": 42,
+          "pieces": 48,
+          "padding_bytes": 13344,
+          "first_view": "view model.mtp.layers.0.eh_proj.weight offset=0 bytes=16777216 padding=0 dtype=BF16 shape=[4096, 2048] layout=bf16_mma_fragments_16x16_v1",
+          "last_view": "view model.mtp.layers.2.self_attn.qkv_proj.weight_scale_inv offset=297451520 bytes=3712 padding=384 dtype=F32 shape=[29, 32] layout=fp8_f32_block_scale_128x128_v1",
+          "sha256": "374f2750d1685cf687017fde2bb70dfbdad02f659668d0b4e3d002ebca40b340"
+        }
+      ]
+    },
+    "dflash": {
+      "2": [
+        {
+          "arena_bytes": 1510117376,
+          "views": 50,
+          "pieces": 74,
+          "padding_bytes": 58560,
+          "first_view": "view fc.weight offset=0 bytes=83886080 padding=0 dtype=BF16 shape=[4096, 10240] layout=bf16_mma_fragments_16x16_v1",
+          "last_view": "view mask_embedding.weight offset=1510109184 bytes=8192 padding=0 dtype=BF16 shape=[4096] layout=bf16_row_major_v1",
+          "sha256": "e2bb26a4540a884f2057f050547e2f67da439e1398a668769a8c2760a9d97683"
+        },
+        {
+          "arena_bytes": 1510117376,
+          "views": 50,
+          "pieces": 74,
+          "padding_bytes": 58560,
+          "first_view": "view fc.weight offset=0 bytes=83886080 padding=0 dtype=BF16 shape=[4096, 10240] layout=bf16_mma_fragments_16x16_v1",
+          "last_view": "view mask_embedding.weight offset=1510109184 bytes=8192 padding=0 dtype=BF16 shape=[4096] layout=bf16_row_major_v1",
+          "sha256": "01ef01b579e73f55d45e0080c4c62702d35cbfcd4d325b5fb70aeb1f631108f1"
+        }
+      ],
+      "4": [
+        {
+          "arena_bytes": 755142656,
+          "views": 50,
+          "pieces": 74,
+          "padding_bytes": 58720,
+          "first_view": "view fc.weight offset=0 bytes=41943040 padding=0 dtype=BF16 shape=[4096, 5120] layout=bf16_mma_fragments_16x16_v1",
+          "last_view": "view mask_embedding.weight offset=755134464 bytes=8192 padding=0 dtype=BF16 shape=[4096] layout=bf16_row_major_v1",
+          "sha256": "c99c9f6ec46770f2b54c118db142b2435d03ba5f65cc9763918f6fc19c8a69bf"
+        },
+        {
+          "arena_bytes": 755142656,
+          "views": 50,
+          "pieces": 74,
+          "padding_bytes": 58720,
+          "first_view": "view fc.weight offset=0 bytes=41943040 padding=0 dtype=BF16 shape=[4096, 5120] layout=bf16_mma_fragments_16x16_v1",
+          "last_view": "view mask_embedding.weight offset=755134464 bytes=8192 padding=0 dtype=BF16 shape=[4096] layout=bf16_row_major_v1",
+          "sha256": "ce9d2dcfebede525ae349810d43b865372c405742c46ebffeee758c05b940b00"
+        },
+        {
+          "arena_bytes": 755142656,
+          "views": 50,
+          "pieces": 74,
+          "padding_bytes": 58720,
+          "first_view": "view fc.weight offset=0 bytes=41943040 padding=0 dtype=BF16 shape=[4096, 5120] layout=bf16_mma_fragments_16x16_v1",
+          "last_view": "view mask_embedding.weight offset=755134464 bytes=8192 padding=0 dtype=BF16 shape=[4096] layout=bf16_row_major_v1",
+          "sha256": "75c737bdcb1f698185082daf3055b8e6ee4e8c4d0ebf6c6fb19c414a6441762f"
+        },
+        {
+          "arena_bytes": 755142656,
+          "views": 50,
+          "pieces": 74,
+          "padding_bytes": 58720,
+          "first_view": "view fc.weight offset=0 bytes=41943040 padding=0 dtype=BF16 shape=[4096, 5120] layout=bf16_mma_fragments_16x16_v1",
+          "last_view": "view mask_embedding.weight offset=755134464 bytes=8192 padding=0 dtype=BF16 shape=[4096] layout=bf16_row_major_v1",
+          "sha256": "88226309917fd233647f5973d884af47cf0c7411bdbff67fe4e8bece4a684141"
+        }
+      ]
+    }
+  }
+}

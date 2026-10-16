@@ -1,0 +1,22 @@
+[
+  {
+    "name": "block_merge_qwen38_sm120",
+    "source_closure_sha256": "30fb6cc07409015d30c02a98b906e88b7462933aaf25f972bd94da9dabb4b665"
+  },
+  {
+    "name": "context_parallel_qwen38_sm120",
+    "source_closure_sha256": "61d2982c2c3d92b0120a3cc5e7473ebf5b2c92926473dbeca00442eecfa5ef6c"
+  },
+  {
+    "name": "owned_writes_qwen38_sm120",
+    "source_closure_sha256": "366caf4c869af9890d4e24afa54e71a8e8ed934bcfc1be119ae513023145b076"
+  },
+  {
+    "name": "pooled_indexer_head_sum_qwen38_sm120",
+    "source_closure_sha256": "33aa0d1a21e71b06c5febfe7170ca0e4095a430782cc2c2fce64d8d75a073a6b"
+  },
+  {
+    "name": "selected_partials_qwen38_sm120",
+    "source_closure_sha256": "d99fa857ee7a1caa70a0fe399e73328170513a16a6701c1f2197abfb5149ebd0"
+  }
+]

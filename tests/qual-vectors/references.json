@@ -1,0 +1,172 @@
+{
+ "kind": "references",
+ "schema": "chopinfer-qual-vectors/v1",
+ "vectors": [
+  {
+   "checkpoint": {
+    "checkpoint_identity": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "lock": "models/example/checkpoint-files.json",
+    "repository": "example/model",
+    "revision": "0000000000000000000000000000000000000000",
+    "served_model_name": "Example",
+    "source_lock_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+   },
+   "covers": [
+    "unbound"
+   ],
+   "expected": {
+    "binding": {
+     "refset_sha256": null,
+     "status": "unbound"
+    },
+    "status": "accepted"
+   },
+   "fixture": "{\"provenance\": {\"checkpoint\": {\"checkpoint_identity\": \"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\", \"repository\": \"example/model\", \"revision\": \"0000000000000000000000000000000000000000\", \"served_model_name\": \"Example\", \"source_lock_sha256\": \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}}, \"schema\": \"chopinfer.example.teacher-reference.v1\", \"texts\": [{\"bf16\": {\"logprob\": [-0.52, -1.1], \"margin\": [1.0, 1.0], \"top1\": [2, 3], \"topk_ids\": [[2, 900, 901, 902, 903], [3, 900, 901, 902, 903]], \"topk_logits\": [[-0.52, -1.52, -2.52, -3.52, -4.52], [-1.1, -2.1, -3.1, -4.1, -5.1]], \"topk_logprobs\": [[-0.52, -1.52, -2.52, -3.52, -4.52], [-1.1, -2.1, -3.1, -4.1, -5.1]]}, \"category\": \"chat\", \"exact\": {\"logprob\": [-0.5, -1.0], \"margin\": [1.0, 1.0], \"top1\": [2, 3], \"topk_ids\": [[2, 900, 901, 902, 903], [3, 900, 901, 902, 903]], \"topk_logits\": [[-0.5, -1.5, -2.5, -3.5, -4.5], [-1.0, -2.0, -3.0, -4.0, -5.0]], \"topk_logprobs\": [[-0.5, -1.5, -2.5, -3.5, -4.5], [-1.0, -2.0, -3.0, -4.0, -5.0]]}, \"name\": \"t0\", \"prompt_token_ids\": [1, 2, 3], \"score_from\": 1}]}",
+   "name": "accepted: an unbound fixture is read as unbound (transitional)",
+   "pin": {
+    "schema": "chopinfer.example.teacher-reference.v1",
+    "sha256": "beaa432c5098e7aa5b55b1d418560ca3a307067882f128052e345568836694e7",
+    "variants": [
+     "exact",
+     "bf16"
+    ]
+   }
+  },
+  {
+   "checkpoint": {
+    "checkpoint_identity": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "lock": "models/example/checkpoint-files.json",
+    "repository": "example/model",
+    "revision": "0000000000000000000000000000000000000000",
+    "served_model_name": "Example",
+    "source_lock_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+   },
+   "covers": [
+    "bound to another lock"
+   ],
+   "expected": {
+    "error": "stale_reference: lock: the teacher reference is bound to another checkpoint lock than the pin",
+    "status": "refused"
+   },
+   "fixture": "{\"binding\": {\"digests\": {\"lock\": \"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"}, \"lock\": {\"path\": \"models/other/checkpoint-files.json\", \"variant\": null}}, \"provenance\": {\"checkpoint\": {\"checkpoint_identity\": \"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\", \"repository\": \"example/model\", \"revision\": \"0000000000000000000000000000000000000000\", \"served_model_name\": \"Example\", \"source_lock_sha256\": \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}}, \"schema\": \"chopinfer.example.teacher-reference.v1\", \"texts\": [{\"bf16\": {\"logprob\": [-0.52, -1.1], \"margin\": [1.0, 1.0], \"top1\": [2, 3], \"topk_ids\": [[2, 900, 901, 902, 903], [3, 900, 901, 902, 903]], \"topk_logits\": [[-0.52, -1.52, -2.52, -3.52, -4.52], [-1.1, -2.1, -3.1, -4.1, -5.1]], \"topk_logprobs\": [[-0.52, -1.52, -2.52, -3.52, -4.52], [-1.1, -2.1, -3.1, -4.1, -5.1]]}, \"category\": \"chat\", \"exact\": {\"logprob\": [-0.5, -1.0], \"margin\": [1.0, 1.0], \"top1\": [2, 3], \"topk_ids\": [[2, 900, 901, 902, 903], [3, 900, 901, 902, 903]], \"topk_logits\": [[-0.5, -1.5, -2.5, -3.5, -4.5], [-1.0, -2.0, -3.0, -4.0, -5.0]], \"topk_logprobs\": [[-0.5, -1.5, -2.5, -3.5, -4.5], [-1.0, -2.0, -3.0, -4.0, -5.0]]}, \"name\": \"t0\", \"prompt_token_ids\": [1, 2, 3], \"score_from\": 1}]}",
+   "name": "refused: a binding to another checkpoint lock",
+   "pin": {
+    "schema": "chopinfer.example.teacher-reference.v1",
+    "sha256": "365c2140f5f15c4af35fbcbf890754aaddda0e9a66abd269d136cc093c4977a6",
+    "variants": [
+     "exact",
+     "bf16"
+    ]
+   }
+  },
+  {
+   "checkpoint": {
+    "checkpoint_identity": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "lock": "models/example/checkpoint-files.json",
+    "repository": "example/model",
+    "revision": "0000000000000000000000000000000000000000",
+    "served_model_name": "Example",
+    "source_lock_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+   },
+   "covers": [
+    "digest mismatch"
+   ],
+   "expected": {
+    "error": "<fixture> is not the pinned teacher reference",
+    "status": "refused"
+   },
+   "fixture": "{\"provenance\": {\"checkpoint\": {\"checkpoint_identity\": \"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\", \"repository\": \"example/model\", \"revision\": \"0000000000000000000000000000000000000000\", \"served_model_name\": \"Example\", \"source_lock_sha256\": \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}}, \"schema\": \"chopinfer.example.teacher-reference.v1\", \"texts\": [{\"bf16\": {\"logprob\": [-0.52, -1.1], \"margin\": [1.0, 1.0], \"top1\": [2, 3], \"topk_ids\": [[2, 900, 901, 902, 903], [3, 900, 901, 902, 903]], \"topk_logits\": [[-0.52, -1.52, -2.52, -3.52, -4.52], [-1.1, -2.1, -3.1, -4.1, -5.1]], \"topk_logprobs\": [[-0.52, -1.52, -2.52, -3.52, -4.52], [-1.1, -2.1, -3.1, -4.1, -5.1]]}, \"category\": \"chat\", \"exact\": {\"logprob\": [-0.5, -1.0], \"margin\": [1.0, 1.0], \"top1\": [2, 3], \"topk_ids\": [[2, 900, 901, 902, 903], [3, 900, 901, 902, 903]], \"topk_logits\": [[-0.5, -1.5, -2.5, -3.5, -4.5], [-1.0, -2.0, -3.0, -4.0, -5.0]], \"topk_logprobs\": [[-0.5, -1.5, -2.5, -3.5, -4.5], [-1.0, -2.0, -3.0, -4.0, -5.0]]}, \"name\": \"t0\", \"prompt_token_ids\": [1, 2, 3], \"score_from\": 1}]}",
+   "name": "refused: bytes other than the pinned digest",
+   "pin": {
+    "schema": "chopinfer.example.teacher-reference.v1",
+    "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "variants": [
+     "exact",
+     "bf16"
+    ]
+   }
+  },
+  {
+   "checkpoint": {
+    "checkpoint_identity": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "lock": "models/example/checkpoint-files.json",
+    "repository": "example/model",
+    "revision": "0000000000000000000000000000000000000000",
+    "served_model_name": "Example",
+    "source_lock_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+   },
+   "covers": [
+    "schema mismatch"
+   ],
+   "expected": {
+    "error": "<fixture>: schema or checkpoint provenance differs from the pin",
+    "status": "refused"
+   },
+   "fixture": "{\"provenance\": {\"checkpoint\": {\"checkpoint_identity\": \"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\", \"repository\": \"example/model\", \"revision\": \"0000000000000000000000000000000000000000\", \"served_model_name\": \"Example\", \"source_lock_sha256\": \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}}, \"schema\": \"chopinfer.example.teacher-reference.v0\", \"texts\": [{\"bf16\": {\"logprob\": [-0.52, -1.1], \"margin\": [1.0, 1.0], \"top1\": [2, 3], \"topk_ids\": [[2, 900, 901, 902, 903], [3, 900, 901, 902, 903]], \"topk_logits\": [[-0.52, -1.52, -2.52, -3.52, -4.52], [-1.1, -2.1, -3.1, -4.1, -5.1]], \"topk_logprobs\": [[-0.52, -1.52, -2.52, -3.52, -4.52], [-1.1, -2.1, -3.1, -4.1, -5.1]]}, \"category\": \"chat\", \"exact\": {\"logprob\": [-0.5, -1.0], \"margin\": [1.0, 1.0], \"top1\": [2, 3], \"topk_ids\": [[2, 900, 901, 902, 903], [3, 900, 901, 902, 903]], \"topk_logits\": [[-0.5, -1.5, -2.5, -3.5, -4.5], [-1.0, -2.0, -3.0, -4.0, -5.0]], \"topk_logprobs\": [[-0.5, -1.5, -2.5, -3.5, -4.5], [-1.0, -2.0, -3.0, -4.0, -5.0]]}, \"name\": \"t0\", \"prompt_token_ids\": [1, 2, 3], \"score_from\": 1}]}",
+   "name": "refused: another schema",
+   "pin": {
+    "schema": "chopinfer.example.teacher-reference.v1",
+    "sha256": "eb3037c3bc2e10fe46fec7cc93f615bcb3737d745199c54180af9cca27b4f05c",
+    "variants": [
+     "exact",
+     "bf16"
+    ]
+   }
+  },
+  {
+   "checkpoint": {
+    "checkpoint_identity": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "lock": "models/example/checkpoint-files.json",
+    "repository": "example/model",
+    "revision": "0000000000000000000000000000000000000000",
+    "served_model_name": "Example",
+    "source_lock_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+   },
+   "covers": [
+    "provenance mismatch"
+   ],
+   "expected": {
+    "error": "<fixture>: schema or checkpoint provenance differs from the pin",
+    "status": "refused"
+   },
+   "fixture": "{\"provenance\": {\"checkpoint\": {\"checkpoint_identity\": \"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\", \"repository\": \"example/model\", \"revision\": \"1111111111111111111111111111111111111111\", \"served_model_name\": \"Example\", \"source_lock_sha256\": \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}}, \"schema\": \"chopinfer.example.teacher-reference.v1\", \"texts\": [{\"bf16\": {\"logprob\": [-0.52, -1.1], \"margin\": [1.0, 1.0], \"top1\": [2, 3], \"topk_ids\": [[2, 900, 901, 902, 903], [3, 900, 901, 902, 903]], \"topk_logits\": [[-0.52, -1.52, -2.52, -3.52, -4.52], [-1.1, -2.1, -3.1, -4.1, -5.1]], \"topk_logprobs\": [[-0.52, -1.52, -2.52, -3.52, -4.52], [-1.1, -2.1, -3.1, -4.1, -5.1]]}, \"category\": \"chat\", \"exact\": {\"logprob\": [-0.5, -1.0], \"margin\": [1.0, 1.0], \"top1\": [2, 3], \"topk_ids\": [[2, 900, 901, 902, 903], [3, 900, 901, 902, 903]], \"topk_logits\": [[-0.5, -1.5, -2.5, -3.5, -4.5], [-1.0, -2.0, -3.0, -4.0, -5.0]], \"topk_logprobs\": [[-0.5, -1.5, -2.5, -3.5, -4.5], [-1.0, -2.0, -3.0, -4.0, -5.0]]}, \"name\": \"t0\", \"prompt_token_ids\": [1, 2, 3], \"score_from\": 1}]}",
+   "name": "refused: provenance of another checkpoint revision",
+   "pin": {
+    "schema": "chopinfer.example.teacher-reference.v1",
+    "sha256": "aad29a866191b9ec823752eafd7ca3b34b77e63d027d3924358bb229c2b23f7e",
+    "variants": [
+     "exact",
+     "bf16"
+    ]
+   }
+  },
+  {
+   "checkpoint": {
+    "checkpoint_identity": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "lock": "models/example/checkpoint-files.json",
+    "repository": "example/model",
+    "revision": "0000000000000000000000000000000000000000",
+    "served_model_name": "Example",
+    "source_lock_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+   },
+   "covers": [
+    "missing variant"
+   ],
+   "expected": {
+    "error": "<fixture>: variants differ from the pinned policy",
+    "status": "refused"
+   },
+   "fixture": "{\"provenance\": {\"checkpoint\": {\"checkpoint_identity\": \"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\", \"repository\": \"example/model\", \"revision\": \"0000000000000000000000000000000000000000\", \"served_model_name\": \"Example\", \"source_lock_sha256\": \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}}, \"schema\": \"chopinfer.example.teacher-reference.v1\", \"texts\": [{\"category\": \"chat\", \"exact\": {\"logprob\": [-0.5, -1.0], \"margin\": [1.0, 1.0], \"top1\": [2, 3], \"topk_ids\": [[2, 900, 901, 902, 903], [3, 900, 901, 902, 903]], \"topk_logits\": [[-0.5, -1.5, -2.5, -3.5, -4.5], [-1.0, -2.0, -3.0, -4.0, -5.0]], \"topk_logprobs\": [[-0.5, -1.5, -2.5, -3.5, -4.5], [-1.0, -2.0, -3.0, -4.0, -5.0]]}, \"name\": \"t0\", \"prompt_token_ids\": [1, 2, 3], \"score_from\": 1}]}",
+   "name": "refused: a pinned variant missing from a text",
+   "pin": {
+    "schema": "chopinfer.example.teacher-reference.v1",
+    "sha256": "0c05d172e044feb7dbc679c88d636f8625f459ed31602581abac88e7acce3268",
+    "variants": [
+     "exact",
+     "bf16"
+    ]
+   }
+  }
+ ],
+ "version": "references.v1"
+}

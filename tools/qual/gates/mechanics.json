@@ -1,0 +1,127 @@
+{
+  "schema": "chopinfer-release-gates/v1",
+  "model": "fixture",
+  "profiles": {
+    "quick": {
+      "checks": [
+        "api",
+        "structured"
+      ]
+    },
+    "full": {
+      "checks": [
+        "api",
+        "structured"
+      ]
+    }
+  },
+  "checks": [
+    {
+      "id": "api",
+      "module": "api",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--mechanics-only",
+        "--timeout",
+        "10"
+      ],
+      "timeout_seconds": 120,
+      "receipt": "*-api.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ]
+    },
+    {
+      "id": "structured",
+      "module": "structured",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--mechanics-only",
+        "--timeout",
+        "10"
+      ],
+      "timeout_seconds": 120,
+      "receipt": "*-structured.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "CPU mechanics only. No accuracy or release qualification."
+  ],
+  "receipts": {
+    "env": "CHOPINFER_DATA",
+    "path": "qual/mechanics"
+  },
+  "inputs": {
+    "fixture_root": "fixtures/mimo26",
+    "frontend": "models/mimo26/compiler/src/frontend.json",
+    "chat_renders": "fixtures/mimo26/frontend/chat-renders.json",
+    "exact": "fixtures/mimo26/teacher-exact-reference.json",
+    "teacher_reference": "fixtures/mimo26/teacher-exact-reference.json",
+    "gsm8k": {
+      "env": "CHOPINFER_MIMO_FIXTURES",
+      "default": "fixtures/mimo26",
+      "path": "gsm8k"
+    },
+    "needle": {
+      "env": "CHOPINFER_MIMO_FIXTURES",
+      "default": "fixtures/mimo26",
+      "path": "functional"
+    },
+    "spec_teacher": "fixtures/mimo26/teacher-texts.json",
+    "media_cases": "fixtures/mimo26/capture/multimodal_cases.py",
+    "media_fixtures": {
+      "env": "CHOPINFER_MIMO_FIXTURES",
+      "default": "fixtures/mimo26",
+      "path": "functional"
+    }
+  },
+  "qualification": {
+    "teacher_reference_kind": "exact",
+    "teacher_receipt": "teacher",
+    "teacher_capture_schema": "chopinfer.mimo26.teacher-capture.v1",
+    "verify_buckets": [
+      2,
+      4,
+      8
+    ],
+    "chars_per_token": 4.3,
+    "prefix": {
+      "family": "mimo26",
+      "prompt_end": false,
+      "media": true,
+      "acceptance": true,
+      "block_tokens": 64,
+      "prefill_granule": 1,
+      "anchor_boundary": 128,
+      "anchor_labels": [
+        "anchor_in_window",
+        "anchor_past_window"
+      ],
+      "reference_schema": "chopinfer.mimo26.teacher-exact-reference.v3"
+    },
+    "mechanics_only": true
+  }
+}

@@ -1,0 +1,2005 @@
+[
+  {
+    "name": "decoded_balanced_mutants_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_lab_balanced_none_n512_m256_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "n"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_global_scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_global_scale",
+            "cxx_type": "const float"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 1024
+      },
+      {
+        "symbol": "chop_lab_balanced_drop_wait_n512_m256_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "n"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_global_scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_global_scale",
+            "cxx_type": "const float"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 1024
+      },
+      {
+        "symbol": "chop_lab_balanced_late_wait_n512_m256_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "n"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_global_scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_global_scale",
+            "cxx_type": "const float"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 1024
+      },
+      {
+        "symbol": "chop_lab_balanced_long_chain_n512_m256_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "n"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_global_scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_global_scale",
+            "cxx_type": "const float"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 1024
+      }
+    ],
+    "cubin_sha256": "1e76667d974d0a01335b0148fdffb4916a3a0f2a4579847ebf92a6d533333e03",
+    "resources": [
+      {
+        "symbol": "chop_lab_balanced_none_n512_m256_v1",
+        "registers": 168,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 384,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_lab_balanced_drop_wait_n512_m256_v1",
+        "registers": 168,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 384,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_lab_balanced_late_wait_n512_m256_v1",
+        "registers": 168,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 384,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_lab_balanced_long_chain_n512_m256_v1",
+        "registers": 168,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 384,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "decoded_balanced_n1536_k4096_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_lab_balanced_n1536_k4096_m8192_decoded_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "n"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_global_scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_global_scale",
+            "cxx_type": "const float"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 1024
+      },
+      {
+        "symbol": "chop_lab_balanced_n1536_k4096_m8192_one_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "n"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_global_scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_global_scale",
+            "cxx_type": "const float"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 1024
+      },
+      {
+        "symbol": "chop_lab_balanced_n1536_k4096_m8192_balanced_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "n"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_global_scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_global_scale",
+            "cxx_type": "const float"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 1024
+      }
+    ],
+    "cubin_sha256": "a5ddd1b9ea8edd0a20cb80151d93a389eeee8dcf9f2cdf3469987f339885ff7e",
+    "resources": [
+      {
+        "symbol": "chop_lab_balanced_n1536_k4096_m8192_decoded_v1",
+        "registers": 168,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 384,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_lab_balanced_n1536_k4096_m8192_one_v1",
+        "registers": 168,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 136,
+        "max_threads": 384,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_lab_balanced_n1536_k4096_m8192_balanced_v1",
+        "registers": 168,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 384,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "decoded_balanced_n4096_k1536_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_lab_balanced_n4096_k1536_m8192_decoded_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "n"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_global_scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_global_scale",
+            "cxx_type": "const float"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 1024
+      },
+      {
+        "symbol": "chop_lab_balanced_n4096_k1536_m8192_one_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "n"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_global_scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_global_scale",
+            "cxx_type": "const float"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 1024
+      },
+      {
+        "symbol": "chop_lab_balanced_n4096_k1536_m8192_balanced_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "n"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_global_scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_global_scale",
+            "cxx_type": "const float"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 1024
+      }
+    ],
+    "cubin_sha256": "da24c7b5224b317e3919569639c08476a77e38ec3fbc9abee76abc6d27f4e61b",
+    "resources": [
+      {
+        "symbol": "chop_lab_balanced_n4096_k1536_m8192_decoded_v1",
+        "registers": 168,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 384,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_lab_balanced_n4096_k1536_m8192_one_v1",
+        "registers": 168,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 136,
+        "max_threads": 384,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_lab_balanced_n4096_k1536_m8192_balanced_v1",
+        "registers": 168,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 384,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "decoded_balanced_n4096_k3072_f32_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_lab_balanced_n4096_k3072_f32_m8192_decoded_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "n"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_global_scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_global_scale",
+            "cxx_type": "const float"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 1024
+      },
+      {
+        "symbol": "chop_lab_balanced_n4096_k3072_f32_m8192_one_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "n"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_global_scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_global_scale",
+            "cxx_type": "const float"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 1024
+      },
+      {
+        "symbol": "chop_lab_balanced_n4096_k3072_f32_m8192_balanced_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "n"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_global_scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_global_scale",
+            "cxx_type": "const float"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 1024
+      }
+    ],
+    "cubin_sha256": "b445d30081bb02230b382e0fd7bde609535775594dd3cd836fe2dc293902a7ab",
+    "resources": [
+      {
+        "symbol": "chop_lab_balanced_n4096_k3072_f32_m8192_decoded_v1",
+        "registers": 168,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 384,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_lab_balanced_n4096_k3072_f32_m8192_one_v1",
+        "registers": 168,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 136,
+        "max_threads": 384,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_lab_balanced_n4096_k3072_f32_m8192_balanced_v1",
+        "registers": 168,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 384,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "decoded_balanced_n4096_k4096_f32_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_lab_balanced_n4096_k4096_f32_m8192_decoded_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "n"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_global_scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_global_scale",
+            "cxx_type": "const float"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 1024
+      },
+      {
+        "symbol": "chop_lab_balanced_n4096_k4096_f32_m8192_one_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "n"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_global_scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_global_scale",
+            "cxx_type": "const float"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 1024
+      },
+      {
+        "symbol": "chop_lab_balanced_n4096_k4096_f32_m8192_balanced_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "n"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_global_scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_global_scale",
+            "cxx_type": "const float"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 1024
+      }
+    ],
+    "cubin_sha256": "4807272c74c3ca0b1c30693b6fc807636f69b787add1f1dfe99bd9589b5cf595",
+    "resources": [
+      {
+        "symbol": "chop_lab_balanced_n4096_k4096_f32_m8192_decoded_v1",
+        "registers": 168,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 384,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_lab_balanced_n4096_k4096_f32_m8192_one_v1",
+        "registers": 168,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 136,
+        "max_threads": 384,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_lab_balanced_n4096_k4096_f32_m8192_balanced_v1",
+        "registers": 168,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 384,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "decoded_balanced_n4096_k512_f32_residual_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_lab_balanced_n4096_k512_f32_residual_m8192_decoded_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "n"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_global_scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_global_scale",
+            "cxx_type": "const float"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 1024
+      },
+      {
+        "symbol": "chop_lab_balanced_n4096_k512_f32_residual_m8192_one_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "n"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_global_scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_global_scale",
+            "cxx_type": "const float"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 1024
+      },
+      {
+        "symbol": "chop_lab_balanced_n4096_k512_f32_residual_m8192_balanced_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "n"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_global_scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_global_scale",
+            "cxx_type": "const float"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 1024
+      }
+    ],
+    "cubin_sha256": "47c1e5d5662958b2c7392d8d2f8bf0a9b78b91a6e8b06042e3e000d7c2a7e26b",
+    "resources": [
+      {
+        "symbol": "chop_lab_balanced_n4096_k512_f32_residual_m8192_decoded_v1",
+        "registers": 168,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 384,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_lab_balanced_n4096_k512_f32_residual_m8192_one_v1",
+        "registers": 168,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 136,
+        "max_threads": 384,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_lab_balanced_n4096_k512_f32_residual_m8192_balanced_v1",
+        "registers": 168,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 384,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "decoded_balanced_n512_k4096_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_lab_balanced_n512_k4096_m8192_decoded_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "n"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_global_scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_global_scale",
+            "cxx_type": "const float"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 1024
+      },
+      {
+        "symbol": "chop_lab_balanced_n512_k4096_m8192_one_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "n"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_global_scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_global_scale",
+            "cxx_type": "const float"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 1024
+      },
+      {
+        "symbol": "chop_lab_balanced_n512_k4096_m8192_balanced_v1",
+        "params": [
+          {
+            "kind": "TensorMap",
+            "name": "map_a"
+          },
+          {
+            "kind": "TensorMap",
+            "name": "map_b"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partial",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "semaphores",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "live_m"
+          },
+          {
+            "kind": "U32",
+            "name": "n"
+          },
+          {
+            "kind": "U32",
+            "name": "k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          },
+          {
+            "kind": "U32",
+            "name": "output_f32"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_global_scale",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_global_scale",
+            "cxx_type": "const float"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 1024
+      }
+    ],
+    "cubin_sha256": "955db77c9d1ee6c5fbaa0ea49217979e74cc1e186e6cb1d80b13b5ebb6127c1a",
+    "resources": [
+      {
+        "symbol": "chop_lab_balanced_n512_k4096_m8192_decoded_v1",
+        "registers": 168,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 384,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_lab_balanced_n512_k4096_m8192_one_v1",
+        "registers": 168,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 136,
+        "max_threads": 384,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_lab_balanced_n512_k4096_m8192_balanced_v1",
+        "registers": 168,
+        "shared_static_bytes": 1152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 384,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

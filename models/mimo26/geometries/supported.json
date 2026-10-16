@@ -1,0 +1,272 @@
+{
+  "aliases": {
+    "model_type": [
+      "mimo_v2"
+    ],
+    "architecture": [
+      "MiMoV2ForCausalLM"
+    ]
+  },
+  "geometries": [
+    {
+      "id": "v26-flash",
+      "file": "v26-flash.json",
+      "kernel_tag": "mimo",
+      "pinned_names": true,
+      "encoders": true
+    }
+  ],
+  "semantic_rules": {
+    "dtype": [
+      "bfloat16"
+    ],
+    "hidden_act": [
+      "silu"
+    ],
+    "attention_bias": [
+      false
+    ],
+    "attention_projection_layout": [
+      "fused_qkv"
+    ],
+    "scoring_func": [
+      "sigmoid"
+    ],
+    "topk_method": [
+      "noaux_tc"
+    ],
+    "n_shared_experts": [
+      null
+    ],
+    "routed_scaling_factor": [
+      null
+    ],
+    "tie_word_embeddings": [
+      false
+    ],
+    "norm_topk_prob": [
+      true
+    ],
+    "add_full_attention_sink_bias": [
+      false
+    ],
+    "add_swa_attention_sink_bias": [
+      true
+    ],
+    "n_group": [
+      1
+    ],
+    "topk_group": [
+      1
+    ],
+    "hybrid_layer_pattern": [
+      0,
+      1
+    ],
+    "moe_layer_freq": [
+      0,
+      1
+    ],
+    "rope_parameters.rope_type": [
+      "default"
+    ],
+    "rope_parameters.type": [
+      "default"
+    ],
+    "dflash.hidden_act": [
+      "silu"
+    ],
+    "dflash.is_causal": [
+      false
+    ],
+    "dflash.layer_types": [
+      "sliding_attention"
+    ],
+    "dflash.attention_bias": [
+      false
+    ],
+    "vision_config.vit_window_attn_types": [
+      -1,
+      0,
+      1
+    ],
+    "moe_router_dtype": [
+      "bfloat16"
+    ],
+    "dflash.model_type": [
+      "qwen3"
+    ],
+    "dflash.architectures": [
+      "DFlashDraftModel"
+    ]
+  },
+  "engine_domain": {
+    "head_dim": {
+      "values": [
+        192
+      ],
+      "source": "crates/kernels-sm120/src/attention/mod.rs",
+      "source_text": "self.query.qk_dim != 192",
+      "reason": "folded RoPE needs 64 rotary of 192 K and 128 V dimensions"
+    },
+    "swa_head_dim": {
+      "values": [
+        192
+      ],
+      "source": "crates/kernels-sm120/src/attention/mod.rs",
+      "source_text": "self.query.qk_dim != 192",
+      "reason": "folded RoPE needs 64 rotary of 192 K and 128 V dimensions"
+    },
+    "v_head_dim": {
+      "values": [
+        128
+      ],
+      "source": "crates/kernels-sm120/src/attention/mod.rs",
+      "source_text": "self.query.v_dim != 128",
+      "reason": "folded RoPE needs 64 rotary of 192 K and 128 V dimensions"
+    },
+    "swa_v_head_dim": {
+      "values": [
+        128
+      ],
+      "source": "crates/kernels-sm120/src/attention/mod.rs",
+      "source_text": "self.query.v_dim != 128",
+      "reason": "folded RoPE needs 64 rotary of 192 K and 128 V dimensions"
+    },
+    "sliding_window": {
+      "values": [
+        128
+      ],
+      "source": "crates/kernels-sm120/src/attention/mod.rs",
+      "source_text": "w >= self.query.page_size",
+      "reason": "ring decode window must fit 128 slots"
+    },
+    "rotary_dim": {
+      "values": [
+        64
+      ],
+      "source": "crates/kernels-sm120/src/attention/mod.rs",
+      "source_text": "rotary != 64",
+      "reason": "folded RoPE needs 64 rotary of 192 K and 128 V dimensions"
+    },
+    "rope_theta": {
+      "values": [
+        10000,
+        10000000
+      ],
+      "source": "crates/kernels-sm120/cuda/common/rotary.cuh",
+      "source_text": "theta == 10000.f || theta == 10000000.f",
+      "reason": "qualified shared rotary arithmetic"
+    },
+    "swa_rope_theta": {
+      "values": [
+        10000,
+        10000000
+      ],
+      "source": "crates/kernels-sm120/cuda/common/rotary.cuh",
+      "source_text": "theta == 10000.f || theta == 10000000.f",
+      "reason": "qualified shared rotary arithmetic"
+    },
+    "dflash.head_dim": {
+      "values": [
+        128
+      ],
+      "source": "crates/kernels-sm120/cuda/row/dflash.cuh",
+      "source_text": "head * 128",
+      "reason": "supported attention dimensions"
+    },
+    "dflash.v_head_dim": {
+      "values": [
+        128
+      ],
+      "source": "crates/kernels-sm120/cuda/attention/attention.cuh",
+      "source_text": "128",
+      "reason": "supported attention dimensions"
+    },
+    "dflash.rotary_dim": {
+      "values": [
+        64
+      ],
+      "source": "crates/kernels-sm120/cuda/row/dflash.cuh",
+      "source_text": "rotated<64, true, Table>",
+      "reason": "qualified shared rotary arithmetic"
+    },
+    "dflash.rope_theta": {
+      "values": [
+        10000
+      ],
+      "source": "crates/kernels-sm120/cuda/row/dflash.cuh",
+      "source_text": "position, 10000.f, cos_sin",
+      "reason": "qualified shared rotary arithmetic"
+    },
+    "n_routed_experts": {
+      "values": [
+        256
+      ],
+      "source": "crates/kernels-sm120/src/moe/mxfp4_fragment.rs",
+      "source_text": "experts: 256",
+      "reason": "specialized fragment routing shape"
+    },
+    "num_experts_per_tok": {
+      "values": [
+        8
+      ],
+      "source": "crates/kernels-sm120/src/moe/mxfp4_fragment.rs",
+      "source_text": "top_k: 8",
+      "reason": "specialized fragment routing shape"
+    },
+    "hidden_size": {
+      "values": [
+        4096
+      ],
+      "source": "crates/kernels-sm120/src/moe/mxfp4_fragment.rs",
+      "source_text": "hidden: 4096",
+      "reason": "specialized fragment hidden width, fused comm FUSED_EPILOGUE width 4096 and RoutedCombine<8>"
+    },
+    "moe_intermediate_size": {
+      "values": [
+        2048
+      ],
+      "source": "crates/kernels-sm120/src/moe/mxfp4_fragment.rs",
+      "source_text": "intermediate: 512",
+      "reason": "specialized fragment intermediate width at every supported rank count"
+    },
+    "max_position_embeddings": {
+      "max": 1048576,
+      "source": "crates/kernels-sm120/src/attention/mod.rs",
+      "source_text": "self.query.max_context_capacity > 1_048_576",
+      "reason": "attention prepared capacity exceeds catalog limits"
+    },
+    "dflash.sliding_window": {
+      "max": 2048,
+      "source": "crates/kernels-sm120/src/attention/mod.rs",
+      "source_text": "w >= self.query.page_size",
+      "reason": "ring verify window must fit 2048 slots"
+    },
+    "dflash.block_size": {
+      "max": 8,
+      "source": "crates/kernels-sm120/src/attention/mod.rs",
+      "source_text": "self.query_capacity > 8",
+      "reason": "verify items hold at most 8 tokens"
+    },
+    "num_attention_heads": {
+      "relation": "GQA group <= 8 or == 16",
+      "source": "crates/kernels-sm120/src/attention/mod.rs",
+      "source_text": "group > 8 && group != 16"
+    },
+    "swa_num_attention_heads": {
+      "relation": "Q heads == 8 * KV heads",
+      "source": "crates/kernels-sm120/src/attention/mod.rs",
+      "source_text": "self.query.q_heads != 8 * self.query.kv_heads"
+    },
+    "dflash.num_attention_heads": {
+      "relation": "GQA group <= 8 or == 16 and block_size * group divisible by 16",
+      "source": "crates/kernels-sm120/src/attention/mod.rs",
+      "source_text": "(self.query_capacity * (self.query.q_heads / self.query.kv_heads)) % 16 != 0"
+    }
+  },
+  "quantization_recipe_classes": [
+    "fp8",
+    "modelopt"
+  ]
+}

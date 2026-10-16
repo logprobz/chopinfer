@@ -1,0 +1,94 @@
+[package]
+name = "model-qwen38-contract"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+bundle-runtime.workspace = true
+encoder-spec.workspace = true
+frontend-format.workspace = true
+projection-spec.workspace = true
+kernel-build.workspace = true
+kernel-core = { workspace = true, features = ["precision-serde"] }
+model-compiler-sdk.workspace = true
+runtime-weights.workspace = true
+serde.workspace = true
+kernels-sm120.workspace = true
+runtime-bundle-abi.workspace = true
+runtime-bundle.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[build-dependencies]
+model-compiler-sdk.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+runtime-frontend-contract.workspace = true
+runtime-engine.workspace = true
+runtime-host.workspace = true
+runtime-media.workspace = true
+
+# Tests that name kernels_sm120 live under tests/sm120 and keep their names.
+[[test]]
+name = "kernel_attention"
+path = "tests/sm120/kernel_attention.rs"
+
+[[test]]
+name = "kernel_comm"
+path = "tests/sm120/kernel_comm.rs"
+
+[[test]]
+name = "kernel_comm_extension"
+path = "tests/sm120/kernel_comm_extension.rs"
+
+[[test]]
+name = "kernel_gemm_build"
+path = "tests/sm120/kernel_gemm_build.rs"
+
+[[test]]
+name = "kernel_geometries"
+path = "tests/sm120/kernel_geometries.rs"
+
+[[test]]
+name = "kernel_linear_build"
+path = "tests/sm120/kernel_linear_build.rs"
+
+[[test]]
+name = "kernel_moe_build"
+path = "tests/sm120/kernel_moe_build.rs"
+
+[[test]]
+name = "kernel_qwen38_comm"
+path = "tests/sm120/kernel_qwen38_comm.rs"
+
+[[test]]
+name = "kernel_qwen38_comm_decode"
+path = "tests/sm120/kernel_qwen38_comm_decode.rs"
+
+[[test]]
+name = "kernel_rank_catalog"
+path = "tests/sm120/kernel_rank_catalog.rs"
+
+[[test]]
+name = "kernel_row_build"
+path = "tests/sm120/kernel_row_build.rs"
+
+[[test]]
+name = "kernel_sparse_build"
+path = "tests/sm120/kernel_sparse_build.rs"
+
+[[test]]
+name = "projections"
+path = "tests/sm120/projections.rs"
+
+# Examples that name the SM120 catalogs live under examples/sm120 and keep their names.
+[[example]]
+name = "qwen38_projection_adoptions"
+path = "examples/sm120/qwen38_projection_adoptions.rs"
+
+[lints]
+workspace = true

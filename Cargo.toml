@@ -1,0 +1,133 @@
+# Chopinfer standalone Cargo workspace.
+[workspace]
+members = [
+    "crates/kernel-build",
+    "crates/kernel-core",
+    "crates/kernel-harness",
+    "crates/kernel-lab",
+    "crates/kernel-lab/families",
+    "crates/kernels-sm120",
+    "crates/bundle-tp4-fixture",
+    "crates/bundle-recurrent-fixture",
+    "crates/bundle-runtime",
+    "crates/encoder-spec",
+    "crates/projection-spec",
+    "crates/model-compiler-sdk",
+    "crates/frontend-format",
+    # Each model directory contributes its bundle, compiler and optional
+    # contract crate; models/<m>/model.toml declares them.
+    "models/*/bundle",
+    "models/*/compiler",
+    "models/*/contract",
+    "crates/runtime-bundle",
+    "crates/runtime-bundle-abi",
+    "crates/runtime-bundle-sdk",
+    "crates/runtime-cuda",
+    "crates/runtime-engine",
+    "crates/runtime-eval",
+    "crates/runtime-frontend-contract",
+    "crates/runtime-frontend",
+    "crates/runtime-grammar",
+    "crates/runtime-host",
+    "crates/runtime-kernel-contract",
+    "crates/runtime-kernels",
+    "crates/runtime-kv",
+    "crates/runtime-media",
+    "crates/runtime-model-api",
+    "crates/runtime-sampling",
+    "crates/runtime-scheduler",
+    "crates/runtime-server",
+    "crates/runtime-tokenizer",
+    "crates/runtime-conformance",
+    "crates/runtime-weights",
+    "crates/xtask",
+    # The terminal dashboard for running servers; it links no workspace crate.
+    "crates/chopinfer-top",
+    "tools/load-proto",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0-alpha.3"
+edition = "2024"
+rust-version = "1.89"
+publish = false
+license = "Apache-2.0"
+
+[workspace.dependencies]
+bundle-tp4-fixture = { path = "crates/bundle-tp4-fixture" }
+bundle-glm5next = { path = "models/glm5next/bundle" }
+bundle-mimo26 = { path = "models/mimo26/bundle" }
+bundle-qwen38 = { path = "models/qwen38/bundle" }
+bundle-recurrent-fixture = { path = "crates/bundle-recurrent-fixture" }
+bundle-runtime = { path = "crates/bundle-runtime" }
+encoder-spec = { path = "crates/encoder-spec" }
+projection-spec = { path = "crates/projection-spec" }
+model-compiler-sdk = { path = "crates/model-compiler-sdk" }
+model-qwen38-contract = { path = "models/qwen38/contract" }
+model-glm5next-contract = { path = "models/glm5next/contract" }
+model-mimo26-contract = { path = "models/mimo26/contract" }
+model-mimo26 = { path = "models/mimo26/compiler" }
+kernel-build = { path = "crates/kernel-build" }
+kernel-core = { path = "crates/kernel-core" }
+kernel-harness = { path = "crates/kernel-harness" }
+kernel-lab-families = { path = "crates/kernel-lab/families" }
+kernels-sm120 = { path = "crates/kernels-sm120" }
+axum = { version = "=0.8.4", default-features = false, features = ["http1", "json", "tokio"] }
+object = { version = "=0.37.3", default-features = false, features = ["read", "std"] }
+frontend-format = { path = "crates/frontend-format" }
+runtime-bundle = { path = "crates/runtime-bundle" }
+runtime-bundle-abi = { path = "crates/runtime-bundle-abi" }
+runtime-bundle-sdk = { path = "crates/runtime-bundle-sdk" }
+runtime-cuda = { path = "crates/runtime-cuda" }
+runtime-engine = { path = "crates/runtime-engine" }
+runtime-eval = { path = "crates/runtime-eval" }
+runtime-frontend-contract = { path = "crates/runtime-frontend-contract" }
+runtime-frontend = { path = "crates/runtime-frontend" }
+runtime-grammar = { path = "crates/runtime-grammar" }
+runtime-host = { path = "crates/runtime-host" }
+runtime-kernel-contract = { path = "crates/runtime-kernel-contract" }
+runtime-kernels = { path = "crates/runtime-kernels" }
+runtime-kv = { path = "crates/runtime-kv" }
+runtime-media = { path = "crates/runtime-media" }
+runtime-model-api = { path = "crates/runtime-model-api" }
+runtime-server = { path = "crates/runtime-server" }
+runtime-sampling = { path = "crates/runtime-sampling" }
+runtime-scheduler = { path = "crates/runtime-scheduler" }
+runtime-tokenizer = { path = "crates/runtime-tokenizer" }
+runtime-weights = { path = "crates/runtime-weights" }
+xtask = { path = "crates/xtask" }
+libc = "=0.2.189"
+miniz_oxide = "=0.8.9"
+sha2 = { version = "=0.10.9", default-features = false, features = ["compress"] }
+serde = { version = "=1.0.219", features = ["derive"] }
+serde_json = { version = "=1.0.143", features = ["preserve_order"] }
+tokio = { version = "=1.47.1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio-stream = { version = "=0.1.17", default-features = false }
+# chopinfer-top's terminal: raw mode, key and resize events, and cleanup.
+crossterm = { version = "=0.29.0", default-features = false, features = ["events"] }
+signal-hook = { version = "=0.3.18", default-features = false }
+unicode-normalization = "=0.1.25"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = "deny"
+
+# Hashing large native modules dominates CPU fixture and build-script work.
+# Optimize this dependency in development only; release settings are unchanged.
+[profile.dev.package.sha2]
+opt-level = 3
+
+[profile.test.package.sha2]
+opt-level = 3
+
+# kernel-core's tests check which NaN operand its f64 reference orders
+# propagate in an unoptimized build. Keep it unoptimized under the CI profile
+# (ci/rust-profile.env) as well; at the default dev level this changes nothing.
+[profile.dev.package.kernel-core]
+opt-level = 0
+
+[profile.test.package.kernel-core]
+opt-level = 0

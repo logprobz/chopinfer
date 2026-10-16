@@ -1,0 +1,14 @@
+{
+  "completion_logprobs": {
+    "choices": [
+      {
+        "logprobs": {
+          "tokens": [],
+          "token_logprobs": [],
+          "top_logprobs": [],
+          "text_offset": []
+        }
+      }
+    ]
+  }
+}

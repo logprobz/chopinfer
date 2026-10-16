@@ -1,0 +1,32 @@
+ chopinfer-top  >  MiMo-V2.6-Flash  [3/5]  proc 48211  127.0.0.1:8311  ready  up 3h17m
+┌─ Throughput  tok/s, last 5m ─────────────────────────────────┐┌─ Load ───────────────────────────┐
+│ DECODE  now  1,795  avg  1,800  max  1,805                   ││ sequences  ━━━━━━━━━━━──── 24/32 │
+│ ████████████████████████████████████████████████████████████ ││ KV cache   ━━━━━━━━━━─────   64% │
+│ PREFILL now  5,200  avg  7,900  max 35,200                   ││ intake     ───────────────    2% │
+│ ▄▄█▄█▄█▄█▄█▄▄█▄█▄█▄█▄█▄▄█▄█▄█▄█▄█▄▄█▄█▄█▄█▄█▄▄█▄█▄█▄█▄█▄▄█▄█ ││                                  │
+│                                                              ││ waiting    2                     │
+└──────────────────────────────────────────────────────────────┘└──────────────────────────────────┘
+┌─ Latency  window 60s ────────────────────────┐┌─ Requests  since star ─┐┌─ Health ───────────────┐
+│                    p50    p90    p99  count  ││ finished stop   51,979 ││ worker         ready   │
+│ TTFT             175ms  458ms  1.75s    300  ││ finished length  5,650 ││ poisoned       no      │
+│ inter-token       17ms   28ms   69ms  2,436  ││ aborted            565 ││ batch refusals 0       │
+│ end to end       4.75s  12.6s  30.6s    282  ││ cancellations      565 ││ restarts seen  0       │
+│ queue             30ms   90ms  380ms    288  ││ preemptions          0 ││ transport buf  3.0 MiB │
+│ prefill          100ms  375ms  875ms    300  ││ engine errors        0 ││ version        0.1.0-a │
+│ per output tok     8ms   23ms   46ms    294  ││ refused              4 ││ metrics        read    │
+└──────────────────────────────────────────────┘└────────────────────────┘└────────────────────────┘
+┌─ Prefix cache  60s ───────────┐┌─ Speculation  adaptive K<=7  ─┐┌─ Steps  60s ───────────────────┐
+│ reused / queried tok      71% ││ accepted drafts 59%           ││ batches/s 47.0                 │
+│ lookups that hit          83% ││ by position                   ││ mix ████████████████████████   │
+│ reused tok/s            3,700 ││ 0 ████▎  86%  4 █▎     26%    ││     decode 77%  mixed 19%      │
+│ recompute seen tok/s      150 ││ 1 ███▊   74%                  ││ step time         p50      p99 │
+│ anchors / page 1,204 / 18,330 ││ 2 ███▏   63%                  ││ decode           19ms     48ms │
+│ evictions/s              0.40 ││ 3 ██▎    46%                  ││ mixed            71ms    237ms │
+│ capture/restore fail    0 / 0 ││ K chosen: 0 4%  3 22%  5 30%  ││ prefill         150ms    248ms │
+└───────────────────────────────┘└───────────────────────────────┘└────────────────────────────────┘
+┌─ Identity ───────────────────────────────────────────────────────────────────────────────────────┐
+│ bundle mimo26   profile tp4-dflash   ranks TP4   kv fp8   max seq 32   page 64 tok               │
+│ served as MiMo-V2.6-Flash   version 0.1.0-alpha.2   source 4c1e9a2b...   checkpoint 3fa91c07...  │
+│ found via serve process 48211 of this user, at 127.0.0.1:8311                                    │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ Esc back   ← → Tab instance   w window   r rescan   p pause   ? help   q quit

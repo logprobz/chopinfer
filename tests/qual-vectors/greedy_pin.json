@@ -1,0 +1,441 @@
+{
+ "kind": "greedy_pin",
+ "schema": "chopinfer-qual-vectors/v1",
+ "vectors": [
+  {
+   "check": {
+    "rule": "exact"
+   },
+   "covers": [],
+   "expected": {
+    "metrics": {
+     "equal": true,
+     "finish_differences": [],
+     "first_differences": []
+    },
+    "status": "pass"
+   },
+   "name": "pass",
+   "receipt": {
+    "arm": "spec",
+    "check": "greedy-equality-spec",
+    "cold_cache": true,
+    "concurrency": 1,
+    "errors": [],
+    "finish_reasons": {
+     "t0": "length",
+     "t1": "stop"
+    },
+    "k": 3,
+    "max_tokens": 3,
+    "mechanics_only": false,
+    "passed": true,
+    "prompt_tokens": 4,
+    "reference_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "requests": {
+     "t0": [
+      5,
+      6,
+      7
+     ],
+     "t1": [
+      8,
+      9
+     ]
+    },
+    "schema": "chopinfer-qualification/v1",
+    "skipped": []
+   },
+   "reference": {
+    "arm": "ar",
+    "check": "greedy-equality-ar",
+    "cold_cache": true,
+    "concurrency": 1,
+    "errors": [],
+    "finish_reasons": {
+     "t0": "length",
+     "t1": "stop"
+    },
+    "k": 0,
+    "max_tokens": 3,
+    "mechanics_only": false,
+    "passed": true,
+    "prompt_tokens": 4,
+    "reference_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "requests": {
+     "t0": [
+      5,
+      6,
+      7
+     ],
+     "t1": [
+      8,
+      9
+     ]
+    },
+    "schema": "chopinfer-qualification/v1",
+    "skipped": []
+   }
+  },
+  {
+   "check": {
+    "rule": "exact"
+   },
+   "covers": [],
+   "expected": {
+    "error": "threshold predicate failed",
+    "metrics": {
+     "equal": false,
+     "finish_differences": [],
+     "first_differences": [
+      {
+       "ar_token": 7,
+       "other_token": 4,
+       "position": 2,
+       "request": "t0"
+      }
+     ]
+    },
+    "status": "fail"
+   },
+   "name": "fail: a token differs",
+   "receipt": {
+    "arm": "spec",
+    "check": "greedy-equality-spec",
+    "cold_cache": true,
+    "concurrency": 1,
+    "errors": [],
+    "finish_reasons": {
+     "t0": "length",
+     "t1": "stop"
+    },
+    "k": 3,
+    "max_tokens": 3,
+    "mechanics_only": false,
+    "passed": true,
+    "prompt_tokens": 4,
+    "reference_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "requests": {
+     "t0": [
+      5,
+      6,
+      4
+     ],
+     "t1": [
+      8,
+      9
+     ]
+    },
+    "schema": "chopinfer-qualification/v1",
+    "skipped": []
+   },
+   "reference": {
+    "arm": "ar",
+    "check": "greedy-equality-ar",
+    "cold_cache": true,
+    "concurrency": 1,
+    "errors": [],
+    "finish_reasons": {
+     "t0": "length",
+     "t1": "stop"
+    },
+    "k": 0,
+    "max_tokens": 3,
+    "mechanics_only": false,
+    "passed": true,
+    "prompt_tokens": 4,
+    "reference_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "requests": {
+     "t0": [
+      5,
+      6,
+      7
+     ],
+     "t1": [
+      8,
+      9
+     ]
+    },
+    "schema": "chopinfer-qualification/v1",
+    "skipped": []
+   }
+  },
+  {
+   "check": {
+    "rule": "informational"
+   },
+   "covers": [],
+   "expected": {
+    "metrics": {
+     "equal": false,
+     "finish_differences": [],
+     "first_differences": [
+      {
+       "ar_token": 7,
+       "other_token": 4,
+       "position": 2,
+       "request": "t0"
+      }
+     ]
+    },
+    "status": "informational"
+   },
+   "name": "informational: a token differs under rule informational",
+   "receipt": {
+    "arm": "spec",
+    "check": "greedy-equality-spec",
+    "cold_cache": true,
+    "concurrency": 1,
+    "errors": [],
+    "finish_reasons": {
+     "t0": "length",
+     "t1": "stop"
+    },
+    "k": 3,
+    "max_tokens": 3,
+    "mechanics_only": false,
+    "passed": true,
+    "prompt_tokens": 4,
+    "reference_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "requests": {
+     "t0": [
+      5,
+      6,
+      4
+     ],
+     "t1": [
+      8,
+      9
+     ]
+    },
+    "schema": "chopinfer-qualification/v1",
+    "skipped": []
+   },
+   "reference": {
+    "arm": "ar",
+    "check": "greedy-equality-ar",
+    "cold_cache": true,
+    "concurrency": 1,
+    "errors": [],
+    "finish_reasons": {
+     "t0": "length",
+     "t1": "stop"
+    },
+    "k": 0,
+    "max_tokens": 3,
+    "mechanics_only": false,
+    "passed": true,
+    "prompt_tokens": 4,
+    "reference_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "requests": {
+     "t0": [
+      5,
+      6,
+      7
+     ],
+     "t1": [
+      8,
+      9
+     ]
+    },
+    "schema": "chopinfer-qualification/v1",
+    "skipped": []
+   }
+  },
+  {
+   "check": {
+    "rule": "exact"
+   },
+   "covers": [],
+   "expected": {
+    "error": "threshold predicate failed",
+    "metrics": {
+     "equal": false,
+     "finish_differences": [
+      {
+       "ar": "stop",
+       "other": "length",
+       "request": "t1"
+      }
+     ],
+     "first_differences": []
+    },
+    "status": "fail"
+   },
+   "name": "fail: a finish reason differs",
+   "receipt": {
+    "arm": "spec",
+    "check": "greedy-equality-spec",
+    "cold_cache": true,
+    "concurrency": 1,
+    "errors": [],
+    "finish_reasons": {
+     "t0": "length",
+     "t1": "length"
+    },
+    "k": 3,
+    "max_tokens": 3,
+    "mechanics_only": false,
+    "passed": true,
+    "prompt_tokens": 4,
+    "reference_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "requests": {
+     "t0": [
+      5,
+      6,
+      7
+     ],
+     "t1": [
+      8,
+      9
+     ]
+    },
+    "schema": "chopinfer-qualification/v1",
+    "skipped": []
+   },
+   "reference": {
+    "arm": "ar",
+    "check": "greedy-equality-ar",
+    "cold_cache": true,
+    "concurrency": 1,
+    "errors": [],
+    "finish_reasons": {
+     "t0": "length",
+     "t1": "stop"
+    },
+    "k": 0,
+    "max_tokens": 3,
+    "mechanics_only": false,
+    "passed": true,
+    "prompt_tokens": 4,
+    "reference_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "requests": {
+     "t0": [
+      5,
+      6,
+      7
+     ],
+     "t1": [
+      8,
+      9
+     ]
+    },
+    "schema": "chopinfer-qualification/v1",
+    "skipped": []
+   }
+  },
+  {
+   "check": {
+    "rule": "exact"
+   },
+   "covers": [],
+   "expected": {
+    "error": "record: finish reasons do not cover the requests",
+    "status": "insufficient"
+   },
+   "name": "insufficient: a request without a finish reason",
+   "receipt": {
+    "arm": "spec",
+    "check": "greedy-equality-spec",
+    "cold_cache": true,
+    "concurrency": 1,
+    "errors": [],
+    "finish_reasons": {
+     "t0": "length"
+    },
+    "k": 3,
+    "max_tokens": 3,
+    "mechanics_only": false,
+    "passed": true,
+    "prompt_tokens": 4,
+    "reference_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "requests": {
+     "t0": [
+      5,
+      6,
+      7
+     ],
+     "t1": [
+      8,
+      9
+     ]
+    },
+    "schema": "chopinfer-qualification/v1",
+    "skipped": []
+   },
+   "reference": {
+    "arm": "ar",
+    "check": "greedy-equality-ar",
+    "cold_cache": true,
+    "concurrency": 1,
+    "errors": [],
+    "finish_reasons": {
+     "t0": "length",
+     "t1": "stop"
+    },
+    "k": 0,
+    "max_tokens": 3,
+    "mechanics_only": false,
+    "passed": true,
+    "prompt_tokens": 4,
+    "reference_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "requests": {
+     "t0": [
+      5,
+      6,
+      7
+     ],
+     "t1": [
+      8,
+      9
+     ]
+    },
+    "schema": "chopinfer-qualification/v1",
+    "skipped": []
+   }
+  },
+  {
+   "check": {
+    "rule": "exact"
+   },
+   "covers": [],
+   "expected": {
+    "error": "no baseline record",
+    "status": "insufficient"
+   },
+   "name": "insufficient: no baseline",
+   "receipt": {
+    "arm": "spec",
+    "check": "greedy-equality-spec",
+    "cold_cache": true,
+    "concurrency": 1,
+    "errors": [],
+    "finish_reasons": {
+     "t0": "length",
+     "t1": "stop"
+    },
+    "k": 3,
+    "max_tokens": 3,
+    "mechanics_only": false,
+    "passed": true,
+    "prompt_tokens": 4,
+    "reference_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "requests": {
+     "t0": [
+      5,
+      6,
+      7
+     ],
+     "t1": [
+      8,
+      9
+     ]
+    },
+    "schema": "chopinfer-qualification/v1",
+    "skipped": []
+   },
+   "reference": null
+  }
+ ],
+ "version": "greedy_pin.v1"
+}

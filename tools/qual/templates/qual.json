@@ -1,0 +1,200 @@
+{
+  "schema": "chopinfer-qual-model/v1",
+  "model": "sample-vlm",
+  "cohorts": {
+    "quick": {
+      "checks": [
+        "teacher",
+        "image"
+      ]
+    },
+    "full": {
+      "checks": [
+        "teacher",
+        "image"
+      ]
+    }
+  },
+  "change_classes": {
+    "frontend": [
+      "teacher",
+      "image"
+    ],
+    "quality": [
+      "teacher",
+      "image"
+    ],
+    "service": [],
+    "speculation": [],
+    "prefix": []
+  },
+  "checks": {
+    "teacher": {
+      "module": "teacher",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}"
+      ],
+      "timeout_seconds": 600,
+      "receipt": "*-teacher.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/check-kinds.md"
+        }
+      ]
+    },
+    "image": {
+      "module": "multimodal",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}"
+      ],
+      "timeout_seconds": 600,
+      "receipt": "*-multimodal.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/check-kinds.md"
+        }
+      ]
+    }
+  },
+  "references": {
+    "teacher": {
+      "path": "fixtures/sample-vlm/teacher.json",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "schema": "sample-vlm.teacher.v1",
+      "variants": [
+        "exact",
+        "bf16",
+        "f64"
+      ],
+      "workload": {
+        "env": "CHOPINFER_DATA",
+        "path": "qual-inputs/sample-vlm/teacher.workload.json"
+      },
+      "checkpoint_keys": [
+        "repository",
+        "revision",
+        "served_model_name",
+        "source_lock_sha256",
+        "checkpoint_identity"
+      ]
+    },
+    "media": {
+      "path": "fixtures/sample-vlm/media.json",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "schema": "sample-vlm.media.v1",
+      "variants": [
+        "exact",
+        "bf16",
+        "f64"
+      ],
+      "workload": {
+        "env": "CHOPINFER_DATA",
+        "path": "qual-inputs/sample-vlm/media.workload.json"
+      },
+      "checkpoint_keys": [
+        "repository",
+        "revision",
+        "served_model_name",
+        "source_lock_sha256",
+        "checkpoint_identity"
+      ]
+    }
+  },
+  "inputs": {
+    "fixture_root": {
+      "env": "CHOPINFER_DATA",
+      "path": "qual-inputs/sample-vlm"
+    },
+    "exact": "fixtures/sample-vlm/teacher.json",
+    "teacher_reference": "fixtures/sample-vlm/teacher.json",
+    "teacher_long": null,
+    "legacy_reference": null,
+    "vllm_capture": null,
+    "media_capture": {
+      "env": "CHOPINFER_DATA",
+      "path": "qual-inputs/sample-vlm/media-capture.json"
+    },
+    "media_cases": "fixtures/sample-vlm/capture/media_cases.py",
+    "media_fixtures": {
+      "env": "CHOPINFER_DATA",
+      "path": "qual-inputs/sample-vlm/media"
+    }
+  },
+  "qualification": {
+    "teacher_reference_kind": "exact",
+    "teacher_receipt": "teacher",
+    "teacher_capture_schema": "sample-vlm.teacher-capture.v1",
+    "verify_buckets": [
+      2,
+      4
+    ],
+    "chars_per_token": 4.0,
+    "mechanics_only": false,
+    "checkpoint": {
+      "lock": "models/sample-vlm/checkpoint-files.json",
+      "repository": "example/sample-vlm",
+      "revision": "REPLACE_WITH_CHECKPOINT_REVISION",
+      "served_model_name": "sample-vlm",
+      "source_lock_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "checkpoint_identity": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "media": {
+      "format": "cases",
+      "reference": "media",
+      "receipt": "multimodal",
+      "capture_schema": "sample-vlm.media-capture.v1",
+      "expectations": {
+        "kinds": {
+          "image": {
+            "field": "image_expected",
+            "single": true
+          }
+        }
+      },
+      "audio_near_tie": 1.0,
+      "coverage": {
+        "image": [
+          "image-example"
+        ]
+      }
+    }
+  },
+  "receipts": {
+    "env": "CHOPINFER_DATA",
+    "path": "qual/sample-vlm"
+  },
+  "limitations": [
+    "Template only: text and image; replace placeholder pins, paths, timeouts and limits before qualification. No audio, video, speculation or prefix-cache qualification."
+  ],
+  "capabilities": {
+    "text": true,
+    "frontend": false,
+    "api": false,
+    "structured": false,
+    "prefix_cache": false,
+    "preemption": false,
+    "long_context": false,
+    "stability": false,
+    "media": [
+      "image"
+    ],
+    "speculation": "none",
+    "kv_offload": false
+  }
+}

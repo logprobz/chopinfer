@@ -1,0 +1,37 @@
+[package]
+name = "example-lab"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# The example's kernel GPU correctness tests, on the SDK's model-free
+# kernel harness. Not a default workspace member: it links the CUDA driver
+# (`runtime-cuda`), and its tests read a verified build's reports. Run it
+# explicitly (`cargo test -p example-lab --test selection`).
+
+[dev-dependencies]
+example-contract = { workspace = true, features = ["ops", "precision"] }
+kernel-build.workspace = true
+kernel-core = { workspace = true, features = ["precision-serde"] }
+kernel-harness.workspace = true
+kernels-sm120.workspace = true
+model-compiler-sdk.workspace = true
+projection-spec.workspace = true
+runtime-bundle-abi.workspace = true
+# The host's direct-load executor plans each precision package's weights,
+# as `serve --model` does.
+runtime-host.workspace = true
+runtime-cuda.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+# SM120 code lives in sm120 modules (`tests/sm120/`).
+[[test]]
+name = "selection"
+path = "tests/sm120/selection.rs"
+
+[[test]]
+name = "precision"
+path = "tests/sm120/precision.rs"

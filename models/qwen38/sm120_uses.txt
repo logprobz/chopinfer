@@ -1,0 +1,5 @@
+# Other names of this model's sm120 modules outside them (private use leaves and
+# paths in code), frozen 2026-10-10 (tools/model_sdk/core_policy.py, check_model_sm120_uses).
+# One "<file> <path>" per line. Remove a line when its use goes; never add one.
+bundle/src/instance.rs crate::sm120::own_ops::Sm120Own::new
+contract/src/backend.rs crate::sm120::Sm120

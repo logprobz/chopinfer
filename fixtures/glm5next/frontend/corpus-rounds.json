@@ -1,0 +1,2534 @@
+[
+ {
+  "id": "g0018-round-user",
+  "request": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "You are terse."
+    },
+    {
+     "role": "user",
+     "content": ""
+    }
+   ],
+   "chat_template_kwargs": {
+    "reasoning_effort": "low",
+    "enable_thinking": true,
+    "clear_thinking": true,
+    "preserve_thinking": false
+   }
+  },
+  "token_ids": [
+   20442,
+   279,
+   4226,
+   13,
+   154842,
+   2132,
+   374,
+   220,
+   99243,
+   36103,
+   34,
+   13,
+   154827
+  ],
+  "expect": {
+   "reasoning": "Plan the answer.",
+   "content": "It is 18 °C.",
+   "finish_reason": "stop"
+  }
+ },
+ {
+  "id": "g0018-round-endoftext",
+  "request": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "You are terse."
+    },
+    {
+     "role": "user",
+     "content": ""
+    }
+   ],
+   "chat_template_kwargs": {
+    "reasoning_effort": "low",
+    "enable_thinking": true,
+    "clear_thinking": true,
+    "preserve_thinking": false
+   }
+  },
+  "token_ids": [
+   20442,
+   279,
+   4226,
+   13,
+   154842,
+   2132,
+   374,
+   220,
+   99243,
+   36103,
+   34,
+   13,
+   154820
+  ],
+  "expect": {
+   "reasoning": "Plan the answer.",
+   "content": "It is 18 °C.",
+   "finish_reason": "stop"
+  }
+ },
+ {
+  "id": "g0105-round-user",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "What is the weather in Paris?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      }
+     }
+    }
+   ],
+   "chat_template_kwargs": {
+    "clear_thinking": false,
+    "preserve_thinking": false
+   }
+  },
+  "token_ids": [
+   154842,
+   154827
+  ],
+  "expect": {
+   "finish_reason": "stop"
+  }
+ },
+ {
+  "id": "g0105-round-endoftext",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "What is the weather in Paris?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      }
+     }
+    }
+   ],
+   "chat_template_kwargs": {
+    "clear_thinking": false,
+    "preserve_thinking": false
+   }
+  },
+  "token_ids": [
+   154842,
+   154820
+  ],
+  "expect": {
+   "finish_reason": "stop"
+  }
+ },
+ {
+  "id": "g0106-round-user",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "What is the weather in Paris?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      }
+     }
+    }
+   ],
+   "chat_template_kwargs": {
+    "clear_thinking": false,
+    "preserve_thinking": false
+   }
+  },
+  "token_ids": [
+   154842,
+   2132,
+   374,
+   220,
+   99243,
+   36103,
+   34,
+   13,
+   154827
+  ],
+  "expect": {
+   "content": "It is 18 °C.",
+   "finish_reason": "stop"
+  }
+ },
+ {
+  "id": "g0106-round-endoftext",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "What is the weather in Paris?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      }
+     }
+    }
+   ],
+   "chat_template_kwargs": {
+    "clear_thinking": false,
+    "preserve_thinking": false
+   }
+  },
+  "token_ids": [
+   154842,
+   2132,
+   374,
+   220,
+   99243,
+   36103,
+   34,
+   13,
+   154820
+  ],
+  "expect": {
+   "content": "It is 18 °C.",
+   "finish_reason": "stop"
+  }
+ },
+ {
+  "id": "g0107-round-user",
+  "request": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "  \n "
+    },
+    {
+     "role": "user",
+     "content": "What is the weather in Paris?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      },
+      "defer_loading": true
+     }
+    }
+   ],
+   "chat_template_kwargs": {
+    "clear_thinking": true
+   }
+  },
+  "token_ids": [
+   20442,
+   279,
+   4226,
+   13,
+   154842,
+   154827
+  ],
+  "expect": {
+   "reasoning": "Plan the answer.",
+   "finish_reason": "stop"
+  }
+ },
+ {
+  "id": "g0107-round-endoftext",
+  "request": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "  \n "
+    },
+    {
+     "role": "user",
+     "content": "What is the weather in Paris?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      },
+      "defer_loading": true
+     }
+    }
+   ],
+   "chat_template_kwargs": {
+    "clear_thinking": true
+   }
+  },
+  "token_ids": [
+   20442,
+   279,
+   4226,
+   13,
+   154842,
+   154820
+  ],
+  "expect": {
+   "reasoning": "Plan the answer.",
+   "finish_reason": "stop"
+  }
+ },
+ {
+  "id": "g0109-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "  \n "
+    },
+    {
+     "role": "user",
+     "content": "What is the weather in Paris?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "The get_weather tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "string"
+        },
+        "city": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      },
+      "defer_loading": "true"
+     }
+    }
+   ],
+   "chat_template_kwargs": {
+    "clear_thinking": true,
+    "preserve_thinking": true
+   }
+  },
+  "token_ids": [
+   154842,
+   154843,
+   455,
+   68852,
+   154847,
+   957,
+   154848,
+   154849,
+   59190,
+   366,
+   5,
+   29,
+   154850,
+   154847,
+   8923,
+   154848,
+   154849,
+   59190,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "get_weather",
+     "arguments": "{\"value\": \"Paris <&>\", \"city\": \"Paris\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "g0110-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "system",
+     "content": ""
+    },
+    {
+     "role": "user",
+     "content": "What is the weather in Paris?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "The get_weather tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "object"
+        },
+        "city": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      }
+     }
+    }
+   ],
+   "chat_template_kwargs": {
+    "preserve_thinking": false
+   }
+  },
+  "token_ids": [
+   154842,
+   2132,
+   374,
+   220,
+   99243,
+   36103,
+   34,
+   13,
+   154843,
+   455,
+   68852,
+   154847,
+   957,
+   154848,
+   154849,
+   4913,
+   3843,
+   788,
+   330,
+   66,
+   497,
+   330,
+   30265,
+   788,
+   508,
+   16,
+   11,
+   220,
+   17,
+   13,
+   20,
+   11,
+   845,
+   1125,
+   330,
+   562,
+   788,
+   895,
+   92,
+   154850,
+   154847,
+   8923,
+   154848,
+   154849,
+   59190,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "content": "It is 18 °C.",
+   "tool_calls": [
+    {
+     "name": "get_weather",
+     "arguments": "{\"value\": {\"unit\": \"c\", \"hours\": [1, 2.5, null], \"ok\": false}, \"city\": \"Paris\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "g0111-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "What is the weather in Paris?"
+    },
+    {
+     "role": "assistant",
+     "content": "One moment."
+    },
+    {
+     "role": "system",
+     "content": "Now answer in French."
+    },
+    {
+     "role": "user",
+     "content": "Go on."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "The get_weather tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "number"
+        },
+        "city": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      },
+      "defer_loading": "true"
+     }
+    }
+   ],
+   "chat_template_kwargs": {
+    "preserve_thinking": true
+   }
+  },
+  "token_ids": [
+   20442,
+   279,
+   4226,
+   13,
+   154842,
+   154843,
+   455,
+   68852,
+   154847,
+   957,
+   154848,
+   154849,
+   16,
+   68,
+   10,
+   99317,
+   154850,
+   154847,
+   8923,
+   154848,
+   154849,
+   59190,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "reasoning": "Plan the answer.",
+   "tool_calls": [
+    {
+     "name": "get_weather",
+     "arguments": "{\"value\": 1e+16, \"city\": \"Paris\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "g0112-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "What is the weather in Paris?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "The get_weather tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "array"
+        },
+        "city": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      },
+      "defer_loading": true
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   20442,
+   279,
+   4226,
+   13,
+   154842,
+   2132,
+   374,
+   220,
+   99243,
+   36103,
+   34,
+   13,
+   154843,
+   455,
+   68852,
+   154847,
+   957,
+   154848,
+   154849,
+   58,
+   16,
+   11,
+   330,
+   19752,
+   497,
+   220,
+   18,
+   13,
+   20,
+   11,
+   845,
+   60,
+   154850,
+   154847,
+   8923,
+   154848,
+   154849,
+   59190,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "reasoning": "Plan the answer.",
+   "content": "It is 18 °C.",
+   "tool_calls": [
+    {
+     "name": "get_weather",
+     "arguments": "{\"value\": [1, \"two\", 3.5, null], \"city\": \"Paris\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "g0113-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "  \n "
+    },
+    {
+     "role": "user",
+     "content": "What is the weather in Paris?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "The get_weather tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "number"
+        },
+        "city": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "convert",
+      "description": "The convert tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "array"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "ping",
+      "description": "The ping tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "number"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      },
+      "defer_loading": false
+     }
+    }
+   ],
+   "chat_template_kwargs": {
+    "clear_thinking": false
+   }
+  },
+  "token_ids": [
+   154842,
+   154843,
+   455,
+   68852,
+   154847,
+   957,
+   154848,
+   154849,
+   16,
+   68,
+   10,
+   99317,
+   154850,
+   154847,
+   8923,
+   154848,
+   154849,
+   59190,
+   154850,
+   154844,
+   154843,
+   14157,
+   154847,
+   957,
+   154848,
+   154849,
+   58,
+   16,
+   11,
+   330,
+   19752,
+   497,
+   220,
+   18,
+   13,
+   20,
+   11,
+   845,
+   60,
+   154850,
+   154844,
+   154843,
+   9984,
+   154847,
+   957,
+   154848,
+   154849,
+   16,
+   68,
+   12,
+   100002,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "get_weather",
+     "arguments": "{\"value\": 1e+16, \"city\": \"Paris\"}"
+    },
+    {
+     "name": "convert",
+     "arguments": "{\"value\": [1, \"two\", 3.5, null]}"
+    },
+    {
+     "name": "ping",
+     "arguments": "{\"value\": 1e-05}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "g0114-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "system",
+     "content": ""
+    },
+    {
+     "role": "user",
+     "content": "What is the weather in Paris?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "The get_weather tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "string"
+        },
+        "city": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "convert",
+      "description": "The convert tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "number"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "ping",
+      "description": "The ping tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "number"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      },
+      "defer_loading": "true"
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   154842,
+   2132,
+   374,
+   220,
+   99243,
+   36103,
+   34,
+   13,
+   154843,
+   455,
+   68852,
+   154847,
+   957,
+   154848,
+   154849,
+   99334,
+   36103,
+   34,
+   10484,
+   154850,
+   154847,
+   8923,
+   154848,
+   154849,
+   59190,
+   154850,
+   154844,
+   154843,
+   14157,
+   154847,
+   957,
+   154848,
+   154849,
+   15,
+   13,
+   99446,
+   154850,
+   154844,
+   154843,
+   9984,
+   154847,
+   957,
+   154848,
+   154849,
+   15,
+   13,
+   99446,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "content": "It is 18 °C.",
+   "tool_calls": [
+    {
+     "name": "get_weather",
+     "arguments": "{\"value\": \"北京 °C ü\", \"city\": \"Paris\"}"
+    },
+    {
+     "name": "convert",
+     "arguments": "{\"value\": 0.25}"
+    },
+    {
+     "name": "ping",
+     "arguments": "{\"value\": 0.25}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "g0115-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "  \n "
+    },
+    {
+     "role": "user",
+     "content": "What is the weather in Paris?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "The get_weather tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "boolean"
+        },
+        "city": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "convert",
+      "description": "The convert tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "ping",
+      "description": "The ping tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "array"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      },
+      "defer_loading": "true"
+     }
+    }
+   ],
+   "chat_template_kwargs": {
+    "clear_thinking": false
+   }
+  },
+  "token_ids": [
+   20442,
+   279,
+   4226,
+   13,
+   154842,
+   154843,
+   455,
+   68852,
+   154847,
+   957,
+   154848,
+   154849,
+   1866,
+   154850,
+   154847,
+   8923,
+   154848,
+   154849,
+   59190,
+   154850,
+   154844,
+   154843,
+   14157,
+   154847,
+   957,
+   154848,
+   154849,
+   59190,
+   366,
+   5,
+   29,
+   154850,
+   154844,
+   154843,
+   9984,
+   154847,
+   957,
+   154848,
+   154849,
+   58,
+   16,
+   11,
+   330,
+   19752,
+   497,
+   220,
+   18,
+   13,
+   20,
+   11,
+   845,
+   60,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "reasoning": "Plan the answer.",
+   "tool_calls": [
+    {
+     "name": "get_weather",
+     "arguments": "{\"value\": true, \"city\": \"Paris\"}"
+    },
+    {
+     "name": "convert",
+     "arguments": "{\"value\": \"Paris <&>\"}"
+    },
+    {
+     "name": "ping",
+     "arguments": "{\"value\": [1, \"two\", 3.5, null]}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "g0116-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "What is the weather in Paris?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "The get_weather tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "integer"
+        },
+        "city": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "convert",
+      "description": "The convert tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "number"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "ping",
+      "description": "The ping tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      },
+      "defer_loading": false
+     }
+    }
+   ],
+   "chat_template_kwargs": {
+    "clear_thinking": false,
+    "preserve_thinking": false
+   }
+  },
+  "token_ids": [
+   20442,
+   279,
+   4226,
+   13,
+   154842,
+   2132,
+   374,
+   220,
+   99243,
+   36103,
+   34,
+   13,
+   154843,
+   455,
+   68852,
+   154847,
+   957,
+   154848,
+   154849,
+   18,
+   154850,
+   154847,
+   8923,
+   154848,
+   154849,
+   59190,
+   154850,
+   154844,
+   154843,
+   14157,
+   154847,
+   957,
+   154848,
+   154849,
+   16,
+   68,
+   12,
+   100002,
+   154850,
+   154844,
+   154843,
+   9984,
+   154847,
+   957,
+   154848,
+   154849,
+   99334,
+   36103,
+   34,
+   10484,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "reasoning": "Plan the answer.",
+   "content": "It is 18 °C.",
+   "tool_calls": [
+    {
+     "name": "get_weather",
+     "arguments": "{\"value\": 3, \"city\": \"Paris\"}"
+    },
+    {
+     "name": "convert",
+     "arguments": "{\"value\": 1e-05}"
+    },
+    {
+     "name": "ping",
+     "arguments": "{\"value\": \"北京 °C ü\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "s-schema-additional-integer-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "additionalProperties": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   154842,
+   154843,
+   69,
+   154847,
+   87,
+   154848,
+   154849,
+   101961,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": 42}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "s-schema-additional-object-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "additionalProperties": {
+        "type": "object"
+       }
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   154842,
+   154843,
+   69,
+   154847,
+   87,
+   154848,
+   154849,
+   4913,
+   64,
+   788,
+   508,
+   16,
+   11,
+   830,
+   11,
+   845,
+   1125,
+   330,
+   65,
+   788,
+   330,
+   1318,
+   9204,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": {\"a\": [1, true, null], \"b\": \"text\"}}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "s-schema-additional-string-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "additionalProperties": {
+        "type": "string"
+       }
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   154842,
+   154843,
+   69,
+   154847,
+   87,
+   154848,
+   154849,
+   101961,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"42\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "s-schema-additional-required-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "y": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "x",
+        "y"
+       ],
+       "additionalProperties": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   154842,
+   154843,
+   69,
+   154847,
+   87,
+   154848,
+   154849,
+   22,
+   154850,
+   154847,
+   88,
+   154848,
+   154849,
+   89,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": 7, \"y\": \"z\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "s-schema-untyped-string-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {}
+       }
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   154842,
+   154843,
+   69,
+   154847,
+   87,
+   154848,
+   154849,
+   1318,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"text\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "s-schema-enum-string-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "enum": [
+          "a",
+          "b"
+         ]
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   154842,
+   154843,
+   69,
+   154847,
+   87,
+   154848,
+   154849,
+   64,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"a\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "s-schema-number-integer-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "number"
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   154842,
+   154843,
+   69,
+   154847,
+   87,
+   154848,
+   154849,
+   101961,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": 42}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "s-schema-additional-number-integer-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "additionalProperties": {
+        "type": "number"
+       }
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   154842,
+   154843,
+   69,
+   154847,
+   87,
+   154848,
+   154849,
+   101961,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": 42}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "s-value-empty-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   154842,
+   154843,
+   69,
+   154847,
+   87,
+   154848,
+   154849,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "s-value-lf-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   154842,
+   154843,
+   69,
+   154847,
+   87,
+   154848,
+   154849,
+   198,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"\\n\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "s-value-crlf-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   154842,
+   154843,
+   69,
+   154847,
+   87,
+   154848,
+   154849,
+   319,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"\\r\\n\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "s-value-boundary-newlines-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   154842,
+   154843,
+   69,
+   154847,
+   87,
+   154848,
+   154849,
+   271,
+   1318,
+   271,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"\\n\\ntext\\n\\n\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "s-value-leading-lf-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   154842,
+   154843,
+   69,
+   154847,
+   87,
+   154848,
+   154849,
+   198,
+   1318,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"\\ntext\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "s-value-trailing-lf-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   154842,
+   154843,
+   69,
+   154847,
+   87,
+   154848,
+   154849,
+   1318,
+   198,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"text\\n\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "s-value-inner-crlf-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   154842,
+   154843,
+   69,
+   154847,
+   87,
+   154848,
+   154849,
+   64,
+   319,
+   65,
+   319,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"a\\r\\nb\\r\\n\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "s-value-decomposed-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   154842,
+   154843,
+   69,
+   154847,
+   87,
+   154848,
+   154849,
+   68,
+   53481,
+   102882,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"é 北京\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "s-string-type-string-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   154842,
+   154843,
+   69,
+   154847,
+   87,
+   154848,
+   154849,
+   1,
+   63271,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"\\\"quoted\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "s-string-type-str-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "str"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   154842,
+   154843,
+   69,
+   154847,
+   87,
+   154848,
+   154849,
+   1,
+   963,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"\\\"é\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "s-string-type-text-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "text"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   154842,
+   154843,
+   69,
+   154847,
+   87,
+   154848,
+   154849,
+   4913,
+   64,
+   788,
+   220,
+   16,
+   92,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"{\\\"a\\\": 1}\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "s-string-type-varchar-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "varchar"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   154842,
+   154843,
+   69,
+   154847,
+   87,
+   154848,
+   154849,
+   58,
+   16,
+   11,
+   220,
+   17,
+   60,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"[1, 2]\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "s-string-type-char-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "char"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   154842,
+   154843,
+   69,
+   154847,
+   87,
+   154848,
+   154849,
+   101961,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"42\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "s-string-type-enum-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "enum"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   154842,
+   154843,
+   69,
+   154847,
+   87,
+   154848,
+   154849,
+   64961,
+   1,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"\\\"x\\\"\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ },
+ {
+  "id": "s-string-type-str-decomposed-round-observation",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "str"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   154842,
+   154843,
+   69,
+   154847,
+   87,
+   154848,
+   154849,
+   1,
+   68,
+   53481,
+   154850,
+   154844,
+   154829
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"\\\"é\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  }
+ }
+]

@@ -1,0 +1,23 @@
+[package]
+name = "chopinfer-top"
+description = "A terminal dashboard of running chopinfer serve instances: what they serve and how they are doing."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# A client of /health and /metrics. It links no workspace crate, so the
+# terminal dependencies stay out of every serving binary.
+[dependencies]
+crossterm.workspace = true
+serde_json.workspace = true
+# Restores the terminal on SIGTERM and SIGHUP; already locked through crossterm.
+signal-hook.workspace = true
+
+[[bin]]
+name = "chopinfer-top"
+path = "src/main.rs"
+
+[lints]
+workspace = true

@@ -1,0 +1,38 @@
+ chopinfer-top   5 instances: 3 ready  1 unreachable  1 starting   sources: proc, docker, --target  window 60s  poll 1s  rescan 15s
+
+┌─ Instances  tok/s over the last 3 polls; ratios and TTFT over 60s ───────────────────────────────────────────────────────────────┐
+│ SOURCE          ADDRESS          MODEL            STATE          DECODE PREFILL RUN/WAIT   KV PREFIX SPEC TTFT50  DECODE 5m      │
+│ target          127.0.0.1:8431   Qwen3.8-Flash    ready             956   5,200     11/2  64%    71%  59%  175ms              ██ │
+│ target          192.0.2.10:8310  -                unreachable         -       -        -    -      -    -      -  retrying       │
+│▌proc 48211      127.0.0.1:8311   MiMo-V2.6-Flash  ready           1,795   5,200     24/2  64%    71%  59%  175ms  ██████████████ │
+│ proc 51022      -                Qwen3.8-Flash    starting            -       -        -    -      -    -      -  up 2m14s       │
+│ docker glm-tp4  127.0.0.1:8600   GLM-5.3-Flash    ready idle          0       0      0/0   2%      -    -      -                 │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ proc 48211  MiMo-V2.6-Flash  Enter for details ─────────────────────────────────────────────────────────────────────────────────┐
+│ DECODE   now  1,795  avg  1,800  max  1,805  tok/s               PREFILL  now  5,200  avg  8,057  max 35,200  tok/s              │
+│                                                     2,000 tok/s                                                     50,000 tok/s │
+│ ▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃                                                                  │
+│ ███████████████████████████████████████████████████████████████      ▂          ▂          ▂          ▂          ▂          ▂    │
+│ ███████████████████████████████████████████████████████████████      █          █          █          █          █          █    │
+│ ███████████████████████████████████████████████████████████████      █          █          █          █          █          █    │
+│ ███████████████████████████████████████████████████████████████      █          █          █          █          █          █    │
+│ ███████████████████████████████████████████████████████████████  ▅▅▅▅█▅▅▅▅▅▅▅▅▅▅█▅▅▅▅▅▅▅▅▅▅█▅▅▅▅▅▅▅▅▅▅█▅▅▅▅▅▅▅▅▅▅█▅▅▅▅▅▅▅▅▅▅█▅▅▅ │
+│ -1m03s ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ now  -1m03s ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ now │
+│ sequences   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────── 24/32 run  KV cache    ━━━━━━━━━━━━━━━━━━━━━━━━━━───────────────  64% used │
+│ waiting     2                                                    prefix      71% of prompt tokens reused, 83% of lookups hit     │
+│ latency     TTFT p50 175ms  p99 1.75s   ITL p50 17ms  p99 69ms   spec        adaptive K<=7 dflash, 59% of drafts accepted        │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ Events ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  5m00s ago  proc 48211                discovered: serve process listening on 127.0.0.1:8311                                      │
+│  5m00s ago  proc 51022                discovered: serve process, no listener yet (loading)                                       │
+│  5m00s ago  docker glm-tp4            discovered: container running serve, reached at 127.0.0.1:8600                             │
+│  4m59s ago  target 192.0.2.10:8310    unreachable: connection refused; retrying every 5s                                         │
+│  5m00s ago  proc 48211                answering at 127.0.0.1:8311                                                                │
+│  5m00s ago  target 127.0.0.1:8431     answering at 127.0.0.1:8431                                                                │
+│  5m00s ago  docker glm-tp4            answering at 127.0.0.1:8600                                                                │
+│    30s ago  target 127.0.0.1:8431     restarted: new startup nonce; counters re-baselined                                        │
+│                                                                                                                                  │
+│                                                                                                                                  │
+│                                                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ ↑↓ jk select   Enter details   w window   r rescan   p pause   ? help   q quit

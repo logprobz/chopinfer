@@ -1,0 +1,194 @@
+[
+ {
+  "name": "chat-thinking",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Is 91 prime? Answer in one sentence."
+    }
+   ],
+   "max_tokens": 1024,
+   "temperature": 0
+  }
+ },
+ {
+  "name": "chat-effort-low",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Is 91 prime? Answer in one sentence."
+    }
+   ],
+   "max_tokens": 1024,
+   "reasoning_effort": "low",
+   "temperature": 0
+  }
+ },
+ {
+  "name": "chat-effort-medium",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Is 91 prime? Answer in one sentence."
+    }
+   ],
+   "max_tokens": 1024,
+   "reasoning_effort": "medium",
+   "temperature": 0
+  }
+ },
+ {
+  "name": "chat-effort-xhigh",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Is 91 prime? Answer in one sentence."
+    }
+   ],
+   "max_tokens": 1024,
+   "reasoning_effort": "xhigh",
+   "temperature": 0
+  }
+ },
+ {
+  "name": "chat-nothink",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Is 91 prime? Answer in one sentence."
+    }
+   ],
+   "max_tokens": 256,
+   "chat_template_kwargs": {
+    "enable_thinking": false
+   },
+   "temperature": 0
+  }
+ },
+ {
+  "name": "tool-call",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "What's the weather in Paris? Use the tool."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "Get the current weather for a city.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "city": {
+         "type": "string",
+         "description": "City name"
+        },
+        "unit": {
+         "type": "string",
+         "enum": [
+          "celsius",
+          "fahrenheit"
+         ]
+        }
+       },
+       "required": [
+        "city"
+       ]
+      }
+     }
+    }
+   ],
+   "max_tokens": 1024,
+   "temperature": 0
+  }
+ },
+ {
+  "name": "tool-result",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "What's the weather in Paris? Use the tool."
+    },
+    {
+     "role": "assistant",
+     "content": "",
+     "reasoning_content": "The user wants the current weather in Paris. I need to use the get_weather tool. The city is Paris. No unit specified, so I'll use the default (omit unit). This is a single independent call, so I'll make it directly.\n",
+     "tool_calls": [
+      {
+       "id": "chatcmpl-tool-a5fd2413deed8e1a",
+       "type": "function",
+       "function": {
+        "name": "get_weather",
+        "arguments": "{\"city\": \"Paris\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "chatcmpl-tool-a5fd2413deed8e1a",
+     "content": "{\"temperature\": 18, \"condition\": \"cloudy\"}"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "Get the current weather for a city.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "city": {
+         "type": "string",
+         "description": "City name"
+        },
+        "unit": {
+         "type": "string",
+         "enum": [
+          "celsius",
+          "fahrenheit"
+         ]
+        }
+       },
+       "required": [
+        "city"
+       ]
+      }
+     }
+    }
+   ],
+   "max_tokens": 1024,
+   "temperature": 0
+  }
+ },
+ {
+  "name": "completion-logprobs",
+  "request": {
+   "prompt": "The capital of France is",
+   "max_tokens": 8,
+   "temperature": 0
+  }
+ },
+ {
+  "name": "completion-n2-seeded",
+  "request": {
+   "prompt": "Once upon a time",
+   "max_tokens": 16,
+   "n": 2,
+   "seed": 7,
+   "temperature": 1.0,
+   "top_p": 0.95
+  }
+ }
+]

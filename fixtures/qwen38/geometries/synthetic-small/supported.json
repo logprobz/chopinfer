@@ -1,0 +1,12 @@
+{
+  "geometries": [
+    {
+      "id": "synthetic_small",
+      "file": "geometry.json",
+      "kernel_tag": "qwen38_synthetic_small",
+      "limits": {
+        "text_config.indexer_budget": 1024
+      }
+    }
+  ]
+}

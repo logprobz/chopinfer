@@ -1,0 +1,1966 @@
+[
+  {
+    "name": "comm_phased_f32_late_wait_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ],
+      [
+        "CHOP_COMM_PHASED_F32_TEST_LATE_WAIT",
+        "1"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_comm_test_late_wait_allreduce_phased_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_test_late_wait_allreduce_phased_round_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_test_late_wait_allreduce_phased_oneshot_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_test_late_wait_allreduce_phased_oneshot_round_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "47b6aaf81303a31969be1d3b0151c34eb89489694521315f8e772c9a51a985ad",
+    "resources": [
+      {
+        "symbol": "chop_comm_test_late_wait_allreduce_phased_f32_v1",
+        "registers": 99,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_test_late_wait_allreduce_phased_round_f32_v1",
+        "registers": 103,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_test_late_wait_allreduce_phased_oneshot_f32_v1",
+        "registers": 94,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_test_late_wait_allreduce_phased_oneshot_round_f32_v1",
+        "registers": 94,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "comm_phased_f32_no_gather_wait_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ],
+      [
+        "CHOP_COMM_PHASED_F32_TEST_NO_GATHER_WAIT",
+        "1"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_comm_test_no_gather_wait_allreduce_phased_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_test_no_gather_wait_allreduce_phased_round_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_test_no_gather_wait_allreduce_phased_oneshot_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_test_no_gather_wait_allreduce_phased_oneshot_round_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "519031454027941771c801eebb170fd585ffa2ca3a524ad13a3d471e4bcb8400",
+    "resources": [
+      {
+        "symbol": "chop_comm_test_no_gather_wait_allreduce_phased_f32_v1",
+        "registers": 99,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_test_no_gather_wait_allreduce_phased_round_f32_v1",
+        "registers": 102,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_test_no_gather_wait_allreduce_phased_oneshot_f32_v1",
+        "registers": 94,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_test_no_gather_wait_allreduce_phased_oneshot_round_f32_v1",
+        "registers": 90,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "comm_phased_f32_no_scatter_wait_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ],
+      [
+        "CHOP_COMM_PHASED_F32_TEST_NO_SCATTER_WAIT",
+        "1"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_comm_test_no_scatter_wait_allreduce_phased_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_test_no_scatter_wait_allreduce_phased_round_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_test_no_scatter_wait_allreduce_phased_oneshot_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_test_no_scatter_wait_allreduce_phased_oneshot_round_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "7623a33001ef2c4112b69b509c6f36d043dc05dc4b529cb71e1c429763335c30",
+    "resources": [
+      {
+        "symbol": "chop_comm_test_no_scatter_wait_allreduce_phased_f32_v1",
+        "registers": 100,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_test_no_scatter_wait_allreduce_phased_round_f32_v1",
+        "registers": 102,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_test_no_scatter_wait_allreduce_phased_oneshot_f32_v1",
+        "registers": 90,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_test_no_scatter_wait_allreduce_phased_oneshot_round_f32_v1",
+        "registers": 86,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "comm_phased_f32_reversed_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ],
+      [
+        "CHOP_COMM_PHASED_F32_TEST_REVERSED",
+        "1"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_comm_test_reversed_allreduce_phased_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_test_reversed_allreduce_phased_round_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_test_reversed_allreduce_phased_oneshot_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_test_reversed_allreduce_phased_oneshot_round_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "b5ee94f8bb0c36aef1a9d884d3c851026a840796c909710204432577f57bea3f",
+    "resources": [
+      {
+        "symbol": "chop_comm_test_reversed_allreduce_phased_f32_v1",
+        "registers": 96,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_test_reversed_allreduce_phased_round_f32_v1",
+        "registers": 96,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_test_reversed_allreduce_phased_oneshot_f32_v1",
+        "registers": 90,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_test_reversed_allreduce_phased_oneshot_round_f32_v1",
+        "registers": 92,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "comm_phased_f32_shared_parity_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ],
+      [
+        "CHOP_COMM_PHASED_F32_TEST_SHARED_PARITY",
+        "1"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_comm_test_shared_parity_allreduce_phased_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_test_shared_parity_allreduce_phased_round_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_test_shared_parity_allreduce_phased_oneshot_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_test_shared_parity_allreduce_phased_oneshot_round_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "e326555688299663b27520da0713136a96b94dab0a50bde6dd3a4efabeecd2ea",
+    "resources": [
+      {
+        "symbol": "chop_comm_test_shared_parity_allreduce_phased_f32_v1",
+        "registers": 99,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_test_shared_parity_allreduce_phased_round_f32_v1",
+        "registers": 96,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_test_shared_parity_allreduce_phased_oneshot_f32_v1",
+        "registers": 94,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_test_shared_parity_allreduce_phased_oneshot_round_f32_v1",
+        "registers": 90,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "comm_phased_f32_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_comm_allreduce_phased_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_allreduce_phased_round_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_allreduce_phased_oneshot_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_allreduce_phased_oneshot_round_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "68a54aece39197bbec7d2aeba8cca5d5ac419a07f333c4ee0195dba544fb7f98",
+    "resources": [
+      {
+        "symbol": "chop_comm_allreduce_phased_f32_v1",
+        "registers": 99,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_allreduce_phased_round_f32_v1",
+        "registers": 96,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_allreduce_phased_oneshot_f32_v1",
+        "registers": 94,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_allreduce_phased_oneshot_round_f32_v1",
+        "registers": 90,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

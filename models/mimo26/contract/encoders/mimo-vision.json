@@ -1,0 +1,89 @@
+{
+  "schema": "chopinfer.encoder.v1",
+  "model": "mimo26",
+  "name": "mimo-vision",
+  "precision": "f32-pairs.v1",
+  "checkpoint": {
+    "prefix": "visual.",
+    "files": {"visual.": "model_pp0_ep0_shard0.safetensors"},
+    "config": [
+      {
+        "file": "config.json",
+        "pointer": "/vision_config",
+        "values": {
+          "depth": 28,
+          "hidden_size": 1280,
+          "intermediate_size": 4608,
+          "num_heads": 32,
+          "num_key_value_heads": 8,
+          "hidden_act": "silu",
+          "out_hidden_size": 4096,
+          "patch_size": 16,
+          "temporal_patch_size": 2,
+          "spatial_merge_size": 2,
+          "fullatt_block_indexes": [0, 9, 18, 27],
+          "use_sink": true,
+          "visual_token_window_size": 64,
+          "vit_window_attn_types": [-1, 0, 0, 0, 0, 1, 1, 1, 1, -1, 0, 0, 0, 0, 1, 1, 1, 1, -1, 0, 0, 0, 0, 1, 1, 1, 1, -1]
+        }
+      }
+    ]
+  },
+  "input": {
+    "recipes": [
+      {"tag": "image.patch-grid.v1", "patch": 16, "temporal_patch": 2, "merge": 2, "maximum_pixels": 1048576},
+      {"tag": "video.timestamped-grids.v1", "patch": 16, "temporal_patch": 2, "merge": 2,
+       "maximum_pixels_per_frame": 262144, "maximum_frames": 32}
+    ],
+    "patchify": "merge-blocks.v1",
+    "payload": "f32",
+    "columns": 1536,
+    "capacity_rows": 8192,
+    "chunking": "whole-sequences.v1"
+  },
+  "sequences": {"kind": "temporal-grid"},
+  "image_layout": "program-order-stacked.v1",
+  "stages": [
+    {
+      "op": "linear.pairs.v1", "out": 1280, "bias": false,
+      "weights": {"weight": {"tensor": "patch_embed.proj.weight", "transforms": ["flatten"]}}
+    },
+    {
+      "op": "transformer.pre-norm.v1", "blocks": 28, "width": 1280,
+      "norm": {"op": "norm.rms-f32.v1", "eps": 1e-6},
+      "attention": {
+        "op": "attention.varlen.pairs.v1", "q_heads": 32, "kv_heads": 8, "head_dim": 64,
+        "qkv_bias": true, "proj_bias": true, "mask": {"window": [64, 64]}, "sink": "key0"
+      },
+      "overrides": [{"blocks": "0,9,18,27", "attention": {"mask": "full", "sink": "none"}}],
+      "reorder": [{"blocks": "5-8,14-17,23-26", "reorder": {"op": "reorder.merge-group-columns.v1"}}],
+      "rotary": {"op": "rotary.axial-2d.v1", "pairs_per_axis": 16, "theta": 10000, "style": "neox", "table": "table.hf-f32-angle.v1"},
+      "mlp": {"op": "mlp.swiglu.v1", "hidden": 4608, "bias": true},
+      "weights": {
+        "norm1.weight": "blocks.{i}.norm1.weight",
+        "qkv.weight": "blocks.{i}.attn.qkv.weight",
+        "qkv.bias": "blocks.{i}.attn.qkv.bias",
+        "sinks": {"tensor": "blocks.{i}.attn.sinks", "transforms": ["widen_f32"], "blocks": "1-8,10-17,19-26"},
+        "proj.weight": "blocks.{i}.attn.proj.weight",
+        "proj.bias": "blocks.{i}.attn.proj.bias",
+        "norm2.weight": "blocks.{i}.norm2.weight",
+        "gate_up.weight": {"concat_rows": ["blocks.{i}.mlp.gate_proj.weight", "blocks.{i}.mlp.up_proj.weight"]},
+        "gate_up.bias": {"concat_rows": ["blocks.{i}.mlp.gate_proj.bias", "blocks.{i}.mlp.up_proj.bias"]},
+        "down.weight": "blocks.{i}.mlp.down_proj.weight",
+        "down.bias": "blocks.{i}.mlp.down_proj.bias"
+      }
+    },
+    {"op": "norm.rms-f32.v1", "eps": 1e-6, "weights": {"weight": "merger.ln_q.weight"}},
+    {"op": "merge.consecutive.v1", "rows": 4},
+    {
+      "op": "linear.pairs.v1", "out": 5120, "bias": false, "gelu": "erf",
+      "weights": {"weight": "merger.mlp.0.weight"}
+    },
+    {
+      "op": "linear.pairs.v1", "out": 4096, "bias": false, "output": "bf16",
+      "weights": {"weight": "merger.mlp.2.weight"}
+    }
+  ],
+  "output": {"op": "layout.tokens.v1", "hidden": 4096, "positions": "sequential", "media_mask": false},
+  "parallel": ["replicated", "record-parallel"]
+}

@@ -1,0 +1,22 @@
+[
+  {
+    "name": "chop_moe_chain_lab_split_k4096_bf16",
+    "source_closure_sha256": "a547f5fb07cd0435ba6b78ff447de9810e51169c31c89e041e1470e542983ce7"
+  },
+  {
+    "name": "chop_moe_chain_lab_split_k4096_fp8block",
+    "source_closure_sha256": "714c7af31d43aab46d1a70d1f87413e902113e6e272f0f028b9c1fb2930de431"
+  },
+  {
+    "name": "chop_moe_chain_lab_split_k4096_fp8block_bw4",
+    "source_closure_sha256": "60e0157199a57ec80f0837fc45e46cc40997c13e8e6222fdd0e216ae8d92b750"
+  },
+  {
+    "name": "chop_moe_chain_lab_split_k4096_mxfp8",
+    "source_closure_sha256": "f20941e237ae6698b0c3c9b90b049e6c550a003ec39fb3c22db5a5d32e787c12"
+  },
+  {
+    "name": "chop_moe_chain_lab_split_k4096_nvfp4",
+    "source_closure_sha256": "4f6a73a9a35d9dadf684e8b6335f5971ab52b2bce14ad6078836a955356c7e33"
+  }
+]

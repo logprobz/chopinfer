@@ -1,0 +1,3752 @@
+{
+ "schema": "chopinfer-qual-declaration-vectors/v1",
+ "description": "Mutations of a synthetic declaration and the field each loader must name when refusing it (null: valid). crates/runtime-eval/tests/declaration.rs checks the loader, the one implementation of the rules, against them. A mutation sets values at JSON pointers, then removes pointers.",
+ "base": {
+  "schema": "chopinfer-qual-model/v1",
+  "model": "example",
+  "cohorts": {
+   "quick": {
+    "checks": [
+     "teacher",
+     "api"
+    ]
+   },
+   "full": {
+    "checks": [
+     "teacher",
+     "api",
+     "media"
+    ]
+   }
+  },
+  "change_classes": {
+   "frontend": [
+    "api"
+   ],
+   "quality": [
+    "teacher"
+   ],
+   "service": [],
+   "speculation": [],
+   "prefix": []
+  },
+  "checks": {
+   "teacher": {
+    "module": "teacher",
+    "args": [
+     "--url",
+     "{url}"
+    ],
+    "timeout_seconds": 600,
+    "receipt": "*-teacher.json",
+    "rules": [
+     {
+      "path": [
+       "passed"
+      ],
+      "op": "eq",
+      "value": true,
+      "source": "docs/example.md"
+     },
+     {
+      "path": [
+       "scored"
+      ],
+      "op": "ge",
+      "value": 10,
+      "source": "docs/example.md"
+     }
+    ],
+    "constants": {
+     "teacher": {
+      "MAX_MEAN": {
+       "value": 0.15,
+       "source": "docs/example.md"
+      }
+     }
+    }
+   },
+   "api": {
+    "module": "api",
+    "args": [],
+    "timeout_seconds": 60,
+    "receipt": "*-api.json",
+    "rules": [
+     {
+      "path": [
+       "passed"
+      ],
+      "op": "eq",
+      "value": true,
+      "source": "docs/example.md"
+     }
+    ],
+    "cohort_args": {
+     "quick": [
+      "--fast"
+     ]
+    }
+   },
+   "media": {
+    "module": "multimodal",
+    "args": [],
+    "timeout_seconds": 60,
+    "stdout_json": true,
+    "rules": [
+     {
+      "path": [
+       "rows",
+       "*",
+       "passed"
+      ],
+      "op": "true_count_ge",
+      "value": 2,
+      "source": "docs/example.md"
+     }
+    ],
+    "informational_reason": "no media fixtures yet"
+   }
+  },
+  "references": {
+   "teacher": {
+    "path": "fixtures/example/teacher.json",
+    "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "schema": "example.teacher.v1",
+    "variants": [
+     "exact",
+     "bf16"
+    ],
+    "workload_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "checkpoint_keys": [
+     "revision"
+    ]
+   },
+   "media": {
+    "path": "fixtures/example/media.json",
+    "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "schema": "example.media.v1",
+    "variants": [
+     "exact"
+    ],
+    "capture_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "workload": "fixtures/example/w.json"
+   }
+  },
+  "inputs": {
+   "fixture_root": "fixtures/example",
+   "unused": null,
+   "data": {
+    "env": "EXAMPLE_DATA",
+    "default": "fixtures/example",
+    "path": "data"
+   }
+  },
+  "qualification": {
+   "teacher_reference_kind": "exact",
+   "teacher_receipt": "teacher",
+   "teacher_capture_schema": "example.capture.v1",
+   "verify_buckets": [
+    2,
+    4
+   ],
+   "chars_per_token": 4.3,
+   "prefix": {
+    "family": "example",
+    "prompt_end": true,
+    "media": false,
+    "acceptance": false,
+    "block_tokens": 64,
+    "prefill_granule": 64,
+    "anchor_boundary": 128,
+    "anchor_labels": [
+     "a"
+    ],
+    "reference_schema": "example.teacher.v1"
+   },
+   "needle": {
+    "format": "prompt-set",
+    "frozen": "fixtures/example/prompts.json",
+    "lengths": [
+     8192
+    ],
+    "match": "alphanumeric"
+   },
+   "checkpoint": {
+    "lock": "models/example/checkpoint-files.json",
+    "repository": "org/example",
+    "revision": "abc",
+    "served_model_name": "Example",
+    "source_lock_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "checkpoint_identity": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+   },
+   "media": {
+    "format": "cases",
+    "reference": "media",
+    "receipt": "multimodal",
+    "capture_schema": "example",
+    "expectations": {
+     "kinds": {
+      "image": {
+       "field": "expected",
+       "single": true
+      }
+     }
+    },
+    "audio_near_tie": 0.3,
+    "coverage": {
+     "image": [
+      "example"
+     ]
+    }
+   }
+  },
+  "checkpoint": {
+   "status": "pinned"
+  },
+  "receipts": {
+   "env": "EXAMPLE_DATA",
+   "path": "qual/example"
+  },
+  "limitations": [
+   "Synthetic."
+  ],
+  "preview": {
+   "profile": "tp4",
+   "speculation": {
+    "drafter": "mtp",
+    "tokens": 3,
+    "draft_cost": "per-token"
+   },
+   "spec_greedy": {
+    "rule": "informational",
+    "reason": "reported only"
+   },
+   "numerical_reference": "teacher",
+   "gsm8k_floor": 194,
+   "soak_prefix_mix": false
+  }
+ },
+ "cases": [
+  {
+   "name": "the base is valid",
+   "set": {},
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "an unknown schema",
+   "set": {
+    "/schema": "chopinfer-qual-model/v2"
+   },
+   "remove": [],
+   "error": "schema"
+  },
+  {
+   "name": "an unknown top-level field",
+   "set": {
+    "/colour": 1
+   },
+   "remove": [],
+   "error": "colour"
+  },
+  {
+   "name": "a former check ID renamed",
+   "set": {
+    "/renamed_checks": {
+     "example-teacher": "teacher"
+    }
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "a declared check renamed",
+   "set": {
+    "/renamed_checks": {
+     "api": "teacher"
+    }
+   },
+   "remove": [],
+   "error": "renamed_checks.api"
+  },
+  {
+   "name": "a rename to an undeclared check",
+   "set": {
+    "/renamed_checks": {
+     "old": "absent"
+    }
+   },
+   "remove": [],
+   "error": "renamed_checks.old"
+  },
+  {
+   "name": "a rename to a non-string",
+   "set": {
+    "/renamed_checks": {
+     "old": 1
+    }
+   },
+   "remove": [],
+   "error": "renamed_checks.old"
+  },
+  {
+   "name": "renamed checks not an object",
+   "set": {
+    "/renamed_checks": []
+   },
+   "remove": [],
+   "error": "renamed_checks"
+  },
+  {
+   "name": "a model name with a slash",
+   "set": {
+    "/model": "a/b"
+   },
+   "remove": [],
+   "error": "model"
+  },
+  {
+   "name": "a model name of separators",
+   "set": {
+    "/model": "-_"
+   },
+   "remove": [],
+   "error": "model"
+  },
+  {
+   "name": "a module that is not a name",
+   "set": {
+    "/checks/api/module": "no-such"
+   },
+   "remove": [],
+   "error": "checks.api.module"
+  },
+  {
+   "name": "a module that does not exist",
+   "set": {
+    "/checks/api/module": "nonexistent_module"
+   },
+   "remove": [],
+   "error": "checks.api.module"
+  },
+  {
+   "name": "a test module",
+   "set": {
+    "/checks/api/module": "test_limits"
+   },
+   "remove": [],
+   "error": "checks.api.module"
+  },
+  {
+   "name": "another existing module",
+   "set": {
+    "/checks/api/module": "structured"
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "an unknown predicate op",
+   "set": {
+    "/checks/api/rules/0/op": "lt"
+   },
+   "remove": [],
+   "error": "checks.api.rules[0].op"
+  },
+  {
+   "name": "an empty predicate source",
+   "set": {
+    "/checks/api/rules/0/source": ""
+   },
+   "remove": [],
+   "error": "checks.api.rules[0].source"
+  },
+  {
+   "name": "a bool predicate path key",
+   "set": {
+    "/checks/api/rules/0/path": [
+     "rows",
+     true
+    ]
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "a float predicate path key",
+   "set": {
+    "/checks/api/rules/0/path": [
+     "rows",
+     1.0
+    ]
+   },
+   "remove": [],
+   "error": "checks.api.rules[0].path"
+  },
+  {
+   "name": "a legacy profile_args field",
+   "set": {
+    "/checks/api/profile_args": {}
+   },
+   "remove": [],
+   "error": "checks.api.profile_args"
+  },
+  {
+   "name": "cohort args for no cohort",
+   "set": {
+    "/checks/api/cohort_args/nightly": []
+   },
+   "remove": [],
+   "error": "checks.api.cohort_args.nightly"
+  },
+  {
+   "name": "no receipt",
+   "set": {},
+   "remove": [
+    "/checks/api/receipt"
+   ],
+   "error": "checks.api.receipt"
+  },
+  {
+   "name": "stdout_json false",
+   "set": {
+    "/checks/media/stdout_json": false
+   },
+   "remove": [],
+   "error": "checks.media.stdout_json"
+  },
+  {
+   "name": "a reference file that is not text",
+   "set": {
+    "/checks/media/json_file": "{media}",
+    "/checks/media/reference_file": 4
+   },
+   "remove": [],
+   "error": "checks.media.reference_file"
+  },
+  {
+   "name": "a reference file without the json file it scores",
+   "set": {
+    "/checks/media/reference_file": "{other}"
+   },
+   "remove": [],
+   "error": "checks.media.reference_file"
+  },
+  {
+   "name": "a reference file beside its json file",
+   "set": {
+    "/checks/media/json_file": "{media}",
+    "/checks/media/reference_file": "{other}"
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "reference_equal without a reference file",
+   "set": {
+    "/checks/media/json_file": "{media}",
+    "/checks/media/reference_equal": [
+     [
+      "run_id"
+     ]
+    ]
+   },
+   "remove": [],
+   "error": "checks.media.reference_equal"
+  },
+  {
+   "name": "reference_equal that is not a list of paths",
+   "set": {
+    "/checks/media/json_file": "{media}",
+    "/checks/media/reference_file": "{other}",
+    "/checks/media/reference_equal": []
+   },
+   "remove": [],
+   "error": "checks.media.reference_equal"
+  },
+  {
+   "name": "a reference_equal path that is empty",
+   "set": {
+    "/checks/media/json_file": "{media}",
+    "/checks/media/reference_file": "{other}",
+    "/checks/media/reference_equal": [
+     []
+    ]
+   },
+   "remove": [],
+   "error": "checks.media.reference_equal.0"
+  },
+  {
+   "name": "reference_equal paths beside a reference file",
+   "set": {
+    "/checks/media/json_file": "{media}",
+    "/checks/media/reference_file": "{other}",
+    "/checks/media/reference_equal": [
+     [
+      "run_id"
+     ],
+     [
+      "server",
+      "checkpoint",
+      "checkpoint_identity"
+     ]
+    ]
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "a string ge bound",
+   "set": {
+    "/checks/teacher/rules/1/value": "ten"
+   },
+   "remove": [],
+   "error": "checks.teacher.rules[1].value"
+  },
+  {
+   "name": "a bool ge bound",
+   "set": {
+    "/checks/teacher/rules/1/value": true
+   },
+   "remove": [],
+   "error": "checks.teacher.rules[1].value"
+  },
+  {
+   "name": "an integer ge bound beyond 2^53",
+   "set": {
+    "/checks/teacher/rules/1/value": 9007199254740993
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "a float count",
+   "set": {
+    "/checks/media/rules/0/value": 2.5
+   },
+   "remove": [],
+   "error": "checks.media.rules[0].value"
+  },
+  {
+   "name": "a negative count",
+   "set": {
+    "/checks/media/rules/0/value": -1
+   },
+   "remove": [],
+   "error": "checks.media.rules[0].value"
+  },
+  {
+   "name": "a count beyond i64",
+   "set": {
+    "/checks/media/rules/0/value": 18446744073709551615
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "a constant of a number type",
+   "set": {
+    "/checks/teacher/constants/teacher/MAX_MEAN/value": 1
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "a constant given a dict",
+   "set": {
+    "/checks/teacher/constants/teacher/MAX_MEAN/value": {}
+   },
+   "remove": [],
+   "error": "checks.teacher.constants.teacher.MAX_MEAN.value"
+  },
+  {
+   "name": "a numeric constant given a string",
+   "set": {
+    "/checks/teacher/constants/teacher/MEAN_MARGIN": {
+     "value": "oops",
+     "source": "x"
+    }
+   },
+   "remove": [],
+   "error": "checks.teacher.constants.teacher.MEAN_MARGIN.value"
+  },
+  {
+   "name": "a numeric constant given a bool",
+   "set": {
+    "/checks/teacher/constants/teacher/MEAN_MARGIN": {
+     "value": true,
+     "source": "x"
+    }
+   },
+   "remove": [],
+   "error": "checks.teacher.constants.teacher.MEAN_MARGIN.value"
+  },
+  {
+   "name": "an unknown constant",
+   "set": {
+    "/checks/teacher/constants/teacher/DOES_NOT_EXIST": {
+     "value": 1,
+     "source": "x"
+    }
+   },
+   "remove": [],
+   "error": "checks.teacher.constants.teacher.DOES_NOT_EXIST"
+  },
+  {
+   "name": "a constant entry with a unit",
+   "set": {
+    "/checks/teacher/constants/teacher/MAX_MEAN/unit": "nats"
+   },
+   "remove": [],
+   "error": "checks.teacher.constants.teacher.MAX_MEAN.unit"
+  },
+  {
+   "name": "constants of an unknown module",
+   "set": {
+    "/checks/teacher/constants/nonexistent_module": {}
+   },
+   "remove": [],
+   "error": "checks.teacher.constants.nonexistent_module"
+  },
+  {
+   "name": "an int constant given an int",
+   "set": {
+    "/checks/teacher/constants/api": {
+     "TOOL_RESULT_MAX_TOKENS": {
+      "value": 7,
+      "source": "docs/example.md"
+     }
+    }
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "an int constant given a float",
+   "set": {
+    "/checks/teacher/constants/api": {
+     "TOOL_RESULT_MAX_TOKENS": {
+      "value": 7.0,
+      "source": "docs/example.md"
+     }
+    }
+   },
+   "remove": [],
+   "error": "checks.teacher.constants.api.TOOL_RESULT_MAX_TOKENS.value"
+  },
+  {
+   "name": "an int constant given a bool",
+   "set": {
+    "/checks/teacher/constants/api": {
+     "TOOL_RESULT_MAX_TOKENS": {
+      "value": true,
+      "source": "docs/example.md"
+     }
+    }
+   },
+   "remove": [],
+   "error": "checks.teacher.constants.api.TOOL_RESULT_MAX_TOKENS.value"
+  },
+  {
+   "name": "a str constant given a str",
+   "set": {
+    "/checks/teacher/constants/teacher": {
+     "GATE_VARIANT": {
+      "value": "x",
+      "source": "docs/example.md"
+     }
+    }
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "a str constant given a number",
+   "set": {
+    "/checks/teacher/constants/teacher": {
+     "GATE_VARIANT": {
+      "value": 1,
+      "source": "docs/example.md"
+     }
+    }
+   },
+   "remove": [],
+   "error": "checks.teacher.constants.teacher.GATE_VARIANT.value"
+  },
+  {
+   "name": "a list constant given a list",
+   "set": {
+    "/checks/teacher/constants/common": {
+     "MODALITIES": {
+      "value": [
+       "a"
+      ],
+      "source": "docs/example.md"
+     }
+    }
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "a list constant given a string",
+   "set": {
+    "/checks/teacher/constants/common": {
+     "MODALITIES": {
+      "value": "a",
+      "source": "docs/example.md"
+     }
+    }
+   },
+   "remove": [],
+   "error": "checks.teacher.constants.common.MODALITIES.value"
+  },
+  {
+   "name": "a dict constant given a dict",
+   "set": {
+    "/checks/teacher/constants/structured": {
+     "PERSON": {
+      "value": {},
+      "source": "docs/example.md"
+     }
+    }
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "a dict constant given a list",
+   "set": {
+    "/checks/teacher/constants/structured": {
+     "PERSON": {
+      "value": [],
+      "source": "docs/example.md"
+     }
+    }
+   },
+   "remove": [],
+   "error": "checks.teacher.constants.structured.PERSON.value"
+  },
+  {
+   "name": "a None constant given null",
+   "set": {
+    "/checks/teacher/constants/common": {
+     "RECEIPTS": {
+      "value": null,
+      "source": "docs/example.md"
+     }
+    }
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "a None constant given a string",
+   "set": {
+    "/checks/teacher/constants/common": {
+     "RECEIPTS": {
+      "value": "x",
+      "source": "docs/example.md"
+     }
+    }
+   },
+   "remove": [],
+   "error": "checks.teacher.constants.common.RECEIPTS.value"
+  },
+  {
+   "name": "a set constant given a list",
+   "set": {
+    "/checks/teacher/constants/validation_evidence": {
+     "KERNEL": {
+      "value": [],
+      "source": "docs/example.md"
+     }
+    }
+   },
+   "remove": [],
+   "error": "checks.teacher.constants.validation_evidence.KERNEL.value"
+  },
+  {
+   "name": "a computed constant given a string",
+   "set": {
+    "/checks/teacher/constants/teacher": {
+     "MAX_MEAN": {
+      "value": "x",
+      "source": "docs/example.md"
+     }
+    }
+   },
+   "remove": [],
+   "error": "checks.teacher.constants.teacher.MAX_MEAN.value"
+  },
+  {
+   "name": "a bool timeout",
+   "set": {
+    "/checks/api/timeout_seconds": true
+   },
+   "remove": [],
+   "error": "checks.api.timeout_seconds"
+  },
+  {
+   "name": "a huge timeout",
+   "set": {
+    "/checks/api/timeout_seconds": 1e+300
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "a cohort naming an absent check",
+   "set": {
+    "/cohorts/quick/checks": [
+     "teacher",
+     "api",
+     "absent"
+    ]
+   },
+   "remove": [],
+   "error": "cohorts.quick.checks"
+  },
+  {
+   "name": "a cohort repeating a check",
+   "set": {
+    "/cohorts/quick/checks": [
+     "api",
+     "api"
+    ]
+   },
+   "remove": [],
+   "error": "cohorts.quick.checks"
+  },
+  {
+   "name": "a change class naming an absent check",
+   "set": {
+    "/change_classes/quality": [
+     "absent"
+    ]
+   },
+   "remove": [],
+   "error": "change_classes.quality"
+  },
+  {
+   "name": "an unknown change class",
+   "set": {
+    "/change_classes/frontned": []
+   },
+   "remove": [],
+   "error": "change_classes.frontned"
+  },
+  {
+   "name": "a missing change class",
+   "set": {},
+   "remove": [
+    "/change_classes/prefix"
+   ],
+   "error": "change_classes.prefix"
+  },
+  {
+   "name": "a short reference digest",
+   "set": {
+    "/references/teacher/sha256": "abc"
+   },
+   "remove": [],
+   "error": "references.teacher.sha256"
+  },
+  {
+   "name": "an unknown reference field",
+   "set": {
+    "/references/teacher/extra": 1
+   },
+   "remove": [],
+   "error": "references.teacher.extra"
+  },
+  {
+   "name": "no reference variants",
+   "set": {
+    "/references/teacher/variants": []
+   },
+   "remove": [],
+   "error": "references.teacher.variants"
+  },
+  {
+   "name": "a repeated variant",
+   "set": {
+    "/references/teacher/variants": [
+     "a",
+     "a"
+    ]
+   },
+   "remove": [],
+   "error": "references.teacher.variants"
+  },
+  {
+   "name": "an unknown checkpoint key",
+   "set": {
+    "/references/teacher/checkpoint_keys": [
+     "revison"
+    ]
+   },
+   "remove": [],
+   "error": "references.teacher.checkpoint_keys"
+  },
+  {
+   "name": "a read reference without variants",
+   "set": {},
+   "remove": [
+    "/references/media/variants"
+   ],
+   "error": "references.media.variants"
+  },
+  {
+   "name": "a reference a check needs is absent",
+   "set": {},
+   "remove": [
+    "/references/media"
+   ],
+   "error": "references.media"
+  },
+  {
+   "name": "an empty workload path",
+   "set": {
+    "/references/media/workload": ""
+   },
+   "remove": [],
+   "error": "references.media.workload"
+  },
+  {
+   "name": "a workload under a variable",
+   "set": {
+    "/references/media/workload": {
+     "env": "EXAMPLE_DATA",
+     "path": "w.json"
+    }
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "a workload under a variable with a default",
+   "set": {
+    "/references/media/workload": {
+     "env": "EXAMPLE_DATA",
+     "default": "fixtures",
+     "path": "w.json"
+    }
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "a workload without its variable",
+   "set": {
+    "/references/media/workload": {
+     "path": "w.json"
+    }
+   },
+   "remove": [],
+   "error": "references.media.workload.env"
+  },
+  {
+   "name": "a workload with an unknown field",
+   "set": {
+    "/references/media/workload": {
+     "env": "X",
+     "file": "w.json"
+    }
+   },
+   "remove": [],
+   "error": "references.media.workload.file"
+  },
+  {
+   "name": "a workload with a numeric path",
+   "set": {
+    "/references/media/workload": {
+     "env": "X",
+     "path": 1
+    }
+   },
+   "remove": [],
+   "error": "references.media.workload.path"
+  },
+  {
+   "name": "a null workload",
+   "set": {
+    "/references/media/workload": null
+   },
+   "remove": [],
+   "error": "references.media.workload"
+  },
+  {
+   "name": "references under qualification",
+   "set": {
+    "/qualification/references": {}
+   },
+   "remove": [],
+   "error": "qualification.references"
+  },
+  {
+   "name": "an unknown qualification field",
+   "set": {
+    "/qualification/needel": {}
+   },
+   "remove": [],
+   "error": "qualification.needel"
+  },
+  {
+   "name": "an unknown needle match",
+   "set": {
+    "/qualification/needle/match": "exact"
+   },
+   "remove": [],
+   "error": "qualification.needle.match"
+  },
+  {
+   "name": "a prompt set without its frozen copy",
+   "set": {},
+   "remove": [
+    "/qualification/needle/frozen"
+   ],
+   "error": "qualification.needle.frozen"
+  },
+  {
+   "name": "a string anchor boundary",
+   "set": {
+    "/qualification/prefix/anchor_boundary": "128"
+   },
+   "remove": [],
+   "error": "qualification.prefix.anchor_boundary"
+  },
+  {
+   "name": "a zero prefix block size",
+   "set": {
+    "/qualification/prefix/block_tokens": 0
+   },
+   "remove": [],
+   "error": "qualification.prefix.block_tokens"
+  },
+  {
+   "name": "a missing prefix block size",
+   "set": {},
+   "remove": [
+    "/qualification/prefix/block_tokens"
+   ],
+   "error": "qualification.prefix.block_tokens"
+  },
+  {
+   "name": "a zero prefill granule",
+   "set": {
+    "/qualification/prefix/prefill_granule": 0
+   },
+   "remove": [],
+   "error": "qualification.prefix.prefill_granule"
+  },
+  {
+   "name": "a short checkpoint identity",
+   "set": {
+    "/qualification/checkpoint/checkpoint_identity": "74a79e"
+   },
+   "remove": [],
+   "error": "qualification.checkpoint.checkpoint_identity"
+  },
+  {
+   "name": "a pin without its registry",
+   "set": {
+    "/qualification/checkpoint/pin": "default"
+   },
+   "remove": [],
+   "error": "qualification.checkpoint.registry"
+  },
+  {
+   "name": "a zero verify bucket",
+   "set": {
+    "/qualification/verify_buckets": [
+     2,
+     0
+    ]
+   },
+   "remove": [],
+   "error": "qualification.verify_buckets[1]"
+  },
+  {
+   "name": "an unknown teacher reference kind",
+   "set": {
+    "/qualification/teacher_reference_kind": "f64"
+   },
+   "remove": [],
+   "error": "qualification.teacher_reference_kind"
+  },
+  {
+   "name": "an integer mechanics flag",
+   "set": {
+    "/qualification/mechanics_only": 1
+   },
+   "remove": [],
+   "error": "qualification.mechanics_only"
+  },
+  {
+   "name": "an empty input variable",
+   "set": {
+    "/inputs/data/env": ""
+   },
+   "remove": [],
+   "error": "inputs.data.env"
+  },
+  {
+   "name": "an unknown input field",
+   "set": {
+    "/inputs/data/extra": ""
+   },
+   "remove": [],
+   "error": "inputs.data.extra"
+  },
+  {
+   "name": "an empty checkpoint status",
+   "set": {
+    "/checkpoint/status": ""
+   },
+   "remove": [],
+   "error": "checkpoint.status"
+  },
+  {
+   "name": "a numeric limitation",
+   "set": {
+    "/limitations": [
+     1
+    ]
+   },
+   "remove": [],
+   "error": "limitations"
+  },
+  {
+   "name": "an unknown preview field",
+   "set": {
+    "/preview/colour": "red"
+   },
+   "remove": [],
+   "error": "preview.colour"
+  },
+  {
+   "name": "zero draft tokens",
+   "set": {
+    "/preview/speculation/tokens": 0
+   },
+   "remove": [],
+   "error": "preview.speculation.tokens"
+  },
+  {
+   "name": "an unknown draft cost",
+   "set": {
+    "/preview/speculation/draft_cost": "per-row"
+   },
+   "remove": [],
+   "error": "preview.speculation.draft_cost"
+  },
+  {
+   "name": "an unknown greedy rule",
+   "set": {
+    "/preview/spec_greedy/rule": "close"
+   },
+   "remove": [],
+   "error": "preview.spec_greedy.rule"
+  },
+  {
+   "name": "a reason on the exact rule",
+   "set": {
+    "/preview/spec_greedy/rule": "exact"
+   },
+   "remove": [],
+   "error": "preview.spec_greedy.reason"
+  },
+  {
+   "name": "a string soak flag",
+   "set": {
+    "/preview/soak_prefix_mix": "no"
+   },
+   "remove": [],
+   "error": "preview.soak_prefix_mix"
+  },
+  {
+   "name": "no GSM8K floor",
+   "set": {},
+   "remove": [
+    "/preview/gsm8k_floor"
+   ],
+   "error": "preview.gsm8k_floor"
+  },
+  {
+   "name": "a zero GSM8K floor",
+   "set": {
+    "/preview/gsm8k_floor": 0
+   },
+   "remove": [],
+   "error": "preview.gsm8k_floor"
+  },
+  {
+   "name": "a GSM8K floor above the screen",
+   "set": {
+    "/preview/gsm8k_floor": 201
+   },
+   "remove": [],
+   "error": "preview.gsm8k_floor"
+  },
+  {
+   "name": "declared media reference",
+   "set": {
+    "/qualification/media": {
+     "format": "cases",
+     "reference": "renamed_media",
+     "receipt": "media",
+     "capture_schema": "capture/v1",
+     "expectations": {},
+     "audio_near_tie": 2.3
+    },
+    "/references/renamed_media": {
+     "path": "fixtures/example/media.json",
+     "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+     "schema": "example.media.v1",
+     "variants": [
+      "exact"
+     ],
+     "capture_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+     "workload": "fixtures/example/w.json"
+    }
+   },
+   "remove": [
+    "/references/media"
+   ],
+   "error": null
+  },
+  {
+   "name": "unknown media format",
+   "set": {
+    "/qualification/media": {
+     "format": "other",
+     "reference": "media",
+     "receipt": "media",
+     "capture_schema": "capture/v1",
+     "expectations": {},
+     "audio_near_tie": 2.3
+    }
+   },
+   "remove": [],
+   "error": "qualification.media.format"
+  },
+  {
+   "name": "missing media reference",
+   "set": {
+    "/qualification/media": {
+     "format": "cases",
+     "reference": "renamed_media",
+     "receipt": "media",
+     "capture_schema": "capture/v1",
+     "expectations": {},
+     "audio_near_tie": 2.3
+    }
+   },
+   "remove": [],
+   "error": "references.renamed_media"
+  },
+  {
+   "name": "missing case variants",
+   "set": {
+    "/qualification/media": {
+     "format": "cases",
+     "reference": "renamed_media",
+     "receipt": "media",
+     "capture_schema": "capture/v1",
+     "expectations": {},
+     "audio_near_tie": 2.3
+    },
+    "/references/renamed_media": {
+     "path": "fixtures/example/media.json",
+     "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+     "schema": "example.media.v1",
+     "capture_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+     "workload": "fixtures/example/w.json"
+    }
+   },
+   "remove": [],
+   "error": "references.renamed_media.variants"
+  },
+  {
+   "name": "invalid audio limit",
+   "set": {
+    "/qualification/media": {
+     "format": "cases",
+     "reference": "media",
+     "receipt": "media",
+     "capture_schema": "capture/v1",
+     "expectations": {},
+     "audio_near_tie": false
+    }
+   },
+   "remove": [],
+   "error": "qualification.media.audio_near_tie"
+  },
+  {
+   "name": "image reference without variants",
+   "set": {
+    "/qualification/media": {
+     "format": "image-probes",
+     "reference": "images",
+     "receipt": "images",
+     "stop_token": "stop",
+     "expected": {
+      "a": [
+       "blue"
+      ]
+     },
+     "fixture_images": {
+      "a": "blue.png"
+     },
+     "items": {
+      "a": "short"
+     }
+    },
+    "/references/images": {
+     "path": "fixtures/example/media.json",
+     "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+     "schema": "example.media.v1",
+     "capture_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+     "workload": "fixtures/example/w.json"
+    }
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "invalid image item",
+   "set": {
+    "/qualification/media": {
+     "format": "image-probes",
+     "reference": "media",
+     "receipt": "images",
+     "stop_token": "stop",
+     "expected": {
+      "a": [
+       "blue"
+      ]
+     },
+     "fixture_images": {
+      "a": "blue.png"
+     },
+     "items": {
+      "a": "unknown"
+     }
+    }
+   },
+   "remove": [],
+   "error": "qualification.media.items.a"
+  },
+  {
+   "name": "case media needs audio limit",
+   "set": {
+    "/qualification/media": {
+     "format": "cases",
+     "reference": "media",
+     "receipt": "media",
+     "capture_schema": "capture/v1",
+     "expectations": {}
+    }
+   },
+   "remove": [],
+   "error": "qualification.media.audio_near_tie"
+  },
+  {
+   "name": "expectation needs field",
+   "set": {
+    "/qualification/media": {
+     "format": "cases",
+     "reference": "media",
+     "receipt": "media",
+     "capture_schema": "capture/v1",
+     "expectations": {
+      "files": {
+       "x": {
+        "single": true
+       }
+      }
+     },
+     "audio_near_tie": 2.3
+    }
+   },
+   "remove": [],
+   "error": "qualification.media.expectations.files.x.field"
+  },
+  {
+   "name": "expectation field is text",
+   "set": {
+    "/qualification/media": {
+     "format": "cases",
+     "reference": "media",
+     "receipt": "media",
+     "capture_schema": "capture/v1",
+     "expectations": {
+      "kinds": {
+       "audio": {
+        "field": false,
+        "single": true
+       }
+      }
+     },
+     "audio_near_tie": 2.3
+    }
+   },
+   "remove": [],
+   "error": "qualification.media.expectations.kinds.audio.field"
+  },
+  {
+   "name": "expectation single is boolean",
+   "set": {
+    "/qualification/media": {
+     "format": "cases",
+     "reference": "media",
+     "receipt": "media",
+     "capture_schema": "capture/v1",
+     "expectations": {
+      "kinds": {
+       "audio": {
+        "field": "answer",
+        "single": 1
+       }
+      }
+     },
+     "audio_near_tie": 2.3
+    }
+   },
+   "remove": [],
+   "error": "qualification.media.expectations.kinds.audio.single"
+  },
+  {
+   "name": "expectation unknown field",
+   "set": {
+    "/qualification/media": {
+     "format": "cases",
+     "reference": "media",
+     "receipt": "media",
+     "capture_schema": "capture/v1",
+     "expectations": {
+      "kinds": {
+       "audio": {
+        "field": "answer",
+        "single": true,
+        "typo": true
+       }
+      }
+     },
+     "audio_near_tie": 2.3
+    }
+   },
+   "remove": [],
+   "error": "qualification.media.expectations.kinds.audio.typo"
+  },
+  {
+   "name": "expectation valid",
+   "set": {
+    "/qualification/media": {
+     "format": "cases",
+     "reference": "media",
+     "receipt": "media",
+     "capture_schema": "capture/v1",
+     "expectations": {
+      "files": {
+       "x": {
+        "field": "answer",
+        "single": true
+       }
+      },
+      "kinds": {
+       "audio": {
+        "field": "clauses",
+        "single": false
+       }
+      }
+     },
+     "audio_near_tie": 2.3
+    }
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "expected key must name item",
+   "set": {
+    "/qualification/media": {
+     "format": "image-probes",
+     "reference": "media",
+     "receipt": "images",
+     "stop_token": "stop",
+     "expected": {
+      "typo": [
+       "blue"
+      ]
+     },
+     "fixture_images": {
+      "a": "blue.png"
+     },
+     "items": {
+      "a": "short"
+     }
+    }
+   },
+   "remove": [],
+   "error": "qualification.media.expected.typo"
+  },
+  {
+   "name": "fixture key must name item",
+   "set": {
+    "/qualification/media": {
+     "format": "image-probes",
+     "reference": "media",
+     "receipt": "images",
+     "stop_token": "stop",
+     "expected": {
+      "a": [
+       "blue"
+      ]
+     },
+     "fixture_images": {
+      "typo": "blue.png"
+     },
+     "items": {
+      "a": "short"
+     }
+    }
+   },
+   "remove": [],
+   "error": "qualification.media.fixture_images.typo"
+  },
+  {
+   "name": "image probes may name their thinking switch",
+   "set": {
+    "/qualification/media": {
+     "format": "image-probes",
+     "reference": "media",
+     "receipt": "images",
+     "stop_token": "stop",
+     "expected": {},
+     "fixture_images": {},
+     "items": {
+      "a": "free-text"
+     },
+     "thinking": true
+    }
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "image-probe thinking is boolean",
+   "set": {
+    "/qualification/media": {
+     "format": "image-probes",
+     "reference": "media",
+     "receipt": "images",
+     "stop_token": "stop",
+     "expected": {},
+     "fixture_images": {},
+     "items": {
+      "a": "free-text"
+     },
+     "thinking": "on"
+    }
+   },
+   "remove": [],
+   "error": "qualification.media.thinking"
+  },
+  {
+   "name": "case media names no thinking switch",
+   "set": {
+    "/qualification/media/thinking": true
+   },
+   "remove": [],
+   "error": "qualification.media.thinking"
+  },
+  {
+   "name": "declared text and image coverage",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": null
+  },
+  {
+   "name": "reject invalid capability text",
+   "set": {
+    "/capabilities": {
+     "text": "yes",
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.text"
+  },
+  {
+   "name": "reject invalid capability media",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image",
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.media"
+  },
+  {
+   "name": "reject invalid capability speculation",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "unknown",
+     "kv_offload": false
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.speculation"
+  },
+  {
+   "name": "reject invalid capability kv_offload",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": true
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.kv_offload"
+  },
+  {
+   "name": "require check for frontend",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": true,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.frontend"
+  },
+  {
+   "name": "require check for structured",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": true,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.structured"
+  },
+  {
+   "name": "require check for prefix_cache",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": true,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.prefix_cache"
+  },
+  {
+   "name": "require check for preemption",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": true,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.preemption"
+  },
+  {
+   "name": "require check for long_context",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": true,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.long_context"
+  },
+  {
+   "name": "require check for stability",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": true,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.stability"
+  },
+  {
+   "name": "require speculative verification",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "mtp",
+     "kv_offload": false
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.speculation"
+  },
+  {
+   "name": "required teacher must be selected",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false
+    },
+    "/cohorts/full/checks": [
+     "api",
+     "media"
+    ]
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.text"
+  },
+  {
+   "name": "required media must be selected",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false
+    },
+    "/cohorts/full/checks": [
+     "teacher",
+     "api"
+    ]
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.media"
+  },
+  {
+   "name": "informational is not coverage",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false
+    },
+    "/checks/teacher/informational_reason": "not qualified"
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.text"
+  },
+  {
+   "name": "preemption requires exact",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": true,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false
+    },
+    "/checks/feature": {
+     "module": "preempt_compare",
+     "args": [
+      "compare",
+      "--reserved",
+      "{reserved}",
+      "--preempted",
+      "{preempted}"
+     ],
+     "timeout_seconds": 60,
+     "stdout_json": true,
+     "rules": [
+      {
+       "path": [
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "docs/example.md"
+      },
+      {
+       "path": [
+        "exact"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "docs/example.md"
+      },
+      {
+       "path": [
+        "requests"
+       ],
+       "op": "ge",
+       "value": 1,
+       "source": "docs/example.md"
+      },
+      {
+       "path": [
+        "positions_after_first_preemption"
+       ],
+       "op": "ge",
+       "value": 1,
+       "source": "docs/example.md"
+      }
+     ]
+    },
+    "/cohorts/full/checks": [
+     "teacher",
+     "api",
+     "media",
+     "feature"
+    ]
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.preemption"
+  },
+  {
+   "name": "preemption baseline is not coverage",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": true,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false
+    },
+    "/checks/feature": {
+     "module": "preempt_compare",
+     "args": [
+      "compare",
+      "--exact",
+      "--baseline",
+      "--reserved",
+      "{reserved}",
+      "--preempted",
+      "{preempted}"
+     ],
+     "timeout_seconds": 60,
+     "stdout_json": true,
+     "rules": [
+      {
+       "path": [
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "docs/example.md"
+      },
+      {
+       "path": [
+        "exact"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "docs/example.md"
+      },
+      {
+       "path": [
+        "requests"
+       ],
+       "op": "ge",
+       "value": 1,
+       "source": "docs/example.md"
+      },
+      {
+       "path": [
+        "positions_after_first_preemption"
+       ],
+       "op": "ge",
+       "value": 1,
+       "source": "docs/example.md"
+      }
+     ]
+    },
+    "/cohorts/full/checks": [
+     "teacher",
+     "api",
+     "media",
+     "feature"
+    ]
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.preemption"
+  },
+  {
+   "name": "exact preemption is coverage",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": true,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false
+    },
+    "/checks/feature": {
+     "module": "preempt_compare",
+     "args": [
+      "compare",
+      "--exact",
+      "--reserved",
+      "{reserved}",
+      "--preempted",
+      "{preempted}"
+     ],
+     "timeout_seconds": 60,
+     "stdout_json": true,
+     "rules": [
+      {
+       "path": [
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "docs/example.md"
+      },
+      {
+       "path": [
+        "exact"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "docs/example.md"
+      },
+      {
+       "path": [
+        "requests"
+       ],
+       "op": "ge",
+       "value": 1,
+       "source": "docs/example.md"
+      },
+      {
+       "path": [
+        "positions_after_first_preemption"
+       ],
+       "op": "ge",
+       "value": 1,
+       "source": "docs/example.md"
+      }
+     ]
+    },
+    "/cohorts/full/checks": [
+     "teacher",
+     "api",
+     "media",
+     "feature"
+    ]
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": null
+  },
+  {
+   "name": "soak requires media mix",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": true,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false
+    },
+    "/checks/feature": {
+     "module": "soak",
+     "args": [
+      "--duration",
+      "60",
+      "--concurrency",
+      "1"
+     ],
+     "timeout_seconds": 60,
+     "stdout_json": true,
+     "rules": [
+      {
+       "path": [
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "docs/example.md"
+      }
+     ]
+    },
+    "/cohorts/full/checks": [
+     "teacher",
+     "api",
+     "media",
+     "feature"
+    ]
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.stability"
+  },
+  {
+   "name": "soak media mix is coverage",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": true,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false
+    },
+    "/checks/feature": {
+     "module": "soak",
+     "args": [
+      "--media-mix",
+      "--duration",
+      "60",
+      "--concurrency",
+      "1"
+     ],
+     "timeout_seconds": 60,
+     "stdout_json": true,
+     "rules": [
+      {
+       "path": [
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "docs/example.md"
+      }
+     ]
+    },
+    "/cohorts/full/checks": [
+     "teacher",
+     "api",
+     "media",
+     "feature"
+    ]
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": null
+  },
+  {
+   "name": "full cohort cannot turn preemption into a baseline",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": true,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false
+    },
+    "/checks/feature": {
+     "module": "preempt_compare",
+     "args": [
+      "compare",
+      "--exact",
+      "--reserved",
+      "{reserved}",
+      "--preempted",
+      "{preempted}"
+     ],
+     "timeout_seconds": 60,
+     "stdout_json": true,
+     "rules": [
+      {
+       "path": [
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "docs/example.md"
+      },
+      {
+       "path": [
+        "exact"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "docs/example.md"
+      },
+      {
+       "path": [
+        "requests"
+       ],
+       "op": "ge",
+       "value": 1,
+       "source": "docs/example.md"
+      },
+      {
+       "path": [
+        "positions_after_first_preemption"
+       ],
+       "op": "ge",
+       "value": 1,
+       "source": "docs/example.md"
+      }
+     ],
+     "cohort_args": {
+      "full": [
+       "--baseline"
+      ]
+     }
+    },
+    "/cohorts/full/checks": [
+     "teacher",
+     "api",
+     "media",
+     "feature"
+    ]
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.preemption"
+  },
+  {
+   "name": "zero-item predicate is refused",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false
+    },
+    "/checks/teacher/rules/0": {
+     "path": [
+      "records"
+     ],
+     "op": "count_ge",
+     "value": 0,
+     "source": "docs/example.md"
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "checks.teacher.rules[0].value"
+  },
+  {
+   "name": "image-only coverage cannot claim audio",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image",
+      "audio"
+     ],
+     "speculation": "none",
+     "kv_offload": false
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.media"
+  },
+  {
+   "name": "image-only coverage cannot claim video",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image",
+      "video"
+     ],
+     "speculation": "none",
+     "kv_offload": false
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.media"
+  },
+  {
+   "name": "audio may be declared served and not qualified, with a reason",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false,
+     "unqualified_media": {
+      "audio": "Served, but no reference input for it is in the repository; test it with your own inputs."
+     }
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": null
+  },
+  {
+   "name": "audio declared qualified without coverage is still refused beside unqualified media",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image",
+      "audio"
+     ],
+     "speculation": "none",
+     "kv_offload": false,
+     "unqualified_media": {
+      "video": "Served, but no reference input for it is in the repository; test it with your own inputs."
+     }
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.media"
+  },
+  {
+   "name": "an unqualified modality needs a reason",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false,
+     "unqualified_media": {
+      "audio": " "
+     }
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.unqualified_media.audio"
+  },
+  {
+   "name": "a modality cannot be both qualified and unqualified",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false,
+     "unqualified_media": {
+      "image": "Served, but no reference input for it is in the repository; test it with your own inputs."
+     }
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.unqualified_media.image"
+  },
+  {
+   "name": "unqualified media names a known modality",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false,
+     "unqualified_media": {
+      "text": "Served, but no reference input for it is in the repository; test it with your own inputs."
+     }
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.unqualified_media.text"
+  },
+  {
+   "name": "unqualified media must map each modality to its reason",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false,
+     "unqualified_media": [
+      "audio"
+     ]
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.unqualified_media"
+  },
+  {
+   "name": "an unqualified modality cannot keep reference items",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [],
+     "speculation": "none",
+     "kv_offload": false,
+     "unqualified_media": {
+      "image": "Served, but no reference input for it is in the repository; test it with your own inputs."
+     }
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.unqualified_media.image"
+  },
+  {
+   "name": "speculative coverage contracts",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "mtp",
+     "kv_offload": false
+    },
+    "/checks/spec_verify": {
+     "module": "spec_verify",
+     "args": [
+      "compare",
+      "--ar",
+      "{spec_ar}",
+      "--spec",
+      "{spec_candidate}"
+     ],
+     "timeout_seconds": 7200,
+     "stdout_json": true,
+     "rules": [
+      {
+       "path": [
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      },
+      {
+       "path": [
+        "sets",
+        "copy",
+        "scored_positions"
+       ],
+       "op": "ge",
+       "value": 1,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      }
+     ]
+    },
+    "/checks/verify_exact": {
+     "module": "verify_exact",
+     "args": [
+      "report",
+      "--ar",
+      "{verify_ar}",
+      "--verify",
+      "{verify_candidate}"
+     ],
+     "timeout_seconds": 7200,
+     "stdout_json": true,
+     "rules": [
+      {
+       "path": [
+        "records"
+       ],
+       "op": "count_ge",
+       "value": 1,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      },
+      {
+       "path": [
+        "records",
+        "*",
+        "exact",
+        "all",
+        "gate_against_ar",
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      },
+      {
+       "path": [
+        "records",
+        "*",
+        "coverage",
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "tools/qual/README.md#release-gates"
+      },
+      {
+       "path": [
+        "records",
+        "*",
+        "k"
+       ],
+       "op": "ge",
+       "value": 1,
+       "source": "tools/qual/README.md#release-gates"
+      }
+     ]
+    },
+    "/cohorts/full/checks": [
+     "teacher",
+     "api",
+     "media",
+     "spec_verify",
+     "verify_exact"
+    ]
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": null
+  },
+  {
+   "name": "AR compared with itself",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "mtp",
+     "kv_offload": false
+    },
+    "/checks/spec_verify": {
+     "module": "spec_verify",
+     "args": [
+      "compare",
+      "--ar",
+      "{spec_ar}",
+      "--spec",
+      "{spec_candidate}"
+     ],
+     "timeout_seconds": 7200,
+     "stdout_json": true,
+     "rules": [
+      {
+       "path": [
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      },
+      {
+       "path": [
+        "sets",
+        "copy",
+        "scored_positions"
+       ],
+       "op": "ge",
+       "value": 1,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      }
+     ]
+    },
+    "/checks/verify_exact": {
+     "module": "verify_exact",
+     "args": [
+      "report",
+      "--ar",
+      "{same}",
+      "--verify",
+      "{same}"
+     ],
+     "timeout_seconds": 7200,
+     "stdout_json": true,
+     "rules": [
+      {
+       "path": [
+        "records"
+       ],
+       "op": "count_ge",
+       "value": 1,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      },
+      {
+       "path": [
+        "records",
+        "*",
+        "exact",
+        "all",
+        "gate_against_ar",
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      },
+      {
+       "path": [
+        "records",
+        "*",
+        "coverage",
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "tools/qual/README.md#release-gates"
+      },
+      {
+       "path": [
+        "records",
+        "*",
+        "k"
+       ],
+       "op": "ge",
+       "value": 1,
+       "source": "tools/qual/README.md#release-gates"
+      }
+     ]
+    },
+    "/cohorts/full/checks": [
+     "teacher",
+     "api",
+     "media",
+     "spec_verify",
+     "verify_exact"
+    ]
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.speculation"
+  },
+  {
+   "name": "non-scoring subcommand",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "mtp",
+     "kv_offload": false
+    },
+    "/checks/spec_verify": {
+     "module": "spec_verify",
+     "args": [
+      "compare",
+      "--ar",
+      "{spec_ar}",
+      "--spec",
+      "{spec_candidate}"
+     ],
+     "timeout_seconds": 7200,
+     "stdout_json": true,
+     "rules": [
+      {
+       "path": [
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      },
+      {
+       "path": [
+        "sets",
+        "copy",
+        "scored_positions"
+       ],
+       "op": "ge",
+       "value": 1,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      }
+     ]
+    },
+    "/checks/verify_exact": {
+     "module": "verify_exact",
+     "args": [
+      "references",
+      "--out",
+      "{out}"
+     ],
+     "timeout_seconds": 7200,
+     "stdout_json": true,
+     "rules": [
+      {
+       "path": [
+        "records"
+       ],
+       "op": "count_ge",
+       "value": 1,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      },
+      {
+       "path": [
+        "records",
+        "*",
+        "exact",
+        "all",
+        "gate_against_ar",
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      },
+      {
+       "path": [
+        "records",
+        "*",
+        "coverage",
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "tools/qual/README.md#release-gates"
+      },
+      {
+       "path": [
+        "records",
+        "*",
+        "k"
+       ],
+       "op": "ge",
+       "value": 1,
+       "source": "tools/qual/README.md#release-gates"
+      }
+     ]
+    },
+    "/cohorts/full/checks": [
+     "teacher",
+     "api",
+     "media",
+     "spec_verify",
+     "verify_exact"
+    ]
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.speculation"
+  },
+  {
+   "name": "missing speculative candidate",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "mtp",
+     "kv_offload": false
+    },
+    "/checks/spec_verify": {
+     "module": "spec_verify",
+     "args": [
+      "compare",
+      "--ar",
+      "{spec_ar}",
+      "--spec",
+      "{spec_candidate}"
+     ],
+     "timeout_seconds": 7200,
+     "stdout_json": true,
+     "rules": [
+      {
+       "path": [
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      },
+      {
+       "path": [
+        "sets",
+        "copy",
+        "scored_positions"
+       ],
+       "op": "ge",
+       "value": 1,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      }
+     ]
+    },
+    "/checks/verify_exact": {
+     "module": "verify_exact",
+     "args": [
+      "report",
+      "--ar",
+      "{ar}"
+     ],
+     "timeout_seconds": 7200,
+     "stdout_json": true,
+     "rules": [
+      {
+       "path": [
+        "records"
+       ],
+       "op": "count_ge",
+       "value": 1,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      },
+      {
+       "path": [
+        "records",
+        "*",
+        "exact",
+        "all",
+        "gate_against_ar",
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      },
+      {
+       "path": [
+        "records",
+        "*",
+        "coverage",
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "tools/qual/README.md#release-gates"
+      },
+      {
+       "path": [
+        "records",
+        "*",
+        "k"
+       ],
+       "op": "ge",
+       "value": 1,
+       "source": "tools/qual/README.md#release-gates"
+      }
+     ]
+    },
+    "/cohorts/full/checks": [
+     "teacher",
+     "api",
+     "media",
+     "spec_verify",
+     "verify_exact"
+    ]
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.speculation"
+  },
+  {
+   "name": "missing indispensable verify predicates",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "mtp",
+     "kv_offload": false
+    },
+    "/checks/spec_verify": {
+     "module": "spec_verify",
+     "args": [
+      "compare",
+      "--ar",
+      "{spec_ar}",
+      "--spec",
+      "{spec_candidate}"
+     ],
+     "timeout_seconds": 7200,
+     "stdout_json": true,
+     "rules": [
+      {
+       "path": [
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      },
+      {
+       "path": [
+        "sets",
+        "copy",
+        "scored_positions"
+       ],
+       "op": "ge",
+       "value": 1,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      }
+     ]
+    },
+    "/checks/verify_exact": {
+     "module": "verify_exact",
+     "args": [
+      "report",
+      "--ar",
+      "{verify_ar}",
+      "--verify",
+      "{verify_candidate}"
+     ],
+     "timeout_seconds": 7200,
+     "stdout_json": true,
+     "rules": [
+      {
+       "path": [
+        "records"
+       ],
+       "op": "count_ge",
+       "value": 1,
+       "source": "docs/example.md"
+      }
+     ]
+    },
+    "/cohorts/full/checks": [
+     "teacher",
+     "api",
+     "media",
+     "spec_verify",
+     "verify_exact"
+    ]
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.speculation"
+  },
+  {
+   "name": "spec comparison cannot compare one arm twice",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "mtp",
+     "kv_offload": false
+    },
+    "/checks/spec_verify": {
+     "module": "spec_verify",
+     "args": [
+      "compare",
+      "--ar",
+      "{same}",
+      "--spec",
+      "{same}"
+     ],
+     "timeout_seconds": 7200,
+     "stdout_json": true,
+     "rules": [
+      {
+       "path": [
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      },
+      {
+       "path": [
+        "sets",
+        "copy",
+        "scored_positions"
+       ],
+       "op": "ge",
+       "value": 1,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      }
+     ]
+    },
+    "/checks/verify_exact": {
+     "module": "verify_exact",
+     "args": [
+      "report",
+      "--ar",
+      "{verify_ar}",
+      "--verify",
+      "{verify_candidate}"
+     ],
+     "timeout_seconds": 7200,
+     "stdout_json": true,
+     "rules": [
+      {
+       "path": [
+        "records"
+       ],
+       "op": "count_ge",
+       "value": 1,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      },
+      {
+       "path": [
+        "records",
+        "*",
+        "exact",
+        "all",
+        "gate_against_ar",
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      },
+      {
+       "path": [
+        "records",
+        "*",
+        "coverage",
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "tools/qual/README.md#release-gates"
+      },
+      {
+       "path": [
+        "records",
+        "*",
+        "k"
+       ],
+       "op": "ge",
+       "value": 1,
+       "source": "tools/qual/README.md#release-gates"
+      }
+     ]
+    },
+    "/cohorts/full/checks": [
+     "teacher",
+     "api",
+     "media",
+     "spec_verify",
+     "verify_exact"
+    ]
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.speculation"
+  },
+  {
+   "name": "image probes cannot prove audio",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image",
+      "audio"
+     ],
+     "speculation": "none",
+     "kv_offload": false
+    },
+    "/qualification/media": {
+     "format": "image-probes",
+     "reference": "media",
+     "receipt": "multimodal",
+     "stop_token": "stop",
+     "items": {
+      "image": "short"
+     },
+     "expected": {},
+     "fixture_images": {}
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.media"
+  },
+  {
+   "name": "image probes cannot prove video",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image",
+      "video"
+     ],
+     "speculation": "none",
+     "kv_offload": false
+    },
+    "/qualification/media": {
+     "format": "image-probes",
+     "reference": "media",
+     "receipt": "multimodal",
+     "stop_token": "stop",
+     "items": {
+      "image": "short"
+     },
+     "expected": {},
+     "fixture_images": {}
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.media"
+  },
+  {
+   "name": "a package maximum",
+   "set": {
+    "/preview/package_max_sequences": 128
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "a noninteger package maximum",
+   "set": {
+    "/preview/package_max_sequences": true
+   },
+   "remove": [],
+   "error": "preview.package_max_sequences"
+  },
+  {
+   "name": "a zero package maximum",
+   "set": {
+    "/preview/package_max_sequences": 0
+   },
+   "remove": [],
+   "error": "preview.package_max_sequences"
+  },
+  {
+   "name": "a retired cohort budget",
+   "set": {
+    "/cohorts/full/budget_seconds": 600
+   },
+   "remove": [],
+   "error": "cohorts.full.budget_seconds"
+  },
+  {
+   "name": "a retired preview sweep",
+   "set": {
+    "/preview/sweep": [
+     1,
+     16
+    ]
+   },
+   "remove": [],
+   "error": "preview.sweep"
+  },
+  {
+   "name": "a retired greedy pin",
+   "set": {
+    "/preview/greedy_pin": {
+     "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+     "approved": "x"
+    }
+   },
+   "remove": [],
+   "error": "preview.greedy_pin"
+  },
+  {
+   "name": "retired preview stage limits",
+   "set": {
+    "/preview/budgets": {
+     "startup": 240
+    }
+   },
+   "remove": [],
+   "error": "preview.budgets"
+  },
+  {
+   "name": "a retired checkpoint verify mode",
+   "set": {
+    "/preview/checkpoint_verify": "prepare"
+   },
+   "remove": [],
+   "error": "preview.checkpoint_verify"
+  },
+  {
+   "name": "a quick cohort on the speculative arm alone",
+   "set": {
+    "/preview/quick_arms": [
+     "spec"
+    ]
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "a quick arm named twice",
+   "set": {
+    "/preview/quick_arms": [
+     "spec",
+     "spec"
+    ]
+   },
+   "remove": [],
+   "error": "preview.quick_arms"
+  },
+  {
+   "name": "an unknown quick arm",
+   "set": {
+    "/preview/quick_arms": [
+     "spec-repeat"
+    ]
+   },
+   "remove": [],
+   "error": "preview.quick_arms"
+  },
+  {
+   "name": "no quick arm",
+   "set": {
+    "/preview/quick_arms": []
+   },
+   "remove": [],
+   "error": "preview.quick_arms"
+  },
+  {
+   "name": "a checkpoint variant",
+   "set": {
+    "/variant": "nvfp4"
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "a variant that is not a plain name",
+   "set": {
+    "/variant": "nv/fp4"
+   },
+   "remove": [],
+   "error": "variant"
+  },
+  {
+   "name": "a variant that is not text",
+   "set": {
+    "/variant": 4
+   },
+   "remove": [],
+   "error": "variant"
+  },
+  {
+   "name": "a predicate waiver looser than its rule",
+   "set": {
+    "/checks/teacher/waivers": [
+     {
+      "reason": "a reason",
+      "decision": "operator, 2026-10-15, recorded where",
+      "predicate": {
+       "path": [
+        "scored"
+       ],
+       "op": "ge"
+      },
+      "ceiling": 5
+     }
+    ]
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "a category waiver on a teacher check",
+   "set": {
+    "/checks/teacher/waivers": [
+     {
+      "reason": "a reason",
+      "decision": "operator, 2026-10-15, recorded where",
+      "category": "prose-frozen",
+      "metric": "top1_disagreement",
+      "ceiling": 0.12
+     }
+    ]
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "an empty waiver list",
+   "set": {
+    "/checks/teacher/waivers": []
+   },
+   "remove": [],
+   "error": "checks.teacher.waivers"
+  },
+  {
+   "name": "a waiver without its decision",
+   "set": {
+    "/checks/teacher/waivers": [
+     {
+      "reason": "a reason",
+      "predicate": {
+       "path": [
+        "scored"
+       ],
+       "op": "ge"
+      },
+      "ceiling": 5
+     }
+    ]
+   },
+   "remove": [],
+   "error": "checks.teacher.waivers.0.decision"
+  },
+  {
+   "name": "a waiver without a reason",
+   "set": {
+    "/checks/teacher/waivers": [
+     {
+      "reason": " ",
+      "decision": "operator, 2026-10-15, recorded where",
+      "predicate": {
+       "path": [
+        "scored"
+       ],
+       "op": "ge"
+      },
+      "ceiling": 5
+     }
+    ]
+   },
+   "remove": [],
+   "error": "checks.teacher.waivers.0.reason"
+  },
+  {
+   "name": "a waiver of an undeclared rule",
+   "set": {
+    "/checks/teacher/waivers": [
+     {
+      "reason": "a reason",
+      "decision": "operator, 2026-10-15, recorded where",
+      "predicate": {
+       "path": [
+        "scored"
+       ],
+       "op": "le"
+      },
+      "ceiling": 5
+     }
+    ]
+   },
+   "remove": [],
+   "error": "checks.teacher.waivers.0.predicate"
+  },
+  {
+   "name": "a waiver ceiling the rule already accepts",
+   "set": {
+    "/checks/teacher/waivers": [
+     {
+      "reason": "a reason",
+      "decision": "operator, 2026-10-15, recorded where",
+      "predicate": {
+       "path": [
+        "scored"
+       ],
+       "op": "ge"
+      },
+      "ceiling": 12
+     }
+    ]
+   },
+   "remove": [],
+   "error": "checks.teacher.waivers.0.ceiling"
+  },
+  {
+   "name": "an equality waiver of the rule's own value",
+   "set": {
+    "/checks/teacher/waivers": [
+     {
+      "reason": "a reason",
+      "decision": "operator, 2026-10-15, recorded where",
+      "predicate": {
+       "path": [
+        "passed"
+       ],
+       "op": "eq"
+      },
+      "ceiling": true
+     }
+    ]
+   },
+   "remove": [],
+   "error": "checks.teacher.waivers.0.ceiling"
+  },
+  {
+   "name": "a waiver naming both a predicate and a category",
+   "set": {
+    "/checks/teacher/waivers": [
+     {
+      "reason": "a reason",
+      "decision": "operator, 2026-10-15, recorded where",
+      "predicate": {
+       "path": [
+        "scored"
+       ],
+       "op": "ge"
+      },
+      "ceiling": 5,
+      "category": "prose-frozen"
+     }
+    ]
+   },
+   "remove": [],
+   "error": "checks.teacher.waivers.0"
+  },
+  {
+   "name": "a waiver naming neither",
+   "set": {
+    "/checks/teacher/waivers": [
+     {
+      "reason": "a reason",
+      "decision": "operator, 2026-10-15, recorded where",
+      "ceiling": 1
+     }
+    ]
+   },
+   "remove": [],
+   "error": "checks.teacher.waivers.0"
+  },
+  {
+   "name": "a category waiver of an unknown metric",
+   "set": {
+    "/checks/teacher/waivers": [
+     {
+      "reason": "a reason",
+      "decision": "operator, 2026-10-15, recorded where",
+      "category": "prose-frozen",
+      "metric": "max_abs_dlogprob",
+      "ceiling": 0.12
+     }
+    ]
+   },
+   "remove": [],
+   "error": "checks.teacher.waivers.0.metric"
+  },
+  {
+   "name": "a category waiver without a positive ceiling",
+   "set": {
+    "/checks/teacher/waivers": [
+     {
+      "reason": "a reason",
+      "decision": "operator, 2026-10-15, recorded where",
+      "category": "prose-frozen",
+      "metric": "top1_disagreement",
+      "ceiling": 0
+     }
+    ]
+   },
+   "remove": [],
+   "error": "checks.teacher.waivers.0.ceiling"
+  },
+  {
+   "name": "a category waiver on a check without categories",
+   "set": {
+    "/checks/api/waivers": [
+     {
+      "reason": "a reason",
+      "decision": "operator, 2026-10-15, recorded where",
+      "category": "prose-frozen",
+      "metric": "top1_disagreement",
+      "ceiling": 0.12
+     }
+    ]
+   },
+   "remove": [],
+   "error": "checks.api.waivers.0.category"
+  },
+  {
+   "name": "an unknown waiver field",
+   "set": {
+    "/checks/teacher/waivers": [
+     {
+      "reason": "a reason",
+      "decision": "operator, 2026-10-15, recorded where",
+      "predicate": {
+       "path": [
+        "scored"
+       ],
+       "op": "ge"
+      },
+      "ceiling": 5,
+      "colour": 1
+     }
+    ]
+   },
+   "remove": [],
+   "error": "checks.teacher.waivers.0.colour"
+  }
+ ]
+}

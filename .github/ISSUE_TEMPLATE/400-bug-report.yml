@@ -1,0 +1,23 @@
+name: Bug report
+description: Report a problem with chopinfer.
+title: "[Bug]: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the expected and actual behavior, including relevant errors.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Version and environment
+      description: Include chopinfer --version, OS, CUDA and driver versions, GPU model and count, and model name or revision.
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include the smallest command or script, input, and configuration that show the problem.
+    validations:
+      required: true

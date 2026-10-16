@@ -1,0 +1,86 @@
+[package]
+name = "model-mimo26-contract"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+encoder-spec.workspace = true
+frontend-format.workspace = true
+projection-spec.workspace = true
+kernel-build.workspace = true
+kernel-core.workspace = true
+model-compiler-sdk.workspace = true
+runtime-bundle.workspace = true
+runtime-bundle-abi.workspace = true
+bundle-runtime.workspace = true
+kernels-sm120.workspace = true
+runtime-weights.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[build-dependencies]
+sha2.workspace = true
+model-compiler-sdk.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+runtime-frontend-contract.workspace = true
+runtime-host.workspace = true
+runtime-media.workspace = true
+
+[lints]
+workspace = true
+
+# Tests that name kernels_sm120 live under tests/sm120 and keep their names.
+[[test]]
+name = "encoder_membership"
+path = "tests/sm120/encoder_membership.rs"
+
+[[test]]
+name = "kernel_comm"
+path = "tests/sm120/kernel_comm.rs"
+
+[[test]]
+name = "kernel_dflash_catalog"
+path = "tests/sm120/kernel_dflash_catalog.rs"
+
+[[test]]
+name = "kernel_engine"
+path = "tests/sm120/kernel_engine.rs"
+
+[[test]]
+name = "kernel_moe_build"
+path = "tests/sm120/kernel_moe_build.rs"
+
+[[test]]
+name = "kernel_moe_selection"
+path = "tests/sm120/kernel_moe_selection.rs"
+
+[[test]]
+name = "kernel_rank_catalog"
+path = "tests/sm120/kernel_rank_catalog.rs"
+
+[[test]]
+name = "kernel_row"
+path = "tests/sm120/kernel_row.rs"
+
+[[test]]
+name = "projection_placements"
+path = "tests/sm120/projection_placements.rs"
+
+[[test]]
+name = "projections"
+path = "tests/sm120/projections.rs"
+
+# Examples that name the SM120 catalogs live under examples/sm120 and keep their names.
+[[example]]
+name = "mimo26_projection_adoptions"
+path = "examples/sm120/mimo26_projection_adoptions.rs"
+
+[[example]]
+name = "mimo26_projection_schedules"
+path = "examples/sm120/mimo26_projection_schedules.rs"

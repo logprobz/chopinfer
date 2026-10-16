@@ -1,0 +1,152 @@
+{
+  "source_commit": "9e6022c0fb7e075734a9602e227ea08d9b1fe442",
+  "revision": "runyard.agentic-coding.r6",
+  "corpus_digest": "b7f1c8384a0351a61364a7958c5cc4fb4a0468b8df96dea8e092675b3e22a643",
+  "files": [
+    {
+      "group": "coding",
+      "fixture": "go.txt",
+      "path": "internal/bench/guardrails.go",
+      "sha256": "6aa0a5400dda15b526e8d312d35a9d260a377fdc3e92fd430dc05052f9d48689"
+    },
+    {
+      "group": "coding",
+      "fixture": "typescript.txt",
+      "path": "web/src/components/metricText.ts",
+      "sha256": "70f17d2d3410fb6d7f67ac53bd1638bbad5b0bb67091ce5209a5a4106d00fc61"
+    },
+    {
+      "group": "coding",
+      "fixture": "python.txt",
+      "path": "scripts/e2e_fixture.py",
+      "sha256": "a0ac6c23547e39b5ae831ddf2a7bc62b04a2cc3f2d4a966e03fcc1fb289e5321"
+    },
+    {
+      "group": "decode",
+      "fixture": "runservice.txt",
+      "path": "internal/bench/runservice.go",
+      "sha256": "02a151ec057bd204d199adf2b397bd6fe72585816c4c70d95addc1774faaf7d5"
+    },
+    {
+      "group": "decode",
+      "fixture": "rundrive.txt",
+      "path": "internal/bench/rundrive.go",
+      "sha256": "5dd9e127ce2d064b4f49b63bea8af91023d4051cc849d9d8cda8e51de83ba770"
+    },
+    {
+      "group": "decode",
+      "fixture": "runstore.txt",
+      "path": "internal/bench/runstore.go",
+      "sha256": "82183586aec98c81e0d00d7380b1c13eecdf1295b27459a7a4d1a566ca18250b"
+    }
+  ],
+  "tasks": {
+    "internal/bench/guardrails.go": {
+      "bug fix": "In outputSpend, treat the output-byte ceiling as reached when the total equals the ceiling. Change the stopping comparison only.",
+      "refactor": "In requestSpend, rename the local used counter to requestsUsed and update its later references. Keep the logic the same.",
+      "documentation": "Clarify the comment above outputSpend: it counts response bytes after they are read, and the recorded total can exceed the ceiling."
+    },
+    "web/src/components/metricText.ts": {
+      "bug fix": "In formatMetric, clamp a negative digits argument to zero before computing the rounding factor. Keep the other behavior the same.",
+      "refactor": "In formatLatest, replace the two return branches with one equivalent expression. Keep the output the same.",
+      "documentation": "Clarify the formatSpan comment to say that seconds are rounded to the nearest whole second before formatting."
+    },
+    "scripts/e2e_fixture.py": {
+      "bug fix": "When --counter names a file in a missing parent directory, create that parent directory before appending the start marker.",
+      "refactor": "In do_POST, store request.get(\"model\") in a local variable before the require-model check. Keep the response behavior the same.",
+      "documentation": "Add a short comment at the require-model check in do_POST explaining why an unknown model returns 404."
+    }
+  },
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "list_files",
+        "description": "List the pinned code files",
+        "parameters": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "search",
+        "description": "Search pinned source files for a literal string of at most 128 characters",
+        "parameters": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "query"
+          ],
+          "properties": {
+            "query": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "read",
+        "description": "Read a bounded range of a file as numbered lines. Pass its path and optional 1-based offset and limit. limit defaults to 200 and is capped at 200; an oversized limit returns the first 200 lines. Use the next offset in the result to continue.",
+        "parameters": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path"
+          ],
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "edit",
+        "description": "Replace one short, unique span in a file already read. Pass path, oldString copied exactly from the read result without line numbers, and newString as the replacement. This benchmark permits one edit per session.",
+        "parameters": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "oldString",
+            "newString"
+          ],
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "oldString": {
+              "type": "string",
+              "minLength": 1
+            },
+            "newString": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "setup": "You are a coding agent working in a small pinned repository. Complete one change in this order: use search or list_files to locate code; use read with path and optional 1-based offset and limit to inspect it; use edit with path, oldString and newString to replace a short, unique span you saw; then give a brief final answer. read shows line numbers for navigation; do not copy line numbers into oldString. read caps limit at 200 and shows the next offset when more lines exist. A failed tool call can be corrected. Only listed files exist; no code is executed."
+}

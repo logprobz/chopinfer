@@ -1,0 +1,1003 @@
+{
+ "schema": "chopinfer.journal-proof.layout.v1",
+ "description": "GLM 5.3's TP-split adoption (85893d6f1 to 4334c4cdc): the 288 routed experts are split across the ranks instead of 72 per rank, and each MoE sublayer's all-reduce runs on F32 partials rounded once. The EP routed cubins give way to the split ones and two F32 comm cubins; each rank allocates five F32 all-reduce buffers at create; route tables, sorted rows and the expert intermediate follow the 288 local experts; the KDA anchor items grow from 8 to 16 (conv, delta and indexer state planes and the drafter's retained rows); NVFP4 expert scales are admitted for all 288 experts. Written after the change landed.",
+ "modules": {
+  "removed": [
+   "chop_moe_chain_e288l72k8_formats_bf16",
+   "chop_moe_chain_e288l72k8_fp8block_tp",
+   "chop_moe_chain_e288l72k8_fp8block_ws",
+   "chop_moe_chain_e288l72k8_mxfp8",
+   "chop_moe_chain_e288l72k8_nvfp4",
+   "chop_moe_chain_e288l72k8_nvfp4_bw4",
+   "chop_moe_chain_e288l72k8_route",
+   "chop_moe_chain_e288l72k8_sum_add"
+  ],
+  "added": [
+   {
+    "name": "chop_moe_chain_e288l288k8_bf16",
+    "loads_like": "chop_moe_chain_e288l72k8_formats_bf16"
+   },
+   {
+    "name": "chop_moe_chain_e288l288k8_bf16_bw4",
+    "loads_like": "chop_moe_chain_e288l72k8_formats_bf16"
+   },
+   {
+    "name": "chop_moe_chain_e288l288k8_fp8block",
+    "loads_like": "chop_moe_chain_e288l72k8_fp8block_ws"
+   },
+   {
+    "name": "chop_moe_chain_e288l288k8_fp8block_bw4",
+    "loads_like": "chop_moe_chain_e288l72k8_fp8block_ws"
+   },
+   {
+    "name": "chop_moe_chain_e288l288k8_fp8block_tp",
+    "loads_like": "chop_moe_chain_e288l72k8_fp8block_tp"
+   },
+   {
+    "name": "chop_moe_chain_e288l288k8_fp8block_ws",
+    "loads_like": "chop_moe_chain_e288l72k8_fp8block_ws"
+   },
+   {
+    "name": "chop_moe_chain_e288l288k8_mxfp8",
+    "loads_like": "chop_moe_chain_e288l72k8_mxfp8"
+   },
+   {
+    "name": "chop_moe_chain_e288l288k8_nvfp4",
+    "loads_like": "chop_moe_chain_e288l72k8_nvfp4"
+   },
+   {
+    "name": "chop_moe_chain_e288l288k8_nvfp4_bw4",
+    "loads_like": "chop_moe_chain_e288l72k8_nvfp4_bw4"
+   },
+   {
+    "name": "chop_moe_chain_e288l288k8_route",
+    "loads_like": "chop_moe_chain_e288l72k8_route"
+   },
+   {
+    "name": "chop_moe_chain_e288l288k8_sum_add",
+    "loads_like": "chop_moe_chain_e288l72k8_sum_add"
+   },
+   {
+    "name": "comm_ll_f32_glm5next_sm120",
+    "loads_like": "comm_ll_bf16_glm5next_sm120"
+   },
+   {
+    "name": "comm_phased_f32_glm5next_sm120",
+    "loads_like": "comm_phased_bf16_glm5next_sm120"
+   }
+  ]
+ },
+ "resources": {
+  "added": [
+   {
+    "name": "comm.ll_f32_inbox",
+    "bytes": 262144,
+    "alignment": 256,
+    "per_rank": 1,
+    "lifetime": "instance",
+    "init": "zero",
+    "alongside": {
+     "bytes": 131072,
+     "alignment": 256
+    }
+   },
+   {
+    "name": "comm.ll_f32_epochs",
+    "bytes": 16,
+    "alignment": 256,
+    "per_rank": 1,
+    "lifetime": "instance",
+    "init": "zero",
+    "alongside": {
+     "bytes": 131072,
+     "alignment": 256
+    }
+   },
+   {
+    "name": "comm.phased_f32_inbox",
+    "bytes": 150994944,
+    "alignment": 256,
+    "per_rank": 1,
+    "lifetime": "instance",
+    "init": "none",
+    "alongside": {
+     "bytes": 75497472,
+     "alignment": 256
+    }
+   },
+   {
+    "name": "comm.phased_f32_flags",
+    "bytes": 33800,
+    "alignment": 256,
+    "per_rank": 1,
+    "lifetime": "instance",
+    "init": "zero",
+    "alongside": {
+     "bytes": 75497472,
+     "alignment": 256
+    }
+   },
+   {
+    "name": "comm.phased_f32_epoch",
+    "bytes": 4,
+    "alignment": 256,
+    "per_rank": 1,
+    "lifetime": "instance",
+    "init": "zero",
+    "alongside": {
+     "bytes": 75497472,
+     "alignment": 256
+    }
+   }
+  ],
+  "resized": [
+   {
+    "name": "moe.route_tables",
+    "from": 292,
+    "to": 1156,
+    "alignment": 256,
+    "per_rank": 3
+   },
+   {
+    "name": "moe.sorted_rows",
+    "from": 280288,
+    "to": 334720,
+    "alignment": 256,
+    "per_rank": 1
+   },
+   {
+    "name": "moe.expert_intermediate",
+    "from": 268435456,
+    "to": 67108864,
+    "alignment": 256,
+    "per_rank": 1
+   },
+   {
+    "name": "drafter.retained_rows",
+    "from": 1966080,
+    "to": 2359296,
+    "alignment": 256,
+    "per_rank": 1,
+    "layout": {
+     "planes": 1,
+     "from_stride": 1966080,
+     "to_stride": 2359296,
+     "from_tail": 0,
+     "to_tail": 0
+    }
+   },
+   {
+    "name": "kda.conv_state",
+    "from": 210567168,
+    "to": 220594176,
+    "alignment": 256,
+    "per_rank": 1,
+    "layout": {
+     "planes": 34,
+     "from_stride": 6193152,
+     "to_stride": 6488064,
+     "from_tail": 0,
+     "to_tail": 0
+    }
+   },
+   {
+    "name": "kda.delta_state",
+    "from": 5989601280,
+    "to": 6274949120,
+    "alignment": 256,
+    "per_rank": 1,
+    "layout": {
+     "planes": 34,
+     "from_stride": 176160768,
+     "to_stride": 184549376,
+     "from_tail": 135168,
+     "to_tail": 270336
+    }
+   },
+   {
+    "name": "kda.delta_state_indexer",
+    "from": 5989613568,
+    "to": 6274973696,
+    "alignment": 256,
+    "per_rank": 1,
+    "layout": {
+     "planes": 34,
+     "from_stride": 176160768,
+     "to_stride": 184549376,
+     "from_tail": 147456,
+     "to_tail": 294912
+    }
+   }
+  ]
+ },
+ "collectives": [
+  {
+   "name": "MoE reduce, LL, rounded F32",
+   "from_symbol": "chop_comm_allreduce_ll_bf16_v1",
+   "to_symbol": "chop_comm_allreduce_ll_round_f32_v1",
+   "ranks": 4,
+   "when": {
+    "after": {
+     "symbols": [
+      "chop_moe_chain_e288l72k8_sum_add_f32_k8_w4096_l72_t8192_v1"
+     ]
+    }
+   },
+   "args": {
+    "5": {
+     "ScalarU32(2)": "ScalarU32(4)"
+    }
+   },
+   "cases": [
+    {
+     "when": {
+      "grid_x": 2,
+      "grid_y": 1,
+      "grid_z": 1,
+      "block_x": 256
+     },
+     "then": {
+      "grid_x": 4
+     }
+    }
+   ],
+   "peers": {
+    "2": "comm.ll_f32_inbox"
+   },
+   "buffers": {
+    "3": "comm.ll_f32_epochs"
+   }
+  },
+  {
+   "name": "MoE reduce, phased, rounded F32",
+   "from_symbol": "chop_comm_allreduce_phased_bf16_v1",
+   "to_symbol": "chop_comm_allreduce_phased_round_f32_v1",
+   "ranks": 4,
+   "when": {
+    "after": {
+     "symbols": [
+      "chop_moe_chain_e288l72k8_sum_add_f32_k8_w4096_l72_t8192_v1",
+      "chop_proj_bf16_dense_n4096_k512_0084d9c5fe8756e6_v1",
+      "chop_proj_fp8_block128_dense_n4096_k512_ca330621f46ca77d_v1"
+     ]
+    }
+   },
+   "peers": {
+    "2": "comm.phased_f32_inbox",
+    "4": "comm.phased_f32_flags"
+   },
+   "buffers": {
+    "5": "comm.phased_f32_epoch"
+   }
+  },
+  {
+   "name": "MoE reduce, one-shot phased, rounded F32",
+   "from_symbol": "chop_comm_allreduce_phased_oneshot_bf16_v1",
+   "to_symbol": "chop_comm_allreduce_phased_oneshot_round_f32_v1",
+   "ranks": 4,
+   "when": {
+    "after": {
+     "symbols": [
+      "chop_moe_chain_e288l72k8_sum_add_f32_k8_w4096_l72_t8192_v1"
+     ]
+    }
+   },
+   "peers": {
+    "2": "comm.phased_f32_inbox",
+    "4": "comm.phased_f32_flags"
+   },
+   "buffers": {
+    "5": "comm.phased_f32_epoch"
+   }
+  },
+  {
+   "name": "MoE reduce, phased turns, now phased rounded F32",
+   "from_symbol": "chop_comm_allreduce_phased_turns_bf16_v1",
+   "to_symbol": "chop_comm_allreduce_phased_round_f32_v1",
+   "ranks": 4,
+   "when": {
+    "after": {
+     "symbols": [
+      "chop_moe_chain_gateup_fp8block_dense_n1024_k4096_r64_clamp4120000041200000_dt_v1",
+      "chop_proj_fp8_block128_dense_n4096_k512_ca330621f46ca77d_v1"
+     ]
+    }
+   },
+   "peers": {
+    "2": "comm.phased_f32_inbox",
+    "4": "comm.phased_f32_flags"
+   },
+   "buffers": {
+    "5": "comm.phased_f32_epoch"
+   }
+  }
+ ],
+ "kernels": [
+  {
+   "name": "NVFP4 F32 expert scales, admitted for all 288 experts",
+   "from_symbol": "chop_admit_f32_scales_glm5next_v1",
+   "to_symbol": "chop_admit_f32_scales_glm5next_v1",
+   "args": {
+    "1": {
+     "ScalarU64(144)": "ScalarU64(576)",
+     "ScalarU64(72)": "ScalarU64(288)"
+    }
+   },
+   "lengths": {
+    "0": {
+     "576": 2304,
+     "288": 1152
+    }
+   },
+   "cases": [
+    {
+     "when": {
+      "args": {
+       "1": "ScalarU64(144)"
+      }
+     },
+     "then": {
+      "grid_x": 3
+     }
+    },
+    {
+     "when": {
+      "args": {
+       "1": "ScalarU64(72)"
+      }
+     },
+     "then": {
+      "grid_x": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "routed down, BF16",
+   "from_symbol": "chop_moe_chain_down_bf16_e72k8_n4096_k2048_r16_v1",
+   "to_symbol": "chop_moe_chain_down_bf16_e288k8_n4096_k512_r16_bw4_v1",
+   "cases": [
+    {
+     "when": {
+      "grid_x": 68,
+      "grid_y": 64,
+      "grid_z": 1,
+      "block_x": 128
+     },
+     "then": {
+      "grid_x": 8,
+      "grid_y": 256
+     }
+    },
+    {
+     "when": {
+      "grid_x": 72,
+      "grid_y": 64,
+      "grid_z": 1,
+      "block_x": 128
+     },
+     "then": {
+      "grid_y": 256
+     }
+    }
+   ]
+  },
+  {
+   "name": "routed down, FP8 block, r16 ws",
+   "from_symbol": "chop_moe_chain_down_fp8block_e72k8_n4096_k2048_r16_ws_v1",
+   "to_symbol": "chop_moe_chain_down_fp8block_e288k8_n4096_k512_r16_v1",
+   "cases": [
+    {
+     "when": {
+      "grid_x": 376,
+      "grid_y": 1,
+      "grid_z": 1,
+      "block_x": 128,
+      "after": {
+       "symbols": [
+        "chop_moe_chain_gateup_fp8block_e72k8_n4096_k4096_r16_clamp4120000041200000_ws_v1"
+       ],
+       "grid_x": 128,
+       "grid_y": 16
+      }
+     },
+     "then": {
+      "symbol": "chop_moe_chain_down_fp8block_e288k8_n4096_k512_r16_bw4_v1",
+      "grid_x": 16,
+      "grid_y": 256
+     }
+    },
+    {
+     "when": {
+      "grid_x": 376,
+      "grid_y": 1,
+      "grid_z": 1,
+      "block_x": 128,
+      "after": {
+       "symbols": [
+        "chop_moe_chain_gateup_fp8block_e72k8_n4096_k4096_r16_clamp4120000041200000_ws_v1"
+       ],
+       "grid_x": 128,
+       "grid_y": 32
+      }
+     },
+     "then": {
+      "symbol": "chop_moe_chain_down_fp8block_e288k8_n4096_k512_r16_bw4_v1",
+      "grid_x": 32,
+      "grid_y": 256
+     }
+    },
+    {
+     "when": {
+      "grid_x": 376,
+      "grid_y": 1,
+      "grid_z": 1,
+      "block_x": 128,
+      "after": {
+       "symbols": [
+        "chop_moe_chain_gateup_fp8block_e72k8_n4096_k4096_r16_clamp4120000041200000_ws_v1"
+       ],
+       "grid_x": 128,
+       "grid_y": 8
+      }
+     },
+     "then": {
+      "symbol": "chop_moe_chain_down_fp8block_e288k8_n4096_k512_r16_bw4_v1",
+      "grid_x": 8,
+      "grid_y": 256
+     }
+    },
+    {
+     "when": {
+      "grid_x": 376,
+      "grid_y": 1,
+      "grid_z": 1,
+      "block_x": 128,
+      "after": {
+       "symbols": [
+        "chop_moe_chain_gateup_fp8block_e72k8_n4096_k4096_r16_clamp4120000041200000_ws_v1"
+       ],
+       "grid_x": 128,
+       "grid_y": 64
+      }
+     },
+     "then": {
+      "grid_x": 274,
+      "grid_y": 64
+     }
+    },
+    {
+     "when": {
+      "grid_x": 376,
+      "grid_y": 1,
+      "grid_z": 1,
+      "block_x": 128,
+      "after": {
+       "symbols": [
+        "chop_moe_chain_gateup_fp8block_e72k8_n4096_k4096_r16_clamp4120000041200000_ws_v1"
+       ],
+       "grid_x": 128,
+       "grid_y": 72
+      }
+     },
+     "then": {
+      "grid_x": 275,
+      "grid_y": 64
+     }
+    },
+    {
+     "when": {
+      "grid_x": 376,
+      "grid_y": 1,
+      "grid_z": 1,
+      "block_x": 128,
+      "after": {
+       "symbols": [
+        "chop_moe_chain_gateup_fp8block_e72k8_n4096_k4096_r16_clamp4120000041200000_ws_v1"
+       ],
+       "grid_x": 128,
+       "grid_y": 73
+      }
+     },
+     "then": {
+      "grid_x": 275,
+      "grid_y": 64
+     }
+    },
+    {
+     "when": {
+      "grid_x": 376,
+      "grid_y": 1,
+      "grid_z": 1,
+      "block_x": 128,
+      "after": {
+       "symbols": [
+        "chop_moe_chain_gateup_fp8block_e72k8_n4096_k4096_r16_clamp4120000041200000_ws_v1"
+       ],
+       "grid_x": 128,
+       "grid_y": 76
+      }
+     },
+     "then": {
+      "grid_x": 278,
+      "grid_y": 64
+     }
+    },
+    {
+     "when": {
+      "grid_x": 376,
+      "grid_y": 1,
+      "grid_z": 1,
+      "block_x": 128,
+      "after": {
+       "symbols": [
+        "chop_moe_chain_gateup_fp8block_e72k8_n4096_k4096_r16_clamp4120000041200000_ws_v1"
+       ],
+       "grid_x": 128,
+       "grid_y": 84
+      }
+     },
+     "then": {
+      "grid_x": 286,
+      "grid_y": 64
+     }
+    }
+   ]
+  },
+  {
+   "name": "routed down, FP8 block, r64",
+   "from_symbol": "chop_moe_chain_down_fp8block_e72k8_n4096_k2048_r64_v1",
+   "to_symbol": "chop_moe_chain_down_fp8block_e288k8_n4096_k512_r64_tp0_v1",
+   "cases": [
+    {
+     "when": {
+      "grid_x": 109,
+      "grid_y": 64,
+      "grid_z": 1,
+      "block_x": 128
+     },
+     "then": {
+      "symbol": "chop_moe_chain_down_fp8block_e288k8_n4096_k512_r64_v1",
+      "grid_x": 321
+     }
+    },
+    {
+     "when": {
+      "grid_x": 327,
+      "grid_y": 64,
+      "grid_z": 1,
+      "block_x": 128
+     },
+     "then": {
+      "grid_x": 540,
+      "grid_y": 32,
+      "block_x": 256
+     }
+    },
+    {
+     "when": {
+      "grid_x": 446,
+      "grid_y": 64,
+      "grid_z": 1,
+      "block_x": 128
+     },
+     "then": {
+      "grid_x": 659,
+      "grid_y": 32,
+      "block_x": 256
+     }
+    }
+   ]
+  },
+  {
+   "name": "routed down, MXFP8",
+   "from_symbol": "chop_moe_chain_down_mxfp8_e72k8_n4096_k2048_r16_v1",
+   "to_symbol": "chop_moe_chain_down_mxfp8_e288k8_n4096_k512_r16_v1",
+   "cases": [
+    {
+     "when": {
+      "grid_x": 68,
+      "grid_y": 64,
+      "grid_z": 1,
+      "block_x": 128
+     },
+     "then": {
+      "grid_x": 271
+     }
+    },
+    {
+     "when": {
+      "grid_x": 72,
+      "grid_y": 64,
+      "grid_z": 1,
+      "block_x": 128
+     },
+     "then": {
+      "grid_x": 275
+     }
+    }
+   ]
+  },
+  {
+   "name": "routed down, NVFP4",
+   "from_symbol": "chop_moe_chain_down_nvfp4_e72k8_n4096_k2048_r16_bw4_v1",
+   "to_symbol": "chop_moe_chain_down_nvfp4_e288k8_n4096_k512_r16_bw4_v1",
+   "lengths": {
+    "4": {
+     "288": 1152
+    }
+   },
+   "cases": [
+    {
+     "when": {
+      "grid_x": 73,
+      "grid_y": 256,
+      "grid_z": 1,
+      "block_x": 128
+     },
+     "then": {
+      "grid_x": 80
+     }
+    }
+   ]
+  },
+  {
+   "name": "route count over 288 local experts",
+   "from_symbol": "chop_moe_chain_e288l72k8_count_e288l72k8_t8192_p64_v1",
+   "to_symbol": "chop_moe_chain_e288l288k8_count_e288l288k8_t8192_p64_v1",
+   "args": {
+    "3": {
+     "ScalarU32(1)": "ScalarU32(0)",
+     "ScalarU32(2)": "ScalarU32(0)",
+     "ScalarU32(3)": "ScalarU32(0)"
+    }
+   },
+   "cases": [
+    {
+     "when": {
+      "grid_x": 72,
+      "grid_y": 1,
+      "grid_z": 1,
+      "block_x": 256
+     },
+     "then": {
+      "grid_x": 288
+     }
+    }
+   ]
+  },
+  {
+   "name": "route decode over 288 local experts",
+   "from_symbol": "chop_moe_chain_e288l72k8_decode_e288l72k8_t32_p16_v1",
+   "to_symbol": "chop_moe_chain_e288l288k8_decode_e288l288k8_t32_p16_v1",
+   "args": {
+    "10": {
+     "ScalarU32(1)": "ScalarU32(0)",
+     "ScalarU32(2)": "ScalarU32(0)",
+     "ScalarU32(3)": "ScalarU32(0)"
+    }
+   }
+  },
+  {
+   "name": "route scatter over 288 local experts",
+   "from_symbol": "chop_moe_chain_e288l72k8_scatter_e288l72k8_t8192_p64_v1",
+   "to_symbol": "chop_moe_chain_e288l288k8_scatter_e288l288k8_t8192_p64_v1",
+   "args": {
+    "7": {
+     "ScalarU32(1)": "ScalarU32(0)",
+     "ScalarU32(2)": "ScalarU32(0)",
+     "ScalarU32(3)": "ScalarU32(0)"
+    }
+   },
+   "cases": [
+    {
+     "when": {
+      "grid_x": 72,
+      "grid_y": 1,
+      "grid_z": 1,
+      "block_x": 256
+     },
+     "then": {
+      "grid_x": 288
+     }
+    }
+   ]
+  },
+  {
+   "name": "route select over 288 local experts",
+   "from_symbol": "chop_moe_chain_e288l72k8_select_e288l72k8_t8192_p64_v1",
+   "to_symbol": "chop_moe_chain_e288l288k8_select_e288l288k8_t8192_p64_v1"
+  },
+  {
+   "name": "routed sum and residual add over 288 local experts",
+   "from_symbol": "chop_moe_chain_e288l72k8_sum_add_f32_k8_w4096_l72_t8192_v1",
+   "to_symbol": "chop_moe_chain_e288l288k8_sum_add_f32_k8_w4096_l288_t8192_v1",
+   "args": {
+    "3": {
+     "ScalarU32(1)": "ScalarU32(0)",
+     "ScalarU32(2)": "ScalarU32(0)",
+     "ScalarU32(3)": "ScalarU32(0)"
+    }
+   }
+  },
+  {
+   "name": "routed sum over 288 local experts",
+   "from_symbol": "chop_moe_chain_e288l72k8_sum_f32_k8_w4096_l72_t8192_v1",
+   "to_symbol": "chop_moe_chain_e288l288k8_sum_f32_k8_w4096_l288_t8192_v1",
+   "args": {
+    "3": {
+     "ScalarU32(1)": "ScalarU32(0)",
+     "ScalarU32(2)": "ScalarU32(0)",
+     "ScalarU32(3)": "ScalarU32(0)"
+    }
+   }
+  },
+  {
+   "name": "routed gate-up, BF16",
+   "from_symbol": "chop_moe_chain_gateup_bf16_e72k8_n4096_k4096_r16_clamp4120000041200000_v1",
+   "to_symbol": "chop_moe_chain_gateup_bf16_e288k8_n1024_k4096_r16_clamp4120000041200000_bw4_v1",
+   "cases": [
+    {
+     "when": {
+      "grid_x": 68,
+      "grid_y": 32,
+      "grid_z": 1,
+      "block_x": 128
+     },
+     "then": {
+      "grid_x": 8
+     }
+    }
+   ]
+  },
+  {
+   "name": "routed gate-up, FP8 block, r16 ws",
+   "from_symbol": "chop_moe_chain_gateup_fp8block_e72k8_n4096_k4096_r16_clamp4120000041200000_ws_v1",
+   "to_symbol": "chop_moe_chain_gateup_fp8block_e288k8_n1024_k4096_r16_clamp4120000041200000_ws_v1",
+   "cases": [
+    {
+     "when": {
+      "grid_x": 128,
+      "grid_y": 8,
+      "grid_z": 1,
+      "block_x": 128
+     },
+     "then": {
+      "grid_x": 32
+     }
+    },
+    {
+     "when": {
+      "grid_x": 128,
+      "grid_y": 16,
+      "grid_z": 1,
+      "block_x": 128
+     },
+     "then": {
+      "grid_x": 32
+     }
+    },
+    {
+     "when": {
+      "grid_x": 128,
+      "grid_y": 32,
+      "grid_z": 1,
+      "block_x": 128
+     },
+     "then": {
+      "grid_x": 32
+     }
+    },
+    {
+     "when": {
+      "grid_x": 128,
+      "grid_y": 64,
+      "grid_z": 1,
+      "block_x": 128
+     },
+     "then": {
+      "grid_x": 32
+     }
+    },
+    {
+     "when": {
+      "grid_x": 128,
+      "grid_y": 72,
+      "grid_z": 1,
+      "block_x": 128
+     },
+     "then": {
+      "grid_x": 32
+     }
+    },
+    {
+     "when": {
+      "grid_x": 128,
+      "grid_y": 73,
+      "grid_z": 1,
+      "block_x": 128
+     },
+     "then": {
+      "grid_x": 32,
+      "grid_y": 80
+     }
+    },
+    {
+     "when": {
+      "grid_x": 128,
+      "grid_y": 76,
+      "grid_z": 1,
+      "block_x": 128
+     },
+     "then": {
+      "grid_x": 32,
+      "grid_y": 128
+     }
+    },
+    {
+     "when": {
+      "grid_x": 128,
+      "grid_y": 84,
+      "grid_z": 1,
+      "block_x": 128
+     },
+     "then": {
+      "grid_x": 32,
+      "grid_y": 256
+     }
+    }
+   ]
+  },
+  {
+   "name": "routed gate-up, FP8 block, r64 tp2",
+   "from_symbol": "chop_moe_chain_gateup_fp8block_e72k8_n4096_k4096_r64_clamp4120000041200000_tp2_v1",
+   "to_symbol": "chop_moe_chain_gateup_fp8block_e288k8_n1024_k4096_r64_clamp4120000041200000_tp2_v1",
+   "cases": [
+    {
+     "when": {
+      "grid_x": 327,
+      "grid_y": 16,
+      "grid_z": 1,
+      "block_x": 256
+     },
+     "then": {
+      "grid_x": 540,
+      "grid_y": 4
+     }
+    },
+    {
+     "when": {
+      "grid_x": 446,
+      "grid_y": 16,
+      "grid_z": 1,
+      "block_x": 256
+     },
+     "then": {
+      "grid_x": 659,
+      "grid_y": 4
+     }
+    }
+   ]
+  },
+  {
+   "name": "routed gate-up, FP8 block, r64",
+   "from_symbol": "chop_moe_chain_gateup_fp8block_e72k8_n4096_k4096_r64_clamp4120000041200000_v1",
+   "to_symbol": "chop_moe_chain_gateup_fp8block_e288k8_n1024_k4096_r64_clamp4120000041200000_v1",
+   "cases": [
+    {
+     "when": {
+      "grid_x": 109,
+      "grid_y": 32,
+      "grid_z": 1,
+      "block_x": 128
+     },
+     "then": {
+      "grid_x": 321,
+      "grid_y": 8
+     }
+    }
+   ]
+  },
+  {
+   "name": "routed gate-up, MXFP8",
+   "from_symbol": "chop_moe_chain_gateup_mxfp8_e72k8_n4096_k4096_r16_clamp4120000041200000_v1",
+   "to_symbol": "chop_moe_chain_gateup_mxfp8_e288k8_n1024_k4096_r16_clamp4120000041200000_v1",
+   "cases": [
+    {
+     "when": {
+      "grid_x": 68,
+      "grid_y": 32,
+      "grid_z": 1,
+      "block_x": 128
+     },
+     "then": {
+      "grid_x": 271,
+      "grid_y": 8
+     }
+    },
+    {
+     "when": {
+      "grid_x": 72,
+      "grid_y": 32,
+      "grid_z": 1,
+      "block_x": 128
+     },
+     "then": {
+      "grid_x": 275,
+      "grid_y": 8
+     }
+    }
+   ]
+  },
+  {
+   "name": "routed gate-up, NVFP4",
+   "from_symbol": "chop_moe_chain_gateup_nvfp4_e72k8_n4096_k4096_r16_clamp4120000041200000_bw4_v1",
+   "to_symbol": "chop_moe_chain_gateup_nvfp4_e288k8_n1024_k4096_r16_clamp4120000041200000_bw4_v1",
+   "lengths": {
+    "4": {
+     "576": 2304
+    }
+   },
+   "cases": [
+    {
+     "when": {
+      "grid_x": 16,
+      "grid_y": 128,
+      "grid_z": 1,
+      "block_x": 128
+     },
+     "then": {
+      "grid_y": 32
+     }
+    },
+    {
+     "when": {
+      "grid_x": 32,
+      "grid_y": 128,
+      "grid_z": 1,
+      "block_x": 128
+     },
+     "then": {
+      "grid_y": 32
+     }
+    },
+    {
+     "when": {
+      "grid_x": 64,
+      "grid_y": 128,
+      "grid_z": 1,
+      "block_x": 128
+     },
+     "then": {
+      "grid_y": 32
+     }
+    },
+    {
+     "when": {
+      "grid_x": 73,
+      "grid_y": 128,
+      "grid_z": 1,
+      "block_x": 128
+     },
+     "then": {
+      "grid_x": 80,
+      "grid_y": 32
+     }
+    }
+   ]
+  },
+  {
+   "name": "KDA state copy, strides of the grown planes",
+   "from_symbol": "chop_copy_layers_glm5next_v1",
+   "to_symbol": "chop_copy_layers_glm5next_v1",
+   "strides": {
+    "2": 0,
+    "3": 1
+   }
+  }
+ ],
+ "text_journals": [
+  "glm5next-invariance-asks.txt",
+  "glm5next-invariance-launches.txt"
+ ]
+}

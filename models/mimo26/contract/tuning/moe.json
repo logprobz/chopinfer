@@ -1,0 +1,20 @@
+{
+  "v26-flash": {
+    "compute_capability": 120,
+    "sm_count": 188,
+    "decode": {
+      "1": { "row_block": 16, "n_tile": 16, "k_tile": 32, "warps": 2, "stages": 2, "split_k": 4 },
+      "2": { "row_block": 16, "n_tile": 16, "k_tile": 32, "warps": 2, "stages": 2, "split_k": 4 },
+      "4": { "row_block": 16, "n_tile": 16, "k_tile": 32, "warps": 2, "stages": 2, "split_k": 2 },
+      "8": { "row_block": 16, "n_tile": 16, "k_tile": 32, "warps": 2, "stages": 2, "split_k": 2 },
+      "16": { "row_block": 16, "n_tile": 16, "k_tile": 32, "warps": 2, "stages": 2, "split_k": 1 },
+      "32": { "row_block": 16, "n_tile": 16, "k_tile": 32, "warps": 2, "stages": 2, "split_k": 1 }
+    },
+    "prefill": {
+      "8192": { "row_block": 64, "n_tile": 16, "k_tile": 32, "warps": 8, "stages": 2, "split_k": 1 }
+    },
+    "fragment_prefill": {
+      "8192": { "row_block": 64, "n_tile": 128, "k_tile": 64, "warps": 8, "stages": 2, "weight_stages": 6, "split_k": 1 }
+    }
+  }
+}

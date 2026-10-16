@@ -1,0 +1,265 @@
+{
+  "schema": "chop-frontend-divergences-v1",
+  "lines": [
+    {
+      "id": "list-of-outputs",
+      "blocked_by": "type is required",
+      "reason": "a tool message whose content entries carry tool_call_id and output, not a type, is refused by the transport before render",
+      "lines": [
+        84,
+        85,
+        86,
+        88,
+        110,
+        111,
+        112,
+        189,
+        190,
+        191,
+        192,
+        193,
+        194,
+        195,
+        196,
+        197,
+        231,
+        232,
+        233,
+        234,
+        235,
+        237
+      ]
+    },
+    {
+      "id": "string-content-items",
+      "lines": [
+        62
+      ],
+      "blocked_by": "content part must be an object",
+      "reason": "a bare string in a content list is refused by the transport"
+    },
+    {
+      "id": "scalar-content",
+      "lines": [
+        72
+      ],
+      "blocked_by": "message content must be a string or content-part array",
+      "reason": "content that is neither text, a list nor null is refused by the transport"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "undeclared-effort",
+      "kind": "refused",
+      "when": [
+        "effort:undeclared"
+      ],
+      "outcome": {
+        "message": "reasoning_effort must be low, high, or max",
+        "parameter": "reasoning_effort"
+      },
+      "reason": "the template remaps an effort other than low or high to max"
+    },
+    {
+      "id": "disabled-effort",
+      "kind": "refused",
+      "when": [
+        "effort:disable"
+      ],
+      "outcome": {
+        "message": "this frontend does not allow reasoning to be disabled",
+        "parameter": "reasoning_effort"
+      },
+      "reason": "the template remaps reasoning_effort none to max; GLM cannot disable reasoning"
+    },
+    {
+      "id": "enable-thinking-false",
+      "kind": "refused",
+      "when": [
+        "thinking:enable_thinking=false"
+      ],
+      "outcome": {
+        "message": "this frontend does not allow reasoning to be disabled",
+        "parameter": "reasoning_effort"
+      },
+      "reason": "the template ignores enable_thinking; GLM cannot disable reasoning"
+    },
+    {
+      "id": "thinking-false",
+      "kind": "refused",
+      "when": [
+        "thinking:thinking=false"
+      ],
+      "outcome": {
+        "message": "this frontend does not allow reasoning to be disabled",
+        "parameter": "reasoning_effort"
+      },
+      "reason": "the template ignores thinking; GLM cannot disable reasoning"
+    },
+    {
+      "id": "video-parts",
+      "kind": "refused",
+      "when": [
+        "media:video_url"
+      ],
+      "outcome": {
+        "message": "video input is not supported by this server, which serves text,image",
+        "parameter": "messages"
+      },
+      "reason": "video is not served"
+    },
+    {
+      "id": "audio-url-parts",
+      "kind": "refused",
+      "when": [
+        "media:audio_url"
+      ],
+      "outcome": {
+        "message": "audio input is not supported by this server, which serves text,image",
+        "parameter": "messages"
+      },
+      "reason": "audio is not served"
+    },
+    {
+      "id": "input-audio-parts",
+      "kind": "refused",
+      "when": [
+        "media:input_audio"
+      ],
+      "outcome": {
+        "message": "audio input is not supported by this server, which serves text,image",
+        "parameter": "messages"
+      },
+      "reason": "audio is not served"
+    },
+    {
+      "id": "developer-role",
+      "kind": "refused",
+      "when": [
+        "developer:present"
+      ],
+      "outcome": {
+        "message": "invalid conversation field: developer role is not declared",
+        "parameter": "messages"
+      },
+      "reason": "the template renders nothing for a developer message"
+    },
+    {
+      "id": "message-tools",
+      "kind": "refused",
+      "when": [
+        "message-tools:present"
+      ],
+      "outcome": {
+        "message": "invalid conversation field: message tools are not declared",
+        "parameter": "messages"
+      },
+      "reason": "the template ignores a message's tools"
+    },
+    {
+      "id": "missing-call-id",
+      "kind": "refused",
+      "when": [
+        "call-id:missing"
+      ],
+      "outcome": {
+        "message": "invalid JSON request: missing field `id` at line 1 column 241",
+        "parameter": "id"
+      },
+      "reason": "the transport requires a tool call id"
+    },
+    {
+      "id": "missing-tool-call-id",
+      "kind": "refused",
+      "when": [
+        "results:missing-id"
+      ],
+      "outcome": {
+        "message": "tool message requires tool_call_id",
+        "parameter": "messages"
+      },
+      "reason": "the render requires a tool result to name its call; the template renders one without in the order sent"
+    },
+    {
+      "id": "bare-tools",
+      "kind": "refused",
+      "when": [
+        "tools:bare"
+      ],
+      "outcome": {
+        "message": "invalid JSON request: missing field `type` at line 1 column 552",
+        "parameter": "type"
+      },
+      "reason": "the transport requires the type and function wrapper"
+    },
+    {
+      "id": "continue-tool-calls",
+      "kind": "refused",
+      "when": [
+        "ends:continue-calls"
+      ],
+      "outcome": {
+        "message": "invalid conversation field: continue_final_message requires a final assistant message without tool calls",
+        "parameter": "messages"
+      },
+      "reason": "a tool-call turn cannot be continued"
+    },
+    {
+      "id": "tool-name-alias",
+      "kind": "normalized",
+      "when": [
+        "tool-reference:tool_name"
+      ],
+      "normalize": "tool_name_to_name",
+      "reason": "tool_name (the Anthropic form) is read as name; HF renders it as an empty block"
+    },
+    {
+      "id": "tool-reference-then-text",
+      "kind": "refused",
+      "when": [
+        "tool-reference:mixed-text"
+      ],
+      "outcome": {
+        "message": "invalid conversation field: a tool message's tool_reference parts cannot share it with other content",
+        "parameter": "messages"
+      },
+      "reason": "the template drops text after a leading tool_reference"
+    },
+    {
+      "id": "text-then-tool-reference",
+      "kind": "refused",
+      "when": [
+        "tool-reference:text-first"
+      ],
+      "outcome": {
+        "message": "invalid conversation field: a tool message's tool_reference parts cannot share it with other content",
+        "parameter": "messages"
+      },
+      "reason": "the template drops a tool_reference after leading text"
+    },
+    {
+      "id": "union-arguments",
+      "kind": "no-round-trip",
+      "when": [
+        "round-trip:union"
+      ],
+      "reason": "the template writes a string argument as its text and any other value as JSON (line 163), so the string \"42\" and the integer 42 write the same bytes and the parser reads one type back"
+    },
+    {
+      "id": "untyped-arguments",
+      "kind": "no-round-trip",
+      "when": [
+        "round-trip:untyped"
+      ],
+      "reason": "an argument no schema types (an untyped property, a pattern or any additional property) parses as a string, so a value of another type reads back as its text"
+    },
+    {
+      "id": "delimiter-arguments",
+      "kind": "no-round-trip",
+      "when": [
+        "round-trip:delimiter"
+      ],
+      "reason": "the template writes a string argument raw (line 163) without escaping, so a value that spells </arg_value> or </tool_call> ends the value or the call early"
+    }
+  ]
+}

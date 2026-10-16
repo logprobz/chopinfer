@@ -1,0 +1,46 @@
+[
+  {
+    "name": "chop_moe_chain_e288l288k8_bf16",
+    "source_closure_sha256": "8a7e8590eea0329d2b22d4a70054da4f08104c5ee775454ab5defabf75669da7"
+  },
+  {
+    "name": "chop_moe_chain_e288l288k8_bf16_bw4",
+    "source_closure_sha256": "9ed350938e482f5d0ee6346c4e3ebc05400062255c273fbb6fa7c882cdfcd9d7"
+  },
+  {
+    "name": "chop_moe_chain_e288l288k8_fp8block",
+    "source_closure_sha256": "3d9bf1b07c3381171a37d80248d9e22a51d09a15267b12dc4f3990a35c1243da"
+  },
+  {
+    "name": "chop_moe_chain_e288l288k8_fp8block_bw4",
+    "source_closure_sha256": "be396a5f97fe1c89b4f2995396194b3edc57269ffeafb246c7fd83680440157d"
+  },
+  {
+    "name": "chop_moe_chain_e288l288k8_fp8block_tp",
+    "source_closure_sha256": "988d2a5d48a4864cf917c0ae0715e9958df42e6ae99afd0a8485558f484ac3d9"
+  },
+  {
+    "name": "chop_moe_chain_e288l288k8_fp8block_ws",
+    "source_closure_sha256": "ac1d225d402ff40f40101f016cca21b2061ddffcf787cf19b6790b4ea1e71416"
+  },
+  {
+    "name": "chop_moe_chain_e288l288k8_mxfp8",
+    "source_closure_sha256": "4e93e0d2462a0a6e7d9b26f9ac0d1bf92ca068157fd8ae39f4ae57e252def59f"
+  },
+  {
+    "name": "chop_moe_chain_e288l288k8_nvfp4",
+    "source_closure_sha256": "a3915289de2a1b8df16d280ac371344fba12e6dd41d8857cf0baedc1dee58241"
+  },
+  {
+    "name": "chop_moe_chain_e288l288k8_nvfp4_bw4",
+    "source_closure_sha256": "2696e83bce909889997f42a816db0b428b54d9de7e48b8c3db7546bd65923354"
+  },
+  {
+    "name": "chop_moe_chain_e288l288k8_route",
+    "source_closure_sha256": "9d6d7c0e6f8415264498a6fbeac9621eba55fe3d45e172eed4e2ec31867220ef"
+  },
+  {
+    "name": "chop_moe_chain_e288l288k8_sum_add",
+    "source_closure_sha256": "44fed77599c6138a1fc58e4136295788a90434c5bc53d0d2fb84138a1efa74bd"
+  }
+]

@@ -1,0 +1,717 @@
+[
+  {
+    "name": "ordered_sum_no_fallback_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_ORDERED_SUM_TEST_NO_FALLBACK",
+        "1"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_ordered_sum_w4096_t224_no_fallback_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "terms",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "serial",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "exact",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_ordered_sum_w4096_t256_no_fallback_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "terms",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "serial",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "exact",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 288,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_ordered_sum_w1536_t224_no_fallback_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "terms",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "serial",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "exact",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_ordered_sum_w1536_t256_no_fallback_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "terms",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "serial",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "exact",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 288,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_ordered_sum_w512_t224_no_fallback_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "terms",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "serial",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "exact",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_ordered_sum_w512_t256_no_fallback_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "terms",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "serial",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "exact",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 288,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "49483459a2df31cd41a6105a64b8a04d3243fe46559ac889b289c12e7e343f83",
+    "resources": [
+      {
+        "symbol": "chop_ordered_sum_w4096_t224_no_fallback_v1",
+        "registers": 52,
+        "shared_static_bytes": 20152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_ordered_sum_w4096_t256_no_fallback_v1",
+        "registers": 78,
+        "shared_static_bytes": 20544,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 288,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_ordered_sum_w1536_t224_no_fallback_v1",
+        "registers": 40,
+        "shared_static_bytes": 9912,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_ordered_sum_w1536_t256_no_fallback_v1",
+        "registers": 38,
+        "shared_static_bytes": 10304,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 288,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_ordered_sum_w512_t224_no_fallback_v1",
+        "registers": 35,
+        "shared_static_bytes": 5816,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_ordered_sum_w512_t256_no_fallback_v1",
+        "registers": 32,
+        "shared_static_bytes": 6208,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 288,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "ordered_sum_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_ordered_sum_w4096_t224_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "terms",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "serial",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "exact",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_ordered_sum_w4096_t256_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "terms",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "serial",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "exact",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 288,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_ordered_sum_w1536_t224_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "terms",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "serial",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "exact",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_ordered_sum_w1536_t256_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "terms",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "serial",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "exact",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 288,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_ordered_sum_w512_t224_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "terms",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "serial",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "exact",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_ordered_sum_w512_t256_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "terms",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "serial",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "exact",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 288,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "056c73255263215a101981b09c8508ad4cb3c821bf8ff318d2f4feae5d27d9c5",
+    "resources": [
+      {
+        "symbol": "chop_ordered_sum_w4096_t224_v1",
+        "registers": 52,
+        "shared_static_bytes": 20152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_ordered_sum_w4096_t256_v1",
+        "registers": 78,
+        "shared_static_bytes": 20544,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 288,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_ordered_sum_w1536_t224_v1",
+        "registers": 40,
+        "shared_static_bytes": 9912,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_ordered_sum_w1536_t256_v1",
+        "registers": 38,
+        "shared_static_bytes": 10304,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 288,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_ordered_sum_w512_t224_v1",
+        "registers": 35,
+        "shared_static_bytes": 5816,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_ordered_sum_w512_t256_v1",
+        "registers": 32,
+        "shared_static_bytes": 6208,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 288,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "ordered_sum_ties_away_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_ORDERED_SUM_TEST_TIES_AWAY",
+        "1"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_ordered_sum_w4096_t224_ties_away_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "terms",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "serial",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "exact",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_ordered_sum_w4096_t256_ties_away_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "terms",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "serial",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "exact",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 288,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_ordered_sum_w1536_t224_ties_away_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "terms",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "serial",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "exact",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_ordered_sum_w1536_t256_ties_away_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "terms",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "serial",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "exact",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 288,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_ordered_sum_w512_t224_ties_away_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "terms",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "serial",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "exact",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_ordered_sum_w512_t256_ties_away_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "terms",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "serial",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "exact",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 288,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "335ab917c31a1ca4b5029d33c942f415a1f8950d399f2575fc71de9186fca3fe",
+    "resources": [
+      {
+        "symbol": "chop_ordered_sum_w4096_t224_ties_away_v1",
+        "registers": 52,
+        "shared_static_bytes": 20152,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_ordered_sum_w4096_t256_ties_away_v1",
+        "registers": 107,
+        "shared_static_bytes": 20544,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 288,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_ordered_sum_w1536_t224_ties_away_v1",
+        "registers": 40,
+        "shared_static_bytes": 9912,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_ordered_sum_w1536_t256_ties_away_v1",
+        "registers": 38,
+        "shared_static_bytes": 10304,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 288,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_ordered_sum_w512_t224_ties_away_v1",
+        "registers": 35,
+        "shared_static_bytes": 5816,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_ordered_sum_w512_t256_ties_away_v1",
+        "registers": 32,
+        "shared_static_bytes": 6208,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 288,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

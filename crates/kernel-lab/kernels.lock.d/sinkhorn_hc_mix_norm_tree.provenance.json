@@ -1,0 +1,18 @@
+[
+  {
+    "name": "sinkhorn_hc_hc4x4096_mix_norm_tree_distances_reversed_sm120",
+    "source_closure_sha256": "cc323bb53be85a877d305ae005d101df36abca5da6bf4a4444a2f42c3efdfd3c"
+  },
+  {
+    "name": "sinkhorn_hc_hc4x4096_mix_norm_tree_late_wait_sm120",
+    "source_closure_sha256": "cc25530798876027797c5dbfa01f048ef293e060215091a430fa48f0995c0e30"
+  },
+  {
+    "name": "sinkhorn_hc_hc4x4096_mix_norm_tree_levels_reversed_sm120",
+    "source_closure_sha256": "e282134515ff8cf74c6891704db00668795cae58072aa122e8e84c189c5efb13"
+  },
+  {
+    "name": "sinkhorn_hc_hc4x4096_mix_norm_tree_sm120",
+    "source_closure_sha256": "84825126d78ea70019e8ac28f86fdebad40919c4a68a1eb05dd0841d9e10ea89"
+  }
+]

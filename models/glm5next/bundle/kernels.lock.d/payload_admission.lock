@@ -1,0 +1,119 @@
+[
+  {
+    "name": "payload_admission_glm5next_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_admit_f32_scales_glm5next_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "words",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "count"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "first",
+            "cxx_type": "uint32_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_admit_ue4m3_scales_glm5next_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "U64",
+            "name": "count"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "first",
+            "cxx_type": "uint32_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_admit_mxfp8_payload_glm5next_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "U64",
+            "name": "count"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "first",
+            "cxx_type": "uint32_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "42860063e3eb73f0f5d455bd4371a92f968ac271af29a21cb204faecd4e399fa",
+    "resources": [
+      {
+        "symbol": "chop_admit_f32_scales_glm5next_v1",
+        "registers": 12,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_admit_ue4m3_scales_glm5next_v1",
+        "registers": 12,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_admit_mxfp8_payload_glm5next_v1",
+        "registers": 13,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

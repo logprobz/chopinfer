@@ -1,0 +1,3637 @@
+{
+  "schema": "chopinfer-qual-model/v1",
+  "model": "glm5next",
+  "cohorts": {
+    "quick": {
+      "checks": [
+        "teacher",
+        "chat",
+        "api",
+        "structured",
+        "frontend_goldens",
+        "soak",
+        "paired_teacher"
+      ]
+    },
+    "full": {
+      "checks": [
+        "teacher",
+        "chat",
+        "paired_teacher",
+        "evals_gsm8k",
+        "gsm8k_regression",
+        "long_context",
+        "needle",
+        "api",
+        "structured",
+        "frontend_goldens",
+        "multimodal",
+        "media_preprocessing",
+        "soak",
+        "spec_verify",
+        "verify_exact",
+        "prefix_exact",
+        "preemption_exact",
+        "determinism",
+        "kv_offload_plain",
+        "kv_offload_pressure"
+      ]
+    }
+  },
+  "change_classes": {
+    "frontend": [
+      "teacher",
+      "chat",
+      "api",
+      "structured",
+      "frontend_goldens",
+      "multimodal",
+      "media_preprocessing"
+    ],
+    "quality": [
+      "teacher",
+      "chat",
+      "paired_teacher",
+      "evals_gsm8k",
+      "long_context",
+      "needle",
+      "api",
+      "structured",
+      "frontend_goldens",
+      "multimodal",
+      "media_preprocessing",
+      "gsm8k_regression"
+    ],
+    "service": [
+      "soak",
+      "preemption_exact",
+      "determinism",
+      "kv_offload_plain",
+      "kv_offload_pressure"
+    ],
+    "speculation": [
+      "spec_verify",
+      "verify_exact"
+    ],
+    "prefix": [
+      "prefix_exact"
+    ]
+  },
+  "checks": {
+    "teacher": {
+      "module": "teacher",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--server-log",
+        "{server_log}"
+      ],
+      "cohort_args": {
+        "full": [
+          "--capture-out",
+          "{raw}/teacher-capture.json"
+        ]
+      },
+      "timeout_seconds": 7200,
+      "receipt": "*-teacher.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "mean_abs_dlogprob"
+          ],
+          "op": "le",
+          "value": 0.1,
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "top1_decisive"
+          ],
+          "op": "le",
+          "value": 0.08,
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "top1_near_tie"
+          ],
+          "op": "le",
+          "value": 0.08,
+          "source": "docs/numerics.md#top-one-near-ties"
+        },
+        {
+          "path": [
+            "top1_disagreement"
+          ],
+          "op": "le",
+          "value": 0.1,
+          "source": "docs/numerics.md#top-one-near-ties"
+        },
+        {
+          "path": [
+            "failed_categories"
+          ],
+          "op": "eq",
+          "value": [],
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "scored"
+          ],
+          "op": "ge",
+          "value": 3781,
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "server",
+            "checkpoint",
+            "checkpoint_identity"
+          ],
+          "op": "eq",
+          "value": "f75ee9b0e79e11157206b410df9fb4e07db58cc8b0256ea2e7d763b26e9c8fcd",
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "reference_sha256"
+          ],
+          "op": "eq",
+          "value": "1288d55ecb2bc58f91dbe92e96c1e210baad416f99f17a41b3aac27f13e570bb",
+          "source": "models/glm5next/README.md#reference-runner"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "tensor_parallel_size"
+          ],
+          "op": "eq",
+          "value": 4,
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "kv_cache_dtype"
+          ],
+          "op": "eq",
+          "value": "fp8",
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "context_parallel_size"
+          ],
+          "op": "eq",
+          "value": 1,
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "name"
+          ],
+          "op": "eq",
+          "value": "tp4-mtp",
+          "source": "models/glm5next/README.md#serving-profiles"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "speculation",
+            "tokens"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "models/glm5next/README.md#serving-profiles"
+        }
+      ],
+      "constants": {
+        "teacher": {
+          "MAX_MEAN": {
+            "value": 0.15,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          "LARGE_SET_MEAN": {
+            "value": 0.1,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          "LARGE_SET_POSITIONS": {
+            "value": 1000,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MAX_TOP1": {
+            "value": 0.08,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          "MEAN_STEP": {
+            "value": 0.05,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MEAN_MARGIN": {
+            "value": 0.02,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          "TOP1_SIGMAS": {
+            "value": 2.0,
+            "source": "tools/qual/README.md#release-gates"
+          }
+        }
+      },
+      "files": [
+        "server_log"
+      ]
+    },
+    "chat": {
+      "module": "teacher",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--server-log",
+        "{server_log}",
+        "--reference-name",
+        "chat",
+        "--receipt",
+        "chat"
+      ],
+      "cohort_args": {
+        "full": [
+          "--capture-out",
+          "{raw}/chat-capture.json"
+        ]
+      },
+      "timeout_seconds": 7200,
+      "receipt": "*-chat.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "mean_abs_dlogprob"
+          ],
+          "op": "le",
+          "value": 0.25,
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "top1_decisive"
+          ],
+          "op": "le",
+          "value": 0.08,
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "top1_near_tie"
+          ],
+          "op": "le",
+          "value": 0.08,
+          "source": "docs/numerics.md#top-one-near-ties"
+        },
+        {
+          "path": [
+            "top1_disagreement"
+          ],
+          "op": "le",
+          "value": 0.1,
+          "source": "docs/numerics.md#top-one-near-ties"
+        },
+        {
+          "path": [
+            "failed_categories"
+          ],
+          "op": "eq",
+          "value": [],
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "scored"
+          ],
+          "op": "ge",
+          "value": 4340,
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "server",
+            "checkpoint",
+            "checkpoint_identity"
+          ],
+          "op": "eq",
+          "value": "f75ee9b0e79e11157206b410df9fb4e07db58cc8b0256ea2e7d763b26e9c8fcd",
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "reference_sha256"
+          ],
+          "op": "eq",
+          "value": "0ab8b65f9eb05e07686f4c199644f9efee538c792d7e497d8ef14bf7f52324e3",
+          "source": "models/glm5next/README.md#reference-runner"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "tensor_parallel_size"
+          ],
+          "op": "eq",
+          "value": 4,
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "kv_cache_dtype"
+          ],
+          "op": "eq",
+          "value": "fp8",
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "context_parallel_size"
+          ],
+          "op": "eq",
+          "value": 1,
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "name"
+          ],
+          "op": "eq",
+          "value": "tp4-mtp",
+          "source": "models/glm5next/README.md#serving-profiles"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "speculation",
+            "tokens"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "models/glm5next/README.md#serving-profiles"
+        }
+      ],
+      "constants": {
+        "teacher": {
+          "MAX_MEAN": {
+            "value": 0.15,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          "LARGE_SET_MEAN": {
+            "value": 0.1,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          "LARGE_SET_POSITIONS": {
+            "value": 1000,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MAX_TOP1": {
+            "value": 0.08,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          "MEAN_STEP": {
+            "value": 0.05,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "SPREAD_MEAN_FACTOR": {
+            "value": 1.25,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          "MEAN_MARGIN": {
+            "value": 0.02,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          "TOP1_SIGMAS": {
+            "value": 2.0,
+            "source": "tools/qual/README.md#release-gates"
+          }
+        }
+      },
+      "files": [
+        "server_log"
+      ]
+    },
+    "paired_teacher": {
+      "module": "paired_teacher",
+      "args": [
+        "--accepted",
+        "{stored_teacher}",
+        "--candidate",
+        "{teacher}",
+        "--url",
+        "{url}",
+        "--model",
+        "{model}"
+      ],
+      "files": [
+        "stored_teacher",
+        "teacher"
+      ],
+      "timeout_seconds": 900,
+      "receipt": "*-paired_teacher.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/paired-accuracy.md"
+        }
+      ],
+      "constants": {
+        "paired_teacher": {
+          "PROFILE_POLICIES": {
+            "source": "docs/paired-accuracy.md#activation-and-calibration",
+            "value": {
+              "tp4-mtp": {
+                "schema": "paired-teacher-margins/v1",
+                "approval": "operator:2026-10-11:glm-accepted-8c75e90bd;glm-neutral-margins",
+                "rationale": "GLM's accepted arm is a fresh capture of the GATES4 install at 8c75e90bd, the adopted qualification's part B, one per policy. Margins from GLM's own same-build neutral evidence (accepted DCP 1 against DCP 2, DCP 4 and BF16 KV; 35 texts, 3,781 positions): pooled upper clustered CI95 at most 0.005 nats mean error (DCP 2 reached 0.0040), category mean point increase at most 0.015 nats (1.4 times the largest observed, BF16 KV chat +0.0107), pooled net top-one upper CI95 at most 0.01, and at most four net positions whose absolute error grows by more than 0.5 nats (DCP 2's +3 plus one). Holm alpha 0.05, the eight-text CI minimum and sparse pooled refusal are unchanged. DCP 2 and 4 have their own accepted arms. Operator approved the accepted arm and these margins on 2026-10-11; two independent accepted captures per policy are calibrated before the pins are filled.",
+                "reference_sha256": "1288d55ecb2bc58f91dbe92e96c1e210baad416f99f17a41b3aac27f13e570bb",
+                "mean_margin": 0.005,
+                "category_mean_margin": 0.015,
+                "top1_delta": 0.01,
+                "category_alpha": 0.05,
+                "min_clusters": 8,
+                "tail_growth_nats": 0.5,
+                "tail_net_allowance": 4,
+                "allow_sparse_pooled": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "evals_gsm8k": {
+      "module": "evals",
+      "args": [
+        "run",
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--arm",
+        "fp8",
+        "--run-id",
+        "{run_id}",
+        "--suites",
+        "gsm8k",
+        "--server-log",
+        "{server_log}"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-evals-fp8.json",
+      "files": [
+        "server_log"
+      ],
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "items"
+          ],
+          "op": "ge",
+          "value": 1319,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "suites",
+            "gsm8k",
+            "count"
+          ],
+          "op": "eq",
+          "value": 1319,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "workload_sha256"
+          ],
+          "op": "eq",
+          "value": "6ea6ef1611f1d9121f83a0c9292ef39850a4cb1253418cfb539d2a455667ea11",
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "tensor_parallel_size"
+          ],
+          "op": "eq",
+          "value": 4,
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "kv_cache_dtype"
+          ],
+          "op": "eq",
+          "value": "fp8",
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "context_parallel_size"
+          ],
+          "op": "eq",
+          "value": 1,
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "name"
+          ],
+          "op": "eq",
+          "value": "tp4-mtp",
+          "source": "models/glm5next/README.md#serving-profiles"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "speculation",
+            "tokens"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "models/glm5next/README.md#serving-profiles"
+        },
+        {
+          "path": [
+            "server",
+            "checkpoint",
+            "checkpoint_identity"
+          ],
+          "op": "eq",
+          "value": "f75ee9b0e79e11157206b410df9fb4e07db58cc8b0256ea2e7d763b26e9c8fcd",
+          "source": "models/glm5next/README.md#qualification-checks"
+        }
+      ]
+    },
+    "long_context": {
+      "module": "teacher",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--server-log",
+        "{server_log}",
+        "--reference-name",
+        "long_context",
+        "--receipt",
+        "long-context"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-long-context.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "mean_abs_dlogprob"
+          ],
+          "op": "le",
+          "value": 0.1,
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "top1_decisive"
+          ],
+          "op": "le",
+          "value": 0.08,
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "top1_near_tie"
+          ],
+          "op": "le",
+          "value": 0.08,
+          "source": "docs/numerics.md#top-one-near-ties"
+        },
+        {
+          "path": [
+            "top1_disagreement"
+          ],
+          "op": "le",
+          "value": 0.1,
+          "source": "docs/numerics.md#top-one-near-ties"
+        },
+        {
+          "path": [
+            "failed_categories"
+          ],
+          "op": "eq",
+          "value": [],
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "scored"
+          ],
+          "op": "ge",
+          "value": 1536,
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "server",
+            "checkpoint",
+            "checkpoint_identity"
+          ],
+          "op": "eq",
+          "value": "f75ee9b0e79e11157206b410df9fb4e07db58cc8b0256ea2e7d763b26e9c8fcd",
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "reference_sha256"
+          ],
+          "op": "eq",
+          "value": "4e1348868e8104ad65d9e5d4a3dd28deb2094ea133f3f3c53400e2b87b5903b6",
+          "source": "models/glm5next/README.md#reference-runner"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "tensor_parallel_size"
+          ],
+          "op": "eq",
+          "value": 4,
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "kv_cache_dtype"
+          ],
+          "op": "eq",
+          "value": "fp8",
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "context_parallel_size"
+          ],
+          "op": "eq",
+          "value": 1,
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "name"
+          ],
+          "op": "eq",
+          "value": "tp4-mtp",
+          "source": "models/glm5next/README.md#serving-profiles"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "speculation",
+            "tokens"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "models/glm5next/README.md#serving-profiles"
+        }
+      ],
+      "constants": {
+        "teacher": {
+          "MAX_MEAN": {
+            "value": 0.15,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          "LARGE_SET_MEAN": {
+            "value": 0.1,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          "LARGE_SET_POSITIONS": {
+            "value": 1000,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MAX_TOP1": {
+            "value": 0.08,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          "MEAN_STEP": {
+            "value": 0.05,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MEAN_MARGIN": {
+            "value": 0.02,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          "TOP1_SIGMAS": {
+            "value": 2.0,
+            "source": "tools/qual/README.md#release-gates"
+          }
+        }
+      },
+      "files": [
+        "server_log"
+      ]
+    },
+    "needle": {
+      "module": "needle",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}"
+      ],
+      "timeout_seconds": 1800,
+      "receipt": "*-needle.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ]
+    },
+    "api": {
+      "module": "api",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-api.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ]
+    },
+    "structured": {
+      "module": "structured",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--stream"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-structured.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "summary",
+            "overall",
+            "validity_rate"
+          ],
+          "op": "ge",
+          "value": 1.0,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "summary",
+            "overall",
+            "refused"
+          ],
+          "op": "eq",
+          "value": 0,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "summary",
+            "overall",
+            "truncated"
+          ],
+          "op": "eq",
+          "value": 0,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ]
+    },
+    "frontend_goldens": {
+      "module": "frontend_goldens",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--capture-out",
+        "{run}/capture",
+        "--required-file",
+        "chat-renders.json",
+        "--required-file",
+        "tokenizer-golden.json",
+        "--json",
+        "{run}/frontend.json"
+      ],
+      "timeout_seconds": 600,
+      "stdout_json": true,
+      "json_file": "{run}/frontend.json",
+      "rules": [
+        {
+          "path": [
+            "chat-renders.json",
+            "agrees"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/check-kinds.md"
+        },
+        {
+          "path": [
+            "tokenizer-golden.json",
+            "agrees"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/check-kinds.md"
+        }
+      ]
+    },
+    "soak": {
+      "module": "soak",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--structured-mix"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-soak.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "completed"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "memory_scope"
+          ],
+          "op": "eq",
+          "value": "serving_process_tree",
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "steady_memory_growth_mib"
+          ],
+          "op": "le",
+          "value": 512,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        },
+        {
+          "path": [
+            "memory_growth_mib"
+          ],
+          "op": "le",
+          "value": 1856,
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "steady_host_memory_growth_mib"
+          ],
+          "op": "le",
+          "value": 512,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        },
+        {
+          "path": [
+            "host_memory_growth_mib"
+          ],
+          "op": "le",
+          "value": 3072,
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "memory_samples"
+          ],
+          "op": "count_ge",
+          "value": 2,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        }
+      ],
+      "cohort_args": {
+        "quick": [
+          "--duration",
+          "60",
+          "--concurrency",
+          "4"
+        ],
+        "full": [
+          "--duration",
+          "1200",
+          "--concurrency",
+          "32",
+          "--prefix-mix",
+          "--media-mix",
+          "--media-cases",
+          "image-blue-square.png"
+        ]
+      },
+      "constants": {
+        "soak": {
+          "WARMUP_SECONDS": {
+            "value": 180,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          "CACHE_ALLOWANCE_MIB": {
+            "value": {
+              "host": 2560,
+              "device": 1344
+            },
+            "source": "models/glm5next/README.md#qualification-checks"
+          }
+        }
+      }
+    },
+    "multimodal": {
+      "module": "multimodal",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--server-log",
+        "{server_log}"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-glm5next-multimodal.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/check-kinds.md"
+        },
+        {
+          "path": [
+            "server",
+            "checkpoint",
+            "checkpoint_identity"
+          ],
+          "op": "eq",
+          "value": "f75ee9b0e79e11157206b410df9fb4e07db58cc8b0256ea2e7d763b26e9c8fcd",
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "reference",
+            "sha256"
+          ],
+          "op": "eq",
+          "value": "3a661a679fdb5bff55705c06d6ef62c3c7ec569bf524e59c27fb78d51c0eb798",
+          "source": "models/glm5next/README.md#reference-runner"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "tensor_parallel_size"
+          ],
+          "op": "eq",
+          "value": 4,
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "kv_cache_dtype"
+          ],
+          "op": "eq",
+          "value": "fp8",
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "context_parallel_size"
+          ],
+          "op": "eq",
+          "value": 1,
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "name"
+          ],
+          "op": "eq",
+          "value": "tp4-mtp",
+          "source": "models/glm5next/README.md#serving-profiles"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "speculation",
+            "tokens"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "models/glm5next/README.md#serving-profiles"
+        }
+      ],
+      "files": [
+        "server_log"
+      ]
+    },
+    "spec_verify": {
+      "module": "spec_verify",
+      "args": [
+        "compare",
+        "--ar",
+        "{spec_ar}",
+        "--spec",
+        "{spec_candidate}"
+      ],
+      "timeout_seconds": 7200,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "sets",
+            "copy",
+            "scored_positions"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        }
+      ],
+      "files": [
+        "spec_ar",
+        "spec_candidate"
+      ],
+      "constants": {
+        "spec_verify": {
+          "MAXIMUM_ABS_DLOGPROB": {
+            "value": 0.15,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          "MAXIMUM_TOP1_DISAGREEMENT": {
+            "value": 0.08,
+            "source": "models/glm5next/README.md#qualification-checks"
+          }
+        }
+      },
+      "input_rules": {
+        "spec_ar": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "sets",
+              "copy",
+              "requests"
+            ],
+            "op": "count_ge",
+            "value": 16,
+            "source": "tools/qual/README.md#verify-rows-against-autoregressive-rows"
+          },
+          {
+            "path": [
+              "sets",
+              "natural",
+              "requests"
+            ],
+            "op": "count_ge",
+            "value": 16,
+            "source": "tools/qual/README.md#verify-rows-against-autoregressive-rows"
+          },
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "tensor_parallel_size"
+            ],
+            "op": "eq",
+            "value": 4,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "kv_cache_dtype"
+            ],
+            "op": "eq",
+            "value": "fp8",
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "context_parallel_size"
+            ],
+            "op": "eq",
+            "value": 1,
+            "source": "models/glm5next/README.md#qualification-checks"
+          }
+        ],
+        "spec_candidate": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "sets",
+              "copy",
+              "requests"
+            ],
+            "op": "count_ge",
+            "value": 16,
+            "source": "tools/qual/README.md#verify-rows-against-autoregressive-rows"
+          },
+          {
+            "path": [
+              "sets",
+              "natural",
+              "requests"
+            ],
+            "op": "count_ge",
+            "value": 16,
+            "source": "tools/qual/README.md#verify-rows-against-autoregressive-rows"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "tensor_parallel_size"
+            ],
+            "op": "eq",
+            "value": 4,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "kv_cache_dtype"
+            ],
+            "op": "eq",
+            "value": "fp8",
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "context_parallel_size"
+            ],
+            "op": "eq",
+            "value": 1,
+            "source": "models/glm5next/README.md#qualification-checks"
+          }
+        ]
+      }
+    },
+    "verify_exact": {
+      "module": "verify_exact",
+      "args": [
+        "report",
+        "--require-row-shapes",
+        "--ar",
+        "{verify_ar}",
+        "--verify",
+        "{verify_candidate}"
+      ],
+      "timeout_seconds": 7200,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "records"
+          ],
+          "op": "count_ge",
+          "value": 1,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "exact",
+            "all",
+            "gate_against_ar",
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "coverage",
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "k"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ],
+      "files": [
+        "verify_ar",
+        "verify_candidate"
+      ],
+      "constants": {
+        "verify_exact": {
+          "ROW_MEAN_MARGIN": {
+            "value": 0.005,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "HOST_DRAFTED_MINIMUM_POSITIONS": {
+            "value": 3781,
+            "source": "models/glm5next/README.md#qualification-checks"
+          }
+        },
+        "teacher": {
+          "TOP1_SIGMAS": {
+            "value": 2.0,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          }
+        }
+      },
+      "input_rules": {
+        "verify_ar": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "texts"
+            ],
+            "op": "count_ge",
+            "value": 35,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "k"
+            ],
+            "op": "eq",
+            "value": 0,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "checkpoint_identity"
+            ],
+            "op": "eq",
+            "value": "f75ee9b0e79e11157206b410df9fb4e07db58cc8b0256ea2e7d763b26e9c8fcd",
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "reference_sha256"
+            ],
+            "op": "eq",
+            "value": "1288d55ecb2bc58f91dbe92e96c1e210baad416f99f17a41b3aac27f13e570bb",
+            "source": "models/glm5next/README.md#reference-runner"
+          },
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "tensor_parallel_size"
+            ],
+            "op": "eq",
+            "value": 4,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "kv_cache_dtype"
+            ],
+            "op": "eq",
+            "value": "fp8",
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "context_parallel_size"
+            ],
+            "op": "eq",
+            "value": 1,
+            "source": "models/glm5next/README.md#qualification-checks"
+          }
+        ],
+        "verify_candidate": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "texts"
+            ],
+            "op": "count_ge",
+            "value": 35,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "k"
+            ],
+            "op": "ge",
+            "value": 1,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "checkpoint_identity"
+            ],
+            "op": "eq",
+            "value": "f75ee9b0e79e11157206b410df9fb4e07db58cc8b0256ea2e7d763b26e9c8fcd",
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "reference_sha256"
+            ],
+            "op": "eq",
+            "value": "1288d55ecb2bc58f91dbe92e96c1e210baad416f99f17a41b3aac27f13e570bb",
+            "source": "models/glm5next/README.md#reference-runner"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "tensor_parallel_size"
+            ],
+            "op": "eq",
+            "value": 4,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "kv_cache_dtype"
+            ],
+            "op": "eq",
+            "value": "fp8",
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "context_parallel_size"
+            ],
+            "op": "eq",
+            "value": 1,
+            "source": "models/glm5next/README.md#qualification-checks"
+          }
+        ]
+      }
+    },
+    "prefix_exact": {
+      "module": "prefix_exact",
+      "args": [
+        "report",
+        "--record",
+        "{prefix_record_1}",
+        "--record",
+        "{prefix_record_2}"
+      ],
+      "timeout_seconds": 1740,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        }
+      ],
+      "files": [
+        "prefix_record_1",
+        "prefix_record_2"
+      ],
+      "input_rules": {
+        "prefix_record_1": [
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "tensor_parallel_size"
+            ],
+            "op": "eq",
+            "value": 4,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "kv_cache_dtype"
+            ],
+            "op": "eq",
+            "value": "fp8",
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "context_parallel_size"
+            ],
+            "op": "eq",
+            "value": 1,
+            "source": "models/glm5next/README.md#qualification-checks"
+          }
+        ],
+        "prefix_record_2": [
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "tensor_parallel_size"
+            ],
+            "op": "eq",
+            "value": 4,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "kv_cache_dtype"
+            ],
+            "op": "eq",
+            "value": "fp8",
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "context_parallel_size"
+            ],
+            "op": "eq",
+            "value": 1,
+            "source": "models/glm5next/README.md#qualification-checks"
+          }
+        ]
+      }
+    },
+    "preemption_exact": {
+      "module": "preempt_compare",
+      "args": [
+        "compare",
+        "--reserved",
+        "{preemption_reserved}",
+        "--preempted",
+        "{preemption_candidate}",
+        "--every",
+        "32",
+        "--exact"
+      ],
+      "timeout_seconds": 1740,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        },
+        {
+          "path": [
+            "exact"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        },
+        {
+          "path": [
+            "requests"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        },
+        {
+          "path": [
+            "positions_after_first_preemption"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        }
+      ],
+      "files": [
+        "preemption_reserved",
+        "preemption_candidate"
+      ],
+      "input_rules": {
+        "preemption_reserved": [
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "tensor_parallel_size"
+            ],
+            "op": "eq",
+            "value": 4,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "kv_cache_dtype"
+            ],
+            "op": "eq",
+            "value": "fp8",
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "context_parallel_size"
+            ],
+            "op": "eq",
+            "value": 1,
+            "source": "models/glm5next/README.md#qualification-checks"
+          }
+        ],
+        "preemption_candidate": [
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "tensor_parallel_size"
+            ],
+            "op": "eq",
+            "value": 4,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "kv_cache_dtype"
+            ],
+            "op": "eq",
+            "value": "fp8",
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "context_parallel_size"
+            ],
+            "op": "eq",
+            "value": 1,
+            "source": "models/glm5next/README.md#qualification-checks"
+          }
+        ]
+      }
+    },
+    "determinism": {
+      "module": "determinism",
+      "args": [
+        "compare",
+        "{determinism_ar}",
+        "{determinism_spec}"
+      ],
+      "timeout_seconds": 600,
+      "json_file": "{determinism_spec}",
+      "reference_file": "{determinism_ar}",
+      "reference_equal": [
+        [
+          "run_id"
+        ],
+        [
+          "server",
+          "checkpoint",
+          "checkpoint_identity"
+        ],
+        [
+          "server",
+          "health",
+          "serving",
+          "package_identity"
+        ],
+        [
+          "server",
+          "health",
+          "serving",
+          "version"
+        ],
+        [
+          "server",
+          "health",
+          "serving",
+          "source_commit"
+        ]
+      ],
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/check-kinds.md#determinism-determinismv1"
+        }
+      ],
+      "files": [
+        "determinism_ar",
+        "determinism_spec"
+      ],
+      "input_rules": {
+        "determinism_ar": [
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "checkpoint_identity"
+            ],
+            "op": "eq",
+            "value": "f75ee9b0e79e11157206b410df9fb4e07db58cc8b0256ea2e7d763b26e9c8fcd",
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "tensor_parallel_size"
+            ],
+            "op": "eq",
+            "value": 4,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "kv_cache_dtype"
+            ],
+            "op": "eq",
+            "value": "fp8",
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "context_parallel_size"
+            ],
+            "op": "eq",
+            "value": 1,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "speculation",
+              "tokens"
+            ],
+            "op": "eq",
+            "value": 0,
+            "source": "docs/check-kinds.md#determinism-determinismv1"
+          },
+          {
+            "path": [
+              "image",
+              "included"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "docs/check-kinds.md#determinism-determinismv1"
+          }
+        ],
+        "determinism_spec": [
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "checkpoint_identity"
+            ],
+            "op": "eq",
+            "value": "f75ee9b0e79e11157206b410df9fb4e07db58cc8b0256ea2e7d763b26e9c8fcd",
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "tensor_parallel_size"
+            ],
+            "op": "eq",
+            "value": 4,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "kv_cache_dtype"
+            ],
+            "op": "eq",
+            "value": "fp8",
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "context_parallel_size"
+            ],
+            "op": "eq",
+            "value": 1,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "speculation",
+              "tokens"
+            ],
+            "op": "ge",
+            "value": 1,
+            "source": "docs/check-kinds.md#determinism-determinismv1"
+          },
+          {
+            "path": [
+              "image",
+              "included"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "docs/check-kinds.md#determinism-determinismv1"
+          }
+        ]
+      }
+    },
+    "media_preprocessing": {
+      "module": "media_preprocessing",
+      "args": [],
+      "timeout_seconds": 900,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/reference-runner.md#frontend-preprocessing"
+        },
+        {
+          "path": [
+            "reference_bound"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/reference-runner.md#frontend-preprocessing"
+        }
+      ],
+      "constants": {
+        "media_preprocessing": {
+          "SPREAD_FACTOR": {
+            "value": 2.0,
+            "source": "docs/reference-runner.md#frontend-preprocessing"
+          }
+        }
+      }
+    },
+    "teacher_arms": {
+      "module": "teacher_arms",
+      "args": [
+        "--arm",
+        "bf16={teacher}={check_raw[teacher]}/teacher-capture.json",
+        "--arm",
+        "fp8={fp8_teacher}={fp8_teacher_capture}"
+      ],
+      "timeout_seconds": 600,
+      "receipt": "*-teacher-arms.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "scored"
+          ],
+          "op": "ge",
+          "value": 3781,
+          "source": "models/glm5next/README.md#qualification-checks"
+        }
+      ],
+      "files": [
+        "fp8_teacher",
+        "fp8_teacher_capture"
+      ],
+      "input_rules": {
+        "fp8_teacher": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "reference_sha256"
+            ],
+            "op": "eq",
+            "value": "1288d55ecb2bc58f91dbe92e96c1e210baad416f99f17a41b3aac27f13e570bb",
+            "source": "models/glm5next/README.md#reference-runner"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "tensor_parallel_size"
+            ],
+            "op": "eq",
+            "value": 4,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "kv_cache_dtype"
+            ],
+            "op": "eq",
+            "value": "fp8",
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "context_parallel_size"
+            ],
+            "op": "eq",
+            "value": 1,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "name"
+            ],
+            "op": "eq",
+            "value": "tp4-mtp",
+            "source": "models/glm5next/README.md#serving-profiles"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "speculation",
+              "tokens"
+            ],
+            "op": "ge",
+            "value": 1,
+            "source": "models/glm5next/README.md#serving-profiles"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "checkpoint_identity"
+            ],
+            "op": "eq",
+            "value": "f75ee9b0e79e11157206b410df9fb4e07db58cc8b0256ea2e7d763b26e9c8fcd",
+            "source": "models/glm5next/README.md#qualification-checks"
+          }
+        ]
+      }
+    },
+    "evals_candidate": {
+      "module": "evals",
+      "args": [
+        "run",
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--arm",
+        "candidate",
+        "--run-id",
+        "{run_id}",
+        "--suites",
+        "gsm8k",
+        "--server-log",
+        "{server_log}"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-evals-candidate.json",
+      "files": [
+        "server_log"
+      ],
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "items"
+          ],
+          "op": "ge",
+          "value": 1319,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "suites",
+            "gsm8k",
+            "count"
+          ],
+          "op": "eq",
+          "value": 1319,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "workload_sha256"
+          ],
+          "op": "eq",
+          "value": "6ea6ef1611f1d9121f83a0c9292ef39850a4cb1253418cfb539d2a455667ea11",
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "tensor_parallel_size"
+          ],
+          "op": "eq",
+          "value": 4,
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "kv_cache_dtype"
+          ],
+          "op": "eq",
+          "value": "fp8",
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "context_parallel_size"
+          ],
+          "op": "eq",
+          "value": 1,
+          "source": "models/glm5next/README.md#qualification-checks"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "name"
+          ],
+          "op": "eq",
+          "value": "tp4-mtp",
+          "source": "models/glm5next/README.md#nvfp4-checkpoint"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "speculation",
+            "tokens"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "models/glm5next/README.md#serving-profiles"
+        },
+        {
+          "path": [
+            "server",
+            "checkpoint",
+            "checkpoint_identity"
+          ],
+          "op": "eq",
+          "value": "f75ee9b0e79e11157206b410df9fb4e07db58cc8b0256ea2e7d763b26e9c8fcd",
+          "source": "models/glm5next/README.md#nvfp4-checkpoint"
+        }
+      ]
+    },
+    "evals_compare": {
+      "module": "evals",
+      "args": [
+        "compare",
+        "--arms",
+        "candidate",
+        "fp8",
+        "--receipt",
+        "candidate={evals_candidate}",
+        "--receipt",
+        "fp8={fp8_gsm8k}",
+        "--bound"
+      ],
+      "timeout_seconds": 600,
+      "receipt": "*-evals-compare.json",
+      "constants": {
+        "evals": {
+          "SIGNIFICANCE": {
+            "value": 0.05,
+            "source": "tools/qual/README.md#release-gates"
+          }
+        }
+      },
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "bound"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "suites",
+            "gsm8k",
+            "count"
+          ],
+          "op": "eq",
+          "value": 1319,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "unpaired_items"
+          ],
+          "op": "count_ge",
+          "value": 2,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "unpaired_items",
+            "*"
+          ],
+          "op": "eq",
+          "value": 0,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ],
+      "files": [
+        "fp8_gsm8k"
+      ],
+      "input_rules": {
+        "fp8_gsm8k": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "items"
+            ],
+            "op": "ge",
+            "value": 1319,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "suites",
+              "gsm8k",
+              "count"
+            ],
+            "op": "eq",
+            "value": 1319,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "workload_sha256"
+            ],
+            "op": "eq",
+            "value": "6ea6ef1611f1d9121f83a0c9292ef39850a4cb1253418cfb539d2a455667ea11",
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "run_id"
+            ],
+            "op": "eq",
+            "value": "{fp8_gsm8k_run}",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "arm"
+            ],
+            "op": "eq",
+            "value": "fp8",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "tensor_parallel_size"
+            ],
+            "op": "eq",
+            "value": 4,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "kv_cache_dtype"
+            ],
+            "op": "eq",
+            "value": "fp8",
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "context_parallel_size"
+            ],
+            "op": "eq",
+            "value": 1,
+            "source": "models/glm5next/README.md#qualification-checks"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "name"
+            ],
+            "op": "eq",
+            "value": "tp4-mtp",
+            "source": "models/glm5next/README.md#serving-profiles"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "speculation",
+              "tokens"
+            ],
+            "op": "ge",
+            "value": 1,
+            "source": "models/glm5next/README.md#serving-profiles"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "checkpoint_identity"
+            ],
+            "op": "eq",
+            "value": "f75ee9b0e79e11157206b410df9fb4e07db58cc8b0256ea2e7d763b26e9c8fcd",
+            "source": "models/glm5next/README.md#qualification-checks"
+          }
+        ]
+      }
+    },
+    "encoder_parity": {
+      "module": "encoder_parity",
+      "args": [
+        "taps",
+        "--run",
+        "{encoder_parity_run}",
+        "--url",
+        "{url}"
+      ],
+      "timeout_seconds": 1800,
+      "receipt": "*-encoder-parity.json",
+      "files": [
+        "encoder_parity_run"
+      ],
+      "constants": {
+        "encoder_parity": {
+          "PARITY_RATIO": {
+            "value": 3.0,
+            "source": "tools/qual/README.md#encoder-parity"
+          },
+          "ROW_FLOOR": {
+            "value": 0.00390625,
+            "source": "tools/qual/README.md#encoder-parity"
+          }
+        }
+      },
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#encoder-parity"
+        }
+      ]
+    },
+    "text_layers": {
+      "module": "text_layers",
+      "args": [
+        "--dump",
+        "{layer_dump}",
+        "--reference",
+        "{layer_reference}",
+        "--url",
+        "{url}",
+        "--json",
+        "{run}/layers.json"
+      ],
+      "timeout_seconds": 7200,
+      "stdout_json": true,
+      "files": [
+        "layer_dump",
+        "layer_reference"
+      ],
+      "json_file": "{run}/layers.json",
+      "constants": {
+        "text_layers": {
+          "MODES": {
+            "value": {
+              "f32": "rounded",
+              "bf16": "hf-bf16"
+            },
+            "source": "models/glm5next/reference_fixtures.py"
+          },
+          "ADAPTERS": {
+            "value": {
+              "bf16": "models/glm5next/reference_latent_fp8.py"
+            },
+            "source": "models/glm5next/README.md#layer-reference"
+          },
+          "RELATIVE_RMS_LIMIT": {
+            "value": 0.05,
+            "source": "tools/qual/README.md#text-layers"
+          },
+          "FLOOR_RATIO": {
+            "value": 3.0,
+            "source": "tools/qual/README.md#text-layers"
+          },
+          "REQUIRED_TAPS": {
+            "value": [
+              "L{nn}.x.hc.attn",
+              "L{nn}.attn.out",
+              "L{nn}.x.hc.mlp",
+              "L{nn}.mlp.out",
+              "L{nn}.x.latent",
+              "L{nn}.x.indexer.ids",
+              "L{nn}.router.logits",
+              "L{nn}.router.weights",
+              "L{nn}.router.ids",
+              "final.norm"
+            ],
+            "source": "models/glm5next/README.md"
+          },
+          "ROUTER": {
+            "value": {
+              "score": "sigmoid",
+              "top_k": 8,
+              "n_group": 1,
+              "topk_group": 1,
+              "bias": "layer_router_bias"
+            },
+            "source": "models/glm5next/README.md#routing-near-ties"
+          }
+        }
+      },
+      "rules": [
+        {
+          "path": [
+            "status"
+          ],
+          "op": "eq",
+          "value": "match",
+          "source": "tools/qual/README.md#text-layers"
+        },
+        {
+          "path": [
+            "first"
+          ],
+          "op": "eq",
+          "value": null,
+          "source": "tools/qual/README.md#text-layers"
+        }
+      ]
+    },
+    "gsm8k_regression": {
+      "module": "evals",
+      "args": [
+        "compare",
+        "--run-id",
+        "{run_id}",
+        "--arms",
+        "candidate",
+        "reference"
+      ],
+      "cohort_args": {
+        "full": [
+          "--stored",
+          "candidate={evals_gsm8k}",
+          "--stored",
+          "reference={stored_evals_gsm8k}"
+        ]
+      },
+      "timeout_seconds": 600,
+      "receipt": "*-evals-compare.json",
+      "constants": {
+        "evals": {
+          "SIGNIFICANCE": {
+            "value": 0.05,
+            "source": "tools/qual/README.md#release-gates"
+          }
+        }
+      },
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#correctness-runner"
+        },
+        {
+          "path": [
+            "unpaired_items",
+            "candidate"
+          ],
+          "op": "eq",
+          "value": 0,
+          "source": "tools/qual/README.md#correctness-runner"
+        },
+        {
+          "path": [
+            "unpaired_items",
+            "reference"
+          ],
+          "op": "eq",
+          "value": 0,
+          "source": "tools/qual/README.md#correctness-runner"
+        },
+        {
+          "path": [
+            "suites",
+            "gsm8k",
+            "count"
+          ],
+          "op": "eq",
+          "value": 1319,
+          "source": "tools/qual/README.md#correctness-runner"
+        }
+      ]
+    },
+    "kv_offload_plain": {
+      "module": "kv_offload",
+      "args": [
+        "report",
+        "--off",
+        "{kv_offload_plain_off}",
+        "--swap",
+        "{kv_offload_plain_swap}"
+      ],
+      "timeout_seconds": 600,
+      "receipt": "*-kv-offload-plain.json",
+      "files": [
+        "kv_offload_plain_off",
+        "kv_offload_plain_swap"
+      ],
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/serving-kv-pool.md"
+        }
+      ]
+    },
+    "kv_offload_pressure": {
+      "module": "kv_offload",
+      "args": [
+        "report",
+        "--off",
+        "{kv_offload_pressure_off}",
+        "--swap",
+        "{kv_offload_pressure_swap}"
+      ],
+      "timeout_seconds": 600,
+      "receipt": "*-kv-offload-pressure.json",
+      "files": [
+        "kv_offload_pressure_off",
+        "kv_offload_pressure_swap"
+      ],
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/serving-kv-pool.md"
+        }
+      ]
+    }
+  },
+  "inputs": {
+    "fixture_root": "fixtures/glm5next/gate",
+    "frontend": "models/glm5next/compiler/src/frontend.json",
+    "frontend_capture": "fixtures/glm5next/frontend",
+    "tokenizer_goldens": "models/glm5next/compiler/fixtures/checkpoints/glm-5.3-flash/tokenizer-golden.json",
+    "exact": "fixtures/glm5next/teacher-reference.json",
+    "teacher_reference": "fixtures/glm5next/teacher-reference.json",
+    "chat_renders": "fixtures/mimo26/frontend/chat-renders.json",
+    "gsm8k": {
+      "env": "CHOPINFER_MIMO_FIXTURES",
+      "default": "fixtures/mimo26",
+      "path": "gsm8k"
+    },
+    "spec_teacher": "fixtures/mimo26/teacher-texts.json",
+    "media_cases": "fixtures/mimo26/capture/multimodal_cases.py",
+    "media_fixtures": {
+      "env": "CHOPINFER_MIMO_FIXTURES",
+      "path": "functional",
+      "default": "fixtures/mimo26"
+    },
+    "media_capture": "fixtures/glm5next/gate/capture/probes.json",
+    "media_images": "models/glm5next/probe_images.py",
+    "media_preprocessing_reference": {
+      "env": "CHOPINFER_DATA",
+      "path": "glm5next/refrun/preprocessing"
+    },
+    "media_preprocessing_frontend": "models/glm5next/compiler/src/frontend.json",
+    "needle": {
+      "env": "CHOPINFER_DATA",
+      "path": "glm5next/needle/prompts.json"
+    },
+    "layer_reference": {
+      "env": "CHOPINFER_GLM5NEXT_LAYER_REFERENCE",
+      "path": "."
+    },
+    "layer_router_bias": "fixtures/glm5next/router-bias.json"
+  },
+  "references": {
+    "teacher": {
+      "path": "fixtures/glm5next/teacher-reference.json",
+      "sha256": "1288d55ecb2bc58f91dbe92e96c1e210baad416f99f17a41b3aac27f13e570bb",
+      "schema": "chopinfer.glm5next.teacher-reference.v1",
+      "workload_sha256": "2cb887e1566fa252a2bf4136313f0f7fe4932b11c0657dbf61fb86fd7e0e09cb",
+      "variants": [
+        "exact",
+        "bf16",
+        "f64"
+      ],
+      "checkpoint_keys": [
+        "repository",
+        "revision",
+        "served_model_name",
+        "source_lock_sha256"
+      ]
+    },
+    "chat": {
+      "path": "fixtures/glm5next/chat-reference.json",
+      "sha256": "0ab8b65f9eb05e07686f4c199644f9efee538c792d7e497d8ef14bf7f52324e3",
+      "schema": "chopinfer.glm5next.teacher-reference.v1",
+      "workload_sha256": "65e9a3bb0af48ce6900e3a1ddc3d2de7a5c565036bb9138d83d85d597ff02b4a",
+      "variants": [
+        "exact",
+        "bf16",
+        "f64"
+      ],
+      "checkpoint_keys": [
+        "repository",
+        "revision",
+        "served_model_name",
+        "source_lock_sha256"
+      ]
+    },
+    "long_context": {
+      "path": "fixtures/glm5next/long-context-reference.json",
+      "sha256": "4e1348868e8104ad65d9e5d4a3dd28deb2094ea133f3f3c53400e2b87b5903b6",
+      "schema": "chopinfer.glm5next.teacher-reference.v1",
+      "workload_sha256": "0aa7cebf993b1c2b5ad99ecd1a7f3dad2acdb219ae8449b5bc0ddfc701ce3919",
+      "variants": [
+        "exact",
+        "bf16"
+      ],
+      "checkpoint_keys": [
+        "repository",
+        "revision",
+        "served_model_name",
+        "source_lock_sha256"
+      ]
+    },
+    "image_probes": {
+      "path": "fixtures/glm5next/image-probe-references.json",
+      "sha256": "3a661a679fdb5bff55705c06d6ef62c3c7ec569bf524e59c27fb78d51c0eb798",
+      "schema": "chopinfer.glm5next.image-probe-references.v1",
+      "variants": [
+        "exact",
+        "bf16",
+        "f64"
+      ],
+      "checkpoint_keys": [
+        "repository",
+        "revision",
+        "served_model_name",
+        "source_lock_sha256"
+      ],
+      "workload": {
+        "env": "CHOPINFER_DATA",
+        "path": "glm5next/refrun/image-probe-references.workload.json"
+      }
+    }
+  },
+  "qualification": {
+    "teacher_reference_kind": "exact",
+    "teacher_receipt": "teacher",
+    "teacher_capture_schema": "chopinfer.glm5next.teacher-capture.v1",
+    "verify_buckets": [
+      2,
+      3,
+      4
+    ],
+    "chars_per_token": 4.0,
+    "prefix": {
+      "family": "glm5next",
+      "prompt_end": true,
+      "media": true,
+      "acceptance": true,
+      "block_tokens": 64,
+      "prefill_granule": 64,
+      "anchor_boundary": 2051,
+      "anchor_labels": [
+        "anchor_dense",
+        "anchor_sparse"
+      ],
+      "reference_schema": "chopinfer.glm5next.teacher-reference.v1"
+    },
+    "needle": {
+      "format": "prompt-set",
+      "frozen": "fixtures/glm5next/needles.json",
+      "lengths": [
+        8192,
+        131072,
+        262144
+      ],
+      "match": "alphanumeric"
+    },
+    "media": {
+      "format": "image-probes",
+      "reference": "image_probes",
+      "receipt": "glm5next-multimodal",
+      "stop_token": "<|user|>",
+      "expected": {},
+      "fixture_images": {},
+      "items": {
+        "small-100x60": "free-text",
+        "odd-333x517": "free-text",
+        "wide-1000x40": "free-text",
+        "exact-448x448": "free-text",
+        "translucent-300x200": "free-text",
+        "large-1300x1000": "free-text"
+      },
+      "thinking": true
+    },
+    "mechanics_only": false,
+    "checkpoint": {
+      "lock": "models/glm5next/checkpoint-files.json",
+      "repository": "zai-org/GLM-5.3-Flash",
+      "revision": "eb9eb208eb0d988989d07a6a12d0fdeb5f52574a",
+      "served_model_name": "GLM-5.3-Flash",
+      "source_lock_sha256": "d643188b3abb52782ee8cec3000cbbca1483c010ac736e1a89ac58a081759152",
+      "checkpoint_identity": "f75ee9b0e79e11157206b410df9fb4e07db58cc8b0256ea2e7d763b26e9c8fcd"
+    }
+  },
+  "receipts": {
+    "env": "CHOPINFER_DATA",
+    "path": "qual/glm5next"
+  },
+  "limitations": [
+    "glm5next's default configuration is qualified: the operator adopted its GATES4 results on 2026-10-11 (part A, the autoregressive arms, at cab96b599; part B at 8c75e90bd), its soak judged after the declared warm-up stated below. The checkpoint identity is the one the engine reported for the zai-org FP8 checkpoint at its pinned revision (startup serving_identity of a TP4 tp4-mtp serve, 2026-10-07). The teacher, long-context and image-probe references are adopted (models/glm5next/reference.py, step 30) and pin repository, revision, served model name and source lock.",
+    "This declaration qualifies the default configuration alone (tp4-mtp: TP4, FP8 latent KV, DCP 1), one gate run against one server: every live check and record requires context_parallel_size 1, TP4 and FP8 KV. DCP 2 and 4, BF16 latent KV and encoder parity, which needs the diagnostic-taps build, are qualified by their own configurations (configurations.dcp2, dcp4, kv-bf16 and taps in this file), each gated against its own server, since a TP4 server takes all four GPUs.",
+    "Determinism compares two records of tools/qual/determinism.py record --server-log, each bound to the pinned checkpoint and the live process that answered it: determinism_ar from an autoregressive server and determinism_spec from an MTP one (both with --image: this declaration claims image input, so each record must include the image request). The gate scores the MTP record against the AR record (reference_file), which must share its run ID, checkpoint and build (package identity, version, source commit; reference_equal), so speculative output must equal AR bit for bit, as must each record's cold repeat and prefix hits.",
+    "This run records the FP8 arms later paired runs compare against, each bound to this server's identity: the full cohort's teacher writes its capture to {raw}/teacher-capture.json beside its receipt (the FP8 arm of the kv-bf16 configuration's teacher_arms), and evals_gsm8k answers the whole GSM8K test split as arm fp8 under this run's ID, bound to the pinned checkpoint and this server's startup log (the FP8 arm of each NVFP4 declaration's paired GSM8K).",
+    "paired_teacher compares this server's teacher capture (the candidate arm) with the stored accepted arm of the same configuration and arm: the correctness runner reads stored_teacher from each of its stores (last good and seed, both seeded with the accepted captures of the GATES4 install at 8c75e90bd, served the same way) and reports a store without one as no baseline yet (tools/qual/README.md#correctness-runner, docs/paired-accuracy.md). Its margins are tp4-mtp's, which the operator approved on 2026-10-11 (0.005 nats pooled, 0.015 per category, 0.01 top-one, four tail positions); each configuration that declares the check (both DCP sizes, both NVFP4 checkpoints) selects them by its profile, on its own teacher reference. No margins are declared for tp4-ar, which no GLM gate run serves; it is tied to tp4-mtp by the bit-for-bit determinism pair and the AR-versus-MTP spec_verify and verify_exact pairs.",
+    "The soak's memory rule declares a warm-up and a cache allowance (operator, 2026-10-11; soak.memory_rule): a request's last prompt chunk (at most 64 rows) captures its prefill program at its first run and keeps it, at most 64 lengths (models/glm5next/README.md, Qualification checks), each about 40 MiB host and 21 MiB GPU across the four ranks. Growth after the first 180 s must stay within 512 MiB host and GPU, and growth over the whole soak within 512 MiB plus the 64 programs' bound (2,560 MiB host, 1,344 MiB GPU). In GATES4 (8c75e90bd, 2026-10-11) the DCP 1 soak grew 1,077.5 MiB host over its 1,380 s and 43.6 MiB after 180 s; the local-inference-lab NVFP4 gate's soak 529.2 and 48.1 MiB; the NVIDIA NVFP4 gate's 480.0 and 43.3 MiB. GPU memory for all 64 programs is left: every GATES4 server had at least 989 MiB free per rank before its first graph capture, and all 64 programs with every other graph take at most about 500 MiB per rank. The full soak runs 1,200 s so that its job fits the release preview's 1,740-second bound.",
+    "chat scores the chat reference (fixtures/glm5next/chat-reference.json: the seven teacher chat texts and ten longer conversations of 251 to 603 tokens, 4,340 positions, eleven of the seventeen crossing four 64-token pages) teacher-forced like the teacher check, with the spread rule's mean headroom factor 1.25 (SPREAD_MEAN_FACTOR, adopted 2026-10-11, fixed before the references ran). Its limits come from the reference alone: BF16 spread 0.180 mean, 3.1% decisive, 6.4% total; f64 0.014. So the mean limit is 0.25 (1.25 x 0.180 rounded up to 0.05) and the top-1 limits are the floors (8%, 8%, 10%). The teacher check keeps its seven chat texts and limits. The full cohort's capture ({raw}/chat-capture.json) is the arm a paired comparison reads; the quick cohort writes none, so chopinfer eval captures both quick checks.",
+    "frontend_goldens captures the served frontend itself (--url): each row of fixtures/glm5next/frontend/chat-renders.json, which transformers 5.16.1 rendered from the pinned revision's chat_template.jinja and tokenized with its tokenizer.json on CPU (models/glm5next/compiler/fixtures/checkpoints/glm-5.3-flash/goldens.py --gate; no vLLM capture), goes to /tokenize, as does each text of the tokenizer goldens beside goldens.py, and the served token IDs must equal HF's. The rows cover the role tags, reasoning, reasoning_effort low, high and max, tool definitions, tool calls with non-string arguments and tool results, and the chat teacher conversations; images are left to media_preprocessing. It passed against served tp4-mtp, tp4-mtp-nvfp4 and tp4-mtp-nvfp4-nvidia servers (2026-10-11: 31 chat rows and 27 tokenizer rows, every token ID equal).",
+    "needle sends the frozen needle prompts (fixtures/glm5next/capture/needles.py: MiMo's functional haystack and three needles rebuilt in GLM's template as prompts of 7,168, 130,048 and 261,120 tokens with reasoning effort Low and 1,024 tokens to answer, total contexts of 8,192, 131,072 and 262,144; inputs.needle under $CHOPINFER_DATA, digests in fixtures/glm5next/needles.json) and requires the three values in order (alphanumeric match). 262,144 is the largest context: tp4-mtp's measured KV pool with images holds 442,112 tokens at 32 slots, so a 1,048,576-token context does not fit one sequence on the default package. The served tp4-mtp reports max_model_len 429,120. The needle passed at all three lengths against tp4-mtp at DCP 1, 2 and 4 and both NVFP4 exports (2026-10-11).",
+    "Not declared: a paired margin between the FP8 and BF16 KV arms (the kv-bf16 configuration's teacher_arms reports their difference; paired_teacher declares no BF16 KV policy), logprobs_parity, which compares the logprobs a reference OpenAI server returns with the candidate's: GLM's reference is HF transformers through tools/refrun, not a server, and the teacher, chat and long_context checks already score the served logprobs against it, while api covers the response shape; and video, which the bundle refuses. The long-context reference holds 131,072 tokens (long_128k); 262,144 does not fit one GPU job of the reference runner (models/glm5next/README.md).",
+    "api uses MiMo's API sample and tools-00 conversation (fixtures/mimo26), as the api check reads only their response shape and tool request; spec_verify uses MiMo's prompts and GSM8K questions as Qwen's does.",
+    "Release prerequisites outside this declaration (plan step 39, default config), recorded separately: kernel-lab reports for each GLM engine, and bring-up (chopinfer verify --model, a smoke test and the release preview's GSM8K screen at preview.gsm8k_floor, 193 of 200, the floor the operator adopted on 2026-10-11). spec_verify's GSM8K questions are prompts, not that screen."
+  ],
+  "preview": {
+    "profile": "tp4-mtp",
+    "speculation": {
+      "drafter": "mtp",
+      "tokens": 3,
+      "draft_cost": "per-token"
+    },
+    "spec_greedy": {
+      "rule": "exact"
+    },
+    "soak_prefix_mix": true,
+    "numerical_reference": "teacher gated against the GPU reference runner's F32 reference, limits from its BF16 and f64 spread",
+    "gsm8k_floor": 193,
+    "package_max_sequences": 32,
+    "quick_arms": [
+      "spec"
+    ]
+  },
+  "capabilities": {
+    "text": true,
+    "frontend": true,
+    "api": true,
+    "structured": true,
+    "prefix_cache": true,
+    "preemption": true,
+    "long_context": true,
+    "stability": true,
+    "media": [
+      "image"
+    ],
+    "speculation": "mtp",
+    "kv_offload": true
+  },
+  "configurations": {
+    "dcp2": {
+      "serve": [
+        "--context-parallel-size",
+        "2"
+      ],
+      "checks": [
+        "teacher",
+        "chat",
+        "paired_teacher",
+        "long_context",
+        "needle",
+        "spec_verify",
+        "verify_exact",
+        "prefix_exact",
+        "preemption_exact",
+        "determinism",
+        "kv_offload_plain",
+        "kv_offload_pressure"
+      ],
+      "quick": [
+        "teacher",
+        "chat",
+        "paired_teacher"
+      ],
+      "serving": {
+        "context_parallel_size": 2
+      },
+      "media": false,
+      "keep_references": [
+        "teacher",
+        "chat",
+        "long_context"
+      ],
+      "capabilities": {
+        "text": true,
+        "frontend": false,
+        "api": false,
+        "structured": false,
+        "prefix_cache": true,
+        "preemption": true,
+        "long_context": true,
+        "stability": false,
+        "kv_offload": true,
+        "media": [],
+        "speculation": "mtp"
+      }
+    },
+    "dcp4": {
+      "serve": [
+        "--context-parallel-size",
+        "4"
+      ],
+      "checks": [
+        "teacher",
+        "chat",
+        "paired_teacher",
+        "long_context",
+        "needle",
+        "spec_verify",
+        "verify_exact",
+        "prefix_exact",
+        "preemption_exact",
+        "determinism",
+        "kv_offload_plain",
+        "kv_offload_pressure"
+      ],
+      "quick": [
+        "teacher",
+        "chat",
+        "paired_teacher"
+      ],
+      "serving": {
+        "context_parallel_size": 4
+      },
+      "media": false,
+      "keep_references": [
+        "teacher",
+        "chat",
+        "long_context"
+      ],
+      "capabilities": {
+        "text": true,
+        "frontend": false,
+        "api": false,
+        "structured": false,
+        "prefix_cache": true,
+        "preemption": true,
+        "long_context": true,
+        "stability": false,
+        "kv_offload": true,
+        "media": [],
+        "speculation": "mtp"
+      }
+    },
+    "k5": {
+      "experimental": true,
+      "serve": [
+        "--speculative-tokens",
+        "5",
+        "--modalities",
+        "text"
+      ],
+      "checks": [
+        "teacher",
+        "chat",
+        "spec_verify",
+        "verify_exact",
+        "preemption_exact",
+        "determinism"
+      ],
+      "quick": [
+        "teacher",
+        "chat"
+      ],
+      "serving": {
+        "speculation_tokens": 5
+      },
+      "media": false,
+      "keep_references": [
+        "teacher",
+        "chat"
+      ],
+      "capabilities": {
+        "text": true,
+        "frontend": false,
+        "api": false,
+        "structured": false,
+        "prefix_cache": false,
+        "preemption": true,
+        "long_context": false,
+        "stability": false,
+        "kv_offload": false,
+        "media": [],
+        "speculation": "mtp"
+      },
+      "qualification": {
+        "verify_buckets": [
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      }
+    },
+    "kv-bf16": {
+      "serve": [
+        "--kv-cache-dtype",
+        "bf16"
+      ],
+      "checks": [
+        "teacher",
+        "teacher_arms",
+        "chat",
+        "prefix_exact"
+      ],
+      "quick": [
+        "teacher",
+        "chat"
+      ],
+      "serving": {
+        "kv_cache_dtype": "bf16"
+      },
+      "media": false,
+      "from_default": [
+        "fp8_teacher",
+        "fp8_teacher_capture",
+        "fp8_gsm8k",
+        "fp8_gsm8k_run"
+      ],
+      "keep_references": [
+        "teacher",
+        "chat"
+      ],
+      "change_classes": {
+        "quality": [
+          "teacher_arms"
+        ]
+      },
+      "capabilities": {
+        "text": true,
+        "frontend": false,
+        "api": false,
+        "structured": false,
+        "prefix_cache": true,
+        "preemption": false,
+        "long_context": false,
+        "stability": false,
+        "kv_offload": false,
+        "media": [],
+        "speculation": "none"
+      }
+    },
+    "nvfp4": {
+      "checkpoint": "GLM5NEXT_NVFP4",
+      "checks": [
+        "teacher",
+        "evals_candidate",
+        "evals_compare",
+        "gsm8k_regression",
+        "chat",
+        "paired_teacher",
+        "needle",
+        "api",
+        "structured",
+        "frontend_goldens",
+        "media_preprocessing",
+        "soak",
+        "spec_verify",
+        "verify_exact",
+        "prefix_exact",
+        "preemption_exact",
+        "determinism",
+        "kv_offload_plain",
+        "kv_offload_pressure"
+      ],
+      "quick": [
+        "teacher",
+        "chat",
+        "api",
+        "structured",
+        "frontend_goldens",
+        "soak",
+        "paired_teacher"
+      ],
+      "serving": {
+        "checkpoint_identity": "83b4297362ba87927e462afaff42c406e8a2d8a869fb36e14fdc65badb5201e6",
+        "profile_name": "tp4-mtp-nvfp4"
+      },
+      "source": "models/glm5next/README.md#nvfp4-checkpoint",
+      "media": false,
+      "from_default": [
+        "fp8_teacher",
+        "fp8_teacher_capture",
+        "fp8_gsm8k",
+        "fp8_gsm8k_run"
+      ],
+      "references": {
+        "teacher": {
+          "path": "fixtures/glm5next/nvfp4-teacher-reference.json",
+          "sha256": "62723e59d771b9fab780f6b0db86cfc0c3e47c0d17649f8bddd5eacc211297b9",
+          "schema": "chopinfer.glm5next.teacher-reference.v1",
+          "workload_sha256": "2cb887e1566fa252a2bf4136313f0f7fe4932b11c0657dbf61fb86fd7e0e09cb",
+          "variants": [
+            "exact",
+            "bf16"
+          ],
+          "checkpoint_keys": [
+            "repository",
+            "revision",
+            "served_model_name",
+            "source_lock_sha256"
+          ]
+        },
+        "chat": {
+          "path": "fixtures/glm5next/nvfp4-chat-reference.json",
+          "sha256": "3687d77bcc3b4701276874e3cbb17f1f12546c71e2f1a3a7517988e75a92ccb7",
+          "schema": "chopinfer.glm5next.teacher-reference.v1",
+          "workload_sha256": "65e9a3bb0af48ce6900e3a1ddc3d2de7a5c565036bb9138d83d85d597ff02b4a",
+          "variants": [
+            "exact",
+            "bf16"
+          ],
+          "checkpoint_keys": [
+            "repository",
+            "revision",
+            "served_model_name",
+            "source_lock_sha256"
+          ]
+        }
+      },
+      "keep_references": [],
+      "inputs": {
+        "exact": "fixtures/glm5next/nvfp4-teacher-reference.json",
+        "teacher_reference": "fixtures/glm5next/nvfp4-teacher-reference.json"
+      },
+      "qualification": {
+        "checkpoint": {
+          "lock": "models/glm5next/checkpoint-files-nvfp4.json",
+          "repository": "local-inference-lab/GLM-5.3-Flash-NVFP4",
+          "revision": "175ae8ce3b5af842b0d0140dbeb43e9cfc557c49",
+          "served_model_name": "GLM-5.3-Flash",
+          "source_lock_sha256": "ffbe452d1f386986905eb8e2dda0abcb1e6fec7279185155d18aa751d4c6fb2f",
+          "checkpoint_identity": "83b4297362ba87927e462afaff42c406e8a2d8a869fb36e14fdc65badb5201e6"
+        }
+      },
+      "rules": {
+        "chat": [
+          {
+            "path": [
+              "mean_abs_dlogprob"
+            ],
+            "op": "le",
+            "value": 0.2,
+            "source": "models/glm5next/README.md#nvfp4-checkpoint"
+          }
+        ]
+      },
+      "cohort_args": {
+        "soak": {
+          "quick": [
+            "--duration",
+            "60",
+            "--concurrency",
+            "4"
+          ],
+          "full": [
+            "--duration",
+            "1200",
+            "--concurrency",
+            "32",
+            "--prefix-mix"
+          ]
+        },
+        "gsm8k_regression": {
+          "full": [
+            "--stored",
+            "candidate={evals_candidate}",
+            "--stored",
+            "reference={stored_evals_candidate}"
+          ]
+        }
+      },
+      "change_classes": {
+        "quality": [
+          "evals_candidate",
+          "evals_compare"
+        ]
+      },
+      "capabilities": {
+        "text": true,
+        "frontend": true,
+        "api": true,
+        "structured": true,
+        "prefix_cache": true,
+        "preemption": true,
+        "long_context": true,
+        "stability": true,
+        "media": [],
+        "speculation": "mtp",
+        "kv_offload": true
+      }
+    },
+    "nvfp4-nvidia": {
+      "checkpoint": "GLM5NEXT_NVIDIA_NVFP4",
+      "checks": [
+        "teacher",
+        "evals_candidate",
+        "evals_compare",
+        "gsm8k_regression",
+        "chat",
+        "paired_teacher",
+        "needle",
+        "api",
+        "structured",
+        "frontend_goldens",
+        "media_preprocessing",
+        "soak",
+        "spec_verify",
+        "verify_exact",
+        "prefix_exact",
+        "preemption_exact",
+        "determinism",
+        "kv_offload_plain",
+        "kv_offload_pressure"
+      ],
+      "quick": [
+        "teacher",
+        "chat",
+        "api",
+        "structured",
+        "frontend_goldens",
+        "soak",
+        "paired_teacher"
+      ],
+      "serving": {
+        "checkpoint_identity": "aadfa0fd2df0268c5ee9cba10c33388ac33d118126fd6cfacd2c00568b19c8e2",
+        "profile_name": "tp4-mtp-nvfp4-nvidia"
+      },
+      "source": "models/glm5next/README.md#nvidia-nvfp4-checkpoint",
+      "media": false,
+      "from_default": [
+        "fp8_teacher",
+        "fp8_teacher_capture",
+        "fp8_gsm8k",
+        "fp8_gsm8k_run"
+      ],
+      "references": {
+        "teacher": {
+          "path": "fixtures/glm5next/nvfp4-nvidia-teacher-reference.json",
+          "sha256": "663c944f5d534cf16913feaf4f60ba728622005d03dab9067144c2f00d62fdd0",
+          "schema": "chopinfer.glm5next.teacher-reference.v1",
+          "workload_sha256": "2cb887e1566fa252a2bf4136313f0f7fe4932b11c0657dbf61fb86fd7e0e09cb",
+          "variants": [
+            "exact",
+            "bf16"
+          ],
+          "checkpoint_keys": [
+            "repository",
+            "revision",
+            "served_model_name",
+            "source_lock_sha256"
+          ]
+        },
+        "chat": {
+          "path": "fixtures/glm5next/nvfp4-nvidia-chat-reference.json",
+          "sha256": "b12483b8340b35fc3471fdf093d845368e0170d9720d5e5aa90feed0816b734c",
+          "schema": "chopinfer.glm5next.teacher-reference.v1",
+          "workload_sha256": "65e9a3bb0af48ce6900e3a1ddc3d2de7a5c565036bb9138d83d85d597ff02b4a",
+          "variants": [
+            "exact",
+            "bf16"
+          ],
+          "checkpoint_keys": [
+            "repository",
+            "revision",
+            "served_model_name",
+            "source_lock_sha256"
+          ]
+        }
+      },
+      "keep_references": [],
+      "inputs": {
+        "exact": "fixtures/glm5next/nvfp4-nvidia-teacher-reference.json",
+        "teacher_reference": "fixtures/glm5next/nvfp4-nvidia-teacher-reference.json"
+      },
+      "qualification": {
+        "checkpoint": {
+          "lock": "models/glm5next/checkpoint-files-nvidia-nvfp4.json",
+          "repository": "nvidia/GLM-5.3-Flash-NVFP4",
+          "revision": "da920bb0b9f4a06727223a349e55468e38352348",
+          "served_model_name": "GLM-5.3-Flash",
+          "source_lock_sha256": "8d10e03211d2110840146e361f36ec9195ff564db56540988c365c7998b9bbb8",
+          "checkpoint_identity": "aadfa0fd2df0268c5ee9cba10c33388ac33d118126fd6cfacd2c00568b19c8e2"
+        }
+      },
+      "rules": {
+        "chat": [
+          {
+            "path": [
+              "mean_abs_dlogprob"
+            ],
+            "op": "le",
+            "value": 0.25,
+            "source": "models/glm5next/README.md#nvidia-nvfp4-checkpoint"
+          }
+        ]
+      },
+      "cohort_args": {
+        "soak": {
+          "quick": [
+            "--duration",
+            "60",
+            "--concurrency",
+            "4"
+          ],
+          "full": [
+            "--duration",
+            "1200",
+            "--concurrency",
+            "32",
+            "--prefix-mix"
+          ]
+        },
+        "gsm8k_regression": {
+          "full": [
+            "--stored",
+            "candidate={evals_candidate}",
+            "--stored",
+            "reference={stored_evals_candidate}"
+          ]
+        }
+      },
+      "change_classes": {
+        "quality": [
+          "evals_candidate",
+          "evals_compare"
+        ]
+      },
+      "capabilities": {
+        "text": true,
+        "frontend": true,
+        "api": true,
+        "structured": true,
+        "prefix_cache": true,
+        "preemption": true,
+        "long_context": true,
+        "stability": true,
+        "media": [],
+        "speculation": "mtp",
+        "kv_offload": true
+      }
+    },
+    "taps": {
+      "install_features": [
+        "diagnostic-taps"
+      ],
+      "serve": [
+        "--modalities",
+        "text,image",
+        "--prefix-cache",
+        "off",
+        "--speculative-tokens",
+        "0"
+      ],
+      "environment": {
+        "CHOPINFER_TAPS_SITES": "enc.*",
+        "CHOPINFER_REQUEST_TRACE": "1",
+        "CHOPINFER_TAPS_DIR": "{taps_dir}"
+      },
+      "producer": "models/glm5next/encoder_parity_run.py",
+      "checks": [
+        "encoder_parity",
+        "text_layers"
+      ],
+      "quick": [
+        "encoder_parity"
+      ],
+      "media": false,
+      "keep_references": [],
+      "qualification": {
+        "mechanics_only": true
+      },
+      "change_classes": {
+        "quality": [
+          "encoder_parity",
+          "text_layers"
+        ]
+      },
+      "capabilities": {
+        "text": false,
+        "frontend": false,
+        "api": false,
+        "structured": false,
+        "prefix_cache": false,
+        "preemption": false,
+        "long_context": false,
+        "stability": false,
+        "kv_offload": false,
+        "media": [],
+        "speculation": "none"
+      }
+    }
+  },
+  "kv_offload": {
+    "budget_gib": 16,
+    "swap_every": 16,
+    "max_preemptions": 3,
+    "min_gated": 18,
+    "pressure_tokens": 32768
+  }
+}

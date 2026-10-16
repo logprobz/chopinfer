@@ -1,0 +1,76 @@
+[
+  {
+    "name": "comm_group_phased_lab_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_comm_group_phased_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "input_stride"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "words"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "11ad0b12988c3cb54672df4c11f417684699048b75abfd1cff347f6b14685cb7",
+    "resources": [
+      {
+        "symbol": "chop_comm_group_phased_f32_v1",
+        "registers": 60,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

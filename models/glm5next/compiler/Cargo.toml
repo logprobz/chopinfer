@@ -1,0 +1,33 @@
+[package]
+name = "model-glm5next"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "chopinfer-model-glm5next"
+path = "src/bin/chopinfer-model-glm5next.rs"
+
+[dependencies]
+model-glm5next-contract.workspace = true
+model-compiler-sdk.workspace = true
+runtime-bundle.workspace = true
+runtime-bundle-abi.workspace = true
+runtime-frontend-contract.workspace = true
+runtime-weights.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+frontend-format.workspace = true
+model-glm5next-contract = { workspace = true, features = ["test-support"] }
+runtime-frontend = { workspace = true, features = ["test-support"] }
+runtime-host = { workspace = true, features = ["test-support"] }
+runtime-server.workspace = true
+runtime-tokenizer.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

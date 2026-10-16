@@ -1,0 +1,1246 @@
+[
+  {
+    "name": "comm_phased_turns_bf16_blocks128_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ],
+      [
+        "CHOP_COMM_PHASED_TURNS_BF16_TEST_BLOCK_GRANULES",
+        "128"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_comm_test_blocks128_allreduce_phased_turns_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "cf0a5f4bd8ef25fed17b46260b0524b5c4b0a6301de60c99db467a87e8cf095d",
+    "resources": [
+      {
+        "symbol": "chop_comm_test_blocks128_allreduce_phased_turns_bf16_v1",
+        "registers": 92,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "comm_phased_turns_bf16_blocks32_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ],
+      [
+        "CHOP_COMM_PHASED_TURNS_BF16_TEST_BLOCK_GRANULES",
+        "32"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_comm_test_blocks32_allreduce_phased_turns_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "9b1a82c2fe26d1528475269a1dfb044ce1740f17b2a5ccade7ec203cf0612371",
+    "resources": [
+      {
+        "symbol": "chop_comm_test_blocks32_allreduce_phased_turns_bf16_v1",
+        "registers": 92,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "comm_phased_turns_bf16_late_scatter_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ],
+      [
+        "CHOP_COMM_PHASED_TURNS_BF16_TEST_LATE_SCATTER",
+        "1"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_comm_test_late_scatter_allreduce_phased_turns_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "dc04969898290d6b789be1359d480f5e0bc92af3c0d2315984238d6c7389f921",
+    "resources": [
+      {
+        "symbol": "chop_comm_test_late_scatter_allreduce_phased_turns_bf16_v1",
+        "registers": 94,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "comm_phased_turns_bf16_late_wait_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ],
+      [
+        "CHOP_COMM_PHASED_TURNS_BF16_TEST_LATE_WAIT",
+        "1"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_comm_test_late_wait_allreduce_phased_turns_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "3f6e6f84d7ee155531253348482966a112063ea4fad4661547ad4a8ddedb95d7",
+    "resources": [
+      {
+        "symbol": "chop_comm_test_late_wait_allreduce_phased_turns_bf16_v1",
+        "registers": 92,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "comm_phased_turns_bf16_no_gather_wait_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ],
+      [
+        "CHOP_COMM_PHASED_TURNS_BF16_TEST_NO_GATHER_WAIT",
+        "1"
+      ],
+      [
+        "CHOP_COMM_PHASED_BF16_TEST_SLOW_RANK",
+        "1"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_comm_test_no_gather_wait_allreduce_phased_turns_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "1609d4ff7a67529649c145911b09522e153dd3f56d66fe0d33316f4016fa5080",
+    "resources": [
+      {
+        "symbol": "chop_comm_test_no_gather_wait_allreduce_phased_turns_bf16_v1",
+        "registers": 92,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "comm_phased_turns_bf16_no_scatter_wait_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ],
+      [
+        "CHOP_COMM_PHASED_TURNS_BF16_TEST_NO_SCATTER_WAIT",
+        "1"
+      ],
+      [
+        "CHOP_COMM_PHASED_TURNS_BF16_TEST_LATE_SCATTER",
+        "1"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_comm_test_no_scatter_wait_allreduce_phased_turns_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "bbabcbf9d56edae65f13b00f483ac89e29ff299111ff0997b8d0b5ec6342fd1a",
+    "resources": [
+      {
+        "symbol": "chop_comm_test_no_scatter_wait_allreduce_phased_turns_bf16_v1",
+        "registers": 94,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "comm_phased_turns_bf16_own_f32_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ],
+      [
+        "CHOP_COMM_PHASED_BF16_TEST_OWN_F32",
+        "1"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_comm_test_own_f32_allreduce_phased_turns_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "26697ba111a8f0b64383bf3edf5bd2eb511476857f0090ff7482ee8da016f4f6",
+    "resources": [
+      {
+        "symbol": "chop_comm_test_own_f32_allreduce_phased_turns_bf16_v1",
+        "registers": 96,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "comm_phased_turns_bf16_reversed_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ],
+      [
+        "CHOP_COMM_PHASED_BF16_TEST_REVERSED",
+        "1"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_comm_test_reversed_allreduce_phased_turns_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "4921fe5ce0a75199c810d6b06fd04405fb4db1778c6c5fe12055f4a73566d229",
+    "resources": [
+      {
+        "symbol": "chop_comm_test_reversed_allreduce_phased_turns_bf16_v1",
+        "registers": 92,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "comm_phased_turns_bf16_slow_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ],
+      [
+        "CHOP_COMM_PHASED_BF16_TEST_SLOW_RANK",
+        "1"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_comm_test_slow_allreduce_phased_turns_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "01451d385775885ed19b136c19e0f624c417c8198987c9feabb8875d1c939b33",
+    "resources": [
+      {
+        "symbol": "chop_comm_test_slow_allreduce_phased_turns_bf16_v1",
+        "registers": 94,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "comm_phased_turns_bf16_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_comm_allreduce_phased_turns_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "037bbdc1e90eb95b9934b81294af0e4f90f3af02b18d2c2b39e789001ef5c127",
+    "resources": [
+      {
+        "symbol": "chop_comm_allreduce_phased_turns_bf16_v1",
+        "registers": 92,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "comm_phased_turns_bf16_unturned_blocks128_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ],
+      [
+        "CHOP_COMM_PHASED_TURNS_BF16_TEST_UNTURNED",
+        "1"
+      ],
+      [
+        "CHOP_COMM_PHASED_TURNS_BF16_TEST_BLOCK_GRANULES",
+        "128"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_comm_test_unturned_blocks128_allreduce_phased_turns_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "0ecfcbbafcd3a0b4b6d083460fbc986493d4130557345e0e5a3c0dfb4db40743",
+    "resources": [
+      {
+        "symbol": "chop_comm_test_unturned_blocks128_allreduce_phased_turns_bf16_v1",
+        "registers": 90,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "comm_phased_turns_bf16_unturned_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ],
+      [
+        "CHOP_COMM_PHASED_TURNS_BF16_TEST_UNTURNED",
+        "1"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_comm_test_unturned_allreduce_phased_turns_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "row_elements"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "senders"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "adcd705d7d12e838f1d936a888f9d29ab52846d8b619e468b6ceb2e1a38e4198",
+    "resources": [
+      {
+        "symbol": "chop_comm_test_unturned_allreduce_phased_turns_bf16_v1",
+        "registers": 90,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

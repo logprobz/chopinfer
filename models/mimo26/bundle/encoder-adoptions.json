@@ -1,0 +1,62 @@
+[
+  {
+    "previous": "0000000000000000000000000000000000000000000000000000000000000000",
+    "declarations": [
+      "20886f7a30795bdb92321ffd526d2bb97d9479bbcc0044a251a6d729c29f4914",
+      "6ea980c4d4d7e70176b83c1d15c6bbefc524ce43f74799c1cfb5e48b733fdfb0"
+    ],
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "cubins": [
+      {
+        "name": "multimodal_attention_sm120",
+        "source_closure_sha256": "4914710a504a221aa0db56871bc546c043f6406883d2b718b4f08c17553895c8",
+        "cubin_sha256": "7cdc27286e2264e1786f1b94fde0b7f1c304dde2ba46096e366511fdd9d80281"
+      },
+      {
+        "name": "multimodal_rows_gemm_sm120",
+        "source_closure_sha256": "fb82fce22dac5b768982b7bb9def2df0bdae25f01b564d92c43d69edb9fb8ea8",
+        "cubin_sha256": "faec646e33690c49e9010f885f63839e8eede26462f6200d69abce048e30921d"
+      }
+    ]
+  },
+  {
+    "previous": "e4184ad14379a74538a46a5b213e0dffc33a72132b3bb7279617eb8a45ded4cc",
+    "declarations": [
+      "a04f4c6e77098207d1a68406211f60f532dceb338f499af869c9906d5d1f99ee",
+      "6ea980c4d4d7e70176b83c1d15c6bbefc524ce43f74799c1cfb5e48b733fdfb0"
+    ],
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "cubins": [
+      {
+        "name": "multimodal_attention_sm120",
+        "source_closure_sha256": "3afbf28004076c863ddab3b27df2bb24f1fc6da4349731e84ee1668ed552eaa4",
+        "cubin_sha256": "fa43ad623a4b392c36e8e13692164e43f78efda2fd9c72327bd763b8c0249965"
+      },
+      {
+        "name": "multimodal_rows_gemm_sm120",
+        "source_closure_sha256": "d434ff6e41ddc7579d5b95bd787621ab8938d3771f54aa6ae78e49824351707e",
+        "cubin_sha256": "788f6730c7764d8a044c541fac03a3838e64496f866e43166453a1740351c4ee"
+      }
+    ]
+  },
+  {
+    "previous": "e9dacb3d1f99cda39051220e3cd24122503e9c43843ec637e7a90b71e8cce590",
+    "declarations": [
+      "a04f4c6e77098207d1a68406211f60f532dceb338f499af869c9906d5d1f99ee",
+      "d1dfdf4c531cccb51d66cb889dfaba310e831a7b25ce6f13ef398c9bbfdbe8c0"
+    ],
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "cubins": [
+      {
+        "name": "multimodal_attention_sm120",
+        "source_closure_sha256": "03fbad97b381d651dc63e27e5c52f40bac16cf30f8ccd0ab1427648fc0630ca1",
+        "cubin_sha256": "584b1f2b7a660fe13a76fb2c1f00f45865a400fe386cbcac281ee26e6da9b972"
+      },
+      {
+        "name": "multimodal_rows_gemm_sm120",
+        "source_closure_sha256": "6fe9bafb87fcf6b63db2569e6c86323ab2d963e309d3176ad8bf91c83d200d55",
+        "cubin_sha256": "b36f2292ab38b3badd1807765c9207aee187bbf9c4ba3934393d2f720eb27330"
+      }
+    ]
+  }
+]

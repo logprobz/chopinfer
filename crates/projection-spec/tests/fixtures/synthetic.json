@@ -1,0 +1,520 @@
+{
+  "schema": "chopinfer.projection.v1",
+  "namespace": "fixture",
+  "layer_stems": [
+    {
+      "id": "decoder",
+      "template": "layers.{i}",
+      "indices": {
+        "kind": "range",
+        "start": 0,
+        "end": "layers"
+      }
+    },
+    {
+      "id": "drafter",
+      "template": "draft.{i}",
+      "indices": {
+        "kind": "list",
+        "indices": [
+          0
+        ]
+      }
+    }
+  ],
+  "projections": [
+    {
+      "id": "q",
+      "source": {
+        "tensor": "{stem}.q.weight",
+        "stem": "decoder"
+      },
+      "shape": [
+        8,
+        "hidden"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "head_grouped",
+        "heads": 2,
+        "head_dim": 4,
+        "tile": 4
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "a16.f32.v1",
+      "uses": [
+        {
+          "phase": "Prefill",
+          "capacity": "prefill",
+          "graph": false
+        },
+        {
+          "phase": "Decode",
+          "capacity": 1,
+          "graph": true
+        },
+        {
+          "phase": "Verify",
+          "capacity": 4,
+          "graph": true
+        },
+        {
+          "phase": "Verify",
+          "capacity": 8,
+          "graph": true
+        }
+      ],
+      "parts": [
+        {
+          "id": "query",
+          "rows": 4,
+          "heads": 1,
+          "range": {
+            "start": 0,
+            "length": 4
+          },
+          "scale_origin": [
+            0,
+            0
+          ]
+        },
+        {
+          "id": "key",
+          "rows": 4,
+          "heads": 1,
+          "range": {
+            "start": 4,
+            "length": 4
+          },
+          "scale_origin": [
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "id": "k",
+      "source": {
+        "tensor": "{stem}.k.weight",
+        "stem": "decoder"
+      },
+      "shape": [
+        8,
+        "hidden"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "column",
+        "tile": 4
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "a16.f32.v1",
+      "use_profile": "served"
+    },
+    {
+      "id": "out",
+      "source": {
+        "tensor": "{stem}.out.weight",
+        "stem": "decoder"
+      },
+      "shape": [
+        "hidden",
+        8
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "row",
+        "tile": 4
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "a16.f32.v1",
+      "use_profile": "served"
+    },
+    {
+      "id": "feed",
+      "source": {
+        "tensor": "{stem}.feed.{operand}.weight",
+        "stem": "decoder"
+      },
+      "shape": [
+        "intermediate",
+        "hidden"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "column",
+        "tile": 4
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": "ConcatenatedHalves",
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "a16.f32.v1",
+      "operands": [
+        "gate",
+        "up"
+      ],
+      "use_profile": "served"
+    },
+    {
+      "id": "experts",
+      "source": {
+        "tensor": "{stem}.experts.weight",
+        "stem": "decoder"
+      },
+      "shape": [
+        "intermediate",
+        "hidden"
+      ],
+      "kind": {
+        "kind": "expert_bank",
+        "experts": "experts",
+        "top_k": 2
+      },
+      "split": {
+        "class": "expert_sharded",
+        "axis": "rows",
+        "tile": 4
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "a16.f32.v1",
+      "use_profile": "served"
+    },
+    {
+      "id": "expert_out",
+      "source": {
+        "tensor": "{stem}.expert.{expert}.out.weight",
+        "stem": "decoder"
+      },
+      "shape": [
+        "hidden",
+        "intermediate"
+      ],
+      "kind": {
+        "kind": "expert_bank",
+        "experts": "experts",
+        "top_k": 2
+      },
+      "split": {
+        "class": "expert_owned",
+        "tile": 4
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "a16.f32.v1",
+      "use_profile": "served"
+    },
+    {
+      "id": "table",
+      "source": {
+        "tensor": "embed.weight"
+      },
+      "shape": [
+        "vocab",
+        "hidden"
+      ],
+      "kind": {
+        "kind": "lookup_table"
+      },
+      "split": {
+        "class": "vocab_sharded",
+        "tile": 8
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "a16.f32.v1",
+      "use_profile": "served"
+    },
+    {
+      "id": "hash",
+      "shape": [
+        32,
+        4
+      ],
+      "kind": {
+        "kind": "lookup_table"
+      },
+      "split": {
+        "class": "replicate"
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "a16.f32.v1",
+      "lookup": {
+        "shards": [
+          {
+            "id": "s0_h0",
+            "source": {
+              "tensor": "hash.0.0.weight"
+            },
+            "rows": {
+              "start": 0,
+              "length": 8
+            }
+          },
+          {
+            "id": "s0_h1",
+            "source": {
+              "tensor": "hash.0.1.weight"
+            },
+            "rows": {
+              "start": 8,
+              "length": 8
+            }
+          },
+          {
+            "id": "s1_h0",
+            "source": {
+              "tensor": "hash.1.0.weight"
+            },
+            "rows": {
+              "start": 16,
+              "length": 8
+            }
+          },
+          {
+            "id": "s1_h1",
+            "source": {
+              "tensor": "hash.1.1.weight"
+            },
+            "rows": {
+              "start": 24,
+              "length": 8
+            }
+          }
+        ],
+        "heads": [
+          {
+            "id": "h0",
+            "vocabulary": {
+              "start": 0,
+              "length": 16
+            }
+          },
+          {
+            "id": "h1",
+            "vocabulary": {
+              "start": 16,
+              "length": 16
+            }
+          }
+        ],
+        "padding_owner": {
+          "owner": "last_rank"
+        }
+      },
+      "use_profile": "served"
+    },
+    {
+      "id": "draft",
+      "source": {
+        "tensor": "{stem}.proj.weight",
+        "stem": "drafter"
+      },
+      "shape": [
+        "hidden",
+        "hidden"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "replicate"
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "a16.f32.v1",
+      "use_profile": "served"
+    }
+  ],
+  "fusion_groups": [
+    {
+      "id": "qk",
+      "input": "hidden_rows",
+      "members": [
+        "q",
+        "k"
+      ],
+      "eligibility": {
+        "predicate": "same_formats"
+      },
+      "fallback": "separate",
+      "use_profile": "served"
+    }
+  ],
+  "side_tensors": [
+    {
+      "id": "norm",
+      "source": {
+        "stem": "decoder",
+        "tensor": "{stem}.norm.weight"
+      },
+      "shape": [
+        "hidden"
+      ],
+      "kind": "norm",
+      "dtypes": [
+        "Bf16",
+        "F32"
+      ],
+      "consumer": "q",
+      "norm": {
+        "reduction_width": "hidden",
+        "groups": 1,
+        "affine": "per_group",
+        "reduction": "shuffle_down",
+        "epsilon_bits": 897988541,
+        "one_plus_weight": true,
+        "weight_dtypes": [
+          "Bf16",
+          "F32"
+        ]
+      }
+    },
+    {
+      "id": "gate",
+      "source": {
+        "stem": "decoder",
+        "tensor": "{stem}.gate"
+      },
+      "shape": [
+        8
+      ],
+      "kind": "gate",
+      "dtypes": [
+        "F32"
+      ],
+      "consumer": "qk"
+    },
+    {
+      "id": "router",
+      "source": {
+        "stem": "decoder",
+        "tensor": "{stem}.router"
+      },
+      "shape": [
+        "experts",
+        "hidden"
+      ],
+      "kind": "router",
+      "dtypes": [
+        "Bf16",
+        "F32"
+      ],
+      "consumer": "experts"
+    },
+    {
+      "id": "conv",
+      "source": {
+        "stem": "drafter",
+        "tensor": "{stem}.conv"
+      },
+      "shape": [
+        "hidden",
+        1,
+        3
+      ],
+      "kind": "conv",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": "draft",
+      "placement": {
+        "axis": 0,
+        "split": {
+          "class": "column",
+          "tile": 1
+        }
+      }
+    }
+  ],
+  "use_profiles": {
+    "served": [
+      {
+        "phase": "Prefill",
+        "capacity": "prefill",
+        "graph": false
+      },
+      {
+        "phase": "Decode",
+        "capacity": 1,
+        "graph": true
+      },
+      {
+        "phase": "Verify",
+        "capacity": 4,
+        "graph": true
+      },
+      {
+        "phase": "Verify",
+        "capacity": 8,
+        "graph": true
+      }
+    ]
+  }
+}

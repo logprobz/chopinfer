@@ -1,0 +1,199 @@
+{
+  "schema": "chopinfer-serve-profiles-v2",
+  "model": "qwen38",
+  "served_model_name": "Qwen3.8-Flash-Next-FP8",
+  "profiles": {
+    "tp4-ar": {
+      "bundle_id": "qwen38.flash.v2",
+      "topology": "qwen38-flash-tp4",
+      "tensor_parallel": 4,
+      "devices_required": 4,
+      "devices": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "speculation": {
+        "mode": "fixed",
+        "tokens": 0,
+        "draft_cost": "per-token",
+        "drafter": "none"
+      },
+      "max_sequences": 32,
+      "qualified_max_sequences": 64,
+      "qualification": "HICONC-TP4 Qwen checkpoint-index C64 rerun, 2026-10-04: paired and absolute teacher, three B64-versus-C32 decode repeats, full prefix equality, preemption bit identity, full GSM8K, bounded soak and performance passed with BF16 KV and text,image. Qualified through C64 for the frozen rerun implementation; later build identities require their own evidence. Not full production qualification.",
+      "kv_cache_dtype": "auto",
+      "prefix_cache": true,
+      "max_batch_tokens": 8192,
+      "prefill_chunk_tokens": 2048,
+      "queue_depth": null,
+      "kv_memory_fraction": 0.9,
+      "status": "qualified",
+      "evidence": [
+        "docs/serving-profiles.md#tp4-concurrency-qualification-2026-10-04",
+        "docs/bundle-qwen38.md#accuracy-gate",
+        "docs/deploy-common.md#concurrency-and-prefill-policy"
+      ]
+    },
+    "tp4-mtp": {
+      "bundle_id": "qwen38.flash.v2",
+      "topology": "qwen38-flash-tp4",
+      "tensor_parallel": 4,
+      "devices_required": 4,
+      "devices": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "speculation": {
+        "mode": "adaptive",
+        "tokens": 3,
+        "draft_cost": "per-token",
+        "drafter": "mtp"
+      },
+      "max_sequences": 32,
+      "qualified_max_sequences": 32,
+      "qualification": "Historical TP4 C1-C32 serving evidence; not full production qualification or qualification of later implementation identities. Speculation has workload-specific throughput regressions. Prefix matched-chunk exactness, frontier, drafter acceptance and 30-minute soak passed. Same-build GSM8K prefix-off/on was 196/196. HICONC-TP4 C64 gates passed on the pre-checkpoint-change build, but keep the default and qualified count at 32: 256-token GSM8K throughput fell from 1822 to 1692 tok/s and short outputs were flat; C64 TPOT matched AR, consistent with adaptive fallback. No C64 MTP rerun of the checkpoint-by-index implementation is claimed.",
+      "kv_cache_dtype": "auto",
+      "prefix_cache": true,
+      "max_batch_tokens": 8192,
+      "prefill_chunk_tokens": 2048,
+      "queue_depth": null,
+      "kv_memory_fraction": 0.9,
+      "status": "qualified",
+      "evidence": [
+        "docs/serving-profiles.md#tp4-concurrency-qualification-2026-10-04",
+        "docs/bundle-qwen38.md#accuracy-gate",
+        "docs/deploy-common.md#concurrency-and-prefill-policy"
+      ]
+    },
+    "tp4-ar-dcp2": {
+      "bundle_id": "qwen38.flash.v2",
+      "topology": "qwen38-flash-tp4",
+      "tensor_parallel": 4,
+      "devices_required": 4,
+      "devices": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "speculation": {
+        "mode": "fixed",
+        "tokens": 0,
+        "draft_cost": "per-token",
+        "drafter": "none"
+      },
+      "max_sequences": 32,
+      "qualified_max_sequences": null,
+      "qualification": "Experimental: tp4-ar at context-parallel size 2 (autoregressive: each sequence's K, V and QSA block keys split across the two ranks of a KV head's replica set), 43,496 pages per rank, 5,567,488 tokens. Served at 32 sequences; qual.dcp2.json's full cohort (plan step 45: teacher, long_context, spec_verify, verify_exact, prefix_exact, preemption_exact at concurrency 1 and determinism) passed on 2026-10-07. Not a release qualification: qual.json's other checks have not run at size 2.",
+      "kv_cache_dtype": "auto",
+      "prefix_cache": true,
+      "max_batch_tokens": 8192,
+      "prefill_chunk_tokens": 2048,
+      "queue_depth": null,
+      "context_parallel_size": 2,
+      "kv_memory_fraction": 0.9,
+      "status": "experimental",
+      "evidence": [
+        "docs/model-qwen38.md#context-parallelism",
+        "docs/context-parallel.md"
+      ]
+    },
+    "tp4-mtp-dcp2": {
+      "bundle_id": "qwen38.flash.v2",
+      "topology": "qwen38-flash-tp4",
+      "tensor_parallel": 4,
+      "devices_required": 4,
+      "devices": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "speculation": {
+        "mode": "adaptive",
+        "tokens": 3,
+        "draft_cost": "per-token",
+        "drafter": "mtp"
+      },
+      "max_sequences": 32,
+      "qualified_max_sequences": null,
+      "qualification": "Experimental: tp4-mtp at context-parallel size 2 (MTP with three draft tokens: each sequence's K, V and QSA block keys split across the two ranks of a KV head's replica set), 39,759 pages per rank, 5,089,152 tokens. Served at 32 sequences; qual.dcp2.json's full cohort (plan step 45: teacher, long_context, spec_verify, verify_exact, prefix_exact, preemption_exact at concurrency 1 and determinism) passed on 2026-10-07. Not a release qualification: qual.json's other checks have not run at size 2.",
+      "kv_cache_dtype": "auto",
+      "prefix_cache": true,
+      "max_batch_tokens": 8192,
+      "prefill_chunk_tokens": 2048,
+      "queue_depth": null,
+      "context_parallel_size": 2,
+      "kv_memory_fraction": 0.9,
+      "status": "experimental",
+      "evidence": [
+        "docs/model-qwen38.md#context-parallelism",
+        "docs/context-parallel.md"
+      ]
+    },
+    "tp2-ar": {
+      "bundle_id": "qwen38.flash.v2",
+      "topology": "qwen38-flash-tp2",
+      "tensor_parallel": 2,
+      "devices_required": 2,
+      "devices": [
+        0,
+        1
+      ],
+      "speculation": {
+        "mode": "fixed",
+        "tokens": 0,
+        "draft_cost": "per-token",
+        "drafter": "none"
+      },
+      "max_sequences": 32,
+      "qualified_max_sequences": null,
+      "qualification": "Experimental: narrower topology smoke only, no full concurrency qualification. Requires host n-gram placement and about 52 GB pinned host RAM.",
+      "kv_cache_dtype": "auto",
+      "prefix_cache": true,
+      "max_batch_tokens": 8192,
+      "prefill_chunk_tokens": 2048,
+      "queue_depth": null,
+      "kv_memory_fraction": 0.9,
+      "status": "experimental",
+      "evidence": [
+        "docs/topology-qwen.md",
+        "docs/deploy-common.md#concurrency-and-prefill-policy"
+      ]
+    },
+    "tp2-mtp": {
+      "bundle_id": "qwen38.flash.v2",
+      "topology": "qwen38-flash-tp2",
+      "tensor_parallel": 2,
+      "devices_required": 2,
+      "devices": [
+        0,
+        1
+      ],
+      "speculation": {
+        "mode": "adaptive",
+        "tokens": 3,
+        "draft_cost": "per-token",
+        "drafter": "mtp"
+      },
+      "max_sequences": 32,
+      "qualified_max_sequences": null,
+      "qualification": "Experimental: narrower topology smoke only, no full concurrency qualification. Requires host n-gram placement and about 52 GB pinned host RAM.",
+      "kv_cache_dtype": "auto",
+      "prefix_cache": true,
+      "max_batch_tokens": 8192,
+      "prefill_chunk_tokens": 2048,
+      "queue_depth": null,
+      "kv_memory_fraction": 0.9,
+      "status": "experimental",
+      "evidence": [
+        "docs/topology-qwen.md",
+        "docs/deploy-common.md#concurrency-and-prefill-policy"
+      ]
+    }
+  }
+}

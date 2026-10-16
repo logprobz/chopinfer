@@ -1,0 +1,10 @@
+# SHA-256 of every "models/<m>/<file> <item>" (or "examples/<e>/...") line that the
+# models' sm120_uses.txt lists hold, and no other: the other paths through sm120 modules outside them,
+# frozen 2026-10-10 (tools/model_sdk/core_policy.py, check_frozen_lines).
+# Remove a hash together with its line; never add one.
+f628d484e79580b2212477dcb379908dff33aea7318ac95ce9c359135750cb7b
+3cc9815cc3cb9b43be0ee257a623e63c8cb5565f438bfe08afdf13f308d2466a
+970fa027cb8faf79040cc93ce4c76c1e6aa2db2681980b11b4b29606137234c8
+10e6cffa875f8e7a81717153ae7cba9a7f307bd42f032add95169d399501f1f0
+2fb7ba3e71a5982fdbbca5415fa5bef49a5e88944ba84fac82af1c859ab8b3fb
+0bbdf9ed849ef5117f54f4da6773cf61cbad4120573be5a3711d3553d9aa6f32

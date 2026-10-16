@@ -1,0 +1,30 @@
+[
+  {
+    "name": "decoded_tile_mutants_sm120",
+    "source_closure_sha256": "eeda7a28ebae576eaf0faade820a56364c8d197e239ec6d4402cb809218679eb"
+  },
+  {
+    "name": "decoded_tiles_n1536_k4096_sm120",
+    "source_closure_sha256": "70b57a302288fdb84b5bdd993339b94481b3c224784b55715e6c4c55792b04bb"
+  },
+  {
+    "name": "decoded_tiles_n4096_k1536_sm120",
+    "source_closure_sha256": "a04615677ea86ab6a01eaf386a820fd0b13c379a2aa1865cecd8db82ffee3a42"
+  },
+  {
+    "name": "decoded_tiles_n4096_k3072_f32_sm120",
+    "source_closure_sha256": "9a20ac1cfb803260b3462eee2999529b6bf47ce88f329a06a8c51dc27112a8d9"
+  },
+  {
+    "name": "decoded_tiles_n4096_k4096_f32_sm120",
+    "source_closure_sha256": "6120fadfc522412c4b0306aff7cad6cab94f22611e8d22df736adb0d3f141241"
+  },
+  {
+    "name": "decoded_tiles_n4096_k512_f32_residual_sm120",
+    "source_closure_sha256": "3783da46f9bed99e2b919c1f05b672dc69fec04289a0221d2ca65b83b6e10f0f"
+  },
+  {
+    "name": "decoded_tiles_n512_k4096_sm120",
+    "source_closure_sha256": "7e649969e0f57066441b3d7e326dc9c752aa16e573f0c68600788b4b83840552"
+  }
+]

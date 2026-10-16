@@ -1,0 +1,8 @@
+{
+  "schema": "chopinfer-image-spread-vectors/v1",
+  "cases": [
+    {"name": "floor", "spread": 0.12, "mean_limit": 0.15},
+    {"name": "above former cap", "spread": 0.32, "mean_limit": 0.35},
+    {"name": "wide spread", "spread": 0.62, "mean_limit": 0.65}
+  ]
+}

@@ -1,0 +1,50 @@
+[package]
+name = "example-bundle"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+# The build compiles and locks SM120 cubins, so it lives in the sm120 module.
+build = "src/sm120/build.rs"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+sm120-helpers = ["dep:bundle-runtime"]
+cuda-probe = ["dep:kernel-build", "dep:kernel-core", "dep:kernels-sm120", "example-contract/ops"]
+precision-exercise = ["dep:runtime-bundle-sdk", "dep:kernel-build", "dep:kernel-core", "dep:kernels-sm120", "dep:projection-spec", "dep:serde_json", "example-contract/precision"]
+# Negative conformance fixture: the package still requires retirement.
+omit-retirement = []
+
+[dependencies]
+example-contract.workspace = true
+runtime-bundle-abi.workspace = true
+runtime-bundle-sdk.workspace = true
+frontend-format.workspace = true
+bundle-runtime = { workspace = true, optional = true }
+kernel-build = { workspace = true, optional = true }
+kernel-core = { workspace = true, optional = true, features = ["precision-serde"] }
+kernels-sm120 = { workspace = true, optional = true }
+projection-spec = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+
+[build-dependencies]
+runtime-bundle-sdk = { workspace = true, optional = true }
+kernel-build = { workspace = true, optional = true }
+kernel-core = { workspace = true, optional = true }
+kernels-sm120 = { workspace = true, optional = true }
+projection-spec = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+example-contract = { workspace = true, optional = true }
+
+[dev-dependencies]
+kernel-build.workspace = true
+kernel-core.workspace = true
+kernels-sm120.workspace = true
+
+[[test]]
+name = "sm120"
+path = "tests/sm120/main.rs"
+required-features = ["cuda-probe"]

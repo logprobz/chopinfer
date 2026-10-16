@@ -1,0 +1,6 @@
+{
+  "description": "Synthetic compression of accepted-only paired captures: signed error changes and rare added/removed top-one flips on identical positions.",
+  "error_changes": [-0.002, 0.001, -0.0008, 0.0005, -0.001, 0.0003, -0.0006, 0.0004],
+  "accepted_flip_offsets": [[], [], [], [], [], [], [0], []],
+  "candidate_flip_offsets": [[0], [], [], [], [], [], [], []]
+}

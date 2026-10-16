@@ -1,0 +1,140 @@
+{
+ "schema": "chop-frontend-divergences-v1",
+ "lines": [
+  {
+   "id": "no-messages",
+   "lines": [
+    43
+   ],
+   "blocked_by": "messages must contain between 1 and 4096 items",
+   "reason": "the transport refuses an empty conversation, and HF's apply_chat_template refuses it before the template"
+  }
+ ],
+ "inputs": [
+  {
+   "id": "video-parts",
+   "kind": "refused",
+   "when": [
+    "media:video_url"
+   ],
+   "outcome": {
+    "message": "video input is not supported by this server, which serves text,image",
+    "parameter": "messages"
+   },
+   "reason": "video is not served"
+  },
+  {
+   "id": "message-tools",
+   "kind": "refused",
+   "when": [
+    "message-tools:present"
+   ],
+   "outcome": {
+    "message": "invalid conversation field: message tools are not declared",
+    "parameter": "messages"
+   },
+   "reason": "the template ignores a message's tools"
+  },
+  {
+   "id": "empty-arguments",
+   "kind": "refused",
+   "when": [
+    "arguments-text:empty"
+   ],
+   "outcome": {
+    "message": "invalid JSON: EOF while parsing a value at line 1 column 0",
+    "parameter": "messages"
+   },
+   "reason": "the template skips empty argument text; the transport needs a JSON object"
+  },
+  {
+   "id": "missing-call-id",
+   "kind": "refused",
+   "when": [
+    "call-id:missing"
+   ],
+   "outcome": {
+    "message": "invalid JSON request: missing field `id` at line 1 column 272",
+    "parameter": "id"
+   },
+   "reason": "the transport requires a tool call id"
+  },
+  {
+   "id": "missing-tool-call-id",
+   "kind": "refused",
+   "when": [
+    "results:missing-id"
+   ],
+   "outcome": {
+    "message": "tool message requires tool_call_id",
+    "parameter": "messages"
+   },
+   "reason": "the transport requires a tool result's tool_call_id"
+  },
+  {
+   "id": "bare-tools",
+   "kind": "refused",
+   "when": [
+    "tools:bare"
+   ],
+   "outcome": {
+    "message": "invalid JSON request: missing field `type` at line 1 column 592",
+    "parameter": "type"
+   },
+   "reason": "the transport requires the type and function wrapper"
+  },
+  {
+   "id": "continue-tool-calls",
+   "kind": "refused",
+   "when": [
+    "ends:continue-calls"
+   ],
+   "outcome": {
+    "message": "invalid conversation field: continue_final_message requires a final assistant message without tool calls",
+    "parameter": "messages"
+   },
+   "reason": "a tool-call turn cannot be continued"
+  },
+  {
+   "id": "thinking-off-with-reasoning",
+   "kind": "no-round-trip",
+   "when": [
+    "round-trip:prefix",
+    "mode:chat"
+   ],
+   "reason": "the chat generation prompt closes an empty think block (template lines 165-166), while the history turn writes the reasoning that reaches it: reasoning, or reasoning_content on a turn with a tool_calls list, even an empty one (lines 110-146)"
+  },
+  {
+   "id": "union-arguments",
+   "kind": "no-round-trip",
+   "when": [
+    "round-trip:union"
+   ],
+   "reason": "the template writes a union-typed argument's value as its text alone (lines 137-140), so the string \"42\" and the integer 42 write the same bytes and the parser reads one type back"
+  },
+  {
+   "id": "untyped-arguments",
+   "kind": "no-round-trip",
+   "when": [
+    "round-trip:untyped"
+   ],
+   "reason": "an argument no schema types (an untyped property, a pattern or any additional property) parses as a string, so a value of another type reads back as its text"
+  },
+  {
+   "id": "delimiter-arguments",
+   "kind": "no-round-trip",
+   "when": [
+    "round-trip:delimiter"
+   ],
+   "reason": "the template writes a string argument raw (lines 137-140) without escaping, so a value that spells <parameter=, </parameter> or </function> ends the value or the call early"
+  },
+  {
+   "id": "tokenizer-normalization",
+   "kind": "no-round-trip",
+   "when": [
+    "round-trip:tokenizer"
+   ],
+   "reason": "the tokenizer normalizes text to NFC, so a decomposed character in the turn tokenizes to its composed form; the parser keeps the bytes it reads (frontend-format parameter_values.rs)"
+  }
+ ]
+}

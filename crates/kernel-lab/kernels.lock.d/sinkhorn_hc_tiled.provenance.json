@@ -1,0 +1,14 @@
+[
+  {
+    "name": "sinkhorn_hc_hc4x4096_tiled_late_wait_sm120",
+    "source_closure_sha256": "6e9980b888fc3a5486194c571922350510015bd3897076c853e947c88c7aae4e"
+  },
+  {
+    "name": "sinkhorn_hc_hc4x4096_tiled_levels_reversed_sm120",
+    "source_closure_sha256": "8f09b6faff88ad6cf7e4d437e0ecbabac7a695b2f6e3d957c932b5e62d75f75d"
+  },
+  {
+    "name": "sinkhorn_hc_hc4x4096_tiled_sm120",
+    "source_closure_sha256": "8d003fa9ed47d35a984abf7ea1fe843c9ed99906993d0fb60f86915a9fc70144"
+  }
+]

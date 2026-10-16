@@ -1,0 +1,182 @@
+{
+ "schema": "chopinfer.qwen38.teacher-texts.v1",
+ "provenance": "The frozen Qwen3.8 teacher texts: prompts.json's short teacher texts and long_4k, the long prompt the f64 oracle scores, in reference order.",
+ "prompts_sha256": "7e57dfc8803600a2f5d5a1c1f933530683d70fdd55bb29d9bd94487bd48080a3",
+ "texts": [
+  {
+   "name": "frozen0",
+   "category": "prose-frozen",
+   "prompt_token_ids_sha256": "eb80f20d4a5692b75c55f7269919ee5751aefa30129026b77d6fd0921617fa8a"
+  },
+  {
+   "name": "frozen1",
+   "category": "prose-frozen",
+   "prompt_token_ids_sha256": "e0a1aa600fc2382d850ed3d8cb3d23cbf44a0af468b516c968c7ce7b59a3dfaf"
+  },
+  {
+   "name": "frozen2",
+   "category": "prose-frozen",
+   "prompt_token_ids_sha256": "7e48e770db7a23728e716354ddd4a4f2214f98330a50f34225bcb7961d804398"
+  },
+  {
+   "name": "math_word",
+   "category": "math",
+   "prompt_token_ids_sha256": "0471fc5d7c9915cd3d710bc688551918621177f1e3a67b23c75b81cca07b3b49"
+  },
+  {
+   "name": "math_algebra",
+   "category": "math",
+   "prompt_token_ids_sha256": "53556eebfbba686c8f441b24d99dfd6469df91f0812e5350515c718500212d49"
+  },
+  {
+   "name": "math_latex",
+   "category": "math",
+   "prompt_token_ids_sha256": "7d3a7e47e495a3272d54532a55cc621f290b8c57376ed296fc04257c308782b6"
+  },
+  {
+   "name": "math_numbers",
+   "category": "math",
+   "prompt_token_ids_sha256": "a73180a8aab696def8b6d00463fa879b3e0a1e68d3f9a541264f8289ad193d7c"
+  },
+  {
+   "name": "math_probability",
+   "category": "math",
+   "prompt_token_ids_sha256": "d3d15104831cb4612815ebf1e25e314da71620201216f55352e9bb8ac4701fa9"
+  },
+  {
+   "name": "code_python",
+   "category": "code",
+   "prompt_token_ids_sha256": "5703d3726d89519db888214dcb82b6210c7101f3e172c344d107b7da25b47f69"
+  },
+  {
+   "name": "code_rust",
+   "category": "code",
+   "prompt_token_ids_sha256": "622c62403f79855adda66cc3eb682a73ad23d908d6f7785227ef18bd8ebae974"
+  },
+  {
+   "name": "code_cuda",
+   "category": "code",
+   "prompt_token_ids_sha256": "adb12108353c0375b8a74048d79854a956ef3e714f57d72d51c5584295ca239e"
+  },
+  {
+   "name": "code_sql_json",
+   "category": "code",
+   "prompt_token_ids_sha256": "4c64750a96bb6424b2e94483ec9011c53c41708331fba28a570a36d159834d6e"
+  },
+  {
+   "name": "code_shell",
+   "category": "code",
+   "prompt_token_ids_sha256": "b30d0bdb49992e9187db063c5c042be98bd9d53abe9ab270d9d2e13c4cd21500"
+  },
+  {
+   "name": "prose_science",
+   "category": "prose",
+   "prompt_token_ids_sha256": "386e1a619feb1556e98f306d921f9446dbde72ad4bcf175fd99a347e40cb4316"
+  },
+  {
+   "name": "prose_history",
+   "category": "prose",
+   "prompt_token_ids_sha256": "31c5e26225a374fdc1b1c331700a61204f806fa8480c7b53a74f2c5c29ba4b42"
+  },
+  {
+   "name": "prose_story",
+   "category": "prose",
+   "prompt_token_ids_sha256": "807563f120b476102d53dda39a8f3ee88d123cd4445ee1de04329a0808fa2e05"
+  },
+  {
+   "name": "prose_instructions",
+   "category": "prose",
+   "prompt_token_ids_sha256": "365313ae91857685d1a5b47463006016793a14165160f7aecdf53888977ae782"
+  },
+  {
+   "name": "prose_news",
+   "category": "prose",
+   "prompt_token_ids_sha256": "3509a162c3a8b369531840ba86b2f20a324c87a8ab7c8366305fec0667e9f76c"
+  },
+  {
+   "name": "zh_prose",
+   "category": "multilingual",
+   "prompt_token_ids_sha256": "26eca7175e74c9661b4d59e58a2f026f09938ec7472ff4be1ebbd61b2d1110c5"
+  },
+  {
+   "name": "zh_math",
+   "category": "multilingual",
+   "prompt_token_ids_sha256": "91b63517612c8aedaa15de6e9839412645ddf70a2df55c868733fffcfee74923"
+  },
+  {
+   "name": "zh_tech",
+   "category": "multilingual",
+   "prompt_token_ids_sha256": "46cadba98645934823e14f3db426b2f4ee49bf7edf7952596673835272a9cc18"
+  },
+  {
+   "name": "ja_prose",
+   "category": "multilingual",
+   "prompt_token_ids_sha256": "a3c89146634b39bea115e0493c712a6c1f360a953ea067950c936d49e5ccc2dc"
+  },
+  {
+   "name": "ko_prose",
+   "category": "multilingual",
+   "prompt_token_ids_sha256": "f21494447019989328f921a2d9281caa516743076ce2fc135d35765d5e5389a8"
+  },
+  {
+   "name": "fr_prose",
+   "category": "multilingual",
+   "prompt_token_ids_sha256": "79273aa74305441b8c1aae767882839c13a7f8b3e9ed5f979f43baaee34db66e"
+  },
+  {
+   "name": "de_prose",
+   "category": "multilingual",
+   "prompt_token_ids_sha256": "62ba1876137d72854c3d823d0fac0727cfc613534a0cab173ddf2607b492393e"
+  },
+  {
+   "name": "es_prose",
+   "category": "multilingual",
+   "prompt_token_ids_sha256": "76bbaede76f7617a3446a9892acb5da5e50e4ae15538161a4cccb496894fdbce"
+  },
+  {
+   "name": "ru_prose",
+   "category": "multilingual",
+   "prompt_token_ids_sha256": "8596ebc753078bca820c134e7cb1de0ec8f79d31f98104dd188d54b450096fad"
+  },
+  {
+   "name": "chat_system",
+   "category": "chat",
+   "prompt_token_ids_sha256": "719e62c8ade465d274b943071b4e4cfa824c983ad1cc35e2079fd2156deafb15"
+  },
+  {
+   "name": "chat_thinking",
+   "category": "chat",
+   "prompt_token_ids_sha256": "5d80ea58a2278357e8719986d8e56afb9f88730f9f50f05f18b88c925072d972"
+  },
+  {
+   "name": "chat_effort_low",
+   "category": "chat",
+   "prompt_token_ids_sha256": "beab4e5e9600c81e5493f4a1426f54cbdded010e56f032325270543a6b401aee"
+  },
+  {
+   "name": "chat_multi_turn",
+   "category": "chat",
+   "prompt_token_ids_sha256": "ccf752859ec4e9fd8f4a292408748ca2648b35abac3321d4e6fb2dcce80ca69d"
+  },
+  {
+   "name": "chat_zh",
+   "category": "chat",
+   "prompt_token_ids_sha256": "83ec7b1ffa8cd461a85b566b4a8f94f46f9eaded43026d9942c0a4c8bd534432"
+  },
+  {
+   "name": "chat_tool_call",
+   "category": "chat",
+   "prompt_token_ids_sha256": "703b19d173651db8f711bc1eee26cbc879fd8664b1abf99c81060e4638eb6287"
+  },
+  {
+   "name": "chat_document_boundary",
+   "category": "chat",
+   "prompt_token_ids_sha256": "11d83ade43afbfede62c891638f108b800a3cb3ff9f4eb8193a49d8230bd6e83"
+  },
+  {
+   "name": "long_4k",
+   "category": "long",
+   "prompt_token_ids_sha256": "81512962864d30536045731f60b54b69591bb55225aa2afc20dab3209541f52c"
+  }
+ ]
+}

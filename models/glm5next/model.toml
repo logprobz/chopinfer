@@ -1,0 +1,95 @@
+# Model inventory, checked by tests/bundle-boundary.sh (tests/model_inventory.py).
+# Each role is the crate in the directory of that name. List every bin and
+# cdylib target exactly; libraries are not listed.
+schema = "chopinfer-model-inventory-v1"
+# CPU CI reads CHOPINFER_GLM5NEXT_CHECKPOINT: zai-org/GLM-5.3-Flash at
+# revision eb9eb208eb0d988989d07a6a12d0fdeb5f52574a (checkpoint-files.json).
+# CHOPINFER_GLM5NEXT_NVFP4_CHECKPOINT is a second checkpoint of the same
+# geometry: local-inference-lab/GLM-5.3-Flash-NVFP4 at revision
+# 175ae8ce3b5af842b0d0140dbeb43e9cfc557c49 (checkpoint-files-nvfp4.json).
+# CHOPINFER_GLM5NEXT_NVIDIA_NVFP4_CHECKPOINT is a third:
+# nvidia/GLM-5.3-Flash-NVFP4 at revision
+# da920bb0b9f4a06727223a349e55468e38352348 (checkpoint-files-nvidia-nvfp4.json).
+checkpoint_env = "GLM5NEXT"
+
+[bundle]
+package = "bundle-glm5next"
+cdylib = ["bundle_glm5next"]
+
+[compiler]
+package = "model-glm5next"
+bin = ["chopinfer-model-glm5next"]
+
+[contract]
+package = "model-glm5next-contract"
+
+# Released after its full requalification through the release preview
+# (docs/model-glm5next.md, "Release qualification"); the released-model
+# facts apply (tests/test_model_inventory.py, tests/test_serve_profiles.py,
+# tools/qual/qual_test_config.py). The release ships the helper and the
+# bundle; GLM loads checkpoints directly and has no explicit packaging bin.
+[release]
+enabled = true
+bins = ["chopinfer-model-glm5next"]
+cdylibs = ["bundle_glm5next"]
+
+[contributor]
+roots = ["model-glm5next"]
+fixtures = [
+  "models/glm5next/contract/fixtures/config.json",
+  "models/glm5next/contract/fixtures/nvfp4-config.json",
+  "models/glm5next/contract/fixtures/nvidia-nvfp4-config.json",
+]
+
+[[contributor.tests]]
+name = "compile GLM fixtures"
+phase = "compile"
+package = "model-glm5next"
+lib = true
+compile = true
+
+[[contributor.tests]]
+phase = "config"
+package = "model-glm5next"
+lib = true
+cases = [
+  { name = "pinned config routes at TP4", case = "preparation::tests::probe_routes_the_pinned_config_at_tp4" },
+  { name = "another family and unlisted geometry refused", case = "preparation::tests::probe_refuses_another_family_and_an_unlisted_geometry_before_headers" },
+  { name = "layout selects its serving profile", case = "preparation::tests::the_checkpoint_layout_selects_its_serving_profile" },
+]
+
+[[contributor.tests]]
+name = "header refusals"
+phase = "mapping"
+package = "model-glm5next"
+lib = true
+case = "checkpoint_headers::tests::refuses_what_direct_preparation_refuses"
+
+[[contributor.tests]]
+phase = "package_including_verify"
+package = "model-glm5next"
+lib = true
+cases = [
+  { name = "manifest declares state, granule, topology and options", case = "package::tests::the_manifest_declares_state_granule_topology_and_options" },
+  { name = "profiles within the package maximum", case = "package::tests::profiles_serve_their_draft_count_within_the_package_maximum" },
+]
+
+[checks]
+reference_tests = ["test_reference.py", "test_encoder_reference.py", "test_nvfp4_reference.py", "test_reference_latent_fp8.py", "test_reference_latent_kv.py", "test_frontend_corpus.py"]
+
+[[checks.profile_targets]]
+package = "model-glm5next"
+kind = "bin"
+target = "chopinfer-model-glm5next"
+
+[kernel_lab]
+catalog = true
+
+# tests/model-geometry-recipe.sh: one `--contract` leg per fixture under
+# fixtures/glm5next/geometries/. The bundle program and its cubins are built
+# for the flash geometry at TP4 (`Shape::TP4`), so an added geometry stops at
+# the contract stage (docs/model-glm5next.md, "Geometries").
+[geometry_recipe]
+stage = "contract"
+fixtures = ["synthetic-small"]
+architecture = "GlmGeometryRecipeForConditionalGeneration"

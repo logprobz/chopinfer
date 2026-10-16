@@ -1,0 +1,25 @@
+[package]
+name = "qwen38-load-proto"
+description = "Direct-loading CPU checks and benchmarks: Qwen3.8 (qwen38-load-direct) and MiMo V2.6 Flash (mimo26-load-direct)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+model-qwen38 = { path = "../../models/qwen38/compiler" }
+# The direct path: the bundle's planner and the host's executor.
+model-qwen38-contract.workspace = true
+model-mimo26-contract.workspace = true
+runtime-bundle.workspace = true
+runtime-bundle-abi.workspace = true
+runtime-host = { workspace = true, features = ["fake-host-services"] }
+kernel-core = { workspace = true, features = ["precision-serde"] }
+model-compiler-sdk.workspace = true
+runtime-weights.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true

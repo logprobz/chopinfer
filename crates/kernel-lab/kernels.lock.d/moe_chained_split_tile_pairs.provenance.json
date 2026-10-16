@@ -1,0 +1,10 @@
+[
+  {
+    "name": "chop_moe_chain_lab_split_fp8block_tp",
+    "source_closure_sha256": "9b3b300171a7c5dae883c12e2c90d3207046b3dfbd30cc471d40b99e96f092f4"
+  },
+  {
+    "name": "chop_moe_chain_lab_split_tp_mutants",
+    "source_closure_sha256": "4e514d182f29c58a37de379cb6f901f9236d71e2387f5c94643ceb1ead08c86b"
+  }
+]

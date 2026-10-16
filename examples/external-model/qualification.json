@@ -1,0 +1,61 @@
+{
+  "schema": "chopinfer-release-gates/v1",
+  "model": "example/stateful",
+  "profiles": {
+    "quick": {
+      "checks": [
+        "api"
+      ]
+    },
+    "full": {
+      "checks": [
+        "api"
+      ]
+    }
+  },
+  "checks": [
+    {
+      "id": "api",
+      "module": "api",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--mechanics-only",
+        "--timeout",
+        "10"
+      ],
+      "timeout_seconds": 120,
+      "receipt": "*-api.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "model-owned API mechanics declaration"
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Synthetic CPU mechanics only. No model accuracy or production qualification."
+  ],
+  "receipts": {
+    "env": "CHOPINFER_DATA",
+    "path": "qual/external-example"
+  },
+  "inputs": {
+    "api_samples": "fixtures/api-samples.json",
+    "chat_renders": "fixtures/chat-renders.json",
+    "frontend": {
+      "env": "CHOPINFER_EXAMPLE_PACKAGE",
+      "path": "frontend.json"
+    }
+  },
+  "qualification": {
+    "mechanics_only": true
+  }
+}

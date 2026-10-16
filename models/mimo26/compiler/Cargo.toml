@@ -1,0 +1,45 @@
+[package]
+name = "model-mimo26"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# The helper's tests cover registry admission and package emission.
+[[bin]]
+name = "chopinfer-model-mimo26"
+path = "src/bin/chopinfer-model-mimo26.rs"
+
+[dependencies]
+projection-spec.workspace = true
+model-mimo26-contract.workspace = true
+runtime-frontend-contract.workspace = true
+runtime-tokenizer.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+kernel-core.workspace = true
+kernels-sm120.workspace = true
+runtime-weights.workspace = true
+sha2.workspace = true
+libc.workspace = true
+model-compiler-sdk.workspace = true
+runtime-bundle.workspace = true
+runtime-bundle-abi.workspace = true
+
+[dev-dependencies]
+runtime-server.workspace = true
+unicode-normalization.workspace = true
+frontend-format = { workspace = true, features = ["test-support"] }
+runtime-frontend = { workspace = true, features = ["test-support"] }
+runtime-grammar.workspace = true
+runtime-host = { workspace = true, features = ["test-support"] }
+runtime-media.workspace = true
+
+[lints]
+workspace = true
+
+# Tests that name kernels_sm120 live under tests/sm120 and keep their names.
+[[test]]
+name = "view_layouts"
+path = "tests/sm120/view_layouts.rs"

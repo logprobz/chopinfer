@@ -1,0 +1,18 @@
+{
+  "note": "SHA-256 of what each retired tools/qual capture (teacher.py, and api.py and structured.py outside mechanics runs) wrote against these tests' fake servers before chopinfer eval became their only capture: the canonical JSON of the requests the server read and the comparable receipt (and the teacher's compact capture), as each test's `invariant` forms it. Each test compares eval's capture with its entry.",
+  "captures": {
+    "api/accepts": "36ab259aa85cb09f2c557d64723c9e629bdc1fb8c25e9155f2f539001ff5cba7",
+    "api/answers": "c07ae9598dfcb963c7d52c68938324f8374cfd5e85284f4103becdff19d9fdaf",
+    "api/pass": "29a3851a05b79164f425a0f890bff980a7881b55ef2b62fefd5c501a3a9b50cb",
+    "api/reasons": "3989911eb424f193f87d96e72a47458d7a7ad4af422fbc9202e068ac480ffb85",
+    "api/tokenizer": "6e75b14080a579324cd48e32fdf174570a006c2fde890fcc40d03deae4788ab8",
+    "structured/constants": "6cb107eeb477cdf9b4718c2253d3c4b6d816902ac0d80e74c0019623cc8794b8",
+    "structured/defaults": "8ccfecc9b2583cd660f190ff5c2c5f456fdd15a263d8aa824117fb74e12bf3d9",
+    "structured/mixed": "53e3f1d36b4395394b4256e7618bd475eeaaa889f01791367cfd7c08f2b5204e",
+    "structured/pass": "e300e0bc20ef9af59cb64d9be6802aec4db9b46dd73635b489d867fa26548bd5",
+    "structured/reasons": "3d1ac475332a1b325a0d71785b8227039d76526b38933aad2f0085ac1e05d6a4",
+    "teacher/captured": "e05778abaa1e6c8c0ede93512cc310609cff26d82759dbddd9dc04772908e81e",
+    "teacher/logged": "633449feecad0d6c02959bc76641a7e7177965a869270f7c6335093d6c7556d7",
+    "teacher/same": "0a5e8fbfc90d90178ea095bc8238e09d78f9a00163090bdd0cda9eaa0bda23a2"
+  }
+}

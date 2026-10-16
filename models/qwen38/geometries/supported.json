@@ -1,0 +1,245 @@
+{
+  "aliases": {
+    "architecture": [
+      "Qwen4ExpForConditionalGeneration",
+      "Qwen38FlashForConditionalGeneration",
+      "Qwen38FlashNextForConditionalGeneration",
+      "Qwen3_8FlashNextForConditionalGeneration"
+    ],
+    "model_type": [
+      "qwen4_exp",
+      "qwen38_flash",
+      "qwen38_flash_next"
+    ],
+    "text_type": [
+      "qwen4_exp_text",
+      "qwen38_flash_text"
+    ],
+    "vision_type": [
+      "qwen4_exp",
+      "qwen4_exp_vision",
+      "qwen3_5_vision"
+    ]
+  },
+  "geometries": [
+    {
+      "id": "flash",
+      "file": "flash.json",
+      "kernel_tag": "qwen38",
+      "pinned_names": true,
+      "tuning": true,
+      "limits": {
+        "text_config.indexer_budget": 2048
+      }
+    }
+  ],
+  "runtime_fields": {
+    "text_config.indexer_budget": {
+      "overridable": false,
+      "reason": "QSA kernels compile the keep count",
+      "minimum": 1
+    }
+  },
+  "semantic_rules": {
+    "text_config.hidden_act": [
+      "silu"
+    ],
+    "text_config.rope_parameters.rope_type": [
+      "default"
+    ],
+    "text_config.rope_parameters.mrope_interleaved": [
+      true
+    ],
+    "text_config.output_gate_type": [
+      "sigmoid"
+    ],
+    "text_config.mamba_ssm_dtype": [
+      "float32"
+    ],
+    "vision_config.hidden_act": [
+      "gelu_pytorch_tanh"
+    ],
+    "text_config.layer_types": [
+      "linear_attention",
+      "full_attention"
+    ],
+    "text_config.mtp.layer_types": [
+      "full_attention"
+    ]
+  },
+  "engine_domain": {
+    "text_config.indexer_kv_heads": {
+      "values": [
+        1
+      ],
+      "reason": "sparse indexer requires one raw key head",
+      "source": "crates/kernels-sm120/cuda/attention/sparse_indexer.cuh",
+      "source_text": "static constexpr int width = (Heads + 1) * Dim;"
+    },
+    "text_config.indexer_head_dim": {
+      "values": [
+        128
+      ],
+      "reason": "sparse indexer requires head dim 128",
+      "source": "crates/kernels-sm120/cuda/attention/sparse_indexer.cuh",
+      "source_text": "static_assert((Heads == 4 || Heads == 8 || Heads == 16) && Dim == 128 &&"
+    },
+    "text_config.linear_key_head_dim": {
+      "values": [
+        128
+      ],
+      "reason": "linear attention requires head dim 128: dim 256 prefill scan needs 157480 shared bytes, exceeding 101376",
+      "source": "crates/kernels-sm120/cuda/linear/delta_prefill.cuh",
+      "source_text": "static_assert(Dim == 128 && kPrefillThreads == 256 && kScanRows == 16);"
+    },
+    "text_config.linear_value_head_dim": {
+      "values": [
+        128
+      ],
+      "reason": "linear attention instantiates one key/value dim and requires 128",
+      "source": "crates/kernels-sm120/cuda/linear/delta.cuh",
+      "source_text": "static_assert(Dim == 128 && ValueHeads % KeyHeads == 0);"
+    },
+    "text_config.indexer_n_heads": {
+      "values": [
+        4,
+        8,
+        16
+      ],
+      "reason": "sparse indexer requires heads in {4,8,16}",
+      "source": "crates/kernels-sm120/src/attention/qualification.rs",
+      "source_text": "pub const INDEX_HEADS: &[u32] = &[4, 8, 16];"
+    },
+    "text_config.head_dim": {
+      "values": [
+        128,
+        256
+      ],
+      "reason": "sparse and gated attention require head dim in {128,256}",
+      "source": "crates/kernels-sm120/cuda/attention/sparse.cuh",
+      "source_text": "static_assert((Dim == 128 || Dim == 256) && Page % Block == 0);"
+    },
+    "text_config.linear_conv_kernel_dim": {
+      "min": 2,
+      "max": 8,
+      "reason": "causal convolution requires taps in 2..=8"
+    },
+    "text_config.ple_conv_kernel_size": [
+      {
+        "min": 2,
+        "max": 8,
+        "reason": "causal convolution requires taps in 2..=8"
+      },
+      {
+        "values": [
+          4
+        ],
+        "phase": "after_row_shapes",
+        "reason": "PLE rows require 4 convolution taps",
+        "source": "crates/kernels-sm120/src/row/hyper_connection.rs",
+        "source_text": "kernel: 4,"
+      }
+    ],
+    "text_config.hc_count": {
+      "values": [
+        4
+      ],
+      "phase": "after_row_widths",
+      "reason": "hyper-connection rows require 4 streams",
+      "source": "crates/kernels-sm120/src/row/hyper_connection.rs",
+      "source_text": "self.streams != 4"
+    },
+    "text_config.hc_lowrank": [
+      {
+        "min": 16,
+        "max": 512,
+        "multiple_of": 16,
+        "reason": "fused GEMM requires K in 16..=512 and divisible by 16",
+        "source": "models/qwen38/bundle/cuda/gemm/qwen38.cuh",
+        "source_text": "static_assert(K % 16 == 0 && K <= 512,"
+      },
+      {
+        "values": [
+          320
+        ],
+        "phase": "after_row_widths",
+        "reason": "hyper-connection rows require rank 320",
+        "source": "crates/kernels-sm120/src/row/hyper_connection.rs",
+        "source_text": "self.rank != 320"
+      }
+    ],
+    "text_config.num_experts_per_tok": {
+      "max": 32,
+      "reason": "parallel route requires top-k in 1..=32",
+      "source": "crates/kernels-sm120/cuda/moe/route_parallel.cuh",
+      "source_text": "static_assert(Experts % 32 == 0 && TopK > 0 && TopK <= 32);"
+    },
+    "text_config.ple_layer_ids": {
+      "max_length": 1,
+      "reason": "bundle lowering supports at most one PLE layer"
+    },
+    "text_config.ngram_size": {
+      "values": [
+        3
+      ],
+      "phase": "after_row_widths",
+      "reason": "ngram rows require order 3",
+      "source": "crates/kernels-sm120/src/row/hyper_connection.rs",
+      "source_text": "self.orders != 3"
+    },
+    "text_config.heads_per_ngram": {
+      "values": [
+        8
+      ],
+      "phase": "after_row_widths",
+      "reason": "ngram rows require 8 heads per order",
+      "source": "crates/kernels-sm120/src/row/hyper_connection.rs",
+      "source_text": "self.heads_per_order != 8"
+    },
+    "text_config.max_position_embeddings": {
+      "multiple_of": 64,
+      "phase": "after_qsa_context",
+      "reason": "context must be a multiple of the 64-token KV page"
+    },
+    "text_config.hidden_size": {
+      "multiple_of": 4,
+      "phase": "after_linear_groups",
+      "reason": "must be positive and divisible by served rank counts 2 and 4"
+    },
+    "text_config.vocab_size": {
+      "multiple_of": 4,
+      "phase": "after_linear_groups",
+      "reason": "must be positive and divisible by served rank counts 2 and 4"
+    },
+    "text_config.linear_num_key_heads": {
+      "multiple_of": 4,
+      "phase": "after_linear_groups",
+      "reason": "must be positive and divisible by served rank counts 2 and 4"
+    },
+    "text_config.linear_num_value_heads": {
+      "multiple_of": 4,
+      "phase": "after_linear_groups",
+      "reason": "must be positive and divisible by served rank counts 2 and 4"
+    },
+    "text_config.num_attention_heads": {
+      "multiple_of": 4,
+      "phase": "after_linear_groups",
+      "reason": "must be positive and divisible by served rank counts 2 and 4"
+    },
+    "text_config.num_experts": {
+      "multiple_of": 4,
+      "phase": "after_linear_groups",
+      "reason": "must be positive and divisible by served rank counts 2 and 4"
+    },
+    "text_config.ple_embed_dim": {
+      "multiple_of": 4,
+      "phase": "after_linear_groups",
+      "reason": "must be positive and divisible by served rank counts 2 and 4"
+    }
+  },
+  "quantization_recipe_classes": [
+    "fp8",
+    "modelopt"
+  ],
+  "quant_method_default": "modelopt"
+}

@@ -1,0 +1,31 @@
+{
+  "schema": "chopinfer-deployment-policy-v1",
+  "bundle_id": "mimo.v26.flash.v2",
+  "knob_prefixes": ["MIMO_", "ENCODER_"],
+  "drafters": ["dflash", "mtp"],
+  "paths": ["ENCODER_CAPTURE_DIR"],
+  "booleans": [
+    "ENCODER_CAPTURE_ALL_LAYERS",
+    "MIMO_F32_LOGITS",
+    "MIMO_VERIFY_EAGER",
+    "MIMO_MTP_EAGER",
+    "MIMO_ATTENTION_FOLD",
+    "MIMO_PREFILL_OVERLAP"
+  ],
+  "presence": ["MIMO_TRACE_LAUNCHES"],
+  "numbers": {
+    "MIMO_OVERLAP_RESERVED_SMS": [0, 187],
+    "MIMO_OVERLAP_COMM_CTAS": [16, 1128],
+    "MIMO_OVERLAP_MIN_TOKENS": [0, 4294967295]
+  },
+  "multiples": {"MIMO_OVERLAP_COMM_CTAS": 8},
+  "drafter_only": {"MIMO_MTP_EAGER": ["mtp"]},
+  "disabled_by": [
+    {
+      "variable": "MIMO_PREFILL_OVERLAP",
+      "value": "0",
+      "prefix": "MIMO_OVERLAP_",
+      "reason": "prefill overlap is disabled"
+    }
+  ]
+}

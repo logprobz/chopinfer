@@ -1,0 +1,12 @@
+schema = "chopinfer-model-validation-v1"
+profiles = "profiles.json"
+capabilities = []
+locks = []
+kernel_commands = []
+
+[[rules]]
+paths = ["compiler/*"]
+class = "packing"
+[[rules]]
+paths = ["bundle/*", "contract/*", "geometries/*"]
+class = "program"

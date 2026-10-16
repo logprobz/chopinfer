@@ -1,0 +1,47 @@
+[package]
+name = "bundle-glm5next"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+# The build compiles and locks SM120 cubins, so it lives in the sm120 module.
+build = "src/sm120/build.rs"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+# CHOPINFER_TAPS_DIR: the encoder taps (`src/taps.rs`), diagnostic bundles
+# only.
+diagnostic-taps = []
+
+[dependencies]
+encoder-spec.workspace = true
+model-glm5next-contract.workspace = true
+bundle-runtime.workspace = true
+frontend-format.workspace = true
+runtime-bundle-abi.workspace = true
+runtime-bundle-sdk.workspace = true
+kernel-build.workspace = true
+kernel-core.workspace = true
+kernels-sm120.workspace = true
+
+[build-dependencies]
+kernel-build.workspace = true
+model-glm5next-contract.workspace = true
+
+[dev-dependencies]
+bundle-runtime = { workspace = true, features = ["test-support"] }
+model-glm5next-contract = { workspace = true, features = ["test-support"] }
+runtime-host.workspace = true
+runtime-kv.workspace = true
+serde_json.workspace = true
+
+# Tests that name SM120 items live under tests/sm120 and keep their names.
+[[test]]
+name = "encoder_catalog_stability"
+path = "tests/sm120/encoder_catalog_stability.rs"
+
+[lints]
+workspace = true

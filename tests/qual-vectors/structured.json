@@ -1,0 +1,3598 @@
+{
+ "kind": "structured",
+ "schema": "chopinfer-qual-vectors/v1",
+ "vectors": [
+  {
+   "check": {
+    "rules": [
+     {
+      "op": "eq",
+      "path": [
+       "passed"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     },
+     {
+      "op": "ge",
+      "path": [
+       "summary",
+       "overall",
+       "validity_rate"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": 1.0
+     },
+     {
+      "op": "eq",
+      "path": [
+       "summary",
+       "overall",
+       "refused"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": 0
+     },
+     {
+      "op": "eq",
+      "path": [
+       "summary",
+       "overall",
+       "truncated"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": 0
+     }
+    ]
+   },
+   "covers": [],
+   "expected": {
+    "metrics": {
+     "passed": true,
+     "settings": {
+      "cases": [
+       "chat_json_object",
+       "chat_json_schema_strict",
+       "chat_json_schema_loose",
+       "chat_so_json",
+       "chat_so_choice",
+       "chat_so_regex",
+       "chat_so_json_object",
+       "completion_so_json",
+       "completion_json_schema",
+       "tool_required",
+       "tool_named",
+       "reasoning_json_schema"
+      ],
+      "max_tokens": 512,
+      "reasoning_max_tokens": 4096,
+      "repeat": 1,
+      "seed": null,
+      "stream": true,
+      "temperature": 1.0
+     },
+     "summary": {
+      "cases": {
+       "chat_json_object": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_json_object+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_json_schema_loose": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_json_schema_loose+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_json_schema_strict": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_json_schema_strict+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_so_choice": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_so_choice+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_so_json": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_so_json+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_so_json_object": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_so_json_object+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_so_regex": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_so_regex+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "completion_json_schema": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "completion_json_schema+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "completion_so_json": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "completion_so_json+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "reasoning_json_schema": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "reasoning_json_schema+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "tool_named": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "tool_named+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "tool_required": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "tool_required+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       }
+      },
+      "overall": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 24,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      }
+     }
+    },
+    "status": "pass"
+   },
+   "name": "pass",
+   "receipt": {
+    "check": "structured",
+    "errors": [],
+    "mechanics_only": false,
+    "passed": true,
+    "rows": [
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_object",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_object+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_schema_strict",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_schema_strict+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_schema_loose",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_schema_loose+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_json",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_json+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_choice",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_choice+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_regex",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_regex+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_json_object",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_json_object+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "completion_so_json",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "completion_so_json+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "completion_json_schema",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "completion_json_schema+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "tool_required",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "tool_required+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "tool_named",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "tool_named+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "reasoning_json_schema",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "reasoning_json_schema+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     }
+    ],
+    "schema": "chopinfer-qualification/v1",
+    "settings": {
+     "cases": [
+      "chat_json_object",
+      "chat_json_schema_strict",
+      "chat_json_schema_loose",
+      "chat_so_json",
+      "chat_so_choice",
+      "chat_so_regex",
+      "chat_so_json_object",
+      "completion_so_json",
+      "completion_json_schema",
+      "tool_required",
+      "tool_named",
+      "reasoning_json_schema"
+     ],
+     "max_tokens": 512,
+     "reasoning_max_tokens": 4096,
+     "repeat": 1,
+     "seed": null,
+     "stream": true,
+     "temperature": 1.0
+    },
+    "skipped": [],
+    "summary": {
+     "cases": {
+      "chat_json_object": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_json_object+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_json_schema_loose": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_json_schema_loose+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_json_schema_strict": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_json_schema_strict+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_choice": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_choice+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_json": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_json+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_json_object": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_json_object+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_regex": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_regex+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "completion_json_schema": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "completion_json_schema+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "completion_so_json": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "completion_so_json+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "reasoning_json_schema": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "reasoning_json_schema+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "tool_named": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "tool_named+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "tool_required": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "tool_required+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      }
+     },
+     "overall": {
+      "failed": 0,
+      "latency_p50_seconds": 0.5,
+      "latency_p90_seconds": 0.5,
+      "mean_tokens_per_second": 20.0,
+      "passed": 24,
+      "refused": 0,
+      "truncated": 0,
+      "validity_rate": 1.0
+     }
+    }
+   },
+   "reference": null
+  },
+  {
+   "check": {
+    "rules": [
+     {
+      "op": "eq",
+      "path": [
+       "passed"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     },
+     {
+      "op": "ge",
+      "path": [
+       "summary",
+       "overall",
+       "validity_rate"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": 1.0
+     },
+     {
+      "op": "eq",
+      "path": [
+       "summary",
+       "overall",
+       "refused"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": 0
+     },
+     {
+      "op": "eq",
+      "path": [
+       "summary",
+       "overall",
+       "truncated"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": 0
+     }
+    ]
+   },
+   "covers": [],
+   "expected": {
+    "error": "threshold predicate failed",
+    "metrics": {
+     "passed": true,
+     "settings": {
+      "cases": [
+       "chat_json_object",
+       "chat_json_schema_strict",
+       "chat_json_schema_loose",
+       "chat_so_json",
+       "chat_so_choice",
+       "chat_so_regex",
+       "chat_so_json_object",
+       "completion_so_json",
+       "completion_json_schema",
+       "tool_required",
+       "tool_named",
+       "reasoning_json_schema"
+      ],
+      "max_tokens": 512,
+      "reasoning_max_tokens": 4096,
+      "repeat": 1,
+      "seed": null,
+      "stream": true,
+      "temperature": 1.0
+     },
+     "summary": {
+      "cases": {
+       "chat_json_object": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_json_object+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_json_schema_loose": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_json_schema_loose+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 0,
+        "refused": 0,
+        "truncated": 1,
+        "validity_rate": null
+       },
+       "chat_json_schema_strict": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_json_schema_strict+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_so_choice": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_so_choice+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_so_json": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_so_json+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_so_json_object": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_so_json_object+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_so_regex": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_so_regex+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "completion_json_schema": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "completion_json_schema+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "completion_so_json": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "completion_so_json+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "reasoning_json_schema": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "reasoning_json_schema+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "tool_named": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "tool_named+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "tool_required": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "tool_required+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       }
+      },
+      "overall": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 23,
+       "refused": 0,
+       "truncated": 1,
+       "validity_rate": 1.0
+      }
+     }
+    },
+    "status": "fail"
+   },
+   "name": "fail: a truncated output",
+   "receipt": {
+    "check": "structured",
+    "errors": [],
+    "mechanics_only": false,
+    "passed": true,
+    "rows": [
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_object",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_object+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_schema_strict",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_schema_strict+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_schema_loose",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "length",
+      "latency_seconds": 0.5,
+      "name": "chat_json_schema_loose+stream",
+      "status": "truncated",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_json",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_json+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_choice",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_choice+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_regex",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_regex+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_json_object",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_json_object+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "completion_so_json",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "completion_so_json+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "completion_json_schema",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "completion_json_schema+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "tool_required",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "tool_required+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "tool_named",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "tool_named+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "reasoning_json_schema",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "reasoning_json_schema+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     }
+    ],
+    "schema": "chopinfer-qualification/v1",
+    "settings": {
+     "cases": [
+      "chat_json_object",
+      "chat_json_schema_strict",
+      "chat_json_schema_loose",
+      "chat_so_json",
+      "chat_so_choice",
+      "chat_so_regex",
+      "chat_so_json_object",
+      "completion_so_json",
+      "completion_json_schema",
+      "tool_required",
+      "tool_named",
+      "reasoning_json_schema"
+     ],
+     "max_tokens": 512,
+     "reasoning_max_tokens": 4096,
+     "repeat": 1,
+     "seed": null,
+     "stream": true,
+     "temperature": 1.0
+    },
+    "skipped": [],
+    "summary": {
+     "cases": {
+      "chat_json_object": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_json_object+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_json_schema_loose": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_json_schema_loose+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 0,
+       "refused": 0,
+       "truncated": 1,
+       "validity_rate": null
+      },
+      "chat_json_schema_strict": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_json_schema_strict+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_choice": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_choice+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_json": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_json+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_json_object": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_json_object+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_regex": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_regex+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "completion_json_schema": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "completion_json_schema+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "completion_so_json": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "completion_so_json+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "reasoning_json_schema": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "reasoning_json_schema+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "tool_named": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "tool_named+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "tool_required": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "tool_required+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      }
+     },
+     "overall": {
+      "failed": 0,
+      "latency_p50_seconds": 0.5,
+      "latency_p90_seconds": 0.5,
+      "mean_tokens_per_second": 20.0,
+      "passed": 23,
+      "refused": 0,
+      "truncated": 1,
+      "validity_rate": 1.0
+     }
+    }
+   },
+   "reference": null
+  },
+  {
+   "check": {
+    "rules": [
+     {
+      "op": "eq",
+      "path": [
+       "passed"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     },
+     {
+      "op": "ge",
+      "path": [
+       "summary",
+       "overall",
+       "validity_rate"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": 1.0
+     },
+     {
+      "op": "eq",
+      "path": [
+       "summary",
+       "overall",
+       "refused"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": 0
+     },
+     {
+      "op": "eq",
+      "path": [
+       "summary",
+       "overall",
+       "truncated"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": 0
+     }
+    ]
+   },
+   "covers": [],
+   "expected": {
+    "error": "threshold predicate failed",
+    "metrics": {
+     "passed": true,
+     "settings": {
+      "cases": [
+       "chat_json_object",
+       "chat_json_schema_strict",
+       "chat_json_schema_loose",
+       "chat_so_json",
+       "chat_so_choice",
+       "chat_so_regex",
+       "chat_so_json_object",
+       "completion_so_json",
+       "completion_json_schema",
+       "tool_required",
+       "tool_named",
+       "reasoning_json_schema"
+      ],
+      "max_tokens": 512,
+      "reasoning_max_tokens": 4096,
+      "repeat": 1,
+      "seed": null,
+      "stream": true,
+      "temperature": 1.0
+     },
+     "summary": {
+      "cases": {
+       "chat_json_object": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_json_object+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_json_schema_loose": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_json_schema_loose+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 0,
+        "refused": 0,
+        "truncated": 1,
+        "validity_rate": null
+       },
+       "chat_json_schema_strict": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_json_schema_strict+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_so_choice": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_so_choice+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_so_json": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_so_json+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_so_json_object": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_so_json_object+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_so_regex": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "chat_so_regex+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "completion_json_schema": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "completion_json_schema+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "completion_so_json": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "completion_so_json+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "reasoning_json_schema": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "reasoning_json_schema+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "tool_named": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "tool_named+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "tool_required": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       },
+       "tool_required+stream": {
+        "failed": 0,
+        "latency_p50_seconds": 0.5,
+        "latency_p90_seconds": 0.5,
+        "mean_tokens_per_second": 20.0,
+        "passed": 1,
+        "refused": 0,
+        "truncated": 0,
+        "validity_rate": 1.0
+       }
+      },
+      "overall": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 23,
+       "refused": 0,
+       "truncated": 1,
+       "validity_rate": 1.0
+      }
+     }
+    },
+    "status": "fail"
+   },
+   "name": "fail: a stored summary its rows do not support is recomputed",
+   "receipt": {
+    "check": "structured",
+    "errors": [],
+    "mechanics_only": false,
+    "passed": true,
+    "rows": [
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_object",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_object+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_schema_strict",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_schema_strict+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_schema_loose",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "length",
+      "latency_seconds": 0.5,
+      "name": "chat_json_schema_loose+stream",
+      "status": "truncated",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_json",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_json+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_choice",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_choice+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_regex",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_regex+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_json_object",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_json_object+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "completion_so_json",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "completion_so_json+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "completion_json_schema",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "completion_json_schema+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "tool_required",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "tool_required+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "tool_named",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "tool_named+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "reasoning_json_schema",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "reasoning_json_schema+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     }
+    ],
+    "schema": "chopinfer-qualification/v1",
+    "settings": {
+     "cases": [
+      "chat_json_object",
+      "chat_json_schema_strict",
+      "chat_json_schema_loose",
+      "chat_so_json",
+      "chat_so_choice",
+      "chat_so_regex",
+      "chat_so_json_object",
+      "completion_so_json",
+      "completion_json_schema",
+      "tool_required",
+      "tool_named",
+      "reasoning_json_schema"
+     ],
+     "max_tokens": 512,
+     "reasoning_max_tokens": 4096,
+     "repeat": 1,
+     "seed": null,
+     "stream": true,
+     "temperature": 1.0
+    },
+    "skipped": [],
+    "summary": {
+     "cases": {
+      "chat_json_object": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_json_object+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_json_schema_loose": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_json_schema_loose+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_json_schema_strict": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_json_schema_strict+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_choice": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_choice+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_json": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_json+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_json_object": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_json_object+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_regex": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_regex+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "completion_json_schema": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "completion_json_schema+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "completion_so_json": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "completion_so_json+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "reasoning_json_schema": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "reasoning_json_schema+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "tool_named": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "tool_named+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "tool_required": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "tool_required+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      }
+     },
+     "overall": {
+      "failed": 0,
+      "latency_p50_seconds": 0.5,
+      "latency_p90_seconds": 0.5,
+      "mean_tokens_per_second": 20.0,
+      "passed": 24,
+      "refused": 0,
+      "truncated": 0,
+      "validity_rate": 1.0
+     }
+    }
+   },
+   "reference": null
+  },
+  {
+   "check": {
+    "rules": [
+     {
+      "op": "eq",
+      "path": [
+       "passed"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     },
+     {
+      "op": "ge",
+      "path": [
+       "summary",
+       "overall",
+       "validity_rate"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": 1.0
+     },
+     {
+      "op": "eq",
+      "path": [
+       "summary",
+       "overall",
+       "refused"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": 0
+     },
+     {
+      "op": "eq",
+      "path": [
+       "summary",
+       "overall",
+       "truncated"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": 0
+     }
+    ]
+   },
+   "covers": [],
+   "expected": {
+    "error": "the rows are not the 24 requests the settings run",
+    "status": "insufficient"
+   },
+   "name": "insufficient: a case missing",
+   "receipt": {
+    "check": "structured",
+    "errors": [],
+    "mechanics_only": false,
+    "passed": true,
+    "rows": [
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_object",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_object+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_schema_strict",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_schema_strict+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_schema_loose",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_schema_loose+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_json",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_json+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_choice",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_choice+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_regex",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_regex+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_json_object",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_json_object+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "completion_so_json",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "completion_so_json+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "completion_json_schema",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "completion_json_schema+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "tool_required",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "tool_required+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "tool_named",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "tool_named+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "reasoning_json_schema",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     }
+    ],
+    "schema": "chopinfer-qualification/v1",
+    "settings": {
+     "cases": [
+      "chat_json_object",
+      "chat_json_schema_strict",
+      "chat_json_schema_loose",
+      "chat_so_json",
+      "chat_so_choice",
+      "chat_so_regex",
+      "chat_so_json_object",
+      "completion_so_json",
+      "completion_json_schema",
+      "tool_required",
+      "tool_named",
+      "reasoning_json_schema"
+     ],
+     "max_tokens": 512,
+     "reasoning_max_tokens": 4096,
+     "repeat": 1,
+     "seed": null,
+     "stream": true,
+     "temperature": 1.0
+    },
+    "skipped": [],
+    "summary": {
+     "cases": {
+      "chat_json_object": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_json_object+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_json_schema_loose": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_json_schema_loose+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_json_schema_strict": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_json_schema_strict+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_choice": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_choice+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_json": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_json+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_json_object": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_json_object+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_regex": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_regex+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "completion_json_schema": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "completion_json_schema+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "completion_so_json": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "completion_so_json+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "reasoning_json_schema": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "reasoning_json_schema+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "tool_named": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "tool_named+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "tool_required": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "tool_required+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      }
+     },
+     "overall": {
+      "failed": 0,
+      "latency_p50_seconds": 0.5,
+      "latency_p90_seconds": 0.5,
+      "mean_tokens_per_second": 20.0,
+      "passed": 24,
+      "refused": 0,
+      "truncated": 0,
+      "validity_rate": 1.0
+     }
+    }
+   },
+   "reference": null
+  },
+  {
+   "check": {
+    "rules": [
+     {
+      "op": "eq",
+      "path": [
+       "passed"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": true
+     },
+     {
+      "op": "ge",
+      "path": [
+       "summary",
+       "overall",
+       "validity_rate"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": 1.0
+     },
+     {
+      "op": "eq",
+      "path": [
+       "summary",
+       "overall",
+       "refused"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": 0
+     },
+     {
+      "op": "eq",
+      "path": [
+       "summary",
+       "overall",
+       "truncated"
+      ],
+      "source": "docs/check-kinds.md",
+      "value": 0
+     }
+    ]
+   },
+   "covers": [],
+   "expected": {
+    "error": "settings do not run every structured.v1 case",
+    "status": "insufficient"
+   },
+   "name": "insufficient: the settings skip a case",
+   "receipt": {
+    "check": "structured",
+    "errors": [],
+    "mechanics_only": false,
+    "passed": true,
+    "rows": [
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_object",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_object+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_schema_strict",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_schema_strict+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_schema_loose",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_json_schema_loose+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_json",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_json+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_choice",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_choice+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_regex",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_regex+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_json_object",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "chat_so_json_object+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "completion_so_json",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "completion_so_json+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "completion_json_schema",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "completion_json_schema+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "tool_required",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "tool_required+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "tool_named",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "tool_named+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "reasoning_json_schema",
+      "status": "passed",
+      "stream": false,
+      "tokens_per_second": 20.0
+     },
+     {
+      "completion_tokens": 10,
+      "finish_reason": "stop",
+      "latency_seconds": 0.5,
+      "name": "reasoning_json_schema+stream",
+      "status": "passed",
+      "stream": true,
+      "tokens_per_second": 20.0
+     }
+    ],
+    "schema": "chopinfer-qualification/v1",
+    "settings": {
+     "cases": [
+      "chat_json_schema_strict",
+      "chat_json_schema_loose",
+      "chat_so_json",
+      "chat_so_choice",
+      "chat_so_regex",
+      "chat_so_json_object",
+      "completion_so_json",
+      "completion_json_schema",
+      "tool_required",
+      "tool_named",
+      "reasoning_json_schema"
+     ],
+     "max_tokens": 512,
+     "reasoning_max_tokens": 4096,
+     "repeat": 1,
+     "seed": null,
+     "stream": true,
+     "temperature": 1.0
+    },
+    "skipped": [],
+    "summary": {
+     "cases": {
+      "chat_json_object": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_json_object+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_json_schema_loose": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_json_schema_loose+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_json_schema_strict": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_json_schema_strict+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_choice": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_choice+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_json": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_json+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_json_object": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_json_object+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_regex": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "chat_so_regex+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "completion_json_schema": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "completion_json_schema+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "completion_so_json": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "completion_so_json+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "reasoning_json_schema": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "reasoning_json_schema+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "tool_named": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "tool_named+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "tool_required": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      },
+      "tool_required+stream": {
+       "failed": 0,
+       "latency_p50_seconds": 0.5,
+       "latency_p90_seconds": 0.5,
+       "mean_tokens_per_second": 20.0,
+       "passed": 1,
+       "refused": 0,
+       "truncated": 0,
+       "validity_rate": 1.0
+      }
+     },
+     "overall": {
+      "failed": 0,
+      "latency_p50_seconds": 0.5,
+      "latency_p90_seconds": 0.5,
+      "mean_tokens_per_second": 20.0,
+      "passed": 24,
+      "refused": 0,
+      "truncated": 0,
+      "validity_rate": 1.0
+     }
+    }
+   },
+   "reference": null
+  }
+ ],
+ "version": "structured.v1"
+}

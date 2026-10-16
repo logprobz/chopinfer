@@ -1,0 +1,118 @@
+schema = "chopinfer-source-dependencies-v1"
+
+# These edges supplement Cargo. A reference selects reconciliation, not compiled coverage.
+[[edges]]
+source = "models/qwen38/compiler/src/frontend-multimodal.json"
+consumers = ["bundle-qwen38"]
+kind = "data include"
+reader = "models/qwen38/bundle/src/encoder/run.rs"
+
+[[edges]]
+source = "models/mimo26/compiler/src/frontend.json"
+consumers = ["bundle-mimo26"]
+kind = "data include"
+reader = "models/mimo26/bundle/src/encoders/arena.rs"
+
+[[edges]]
+source = "models/mimo26/compiler/tests/support/*"
+consumers = ["model-qwen38"]
+kind = "source include"
+reader = "models/qwen38/compiler/tests/streaming_text.rs"
+
+[[edges]]
+source = "fixtures/tokenizer-whitespace.json"
+consumers = ["model-mimo26", "model-qwen38"]
+kind = "data include"
+reader = "models/mimo26/compiler/tests/support/streaming_text.rs"
+
+[[edges]]
+source = "models/*/bundle/cuda/*"
+consumers = ["kernel-lab"]
+kind = "CUDA input"
+reader = "crates/kernel-lab/build.rs"
+
+[[edges]]
+source = "models/qwen38/bundle/kernels.lock"
+consumers = ["kernel-lab"]
+kind = "data include"
+reader = "crates/kernel-lab/tests/qwen38_bundle_rows.rs"
+
+[[edges]]
+source = "models/qwen38/compiler/src/*.rs"
+consumers = ["model-qwen38-contract"]
+kind = "source include"
+reader = "models/qwen38/contract/src/lib.rs"
+
+[[edges]]
+source = "models/mimo26/compiler/src/*.rs"
+consumers = ["model-mimo26-contract"]
+kind = "source include"
+reader = "models/mimo26/contract/src/lib.rs"
+
+[[edges]]
+source = "models/*/bundle/kernels.lock"
+consumers = ["model-*-contract"]
+kind = "data include"
+reader = "models/*/contract/src/prepared.rs"
+
+[[edges]]
+source = "crates/kernel-core/src/transform/*"
+consumers = ["model-mimo26", "model-qwen38"]
+kind = "recipe identity"
+reader = "models/*/contract/src/weight_plan.rs"
+
+[[edges]]
+source = "crates/kernel-core/src/topology.rs"
+consumers = ["model-mimo26", "model-qwen38"]
+kind = "recipe identity"
+reader = "models/*/contract/src/weight_plan.rs"
+
+[[edges]]
+source = "crates/runtime-host/*"
+consumers = ["runtime-conformance"]
+kind = "subprocess artifact"
+reader = "crates/runtime-conformance/tests/external_bundle_host.rs"
+
+[[edges]]
+source = "crates/runtime-bundle/src/bin/*"
+consumers = ["runtime-conformance"]
+kind = "subprocess artifact"
+reader = "crates/runtime-conformance/tests/external_bundle_host.rs"
+
+[[edges]]
+source = "crates/bundle-*-fixture/*"
+consumers = ["runtime-conformance"]
+kind = "subprocess artifact"
+reader = "crates/runtime-conformance/tests/external_bundle_host.rs"
+
+[[edges]]
+source = "models/*/contract/*"
+consumers = ["kernel-lab"]
+kind = "contract reference"
+reader = "crates/kernel-lab/tests/common/kv_offload.rs"
+
+[[edges]]
+source = "fixtures/*/*"
+consumers = ["kernel-lab"]
+kind = "data include"
+reader = "crates/kernel-lab/tests"
+
+[[edges]]
+source = "include/chop_bundle_v1.h"
+consumers = ["runtime-bundle-abi"]
+kind = "data include"
+reader = "crates/runtime-bundle-abi/tests/abi_contract.rs"
+
+# Locked closure digests do not prove complete membership. Retain all known
+# build consumers for shared engines/planners even if one Cargo edge is absent.
+[[edges]]
+source = "crates/kernels-sm120/*"
+consumers = ["bundle-*", "kernel-lab", "runtime-kernels"]
+kind = "CUDA input"
+reader = "consumer build scripts; package dependencies supplement reported source membership"
+
+[[edges]]
+source = "crates/kernel-build/*"
+consumers = ["bundle-*", "kernel-lab", "runtime-kernels"]
+kind = "CUDA input"
+reader = "consumer build scripts; package dependencies supplement reported source membership"

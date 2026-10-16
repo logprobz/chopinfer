@@ -1,0 +1,50 @@
+[
+  {
+    "name": "comm_phased_turns_bf16_blocks128_sm120",
+    "source_closure_sha256": "3290d923e8dc82105aa9b032f9199fd3e83d64c090dbf50351f9aea45fddffcb"
+  },
+  {
+    "name": "comm_phased_turns_bf16_blocks32_sm120",
+    "source_closure_sha256": "337e093dbecaa460322ea612dcc7789209f94247a45be6c3e549ed554f715e58"
+  },
+  {
+    "name": "comm_phased_turns_bf16_late_scatter_sm120",
+    "source_closure_sha256": "0b62660a81ce8c832726008bbfaaf7f496cab5b2256416e41ae217381e4cfa16"
+  },
+  {
+    "name": "comm_phased_turns_bf16_late_wait_sm120",
+    "source_closure_sha256": "7a948684ca6582268053d87148f5f2e73f738eb73c885126c826c70044c852d3"
+  },
+  {
+    "name": "comm_phased_turns_bf16_no_gather_wait_sm120",
+    "source_closure_sha256": "1d7340a733f159e73b33282b42503e37eacbe98fc26d4d80192afb55fae13db2"
+  },
+  {
+    "name": "comm_phased_turns_bf16_no_scatter_wait_sm120",
+    "source_closure_sha256": "8e121f30b71d30b549c4d99dfbb4adbe0d4db8b8547908acc08eea59cd423b31"
+  },
+  {
+    "name": "comm_phased_turns_bf16_own_f32_sm120",
+    "source_closure_sha256": "3d3da9ece590a85eda2e63732596e498be17262b3c05687d8f914a6c10ec6e39"
+  },
+  {
+    "name": "comm_phased_turns_bf16_reversed_sm120",
+    "source_closure_sha256": "e322df2b0a524ab67069f3f0cc56c3569e423a396f5a3f8aa4ffd6b3d729839a"
+  },
+  {
+    "name": "comm_phased_turns_bf16_slow_sm120",
+    "source_closure_sha256": "5b76ed679549642fa417374f079ff26d53f3e72305db1da8fcfa153824c2a444"
+  },
+  {
+    "name": "comm_phased_turns_bf16_sm120",
+    "source_closure_sha256": "68efbbbd12a1815d86db8ab99bb908bfe3b593940984da3b5e6f0af33d202321"
+  },
+  {
+    "name": "comm_phased_turns_bf16_unturned_blocks128_sm120",
+    "source_closure_sha256": "a2d1caceb9da8e8d83bead119f1429b62ed9d76176fd2bb2fc8aaaece59159ce"
+  },
+  {
+    "name": "comm_phased_turns_bf16_unturned_sm120",
+    "source_closure_sha256": "c695118b2c0bf0aeeb4dd562741bdc32f71a3775fa3089df37a765b54dc5933e"
+  }
+]

@@ -1,0 +1,15 @@
+{
+  "prefill_segments": {
+    "lin_qkv": 4, "lin_z": 8, "out": 2, "attn_qkv": 2,
+    "index_qk": 4, "router": 8, "hc_down": 8, "ple_key": 4,
+    "head": 4, "head_f32": 1, "shared_gate_up": 4, "shared_down": 2,
+    "attn_out": 2, "ple_value": 4, "mtp_fc": 4
+  },
+  "skinny_splits": { "lin_ab": 5, "hc_inject": 10 },
+  "cluster_warp_blocks": {
+    "lin_in": [1, 2], "attn_in": [1, 2], "hc_in": [2, 2],
+    "lin_qkv": [1, 2], "out": [1, 1], "out_tp2": [1, 2],
+    "router": [1, 2], "hc_down": [2, 2], "ple_key": [1, 2],
+    "shared_gate_up": [1, 2], "shared_down": [1, 1]
+  }
+}

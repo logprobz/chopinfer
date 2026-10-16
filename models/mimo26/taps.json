@@ -1,0 +1,30 @@
+{
+ "schema": "chopinfer.tap-declaration.v2",
+ "model": "mimo26",
+ "about": [
+  "The engine's taps (models/mimo26/bundle/src/taps.rs, built with the diagnostic-taps feature), in program order. The first entry whose name matches applies; {nn} is a two-digit layer.",
+  "Names follow docs/reference-runner.md (\"Taps and tapdiff\") (tools/refrun/taps.py's grammar); models/mimo26/reference.py `taps` maps the same names onto the vendor modules: embed.out model.embed_tokens; enc.vision.out and enc.audio.out the visual and audio_encoder outputs (the rows merged into the sequence, on the encoder row axis, keyed by request, media kind, the kind's item counted in prompt order and row, so the runner's order, images then videos, and the engine's, prompt order, pair the same rows); L<nn>.in the decoder layer's input; L<nn>.attn.in input_layernorm; L<nn>.attn.core the input of o_proj; L<nn>.attn.out self_attn; L<nn>.mlp.in post_attention_layernorm; L<nn>.router.ids and .weights mlp.gate's outputs 0 and 1 (MoE layers 1-47); L<nn>.mlp.out mlp; L<nn>.out the layer's output; final.norm model.norm. enc.audio.x.codes holds the RVQ codes each audio inject merges (output row r merges codes 4r..4r + 3), kept with its encode across chunks and shared requests.",
+  "cols is the full width; a col_shards rank holds cols / ranks of it, its share of every [heads, dim] block. The engine writes the encoder taps from rank 0's media arena; every other tap after its stage, the replicated ones from rank 0. detail: written only in the layers CHOPINFER_TAPS_LAYERS names. Decode and verify buckets that sum their routed rows inside the MLP all-reduce write no mlp.out in MoE layers.",
+  "enc.<tower>.B<nn>.out is each encoder transformer block's output, blocks numbered across the tower's transformers, as tools/refrun/encoder.py --blocks taps the declarations (the engine reads them back on rank 0 when a block tap is selected); B<nn>.in is a transformer's input, written by the engine only. Each item's rows are in their own order, keyed like enc.<tower>.out by request, media kind and item."
+ ],
+ "taps": [
+  {"name": "enc.vision.out", "dtype": "bf16", "cols": 4096, "layout": "hidden; encoder output rows", "compare": "dense", "sharding": "replicated"},
+  {"name": "enc.audio.out", "dtype": "bf16", "cols": 4096, "layout": "hidden; encoder output rows", "compare": "dense", "sharding": "replicated"},
+  {"name": "enc.vision.B{nn}.in", "dtype": "f32", "cols": 1280, "layout": "F32 residual stream (f32-pairs.v1); the vision transformer's input rows, each item's in its own order", "compare": "dense", "sharding": "replicated"},
+  {"name": "enc.vision.B{nn}.out", "dtype": "f32", "cols": 1280, "layout": "F32 residual stream (f32-pairs.v1); a vision block's output rows, each item's in its own order", "compare": "dense", "sharding": "replicated"},
+  {"name": "enc.audio.B{nn}.in", "dtype": "f32", "cols": 1024, "layout": "F32 residual stream (f32-pairs.v1); an audio transformer's input rows (B00 the tokenizer's, B24 the local transformer's grouped rows)", "compare": "dense", "sharding": "replicated"},
+  {"name": "enc.audio.B{nn}.out", "dtype": "f32", "cols": 1024, "layout": "F32 residual stream (f32-pairs.v1); an audio block's output rows (B00-B23 the tokenizer's segments joined, B24-B29 the local transformer's grouped rows)", "compare": "dense", "sharding": "replicated"},
+  {"name": "enc.audio.x.codes", "dtype": "u32", "cols": 20, "layout": "the audio tokenizer's RVQ codes, one row per code, 20 stages; encoder code rows", "compare": "codes", "sharding": "replicated"},
+  {"name": "embed.out", "dtype": "bf16", "cols": 4096, "layout": "hidden", "compare": "dense", "sharding": "replicated"},
+  {"name": "L{nn}.in", "dtype": "bf16", "cols": 4096, "layout": "hidden", "compare": "dense", "sharding": "replicated"},
+  {"name": "L{nn}.attn.in", "dtype": "bf16", "cols": 4096, "layout": "hidden", "compare": "dense", "sharding": "replicated"},
+  {"name": "L{nn}.attn.core", "dtype": "bf16", "cols": 8192, "layout": "query heads x 128, head-major", "compare": "dense", "sharding": {"col_shards": {"axis": "heads", "blocks": [[64, 128]]}}, "detail": true},
+  {"name": "L{nn}.attn.out", "dtype": "bf16", "cols": 4096, "layout": "hidden", "compare": "dense", "sharding": "rank_partial"},
+  {"name": "L{nn}.mlp.in", "dtype": "bf16", "cols": 4096, "layout": "hidden", "compare": "dense", "sharding": "replicated"},
+  {"name": "L{nn}.router.ids", "dtype": "u32", "cols": 8, "layout": "top-8 expert ids", "compare": "set", "sharding": "replicated"},
+  {"name": "L{nn}.router.weights", "dtype": "f32", "cols": 8, "layout": "top-8 weights, in the order of router.ids", "compare": "paired", "sharding": "replicated"},
+  {"name": "L{nn}.mlp.out", "dtype": "bf16", "cols": 4096, "layout": "hidden", "compare": "dense", "sharding": "rank_partial"},
+  {"name": "L{nn}.out", "dtype": "bf16", "cols": 4096, "layout": "hidden", "compare": "dense", "sharding": "replicated"},
+  {"name": "final.norm", "dtype": "bf16", "cols": 4096, "layout": "hidden", "compare": "dense", "sharding": "replicated"}
+ ]
+}

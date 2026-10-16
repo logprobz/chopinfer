@@ -1,0 +1,30 @@
+[
+  {
+    "name": "decoded_balanced_mutants_sm120",
+    "source_closure_sha256": "3f2b964e0997bc5c60e0f579c983e92c529d98eea87183e6ca7207fb8ba3a8dd"
+  },
+  {
+    "name": "decoded_balanced_n1536_k4096_sm120",
+    "source_closure_sha256": "0c5741c3a49c98eb54cd6d684f0d95aca6a7b247247a2c39a0305176102b2173"
+  },
+  {
+    "name": "decoded_balanced_n4096_k1536_sm120",
+    "source_closure_sha256": "1225c2e4919edf3ba14fec394476208f7a3f40250e15b43e2b47661241bb2855"
+  },
+  {
+    "name": "decoded_balanced_n4096_k3072_f32_sm120",
+    "source_closure_sha256": "5367662df31b6fd93ea51ee788ec8f2acbdf3b8c8ee7f0fba311f0eedaf8c023"
+  },
+  {
+    "name": "decoded_balanced_n4096_k4096_f32_sm120",
+    "source_closure_sha256": "39ce174bd3407691681da46c941f2588a2c69be6cc0a193787dc0aa54bde2ddd"
+  },
+  {
+    "name": "decoded_balanced_n4096_k512_f32_residual_sm120",
+    "source_closure_sha256": "98cff498122a02b0a49db98e435c4c516778c330e114731eb3fb3fec4be6d78f"
+  },
+  {
+    "name": "decoded_balanced_n512_k4096_sm120",
+    "source_closure_sha256": "e678ce90435e61ae5262dd39f012c57c3f9f567792b9e736a19d31adb006905d"
+  }
+]

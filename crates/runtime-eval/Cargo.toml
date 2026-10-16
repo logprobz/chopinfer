@@ -1,0 +1,20 @@
+[package]
+name = "runtime-eval"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# `chopinfer eval`: the shared qualification check kinds against a running
+# server. It names no model: every model fact comes from the declaration,
+# references and fixtures it is pointed at.
+[dependencies]
+fancy-regex = "0.16.2"
+runtime-bundle.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true

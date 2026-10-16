@@ -1,0 +1,3 @@
+The default online build uses an empty Cargo cache. For offline Cargo builds,
+replace the cargo-cache stage with a BuildKit named context. Do not include
+Cargo credentials or authentication tokens in that context.

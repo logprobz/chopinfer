@@ -1,0 +1,1468 @@
+[
+  {
+    "name": "sampling_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_sampling_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "U64",
+            "name": "stride"
+          },
+          {
+            "kind": "U32",
+            "name": "live"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "meta",
+            "cxx_type": "const chop::sampling::RowMeta"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const chop::sampling::TokenCount"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "biases",
+            "cxx_type": "const chop::sampling::TokenBias"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "eos",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "adjusted",
+            "cxx_type": "double"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "order",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "chop::sampling::RowOutput"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "masks",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "mask_words"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_sampling_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const __nv_bfloat16"
+          },
+          {
+            "kind": "U64",
+            "name": "stride"
+          },
+          {
+            "kind": "U32",
+            "name": "live"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "meta",
+            "cxx_type": "const chop::sampling::RowMeta"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const chop::sampling::TokenCount"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "biases",
+            "cxx_type": "const chop::sampling::TokenBias"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "eos",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "adjusted",
+            "cxx_type": "double"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "order",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "chop::sampling::RowOutput"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "masks",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "mask_words"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_sampling_simple_partials_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "U64",
+            "name": "stride"
+          },
+          {
+            "kind": "U32",
+            "name": "live"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "meta",
+            "cxx_type": "const chop::sampling::RowMeta"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partials",
+            "cxx_type": "chop::sampling::SimplePartial"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_sampling_simple_top_partials_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "U64",
+            "name": "stride"
+          },
+          {
+            "kind": "U32",
+            "name": "live"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "meta",
+            "cxx_type": "const chop::sampling::RowMeta"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partials",
+            "cxx_type": "chop::sampling::SimplePartial"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_sampling_simple_finish_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "U64",
+            "name": "stride"
+          },
+          {
+            "kind": "U32",
+            "name": "live"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "meta",
+            "cxx_type": "const chop::sampling::RowMeta"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partials",
+            "cxx_type": "const chop::sampling::SimplePartial"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "chop::sampling::RowOutput"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_sampling_simple_partials_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const __nv_bfloat16"
+          },
+          {
+            "kind": "U64",
+            "name": "stride"
+          },
+          {
+            "kind": "U32",
+            "name": "live"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "meta",
+            "cxx_type": "const chop::sampling::RowMeta"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partials",
+            "cxx_type": "chop::sampling::SimplePartial"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_sampling_simple_top_partials_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const __nv_bfloat16"
+          },
+          {
+            "kind": "U64",
+            "name": "stride"
+          },
+          {
+            "kind": "U32",
+            "name": "live"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "meta",
+            "cxx_type": "const chop::sampling::RowMeta"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partials",
+            "cxx_type": "chop::sampling::SimplePartial"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_sampling_simple_finish_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const __nv_bfloat16"
+          },
+          {
+            "kind": "U64",
+            "name": "stride"
+          },
+          {
+            "kind": "U32",
+            "name": "live"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "meta",
+            "cxx_type": "const chop::sampling::RowMeta"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partials",
+            "cxx_type": "const chop::sampling::SimplePartial"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "chop::sampling::RowOutput"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_sampling_greedy_partials_1024_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "U64",
+            "name": "stride"
+          },
+          {
+            "kind": "U32",
+            "name": "live"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "meta",
+            "cxx_type": "const chop::sampling::RowMeta"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partials",
+            "cxx_type": "chop::sampling::SimplePartial"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_sampling_greedy_partials_1024_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const __nv_bfloat16"
+          },
+          {
+            "kind": "U64",
+            "name": "stride"
+          },
+          {
+            "kind": "U32",
+            "name": "live"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "meta",
+            "cxx_type": "const chop::sampling::RowMeta"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partials",
+            "cxx_type": "chop::sampling::SimplePartial"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_sampling_filtered_stats_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "U64",
+            "name": "stride"
+          },
+          {
+            "kind": "U32",
+            "name": "live"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "meta",
+            "cxx_type": "const chop::sampling::RowMeta"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const chop::sampling::TokenCount"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "biases",
+            "cxx_type": "const chop::sampling::TokenBias"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "eos",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partials",
+            "cxx_type": "chop::sampling::SimplePartial"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "filter",
+            "cxx_type": "chop::sampling::FilterRow"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "adjusted",
+            "cxx_type": "double"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "order",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "masks",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "mask_words"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_sampling_filtered_histogram_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "U64",
+            "name": "stride"
+          },
+          {
+            "kind": "U32",
+            "name": "live"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "meta",
+            "cxx_type": "const chop::sampling::RowMeta"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const chop::sampling::TokenCount"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "biases",
+            "cxx_type": "const chop::sampling::TokenBias"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "eos",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partials",
+            "cxx_type": "chop::sampling::SimplePartial"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "filter",
+            "cxx_type": "chop::sampling::FilterRow"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "adjusted",
+            "cxx_type": "double"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "order",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "masks",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "mask_words"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_sampling_filtered_collect_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "U64",
+            "name": "stride"
+          },
+          {
+            "kind": "U32",
+            "name": "live"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "meta",
+            "cxx_type": "const chop::sampling::RowMeta"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const chop::sampling::TokenCount"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "biases",
+            "cxx_type": "const chop::sampling::TokenBias"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "eos",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partials",
+            "cxx_type": "chop::sampling::SimplePartial"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "filter",
+            "cxx_type": "chop::sampling::FilterRow"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "adjusted",
+            "cxx_type": "double"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "order",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "masks",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "mask_words"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_sampling_filtered_resolve_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "U64",
+            "name": "stride"
+          },
+          {
+            "kind": "U32",
+            "name": "live"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "meta",
+            "cxx_type": "const chop::sampling::RowMeta"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const chop::sampling::TokenCount"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "biases",
+            "cxx_type": "const chop::sampling::TokenBias"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "eos",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partials",
+            "cxx_type": "chop::sampling::SimplePartial"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "filter",
+            "cxx_type": "chop::sampling::FilterRow"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "adjusted",
+            "cxx_type": "double"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "order",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "masks",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "mask_words"
+          }
+        ],
+        "max_threads": 1024,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_sampling_filtered_gumbel_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "U64",
+            "name": "stride"
+          },
+          {
+            "kind": "U32",
+            "name": "live"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "meta",
+            "cxx_type": "const chop::sampling::RowMeta"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const chop::sampling::TokenCount"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "biases",
+            "cxx_type": "const chop::sampling::TokenBias"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "eos",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partials",
+            "cxx_type": "chop::sampling::SimplePartial"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "filter",
+            "cxx_type": "chop::sampling::FilterRow"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "adjusted",
+            "cxx_type": "double"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "order",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "masks",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "mask_words"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_sampling_filtered_finish_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "U64",
+            "name": "stride"
+          },
+          {
+            "kind": "U32",
+            "name": "live"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "meta",
+            "cxx_type": "const chop::sampling::RowMeta"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partials",
+            "cxx_type": "const chop::sampling::SimplePartial"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "chop::sampling::RowOutput"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_sampling_filtered_stats_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const __nv_bfloat16"
+          },
+          {
+            "kind": "U64",
+            "name": "stride"
+          },
+          {
+            "kind": "U32",
+            "name": "live"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "meta",
+            "cxx_type": "const chop::sampling::RowMeta"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const chop::sampling::TokenCount"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "biases",
+            "cxx_type": "const chop::sampling::TokenBias"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "eos",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partials",
+            "cxx_type": "chop::sampling::SimplePartial"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "filter",
+            "cxx_type": "chop::sampling::FilterRow"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "adjusted",
+            "cxx_type": "double"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "order",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "masks",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "mask_words"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_sampling_filtered_histogram_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const __nv_bfloat16"
+          },
+          {
+            "kind": "U64",
+            "name": "stride"
+          },
+          {
+            "kind": "U32",
+            "name": "live"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "meta",
+            "cxx_type": "const chop::sampling::RowMeta"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const chop::sampling::TokenCount"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "biases",
+            "cxx_type": "const chop::sampling::TokenBias"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "eos",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partials",
+            "cxx_type": "chop::sampling::SimplePartial"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "filter",
+            "cxx_type": "chop::sampling::FilterRow"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "adjusted",
+            "cxx_type": "double"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "order",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "masks",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "mask_words"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_sampling_filtered_collect_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const __nv_bfloat16"
+          },
+          {
+            "kind": "U64",
+            "name": "stride"
+          },
+          {
+            "kind": "U32",
+            "name": "live"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "meta",
+            "cxx_type": "const chop::sampling::RowMeta"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const chop::sampling::TokenCount"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "biases",
+            "cxx_type": "const chop::sampling::TokenBias"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "eos",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partials",
+            "cxx_type": "chop::sampling::SimplePartial"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "filter",
+            "cxx_type": "chop::sampling::FilterRow"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "adjusted",
+            "cxx_type": "double"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "order",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "masks",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "mask_words"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_sampling_filtered_resolve_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const __nv_bfloat16"
+          },
+          {
+            "kind": "U64",
+            "name": "stride"
+          },
+          {
+            "kind": "U32",
+            "name": "live"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "meta",
+            "cxx_type": "const chop::sampling::RowMeta"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const chop::sampling::TokenCount"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "biases",
+            "cxx_type": "const chop::sampling::TokenBias"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "eos",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partials",
+            "cxx_type": "chop::sampling::SimplePartial"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "filter",
+            "cxx_type": "chop::sampling::FilterRow"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "adjusted",
+            "cxx_type": "double"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "order",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "masks",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "mask_words"
+          }
+        ],
+        "max_threads": 1024,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_sampling_filtered_gumbel_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const __nv_bfloat16"
+          },
+          {
+            "kind": "U64",
+            "name": "stride"
+          },
+          {
+            "kind": "U32",
+            "name": "live"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "meta",
+            "cxx_type": "const chop::sampling::RowMeta"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const chop::sampling::TokenCount"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "biases",
+            "cxx_type": "const chop::sampling::TokenBias"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "eos",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partials",
+            "cxx_type": "chop::sampling::SimplePartial"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "filter",
+            "cxx_type": "chop::sampling::FilterRow"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "adjusted",
+            "cxx_type": "double"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "order",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "masks",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "mask_words"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_sampling_filtered_finish_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const __nv_bfloat16"
+          },
+          {
+            "kind": "U64",
+            "name": "stride"
+          },
+          {
+            "kind": "U32",
+            "name": "live"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "meta",
+            "cxx_type": "const chop::sampling::RowMeta"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "partials",
+            "cxx_type": "const chop::sampling::SimplePartial"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "chop::sampling::RowOutput"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "source_closure_sha256": "5e9ea958b91302b35083ee061d87f898d95469706ac87404fcd0c2d620a333d0",
+    "cubin_sha256": "2e30960447a7095a61e133e43598bb00238a3ad223ebab04654c1649f77d0c78",
+    "resources": [
+      {
+        "symbol": "chop_sampling_f32_v1",
+        "registers": 70,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_sampling_bf16_v1",
+        "registers": 70,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_sampling_simple_partials_f32_v1",
+        "registers": 68,
+        "shared_static_bytes": 11160,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_sampling_simple_top_partials_f32_v1",
+        "registers": 68,
+        "shared_static_bytes": 19352,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_sampling_simple_finish_f32_v1",
+        "registers": 72,
+        "shared_static_bytes": 2056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_sampling_simple_partials_bf16_v1",
+        "registers": 68,
+        "shared_static_bytes": 11160,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_sampling_simple_top_partials_bf16_v1",
+        "registers": 68,
+        "shared_static_bytes": 19352,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_sampling_simple_finish_bf16_v1",
+        "registers": 72,
+        "shared_static_bytes": 2056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_sampling_greedy_partials_1024_f32_v1",
+        "registers": 39,
+        "shared_static_bytes": 5768,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_sampling_greedy_partials_1024_bf16_v1",
+        "registers": 40,
+        "shared_static_bytes": 5768,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_sampling_filtered_stats_f32_v1",
+        "registers": 56,
+        "shared_static_bytes": 14536,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_sampling_filtered_histogram_f32_v1",
+        "registers": 100,
+        "shared_static_bytes": 39744,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_sampling_filtered_collect_f32_v1",
+        "registers": 58,
+        "shared_static_bytes": 14384,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_sampling_filtered_resolve_f32_v1",
+        "registers": 60,
+        "shared_static_bytes": 39512,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 1024,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_sampling_filtered_gumbel_f32_v1",
+        "registers": 60,
+        "shared_static_bytes": 18996,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_sampling_filtered_finish_f32_v1",
+        "registers": 72,
+        "shared_static_bytes": 2056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_sampling_filtered_stats_bf16_v1",
+        "registers": 56,
+        "shared_static_bytes": 14536,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_sampling_filtered_histogram_bf16_v1",
+        "registers": 100,
+        "shared_static_bytes": 39744,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_sampling_filtered_collect_bf16_v1",
+        "registers": 58,
+        "shared_static_bytes": 14384,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_sampling_filtered_resolve_bf16_v1",
+        "registers": 60,
+        "shared_static_bytes": 39512,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 1024,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_sampling_filtered_gumbel_bf16_v1",
+        "registers": 60,
+        "shared_static_bytes": 18996,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_sampling_filtered_finish_bf16_v1",
+        "registers": 72,
+        "shared_static_bytes": 2056,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

@@ -1,0 +1,56 @@
+[package]
+name = "bundle-qwen38"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+# The build compiles and locks SM120 cubins, so it lives in the sm120 module.
+build = "src/sm120/build.rs"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+# CHOPINFER_TAPS_DIR (dump): per-layer taps, diagnostic bundles only.
+diagnostic-taps = []
+
+[dependencies]
+model-qwen38-contract.workspace = true
+bundle-runtime.workspace = true
+frontend-format.workspace = true
+runtime-bundle-abi.workspace = true
+runtime-bundle-sdk.workspace = true
+kernel-build.workspace = true
+kernel-core.workspace = true
+kernels-sm120.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+model-qwen38-contract.workspace = true
+kernel-build.workspace = true
+kernels-sm120.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+encoder-spec.workspace = true
+model-compiler-sdk.workspace = true
+runtime-weights.workspace = true
+bundle-runtime = { workspace = true, features = ["test-support"] }
+kernel-build.workspace = true
+
+[lints]
+workspace = true
+
+# Tests that name kernels_sm120 live under tests/sm120 and keep their names.
+[[test]]
+name = "buffer_rows"
+path = "tests/sm120/buffer_rows.rs"
+
+[[test]]
+name = "encoder_catalog_stability"
+path = "tests/sm120/encoder_catalog_stability.rs"
+
+[[test]]
+name = "projection_assembly"
+path = "tests/sm120/projection_assembly.rs"

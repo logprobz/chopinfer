@@ -1,0 +1,372 @@
+{
+  "schema": "chop-frontend-openai-v2",
+  "version": 2,
+  "generation_config": {"temperature": 1.0, "top_p": 0.95, "top_k": 0},
+  "models": [
+    {
+      "id": "MiMo-V2.6-Flash-MOPD",
+      "owned_by": "XiaomiMiMo"
+    }
+  ],
+  "context": {
+    "maximum_total_tokens": 1048576
+  },
+  "limits": {
+    "maximum_prompt_bytes": 67108864,
+    "maximum_completion_bytes": 67108864,
+    "maximum_generated_tokens": 1048576,
+    "maximum_client_stops": 4,
+    "maximum_messages": 4096,
+    "maximum_tools": 128,
+    "maximum_tool_calls": 128,
+    "maximum_tool_parameters": 256,
+    "maximum_name_bytes": 256,
+    "maximum_json_bytes": 16777216,
+    "maximum_json_depth": 128,
+    "maximum_json_values": 1048576
+  },
+  "reasoning": {
+    "disable_value": "none",
+    "default_effort": "default",
+    "efforts": [
+      {
+        "name": "default",
+        "preamble": ""
+      }
+    ],
+    "default_enabled": true,
+    "allow_disabled": true,
+    "thinking_keywords": ["enable_thinking"],
+    "effort_use": "ignored",
+    "end_markers": ["</think>", "<tool_call>"]
+  },
+  "tokenizer": {
+    "repository": "XiaomiMiMo/MiMo-V2.6-Flash-MOPD",
+    "revision": "2479e2d0029eca9a34cc7e7f55a121925f81908e",
+    "definition": {
+      "name": "tokenizer.json",
+      "byte_length": 11423823,
+      "sha256": "ff15eb925890d6b71b5160de4b846fbd13178438ab463b38ecc953e8cd1dcb3e"
+    },
+    "configuration": {
+      "name": "tokenizer_config.json",
+      "byte_length": 12150,
+      "sha256": "413a7845f52943ccf4de0e5c838414507d16c44dbf573da9e20bc8902b384d06"
+    },
+    "policy": {
+      "normalizer": "nfc",
+      "pretokenizer_byte_level": {
+        "add_prefix_space": false,
+        "trim_offsets": false,
+        "use_regex": false
+      },
+      "post_processor_byte_level": {
+        "add_prefix_space": false,
+        "trim_offsets": false,
+        "use_regex": false
+      },
+      "decoder_byte_level": {
+        "add_prefix_space": false,
+        "trim_offsets": false,
+        "use_regex": false
+      },
+      "merge_results": {
+        "kind": "vocabulary"
+      },
+      "merge_records": "string-or-pair",
+      "base_tokens": {
+        "kind": "byte-level"
+      },
+      "config_tokens": {
+        "kind": "string"
+      },
+      "add_bos_token": {
+        "kind": "required",
+        "value": false
+      },
+      "bos_token": {
+        "kind": "required-null"
+      },
+      "unk_token": {
+        "kind": "required-null"
+      },
+      "tokenizer_class": "Qwen2Tokenizer",
+      "continuing_subword_prefix": "",
+      "end_of_word_suffix": "",
+      "ignore_merges": "disabled",
+      "add_eos_token": null,
+      "legacy": null,
+      "empty_sentencepiece_kwargs": false
+    },
+    "base_vocabulary_size": 151643,
+    "merge_count": 151387,
+    "added_token_count": 32,
+    "vocabulary_size": 151675,
+    "model_max_length": 1048576,
+    "bos_token": null,
+    "eos_token": "<|im_end|>",
+    "pad_token": "<|endoftext|>",
+    "pretokenizer_patterns": [
+      "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"
+    ]
+  },
+  "tools": {
+    "name_bytes": {"ascii_alphanumeric": true, "extra": "_-"},
+    "arguments": "json-object"
+  },
+  "vocabulary": {
+    "size": 152576,
+    "bos_token_id": 151643,
+    "eos_token_id": 151645,
+    "stop_token_ids": [
+      151643,
+      151645,
+      151672
+    ],
+    "boundary_tokens": [
+      {
+        "text": "<|endoftext|>",
+        "id": 151643
+      },
+      {
+        "text": "<|im_start|>",
+        "id": 151644
+      },
+      {
+        "text": "<|im_end|>",
+        "id": 151645
+      },
+      {
+        "text": "<|object_ref_start|>",
+        "id": 151646
+      },
+      {
+        "text": "<|object_ref_end|>",
+        "id": 151647
+      },
+      {
+        "text": "<|box_start|>",
+        "id": 151648
+      },
+      {
+        "text": "<|box_end|>",
+        "id": 151649
+      },
+      {
+        "text": "<|quad_start|>",
+        "id": 151650
+      },
+      {
+        "text": "<|quad_end|>",
+        "id": 151651
+      },
+      {
+        "text": "<|vision_start|>",
+        "id": 151652
+      },
+      {
+        "text": "<|vision_end|>",
+        "id": 151653
+      },
+      {
+        "text": "<|vision_pad|>",
+        "id": 151654
+      },
+      {
+        "text": "<|image_pad|>",
+        "id": 151655
+      },
+      {
+        "text": "<|video_pad|>",
+        "id": 151656
+      },
+      {
+        "text": "<tool_call>",
+        "id": 151657
+      },
+      {
+        "text": "</tool_call>",
+        "id": 151658
+      },
+      {
+        "text": "<|fim_prefix|>",
+        "id": 151659
+      },
+      {
+        "text": "<|fim_middle|>",
+        "id": 151660
+      },
+      {
+        "text": "<|fim_suffix|>",
+        "id": 151661
+      },
+      {
+        "text": "<|fim_pad|>",
+        "id": 151662
+      },
+      {
+        "text": "<|repo_name|>",
+        "id": 151663
+      },
+      {
+        "text": "<|file_sep|>",
+        "id": 151664
+      },
+      {
+        "text": "<tool_response>",
+        "id": 151665
+      },
+      {
+        "text": "</tool_response>",
+        "id": 151666
+      },
+      {
+        "text": "<think>",
+        "id": 151667
+      },
+      {
+        "text": "</think>",
+        "id": 151668
+      },
+      {
+        "text": "<|audio_pad|>",
+        "id": 151669
+      },
+      {
+        "text": "<|mimo_video_start|>",
+        "id": 151670
+      },
+      {
+        "text": "<|mimo_video_end|>",
+        "id": 151671
+      },
+      {
+        "text": "<|mimo_audio_eod|>",
+        "id": 151672
+      },
+      {
+        "text": "<|mimo_audio_start|>",
+        "id": 151673
+      },
+      {
+        "text": "<|mimo_audio_end|>",
+        "id": 151674
+      }
+    ],
+    "prompt_special_tokens": [
+      "<|endoftext|>",
+      "<|im_start|>",
+      "<|im_end|>",
+      "<|object_ref_start|>",
+      "<|object_ref_end|>",
+      "<|box_start|>",
+      "<|box_end|>",
+      "<|quad_start|>",
+      "<|quad_end|>",
+      "<|vision_start|>",
+      "<|vision_end|>",
+      "<|vision_pad|>",
+      "<|image_pad|>",
+      "<|video_pad|>",
+      "<tool_call>",
+      "</tool_call>",
+      "<|fim_prefix|>",
+      "<|fim_middle|>",
+      "<|fim_suffix|>",
+      "<|fim_pad|>",
+      "<|repo_name|>",
+      "<|file_sep|>",
+      "<tool_response>",
+      "</tool_response>",
+      "<think>",
+      "</think>",
+      "<|audio_pad|>",
+      "<|mimo_video_start|>",
+      "<|mimo_video_end|>",
+      "<|mimo_audio_eod|>",
+      "<|mimo_audio_start|>",
+      "<|mimo_audio_end|>"
+    ]
+  },
+  "multimodal": {
+    "arena": { "rows": 32768, "page_rows": 64, "hidden": 4096, "element": "bf16" },
+    "encoders": [
+      { "name": "mimo-vision", "payload_element": "f32", "payload_columns": 1536, "maximum_payload_bytes": 100663296, "cost_per_row_milli": 1000 },
+      { "name": "mimo-audio", "payload_element": "f32", "payload_columns": 128, "maximum_payload_bytes": 30720512, "cost_per_row_milli": 1000 }
+    ],
+    "modalities": [
+      {
+        "kind": "image", "part_types": ["image_url"], "maximum_items": 64,
+        "maximum_bytes": 67108864, "maximum_tokens": 1024, "encoder": 0,
+        "recipe": { "tag": "image.patch-grid.v1", "parameters": {
+          "factor": 32, "minimum_pixels": 8192, "maximum_pixels": 1048576,
+          "small_side_minimum": 0, "upscale_small_side": false,
+          "interpolation": "bicubic-antialias", "antialias": true,
+          "value_scale": 1.0, "mean": [123.675, 116.28, 103.53],
+          "std": [58.395, 57.12, 57.375], "patch": 16,
+          "temporal_patch": 2, "merge": 2, "alpha_background": "white",
+          "exif_orientation": true
+        } },
+        "render": { "pad": "<|image_pad|>" }
+      },
+      {
+        "kind": "audio", "part_types": ["input_audio", "audio_url"], "maximum_items": 1,
+        "maximum_bytes": 67108864, "maximum_tokens": 3751, "encoder": 1,
+        "recipe": { "tag": "audio.log-mel.v1", "parameters": {
+          "sample_rate": 24000, "maximum_seconds": 600, "channels": 1,
+          "resampler": "sinc-hann", "sinc_width": 6, "rolloff": 0.99,
+          "n_fft": 960, "window": 960, "window_kind": "periodic-hann", "hop": 240, "mel_bins": 128,
+          "f_min": 0, "f_max": 12000, "power": 1, "mel_scale": "htk",
+          "mel_norm": null, "center": true, "pad_mode": "reflect",
+          "log_floor": 1e-7, "first_kernel": 3, "second_kernel": 3,
+          "second_stride": 2, "pool": 2, "group": 4,
+          "segment_frames": 6000
+        } },
+        "render": { "pad": "<|audio_pad|>" }
+      },
+      {
+        "kind": "video", "part_types": ["video_url"], "maximum_items": 1,
+        "maximum_bytes": 67108864, "maximum_tokens": 8192, "encoder": 0,
+        "recipe": { "tag": "video.timestamped-grids.v1", "parameters": {
+          "maximum_frames": 32, "sampling": "uniform", "repeat_last_if_odd": true,
+          "minimum_pixels_per_frame": 8192, "maximum_pixels_per_frame": 262144,
+          "total_max_pixels": 268435456, "timestamp": "mm:ss",
+          "image": {
+            "factor": 32, "minimum_pixels": 8192, "maximum_pixels": 262144,
+            "upscale_small_side": false, "interpolation": "bicubic-antialias", "antialias": true,
+            "patch": 16, "temporal_patch": 2, "merge": 2, "value_scale": 1.0,
+            "mean": [123.675, 116.28, 103.53], "std": [58.395, 57.12, 57.375]
+          }
+        } },
+        "render": {
+          "pad": "<|video_pad|>",
+          "grid": { "prefix": ["<|vision_start|>"], "suffix": ["<|vision_end|>"], "timestamp": "mm:ss" }
+        }
+      }
+    ]
+  },
+  "response": {"reasoning_field": "reasoning"},
+  "format": {
+    "parser": {
+      "tool_grammar": "xml-function-parameters-v1",
+      "json_encoding": "python-json-v1",
+      "reasoning_open": "<think>",
+      "reasoning_close": "</think>",
+      "answer_prefix": "",
+      "tool_call_open": "<tool_call>",
+      "tool_call_close": "</tool_call>",
+      "tool_call_separator": "",
+      "function_open": "<function=",
+      "function_name_close": ">",
+      "function_close": "</function>",
+      "parameter_open": "<parameter=",
+      "parameter_name_close": ">",
+      "parameter_value_open": "",
+      "parameter_close": "</parameter>",
+      "drop_blank_tool_call_content": false,
+      "reserved_markers": [],
+      "turn_open": ["<|im_start|>"],
+      "assistant_header": "<|im_start|>assistant"
+    }
+  }
+}

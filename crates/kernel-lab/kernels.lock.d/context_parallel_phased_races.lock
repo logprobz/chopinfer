@@ -1,0 +1,283 @@
+[
+  {
+    "name": "comm_group_phased_mutants_lab_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_comm_lab_phased_copy_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "input_stride"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "words"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_lab_phased_no_receive_wait_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "input_stride"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "words"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_lab_phased_no_acknowledgement_wait_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "input_stride"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "words"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_comm_lab_phased_timeouts_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "out",
+            "cxx_type": "unsigned int"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "e80fd8098efe15c1832375996d5f875e8ecffa891fb7f9f43a288db13636274f",
+    "resources": [
+      {
+        "symbol": "chop_comm_lab_phased_copy_v1",
+        "registers": 56,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_lab_phased_no_receive_wait_v1",
+        "registers": 56,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_lab_phased_no_acknowledgement_wait_v1",
+        "registers": 56,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_comm_lab_phased_timeouts_v1",
+        "registers": 8,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "probe_phased_races_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_probe_phased_delay_v1",
+        "params": [
+          {
+            "kind": "U64",
+            "name": "ns"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_probe_phased_snapshot_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "source",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "target",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "words"
+          },
+          {
+            "kind": "U64",
+            "name": "hold_ns"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "09bfcc46fa96288f66c07de560741c58b0ce2346f7cf2f81147210c823f2db37",
+    "resources": [
+      {
+        "symbol": "chop_probe_phased_delay_v1",
+        "registers": 4,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_probe_phased_snapshot_v1",
+        "registers": 10,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

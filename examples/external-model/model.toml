@@ -1,0 +1,12 @@
+schema = "chopinfer-model-inventory-v1"
+
+[bundle]
+package = "example-bundle"
+cdylib = ["example_bundle"]
+
+[compiler]
+package = "example-compiler"
+bin = ["example-compile"]
+
+[contract]
+package = "example-contract"

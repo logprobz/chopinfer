@@ -1,0 +1,21 @@
+[
+  {
+    "previous": "0000000000000000000000000000000000000000000000000000000000000000",
+    "declarations": [
+      "ce4a85dec70ad3477baeef0742f02bc67de197da8d4682fb1ef0a0202277df28"
+    ],
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "cubins": [
+      {
+        "name": "multimodal_attention_sm120",
+        "source_closure_sha256": "f343082b6ebdf3a5a649b91e4fff1e06e321f10064bf9b91b3891cf04dcb3042",
+        "cubin_sha256": "496b4f8f60de5d210395dc9543634596f2a3731167e260533f81ecb7ba9aa023"
+      },
+      {
+        "name": "multimodal_rows_gemm_sm120",
+        "source_closure_sha256": "3993e7769dc14e89ab24146ba76b5c41d3b8d7197534084f8c2a32376f0fe543",
+        "cubin_sha256": "6c8c90998283a3dd89819b72038dc43d69aede4f4957e28166aecd7ae254bba8"
+      }
+    ]
+  }
+]

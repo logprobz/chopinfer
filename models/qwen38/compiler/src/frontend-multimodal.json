@@ -1,0 +1,59 @@
+{
+  "multimodal": {
+    "arena": {
+      "rows": 65536,
+      "page_rows": 64,
+      "hidden": 2560,
+      "element": "bf16"
+    },
+    "encoders": [
+      {
+        "name": "qwen38-vision",
+        "payload_element": "f32",
+        "payload_columns": 1536,
+        "maximum_payload_bytes": 402653184,
+        "cost_per_row_milli": 1000
+      }
+    ],
+    "modalities": [
+      {
+        "kind": "image",
+        "part_types": [
+          "image_url"
+        ],
+        "maximum_items": 64,
+        "maximum_bytes": 67108864,
+        "maximum_tokens": 16384,
+        "encoder": 0,
+        "recipe": {
+          "tag": "image.patch-grid.v1",
+          "parameters": {
+            "factor": 32,
+            "minimum_pixels": 65536,
+            "maximum_pixels": 16777216,
+            "upscale_small_side": false,
+            "interpolation": "bicubic-antialias",
+            "patch": 16,
+            "temporal_patch": 2,
+            "merge": 2,
+            "value_scale": 0.00392156862745098,
+            "mean": [
+              0.5,
+              0.5,
+              0.5
+            ],
+            "std": [
+              0.5,
+              0.5,
+              0.5
+            ]
+          }
+        },
+        "render": {
+          "pad": "<|image_pad|>"
+        },
+        "positions": "grid-3axis.v1"
+      }
+    ]
+  }
+}

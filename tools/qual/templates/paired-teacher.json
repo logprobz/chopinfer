@@ -1,0 +1,50 @@
+{
+  "module": "paired_teacher",
+  "args": [
+    "--accepted",
+    "{paired_accepted}",
+    "--candidate",
+    "{paired_candidate}",
+    "--url",
+    "{url}",
+    "--model",
+    "{model}"
+  ],
+  "files": [
+    "paired_accepted",
+    "paired_candidate"
+  ],
+  "timeout_seconds": 900,
+  "receipt": "*-paired_teacher.json",
+  "rules": [
+    {
+      "path": [
+        "passed"
+      ],
+      "op": "eq",
+      "value": true,
+      "source": "docs/paired-accuracy.md"
+    }
+  ],
+  "constants": {
+    "paired_teacher": {
+      "POLICY": {
+        "source": "docs/paired-accuracy.md, proposed pending operator approval",
+        "value": {
+          "schema": "paired-teacher-margins/v1",
+          "approval": "",
+          "rationale": "Proposed pending accepted-only repeat calibration: pooled upper clustered CI95 at most 0.005 nats mean error. The available accepted-only neutral replay reached 0.002744 nats upper CI; 0.005 is 5% of the 0.1 absolute floor (20 times tighter) and four times tighter than the existing 0.02 informational mean margin. Pooled net top-one upper CI95 at most 0.01; category mean point increase at most 0.01 nats; ordinal severity harm uses a one-sided sign test on per-text net severity changes with Holm alpha 0.05 across categories. Require eight texts for CI gating, otherwise pooled evidence is insufficient unless explicitly permitted by allow_sparse_pooled; categories use point mean rules and whole-text harm tests. Allow at most two net positions whose absolute error grows by more than 0.5 nats. All values require operator approval before candidate capture.",
+          "reference_sha256": null,
+          "mean_margin": 0.005,
+          "category_mean_margin": 0.01,
+          "top1_delta": 0.01,
+          "category_alpha": 0.05,
+          "min_clusters": 8,
+          "tail_growth_nats": 0.5,
+          "tail_net_allowance": 2,
+          "allow_sparse_pooled": false
+        }
+      }
+    }
+  }
+}

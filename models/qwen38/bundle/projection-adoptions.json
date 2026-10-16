@@ -1,0 +1,3098 @@
+[
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o0_c16_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_c216e2223138807a_v1",
+    "entry_sha256": "c216e2223138807ae250e5046ced0f95449e1256d6786d5ed0ccac414b06668f",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 0
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o0_c1_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_e2d65a01f994e06f_v1",
+    "entry_sha256": "e2d65a01f994e06f60150d2b4482985dcb9c90d9642ccdf1ff1090fcf32ef698",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 1
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o0_c2_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_70bddc9957eafa75_v1",
+    "entry_sha256": "70bddc9957eafa7580c4ada84e9c84846e9cea8403e3186b4d665fc5d00261f6",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 2
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o0_c32_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_b7ae86e2c73bf080_v1",
+    "entry_sha256": "b7ae86e2c73bf080f82c1f0b21d2519db1c8d903aa50c01fff90fc170ac8101f",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 3
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o0_c4_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_da71881f4d9d2a31_v1",
+    "entry_sha256": "da71881f4d9d2a310c817c47c63983c399c840558b27d1d801ef80dc456ae66c",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 4
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o0_c8192_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_6d9d42724ffd88f7_v1",
+    "entry_sha256": "6d9d42724ffd88f729cc2736964bc2aa04a2a479c87451db613b231807d6448c",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 5
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o0_c8_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_8706ef6c2afdd4f2_v1",
+    "entry_sha256": "8706ef6c2afdd4f249444cb7b978267e9909357987ac7983855812ef81e094b6",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 6
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o12_c16_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_17ef39661564ad37_v1",
+    "entry_sha256": "17ef39661564ad37ae34ebafed77e5f387410870865e09641bdf525b9d16c122",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 7
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o12_c1_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_b75e3ae2025502d7_v1",
+    "entry_sha256": "b75e3ae2025502d7104cc7ab00fc6388acbf21eed623af06d26a4b05d8eff83b",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 8
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o12_c2_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_16c3a0735695637b_v1",
+    "entry_sha256": "16c3a0735695637b4f04594f5ed35ff33c1656bfca8032eb1b7828c588552331",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 9
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o12_c32_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_712473ade610120b_v1",
+    "entry_sha256": "712473ade610120b75cd48c7f5a7de7e7299b14b713312b37ffa18d0a5db4b43",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 10
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o12_c4_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_020a4144131db008_v1",
+    "entry_sha256": "020a4144131db008b18cf504af304af4b8321f145c0e330871261462915e0116",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 11
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o12_c8192_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_551e30a31bbd0fc5_v1",
+    "entry_sha256": "551e30a31bbd0fc59be51e101f00f66b26474e4b9d0009906a33a15e97b4644a",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 12
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o12_c8_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_e0a1c4b0ecfb7336_v1",
+    "entry_sha256": "e0a1c4b0ecfb7336f9cc49374c1efdb32890f65025fb484aa643f456633e2d4d",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 13
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o0_c16_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_931cb09982670259_v1",
+    "entry_sha256": "931cb09982670259e2be3c6b08b4b36f3d8d4abff08f0a0be73bf4bc4ed8481f",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 14
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o0_c1_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_28a4ba7da7fd32ab_v1",
+    "entry_sha256": "28a4ba7da7fd32abf0fb1d2cb8d007bac113c8db01bd7b71fe2dc37edbb059e7",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 15
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o0_c2_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_daaab151522c3870_v1",
+    "entry_sha256": "daaab151522c38704fb2baa6eea984fbd718e267de1dd807063b4ae8ede34c84",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 16
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o0_c32_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_7310932c00f28487_v1",
+    "entry_sha256": "7310932c00f2848746c7b762f6275da31b29d706763f9766d0e5fbc8fca7060a",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 17
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o0_c4_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_421abad49139622c_v1",
+    "entry_sha256": "421abad49139622cd632d70dd7cbd2752fb37a6f08ff81be212e0455378df44a",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 18
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o0_c8192_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_6dfe9aef9174598d_v1",
+    "entry_sha256": "6dfe9aef9174598dab448816559c635b1f08c3b83b1a178225bc34057dc3bfb6",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 19
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o0_c8_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_1854fd3d3638e9c7_v1",
+    "entry_sha256": "1854fd3d3638e9c7a020766c5569bf57344269048df3263b532cb0067c4a768a",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 20
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o12_c16_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_f8b7a66c316684de_v1",
+    "entry_sha256": "f8b7a66c316684de0d8f72668886e9d81a40d5794f17cbf5df6e6c6826961b36",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 21
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o12_c1_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_2cd5e9ebb594d949_v1",
+    "entry_sha256": "2cd5e9ebb594d9492f08445f386ca900926167b1c919dd9ac4a44f992ca52651",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 22
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o12_c2_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_86cabe3fd60fda66_v1",
+    "entry_sha256": "86cabe3fd60fda661426c7cb796f00f74c7a20f152acdffc6d4eed7f3fd7afd9",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 23
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o12_c32_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_eac456f5cd8acb57_v1",
+    "entry_sha256": "eac456f5cd8acb57e8b0b89477d50d9081822ce1e7ecb650ab6f20fc9ef5de84",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 24
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o12_c4_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_cf35cea4acb71203_v1",
+    "entry_sha256": "cf35cea4acb71203e763e541c1a910d294776e7e31472b3f2d9668748c0b7126",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 25
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o12_c8192_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_ce832314f5c328a5_v1",
+    "entry_sha256": "ce832314f5c328a53745a9ffbc4e1464110840c242766af7e94e1460e32a5373",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 26
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o12_c8_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_40b84f1b1a89093a_v1",
+    "entry_sha256": "40b84f1b1a89093aa41987337578890300abff7053ab9a181fcfee595a92ac5c",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 27
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3072_c16_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_e27f58ea1c1a6357_v1",
+    "entry_sha256": "e27f58ea1c1a63573faba615fae41bad964aa65d40583d85509a2c5cdc61acab",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 28
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3072_c1_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_7c87fd99561f94e0_v1",
+    "entry_sha256": "7c87fd99561f94e0c5cd94d86e539204afc2ddc86c3e746b278d7e7cd7904b02",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 29
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3072_c2_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_b63d20df018f6e0c_v1",
+    "entry_sha256": "b63d20df018f6e0ca9a56b669af433557976ca17d0d9e71164e1d53ea4a99cd6",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 30
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3072_c32_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_fc895545b9bd0092_v1",
+    "entry_sha256": "fc895545b9bd009247abac0c9935300d680158b017f96e01395b6f6ac22168c0",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 31
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3072_c4_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_379c99080f727f6a_v1",
+    "entry_sha256": "379c99080f727f6a0a9c2abee7b7a8388a4246cc7779c10f2e5fbebfff1cfdd3",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 32
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3072_c8192_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_644aea6f58fbf3a3_v1",
+    "entry_sha256": "644aea6f58fbf3a3f00386ce1784c34f68d4f9eb436ccd5349e8d4f38c643f1d",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 33
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3072_c8_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_c95588cdeac28628_v1",
+    "entry_sha256": "c95588cdeac28628b68cbe79ace5eff32c61e7175f29335f31dc55a610cf5dbc",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 34
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3328_c16_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_ddfbfaf155d01f25_v1",
+    "entry_sha256": "ddfbfaf155d01f25be1260ecc2363b004f51c3ea99e74b66b2af8c0a6d1efdfe",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 35
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3328_c1_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_98bac5a38637697a_v1",
+    "entry_sha256": "98bac5a38637697a42feda1d3a1af51dc106b90c8efa54832b3fd3bc0d26dc43",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 36
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3328_c2_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_09fb70c2ef5bef83_v1",
+    "entry_sha256": "09fb70c2ef5bef834ed1ff54201989506e1a4c915b471a69e598a1b17959971c",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 37
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3328_c32_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_87bccc66a0af221a_v1",
+    "entry_sha256": "87bccc66a0af221a571fb95f58eaa1913d4ed910210014c9b2ed7338865d543f",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 38
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3328_c4_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_7d45cee60bf37d60_v1",
+    "entry_sha256": "7d45cee60bf37d60df80f5ea421afcdd4f1ea54475a59d42c5186cfeebc181ad",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 39
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3328_c8192_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_d2daffe40d521be7_v1",
+    "entry_sha256": "d2daffe40d521be724b58425353bc87ea3a918b42b0f3826b298f1336889cbdc",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 40
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3328_c8_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_cf2b9b128a8eb684_v1",
+    "entry_sha256": "cf2b9b128a8eb684ebc39cd20897adda4bd94a36ae1461a1ac72d62cc83a126a",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 41
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n3072_s3072_d3584_o0_c16_v1",
+    "generated": "chop_proj_bf16_copy_n3072_k1_1ccaf02a6a40836a_v1",
+    "entry_sha256": "1ccaf02a6a40836a88891ce83152d46164b64b4b549dcbc01a31c522f4dabd93",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 42
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n3072_s3072_d3584_o0_c1_v1",
+    "generated": "chop_proj_bf16_copy_n3072_k1_bc01e06c66f8789b_v1",
+    "entry_sha256": "bc01e06c66f8789b1a0515418774918c0e04a96f25f9daa06af1cc29c4b14433",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 43
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n3072_s3072_d3584_o0_c2_v1",
+    "generated": "chop_proj_bf16_copy_n3072_k1_a9ca929d2ca77884_v1",
+    "entry_sha256": "a9ca929d2ca77884271e20ccba3b37ea54f7d06bc79ea049b33519e5fc0831b7",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 44
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n3072_s3072_d3584_o0_c32_v1",
+    "generated": "chop_proj_bf16_copy_n3072_k1_ef4c82858d5976c8_v1",
+    "entry_sha256": "ef4c82858d5976c8e62634b7f2dee36d71e9f9813e4b9dd3df1c54b4a424fe07",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 45
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n3072_s3072_d3584_o0_c4_v1",
+    "generated": "chop_proj_bf16_copy_n3072_k1_51b1774cc54e3e3c_v1",
+    "entry_sha256": "51b1774cc54e3e3c132e8b2d10883d7865391a4ffe7b38fd0bee05e73148f84f",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 46
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n3072_s3072_d3584_o0_c8192_v1",
+    "generated": "chop_proj_bf16_copy_n3072_k1_8a57273ed9ac0cbb_v1",
+    "entry_sha256": "8a57273ed9ac0cbb8f4edd2e89b25a70df021cf6d023a385e8b8fe109103fa4c",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 47
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n3072_s3072_d3584_o0_c8_v1",
+    "generated": "chop_proj_bf16_copy_n3072_k1_42e4cdab12404c90_v1",
+    "entry_sha256": "42e4cdab12404c904f09d931cd48b1976e16860ee1af0c0eeba3e215621e3d41",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 48
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n1536_k2560_linear_c16_v1",
+    "generated": "chop_proj_bf16_dense_n1536_k2560_25f2a9bce854a1f5_v1",
+    "entry_sha256": "25f2a9bce854a1f5a43e3b83b04cae32b1674bf3511977ebdb717a2dd45ee6d8",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 0
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n1536_k2560_linear_c1_v1",
+    "generated": "chop_proj_bf16_dense_n1536_k2560_d1132657e7ebc239_v1",
+    "entry_sha256": "d1132657e7ebc23903ea474eefcc45c305c984fc7ab2fa6d751f87dd9d1d1653",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 1
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n1536_k2560_linear_c2_v1",
+    "generated": "chop_proj_bf16_dense_n1536_k2560_d4557e494a849623_v1",
+    "entry_sha256": "d4557e494a849623d3a950c2b7c6e3d61172ceaefb1b01d2ada6c986b9a3477e",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 2
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n1536_k2560_linear_c32_v1",
+    "generated": "chop_proj_bf16_dense_n1536_k2560_4badbb681b964555_v1",
+    "entry_sha256": "4badbb681b96455570bad062bbd98a67a6dcdde427c135ea63cd3d5185d1d157",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 3
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n1536_k2560_linear_c4_v1",
+    "generated": "chop_proj_bf16_dense_n1536_k2560_36a63f207812ab3a_v1",
+    "entry_sha256": "36a63f207812ab3a504178408f6adc7554ee23f9d5cfa1789b171c82ba4a3003",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 4
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n1536_k2560_linear_c8192_v1",
+    "generated": "chop_proj_bf16_dense_n1536_k2560_b6af82e6e467d4b7_v1",
+    "entry_sha256": "b6af82e6e467d4b7caec273bcb8256faf031f7429b43df731ee6d6765f7f5428",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 5
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n1536_k2560_linear_c8_v1",
+    "generated": "chop_proj_bf16_dense_n1536_k2560_a436b6af8a7c0ee5_v1",
+    "entry_sha256": "a436b6af8a7c0ee57556db64bf4d45f579ace6a15b599ef63e27179e1885fb83",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 6
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n2560_k1536_linear_c16_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k1536_47494a319fbdb4b8_v1",
+    "entry_sha256": "47494a319fbdb4b8636f7ced4e0c1abe19e38f48e1a931445f2c843aa12ad534",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 7
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n2560_k1536_linear_c1_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k1536_b250bc13e0e8071d_v1",
+    "entry_sha256": "b250bc13e0e8071d8781ebacde6a6001aff299c42634d466b85110be380f6657",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 8
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n2560_k1536_linear_c2_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k1536_5404495f4cd70e94_v1",
+    "entry_sha256": "5404495f4cd70e94caf19d177197edfc681230aa067e80ce5ed8af8deef30c36",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 9
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n2560_k1536_linear_c32_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k1536_93fb28a27cd7aeba_v1",
+    "entry_sha256": "93fb28a27cd7aebaeee6808bc6db7adc81b3420a54caafb904388a8e1338b7d1",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 10
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n2560_k1536_linear_c4_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k1536_7a5f3f8fda4c1808_v1",
+    "entry_sha256": "7a5f3f8fda4c1808d1e30926e9ecaac9f5f8cf944b0f98b151ea6adbbacfa643",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 11
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n2560_k1536_linear_c8192_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k1536_dcd598b94576bd33_v1",
+    "entry_sha256": "dcd598b94576bd3393c6ff459e186b9bf2cedb92a0d0aca6f92ce57e011190df",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 12
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n2560_k1536_linear_c8_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k1536_b511239eb0370a90_v1",
+    "entry_sha256": "b511239eb0370a901a8c21f3e1098dc33f14d99cde610c9e9dca3843d8ca462b",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 13
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n2560_k2560_linear_c16_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k2560_617ac02b6d04c850_v1",
+    "entry_sha256": "617ac02b6d04c8503dd37b4cca26eaf89d07f9ab34c270153df3519656786e1e",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 14
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n2560_k2560_linear_c1_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k2560_9b77bef1991bf4af_v1",
+    "entry_sha256": "9b77bef1991bf4af28ace8c510399915a71d8879b1b73293de3d6df603eefc47",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 15
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n2560_k2560_linear_c2_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k2560_6544e8b13b788448_v1",
+    "entry_sha256": "6544e8b13b78844817a451423c7d2963ea7ff55aa070ec84d15edf30e5e5dadd",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 16
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n2560_k2560_linear_c32_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k2560_046690a134dec406_v1",
+    "entry_sha256": "046690a134dec40672b15e8ab64c00c468f57221f6f321687bcb9a580abb52b8",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 17
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n2560_k2560_linear_c4_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k2560_b6d913fee26f0994_v1",
+    "entry_sha256": "b6d913fee26f09949189a548afd49c14904e6d0ab7c7edb2a5b38266ad6f5021",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 18
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n2560_k2560_linear_c8192_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k2560_34800512289a76bb_v1",
+    "entry_sha256": "34800512289a76bb00fe0d9452ccc1e23602dcb506489db70e14c1e0dd17c8de",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 19
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n2560_k2560_linear_c8_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k2560_5d0e7db5b35bbeb6_v1",
+    "entry_sha256": "5d0e7db5b35bbeb6f32c880346a57be68d2d625d055fa73526bdca4f61c35683",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 20
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n2560_k256_linear_c16_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k256_4dd16da1acddb0e2_v1",
+    "entry_sha256": "4dd16da1acddb0e206de5e0750fac0364c81be2a7b5a81c92a53af47ac502603",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 21
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n2560_k256_linear_c1_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k256_9e16c58fc5480a89_v1",
+    "entry_sha256": "9e16c58fc5480a89a1a9abdd9a39caa6342857c63a5daac7bcbe091350bddaf5",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 22
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n2560_k256_linear_c2_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k256_6feb0c069238e00e_v1",
+    "entry_sha256": "6feb0c069238e00ef22c29e61ee153bc48c1be403bebcb757d3c74a9d354c217",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 23
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n2560_k256_linear_c32_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k256_9b4eff0d6fcc8921_v1",
+    "entry_sha256": "9b4eff0d6fcc892141749d1c0b81e2d50a31d5338a75a44e84bc212d608676b3",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 24
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n2560_k256_linear_c4_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k256_35a5c7e923ac1801_v1",
+    "entry_sha256": "35a5c7e923ac18012abb16111821b8e0308c06bf00bec841dda913a0aee339e3",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 25
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n2560_k256_linear_c8192_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k256_260748a175ff3859_v1",
+    "entry_sha256": "260748a175ff3859a1c17f060c5fa34b8b71f6b16a6a1a900b3ae2bf8fddd991",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 26
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n2560_k256_linear_c8_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k256_d71330be22038b8b_v1",
+    "entry_sha256": "d71330be22038b8b57ebe4a83c344b043566c6bbf6f59a4847687ec5919acc18",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 27
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n256_k2560_linear_c16_v1",
+    "generated": "chop_proj_bf16_dense_n256_k2560_605487bb7d06b4c7_v1",
+    "entry_sha256": "605487bb7d06b4c7594ef2862711c5883e55dbbe12587bbf501a60a922531f96",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 28
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n256_k2560_linear_c1_v1",
+    "generated": "chop_proj_bf16_dense_n256_k2560_08a49fa65443a1d0_v1",
+    "entry_sha256": "08a49fa65443a1d0cede9675e2b1d3e910ccfebbad0e2ee6aca5cebfccddc435",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 29
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n256_k2560_linear_c2_v1",
+    "generated": "chop_proj_bf16_dense_n256_k2560_59d367c8c014d345_v1",
+    "entry_sha256": "59d367c8c014d345345b434d2f37831791652f7d3936cdda9c8c4b73c09614b5",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 30
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n256_k2560_linear_c32_v1",
+    "generated": "chop_proj_bf16_dense_n256_k2560_a919599967fc9eec_v1",
+    "entry_sha256": "a919599967fc9eec99bae722529f4f38c0ea41f3ccb6390f5cbc52b23f3723c7",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 31
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n256_k2560_linear_c4_v1",
+    "generated": "chop_proj_bf16_dense_n256_k2560_6d175622720b25da_v1",
+    "entry_sha256": "6d175622720b25da2b51d7889bbb3a4f9fc95dc2fdb27bb6d30493472f906436",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 32
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n256_k2560_linear_c8192_v1",
+    "generated": "chop_proj_bf16_dense_n256_k2560_6402c1fb0e089c71_v1",
+    "entry_sha256": "6402c1fb0e089c71c6b587ff0e448a8b6fe3bb21a4df52cba4b9bf6b20f6f53a",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 33
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n256_k2560_linear_c8_v1",
+    "generated": "chop_proj_bf16_dense_n256_k2560_4faab96c9b574f3c_v1",
+    "entry_sha256": "4faab96c9b574f3cc948ba354bbe41adc4b389b1a34388b04979726e55101543",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 34
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n3072_k2560_linear_c16_v1",
+    "generated": "chop_proj_bf16_dense_n3072_k2560_ffe034a127629593_v1",
+    "entry_sha256": "ffe034a1276295936df32cac57ea79695f5184bdc5dc02dc1b854f381a3bbdcd",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 35
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n3072_k2560_linear_c1_v1",
+    "generated": "chop_proj_bf16_dense_n3072_k2560_9f6cdcb4d3df751e_v1",
+    "entry_sha256": "9f6cdcb4d3df751e7007d3598b370bfa05e598183462999f43bf345ab9640124",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 36
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n3072_k2560_linear_c2_v1",
+    "generated": "chop_proj_bf16_dense_n3072_k2560_52d22c9c6b612885_v1",
+    "entry_sha256": "52d22c9c6b612885014e091ddd5df0102dc3b17e972062b82c1ef6c39e614ae2",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 37
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n3072_k2560_linear_c32_v1",
+    "generated": "chop_proj_bf16_dense_n3072_k2560_84a98392a4c0b280_v1",
+    "entry_sha256": "84a98392a4c0b28059219943ac721e73b911146653f6c9037e876cf3463a276d",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 38
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n3072_k2560_linear_c4_v1",
+    "generated": "chop_proj_bf16_dense_n3072_k2560_2aefc2f4f8784d63_v1",
+    "entry_sha256": "2aefc2f4f8784d632d8e135dfd7a7205f2d0ef5714a2b1cecb4cd87e149be125",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 39
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n3072_k2560_linear_c8192_v1",
+    "generated": "chop_proj_bf16_dense_n3072_k2560_84e7ffbb98ae1b66_v1",
+    "entry_sha256": "84e7ffbb98ae1b665729df1dcbf68247d2841c5ab5d25a0a02e1264c1cc3c90b",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 40
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n3072_k2560_linear_c8_v1",
+    "generated": "chop_proj_bf16_dense_n3072_k2560_f7e852ef508994af_v1",
+    "entry_sha256": "f7e852ef508994afcbcddae79063ad945c39a29107dea464bd963fc92e009093",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 41
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n512_k2560_swiglu_c16_v1",
+    "generated": "chop_proj_bf16_dense_n256_k2560_4172b2339ce4d2e7_v1",
+    "entry_sha256": "4172b2339ce4d2e74b35dfd72f24beed7d98d2d77400a3939b52f4f6f49350cd",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 42
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n512_k2560_swiglu_c1_v1",
+    "generated": "chop_proj_bf16_dense_n256_k2560_ab4599461b163270_v1",
+    "entry_sha256": "ab4599461b1632704f1f86c8ccb85d9f05185e64292d8d803f8dcdc8e7fad0a4",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 43
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n512_k2560_swiglu_c2_v1",
+    "generated": "chop_proj_bf16_dense_n256_k2560_2c6eb3a66cee2236_v1",
+    "entry_sha256": "2c6eb3a66cee2236ce4e85fb0ab646793edd7dc3f856f9aed43cbdba33aebc71",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 44
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n512_k2560_swiglu_c32_v1",
+    "generated": "chop_proj_bf16_dense_n256_k2560_e11cc43eef137c1a_v1",
+    "entry_sha256": "e11cc43eef137c1ae22f058c18bca42c5e920832d9daa71b8ed8e964203c906a",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 45
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n512_k2560_swiglu_c4_v1",
+    "generated": "chop_proj_bf16_dense_n256_k2560_d79c3173cf02946e_v1",
+    "entry_sha256": "d79c3173cf02946e5bf63e0dc00ca5356ff829662781e3cec65e5cb1e5999aa6",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 46
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n512_k2560_swiglu_c8192_v1",
+    "generated": "chop_proj_bf16_dense_n256_k2560_7c5906a9f67fd86a_v1",
+    "entry_sha256": "7c5906a9f67fd86ae9bb280c2cbc763bf84fa0f8783bae71aa066c3e057dadae",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 47
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n512_k2560_swiglu_c8_v1",
+    "generated": "chop_proj_bf16_dense_n256_k2560_21522899357f70e4_v1",
+    "entry_sha256": "21522899357f70e4777dc4230df14c3872d17fb8a828bd41fdd8d2d2e7ae42f9",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 48
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n640_k2560_linear_c16_v1",
+    "generated": "chop_proj_bf16_dense_n640_k2560_33ca3b495850487c_v1",
+    "entry_sha256": "33ca3b495850487c59eed120d96fa1caf107e1dc96b3cc075479bf19b2567a7d",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 49
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n640_k2560_linear_c1_v1",
+    "generated": "chop_proj_bf16_dense_n640_k2560_64af4f29b510352b_v1",
+    "entry_sha256": "64af4f29b510352bd93b1f8a14a49137231d54bb75189519864e702d19ed86f5",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 50
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n640_k2560_linear_c2_v1",
+    "generated": "chop_proj_bf16_dense_n640_k2560_758bf08503c45494_v1",
+    "entry_sha256": "758bf08503c4549494204f674b6e203483c877939686be2bd7a1b0cbd6b70d98",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 51
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n640_k2560_linear_c32_v1",
+    "generated": "chop_proj_bf16_dense_n640_k2560_31980cf87bebad55_v1",
+    "entry_sha256": "31980cf87bebad559d3ad782baef914bc5cc54c33435599e5727d4c51d5b6c4a",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 52
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n640_k2560_linear_c4_v1",
+    "generated": "chop_proj_bf16_dense_n640_k2560_b3dd4a39e1c54861_v1",
+    "entry_sha256": "b3dd4a39e1c548615b1dd1c455c397ed258765fd214b54173dffb94958a26265",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 53
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n640_k2560_linear_c8192_v1",
+    "generated": "chop_proj_bf16_dense_n640_k2560_29799b596f376f37_v1",
+    "entry_sha256": "29799b596f376f3785de8ffb90fd246037ff00fc8109f1c0d2804dd20c119611",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 54
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n640_k2560_linear_c8_v1",
+    "generated": "chop_proj_bf16_dense_n640_k2560_359878bbe207971c_v1",
+    "entry_sha256": "359878bbe207971c3c13b53661385b9d79d2651e1378ce252234163dae930e8d",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 55
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n64_k2560_linear_c16_v1",
+    "generated": "chop_proj_bf16_dense_n64_k2560_41718ba300a27fc3_v1",
+    "entry_sha256": "41718ba300a27fc3ba6c417ea3f7c71846c9fe52e1e317b432cbb566700e85f9",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 56
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n64_k2560_linear_c1_v1",
+    "generated": "chop_proj_bf16_dense_n64_k2560_1223ebc78d8fc40b_v1",
+    "entry_sha256": "1223ebc78d8fc40b863b2c6c1841baa792f9527e263280566159f9850942c3bb",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 57
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n64_k2560_linear_c2_v1",
+    "generated": "chop_proj_bf16_dense_n64_k2560_fecc08e789bb8193_v1",
+    "entry_sha256": "fecc08e789bb8193c1726b6c85152a5d72dad2fdc1bebf27a4c5ad796a496d57",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 58
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n64_k2560_linear_c32_v1",
+    "generated": "chop_proj_bf16_dense_n64_k2560_0b928a9d3f399382_v1",
+    "entry_sha256": "0b928a9d3f39938222fb3748af7e229d36051453781d41092080823c6ae36a29",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 59
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n64_k2560_linear_c4_v1",
+    "generated": "chop_proj_bf16_dense_n64_k2560_b7eb7cfa6ef16dcf_v1",
+    "entry_sha256": "b7eb7cfa6ef16dcf146c67bc50eec730900af9dd99e84d3a50719625c197fc7b",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 60
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n64_k2560_linear_c8192_v1",
+    "generated": "chop_proj_bf16_dense_n64_k2560_daf2748f79076adf_v1",
+    "entry_sha256": "daf2748f79076adfa102cda352ad80af91d89fdb72f0a752be6e3bd34f33cce6",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 61
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_bf16_n64_k2560_linear_c8_v1",
+    "generated": "chop_proj_bf16_dense_n64_k2560_38dd3ca1e8fb24e8_v1",
+    "entry_sha256": "38dd3ca1e8fb24e8d26593303b9e75aea07f18484f669366baa92ba63c1194ed",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 62
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n1536_k2560_linear_c16_v1",
+    "generated": "chop_proj_mxfp8_dense_n1536_k2560_a384aba9d83f365c_v1",
+    "entry_sha256": "a384aba9d83f365c535c5df6154692074e869aeb6d086ace1e7e0a77d7e678d3",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 63
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n1536_k2560_linear_c1_v1",
+    "generated": "chop_proj_mxfp8_dense_n1536_k2560_c4f18dde1e31879c_v1",
+    "entry_sha256": "c4f18dde1e31879cb5042efb8e9a86fd04a7500ccc78a21b1c5ec348d1e30e30",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 64
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n1536_k2560_linear_c2_v1",
+    "generated": "chop_proj_mxfp8_dense_n1536_k2560_18267b34d5f10499_v1",
+    "entry_sha256": "18267b34d5f10499fc64e5cf660a2a20319fcbaa183c7b230a2fab2af33a47df",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 65
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n1536_k2560_linear_c32_v1",
+    "generated": "chop_proj_mxfp8_dense_n1536_k2560_22af5395e78ca06f_v1",
+    "entry_sha256": "22af5395e78ca06f43a46806cbbe9b07673833a1e59574e8adf2e30c981fb8c3",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 66
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n1536_k2560_linear_c4_v1",
+    "generated": "chop_proj_mxfp8_dense_n1536_k2560_b8dc778bdb20880b_v1",
+    "entry_sha256": "b8dc778bdb20880be74d5d5f007da80493344d0abf5a37d236d614db3786c3a9",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 67
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n1536_k2560_linear_c8192_v1",
+    "generated": "chop_proj_mxfp8_dense_n1536_k2560_88ec0b154392f6dd_v1",
+    "entry_sha256": "88ec0b154392f6ddf488b2ff0cf3df997cb827d5877dd43ef94631c3054d7a13",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 68
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n1536_k2560_linear_c8_v1",
+    "generated": "chop_proj_mxfp8_dense_n1536_k2560_1d33608c1e93eae5_v1",
+    "entry_sha256": "1d33608c1e93eae5a77a70aebbef9beea0165bc76af700d44ce5d31a1ff87eb9",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 69
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n16_k2560_linear_c16_v1",
+    "generated": "chop_proj_mxfp8_dense_n16_k2560_51b185fa0fc9ec2a_v1",
+    "entry_sha256": "51b185fa0fc9ec2a7558929d6a9d30f205991c4776d8909a8c80a1d7b503ce5c",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 70
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n16_k2560_linear_c1_v1",
+    "generated": "chop_proj_mxfp8_dense_n16_k2560_3465080236943e3d_v1",
+    "entry_sha256": "3465080236943e3d461574bfd141b49e5035791005f0e41b81886bd9972c021b",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 71
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n16_k2560_linear_c2_v1",
+    "generated": "chop_proj_mxfp8_dense_n16_k2560_78fc2ec6be6a03c1_v1",
+    "entry_sha256": "78fc2ec6be6a03c1dd919f52d17130df3d9d88b367b940bfe863579aca29ccf7",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 72
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n16_k2560_linear_c32_v1",
+    "generated": "chop_proj_mxfp8_dense_n16_k2560_73435748217ab17e_v1",
+    "entry_sha256": "73435748217ab17e04119288fdf986485fe2687a8ccfb7632d3824f1a2e6bcc0",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 73
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n16_k2560_linear_c4_v1",
+    "generated": "chop_proj_mxfp8_dense_n16_k2560_a10b122c4b8525e7_v1",
+    "entry_sha256": "a10b122c4b8525e79c0ea809063b64e89f9274c7f9d4056f6cb328f7c85c2c44",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 74
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n16_k2560_linear_c8192_v1",
+    "generated": "chop_proj_mxfp8_dense_n16_k2560_3cb454a0ecd7cedb_v1",
+    "entry_sha256": "3cb454a0ecd7cedbb77f257fdc2ea645822da74e5b4a1bc80c8ebc6278d68c51",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 75
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n16_k2560_linear_c8_v1",
+    "generated": "chop_proj_mxfp8_dense_n16_k2560_2668383344b66b63_v1",
+    "entry_sha256": "2668383344b66b634064156b889a362d108fd3ac883f6a6c4eae40b3d53aa539",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 76
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n2560_k1536_linear_c16_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k1536_18bb76478860153b_v1",
+    "entry_sha256": "18bb76478860153ba759bacfbb412b2193614b178a734a91adc0b7ba0367788b",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 77
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n2560_k1536_linear_c1_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k1536_2e8696578ee63633_v1",
+    "entry_sha256": "2e8696578ee63633da5c5bab412b802b9df085c105c51e2c7552a5e4055e7ccb",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 78
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n2560_k1536_linear_c2_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k1536_e2b0739397ea11b0_v1",
+    "entry_sha256": "e2b0739397ea11b0531c2d3c8813f184378e0f914f70b010fbdd48b4c74d4b8a",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 79
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n2560_k1536_linear_c32_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k1536_7036f99f563e2256_v1",
+    "entry_sha256": "7036f99f563e22565ababf28c5669d700c5a270e88cf8bdadd16fe76bf0f9188",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 80
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n2560_k1536_linear_c4_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k1536_97aa092adaa33b02_v1",
+    "entry_sha256": "97aa092adaa33b02c686bc7df4f7bfbfa1bb5873649b6e47b72f1a4a316bdbfa",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 81
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n2560_k1536_linear_c8192_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k1536_4f0d045a6459d496_v1",
+    "entry_sha256": "4f0d045a6459d496a7f9f38511e294b201aa11d10f5bcec578ffc177c3c91d54",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 82
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n2560_k1536_linear_c8_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k1536_d940d7d47739cef3_v1",
+    "entry_sha256": "d940d7d47739cef35b727dcf7802cee6e8a1409e4d3b8dcd667fef291a16a68d",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 83
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n2560_k2560_linear_c16_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k2560_efa1bff8f01f4fe9_v1",
+    "entry_sha256": "efa1bff8f01f4fe9126cff9578687085394727f5b8da03ef1c5fa93851f84ea4",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 84
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n2560_k2560_linear_c1_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k2560_a9048c741fc6bf88_v1",
+    "entry_sha256": "a9048c741fc6bf8825935495967b9ee8abae9349a4a37dee068bab8a1b538d51",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 85
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n2560_k2560_linear_c2_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k2560_0cedd516706d1b8e_v1",
+    "entry_sha256": "0cedd516706d1b8ef49e9685011df7635831dacfa3af4ca581367b45ad057fe6",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 86
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n2560_k2560_linear_c32_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k2560_50fedac4d0e2bfe8_v1",
+    "entry_sha256": "50fedac4d0e2bfe8884644c58b1ede507db38f738f5d041dbf68770cc496d70e",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 87
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n2560_k2560_linear_c4_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k2560_637204bff49e7db6_v1",
+    "entry_sha256": "637204bff49e7db6bd4b2e16191f168e32a7b8dbb9e14af56337e4536c4f30ab",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 88
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n2560_k2560_linear_c8192_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k2560_85859f2cd11e6bb3_v1",
+    "entry_sha256": "85859f2cd11e6bb3cafb0caa0bbd46a96106b5d98dd13528b8fc5b2f75862f2f",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 89
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n2560_k2560_linear_c8_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k2560_0cfd8b6b6a023f45_v1",
+    "entry_sha256": "0cfd8b6b6a023f4540749bb4963a308d86356d0d8b63cdfd43273986480e1088",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 90
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n2560_k256_linear_c16_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k256_e77edc175e476cd9_v1",
+    "entry_sha256": "e77edc175e476cd99bae6ced02244a6684007bc29722df8b7e9fbbf097afe3be",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 91
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n2560_k256_linear_c1_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k256_d2865778c670fa24_v1",
+    "entry_sha256": "d2865778c670fa2433b4c3295ecc2336a02fb4cded5306f0d6be4c111b7708b2",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 92
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n2560_k256_linear_c2_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k256_24da41f22efdcb33_v1",
+    "entry_sha256": "24da41f22efdcb33dd26719f64b9b3252157abed0f91feda3f4982f13430e20e",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 93
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n2560_k256_linear_c32_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k256_d1a390461b39bd0b_v1",
+    "entry_sha256": "d1a390461b39bd0b888b4230b105ab9cdc8470122dad5e27c11eb690f206131c",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 94
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n2560_k256_linear_c4_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k256_69a749c209ee6afc_v1",
+    "entry_sha256": "69a749c209ee6afcde784757f7d086d304c074139234f9836b479269859fb750",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 95
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n2560_k256_linear_c8192_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k256_e847b8569ba90bc7_v1",
+    "entry_sha256": "e847b8569ba90bc7df5eb2440b44f320aa75b46fce8fd0a9e7efcf69800d48a8",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 96
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n2560_k256_linear_c8_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k256_e3961488e1a33953_v1",
+    "entry_sha256": "e3961488e1a33953ddcfad57372f3fad6146cfd274f7bf56a8ce07c93aa6c323",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 97
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n256_k2560_linear_c16_v1",
+    "generated": "chop_proj_mxfp8_dense_n256_k2560_361a069eab197836_v1",
+    "entry_sha256": "361a069eab197836e72409a7a0be5869eeb78048c1f8eae2b334b4e2e7de50ba",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 98
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n256_k2560_linear_c1_v1",
+    "generated": "chop_proj_mxfp8_dense_n256_k2560_fba3336cdc3f2a9f_v1",
+    "entry_sha256": "fba3336cdc3f2a9f38beba0d0478d95dc6e03210d6a78aa48fe494b0144da3dd",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 99
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n256_k2560_linear_c2_v1",
+    "generated": "chop_proj_mxfp8_dense_n256_k2560_010334602d7c5c54_v1",
+    "entry_sha256": "010334602d7c5c547272fc109dde037a0632fbd43093eee741b74f1a70b6201a",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 100
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n256_k2560_linear_c32_v1",
+    "generated": "chop_proj_mxfp8_dense_n256_k2560_45ccd159cbf0cbba_v1",
+    "entry_sha256": "45ccd159cbf0cbba909ed5b1d0eb13aa9a7ee31e03e831169b875784ec3ffa52",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 101
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n256_k2560_linear_c4_v1",
+    "generated": "chop_proj_mxfp8_dense_n256_k2560_966c731163c6f630_v1",
+    "entry_sha256": "966c731163c6f63041a6727a368ce85f904e8eb276a8d6a8ab6f0d94ccbf033a",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 102
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n256_k2560_linear_c8192_v1",
+    "generated": "chop_proj_mxfp8_dense_n256_k2560_35a084fc39e4ea5c_v1",
+    "entry_sha256": "35a084fc39e4ea5c52c61ae284bcd72ee28c59073c38909a10cbc083ac4bc41f",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 103
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n256_k2560_linear_c8_v1",
+    "generated": "chop_proj_mxfp8_dense_n256_k2560_fa9d927fb2e6a1cd_v1",
+    "entry_sha256": "fa9d927fb2e6a1cd710dced2b2dd6dd5ba3744ba1ab46a2dd2771d994e3df23d",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 104
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n3072_k2560_linear_c16_v1",
+    "generated": "chop_proj_mxfp8_dense_n3072_k2560_d91cb9c09cd315a5_v1",
+    "entry_sha256": "d91cb9c09cd315a5b72c9d336b531a1ca007ea3650c8937b2c5b7b48c1e55ed3",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 105
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n3072_k2560_linear_c1_v1",
+    "generated": "chop_proj_mxfp8_dense_n3072_k2560_3cd376c7df1fc9de_v1",
+    "entry_sha256": "3cd376c7df1fc9de42d083ad20f1903f3d15c195aa9c8b0e7fb57b73553f5900",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 106
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n3072_k2560_linear_c2_v1",
+    "generated": "chop_proj_mxfp8_dense_n3072_k2560_516c55938106ea68_v1",
+    "entry_sha256": "516c55938106ea6875fccfcba10ff0d56953cb7f45090cd27ef8a30488cdcc6f",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 107
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n3072_k2560_linear_c32_v1",
+    "generated": "chop_proj_mxfp8_dense_n3072_k2560_d2d31df0c4d80860_v1",
+    "entry_sha256": "d2d31df0c4d80860d8488a8d7484547e3d52c2d9a0d608df5d6552410f9a4f72",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 108
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n3072_k2560_linear_c4_v1",
+    "generated": "chop_proj_mxfp8_dense_n3072_k2560_7fa5dc31c7086ffe_v1",
+    "entry_sha256": "7fa5dc31c7086ffe8b3fdf04c8d4b836c2e2904f9281f460fd55b526a0652d6a",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 109
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n3072_k2560_linear_c8192_v1",
+    "generated": "chop_proj_mxfp8_dense_n3072_k2560_b60ac19e888b7e26_v1",
+    "entry_sha256": "b60ac19e888b7e267d63266dc6c585e47793268ae6948686784cc99bc539c137",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 110
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n3072_k2560_linear_c8_v1",
+    "generated": "chop_proj_mxfp8_dense_n3072_k2560_e698d276d71ad85d_v1",
+    "entry_sha256": "e698d276d71ad85dec0c5f28be8146fdfd0799203bb0775ff8d405aa5d0d1432",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 111
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n512_k2560_swiglu_c16_v1",
+    "generated": "chop_proj_mxfp8_dense_n256_k2560_a1668a124f476cbf_v1",
+    "entry_sha256": "a1668a124f476cbfb392603e0740375357e8c14cfb70a787a06d9e5c7519fb89",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 112
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n512_k2560_swiglu_c1_v1",
+    "generated": "chop_proj_mxfp8_dense_n256_k2560_96f5cae71eeea328_v1",
+    "entry_sha256": "96f5cae71eeea328df8b3a253ecc159113d3312c1057ad87f41bcdcfd13f97b0",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 113
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n512_k2560_swiglu_c2_v1",
+    "generated": "chop_proj_mxfp8_dense_n256_k2560_b474a69b77a11dfc_v1",
+    "entry_sha256": "b474a69b77a11dfc8097fcc327f084831689e70ebdcc5ada1a9fef9c7fbbd546",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 114
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n512_k2560_swiglu_c32_v1",
+    "generated": "chop_proj_mxfp8_dense_n256_k2560_d11963c3be95edcd_v1",
+    "entry_sha256": "d11963c3be95edcd569fc8d851b058bccf659b5e1d0a8c1cbc88f1451990c4cb",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 115
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n512_k2560_swiglu_c4_v1",
+    "generated": "chop_proj_mxfp8_dense_n256_k2560_2ee71e41e40f8c75_v1",
+    "entry_sha256": "2ee71e41e40f8c7566731c7b33420abbb199e60be7100ca4ba6155690f4b16b4",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 116
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n512_k2560_swiglu_c8192_v1",
+    "generated": "chop_proj_mxfp8_dense_n256_k2560_5e5d42da5b27a073_v1",
+    "entry_sha256": "5e5d42da5b27a073c6192b933ced9999a1cc6c4081e50f6f8826fa7fc19a2e02",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 117
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n512_k2560_swiglu_c8_v1",
+    "generated": "chop_proj_mxfp8_dense_n256_k2560_e02f7560289ca19c_v1",
+    "entry_sha256": "e02f7560289ca19c2b2edd9cee22d6491b30d06197722ade51f2e5951c32f3f9",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 118
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n640_k2560_linear_c16_v1",
+    "generated": "chop_proj_mxfp8_dense_n640_k2560_6cdcef68bc40ce15_v1",
+    "entry_sha256": "6cdcef68bc40ce155b69476b2a23dc2e46f8af6e023a5ef255574abd3c2ee3cb",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 119
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n640_k2560_linear_c1_v1",
+    "generated": "chop_proj_mxfp8_dense_n640_k2560_926d875320ef3bd3_v1",
+    "entry_sha256": "926d875320ef3bd32b3495b367b4c17d389d657a7ed029dc470a8d6f9071c192",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 120
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n640_k2560_linear_c2_v1",
+    "generated": "chop_proj_mxfp8_dense_n640_k2560_bd77501bc2c790c6_v1",
+    "entry_sha256": "bd77501bc2c790c60f37063b626954974bcb943b9c37121899c7a002a270a237",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 121
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n640_k2560_linear_c32_v1",
+    "generated": "chop_proj_mxfp8_dense_n640_k2560_32ac9a6175275c4b_v1",
+    "entry_sha256": "32ac9a6175275c4b78644c5d6436f78a6eb63ac04bf7eb9291d7c33ae6301f2a",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 122
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n640_k2560_linear_c4_v1",
+    "generated": "chop_proj_mxfp8_dense_n640_k2560_db2b338d3d01a903_v1",
+    "entry_sha256": "db2b338d3d01a90336fac389d171f16404530b0fac4d6b0ae702d08bdfe5953f",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 123
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n640_k2560_linear_c8192_v1",
+    "generated": "chop_proj_mxfp8_dense_n640_k2560_924143366ff0c593_v1",
+    "entry_sha256": "924143366ff0c5935e1b3dd5e22cc06bc3da19c97372ebaa6dc3be61f1738802",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 124
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_mxfp8_n640_k2560_linear_c8_v1",
+    "generated": "chop_proj_mxfp8_dense_n640_k2560_094b3f55620e6fad_v1",
+    "entry_sha256": "094b3f55620e6fad0e7c86c92377d394c952a3577845728c60289d7519a595a9",
+    "placement": {
+      "cubin": "qwen38_precision_dense_v1",
+      "position": 125
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_ngram_c128_v1",
+    "generated": "chop_proj_nvfp4_lookup_n320001536_k160_fc3d7f14581d1eba_v1",
+    "entry_sha256": "fc3d7f14581d1eba8f04c325c006018015bd4f1951411ce6127b8317e5bc9542",
+    "placement": {
+      "cubin": "qwen38_precision_rows_v1",
+      "position": 0
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_ngram_c16_v1",
+    "generated": "chop_proj_nvfp4_lookup_n320001536_k160_3b619f43147a4004_v1",
+    "entry_sha256": "3b619f43147a4004a47218bff66a4fd5eae01ac2e522f975b0d4e2fdcacc4322",
+    "placement": {
+      "cubin": "qwen38_precision_rows_v1",
+      "position": 1
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_ngram_c1_v1",
+    "generated": "chop_proj_nvfp4_lookup_n320001536_k160_02f7dce37aea611d_v1",
+    "entry_sha256": "02f7dce37aea611d6580fdc66c9861c082558d5e80e0f51eb0d6b9c9f426904e",
+    "placement": {
+      "cubin": "qwen38_precision_rows_v1",
+      "position": 2
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_ngram_c256_v1",
+    "generated": "chop_proj_nvfp4_lookup_n320001536_k160_d53d845ae182ccb1_v1",
+    "entry_sha256": "d53d845ae182ccb103efa8123b9565aa6095ec61159b16d39826c55c14d41295",
+    "placement": {
+      "cubin": "qwen38_precision_rows_v1",
+      "position": 3
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_ngram_c2_v1",
+    "generated": "chop_proj_nvfp4_lookup_n320001536_k160_db593851e20f6dad_v1",
+    "entry_sha256": "db593851e20f6dadb228a985ced61013b484bf33229becc2447e9d3439caca84",
+    "placement": {
+      "cubin": "qwen38_precision_rows_v1",
+      "position": 4
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_ngram_c32_v1",
+    "generated": "chop_proj_nvfp4_lookup_n320001536_k160_c376f9bb5546dd50_v1",
+    "entry_sha256": "c376f9bb5546dd505b0fd52bbe352cbd32a4ae88d02be8b3bc333424f8f8c364",
+    "placement": {
+      "cubin": "qwen38_precision_rows_v1",
+      "position": 5
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_ngram_c4_v1",
+    "generated": "chop_proj_nvfp4_lookup_n320001536_k160_af11244366c32b2c_v1",
+    "entry_sha256": "af11244366c32b2c385403ba3c08c79cd16d961f4624b66590095529d91cbd6d",
+    "placement": {
+      "cubin": "qwen38_precision_rows_v1",
+      "position": 6
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_ngram_c64_v1",
+    "generated": "chop_proj_nvfp4_lookup_n320001536_k160_f748140c3786a216_v1",
+    "entry_sha256": "f748140c3786a216214035b6fc8cb6259053eb6a69e724761caf2c78ac2cf636",
+    "placement": {
+      "cubin": "qwen38_precision_rows_v1",
+      "position": 7
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_ngram_c8192_v1",
+    "generated": "chop_proj_nvfp4_lookup_n320001536_k160_babc15ee623ed93a_v1",
+    "entry_sha256": "babc15ee623ed93a159b3c7810d2ff01d474fcf649066b7d6c158df59d1fc6db",
+    "placement": {
+      "cubin": "qwen38_precision_rows_v1",
+      "position": 8
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_ngram_c8_v1",
+    "generated": "chop_proj_nvfp4_lookup_n320001536_k160_c08bd5c8a263fae2_v1",
+    "entry_sha256": "c08bd5c8a263fae2796afc79449180a0d20a2996231b35769f222d29ad312aae",
+    "placement": {
+      "cubin": "qwen38_precision_rows_v1",
+      "position": 9
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_nvfp4_down_c16_v1",
+    "generated": "chop_proj_nvfp4_grouped_n2560_k640_bf4d8d7f03322cd7_v1",
+    "entry_sha256": "bf4d8d7f03322cd7a931f34e99388c10cd0e5dfd1ac117766d10961689aaa37a",
+    "placement": {
+      "cubin": "qwen38_precision_grouped_ring_v1",
+      "position": 0
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_nvfp4_down_c1_v1",
+    "generated": "chop_proj_nvfp4_grouped_n2560_k640_1ce56c2cf5cc322b_v1",
+    "entry_sha256": "1ce56c2cf5cc322bcf99b487e53b8da2b64a93cc42292441e3f6dbfce7b49f6d",
+    "placement": {
+      "cubin": "qwen38_precision_grouped_ring_v1",
+      "position": 1
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_nvfp4_down_c2_v1",
+    "generated": "chop_proj_nvfp4_grouped_n2560_k640_6fc9d209998d5363_v1",
+    "entry_sha256": "6fc9d209998d5363b517cb6d73f1a2ebdd82e21a3080c03f828faad0889d2f77",
+    "placement": {
+      "cubin": "qwen38_precision_grouped_ring_v1",
+      "position": 2
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_nvfp4_down_c32_v1",
+    "generated": "chop_proj_nvfp4_grouped_n2560_k640_75bd1f38c507a86a_v1",
+    "entry_sha256": "75bd1f38c507a86ac5e93882abe9e1b76b53717b519e52918fb5039b1b9d1995",
+    "placement": {
+      "cubin": "qwen38_precision_grouped_ring_v1",
+      "position": 3
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_nvfp4_down_c4_v1",
+    "generated": "chop_proj_nvfp4_grouped_n2560_k640_6dbca3568bc53f35_v1",
+    "entry_sha256": "6dbca3568bc53f35072b0bfbadbc2b8d4de595d11cc34e3640a5b9a8feb33ac4",
+    "placement": {
+      "cubin": "qwen38_precision_grouped_ring_v1",
+      "position": 4
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_nvfp4_down_c8192_v1",
+    "generated": "chop_proj_nvfp4_grouped_n2560_k640_b513be863d204966_v1",
+    "entry_sha256": "b513be863d204966558358058ef4a1cb35b5de9c177ba26104e4ccfcf7e6cc7b",
+    "placement": {
+      "cubin": "qwen38_precision_grouped_v1",
+      "position": 0
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_nvfp4_down_c8_v1",
+    "generated": "chop_proj_nvfp4_grouped_n2560_k640_2b241ae58c43b4db_v1",
+    "entry_sha256": "2b241ae58c43b4dbdcc8a2cbb76cc71d8196da9a61195204d16d7a868a54a0ca",
+    "placement": {
+      "cubin": "qwen38_precision_grouped_ring_v1",
+      "position": 5
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_nvfp4_gate_up_c16_v1",
+    "generated": "chop_proj_nvfp4_grouped_n640_k2560_52a879baed9b4892_v1",
+    "entry_sha256": "52a879baed9b4892f5103154a6b3ec5b127a8f7a082c8eecd0466dcd175a3a2f",
+    "placement": {
+      "cubin": "qwen38_precision_grouped_ring_v1",
+      "position": 6
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_nvfp4_gate_up_c1_v1",
+    "generated": "chop_proj_nvfp4_grouped_n640_k2560_f3c5c768b0842a58_v1",
+    "entry_sha256": "f3c5c768b0842a58405c3c86266363118983dfd2fc489651b75a525d3c2036d0",
+    "placement": {
+      "cubin": "qwen38_precision_grouped_ring_v1",
+      "position": 7
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_nvfp4_gate_up_c2_v1",
+    "generated": "chop_proj_nvfp4_grouped_n640_k2560_53995659473ce4b4_v1",
+    "entry_sha256": "53995659473ce4b47d0d8ac08499c2b1d598dcf4300b386a52cca0123a943812",
+    "placement": {
+      "cubin": "qwen38_precision_grouped_ring_v1",
+      "position": 8
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_nvfp4_gate_up_c32_v1",
+    "generated": "chop_proj_nvfp4_grouped_n640_k2560_5d9e9676aa3a634d_v1",
+    "entry_sha256": "5d9e9676aa3a634dd6ee9522729166dec6b11c4a6954a0145b95f090ccc7f35e",
+    "placement": {
+      "cubin": "qwen38_precision_grouped_ring_v1",
+      "position": 9
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_nvfp4_gate_up_c4_v1",
+    "generated": "chop_proj_nvfp4_grouped_n640_k2560_507cdae67de49515_v1",
+    "entry_sha256": "507cdae67de495151a654542070ee2a6add1b1772d4da1a181565acf15e71a52",
+    "placement": {
+      "cubin": "qwen38_precision_grouped_ring_v1",
+      "position": 10
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_nvfp4_gate_up_c8192_v1",
+    "generated": "chop_proj_nvfp4_grouped_n640_k2560_664718d1f2a63ef7_v1",
+    "entry_sha256": "664718d1f2a63ef7a815678c1594aec3ef19ad5333ab0b553f3cbbc615d74634",
+    "placement": {
+      "cubin": "qwen38_precision_grouped_v1",
+      "position": 1
+    }
+  },
+  {
+    "symbol": "chop_qwen38_precision_nvfp4_gate_up_c8_v1",
+    "generated": "chop_proj_nvfp4_grouped_n640_k2560_c20871b186979c8d_v1",
+    "entry_sha256": "c20871b186979c8def5d45e7bdeabd701c024c8b67c05e134f310b7b47a20684",
+    "placement": {
+      "cubin": "qwen38_precision_grouped_ring_v1",
+      "position": 11
+    }
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o0_c16_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_c216e2223138807a_v1",
+    "entry_sha256": "c216e2223138807ae250e5046ced0f95449e1256d6786d5ed0ccac414b06668f",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_dcb652854a80bfcf_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o0_c1_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_e2d65a01f994e06f_v1",
+    "entry_sha256": "e2d65a01f994e06f60150d2b4482985dcb9c90d9642ccdf1ff1090fcf32ef698",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_dcb652854a80bfcf_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o0_c2_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_70bddc9957eafa75_v1",
+    "entry_sha256": "70bddc9957eafa7580c4ada84e9c84846e9cea8403e3186b4d665fc5d00261f6",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_dcb652854a80bfcf_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o0_c32_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_b7ae86e2c73bf080_v1",
+    "entry_sha256": "b7ae86e2c73bf080f82c1f0b21d2519db1c8d903aa50c01fff90fc170ac8101f",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_dcb652854a80bfcf_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o0_c4_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_da71881f4d9d2a31_v1",
+    "entry_sha256": "da71881f4d9d2a310c817c47c63983c399c840558b27d1d801ef80dc456ae66c",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_dcb652854a80bfcf_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o0_c8192_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_6d9d42724ffd88f7_v1",
+    "entry_sha256": "6d9d42724ffd88f729cc2736964bc2aa04a2a479c87451db613b231807d6448c",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_dcb652854a80bfcf_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o0_c8_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_8706ef6c2afdd4f2_v1",
+    "entry_sha256": "8706ef6c2afdd4f249444cb7b978267e9909357987ac7983855812ef81e094b6",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_dcb652854a80bfcf_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o12_c16_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_17ef39661564ad37_v1",
+    "entry_sha256": "17ef39661564ad37ae34ebafed77e5f387410870865e09641bdf525b9d16c122",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_326fec65c59e5939_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o12_c1_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_b75e3ae2025502d7_v1",
+    "entry_sha256": "b75e3ae2025502d7104cc7ab00fc6388acbf21eed623af06d26a4b05d8eff83b",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_326fec65c59e5939_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o12_c2_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_16c3a0735695637b_v1",
+    "entry_sha256": "16c3a0735695637b4f04594f5ed35ff33c1656bfca8032eb1b7828c588552331",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_326fec65c59e5939_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o12_c32_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_712473ade610120b_v1",
+    "entry_sha256": "712473ade610120b75cd48c7f5a7de7e7299b14b713312b37ffa18d0a5db4b43",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_326fec65c59e5939_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o12_c4_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_020a4144131db008_v1",
+    "entry_sha256": "020a4144131db008b18cf504af304af4b8321f145c0e330871261462915e0116",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_326fec65c59e5939_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o12_c8192_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_551e30a31bbd0fc5_v1",
+    "entry_sha256": "551e30a31bbd0fc59be51e101f00f66b26474e4b9d0009906a33a15e97b4644a",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_326fec65c59e5939_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s16_d24_o12_c8_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_e0a1c4b0ecfb7336_v1",
+    "entry_sha256": "e0a1c4b0ecfb7336f9cc49374c1efdb32890f65025fb484aa643f456633e2d4d",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_326fec65c59e5939_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o0_c16_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_931cb09982670259_v1",
+    "entry_sha256": "931cb09982670259e2be3c6b08b4b36f3d8d4abff08f0a0be73bf4bc4ed8481f",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_3c41e70855a976c3_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o0_c1_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_28a4ba7da7fd32ab_v1",
+    "entry_sha256": "28a4ba7da7fd32abf0fb1d2cb8d007bac113c8db01bd7b71fe2dc37edbb059e7",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_3c41e70855a976c3_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o0_c2_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_daaab151522c3870_v1",
+    "entry_sha256": "daaab151522c38704fb2baa6eea984fbd718e267de1dd807063b4ae8ede34c84",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_3c41e70855a976c3_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o0_c32_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_7310932c00f28487_v1",
+    "entry_sha256": "7310932c00f2848746c7b762f6275da31b29d706763f9766d0e5fbc8fca7060a",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_3c41e70855a976c3_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o0_c4_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_421abad49139622c_v1",
+    "entry_sha256": "421abad49139622cd632d70dd7cbd2752fb37a6f08ff81be212e0455378df44a",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_3c41e70855a976c3_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o0_c8192_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_6dfe9aef9174598d_v1",
+    "entry_sha256": "6dfe9aef9174598dab448816559c635b1f08c3b83b1a178225bc34057dc3bfb6",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_3c41e70855a976c3_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o0_c8_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_1854fd3d3638e9c7_v1",
+    "entry_sha256": "1854fd3d3638e9c7a020766c5569bf57344269048df3263b532cb0067c4a768a",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_3c41e70855a976c3_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o12_c16_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_f8b7a66c316684de_v1",
+    "entry_sha256": "f8b7a66c316684de0d8f72668886e9d81a40d5794f17cbf5df6e6c6826961b36",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_7678ed402ba95d41_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o12_c1_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_2cd5e9ebb594d949_v1",
+    "entry_sha256": "2cd5e9ebb594d9492f08445f386ca900926167b1c919dd9ac4a44f992ca52651",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_7678ed402ba95d41_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o12_c2_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_86cabe3fd60fda66_v1",
+    "entry_sha256": "86cabe3fd60fda661426c7cb796f00f74c7a20f152acdffc6d4eed7f3fd7afd9",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_7678ed402ba95d41_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o12_c32_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_eac456f5cd8acb57_v1",
+    "entry_sha256": "eac456f5cd8acb57e8b0b89477d50d9081822ce1e7ecb650ab6f20fc9ef5de84",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_7678ed402ba95d41_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o12_c4_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_cf35cea4acb71203_v1",
+    "entry_sha256": "cf35cea4acb71203e763e541c1a910d294776e7e31472b3f2d9668748c0b7126",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_7678ed402ba95d41_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o12_c8192_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_ce832314f5c328a5_v1",
+    "entry_sha256": "ce832314f5c328a53745a9ffbc4e1464110840c242766af7e94e1460e32a5373",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_7678ed402ba95d41_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n12_s64_d24_o12_c8_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_40b84f1b1a89093a_v1",
+    "entry_sha256": "40b84f1b1a89093aa41987337578890300abff7053ab9a181fcfee595a92ac5c",
+    "replaced_by": "chop_proj_bf16_copy_n12_k1_7678ed402ba95d41_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3072_c16_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_e27f58ea1c1a6357_v1",
+    "entry_sha256": "e27f58ea1c1a63573faba615fae41bad964aa65d40583d85509a2c5cdc61acab",
+    "replaced_by": "chop_proj_bf16_copy_n256_k1_005e25d2ea5ba3fb_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3072_c1_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_7c87fd99561f94e0_v1",
+    "entry_sha256": "7c87fd99561f94e0c5cd94d86e539204afc2ddc86c3e746b278d7e7cd7904b02",
+    "replaced_by": "chop_proj_bf16_copy_n256_k1_005e25d2ea5ba3fb_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3072_c2_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_b63d20df018f6e0c_v1",
+    "entry_sha256": "b63d20df018f6e0ca9a56b669af433557976ca17d0d9e71164e1d53ea4a99cd6",
+    "replaced_by": "chop_proj_bf16_copy_n256_k1_005e25d2ea5ba3fb_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3072_c32_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_fc895545b9bd0092_v1",
+    "entry_sha256": "fc895545b9bd009247abac0c9935300d680158b017f96e01395b6f6ac22168c0",
+    "replaced_by": "chop_proj_bf16_copy_n256_k1_005e25d2ea5ba3fb_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3072_c4_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_379c99080f727f6a_v1",
+    "entry_sha256": "379c99080f727f6a0a9c2abee7b7a8388a4246cc7779c10f2e5fbebfff1cfdd3",
+    "replaced_by": "chop_proj_bf16_copy_n256_k1_005e25d2ea5ba3fb_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3072_c8192_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_644aea6f58fbf3a3_v1",
+    "entry_sha256": "644aea6f58fbf3a3f00386ce1784c34f68d4f9eb436ccd5349e8d4f38c643f1d",
+    "replaced_by": "chop_proj_bf16_copy_n256_k1_005e25d2ea5ba3fb_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3072_c8_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_c95588cdeac28628_v1",
+    "entry_sha256": "c95588cdeac28628b68cbe79ace5eff32c61e7175f29335f31dc55a610cf5dbc",
+    "replaced_by": "chop_proj_bf16_copy_n256_k1_005e25d2ea5ba3fb_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3328_c16_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_ddfbfaf155d01f25_v1",
+    "entry_sha256": "ddfbfaf155d01f25be1260ecc2363b004f51c3ea99e74b66b2af8c0a6d1efdfe",
+    "replaced_by": "chop_proj_bf16_copy_n256_k1_1281cfdf40b99704_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3328_c1_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_98bac5a38637697a_v1",
+    "entry_sha256": "98bac5a38637697a42feda1d3a1af51dc106b90c8efa54832b3fd3bc0d26dc43",
+    "replaced_by": "chop_proj_bf16_copy_n256_k1_1281cfdf40b99704_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3328_c2_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_09fb70c2ef5bef83_v1",
+    "entry_sha256": "09fb70c2ef5bef834ed1ff54201989506e1a4c915b471a69e598a1b17959971c",
+    "replaced_by": "chop_proj_bf16_copy_n256_k1_1281cfdf40b99704_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3328_c32_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_87bccc66a0af221a_v1",
+    "entry_sha256": "87bccc66a0af221a571fb95f58eaa1913d4ed910210014c9b2ed7338865d543f",
+    "replaced_by": "chop_proj_bf16_copy_n256_k1_1281cfdf40b99704_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3328_c4_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_7d45cee60bf37d60_v1",
+    "entry_sha256": "7d45cee60bf37d60df80f5ea421afcdd4f1ea54475a59d42c5186cfeebc181ad",
+    "replaced_by": "chop_proj_bf16_copy_n256_k1_1281cfdf40b99704_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3328_c8192_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_d2daffe40d521be7_v1",
+    "entry_sha256": "d2daffe40d521be724b58425353bc87ea3a918b42b0f3826b298f1336889cbdc",
+    "replaced_by": "chop_proj_bf16_copy_n256_k1_1281cfdf40b99704_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n256_s256_d3584_o3328_c8_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_cf2b9b128a8eb684_v1",
+    "entry_sha256": "cf2b9b128a8eb684ebc39cd20897adda4bd94a36ae1461a1ac72d62cc83a126a",
+    "replaced_by": "chop_proj_bf16_copy_n256_k1_1281cfdf40b99704_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n3072_s3072_d3584_o0_c16_v1",
+    "generated": "chop_proj_bf16_copy_n3072_k1_1ccaf02a6a40836a_v1",
+    "entry_sha256": "1ccaf02a6a40836a88891ce83152d46164b64b4b549dcbc01a31c522f4dabd93",
+    "replaced_by": "chop_proj_bf16_copy_n3072_k1_4dd30a5e73d0aa6a_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n3072_s3072_d3584_o0_c1_v1",
+    "generated": "chop_proj_bf16_copy_n3072_k1_bc01e06c66f8789b_v1",
+    "entry_sha256": "bc01e06c66f8789b1a0515418774918c0e04a96f25f9daa06af1cc29c4b14433",
+    "replaced_by": "chop_proj_bf16_copy_n3072_k1_4dd30a5e73d0aa6a_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n3072_s3072_d3584_o0_c2_v1",
+    "generated": "chop_proj_bf16_copy_n3072_k1_a9ca929d2ca77884_v1",
+    "entry_sha256": "a9ca929d2ca77884271e20ccba3b37ea54f7d06bc79ea049b33519e5fc0831b7",
+    "replaced_by": "chop_proj_bf16_copy_n3072_k1_4dd30a5e73d0aa6a_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n3072_s3072_d3584_o0_c32_v1",
+    "generated": "chop_proj_bf16_copy_n3072_k1_ef4c82858d5976c8_v1",
+    "entry_sha256": "ef4c82858d5976c8e62634b7f2dee36d71e9f9813e4b9dd3df1c54b4a424fe07",
+    "replaced_by": "chop_proj_bf16_copy_n3072_k1_4dd30a5e73d0aa6a_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n3072_s3072_d3584_o0_c4_v1",
+    "generated": "chop_proj_bf16_copy_n3072_k1_51b1774cc54e3e3c_v1",
+    "entry_sha256": "51b1774cc54e3e3c132e8b2d10883d7865391a4ffe7b38fd0bee05e73148f84f",
+    "replaced_by": "chop_proj_bf16_copy_n3072_k1_4dd30a5e73d0aa6a_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n3072_s3072_d3584_o0_c8192_v1",
+    "generated": "chop_proj_bf16_copy_n3072_k1_8a57273ed9ac0cbb_v1",
+    "entry_sha256": "8a57273ed9ac0cbb8f4edd2e89b25a70df021cf6d023a385e8b8fe109103fa4c",
+    "replaced_by": "chop_proj_bf16_copy_n3072_k1_4dd30a5e73d0aa6a_v1"
+  },
+  {
+    "symbol": "chop_qwen38_copy_n3072_s3072_d3584_o0_c8_v1",
+    "generated": "chop_proj_bf16_copy_n3072_k1_42e4cdab12404c90_v1",
+    "entry_sha256": "42e4cdab12404c904f09d931cd48b1976e16860ee1af0c0eeba3e215621e3d41",
+    "replaced_by": "chop_proj_bf16_copy_n3072_k1_4dd30a5e73d0aa6a_v1"
+  },
+  {
+    "symbol": "chop_qwen38_precision_ngram_c128_v1",
+    "generated": "chop_proj_nvfp4_lookup_n320001536_k160_fc3d7f14581d1eba_v1",
+    "entry_sha256": "fc3d7f14581d1eba8f04c325c006018015bd4f1951411ce6127b8317e5bc9542",
+    "replaced_by": "chop_proj_nvfp4_lookup_n320001536_k160_dcd0b7500492906c_v1"
+  },
+  {
+    "symbol": "chop_qwen38_precision_ngram_c16_v1",
+    "generated": "chop_proj_nvfp4_lookup_n320001536_k160_3b619f43147a4004_v1",
+    "entry_sha256": "3b619f43147a4004a47218bff66a4fd5eae01ac2e522f975b0d4e2fdcacc4322",
+    "replaced_by": "chop_proj_nvfp4_lookup_n320001536_k160_dcd0b7500492906c_v1"
+  },
+  {
+    "symbol": "chop_qwen38_precision_ngram_c1_v1",
+    "generated": "chop_proj_nvfp4_lookup_n320001536_k160_02f7dce37aea611d_v1",
+    "entry_sha256": "02f7dce37aea611d6580fdc66c9861c082558d5e80e0f51eb0d6b9c9f426904e",
+    "replaced_by": "chop_proj_nvfp4_lookup_n320001536_k160_dcd0b7500492906c_v1"
+  },
+  {
+    "symbol": "chop_qwen38_precision_ngram_c256_v1",
+    "generated": "chop_proj_nvfp4_lookup_n320001536_k160_d53d845ae182ccb1_v1",
+    "entry_sha256": "d53d845ae182ccb103efa8123b9565aa6095ec61159b16d39826c55c14d41295",
+    "replaced_by": "chop_proj_nvfp4_lookup_n320001536_k160_dcd0b7500492906c_v1"
+  },
+  {
+    "symbol": "chop_qwen38_precision_ngram_c2_v1",
+    "generated": "chop_proj_nvfp4_lookup_n320001536_k160_db593851e20f6dad_v1",
+    "entry_sha256": "db593851e20f6dadb228a985ced61013b484bf33229becc2447e9d3439caca84",
+    "replaced_by": "chop_proj_nvfp4_lookup_n320001536_k160_dcd0b7500492906c_v1"
+  },
+  {
+    "symbol": "chop_qwen38_precision_ngram_c32_v1",
+    "generated": "chop_proj_nvfp4_lookup_n320001536_k160_c376f9bb5546dd50_v1",
+    "entry_sha256": "c376f9bb5546dd505b0fd52bbe352cbd32a4ae88d02be8b3bc333424f8f8c364",
+    "replaced_by": "chop_proj_nvfp4_lookup_n320001536_k160_dcd0b7500492906c_v1"
+  },
+  {
+    "symbol": "chop_qwen38_precision_ngram_c4_v1",
+    "generated": "chop_proj_nvfp4_lookup_n320001536_k160_af11244366c32b2c_v1",
+    "entry_sha256": "af11244366c32b2c385403ba3c08c79cd16d961f4624b66590095529d91cbd6d",
+    "replaced_by": "chop_proj_nvfp4_lookup_n320001536_k160_dcd0b7500492906c_v1"
+  },
+  {
+    "symbol": "chop_qwen38_precision_ngram_c64_v1",
+    "generated": "chop_proj_nvfp4_lookup_n320001536_k160_f748140c3786a216_v1",
+    "entry_sha256": "f748140c3786a216214035b6fc8cb6259053eb6a69e724761caf2c78ac2cf636",
+    "replaced_by": "chop_proj_nvfp4_lookup_n320001536_k160_dcd0b7500492906c_v1"
+  },
+  {
+    "symbol": "chop_qwen38_precision_ngram_c8192_v1",
+    "generated": "chop_proj_nvfp4_lookup_n320001536_k160_babc15ee623ed93a_v1",
+    "entry_sha256": "babc15ee623ed93a159b3c7810d2ff01d474fcf649066b7d6c158df59d1fc6db",
+    "replaced_by": "chop_proj_nvfp4_lookup_n320001536_k160_dcd0b7500492906c_v1"
+  },
+  {
+    "symbol": "chop_qwen38_precision_ngram_c8_v1",
+    "generated": "chop_proj_nvfp4_lookup_n320001536_k160_c08bd5c8a263fae2_v1",
+    "entry_sha256": "c08bd5c8a263fae2796afc79449180a0d20a2996231b35769f222d29ad312aae",
+    "replaced_by": "chop_proj_nvfp4_lookup_n320001536_k160_dcd0b7500492906c_v1"
+  },
+  {
+    "symbol": "chop_proj_bf16_copy_n12_k1_326fec65c59e5939_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_326fec65c59e5939_v1",
+    "entry_sha256": "326fec65c59e5939c91c3e3f50dc86df8e243a1ff5293686f2f6aae7a52943aa",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 0
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_copy_n12_k1_3c41e70855a976c3_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_3c41e70855a976c3_v1",
+    "entry_sha256": "3c41e70855a976c34bdd6310fa8d98fc3bb885d34bf71cd2fd9a676a16c9e2e8",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 1
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_copy_n12_k1_7678ed402ba95d41_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_7678ed402ba95d41_v1",
+    "entry_sha256": "7678ed402ba95d4186d68e2970b87ddbf8765fdb11f2d5afca543b12ee7f6bd7",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 2
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_copy_n12_k1_dcb652854a80bfcf_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_dcb652854a80bfcf_v1",
+    "entry_sha256": "dcb652854a80bfcfee24eddc49fe6d7b14c1b7fff305b0358fca664135ffde00",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 3
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_copy_n256_k1_005e25d2ea5ba3fb_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_005e25d2ea5ba3fb_v1",
+    "entry_sha256": "005e25d2ea5ba3fb637fe19d585454e1a4e80395f415d2c33cbd7a2564ad566f",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 4
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_copy_n256_k1_1281cfdf40b99704_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_1281cfdf40b99704_v1",
+    "entry_sha256": "1281cfdf40b997042675c3efe265dd3632f2c2e8daa6a72f6b991ddaaebdea6d",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 5
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_copy_n3072_k1_4dd30a5e73d0aa6a_v1",
+    "generated": "chop_proj_bf16_copy_n3072_k1_4dd30a5e73d0aa6a_v1",
+    "entry_sha256": "4dd30a5e73d0aa6ab5529782d69a57b3528900dcce5a458f563a403e41982879",
+    "placement": {
+      "cubin": "qwen38_precision_layouts_v1",
+      "position": 6
+    }
+  },
+  {
+    "symbol": "chop_proj_nvfp4_lookup_n320001536_k160_dcd0b7500492906c_v1",
+    "generated": "chop_proj_nvfp4_lookup_n320001536_k160_dcd0b7500492906c_v1",
+    "entry_sha256": "dcd0b7500492906c522c9ccd855428e7e2fa456adc86e00828624b0748e48510",
+    "placement": {
+      "cubin": "qwen38_precision_rows_v1",
+      "position": 0
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_copy_n12_k1_326fec65c59e5939_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_326fec65c59e5939_v1",
+    "entry_sha256": "326fec65c59e5939c91c3e3f50dc86df8e243a1ff5293686f2f6aae7a52943aa",
+    "replaced_by": "chop_proj_bf16_copy_a07e55119ae9b65d_v1"
+  },
+  {
+    "symbol": "chop_proj_bf16_copy_n12_k1_3c41e70855a976c3_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_3c41e70855a976c3_v1",
+    "entry_sha256": "3c41e70855a976c34bdd6310fa8d98fc3bb885d34bf71cd2fd9a676a16c9e2e8",
+    "replaced_by": "chop_proj_bf16_copy_a07e55119ae9b65d_v1"
+  },
+  {
+    "symbol": "chop_proj_bf16_copy_n12_k1_7678ed402ba95d41_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_7678ed402ba95d41_v1",
+    "entry_sha256": "7678ed402ba95d4186d68e2970b87ddbf8765fdb11f2d5afca543b12ee7f6bd7",
+    "replaced_by": "chop_proj_bf16_copy_a07e55119ae9b65d_v1"
+  },
+  {
+    "symbol": "chop_proj_bf16_copy_n12_k1_dcb652854a80bfcf_v1",
+    "generated": "chop_proj_bf16_copy_n12_k1_dcb652854a80bfcf_v1",
+    "entry_sha256": "dcb652854a80bfcfee24eddc49fe6d7b14c1b7fff305b0358fca664135ffde00",
+    "replaced_by": "chop_proj_bf16_copy_a07e55119ae9b65d_v1"
+  },
+  {
+    "symbol": "chop_proj_bf16_copy_n256_k1_005e25d2ea5ba3fb_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_005e25d2ea5ba3fb_v1",
+    "entry_sha256": "005e25d2ea5ba3fb637fe19d585454e1a4e80395f415d2c33cbd7a2564ad566f",
+    "replaced_by": "chop_proj_bf16_copy_a07e55119ae9b65d_v1"
+  },
+  {
+    "symbol": "chop_proj_bf16_copy_n256_k1_1281cfdf40b99704_v1",
+    "generated": "chop_proj_bf16_copy_n256_k1_1281cfdf40b99704_v1",
+    "entry_sha256": "1281cfdf40b997042675c3efe265dd3632f2c2e8daa6a72f6b991ddaaebdea6d",
+    "replaced_by": "chop_proj_bf16_copy_a07e55119ae9b65d_v1"
+  },
+  {
+    "symbol": "chop_proj_bf16_copy_n3072_k1_4dd30a5e73d0aa6a_v1",
+    "generated": "chop_proj_bf16_copy_n3072_k1_4dd30a5e73d0aa6a_v1",
+    "entry_sha256": "4dd30a5e73d0aa6ab5529782d69a57b3528900dcce5a458f563a403e41982879",
+    "replaced_by": "chop_proj_bf16_copy_a07e55119ae9b65d_v1"
+  },
+  {
+    "symbol": "chop_proj_bf16_copy_a07e55119ae9b65d_v1",
+    "generated": "chop_proj_bf16_copy_a07e55119ae9b65d_v1",
+    "entry_sha256": "a07e55119ae9b65dbd89fe38d6b7a26382f76a0bc38ed372680f8c5e9d91f509",
+    "placement": {
+      "cubin": "qwen38_precision_shape_free_v1",
+      "position": 0
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n2560_k3072_3bf5fe1d453a6a78_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k3072_3bf5fe1d453a6a78_v1",
+    "entry_sha256": "3bf5fe1d453a6a78b890a55767bfecb11b27c1a5f50b073c7ecd2f16314d4472",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 0
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n2560_k3072_66a2777fb501b27f_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k3072_66a2777fb501b27f_v1",
+    "entry_sha256": "66a2777fb501b27f5f222e80f3aef977fcedda71ddf5eb925841b97fca4b2ceb",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 1
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n2560_k3072_940636d6b6adf362_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k3072_940636d6b6adf362_v1",
+    "entry_sha256": "940636d6b6adf3620b9a10dab18f9b41a14d3e4f83105f9e2383f1f95af03a2b",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 2
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n2560_k3072_9cc76262531f0481_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k3072_9cc76262531f0481_v1",
+    "entry_sha256": "9cc76262531f0481367ce133a4dd5333d35c93820193c22670bc7616de06416f",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 3
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n2560_k3072_a05a1f56ee82bdfb_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k3072_a05a1f56ee82bdfb_v1",
+    "entry_sha256": "a05a1f56ee82bdfbfc99b2d213cd189fde2254e43a7974ad50debb2dc9619500",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 4
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n2560_k3072_a1d3bc8460d14e16_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k3072_a1d3bc8460d14e16_v1",
+    "entry_sha256": "a1d3bc8460d14e16d64e6a95a13105ec71eb0a7861a6788de89ffededec4194e",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 5
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n2560_k3072_a89393052ad62681_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k3072_a89393052ad62681_v1",
+    "entry_sha256": "a89393052ad62681f6821bd2d8bb08fbbaf18e16e6a5e49acc09df7a2bac618c",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 6
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n2560_k384_13c6b3b344c004cc_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k384_13c6b3b344c004cc_v1",
+    "entry_sha256": "13c6b3b344c004cc7e8f542fc08afc3cd4e36cf18efc3b1b74cef1797a0a972c",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 7
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n2560_k384_6d8bf8dddfed17f8_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k384_6d8bf8dddfed17f8_v1",
+    "entry_sha256": "6d8bf8dddfed17f87a6bba468a3bb2f1b866501a9858ba4aa6c472180141d574",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 8
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n2560_k384_775c44383cef250f_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k384_775c44383cef250f_v1",
+    "entry_sha256": "775c44383cef250f3f4c48be1f5be280b07a6b4db5614308eeefe156f56576f1",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 9
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n2560_k384_87efebdf6758ffa0_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k384_87efebdf6758ffa0_v1",
+    "entry_sha256": "87efebdf6758ffa0187140a68bbb6ba1298cd8e8b21d8524a9691cadf034f87a",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 10
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n2560_k384_9df24861125afe55_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k384_9df24861125afe55_v1",
+    "entry_sha256": "9df24861125afe55e68a84c976289b72e3f9aeedd9af756043e023b099af613a",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 11
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n2560_k384_ca554c431455a571_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k384_ca554c431455a571_v1",
+    "entry_sha256": "ca554c431455a5713e2530d1033e7c21605ff2a020ba4d6e10ee41288f6b1c46",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 12
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n2560_k384_efde984791942484_v1",
+    "generated": "chop_proj_bf16_dense_n2560_k384_efde984791942484_v1",
+    "entry_sha256": "efde98479194248400956136310ecc7dc0915db76e460395269490f15aca53c6",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 13
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n384_k2560_42c3076d98e6b4b3_v1",
+    "generated": "chop_proj_bf16_dense_n384_k2560_42c3076d98e6b4b3_v1",
+    "entry_sha256": "42c3076d98e6b4b3d0fe6413864742ac22d46e8f1891b7f15cd8c74ec94782b1",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 14
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n384_k2560_57f122a9067ede71_v1",
+    "generated": "chop_proj_bf16_dense_n384_k2560_57f122a9067ede71_v1",
+    "entry_sha256": "57f122a9067ede717a9867774c96a38b9f26a31f8d25581b1c3f4ba47ca0ed0a",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 15
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n384_k2560_641d45d6addda387_v1",
+    "generated": "chop_proj_bf16_dense_n384_k2560_641d45d6addda387_v1",
+    "entry_sha256": "641d45d6addda3870b5abe5130db90c9dbc7cfb7b32fbc8201d3c72577a869c0",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 16
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n384_k2560_a38ba927ae762f81_v1",
+    "generated": "chop_proj_bf16_dense_n384_k2560_a38ba927ae762f81_v1",
+    "entry_sha256": "a38ba927ae762f8196de5098e4dac65b924a12437ac04f1f03b75433b8492b62",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 17
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n384_k2560_ab69da754fddb2a0_v1",
+    "generated": "chop_proj_bf16_dense_n384_k2560_ab69da754fddb2a0_v1",
+    "entry_sha256": "ab69da754fddb2a0af4c6a220503067b99531cad98b2c5da57cff48457c59e73",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 18
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n384_k2560_ba5c8e7827fa6b43_v1",
+    "generated": "chop_proj_bf16_dense_n384_k2560_ba5c8e7827fa6b43_v1",
+    "entry_sha256": "ba5c8e7827fa6b43b48497d9b79e15e0bd2f550e361d9e360d63da05d9580334",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 19
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n384_k2560_fb8bd2a2ee2199d3_v1",
+    "generated": "chop_proj_bf16_dense_n384_k2560_fb8bd2a2ee2199d3_v1",
+    "entry_sha256": "fb8bd2a2ee2199d3bca94e0078b7f7478c55bdb9bc66526c5b2b02e74bb7f279",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 20
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n5120_k2560_375f7f648563be60_v1",
+    "generated": "chop_proj_bf16_dense_n5120_k2560_375f7f648563be60_v1",
+    "entry_sha256": "375f7f648563be60cdc75f20dfe4b6a82aef74bc9eb70329cc926e2d38b3d9c7",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 21
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n5120_k2560_40c90edecb667e66_v1",
+    "generated": "chop_proj_bf16_dense_n5120_k2560_40c90edecb667e66_v1",
+    "entry_sha256": "40c90edecb667e6669012b74f5a91a9848a2bf090597308ce195c7af5ad08d9b",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 22
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n5120_k2560_5d16c9cc657e2d40_v1",
+    "generated": "chop_proj_bf16_dense_n5120_k2560_5d16c9cc657e2d40_v1",
+    "entry_sha256": "5d16c9cc657e2d40096c0d5b572a70292e4bc566599385c5d10f636c6d343788",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 23
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n5120_k2560_7fcccfaac68c39ed_v1",
+    "generated": "chop_proj_bf16_dense_n5120_k2560_7fcccfaac68c39ed_v1",
+    "entry_sha256": "7fcccfaac68c39edbb84f9bee5fb5511969f2903b5ded423cfc75dd4f08cbe84",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 24
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n5120_k2560_80135b57129c985f_v1",
+    "generated": "chop_proj_bf16_dense_n5120_k2560_80135b57129c985f_v1",
+    "entry_sha256": "80135b57129c985f66dd15f56ede4e11fe27e84d7292f6a724523675836f30c6",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 25
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n5120_k2560_c48874e4af44a5ac_v1",
+    "generated": "chop_proj_bf16_dense_n5120_k2560_c48874e4af44a5ac_v1",
+    "entry_sha256": "c48874e4af44a5ac17c9ba0f968e13547621b73d1fb6d61dea75b099ec380330",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 26
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n5120_k2560_d155ce09f334718e_v1",
+    "generated": "chop_proj_bf16_dense_n5120_k2560_d155ce09f334718e_v1",
+    "entry_sha256": "d155ce09f334718ec2126eedc5371ec36253c087d228d3a7553d2e3d8fc0d573",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 27
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n6144_k2560_1c06ac50b4221039_v1",
+    "generated": "chop_proj_bf16_dense_n6144_k2560_1c06ac50b4221039_v1",
+    "entry_sha256": "1c06ac50b422103927ee33da0f24ce4eaf5e15105d0ec8a0e0c014b5fa35a8d2",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 28
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n6144_k2560_1ec6fb8fff1b5e3f_v1",
+    "generated": "chop_proj_bf16_dense_n6144_k2560_1ec6fb8fff1b5e3f_v1",
+    "entry_sha256": "1ec6fb8fff1b5e3f9dbc2ba3ae552d842c248a52f6b29ef668d3ed9b8ceb8b44",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 29
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n6144_k2560_55fb4c1c49c13fd6_v1",
+    "generated": "chop_proj_bf16_dense_n6144_k2560_55fb4c1c49c13fd6_v1",
+    "entry_sha256": "55fb4c1c49c13fd629b3628c1688676cdf30bb531452f812aedbcc80a6324590",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 30
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n6144_k2560_ba29ae38a7d4079a_v1",
+    "generated": "chop_proj_bf16_dense_n6144_k2560_ba29ae38a7d4079a_v1",
+    "entry_sha256": "ba29ae38a7d4079a20a2cffa5ad186cbb855d580c5a206dc658defb6710b21a3",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 31
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n6144_k2560_dd8ebd27e6620137_v1",
+    "generated": "chop_proj_bf16_dense_n6144_k2560_dd8ebd27e6620137_v1",
+    "entry_sha256": "dd8ebd27e662013792de6ccdf9e260c7181757de64ec6f3f727f19106198d22a",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 32
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n6144_k2560_e687979d1f5e7cd1_v1",
+    "generated": "chop_proj_bf16_dense_n6144_k2560_e687979d1f5e7cd1_v1",
+    "entry_sha256": "e687979d1f5e7cd1c73354058f35fd5ef29895760252851c977bffc932cb46b2",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 33
+    }
+  },
+  {
+    "symbol": "chop_proj_bf16_dense_n6144_k2560_fbf9422c7f50627d_v1",
+    "generated": "chop_proj_bf16_dense_n6144_k2560_fbf9422c7f50627d_v1",
+    "entry_sha256": "fbf9422c7f50627d4da521314b41d4568882bbd6e66f1cbcaa2780158b4b47d6",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 34
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n2560_k3072_277df829caa3a1d8_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k3072_277df829caa3a1d8_v1",
+    "entry_sha256": "277df829caa3a1d8474ba2942e585223ec1ba5cf8bf010d5eff23012394101f4",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 35
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n2560_k3072_4fea8a9a5107bd89_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k3072_4fea8a9a5107bd89_v1",
+    "entry_sha256": "4fea8a9a5107bd897e77e1530f03c2cca41cacc2cfaf4aa0b6460ea9229b5f50",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 36
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n2560_k3072_685bc5b522f22cef_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k3072_685bc5b522f22cef_v1",
+    "entry_sha256": "685bc5b522f22cef16d8ac4ecb3d22a00b35689fcff449f45887acb7318b2e2f",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 37
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n2560_k3072_70a7c60d0c2fa617_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k3072_70a7c60d0c2fa617_v1",
+    "entry_sha256": "70a7c60d0c2fa6178ccd36221d47b1eb1ac62af3bfe855c3548f39f9bca99faf",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 38
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n2560_k3072_95aa0fed5b592adf_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k3072_95aa0fed5b592adf_v1",
+    "entry_sha256": "95aa0fed5b592adf03b4502ddd63e2d93b5bb5d5ae67d543d948b3a4ffdabe76",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 39
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n2560_k3072_bef00dd9499ade68_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k3072_bef00dd9499ade68_v1",
+    "entry_sha256": "bef00dd9499ade681a58425b03d354bf98f408f719acda02d684a483726d0f94",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 40
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n2560_k3072_ea91b656c43a80a1_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k3072_ea91b656c43a80a1_v1",
+    "entry_sha256": "ea91b656c43a80a1185ae445f53446667aa9165336d83275e680ff45d9e4c11a",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 41
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n2560_k384_056bcfc7f45e0fe1_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k384_056bcfc7f45e0fe1_v1",
+    "entry_sha256": "056bcfc7f45e0fe15ed338a3cce1be7b4d2254c1a53b9cf8bf371f6e8d41da44",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 42
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n2560_k384_33b71643ec59b6bf_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k384_33b71643ec59b6bf_v1",
+    "entry_sha256": "33b71643ec59b6bf136b1261f7fd4d70651e4a61e0111d49b1d85bab6fb38643",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 43
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n2560_k384_40e4973afa98b1fd_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k384_40e4973afa98b1fd_v1",
+    "entry_sha256": "40e4973afa98b1fdf9bdc3e63dfc279e1b9b4d842005916111a067a09b25094f",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 44
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n2560_k384_7782b7c9769120d7_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k384_7782b7c9769120d7_v1",
+    "entry_sha256": "7782b7c9769120d7f5bbca0b827a581e99dcd6d891a5fd1f91adda5b82734f8d",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 45
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n2560_k384_93f721c8703a3665_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k384_93f721c8703a3665_v1",
+    "entry_sha256": "93f721c8703a36651920ad1bb455cfaa4a4242c8b0a5986aa93c4ad50fa77a12",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 46
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n2560_k384_d5315debd2c4aa94_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k384_d5315debd2c4aa94_v1",
+    "entry_sha256": "d5315debd2c4aa94ec4fc733cacc8abf8060d49defa8c45f96b783ca84294568",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 47
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n2560_k384_e1f87fd1b3d803d7_v1",
+    "generated": "chop_proj_mxfp8_dense_n2560_k384_e1f87fd1b3d803d7_v1",
+    "entry_sha256": "e1f87fd1b3d803d7be24291965102efc97829921af7bb4e1d4e7b1d90ffd8ee1",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 48
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n32_k2560_0fa7eb60214082c7_v1",
+    "generated": "chop_proj_mxfp8_dense_n32_k2560_0fa7eb60214082c7_v1",
+    "entry_sha256": "0fa7eb60214082c748702e8910c26e1ee81a532c731b081f30fb19e53c7b11f1",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 49
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n32_k2560_4a27ef16401e83a7_v1",
+    "generated": "chop_proj_mxfp8_dense_n32_k2560_4a27ef16401e83a7_v1",
+    "entry_sha256": "4a27ef16401e83a724f007450c024403349f227e899ce88ed68272bb4399a910",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 50
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n32_k2560_68c8b28de5eb8aef_v1",
+    "generated": "chop_proj_mxfp8_dense_n32_k2560_68c8b28de5eb8aef_v1",
+    "entry_sha256": "68c8b28de5eb8aefa901d841755c4dcbb0e5766434b3d285182bbb4fafb9b4e9",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 51
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n32_k2560_71839f97b8e380e0_v1",
+    "generated": "chop_proj_mxfp8_dense_n32_k2560_71839f97b8e380e0_v1",
+    "entry_sha256": "71839f97b8e380e030c923f9fe75c142cdee31ff8f27534a95b7c064a8dfecfc",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 52
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n32_k2560_b0f4203309ea42b3_v1",
+    "generated": "chop_proj_mxfp8_dense_n32_k2560_b0f4203309ea42b3_v1",
+    "entry_sha256": "b0f4203309ea42b30d3e70ef13fcd0d57b04e00e6f85e53ea07f3f1ba413bd58",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 53
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n32_k2560_b50d0147b9abd953_v1",
+    "generated": "chop_proj_mxfp8_dense_n32_k2560_b50d0147b9abd953_v1",
+    "entry_sha256": "b50d0147b9abd95326443bd6b53a99174bd4c1b28c5bcd9678ee7f90ff0236e7",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 54
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n32_k2560_e181c142791e37f0_v1",
+    "generated": "chop_proj_mxfp8_dense_n32_k2560_e181c142791e37f0_v1",
+    "entry_sha256": "e181c142791e37f0330b2b4ee21d26bac84b98e9b5e06ac5cf1a199b616ff959",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 55
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n384_k2560_01e30fc3213afc41_v1",
+    "generated": "chop_proj_mxfp8_dense_n384_k2560_01e30fc3213afc41_v1",
+    "entry_sha256": "01e30fc3213afc413bf1c971f477a54a82c260db3612bf2064a399d774313d82",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 56
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n384_k2560_26d15ea5024c9d97_v1",
+    "generated": "chop_proj_mxfp8_dense_n384_k2560_26d15ea5024c9d97_v1",
+    "entry_sha256": "26d15ea5024c9d97dc9aa38e4aa226ce365b72f548cc42dbaae5644ff2881a6a",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 57
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n384_k2560_38e956c328d6c34c_v1",
+    "generated": "chop_proj_mxfp8_dense_n384_k2560_38e956c328d6c34c_v1",
+    "entry_sha256": "38e956c328d6c34c4bb055dbe1cb4caf2e04412116ac3a4988782dce3a70d352",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 58
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n384_k2560_5248abbc7e7ff2c3_v1",
+    "generated": "chop_proj_mxfp8_dense_n384_k2560_5248abbc7e7ff2c3_v1",
+    "entry_sha256": "5248abbc7e7ff2c3ca165ea9871c40acdf4f39bc7195f4dbe2d6abb057f62c72",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 59
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n384_k2560_8f669c89c1bcbe91_v1",
+    "generated": "chop_proj_mxfp8_dense_n384_k2560_8f669c89c1bcbe91_v1",
+    "entry_sha256": "8f669c89c1bcbe91d427a124bc04c3398c26e1143e3c20be087e3854e24d8256",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 60
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n384_k2560_ebc68131b194ec3c_v1",
+    "generated": "chop_proj_mxfp8_dense_n384_k2560_ebc68131b194ec3c_v1",
+    "entry_sha256": "ebc68131b194ec3cb5148d988c6f9dc05f91809fb3a69255bbd0f229262f9945",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 61
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n384_k2560_f049674d29f14f47_v1",
+    "generated": "chop_proj_mxfp8_dense_n384_k2560_f049674d29f14f47_v1",
+    "entry_sha256": "f049674d29f14f47f2e1b53df54a96130501ecd4d41321fb6eafa9b3fd78a8bb",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 62
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n5120_k2560_048b7a9bf93830bb_v1",
+    "generated": "chop_proj_mxfp8_dense_n5120_k2560_048b7a9bf93830bb_v1",
+    "entry_sha256": "048b7a9bf93830bbe3713ed3ceecacc12ec2ac5723f03ce769d9d1fcad1c1925",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 63
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n5120_k2560_20dd10534d9bdbd3_v1",
+    "generated": "chop_proj_mxfp8_dense_n5120_k2560_20dd10534d9bdbd3_v1",
+    "entry_sha256": "20dd10534d9bdbd31b223aa78e1dbba712838bda8b8b96be28be0a4443bf0302",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 64
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n5120_k2560_47477b78c9070514_v1",
+    "generated": "chop_proj_mxfp8_dense_n5120_k2560_47477b78c9070514_v1",
+    "entry_sha256": "47477b78c90705142a437acbe0dc51e89c06349d990b7c2280739020df46fffe",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 65
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n5120_k2560_5d8d79b11d7b1faa_v1",
+    "generated": "chop_proj_mxfp8_dense_n5120_k2560_5d8d79b11d7b1faa_v1",
+    "entry_sha256": "5d8d79b11d7b1faa2e49e25efea14e49b6ac2da5dc561766c4aeaad3ed4a2403",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 66
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n5120_k2560_b35fef22c30c8e72_v1",
+    "generated": "chop_proj_mxfp8_dense_n5120_k2560_b35fef22c30c8e72_v1",
+    "entry_sha256": "b35fef22c30c8e720da9ed9c300caf983f3d513e773f7d51d61f6109772e2c9d",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 67
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n5120_k2560_b4df0b96faa478c4_v1",
+    "generated": "chop_proj_mxfp8_dense_n5120_k2560_b4df0b96faa478c4_v1",
+    "entry_sha256": "b4df0b96faa478c498c63546ca4f455eb4046f7b5aedbe1aa82ec86b7c92d720",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 68
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n5120_k2560_cfd5605e9e9631e2_v1",
+    "generated": "chop_proj_mxfp8_dense_n5120_k2560_cfd5605e9e9631e2_v1",
+    "entry_sha256": "cfd5605e9e9631e28a222f07f133127aa73d48c34b5034da1261c28c8ca42060",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 69
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n6144_k2560_4da75f21c4bd2d02_v1",
+    "generated": "chop_proj_mxfp8_dense_n6144_k2560_4da75f21c4bd2d02_v1",
+    "entry_sha256": "4da75f21c4bd2d021480eed1b7a1a1e90b6e76d0dc996b57cc6dc2a4ec9f829d",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 70
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n6144_k2560_5f26a0f9e142e4ef_v1",
+    "generated": "chop_proj_mxfp8_dense_n6144_k2560_5f26a0f9e142e4ef_v1",
+    "entry_sha256": "5f26a0f9e142e4ef6ff7f5e151baabc6168288ae4ddc05ba338d2c80855254f5",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 71
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n6144_k2560_73229683e1dce3bb_v1",
+    "generated": "chop_proj_mxfp8_dense_n6144_k2560_73229683e1dce3bb_v1",
+    "entry_sha256": "73229683e1dce3bb6208cdcb7d99273aa10802a8c36633d15dbe7c6ef007f8c7",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 72
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n6144_k2560_9304297e9f2a6f6c_v1",
+    "generated": "chop_proj_mxfp8_dense_n6144_k2560_9304297e9f2a6f6c_v1",
+    "entry_sha256": "9304297e9f2a6f6c474a328b7e9068f1dd0dbaac5321be1068d525173589d90a",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 73
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n6144_k2560_aa39ba7fdb71d1dd_v1",
+    "generated": "chop_proj_mxfp8_dense_n6144_k2560_aa39ba7fdb71d1dd_v1",
+    "entry_sha256": "aa39ba7fdb71d1ddbb9d2bdf0a3cabca7c3849b3cb312ab6c25f1c142550c149",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 74
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n6144_k2560_af440511bf6c43ec_v1",
+    "generated": "chop_proj_mxfp8_dense_n6144_k2560_af440511bf6c43ec_v1",
+    "entry_sha256": "af440511bf6c43ec4d11cfc7481b370e812101f816816584dacd0338c1351e9f",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 75
+    }
+  },
+  {
+    "symbol": "chop_proj_mxfp8_dense_n6144_k2560_db3383ee67f4af2a_v1",
+    "generated": "chop_proj_mxfp8_dense_n6144_k2560_db3383ee67f4af2a_v1",
+    "entry_sha256": "db3383ee67f4af2ac4059e164e88286f6b323149bf85f9999c9dc326571bd89f",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_dense_v1",
+      "position": 76
+    }
+  },
+  {
+    "symbol": "chop_proj_nvfp4_grouped_n2560_k640_06064302529234ea_v1",
+    "generated": "chop_proj_nvfp4_grouped_n2560_k640_06064302529234ea_v1",
+    "entry_sha256": "06064302529234ea2db24d2f2cd8b5aafaa6d03ba807f8f2bb2be46cd91b6630",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_grouped_v1",
+      "position": 0
+    }
+  },
+  {
+    "symbol": "chop_proj_nvfp4_grouped_n2560_k640_339aa2b7b5695ee3_v1",
+    "generated": "chop_proj_nvfp4_grouped_n2560_k640_339aa2b7b5695ee3_v1",
+    "entry_sha256": "339aa2b7b5695ee37f474b13d83177c97d793d5210baf37ba9942b29c4f07c5f",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_grouped_v1",
+      "position": 1
+    }
+  },
+  {
+    "symbol": "chop_proj_nvfp4_grouped_n2560_k640_8e6c4192f9ccd995_v1",
+    "generated": "chop_proj_nvfp4_grouped_n2560_k640_8e6c4192f9ccd995_v1",
+    "entry_sha256": "8e6c4192f9ccd995333d8e2fe59260b6e492f05f113986f403bfbf18ac0fc7cf",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_grouped_v1",
+      "position": 2
+    }
+  },
+  {
+    "symbol": "chop_proj_nvfp4_grouped_n2560_k640_a2c3efe307e40f66_v1",
+    "generated": "chop_proj_nvfp4_grouped_n2560_k640_a2c3efe307e40f66_v1",
+    "entry_sha256": "a2c3efe307e40f66b901b1dcaa00ea94626a07775174e0de52b02395c80babf9",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_grouped_v1",
+      "position": 3
+    }
+  },
+  {
+    "symbol": "chop_proj_nvfp4_grouped_n2560_k640_bf97c24eac7b2dbe_v1",
+    "generated": "chop_proj_nvfp4_grouped_n2560_k640_bf97c24eac7b2dbe_v1",
+    "entry_sha256": "bf97c24eac7b2dbee0e44f73de2a3ce857e6c32d1d86df231fd73ef3c996f9f0",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_grouped_v1",
+      "position": 4
+    }
+  },
+  {
+    "symbol": "chop_proj_nvfp4_grouped_n2560_k640_d80dd875c59e1f9a_v1",
+    "generated": "chop_proj_nvfp4_grouped_n2560_k640_d80dd875c59e1f9a_v1",
+    "entry_sha256": "d80dd875c59e1f9af216ec0795ae83ed277c731e92578dbf3da8aefcd08dc3c1",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_grouped_v1",
+      "position": 5
+    }
+  },
+  {
+    "symbol": "chop_proj_nvfp4_grouped_n2560_k640_d96f7b87b56fdda2_v1",
+    "generated": "chop_proj_nvfp4_grouped_n2560_k640_d96f7b87b56fdda2_v1",
+    "entry_sha256": "d96f7b87b56fdda24d356aafd31e3c3cd7d03434f45f3409ac4901cdf433adad",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_grouped_v1",
+      "position": 6
+    }
+  },
+  {
+    "symbol": "chop_proj_nvfp4_grouped_n640_k2560_0a3267779437854c_v1",
+    "generated": "chop_proj_nvfp4_grouped_n640_k2560_0a3267779437854c_v1",
+    "entry_sha256": "0a3267779437854c724602731fa13cbea81d72a6bf4e4ab1b57fc3b515a46ea1",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_grouped_v1",
+      "position": 7
+    }
+  },
+  {
+    "symbol": "chop_proj_nvfp4_grouped_n640_k2560_3bf92680d1db0d6b_v1",
+    "generated": "chop_proj_nvfp4_grouped_n640_k2560_3bf92680d1db0d6b_v1",
+    "entry_sha256": "3bf92680d1db0d6b7ba9fec3594e188053a802c963a00b7c0490e9eeaef24c6e",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_grouped_v1",
+      "position": 8
+    }
+  },
+  {
+    "symbol": "chop_proj_nvfp4_grouped_n640_k2560_6a2ce00c70f3d520_v1",
+    "generated": "chop_proj_nvfp4_grouped_n640_k2560_6a2ce00c70f3d520_v1",
+    "entry_sha256": "6a2ce00c70f3d520c4085b262f4b34d6ea596bc2f4bc5ef816cbd6c17009ec4a",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_grouped_v1",
+      "position": 9
+    }
+  },
+  {
+    "symbol": "chop_proj_nvfp4_grouped_n640_k2560_6ed26d01313608e1_v1",
+    "generated": "chop_proj_nvfp4_grouped_n640_k2560_6ed26d01313608e1_v1",
+    "entry_sha256": "6ed26d01313608e149515283b930514eb31b82df10e73f9122bcbe254b43f9fb",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_grouped_v1",
+      "position": 10
+    }
+  },
+  {
+    "symbol": "chop_proj_nvfp4_grouped_n640_k2560_a29ef89c481eca5b_v1",
+    "generated": "chop_proj_nvfp4_grouped_n640_k2560_a29ef89c481eca5b_v1",
+    "entry_sha256": "a29ef89c481eca5bf7175741bd9e62508a3e974f3e62c3372e62b03fc1f1293a",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_grouped_v1",
+      "position": 11
+    }
+  },
+  {
+    "symbol": "chop_proj_nvfp4_grouped_n640_k2560_dcce3ff5ee681c73_v1",
+    "generated": "chop_proj_nvfp4_grouped_n640_k2560_dcce3ff5ee681c73_v1",
+    "entry_sha256": "dcce3ff5ee681c730c1d5e6cfe1d62f7d108c1acd97cb009262ce0e074bcd744",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_grouped_v1",
+      "position": 12
+    }
+  },
+  {
+    "symbol": "chop_proj_nvfp4_grouped_n640_k2560_fe766da41c63da14_v1",
+    "generated": "chop_proj_nvfp4_grouped_n640_k2560_fe766da41c63da14_v1",
+    "entry_sha256": "fe766da41c63da14daa817b605856acadc6aeee938cc03145cfb18b0b47d2a77",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_grouped_v1",
+      "position": 13
+    }
+  },
+  {
+    "symbol": "chop_proj_nvfp4_lookup_n320001536_k160_7ef2b3c1cfdf15b3_v1",
+    "generated": "chop_proj_nvfp4_lookup_n320001536_k160_7ef2b3c1cfdf15b3_v1",
+    "entry_sha256": "7ef2b3c1cfdf15b302ad45fc11ddbcaf741a4083a16b7fefc9a3be8afa062c7a",
+    "placement": {
+      "cubin": "qwen38_precision_tp2_rows_v1",
+      "position": 0
+    }
+  }
+]

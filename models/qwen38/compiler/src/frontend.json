@@ -1,0 +1,325 @@
+{
+  "schema": "chop-frontend-openai-v2",
+  "version": 2,
+  "generation_config": {"temperature": 1.0, "top_p": 0.95, "top_k": 20},
+  "models": [
+    {
+      "id": "Qwen3.8-Flash-Next-FP8",
+      "owned_by": "Qwen"
+    }
+  ],
+  "context": {
+    "maximum_total_tokens": 262144
+  },
+  "limits": {
+    "maximum_prompt_bytes": 67108864,
+    "maximum_completion_bytes": 67108864,
+    "maximum_generated_tokens": 262144,
+    "maximum_client_stops": 4,
+    "maximum_messages": 4096,
+    "maximum_tools": 128,
+    "maximum_tool_calls": 128,
+    "maximum_tool_parameters": 256,
+    "maximum_name_bytes": 256,
+    "maximum_json_bytes": 16777216,
+    "maximum_json_depth": 128,
+    "maximum_json_values": 1048576
+  },
+  "reasoning": {
+    "disable_value": "none",
+    "default_effort": "xhigh",
+    "efforts": [
+      {
+        "name": "xhigh",
+        "preamble": "Reasoning effort is set to xhigh. Please think carefully through the task, validate key assumptions, consider plausible alternatives, and prioritize correctness, consistency, and clarity in the final answer."
+      },
+      {
+        "name": "medium",
+        "preamble": ""
+      },
+      {
+        "name": "low",
+        "preamble": "Reasoning effort is set to low. Keep your thinking brief and focused, moving directly to the conclusion without unnecessary elaboration."
+      }
+    ],
+    "default_enabled": true,
+    "allow_disabled": true,
+    "thinking_keywords": ["enable_thinking"],
+    "effort_use": "when-thinking",
+    "end_markers": ["</think>"]
+  },
+  "tokenizer": {
+    "repository": "Qwen/Qwen3.8-Flash-Next-FP8",
+    "revision": "236dfdf285828023ca3bcd3f37366c58a3469b13",
+    "definition": {
+      "name": "tokenizer.json",
+      "byte_length": 12809320,
+      "sha256": "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3"
+    },
+    "configuration": {
+      "name": "tokenizer_config.json",
+      "byte_length": 17928,
+      "sha256": "b11349aafa7cdc6a320767cf7ceb29ed82f7eda5d65e8e0819e76f0ce947bf27"
+    },
+    "policy": {
+      "normalizer": "nfc",
+      "pretokenizer_byte_level": {
+        "add_prefix_space": false,
+        "trim_offsets": false,
+        "use_regex": false
+      },
+      "post_processor_byte_level": {
+        "add_prefix_space": false,
+        "trim_offsets": false,
+        "use_regex": false
+      },
+      "decoder_byte_level": {
+        "add_prefix_space": false,
+        "trim_offsets": false,
+        "use_regex": false
+      },
+      "merge_results": {
+        "kind": "vocabulary"
+      },
+      "merge_records": "string-or-pair",
+      "base_tokens": {
+        "kind": "byte-level"
+      },
+      "config_tokens": {
+        "kind": "string"
+      },
+      "add_bos_token": {
+        "kind": "required",
+        "value": false
+      },
+      "bos_token": {
+        "kind": "required-null"
+      },
+      "unk_token": {
+        "kind": "required-null"
+      },
+      "tokenizer_class": "Qwen2Tokenizer",
+      "continuing_subword_prefix": "",
+      "end_of_word_suffix": "",
+      "ignore_merges": "disabled",
+      "add_eos_token": null,
+      "legacy": null,
+      "empty_sentencepiece_kwargs": false
+    },
+    "base_vocabulary_size": 248044,
+    "merge_count": 247587,
+    "added_token_count": 33,
+    "model_max_length": 262144,
+    "bos_token": null,
+    "eos_token": "<|im_end|>",
+    "pad_token": "<|endoftext|>",
+    "pretokenizer_patterns": [
+      "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?[\\p{L}\\p{M}]+|\\p{N}| ?[^\\s\\p{L}\\p{M}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"
+    ],
+    "vocabulary_size": 248077
+  },
+  "tools": {
+    "name_bytes": {"ascii_alphanumeric": true, "extra": "_-"},
+    "arguments": "json-object"
+  },
+  "vocabulary": {
+    "size": 248320,
+    "bos_token_id": 248044,
+    "eos_token_id": 248046,
+    "stop_token_ids": [
+      248046,
+      248044
+    ],
+    "boundary_tokens": [
+      {
+        "text": "<|endoftext|>",
+        "id": 248044
+      },
+      {
+        "text": "<|im_start|>",
+        "id": 248045
+      },
+      {
+        "text": "<|im_end|>",
+        "id": 248046
+      },
+      {
+        "text": "<|object_ref_start|>",
+        "id": 248047
+      },
+      {
+        "text": "<|object_ref_end|>",
+        "id": 248048
+      },
+      {
+        "text": "<|box_start|>",
+        "id": 248049
+      },
+      {
+        "text": "<|box_end|>",
+        "id": 248050
+      },
+      {
+        "text": "<|quad_start|>",
+        "id": 248051
+      },
+      {
+        "text": "<|quad_end|>",
+        "id": 248052
+      },
+      {
+        "text": "<|vision_start|>",
+        "id": 248053
+      },
+      {
+        "text": "<|vision_end|>",
+        "id": 248054
+      },
+      {
+        "text": "<|vision_pad|>",
+        "id": 248055
+      },
+      {
+        "text": "<|image_pad|>",
+        "id": 248056
+      },
+      {
+        "text": "<|video_pad|>",
+        "id": 248057
+      },
+      {
+        "text": "<tool_call>",
+        "id": 248058
+      },
+      {
+        "text": "</tool_call>",
+        "id": 248059
+      },
+      {
+        "text": "<|fim_prefix|>",
+        "id": 248060
+      },
+      {
+        "text": "<|fim_middle|>",
+        "id": 248061
+      },
+      {
+        "text": "<|fim_suffix|>",
+        "id": 248062
+      },
+      {
+        "text": "<|fim_pad|>",
+        "id": 248063
+      },
+      {
+        "text": "<|repo_name|>",
+        "id": 248064
+      },
+      {
+        "text": "<|file_sep|>",
+        "id": 248065
+      },
+      {
+        "text": "<tool_response>",
+        "id": 248066
+      },
+      {
+        "text": "</tool_response>",
+        "id": 248067
+      },
+      {
+        "text": "<think>",
+        "id": 248068
+      },
+      {
+        "text": "</think>",
+        "id": 248069
+      },
+      {
+        "text": "<|audio_start|>",
+        "id": 248070
+      },
+      {
+        "text": "<|audio_end|>",
+        "id": 248071
+      },
+      {
+        "text": "<tts_pad>",
+        "id": 248072
+      },
+      {
+        "text": "<tts_text_bos>",
+        "id": 248073
+      },
+      {
+        "text": "<tts_text_eod>",
+        "id": 248074
+      },
+      {
+        "text": "<tts_text_bos_single>",
+        "id": 248075
+      },
+      {
+        "text": "<|audio_pad|>",
+        "id": 248076
+      }
+    ],
+    "prompt_special_tokens": [
+      "<|endoftext|>",
+      "<|im_start|>",
+      "<|im_end|>",
+      "<|object_ref_start|>",
+      "<|object_ref_end|>",
+      "<|box_start|>",
+      "<|box_end|>",
+      "<|quad_start|>",
+      "<|quad_end|>",
+      "<|vision_start|>",
+      "<|vision_end|>",
+      "<|vision_pad|>",
+      "<|image_pad|>",
+      "<|video_pad|>",
+      "<tool_call>",
+      "</tool_call>",
+      "<|fim_prefix|>",
+      "<|fim_middle|>",
+      "<|fim_suffix|>",
+      "<|fim_pad|>",
+      "<|repo_name|>",
+      "<|file_sep|>",
+      "<tool_response>",
+      "</tool_response>",
+      "<think>",
+      "</think>",
+      "<|audio_start|>",
+      "<|audio_end|>",
+      "<tts_pad>",
+      "<tts_text_bos>",
+      "<tts_text_eod>",
+      "<tts_text_bos_single>",
+      "<|audio_pad|>"
+    ]
+  },
+  "response": {"reasoning_field": "reasoning"},
+  "format": {
+    "parser": {
+      "tool_grammar": "xml-function-parameters-v1",
+      "json_encoding": "python-json-v1",
+      "reasoning_open": "<think>",
+      "reasoning_close": "</think>",
+      "answer_prefix": "\n\n",
+      "tool_call_open": "<tool_call>\n",
+      "tool_call_close": "</tool_call>",
+      "tool_call_separator": "\n",
+      "function_open": "<function=",
+      "function_name_close": ">\n",
+      "function_close": "</function>\n",
+      "parameter_open": "<parameter=",
+      "parameter_name_close": ">\n",
+      "parameter_close": "\n</parameter>\n",
+      "drop_blank_tool_call_content": true,
+      "turn_open": ["<|im_start|>"],
+      "assistant_header": "<|im_start|>assistant"
+    }
+  }
+}

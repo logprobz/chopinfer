@@ -1,0 +1,110 @@
+{
+  "schema": "chopinfer.encoder.v1",
+  "model": "glm5next",
+  "name": "glm5next-vision",
+  "precision": "f32-pairs.v1",
+  "checkpoint": {
+    "prefix": "model.visual.",
+    "config": [
+      {
+        "file": "config.json",
+        "pointer": "/vision_config",
+        "values": {
+          "depth": 24,
+          "hidden_size": 1024,
+          "num_heads": 16,
+          "intermediate_size": 4096,
+          "hidden_act": "silu",
+          "attention_bias": true,
+          "in_channels": 3,
+          "patch_size": 14,
+          "temporal_patch_size": 2,
+          "spatial_merge_size": 2,
+          "out_hidden_size": 4096,
+          "projection_intermediate_size": 10240,
+          "rms_norm_eps": 1e-05,
+          "swiglu_limit": 10.0
+        }
+      }
+    ]
+  },
+  "input": {
+    "recipes": [
+      {"tag": "image.zero-padded-token-budget.v1", "patch": 14, "temporal_patch": 2, "merge": 2, "maximum_tokens": 8000}
+    ],
+    "patchify": "merge-blocks.v1",
+    "payload": "f32",
+    "columns": 1176,
+    "capacity_rows": 32768
+  },
+  "sequences": {"kind": "item"},
+  "image_layout": "program-order-stacked.v1",
+  "stages": [
+    {"op": "pad.zero-columns.v1", "columns": 1216},
+    {
+      "op": "linear.pairs.v1", "out": 1024, "bias": true,
+      "weights": {
+        "weight": {"tensor": "patch_embed.proj.weight", "transforms": ["flatten", {"pad_cols": 1216}]},
+        "bias": "patch_embed.proj.bias"
+      }
+    },
+    {
+      "op": "transformer.pre-norm.v1", "blocks": 24, "width": 1024,
+      "norm": {"op": "norm.rms-f32.v1", "eps": 1e-5},
+      "attention": {
+        "op": "attention.varlen.qk-rms.pairs.v1", "q_heads": 16, "kv_heads": 16, "head_dim": 64,
+        "qkv_bias": true, "proj_bias": true, "mask": "full", "qk_norm_eps": 1e-5
+      },
+      "rotary": {
+        "op": "rotary.axial-2d.v1", "pairs_per_axis": 16, "theta": 10000, "style": "neox",
+        "table": "table.hf-f32-angle.v1"
+      },
+      "mlp": {"op": "mlp.swiglu-clamped.v1", "hidden": 4096, "bias": true, "limit": 10},
+      "weights": {
+        "norm1.weight": "blocks.{i}.norm1.weight",
+        "qkv.weight": "blocks.{i}.attn.qkv.weight",
+        "qkv.bias": "blocks.{i}.attn.qkv.bias",
+        "q_norm.weight": "blocks.{i}.attn.q_norm.weight",
+        "k_norm.weight": "blocks.{i}.attn.k_norm.weight",
+        "proj.weight": "blocks.{i}.attn.proj.weight",
+        "proj.bias": "blocks.{i}.attn.proj.bias",
+        "norm2.weight": "blocks.{i}.norm2.weight",
+        "gate_up.weight": {"concat_rows": ["blocks.{i}.mlp.gate_proj.weight", "blocks.{i}.mlp.up_proj.weight"]},
+        "gate_up.bias": {"concat_rows": ["blocks.{i}.mlp.gate_proj.bias", "blocks.{i}.mlp.up_proj.bias"]},
+        "down.weight": "blocks.{i}.mlp.down_proj.weight",
+        "down.bias": "blocks.{i}.mlp.down_proj.bias"
+      }
+    },
+    {
+      "op": "norm.rms-f32.v1", "eps": 1e-5,
+      "weights": {"weight": "post_layernorm.weight"}
+    },
+    {"op": "merge.consecutive.v1", "rows": 4},
+    {
+      "op": "linear.pairs.v1", "out": 4096, "bias": true,
+      "weights": {
+        "weight": {"tensor": "downsample.weight", "transforms": ["flatten", {"space_to_depth_cols": 2}]},
+        "bias": "downsample.bias"
+      }
+    },
+    {
+      "op": "linear.pairs.v1", "out": 4096, "bias": false,
+      "weights": {"weight": "merger.proj.weight"}
+    },
+    {
+      "op": "projector.norm-gelu-mlp.v1",
+      "norm": {"op": "norm.layer-f32.v1", "eps": 1e-5},
+      "gelu": "erf",
+      "mlp": {"op": "mlp.swiglu-clamped.v1", "hidden": 10240, "bias": false, "limit": 10},
+      "output": "bf16",
+      "weights": {
+        "norm.weight": "merger.post_projection_norm.weight",
+        "norm.bias": "merger.post_projection_norm.bias",
+        "gate_up.weight": {"concat_rows": ["merger.gate_proj.weight", "merger.up_proj.weight"]},
+        "down.weight": "merger.down_proj.weight"
+      }
+    }
+  ],
+  "output": {"op": "layout.tokens.v1", "hidden": 4096, "positions": "grid-3axis.v1", "media_mask": false},
+  "parallel": ["replicated", "record-parallel", "sequence-split"]
+}

@@ -1,0 +1,24 @@
+[package]
+name = "runtime-bundle"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+runtime-bundle-sdk.workspace = true
+object.workspace = true
+libc.workspace = true
+runtime-kernel-contract.workspace = true
+runtime-kv.workspace = true
+runtime-weights.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["arbitrary_precision", "float_roundtrip"] }
+
+[dev-dependencies]
+runtime-weights.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

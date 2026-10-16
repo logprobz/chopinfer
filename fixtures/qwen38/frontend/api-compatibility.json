@@ -1,0 +1,63 @@
+{
+ "tool-call": {
+  "body": {
+   "choices": [
+    {
+     "message": {
+      "role": "assistant",
+      "content": null,
+      "refusal": null,
+      "annotations": null,
+      "audio": null,
+      "function_call": null,
+      "tool_calls": [
+       {
+        "id": "chatcmpl-tool-a5fd2413deed8e1a",
+        "type": "function",
+        "function": {
+         "name": "get_weather",
+         "arguments": "{\"city\": \"Paris\"}"
+        }
+       }
+      ],
+      "reasoning": "The user wants the current weather in Paris. I need to use the get_weather tool. The city is Paris. No unit specified, so I'll use the default (omit unit). This is a single independent call, so I'll make it directly.\n"
+     }
+    }
+   ]
+  }
+ },
+ "chat-thinking": {
+  "body": {
+   "choices": [
+    {
+     "message": {
+      "role": "assistant",
+      "content": "\n\nNo, 91 is not prime because it is divisible by 7 and 13.",
+      "refusal": null,
+      "annotations": null,
+      "audio": null,
+      "function_call": null,
+      "reasoning": "We need answer user: \"Is 91 prime? Answer in one sentence.\" Need final one sentence. 91 = 7*13, not prime. Ensure one sentence.\n"
+     }
+    }
+   ]
+  }
+ },
+ "chat-nothink": {
+  "body": {
+   "choices": [
+    {
+     "message": {
+      "role": "assistant",
+      "content": "No, 91 is not a prime number because it is divisible by 7 and 13.",
+      "refusal": null,
+      "annotations": null,
+      "audio": null,
+      "function_call": null,
+      "reasoning": null
+     }
+    }
+   ]
+  }
+ }
+}

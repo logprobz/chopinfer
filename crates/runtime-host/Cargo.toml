@@ -1,0 +1,94 @@
+[package]
+name = "runtime-host"
+default-run = "chopinfer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[features]
+default = ["fake-host-services"]
+# The host-memory device backend. It pulls in no driver, so a macOS host and the
+# default authoring build compile no CUDA.
+fake-host-services = []
+# The CUDA driver backend. The dependency it enables is Linux-only, so this
+# feature adds nothing to a macOS build.
+linux-cuda-host = ["dep:runtime-cuda", "dep:runtime-kernels"]
+# Device-free CUDA backend tests link runtime-cuda's synthetic driver.
+cuda-fake-driver-tests = ["linux-cuda-host", "runtime-cuda/fake-driver-tests"]
+# A model's HF differential corpus through the served frontend, for the
+# model's own tests. Its round trips also decode through the shared parser
+# called directly, which only a test build of runtime-frontend links.
+test-support = ["runtime-frontend/test-support"]
+
+# The operator's program: verify a bundle, install one, or serve one. It
+# carries no model and no bundle, so which bundle it serves is an argument.
+[[bin]]
+name = "chopinfer"
+path = "src/bin/chopinfer.rs"
+
+# The conformance host, which is the same commands with a conformance run as
+# its unnamed one. The acceptance harness hashes this binary and requires it to
+# stay unchanged across the bundles it runs.
+[[bin]]
+name = "chopinfer-host"
+path = "src/bin/chopinfer-host.rs"
+
+[dependencies]
+runtime-bundle.workspace = true
+runtime-bundle-abi.workspace = true
+runtime-engine.workspace = true
+# `chopinfer eval`: the shared qualification checks against a running server.
+runtime-eval.workspace = true
+# Grammar constraints compiled against the installed tokenizer's bytes.
+runtime-grammar.workspace = true
+# The tiered resolver this host's generic catalog offers candidates to, and
+# resolves every declared operation through before it opens a native module.
+runtime-kernel-contract.workspace = true
+# The frontend a bundle declares, and the transport that serves it. Neither
+# names a model: both read the components the selected bundle shipped.
+runtime-frontend.workspace = true
+runtime-kv.workspace = true
+# Container demuxing and frame rules for video parts; decoding itself is the
+# CUDA backend's.
+runtime-media.workspace = true
+runtime-model-api.workspace = true
+runtime-sampling.workspace = true
+runtime-scheduler.workspace = true
+runtime-server.workspace = true
+runtime-tokenizer.workspace = true
+tokio.workspace = true
+libc.workspace = true
+runtime-weights.workspace = true
+# The closed weight transform set a direct checkpoint load executes.
+kernel-core = { workspace = true, features = ["precision-serde"] }
+serde.workspace = true
+serde_json.workspace = true
+# The startup warmup wave sizes, which bundle conformance tests share. The
+# batch encoder stays independent; tests compare it to the bundle codec.
+runtime-bundle-sdk.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+runtime-cuda = { workspace = true, optional = true }
+runtime-kernels = { workspace = true, optional = true }
+
+[build-dependencies]
+# The direct load's implementation digest is taken at build time.
+sha2.workspace = true
+
+[dev-dependencies]
+# Advance startup deadlines deterministically without sleeping in tests.
+tokio = { workspace = true, features = ["test-util"] }
+# The shared SM120 input packer checks served batches against a native
+# bundle's step limits.
+bundle-runtime.workspace = true
+runtime-bundle.workspace = true
+# Tests that serve a declaration without a package serve the declared format's
+# loopback export.
+runtime-frontend = { workspace = true, features = ["test-support"] }
+# The serving tests drive the real transport over a loopback listener and read
+# the JSON it answers with. Nothing in the library parses a response.
+
+[lints]
+workspace = true

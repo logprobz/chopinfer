@@ -1,0 +1,14 @@
+{
+  "schema": "chopinfer-deployment-policy-v1",
+  "bundle_id": "qwen38.flash.v2",
+  "knob_prefixes": ["QWEN38_"],
+  "drafters": ["mtp"],
+  "taps": [
+    "QWEN38_DUMP_DIR",
+    "QWEN38_DUMP_OPS",
+    "QWEN38_DUMP_TAPS",
+    "QWEN38_DUMP_FROM",
+    "QWEN38_DUMP_BYTES",
+    "QWEN38_DUMP_SCOPE_JSON"
+  ]
+}

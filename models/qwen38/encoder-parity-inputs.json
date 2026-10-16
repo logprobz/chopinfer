@@ -1,0 +1,52 @@
+{
+  "model": "qwen38",
+  "schema": "chopinfer.encoder-parity-inputs.v1",
+  "root": {
+    "env": "CHOPINFER_DATA",
+    "path": "refrun/g9-continued"
+  },
+  "workload": {
+    "path": "qwen-inputs-v2/workload.json",
+    "sha256": "a7b8b99528bb8a53aacbbd3a7ceacb5830338696ee00bea5eab90eb310e7d9a1"
+  },
+  "workload_files_sha256": "b99d660692037f29cd1e4eb437b8d8f0a809cf82316729c9c4f05101f316b2f3",
+  "requests": [
+    {
+      "name": "blue-square",
+      "path": "qwen-inputs-v2/bodies/blue-square.json",
+      "sha256": "90f262cdbd465370c4fd928adcdcb9e47f59ac2247998b4aad8c68cb25a96cc7"
+    },
+    {
+      "name": "frame-00",
+      "path": "qwen-inputs-v2/bodies/frame-00.json",
+      "sha256": "2c26476d235c4dde78c53a993ee591ef87cc96490ce7b8dba64c8a8ba3d235c8"
+    },
+    {
+      "name": "gradient-333x517",
+      "path": "qwen-inputs-v2/bodies/gradient-333x517.json",
+      "sha256": "c4ae883ee6145c91cf9246ffe3984113e44d7b03a05ae6d70d230d2c6a479110"
+    },
+    {
+      "name": "small-100x60",
+      "path": "qwen-inputs-v2/bodies/small-100x60.json",
+      "sha256": "66f51b05fded8006c44069360fdd1177b2052470241a7be52573248d6b3b19fb"
+    },
+    {
+      "name": "wide-1000x40",
+      "path": "qwen-inputs-v2/bodies/wide-1000x40.json",
+      "sha256": "55720d3a6b169190b31aed969f288dae22cc73ed0a6ab4a3f6a8aaef98a2145b"
+    },
+    {
+      "name": "large-4500x4000",
+      "path": "qwen-inputs-v2/bodies/large-4500x4000.json",
+      "sha256": "fe8bcdc3cbb0cee6dd31d0268ddbd13d928bb047be09f25e09003090a3840afe"
+    }
+  ],
+  "references": [
+    {
+      "path": "encoder-reference/qwen38/vision",
+      "files_sha256": "768182b936def25dfae9921b805d1f6d67344183a89070cae11f7db55a96c085",
+      "source": "3d278d5329094d51e353893d933d10f94d37a497"
+    }
+  ]
+}

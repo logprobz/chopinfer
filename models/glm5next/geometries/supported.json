@@ -1,0 +1,68 @@
+{
+  "aliases": {
+    "architecture": [
+      "Glm5NextForConditionalGeneration"
+    ],
+    "model_type": [
+      "glm5_next"
+    ],
+    "text_type": [
+      "glm5_next_text"
+    ],
+    "vision_type": [
+      "glm5_next_vision"
+    ]
+  },
+  "geometries": [
+    {
+      "id": "flash",
+      "file": "flash.json",
+      "kernel_tag": "glm5next",
+      "limits": {
+        "text_config.index_topk": 2048
+      }
+    }
+  ],
+  "runtime_fields": {
+    "text_config.index_topk": {
+      "overridable": true,
+      "reason": "the indexer keeps index_topk / index_kpool pooled keys, up to the compiled maximum",
+      "minimum": 4
+    }
+  },
+  "semantic_rules": {
+    "text_config.dtype": [
+      "bfloat16"
+    ],
+    "text_config.hidden_act": [
+      "silu"
+    ],
+    "text_config.indexer_types": [
+      "full"
+    ],
+    "text_config.layer_types": [
+      "linear_attention",
+      "deepseek_sparse_attention"
+    ],
+    "text_config.mlp_layer_types": [
+      "dense",
+      "sparse"
+    ],
+    "text_config.moe_router_dtype": [
+      "float32"
+    ],
+    "text_config.scoring_func": [
+      "sigmoid"
+    ],
+    "text_config.topk_method": [
+      "noaux_tc"
+    ],
+    "vision_config.hidden_act": [
+      "silu"
+    ]
+  },
+  "quantization_recipe_classes": [
+    "fp8",
+    "modelopt"
+  ]
+}

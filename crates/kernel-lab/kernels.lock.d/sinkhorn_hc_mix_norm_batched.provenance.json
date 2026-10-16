@@ -1,0 +1,22 @@
+[
+  {
+    "name": "sinkhorn_hc_hc4x4096_mix_norm_batched_late_wait_sm120",
+    "source_closure_sha256": "3f7f3f593feb8a800830f5991491f6f198616ce4bafea3492beb5c8d340f9df4"
+  },
+  {
+    "name": "sinkhorn_hc_hc4x4096_mix_norm_batched_levels_reversed_sm120",
+    "source_closure_sha256": "d0e5342f5e0c16df28f92658e8b5150e9cf63e5d581be50bc0fdfbe4ffcf72bf"
+  },
+  {
+    "name": "sinkhorn_hc_hc4x4096_mix_norm_batched_sm120",
+    "source_closure_sha256": "3c1a66a59ba1b879d0001934ca5074b9394061bfdfe1fe5dbf5ca00179c271fc"
+  },
+  {
+    "name": "sinkhorn_hc_hc4x4096_mix_norm_batched_ties_away_sm120",
+    "source_closure_sha256": "d84a1761d371ba778664927146f0a454e9003f0fdd0559dc7271a5671ce56355"
+  },
+  {
+    "name": "sinkhorn_hc_hc4x4096_mix_norm_probe_sm120",
+    "source_closure_sha256": "131437cb33b5599e6b171d7e34d4506b6c95a14e6c98a386adf3def53a34e656"
+  }
+]

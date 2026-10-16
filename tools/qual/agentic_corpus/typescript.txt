@@ -1,0 +1,91 @@
+// The words a reading is printed with, in one place: a card and a chart that format the same
+// reading differently is how a dashboard ends up saying "0.4" here and "0.40" under it.
+//
+// Two rules: nothing is padded to a precision the reading does not have (rounding down is a
+// summary a reader can check, writing a digit that was never read is inventing a measurement),
+// and a unit is the source's, so `shortUnit` shortens only a small vocabulary whose shorter
+// spelling is the same quantity and prints any other unit exactly as it was written.
+//
+// Nothing here formats an absence: a value that is not a number says so in words, and the
+// caller holds which kind of absence it is (see StatCard's states).
+
+/** Format a metric value without inventing precision the reading does not have. */
+export function formatMetric(value: number, digits = 2): string {
+  if (!Number.isFinite(value)) return "not a number";
+  const factor = 10 ** digits;
+  const rounded = Math.round(value * factor) / factor;
+  return String(rounded);
+}
+
+/**
+ * The headline form of a reading: as many digits as a reader can compare at a glance, and
+ * no more. A rate of 399.42 tokens a second is "399.4", because the hundredths of a token
+ * are not distinguishable at that size; a hit fraction of 0.4 is "0.4", not "0.40".
+ *
+ * Below one the rule changes to significant digits, deliberately. Three decimals would print
+ * a hit fraction of 0.0004 as "0", and this page reserves `0` for a quantity that really is
+ * zero, so a small nonzero reading must never be reduced to it.
+ */
+export function formatCompact(value: number): string {
+  if (!Number.isFinite(value)) return "not a number";
+  const magnitude = Math.abs(value);
+  if (magnitude === 0) return "0";
+  if (magnitude < 1) return String(Number(value.toPrecision(3)));
+  const digits = magnitude >= 1000 ? 0 : magnitude >= 100 ? 1 : 2;
+  const factor = 10 ** digits;
+  return String(Math.round(value * factor) / factor);
+}
+
+/**
+ * A unit spelled the way a card can carry it. Only a vocabulary whose short form is the
+ * same quantity is shortened, and an unrecognised unit is printed exactly as the station
+ * wrote it, because a rate per second is not a rate per minute and this file cannot tell
+ * a unit it has never seen from one it should not touch.
+ */
+const SHORT_UNITS: Record<string, string> = {
+  percent: "%",
+  percentrelative: "%",
+  bytes: "B",
+  "tokens/s": "tok/s",
+  "tokens/second": "tok/s",
+  "tokens per second": "tok/s",
+  "requests/s": "req/s",
+  "requests/second": "req/s",
+  "requests per second": "req/s",
+  microseconds: "µs",
+  ms: "ms",
+  milliseconds: "ms",
+  seconds: "s",
+};
+
+export function shortUnit(unit: string): string {
+  if (unit === "") return "";
+  return SHORT_UNITS[unit.trim().toLowerCase()] ?? unit;
+}
+
+/** The headline one-liner: the compact value and its short unit, or the value alone. */
+export function formatLatest(value: number, unit = ""): string {
+  const short = shortUnit(unit);
+  const shown = formatCompact(value);
+  return short === "" ? shown : `${shown} ${short}`;
+}
+
+/** How far apart two samples were, said once. A rate is only as good as the interval it was
+ * divided by, so the interval goes next to the rate rather than being assumed from the page's
+ * refresh interval, which is a different number for a start. */
+export function formatSpan(seconds: number): string {
+  if (!Number.isFinite(seconds)) return "an unknown interval";
+  const whole = Math.max(0, Math.round(seconds));
+  if (whole < 60) return `${whole}s`;
+  if (whole < 3600) return `${Math.floor(whole / 60)}m ${whole % 60}s`;
+  return `${Math.floor(whole / 3600)}h ${Math.floor((whole % 3600) / 60)}m`;
+}
+
+/**
+ * A unit named in a sentence, or the honest statement that none was stated. An empty unit
+ * on the wire means the descriptor said nothing, which is a different fact from "unitless"
+ * and from "1", and it is the reader who has to be told which.
+ */
+export function unitClause(unit: string): string {
+  return unit === "" ? " and no unit" : ` ("${unit}")`;
+}

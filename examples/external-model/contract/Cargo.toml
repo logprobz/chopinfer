@@ -1,0 +1,21 @@
+[package]
+name = "example-contract"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[features]
+# The kernel ops the bundle prepares through a backend (`ops`).
+ops = ["dep:kernel-core"]
+precision = ["dep:kernel-core", "dep:projection-spec", "dep:runtime-bundle-abi", "dep:serde", "dep:serde_json"]
+
+[dependencies]
+# The chat format the bundle exports.
+frontend-format.workspace = true
+kernel-core = { workspace = true, optional = true, features = ["precision-serde"] }
+projection-spec = { workspace = true, optional = true }
+runtime-bundle-abi = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }

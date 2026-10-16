@@ -1,0 +1,32 @@
+[Unit]
+Description=Chopinfer GLM 5.3 Flash
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=exec
+User=chopinfer
+Group=chopinfer
+EnvironmentFile=/etc/chopinfer/glm5next.env
+ExecStart=/usr/bin/env CHOPINFER_EXPECTED_BUNDLE_ID=glm5next.v1 /opt/chopinfer/bin/entrypoint.sh $CHOPINFER_SERVE_ARGS
+Restart=always
+RestartSec=5s
+KillSignal=SIGTERM
+KillMode=control-group
+TimeoutStopSec=45s
+LimitNOFILE=1048576
+LimitMEMLOCK=infinity
+TasksMax=4096
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/chopinfer
+PrivateTmp=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

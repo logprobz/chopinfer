@@ -1,0 +1,54 @@
+[package]
+name = "kernel-lab"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+kernel-build.workspace = true
+kernel-core.workspace = true
+# The model-free harness the lab runs its cases on, with the kit's host
+# sampling adapter (`kit::host`): the shipped sampling cubin, and the CPU
+# sampler as the device sampler's oracle.
+kernel-harness = { workspace = true, features = ["host-sampling"] }
+kernel-lab-families.workspace = true
+kernels-sm120.workspace = true
+# The lab runs every model's kernels from the catalogs models declare in
+# their own crates (`catalogs`).
+model-mimo26-contract.workspace = true
+model-qwen38-contract.workspace = true
+model-glm5next-contract.workspace = true
+runtime-cuda.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+libc.workspace = true
+# The CPU sampler, the oracle of the sampling tests.
+runtime-sampling.workspace = true
+bundle-glm5next.workspace = true
+bundle-mimo26.workspace = true
+bundle-qwen38.workspace = true
+bundle-runtime.workspace = true
+encoder-spec.workspace = true
+runtime-bundle-abi.workspace = true
+runtime-bundle-sdk.workspace = true
+model-mimo26.workspace = true
+# The vision tower check runs the serving encoder over the host's CUDA services.
+runtime-host = { workspace = true, features = ["linux-cuda-host"] }
+runtime-kv.workspace = true
+sha2.workspace = true
+
+[build-dependencies]
+kernel-build.workspace = true
+kernel-core.workspace = true
+kernel-lab-families.workspace = true
+kernels-sm120.workspace = true
+model-mimo26-contract.workspace = true
+model-qwen38-contract.workspace = true
+model-glm5next-contract.workspace = true
+
+[lints]
+workspace = true

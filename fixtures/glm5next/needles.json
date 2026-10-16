@@ -1,0 +1,53 @@
+{
+ "schema": "chopinfer.glm5next.needles.v1",
+ "provenance": "Runs on CPU with the checkpoint's tokenizer.json (through `tokenizers`) and chat template (through transformers); no weights. The method is Qwen3.8's (fixtures/qwen38/capture/prompts.py): the haystack and the three needles of MiMo's functional needle prompt (`$CHOPINFER_MIMO_FIXTURES/functional/context-524288.json`), decoded with MiMo's tokenizer, rebuilt in GLM's chat format at GLM token lengths, with the needles in front of the paragraphs nearest 10%, 50% and 90% of the haystack. Unlike Qwen's, the prompt keeps GLM's generation prompt (`<|assistant|><think>`, the template has no thinking-off form) with reasoning effort Low, and each row leaves 1,024 tokens to answer, so a short reasoning fits before the answer.",
+ "tokenizer_json_sha256": "19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d",
+ "chat_template_sha256": "0c4099f3382d6c92700dfb99725025360966fd73032f0ecf32377c0d9e6309c5",
+ "needle_source_sha256": "de8458f9447757eb3b5ab5e90c185667fb6a0354120067486df75bf1788ee9be",
+ "full_file": {
+  "path": "${CHOPINFER_DATA}/glm5next/needle/prompts.json",
+  "sha256": "d58f270a4202048a0f865e145b5bcaec80f1e9865bb4cb417c7a5260c8025850",
+  "bytes": 1909607
+ },
+ "needles": [
+  {
+   "name": "needle_8k",
+   "total_context": 8192,
+   "max_tokens": 1024,
+   "expected": "8D71A93C,46B2F8E0,C5920AD7",
+   "needle_offsets": [
+    741,
+    3552,
+    6371
+   ],
+   "token_count": 7168,
+   "token_ids_sha256": "4a063282cbc9b1c91a6a5a13d0cea8572d15b57aedf107d644c441b4414f9018"
+  },
+  {
+   "name": "needle_128k",
+   "total_context": 131072,
+   "max_tokens": 1024,
+   "expected": "8D71A93C,46B2F8E0,C5920AD7",
+   "needle_offsets": [
+    13031,
+    64998,
+    116946
+   ],
+   "token_count": 130048,
+   "token_ids_sha256": "8d5011ee3bc6cd7f718fd70e88ea4a1477fc030b1a5fcf96f0b21add2288303d"
+  },
+  {
+   "name": "needle_256k",
+   "total_context": 262144,
+   "max_tokens": 1024,
+   "expected": "8D71A93C,46B2F8E0,C5920AD7",
+   "needle_offsets": [
+    26129,
+    130488,
+    234970
+   ],
+   "token_count": 261120,
+   "token_ids_sha256": "a97366b00beecd80655e8e86bc85833db27add98c99891b1aabb6e4a448a2343"
+  }
+ ]
+}

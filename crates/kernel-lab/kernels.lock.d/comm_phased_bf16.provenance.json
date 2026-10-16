@@ -1,0 +1,34 @@
+[
+  {
+    "name": "comm_phased_bf16_late_wait_sm120",
+    "source_closure_sha256": "cec773caab6f586f2726456b07aa7325023eeff277f7f6e6fa4bce502d6fabdc"
+  },
+  {
+    "name": "comm_phased_bf16_no_gather_wait_sm120",
+    "source_closure_sha256": "aa0fd654b1f594103a3a0ec2a35b8bbc1c54374b094c07dccbadf6a9cb1ee594"
+  },
+  {
+    "name": "comm_phased_bf16_no_scatter_wait_sm120",
+    "source_closure_sha256": "53c7f7a7343916c1f90504fc03920d8d068684638fc1fd085c14eab4bdccf8b1"
+  },
+  {
+    "name": "comm_phased_bf16_own_f32_sm120",
+    "source_closure_sha256": "ff8cf57fe9f2069a5d831c215b073873c91e20225a08588639b3175387481bfb"
+  },
+  {
+    "name": "comm_phased_bf16_reversed_sm120",
+    "source_closure_sha256": "83ac2be883ed58c6e94da518f00462c0c6f16739fb0777d2d26524223871464a"
+  },
+  {
+    "name": "comm_phased_bf16_shared_parity_sm120",
+    "source_closure_sha256": "20fed9b23843d1697dc04f3319394ffdfd7c6b8bd56be013239d65c93bfc5676"
+  },
+  {
+    "name": "comm_phased_bf16_slow_sm120",
+    "source_closure_sha256": "35144338d3e7c04e2a9c747211be8ab5a86785c5cacbebea9651e9c01fb192d5"
+  },
+  {
+    "name": "comm_phased_bf16_sm120",
+    "source_closure_sha256": "edabd6d60847232e3e6a58568c01464d982978da5e7f2969bd47c533826e2535"
+  }
+]

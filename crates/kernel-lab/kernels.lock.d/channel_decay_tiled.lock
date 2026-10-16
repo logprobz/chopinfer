@@ -1,0 +1,957 @@
+[
+  {
+    "name": "channel_decay_tiled_h16x128_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_channel_decay_h16x128_delta_prefill_prepare_tiled_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "qkv",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "U32",
+            "name": "qkv_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "f",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "U32",
+            "name": "f_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "b",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "U32",
+            "name": "b_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "a_log",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "dt_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cu_seqlens",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "start_positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_sequences",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_channel_decay_h16x128_delta_prefill_scan_tiled_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "state",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cu_seqlens",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "start_positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "slot_ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "initial",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "anchor_ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_sequences",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "0273f78cc46d7e472967c92c50d7c591b9e8a74d9684b286767f3cfb823954a2",
+    "resources": [
+      {
+        "symbol": "chop_channel_decay_h16x128_delta_prefill_prepare_tiled_v1",
+        "registers": 110,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_channel_decay_h16x128_delta_prefill_scan_tiled_v1",
+        "registers": 158,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "channel_decay_tiled_late_wait_h16x128_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_CHANNEL_DECAY_TILED_TEST_LATE_WAIT",
+        "1"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_channel_decay_h16x128_delta_prefill_prepare_tiled_late_wait_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "qkv",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "U32",
+            "name": "qkv_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "f",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "U32",
+            "name": "f_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "b",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "U32",
+            "name": "b_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "a_log",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "dt_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cu_seqlens",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "start_positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_sequences",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_channel_decay_h16x128_delta_prefill_scan_tiled_late_wait_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "state",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cu_seqlens",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "start_positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "slot_ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "initial",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "anchor_ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_sequences",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "1382ec9fc87f27ed276464bdb383be5d00b9307f6374ef190926b48c9a0e4ae9",
+    "resources": [
+      {
+        "symbol": "chop_channel_decay_h16x128_delta_prefill_prepare_tiled_late_wait_v1",
+        "registers": 110,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_channel_decay_h16x128_delta_prefill_scan_tiled_late_wait_v1",
+        "registers": 158,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "channel_decay_tiled_no_singles_h16x128_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_CHANNEL_DECAY_TILED_TEST_NO_SINGLES",
+        "1"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_channel_decay_h16x128_delta_prefill_prepare_tiled_no_singles_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "qkv",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "U32",
+            "name": "qkv_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "f",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "U32",
+            "name": "f_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "b",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "U32",
+            "name": "b_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "a_log",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "dt_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cu_seqlens",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "start_positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_sequences",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_channel_decay_h16x128_delta_prefill_scan_tiled_no_singles_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "state",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cu_seqlens",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "start_positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "slot_ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "initial",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "anchor_ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_sequences",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "a693aa7e9721c6f1e3f1371220ef64b3a6614d8f4bf0609280be571f54262ca5",
+    "resources": [
+      {
+        "symbol": "chop_channel_decay_h16x128_delta_prefill_prepare_tiled_no_singles_v1",
+        "registers": 110,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_channel_decay_h16x128_delta_prefill_scan_tiled_no_singles_v1",
+        "registers": 158,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "channel_decay_tiled_no_tile_wait_h16x128_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_CHANNEL_DECAY_TILED_TEST_NO_TILE_WAIT",
+        "1"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_channel_decay_h16x128_delta_prefill_prepare_tiled_no_tile_wait_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "qkv",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "U32",
+            "name": "qkv_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "f",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "U32",
+            "name": "f_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "b",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "U32",
+            "name": "b_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "a_log",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "dt_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cu_seqlens",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "start_positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_sequences",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_channel_decay_h16x128_delta_prefill_scan_tiled_no_tile_wait_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "state",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cu_seqlens",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "start_positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "slot_ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "initial",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "anchor_ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_sequences",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "6791d430680ba0b25b29b16a305720ffe37d9e9282e0ba4693762321cd210296",
+    "resources": [
+      {
+        "symbol": "chop_channel_decay_h16x128_delta_prefill_prepare_tiled_no_tile_wait_v1",
+        "registers": 110,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_channel_decay_h16x128_delta_prefill_scan_tiled_no_tile_wait_v1",
+        "registers": 158,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "channel_decay_tiled_reversed_chain_h16x128_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_CHANNEL_DECAY_TILED_TEST_REVERSED_CHAIN",
+        "1"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_channel_decay_h16x128_delta_prefill_prepare_tiled_reversed_chain_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "qkv",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "U32",
+            "name": "qkv_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "f",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "U32",
+            "name": "f_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "b",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "U32",
+            "name": "b_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "a_log",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "dt_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cu_seqlens",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "start_positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_sequences",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_channel_decay_h16x128_delta_prefill_scan_tiled_reversed_chain_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "state",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cu_seqlens",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "start_positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "slot_ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "initial",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "anchor_ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_sequences",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "a80a478ad1c0164315d0e551b5addd45600300770feb16ab5748506192798837",
+    "resources": [
+      {
+        "symbol": "chop_channel_decay_h16x128_delta_prefill_prepare_tiled_reversed_chain_v1",
+        "registers": 110,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_channel_decay_h16x128_delta_prefill_scan_tiled_reversed_chain_v1",
+        "registers": 158,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "channel_decay_tiled_short_triangle_h16x128_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_CHANNEL_DECAY_TILED_TEST_SHORT_TRIANGLE",
+        "1"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_channel_decay_h16x128_delta_prefill_prepare_tiled_short_triangle_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "qkv",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "U32",
+            "name": "qkv_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "f",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "U32",
+            "name": "f_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "b",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "U32",
+            "name": "b_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "a_log",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "dt_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cu_seqlens",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "start_positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_sequences",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_channel_decay_h16x128_delta_prefill_scan_tiled_short_triangle_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "state",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cu_seqlens",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "start_positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "slot_ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "initial",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "anchor_ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_sequences",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "ceb58b93d4fb7a3eccfd9c3108be3f824e751b849ff263c1f0bdc4bba76fcdd7",
+    "resources": [
+      {
+        "symbol": "chop_channel_decay_h16x128_delta_prefill_prepare_tiled_short_triangle_v1",
+        "registers": 110,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_channel_decay_h16x128_delta_prefill_scan_tiled_short_triangle_v1",
+        "registers": 158,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

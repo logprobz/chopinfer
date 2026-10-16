@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "targets": [
+    {
+      "compute_capability": "12.0",
+      "sm_count": 188,
+      "buckets": {
+        "decode": [1, 2, 4, 8, 16, 32],
+        "prefill": [64, 128, 256, 512, 1024, 2048, 4096, 8192]
+      },
+      "defaults": {
+        "row_threads": 256,
+        "quant_threads": 32,
+        "permute_decode_block": 32,
+        "permute_prefill_block": 64,
+        "pdl": true
+      }
+    }
+  ]
+}

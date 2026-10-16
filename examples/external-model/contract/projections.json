@@ -1,0 +1,50 @@
+{
+  "schema": "chopinfer.projection.v1",
+  "namespace": "example",
+  "use_profiles": {
+    "served": [
+      {"phase": "Decode", "capacity": 1, "graph": false},
+      {"phase": "Prefill", "capacity": 64, "graph": false},
+      {"phase": "Decode", "capacity": 64, "graph": true}
+    ]
+  },
+  "layer_stems": [],
+  "projections": [
+    {
+      "id": "projection",
+      "source": {"tensor": "adapter.projection.weight"},
+      "shape": ["hidden", "hidden"],
+      "kind": {"kind": "dense"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "example.source-recipe.v1",
+      "format": "nvfp4",
+      "use_profile": "served"
+    },
+    {
+      "id": "switch",
+      "source": {"tensor": "switch.pair.weight"},
+      "shape": ["intermediate", "hidden"],
+      "operands": ["gate", "up"],
+      "kind": {"kind": "expert_bank", "experts": "experts", "top_k": "top_k"},
+      "split": {"class": "expert_owned", "tile": 1},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": "ConcatenatedHalves", "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "example.source-recipe.v1",
+      "format": "nvfp4",
+      "use_profile": "served"
+    },
+    {
+      "id": "lookup",
+      "source": {"tensor": "dictionary.table.weight"},
+      "shape": ["vocab", "table_width"],
+      "kind": {"kind": "lookup_table"},
+      "split": {"class": "replicate"},
+      "epilogues": {"residual_add": false, "bias": false, "gelu": null, "swiglu": null, "output_quantization": null, "weighted_moe_combine": false},
+      "numerical_contract": "example.source-recipe.v1",
+      "format": "nvfp4",
+      "use_profile": "served"
+    }
+  ],
+  "fusion_groups": [],
+  "side_tensors": []
+}

@@ -1,0 +1,38 @@
+ chopinfer-top  >  Qwen3.8-Flash  [4/5]  proc 51022  starting  up 2m14s                             window 60s  poll 1s  rescan 15s
+┌─ Status ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                                  │
+│ The serve process is running (up 2m14s) but has no listening socket yet.                                                         │
+│ It is loading weights or warming up; metrics appear once /health answers.                                                        │
+│                                                                                                                                  │
+│ Command line:  chopinfer serve --model /models/Qwen3.8-Flash --tensor-parallel-size 2                                            │
+│                                                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ Identity ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ found via serve process 51022 of this user, not listening yet                                                                    │
+│                                                                                                                                  │
+│                                                                                                                                  │
+│                                                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ Esc back   ← → Tab instance   w window   r rescan   p pause   ? help   q quit

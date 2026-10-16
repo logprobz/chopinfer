@@ -1,0 +1,6 @@
+{
+  "transformers_version": "contributor-exporter",
+  "initializer_range": 0.031,
+  "router_aux_loss_coef": 0.05,
+  "seed": 7654
+}

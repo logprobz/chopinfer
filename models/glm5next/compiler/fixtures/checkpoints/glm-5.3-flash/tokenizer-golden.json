@@ -1,0 +1,551 @@
+[
+  {
+    "text": "Hello, world!",
+    "token_ids": [
+      9703,
+      11,
+      1879,
+      0
+    ],
+    "decoded": "Hello, world!"
+  },
+  {
+    "text": " leading and  double  spaces ",
+    "token_ids": [
+      6388,
+      323,
+      220,
+      1990,
+      220,
+      12615,
+      220
+    ],
+    "decoded": " leading and  double  spaces "
+  },
+  {
+    "text": "line one\nline two\r\n\ttabbed\n\n\n",
+    "token_ids": [
+      1056,
+      825,
+      198,
+      1056,
+      1378,
+      319,
+      57752,
+      2721,
+      1406
+    ],
+    "decoded": "line one\nline two\r\n\ttabbed\n\n\n"
+  },
+  {
+    "text": "数字 12345 和 3.14159，中文标点！",
+    "token_ids": [
+      100295,
+      220,
+      108714,
+      100461,
+      102226,
+      220,
+      18,
+      13,
+      122804,
+      102573,
+      3837,
+      102169,
+      98593,
+      98428,
+      6313
+    ],
+    "decoded": "数字 12345 和 3.14159，中文标点！"
+  },
+  {
+    "text": "émoji 🙂 and 👩‍👩‍👧 family",
+    "token_ids": [
+      963,
+      6355,
+      7754,
+      27392,
+      323,
+      61370,
+      102,
+      124564,
+      151929,
+      124564,
+      151927,
+      2997
+    ],
+    "decoded": "émoji 🙂 and 👩‍👩‍👧 family"
+  },
+  {
+    "text": "def f(x):\n    return x ** 2  # square\n",
+    "token_ids": [
+      750,
+      282,
+      2075,
+      982,
+      262,
+      470,
+      856,
+      3070,
+      220,
+      17,
+      220,
+      671,
+      9331,
+      198
+    ],
+    "decoded": "def f(x):\n    return x ** 2  # square\n"
+  },
+  {
+    "text": "I'm sure they've done it, haven't they? 'Quotes' \"double\"",
+    "token_ids": [
+      40,
+      2776,
+      2704,
+      807,
+      3003,
+      2814,
+      432,
+      11,
+      8987,
+      944,
+      807,
+      30,
+      364,
+      43530,
+      6,
+      330,
+      4331,
+      1
+    ],
+    "decoded": "I'm sure they've done it, haven't they? 'Quotes' \"double\""
+  },
+  {
+    "text": "[gMASK]<sop><|system|>Reasoning Effort: Max<|user|>hi<|assistant|><think>",
+    "token_ids": [
+      154822,
+      154824,
+      154826,
+      25062,
+      287,
+      29905,
+      371,
+      25,
+      7487,
+      154827,
+      6023,
+      154828,
+      154841
+    ],
+    "decoded": "[gMASK]<sop><|system|>Reasoning Effort: Max<|user|>hi<|assistant|><think>"
+  },
+  {
+    "text": "<tool_call>get_weather<arg_key>city</arg_key><arg_value>Paris</arg_value></tool_call>",
+    "token_ids": [
+      154843,
+      455,
+      68852,
+      154847,
+      8923,
+      154848,
+      154849,
+      59190,
+      154850,
+      154844
+    ],
+    "decoded": "<tool_call>get_weather<arg_key>city</arg_key><arg_value>Paris</arg_value></tool_call>"
+  },
+  {
+    "text": "<|begin_of_image|><|image|><|end_of_image|><|observation|><tool_response>ok</tool_response>",
+    "token_ids": [
+      154830,
+      154854,
+      154831,
+      154829,
+      154845,
+      562,
+      154846
+    ],
+    "decoded": "<|begin_of_image|><|image|><|end_of_image|><|observation|><tool_response>ok</tool_response>"
+  },
+  {
+    "text": "/nothink <|endoftext|> trailing",
+    "token_ids": [
+      154851,
+      220,
+      154820,
+      27654
+    ],
+    "decoded": "/nothink <|endoftext|> trailing"
+  },
+  {
+    "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "token_ids": [
+      68926,
+      68926,
+      68926,
+      68926,
+      68926,
+      68926,
+      68926,
+      68926,
+      68926
+    ],
+    "decoded": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+    "text": " non breaking　spaces​",
+    "token_ids": [
+      4102,
+      6280,
+      134137,
+      36467,
+      22382,
+      44029,
+      15680
+    ],
+    "decoded": " non breaking　spaces​"
+  },
+  {
+    "text": "ÅÄÖ åäö Ø ß ﬁ ﬀ İ ı",
+    "token_ids": [
+      147135,
+      86255,
+      62911,
+      13068,
+      2305,
+      2956,
+      88208,
+      1683,
+      253,
+      32348,
+      70201,
+      32348,
+      105,
+      222,
+      38214,
+      220,
+      3777
+    ],
+    "decoded": "ÅÄÖ åäö Ø ß ﬁ ﬀ İ ı"
+  },
+  {
+    "text": "",
+    "token_ids": [],
+    "decoded": ""
+  },
+  {
+    "text": "3.14159 2.71828 -0.001 1e10 0x1F 0b1010 1,234,567.89 50% $12.99",
+    "token_ids": [
+      18,
+      13,
+      122804,
+      102573,
+      220,
+      17,
+      13,
+      22,
+      99243,
+      99869,
+      481,
+      15,
+      13,
+      110228,
+      220,
+      16,
+      68,
+      98668,
+      220,
+      15,
+      87,
+      16,
+      37,
+      220,
+      15,
+      65,
+      107609,
+      15,
+      220,
+      16,
+      11,
+      99619,
+      19,
+      11,
+      101917,
+      22,
+      13,
+      103502,
+      220,
+      99200,
+      4,
+      400,
+      98886,
+      13,
+      100809
+    ],
+    "decoded": "3.14159 2.71828 -0.001 1e10 0x1F 0b1010 1,234,567.89 50% $12.99"
+  },
+  {
+    "text": "مرحبا بالعالم שלום עולם Привет, мир! 한국어 텍스트 日本語のテキスト",
+    "token_ids": [
+      128593,
+      29710,
+      132131,
+      127893,
+      23161,
+      129360,
+      87071,
+      48974,
+      36478,
+      251,
+      17263,
+      95,
+      36478,
+      250,
+      147,
+      251,
+      141521,
+      8177,
+      11,
+      130422,
+      0,
+      147180,
+      30953,
+      10759,
+      43849,
+      52836,
+      108478,
+      131513,
+      15755,
+      56451,
+      61369,
+      70008
+    ],
+    "decoded": "مرحبا بالعالم שלום עולם Привет, мир! 한국어 텍스트 日本語のテキスト"
+  },
+  {
+    "text": "URL https://example.com/a/b?c=d&e=f#g and email someone@example.org",
+    "token_ids": [
+      3144,
+      3703,
+      1110,
+      8686,
+      905,
+      14177,
+      3470,
+      30,
+      66,
+      25327,
+      67575,
+      18083,
+      45873,
+      323,
+      2551,
+      4325,
+      35311,
+      2659
+    ],
+    "decoded": "URL https://example.com/a/b?c=d&e=f#g and email someone@example.org"
+  },
+  {
+    "text": "Ｆｕｌｌｗｉｄｔｈ ①②③ 𝐀𝐁 zero​width joiner‍ end",
+    "token_ids": [
+      1540,
+      99,
+      15381,
+      243,
+      15381,
+      234,
+      15381,
+      234,
+      15381,
+      245,
+      15381,
+      231,
+      15381,
+      226,
+      15381,
+      242,
+      15381,
+      230,
+      220,
+      103410,
+      103527,
+      104801,
+      80590,
+      238,
+      222,
+      55873,
+      238,
+      223,
+      7168,
+      15680,
+      3098,
+      5138,
+      261,
+      124564,
+      835
+    ],
+    "decoded": "Ｆｕｌｌｗｉｄｔｈ ①②③ 𝐀𝐁 zero​width joiner‍ end"
+  },
+  {
+    "text": "<|system|><|user|><|assistant|><|observation|>",
+    "token_ids": [
+      154826,
+      154827,
+      154828,
+      154829
+    ],
+    "decoded": "<|system|><|user|><|assistant|><|observation|>"
+  },
+  {
+    "text": "<think></think><tool_call></tool_call><arg_key></arg_key><arg_value></arg_value>",
+    "token_ids": [
+      154841,
+      154842,
+      154843,
+      154844,
+      154847,
+      154848,
+      154849,
+      154850
+    ],
+    "decoded": "<think></think><tool_call></tool_call><arg_key></arg_key><arg_value></arg_value>"
+  },
+  {
+    "text": "<tool_response></tool_response><|begin_of_image|><|end_of_image|><|image|>",
+    "token_ids": [
+      154845,
+      154846,
+      154830,
+      154831,
+      154854
+    ],
+    "decoded": "<tool_response></tool_response><|begin_of_image|><|end_of_image|><|image|>"
+  },
+  {
+    "text": "[gMASK][sMASK][MASK]<sop><eop><|endoftext|>",
+    "token_ids": [
+      154822,
+      154823,
+      154821,
+      154824,
+      154825,
+      154820
+    ],
+    "decoded": "[gMASK][sMASK][MASK]<sop><eop><|endoftext|>"
+  },
+  {
+    "text": "{\"temperature\": 18, \"condition\": \"cloudy\", \"hours\": [1, 2.5, null], \"ok\": true}",
+    "token_ids": [
+      4913,
+      34388,
+      788,
+      220,
+      99243,
+      11,
+      330,
+      9053,
+      788,
+      330,
+      12355,
+      88,
+      497,
+      330,
+      30265,
+      788,
+      508,
+      16,
+      11,
+      220,
+      17,
+      13,
+      20,
+      11,
+      845,
+      1125,
+      330,
+      562,
+      788,
+      830,
+      92
+    ],
+    "decoded": "{\"temperature\": 18, \"condition\": \"cloudy\", \"hours\": [1, 2.5, null], \"ok\": true}"
+  },
+  {
+    "text": "| a | b |\n|---|---|\n| 1 | 2 |\n\n- item\n  - nested\n\n```python\nprint('x')\n```",
+    "token_ids": [
+      91,
+      264,
+      760,
+      293,
+      9245,
+      91,
+      4421,
+      91,
+      4421,
+      7360,
+      91,
+      220,
+      16,
+      760,
+      220,
+      17,
+      35543,
+      12,
+      1509,
+      198,
+      220,
+      481,
+      23966,
+      271,
+      73022,
+      12663,
+      198,
+      1350,
+      492,
+      87,
+      1305,
+      73022
+    ],
+    "decoded": "| a | b |\n|---|---|\n| 1 | 2 |\n\n- item\n  - nested\n\n```python\nprint('x')\n```"
+  },
+  {
+    "text": "        \t\t   \n \r\n  trailing    ",
+    "token_ids": [
+      36728,
+      5872,
+      2529,
+      220,
+      27654,
+      257
+    ],
+    "decoded": "        \t\t   \n \r\n  trailing    "
+  },
+  {
+    "text": "请用一句话解释什么是机器学习。机器学习是让计算机从数据中自动发现规律。",
+    "token_ids": [
+      98964,
+      98340,
+      106673,
+      100774,
+      104689,
+      101557,
+      98935,
+      1773,
+      101557,
+      98935,
+      98316,
+      98565,
+      101183,
+      98484,
+      99080,
+      98322,
+      100436,
+      99167,
+      101752,
+      1773
+    ],
+    "decoded": "请用一句话解释什么是机器学习。机器学习是让计算机从数据中自动发现规律。"
+  }
+]

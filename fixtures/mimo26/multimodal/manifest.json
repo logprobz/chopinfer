@@ -1,0 +1,19 @@
+{
+  "files": {
+    "exact-reference.json": "25fa52da1e7043aebde5220f5576f6eeb4ab1ca5d9be63d6dfd34b6f45becce9",
+    "reference.json": "bd4faf0c2c395ca30080533b0570bf8bdc250c5abc9ea059f9323c639eacd172"
+  },
+  "fixture_sha256": {
+    "blue-square.png": "3135d002787bc6f7be70ab3e4a4648b2ab1b14ad584058c70aa6d53646da2e3d",
+    "frames/00.png": "ba7fc9794d3db90790d76cdf0b4faf0a1b66ff8acc685667ffb318c06e6d66b6",
+    "frames/01.png": "ba7fc9794d3db90790d76cdf0b4faf0a1b66ff8acc685667ffb318c06e6d66b6",
+    "frames/02.png": "ba7fc9794d3db90790d76cdf0b4faf0a1b66ff8acc685667ffb318c06e6d66b6",
+    "frames/03.png": "ba7fc9794d3db90790d76cdf0b4faf0a1b66ff8acc685667ffb318c06e6d66b6",
+    "frames/04.png": "3c5a92cecb3f7b408eac12b8c09edad458f89e6f4bbc548391830068bdf88505",
+    "frames/05.png": "3c5a92cecb3f7b408eac12b8c09edad458f89e6f4bbc548391830068bdf88505",
+    "frames/06.png": "3c5a92cecb3f7b408eac12b8c09edad458f89e6f4bbc548391830068bdf88505",
+    "frames/07.png": "3c5a92cecb3f7b408eac12b8c09edad458f89e6f4bbc548391830068bdf88505",
+    "red-then-blue.mp4": "067756ec40d61716029762c7c82aac5e01cf86a3ee7947b9c9750bf8c6d7ffab"
+  },
+  "schema": "mimo26-multimodal-manifest/v1"
+}

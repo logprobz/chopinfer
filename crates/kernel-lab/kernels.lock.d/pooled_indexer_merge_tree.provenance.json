@@ -1,0 +1,18 @@
+[
+  {
+    "name": "pooled_indexer_merge_tree_late_wait_pidx_lab_sm120",
+    "source_closure_sha256": "aceecaf2e07f810f7aede98f0237130603a1462bf4d9ae3c13fc97ede45375df"
+  },
+  {
+    "name": "pooled_indexer_merge_tree_pidx_lab_sm120",
+    "source_closure_sha256": "8bc0655cba4dbb3d911486ff5d6574296791fb02ddaa6dfc0ab0e3d1e74fa5ea"
+  },
+  {
+    "name": "pooled_indexer_merge_tree_score_only_pidx_lab_sm120",
+    "source_closure_sha256": "a447fad4633ffacbbaface15572deee0b5141a47b1a5f39184327176ffcbfc9b"
+  },
+  {
+    "name": "pooled_indexer_merge_tree_skip_last_pidx_lab_sm120",
+    "source_closure_sha256": "bbffc54953a2387041a995ffdf6f965a510cebac7d32be72d871d26e85ba4a52"
+  }
+]

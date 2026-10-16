@@ -1,0 +1,21 @@
+[package]
+name = "kernel-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[features]
+precision-serde = ["dep:serde", "dep:serde_json", "dep:miniz_oxide"]
+
+[dependencies]
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+miniz_oxide = { workspace = true, optional = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

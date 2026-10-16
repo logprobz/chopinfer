@@ -1,0 +1,360 @@
+{
+  "schema": "mimo26-processor-cpu/v1",
+  "processor": "Qwen2VLImageProcessor",
+  "overrides": {
+    "image_mean": [
+      0.485,
+      0.456,
+      0.406
+    ],
+    "image_std": [
+      0.229,
+      0.224,
+      0.225
+    ],
+    "max_pixels": 1048576,
+    "min_pixels": 8192
+  },
+  "fixed_video_sha256": "97554e4fd1d7ece4b24fca8a9fde96c79f1b422193b82ce44ffea8d7edeef168",
+  "fixture_sha256": {
+    "blue-square.png": "3135d002787bc6f7be70ab3e4a4648b2ab1b14ad584058c70aa6d53646da2e3d",
+    "frames/00.png": "ba7fc9794d3db90790d76cdf0b4faf0a1b66ff8acc685667ffb318c06e6d66b6",
+    "frames/01.png": "ba7fc9794d3db90790d76cdf0b4faf0a1b66ff8acc685667ffb318c06e6d66b6",
+    "frames/02.png": "ba7fc9794d3db90790d76cdf0b4faf0a1b66ff8acc685667ffb318c06e6d66b6",
+    "frames/03.png": "ba7fc9794d3db90790d76cdf0b4faf0a1b66ff8acc685667ffb318c06e6d66b6",
+    "frames/04.png": "3c5a92cecb3f7b408eac12b8c09edad458f89e6f4bbc548391830068bdf88505",
+    "frames/05.png": "3c5a92cecb3f7b408eac12b8c09edad458f89e6f4bbc548391830068bdf88505",
+    "frames/06.png": "3c5a92cecb3f7b408eac12b8c09edad458f89e6f4bbc548391830068bdf88505",
+    "frames/07.png": "3c5a92cecb3f7b408eac12b8c09edad458f89e6f4bbc548391830068bdf88505",
+    "red-then-blue.mp4": "067756ec40d61716029762c7c82aac5e01cf86a3ee7947b9c9750bf8c6d7ffab"
+  },
+  "cases": {
+    "blue-square.png": {
+      "decoded_rgb": {
+        "file": "blue-square-rgb.npy",
+        "dtype": "uint8",
+        "shape": [
+          256,
+          256,
+          3
+        ]
+      },
+      "pixel_values": {
+        "file": "blue-square-pixels.npy",
+        "dtype": "float32",
+        "shape": [
+          256,
+          1536
+        ]
+      },
+      "image_grid_thw": {
+        "file": "blue-square-grid.npy",
+        "dtype": "int32",
+        "shape": [
+          1,
+          3
+        ]
+      }
+    },
+    "frames/00.png": {
+      "decoded_rgb": {
+        "file": "frames-00-rgb.npy",
+        "dtype": "uint8",
+        "shape": [
+          256,
+          256,
+          3
+        ]
+      },
+      "pixel_values": {
+        "file": "frames-00-pixels.npy",
+        "dtype": "float32",
+        "shape": [
+          256,
+          1536
+        ]
+      },
+      "image_grid_thw": {
+        "file": "frames-00-grid.npy",
+        "dtype": "int32",
+        "shape": [
+          1,
+          3
+        ]
+      }
+    },
+    "frames/01.png": {
+      "decoded_rgb": {
+        "file": "frames-01-rgb.npy",
+        "dtype": "uint8",
+        "shape": [
+          256,
+          256,
+          3
+        ]
+      },
+      "pixel_values": {
+        "file": "frames-01-pixels.npy",
+        "dtype": "float32",
+        "shape": [
+          256,
+          1536
+        ]
+      },
+      "image_grid_thw": {
+        "file": "frames-01-grid.npy",
+        "dtype": "int32",
+        "shape": [
+          1,
+          3
+        ]
+      }
+    },
+    "frames/02.png": {
+      "decoded_rgb": {
+        "file": "frames-02-rgb.npy",
+        "dtype": "uint8",
+        "shape": [
+          256,
+          256,
+          3
+        ]
+      },
+      "pixel_values": {
+        "file": "frames-02-pixels.npy",
+        "dtype": "float32",
+        "shape": [
+          256,
+          1536
+        ]
+      },
+      "image_grid_thw": {
+        "file": "frames-02-grid.npy",
+        "dtype": "int32",
+        "shape": [
+          1,
+          3
+        ]
+      }
+    },
+    "frames/03.png": {
+      "decoded_rgb": {
+        "file": "frames-03-rgb.npy",
+        "dtype": "uint8",
+        "shape": [
+          256,
+          256,
+          3
+        ]
+      },
+      "pixel_values": {
+        "file": "frames-03-pixels.npy",
+        "dtype": "float32",
+        "shape": [
+          256,
+          1536
+        ]
+      },
+      "image_grid_thw": {
+        "file": "frames-03-grid.npy",
+        "dtype": "int32",
+        "shape": [
+          1,
+          3
+        ]
+      }
+    },
+    "frames/04.png": {
+      "decoded_rgb": {
+        "file": "frames-04-rgb.npy",
+        "dtype": "uint8",
+        "shape": [
+          256,
+          256,
+          3
+        ]
+      },
+      "pixel_values": {
+        "file": "frames-04-pixels.npy",
+        "dtype": "float32",
+        "shape": [
+          256,
+          1536
+        ]
+      },
+      "image_grid_thw": {
+        "file": "frames-04-grid.npy",
+        "dtype": "int32",
+        "shape": [
+          1,
+          3
+        ]
+      }
+    },
+    "frames/05.png": {
+      "decoded_rgb": {
+        "file": "frames-05-rgb.npy",
+        "dtype": "uint8",
+        "shape": [
+          256,
+          256,
+          3
+        ]
+      },
+      "pixel_values": {
+        "file": "frames-05-pixels.npy",
+        "dtype": "float32",
+        "shape": [
+          256,
+          1536
+        ]
+      },
+      "image_grid_thw": {
+        "file": "frames-05-grid.npy",
+        "dtype": "int32",
+        "shape": [
+          1,
+          3
+        ]
+      }
+    },
+    "frames/06.png": {
+      "decoded_rgb": {
+        "file": "frames-06-rgb.npy",
+        "dtype": "uint8",
+        "shape": [
+          256,
+          256,
+          3
+        ]
+      },
+      "pixel_values": {
+        "file": "frames-06-pixels.npy",
+        "dtype": "float32",
+        "shape": [
+          256,
+          1536
+        ]
+      },
+      "image_grid_thw": {
+        "file": "frames-06-grid.npy",
+        "dtype": "int32",
+        "shape": [
+          1,
+          3
+        ]
+      }
+    },
+    "frames/07.png": {
+      "decoded_rgb": {
+        "file": "frames-07-rgb.npy",
+        "dtype": "uint8",
+        "shape": [
+          256,
+          256,
+          3
+        ]
+      },
+      "pixel_values": {
+        "file": "frames-07-pixels.npy",
+        "dtype": "float32",
+        "shape": [
+          256,
+          1536
+        ]
+      },
+      "image_grid_thw": {
+        "file": "frames-07-grid.npy",
+        "dtype": "int32",
+        "shape": [
+          1,
+          3
+        ]
+      }
+    },
+    "red-then-blue.mp4": {
+      "decoded_rgb": {
+        "file": "video-rgb.npy",
+        "dtype": "uint8",
+        "shape": [
+          8,
+          256,
+          256,
+          3
+        ]
+      },
+      "pixel_values_videos": {
+        "file": "video-pixels.npy",
+        "dtype": "float32",
+        "shape": [
+          1024,
+          1536
+        ]
+      },
+      "video_grid_thw": {
+        "file": "video-grid.npy",
+        "dtype": "int32",
+        "shape": [
+          1,
+          3
+        ]
+      },
+      "frame_timestamps": {
+        "file": "video-frame-timestamps.npy",
+        "dtype": "float32",
+        "shape": [
+          8
+        ]
+      },
+      "second_per_grid_ts": {
+        "file": "video-seconds-per-grid.npy",
+        "dtype": "float32",
+        "shape": [
+          1
+        ]
+      },
+      "video_start_times": {
+        "file": "video-start-times.npy",
+        "dtype": "float32",
+        "shape": [
+          1
+        ]
+      }
+    }
+  },
+  "files": {
+    "blue-square-rgb.npy": "bbbcaaf856e80b63ec404693c333acd15bb11fedfed1d3b2da86944b377334ac",
+    "blue-square-pixels.npy": "9afa41c6b01a23badb2b9ba0760a75abfc9ea23dabb5098596fba5d7618aac93",
+    "blue-square-grid.npy": "da557f7c53a6a9a05c3ea35e1d648bb6e1d226d104131ec94d51b1dc843d7cd3",
+    "frames-00-rgb.npy": "0f8f4d7920c9c8f2785d675cfd73be2c50ff0ae973e19523e51c801927d6a027",
+    "frames-00-pixels.npy": "a41d17eca94794e8aec62d508242acb28d1511facf67779c56b5cd334694559c",
+    "frames-00-grid.npy": "da557f7c53a6a9a05c3ea35e1d648bb6e1d226d104131ec94d51b1dc843d7cd3",
+    "frames-01-rgb.npy": "0f8f4d7920c9c8f2785d675cfd73be2c50ff0ae973e19523e51c801927d6a027",
+    "frames-01-pixels.npy": "a41d17eca94794e8aec62d508242acb28d1511facf67779c56b5cd334694559c",
+    "frames-01-grid.npy": "da557f7c53a6a9a05c3ea35e1d648bb6e1d226d104131ec94d51b1dc843d7cd3",
+    "frames-02-rgb.npy": "0f8f4d7920c9c8f2785d675cfd73be2c50ff0ae973e19523e51c801927d6a027",
+    "frames-02-pixels.npy": "a41d17eca94794e8aec62d508242acb28d1511facf67779c56b5cd334694559c",
+    "frames-02-grid.npy": "da557f7c53a6a9a05c3ea35e1d648bb6e1d226d104131ec94d51b1dc843d7cd3",
+    "frames-03-rgb.npy": "0f8f4d7920c9c8f2785d675cfd73be2c50ff0ae973e19523e51c801927d6a027",
+    "frames-03-pixels.npy": "a41d17eca94794e8aec62d508242acb28d1511facf67779c56b5cd334694559c",
+    "frames-03-grid.npy": "da557f7c53a6a9a05c3ea35e1d648bb6e1d226d104131ec94d51b1dc843d7cd3",
+    "frames-04-rgb.npy": "1cd40b1de32a92c1cf9dbc61b6286a2c2ea0ded69e199ed532e8ab610521efe0",
+    "frames-04-pixels.npy": "9937025290aafca50492118a83d5e456c7b22075374f9d70b2a5739c3893294a",
+    "frames-04-grid.npy": "da557f7c53a6a9a05c3ea35e1d648bb6e1d226d104131ec94d51b1dc843d7cd3",
+    "frames-05-rgb.npy": "1cd40b1de32a92c1cf9dbc61b6286a2c2ea0ded69e199ed532e8ab610521efe0",
+    "frames-05-pixels.npy": "9937025290aafca50492118a83d5e456c7b22075374f9d70b2a5739c3893294a",
+    "frames-05-grid.npy": "da557f7c53a6a9a05c3ea35e1d648bb6e1d226d104131ec94d51b1dc843d7cd3",
+    "frames-06-rgb.npy": "1cd40b1de32a92c1cf9dbc61b6286a2c2ea0ded69e199ed532e8ab610521efe0",
+    "frames-06-pixels.npy": "9937025290aafca50492118a83d5e456c7b22075374f9d70b2a5739c3893294a",
+    "frames-06-grid.npy": "da557f7c53a6a9a05c3ea35e1d648bb6e1d226d104131ec94d51b1dc843d7cd3",
+    "frames-07-rgb.npy": "1cd40b1de32a92c1cf9dbc61b6286a2c2ea0ded69e199ed532e8ab610521efe0",
+    "frames-07-pixels.npy": "9937025290aafca50492118a83d5e456c7b22075374f9d70b2a5739c3893294a",
+    "frames-07-grid.npy": "da557f7c53a6a9a05c3ea35e1d648bb6e1d226d104131ec94d51b1dc843d7cd3",
+    "video-rgb.npy": "97554e4fd1d7ece4b24fca8a9fde96c79f1b422193b82ce44ffea8d7edeef168",
+    "video-pixels.npy": "68722268a64b353eacf8c2d5078eaa0902b65743d00ada035e8e329e33ab23a1",
+    "video-grid.npy": "7e2a79745624b7d08f8923e2b2af8199507ceffcb5d6c0851115aad7f0673731",
+    "video-frame-timestamps.npy": "17e61a3b1dad89c1797cd04769242eeec0cb9c0b9ec22bec5622a899d4dd0676",
+    "video-seconds-per-grid.npy": "d7b427e070947d1c15ebf9df49f35cb595f40b430a68cc0511927017084cb90c",
+    "video-start-times.npy": "579f4fc9e240b80aade6941d3fba86534d9e959a8520066318b52ed266243e65"
+  }
+}

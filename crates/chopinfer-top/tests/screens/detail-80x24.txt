@@ -1,0 +1,24 @@
+ chopinfer-top  >  MiMo-V2.6-Flash  [3/5]  proc 48211  127.0.0.1:8311  ready  up
+┌─ Throughput  tok/s, last 5m ────────────────────┐┌─ Load ────────────────────┐
+│ DECODE  now  1,795  avg  1,800  max  1,805      ││ sequences  ━━━━━━── 24/32 │
+│ ███████████████████████████████████████████████ ││ KV cache   ━━━━━───   64% │
+│ ███████████████████████████████████████████████ ││ intake     ────────    2% │
+│ ███████████████████████████████████████████████ ││                           │
+│ ███████████████████████████████████████████████ ││ waiting    2              │
+│ PREFILL now  5,200  avg  7,900  max 35,200      ││   by stage transport 0    │
+│  █ █ ▆█ █ ▆█ ▆ ▆ █▆ ▆ █▆ █ █ ██ █ █ ▆█ ▆ ▆█ ▆ █ ││            intake 0       │
+│  █ █ ██ █ ██ █ █ ██ █ ██ █ █ ██ █ █ ██ █ ██ █ █ ││            preparation 0  │
+│ ███████████████████████████████████████████████ ││ requests/s 5.33           │
+│ ███████████████████████████████████████████████ ││                           │
+│                                                 ││                           │
+└─────────────────────────────────────────────────┘└───────────────────────────┘
+┌─ Latency  window 60s ──────────────────────┐┌─ Health ───────────────────────┐
+│                   p50    p90    p99  count ││ worker         ready           │
+│ TTFT            175ms  458ms  1.75s    300 ││ poisoned       no              │
+│ inter-token      17ms   28ms   69ms  2,436 ││ batch refusals 0               │
+│ end to end      4.75s  12.6s  30.6s    282 ││ restarts seen  0               │
+│ queue            30ms   90ms  380ms    288 ││ transport buf  3.0 MiB/512 MiB │
+│ prefill         100ms  375ms  875ms    300 ││ version        0.1.0-alpha.2   │
+│ per output tok    8ms   23ms   46ms    294 ││ metrics        read            │
+└────────────────────────────────────────────┘└────────────────────────────────┘
+ Esc back   ← → Tab instance   w window   r rescan   p pause   ? help   q quit

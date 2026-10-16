@@ -1,0 +1,10 @@
+{
+  "schema": "chopinfer-tuning-v1",
+  "target": {"compute_capability": 120, "sm_count": 188},
+  "rows": [
+    {"op": "grouped_moe.down.decode", "weights": "fp8_block128", "shape": {"experts": 288, "hidden": 4096, "intermediate": 512, "top_k": 8}, "bucket": 32, "schedule": "chained", "knobs": {"row_tile": 16}},
+    {"op": "grouped_moe.down.prefill", "weights": "fp8_block128", "shape": {"experts": 288, "hidden": 4096, "intermediate": 512, "top_k": 8}, "bucket": 8192, "schedule": "chained", "knobs": {"row_tile": 64}},
+    {"op": "grouped_moe.gate_up.decode", "weights": "fp8_block128", "shape": {"experts": 288, "hidden": 4096, "intermediate": 512, "top_k": 8}, "bucket": 32, "schedule": "chained", "knobs": {"row_tile": 16}},
+    {"op": "grouped_moe.gate_up.prefill", "weights": "fp8_block128", "shape": {"experts": 288, "hidden": 4096, "intermediate": 512, "top_k": 8}, "bucket": 8192, "schedule": "chained", "knobs": {"row_tile": 64}}
+  ]
+}

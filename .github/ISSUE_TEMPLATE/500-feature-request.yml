@@ -1,0 +1,16 @@
+name: Feature request
+description: Suggest a feature for chopinfer.
+title: "[Feature]: "
+body:
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Problem and proposed feature
+      description: Explain the use case and what you would like chopinfer to do.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and context
+      description: Describe any workarounds or alternatives you considered and link related issues.

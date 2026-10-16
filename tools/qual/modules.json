@@ -1,0 +1,500 @@
+{
+ "modules": {
+  "__main__": {},
+  "agentic_compare": {},
+  "agentic_fake": {
+   "EVENT_SECONDS": "number"
+  },
+  "agentic_metrics": {
+   "ENDED_IN_THINKING": "str",
+   "INVALID_SESSION": "str",
+   "LABEL": "number",
+   "MALFORMED_CALL": "str",
+   "MODEL_OUTCOMES": "number",
+   "MODEL_OUTCOMES_PER_100": "int",
+   "RAW_CALLS_AGREE": "str",
+   "RAW_MALFORMED_CALL": "str",
+   "RAW_OUTCOMES": "number",
+   "RAW_REASONING_ONLY": "str",
+   "SAMPLE": "number"
+  },
+  "agentic_mixed": {
+   "MARKUP": "null",
+   "MAX_REQUEST": "number",
+   "MAX_RESPONSE": "number",
+   "NON_TEXT_TYPES": "set",
+   "PROMPT_TAIL_IDS": "int",
+   "RAW_TURN_IDS": "int",
+   "REVISION": "str",
+   "TOOL_GRAMMARS": "list"
+  },
+  "agentic_server": {},
+  "agentic_workload": {
+   "CORPUS": "number"
+  },
+  "api": {
+   "TOOL_RESULT_MAX_TOKENS": "int"
+  },
+  "bench": {
+   "DIVERSE_SEEDS": "list"
+  },
+  "checks": {
+   "PASSING": "list"
+  },
+  "cli": {
+   "COMMANDS": "dict",
+   "DESCRIPTIONS": "dict",
+   "ROOT": "number"
+  },
+  "color_probe": {
+   "AC_SYMBOLS": "number",
+   "CHROMA_QUANT": "number",
+   "COLORS": "dict",
+   "COLOR_WORDS": "list",
+   "DCT": "number",
+   "DC_SYMBOLS": "number",
+   "LUMA_QUANT": "list",
+   "PROMPTS": "list",
+   "QUESTION": "str",
+   "SOLID_SIZES": "list",
+   "WHITE": "number",
+   "ZIGZAG": "list"
+  },
+  "common": {
+   "CHECKPOINT_RECORDS": "number",
+   "HOST_LOAD_RULE": "str",
+   "HOST_LOAD_START": "number",
+   "IDLE_CPU_FRACTION": "number",
+   "IDLE_LOAD_PER_CPU": "number",
+   "LOCAL_ENV": "number",
+   "MODALITIES": "list",
+   "PINNED_CHECKPOINT_KEYS": "list",
+   "REASONING_TOKENS": "int",
+   "RECEIPTS": "null",
+   "ROOT": "number",
+   "STARTUP_NONCE": "number"
+  },
+  "concurrency": {},
+  "declaration": {
+   "CHANGE_CLASSES": "list",
+   "CHECKPOINT_KEYS": "list",
+   "GATE_SCHEMA": "str",
+   "MECHANICS": "number",
+   "NAME": "str",
+   "ROOT": "number",
+   "SCHEMA": "str",
+   "TOOLS": "number"
+  },
+  "determinism": {
+   "COLD_REPEAT": "dict",
+   "COMPLETION": "number",
+   "HITS": "number",
+   "HIT_ANCHORS": "list",
+   "IMAGE_QUESTION": "str",
+   "IMAGE_SIDE": "int",
+   "LONG_IDS": "str",
+   "LONG_RULES": "int",
+   "MAX_TOKENS": "int",
+   "PREFILL_CHUNK_TOKENS": "int",
+   "PREFIX_HIT": "dict",
+   "PRIMERS": "number",
+   "SAMPLING": "number",
+   "SHORT_PROMPTS": "dict",
+   "TOP_LOGPROBS": "int"
+  },
+  "encoder_capture": {
+   "DTYPES": "dict",
+   "MODES": "list",
+   "SCHEMA": "str"
+  },
+  "encoder_declarations": {
+   "SCHEMA": "str",
+   "TOWERS": "dict"
+  },
+  "encoder_parity": {
+   "BF16_POLICIES": "list",
+   "CODES_MARGIN": "number",
+   "F32_POLICIES": "list",
+   "NPY_TYPES": "dict",
+   "PARITY_RATIO": "number",
+   "PARITY_RUN": "str",
+   "ROW_FLOOR": "number",
+   "RUNNER_DIRECTORY_INPUTS": "list",
+   "RUNNER_FEATURES": "dict"
+  },
+  "evals": {
+   "BINDING": "list",
+   "BUILD": "list",
+   "CACHE": "number",
+   "GSM8K_INSTRUCTION": "str",
+   "HUB_API": "str",
+   "LETTERS": "str",
+   "LONG_FILL": "number",
+   "LONG_ITEMS": "int",
+   "LONG_LENGTHS": "list",
+   "LONG_TASKS": "list",
+   "LONG_TOKENS": "int",
+   "MMLU_PRO_SUBSET": "int",
+   "PRODUCER": "list",
+   "REASONING_TOKENS": "int",
+   "ROWS_API": "str",
+   "SEED": "int",
+   "SIGNIFICANCE": "number",
+   "SOURCES": "dict",
+   "SUITES": "list",
+   "WORDS": "list"
+  },
+  "exact_reference": {
+   "RUNNER_COLUMNS": "list",
+   "TOLERANCE": "number",
+   "TOP": "int"
+  },
+  "fill_batch": {},
+  "frontend_goldens": {
+   "CAPTURE_SCHEMA": "str",
+   "FILES": "list",
+   "REFUSED_MEDIA": "str",
+   "RUNNER_DIRECTORY_INPUTS": "list",
+   "RUNNER_RECORDS": "dict"
+  },
+  "greedy_equality": {},
+  "grounding": {
+   "COLOR_WORDS": "list",
+   "DESCRIBE": "str",
+   "GAIN_LIMIT": "number",
+   "QUESTION": "str",
+   "SOLID": "dict",
+   "SQUARE": "str"
+  },
+  "gsm8k": {
+   "BOXED": "number",
+   "BOXED_ANSWER": "number",
+   "FIXTURE": "null",
+   "MARKED": "number"
+  },
+  "gsm8k_branches": {
+   "CHECK": "str",
+   "DECISIVE_LOSSES": "int",
+   "TOP_LOGPROBS": "int"
+  },
+  "kinds": {
+   "API_CASES": "list",
+   "KINDS": "number",
+   "MODULES": "number",
+   "RECEIPT": "number",
+   "ROOT": "number",
+   "STATUSES": "list",
+   "STRUCTURED_CASES": "list",
+   "_SOURCES": "list"
+  },
+  "kv_capacity": {
+   "CAPACITY_LINE": "number",
+   "GROUP_LINE": "number"
+  },
+  "kv_offload": {
+   "CONCURRENCY": "int",
+   "COUNTERS": "dict",
+   "FILL_CHUNK_TOKENS": "int",
+   "FILL_SLACK_PAGES": "int",
+   "FILL_TEXT": "str",
+   "OUTPUT_TOKENS": "int",
+   "POOL_GAUGES": "dict",
+   "RUNNER_RECORDS": "number"
+  },
+  "kvo_resume": {
+   "HELPERS": "dict",
+   "RESUME_COUNTERS": "dict"
+  },
+  "limits": {
+   "CONSTANTS": "list"
+  },
+  "logprobs_parity": {
+   "QUESTION": "str",
+   "TOOLS": "list"
+  },
+  "media_preprocessing": {
+   "PROCESSOR_OVERRIDES": "dict",
+   "SPREAD_FACTOR": "number"
+  },
+  "model_modules": {
+   "MAX_BYTES": "number"
+  },
+  "module_metadata": {
+   "OUTPUT": "number",
+   "SCHEMA": "str",
+   "TOOLS": "number"
+  },
+  "multimodal": {
+   "GATE_VARIANT": "str",
+   "LARGE_SET_MEAN_LIMIT": "number",
+   "LARGE_SET_POSITIONS": "number",
+   "MEAN_ABS_LOGPROB_LIMIT": "number",
+   "MEAN_STEP": "number",
+   "MIXED_CASES": "list",
+   "NEAR_TIE_LIMIT": "number",
+   "PROBE_MAX_TOKENS": "int",
+   "TOP1_DISAGREEMENT_LIMIT": "number"
+  },
+  "needle": {
+   "DEFAULT_SPEC": "number",
+   "FIXTURE": "null",
+   "LENGTHS": "list"
+  },
+  "oracle_diagnostics": {},
+  "paired_calibrate": {},
+  "paired_teacher": {
+   "MARGINS": "list",
+   "MAX_CAPTURE_BYTES": "number",
+   "POLICY": "dict",
+   "PROFILE_POLICIES": "dict"
+  },
+  "preempt_compare": {
+   "LONG_QUESTIONS": "int",
+   "PREEMPTIONS": "number",
+   "RUNNING": "number",
+   "TOP_LOGPROBS": "int"
+  },
+  "prefix_cache": {
+   "MAX_DLOGPROB_SLACK": "number",
+   "MEAN_DLOGPROB_SLACK": "number",
+   "TOKENS_PER_RECORD": "int",
+   "WORDS": "list"
+  },
+  "prefix_exact": {
+   "ACCEPTANCE_LENGTHS": "list",
+   "ACCEPTANCE_MARGIN": "number",
+   "ARMS": "list",
+   "BLOCK_TOKENS": "int",
+   "MEDIA_PAIRS": "number",
+   "MEDIA_SIZING_ROUNDS": "int",
+   "MEDIA_TEXT_TOKENS": "int",
+   "PREFILL_CHUNK_TOKENS": "int",
+   "PROMPT_END_ARMS": "list",
+   "SPLIT_DELTAS": "number",
+   "SPLIT_TOKENS": "int",
+   "TOP_LOGPROBS": "int"
+  },
+  "qual_test_config": {
+   "needs_qwen_probe_workload": "number"
+  },
+  "qwen38_layers": {
+   "ADAPTER": "str",
+   "FLOOR_RATIO": "number",
+   "LOCK": "str",
+   "MODES": "dict",
+   "RELATIVE_RMS_LIMIT": "number",
+   "ROOT": "number",
+   "ROUTER": "dict",
+   "RUNNER_ARMS": "dict",
+   "RUNNER_CHECK_ARM": "str",
+   "RUNNER_DIRECTORY_INPUTS": "list",
+   "RUNNER_ENVIRONMENT": "dict",
+   "RUNNER_EXTERNAL_INPUTS": "list",
+   "RUNNER_FEATURES": "dict",
+   "RUNNER_RECORDS": "number",
+   "Unbound": "number"
+  },
+  "refs": {
+   "CODE_INPUTS": "list",
+   "KEPT_SECTIONS": "list",
+   "LOCK_KEYS": "list",
+   "ROOT": "number",
+   "SNAPSHOT_FIELDS": "list"
+  },
+  "release_gate": {
+   "judge": "number",
+   "select": "number"
+  },
+  "release_preview": {
+   "ARMS": "number",
+   "ARM_ORDER": "number",
+   "AR_SOAK_SECONDS": "int",
+   "BACKSTOP": "str",
+   "CPUS": "number",
+   "DATA": "number",
+   "DRAIN_CLEANUP_SECONDS": "int",
+   "DRAIN_DEFAULT_MS": "int",
+   "EXECUTION": "list",
+   "FORCED": "list",
+   "GREEDY_TOKENS": "int",
+   "GSM8K_ITEMS": "int",
+   "LEGACY_STAGES": "list",
+   "LOG_INPUT": "str",
+   "MEDIA_CAPABILITY": "str",
+   "OFFLINE": "str",
+   "PASSING": "list",
+   "PRODUCER": "list",
+   "QUICK_PREFIX_SHARDS": "int",
+   "RECORDS": "number",
+   "ROOT": "number",
+   "SHARD_INPUT": "number",
+   "SHARED": "list",
+   "SHUTDOWN_TIMEOUT": "int",
+   "SOAK_GROWTH_MIB": "int",
+   "STAGE_INPUTS": "dict",
+   "STAGE_TIMEOUTS": "dict",
+   "STARTUP_TIMEOUT": "int",
+   "STOP_KILL_SECONDS": "int",
+   "STORED": "str",
+   "STORES": "list",
+   "SUITES": "list",
+   "TARGET_OWNER": "str",
+   "TARGET_ROOT": "number",
+   "TOOLS": "number",
+   "VALIDATION": "number",
+   "VALUELESS_SERVE_FLAGS": "list",
+   "WRAPPER_KILL_SECONDS": "int"
+  },
+  "router_bias": {
+   "BLOCK": "number",
+   "ROOT": "number",
+   "SCHEMA": "str"
+  },
+  "seeded_equality": {
+   "PROFILES": "dict",
+   "TOP": "int"
+  },
+  "soak": {
+   "CACHE_ALLOWANCE_MIB": "dict",
+   "CANARY": "number",
+   "KEEP_STRUCTURED": "int",
+   "MEDIA_CASES": "list",
+   "NEAR_TIE_MARGIN": "number",
+   "PREFIX_DLOGPROB": "number",
+   "PROMPTS": "number",
+   "STRUCTURED_FORMAT": "number",
+   "SYSTEMS": "number",
+   "WARMUP_SECONDS": "int"
+  },
+  "spec_bench": {
+   "CHAT_PROMPTS": "list",
+   "CONCURRENCIES": "list",
+   "FIXTURE": "null"
+  },
+  "spec_continuation": {
+   "BINDING_INPUT": "str",
+   "BOOTSTRAP_ROUNDS": "int",
+   "BOOTSTRAP_SEED": "int",
+   "ENTROPY_PROMPTS": "list",
+   "EXECUTION_SCHEMA": "str",
+   "GATE_MODE": "str",
+   "GREEDY": "dict",
+   "MODE_VARIANTS": "dict",
+   "NUCLEUS": "number",
+   "OUTPUT_TOKENS": "int",
+   "REFERENCE_SECONDS": "int",
+   "ROOT": "number",
+   "RULE": "str",
+   "RUNNER_CHECK_ARM": "str",
+   "RUNNER_OFFLINE_RECORDS": "dict",
+   "RUNNER_RECORDS": "number",
+   "SAMPLED": "dict",
+   "SAMPLED_TOKENS": "int",
+   "SEEDS": "list",
+   "SPREAD_MODES": "list",
+   "TOP_LOGPROBS": "int",
+   "_SHARED": "list"
+  },
+  "spec_metrics": {
+   "FIELDS": "dict",
+   "LABEL": "number",
+   "POSITIONS": "list",
+   "SAMPLE": "number",
+   "SCALARS": "list"
+  },
+  "spec_verify": {
+   "MAXIMUM_ABS_DLOGPROB": "number",
+   "MAXIMUM_TOP1_DISAGREEMENT": "number",
+   "ROOT": "number"
+  },
+  "step_overlap_ab": {
+   "COMPARED": "list",
+   "HOST_FIELDS": "list",
+   "RECORDED": "list"
+  },
+  "structured": {
+   "CHOICES": "list",
+   "PARAMETERS": "number",
+   "PERSON": "dict",
+   "PERSON_PROMPT": "str",
+   "PHONE": "str",
+   "TOOLS": "list",
+   "TYPES": "number"
+  },
+  "tap_binding": {
+   "HEX": "dict",
+   "IDENTITY": "list",
+   "MANIFEST": "str",
+   "ROOT": "number",
+   "SCHEMA": "str",
+   "STEPS": "str",
+   "TRACE": "str",
+   "TRACE_WAIT_SECONDS": "number"
+  },
+  "tapdiff": {
+   "CODES_MARGIN": "number",
+   "DTYPES": "dict",
+   "POLICY_SCALE_STEP": "number",
+   "ROUTE_RULE": "str",
+   "ROW_FLOOR": "number",
+   "SCALE_STEP": "number",
+   "SCHEMA": "str"
+  },
+  "teacher": {
+   "ALLOW_FLOOR_ONLY": "bool",
+   "BOOTSTRAP_ROUNDS": "int",
+   "BOOTSTRAP_SEED": "int",
+   "EXACT_VARIANTS": "list",
+   "GATE_VARIANT": "str",
+   "LARGE_SET_MEAN": "number",
+   "LARGE_SET_POSITIONS": "number",
+   "MAX_MEAN": "number",
+   "MAX_TOP1": "number",
+   "MEAN_MARGIN": "number",
+   "MEAN_STEP": "number",
+   "SPREAD_MEAN_FACTOR": "number",
+   "TOP1_SIGMAS": "number"
+  },
+  "teacher_arms": {
+   "BUILD": "list"
+  },
+  "text_layers": {
+   "ADAPTERS": "dict",
+   "FLOOR_RATIO": "number",
+   "MODES": "dict",
+   "RELATIVE_RMS_LIMIT": "number",
+   "REQUIRED_TAPS": "list",
+   "ROOT": "number",
+   "ROUTER": "dict",
+   "RUNNER_ARMS": "dict",
+   "RUNNER_CHECK_ARM": "str",
+   "RUNNER_DIRECTORY_INPUTS": "list",
+   "RUNNER_ENVIRONMENT": "dict",
+   "RUNNER_EXTERNAL_INPUTS": "list",
+   "RUNNER_FEATURES": "dict",
+   "RUNNER_RECORDS": "dict",
+   "Unbound": "number"
+  },
+  "validation_evidence": {
+   "KERNEL": "set",
+   "MAX_BYTES": "int",
+   "MODEL": "set",
+   "REQUIRED": "number",
+   "SHA256": "number"
+  },
+  "vectors": {
+   "FILLER": "int",
+   "GENERATORS": "number",
+   "OUTPUT": "number",
+   "REFERENCE_SHA256": "number",
+   "SCHEMA": "str"
+  },
+  "verify_exact": {
+   "DECODE_BUCKETS": "list",
+   "HOST_DRAFTED_MINIMUM_POSITIONS": "int",
+   "ROW_MEAN_MARGIN": "number",
+   "TOP_LOGPROBS": "int"
+  }
+ },
+ "schema": "chopinfer-qual-modules/v1"
+}

@@ -1,0 +1,142 @@
+{
+  "schema": "chopinfer-serve-profiles-v2",
+  "model": "mimo26",
+  "served_model_name": "MiMo-V2.6-Flash-MOPD",
+  "profiles": {
+    "tp4-ar": {
+      "bundle_id": "mimo.v26.flash.v2",
+      "topology": "mimo-v26-flash-tp4",
+      "tensor_parallel": 4,
+      "devices_required": 4,
+      "devices": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "speculation": {
+        "mode": "fixed",
+        "tokens": 0,
+        "draft_cost": "per-token",
+        "drafter": "none"
+      },
+      "max_sequences": 32,
+      "qualified_max_sequences": 64,
+      "qualification": "HICONC-TP4, 2026-10-04: TP4 C64 paired and absolute teacher, decode/reference buckets, prefix equality, preemption bit identity, full GSM8K and bounded soak passed with BF16 KV and text,image. Serving evidence through C64, not full production qualification.",
+      "kv_cache_dtype": "auto",
+      "prefix_cache": true,
+      "max_batch_tokens": 8192,
+      "prefill_chunk_tokens": 2048,
+      "queue_depth": null,
+      "kv_memory_fraction": 0.9,
+      "status": "qualified",
+      "evidence": [
+        "docs/serving-profiles.md#tp4-concurrency-qualification-2026-10-04",
+        "docs/serving-mimo26.md#mopd-alpha-checkpoint",
+        "docs/deploy-common.md#concurrency-and-prefill-policy"
+      ]
+    },
+    "tp4-mtp": {
+      "bundle_id": "mimo.v26.flash.v2",
+      "topology": "mimo-v26-flash-tp4",
+      "tensor_parallel": 4,
+      "devices_required": 4,
+      "devices": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "speculation": {
+        "mode": "adaptive",
+        "tokens": 3,
+        "draft_cost": "per-token",
+        "drafter": "mtp"
+      },
+      "max_sequences": 32,
+      "qualified_max_sequences": null,
+      "qualification": "MOPD alpha: GPU qualification pending. Historical RL evidence only: TP4 C1-C32 serving evidence; not full production qualification. Speculation has workload-specific throughput regressions. Keep 32: the MTP drafter and package limit are 32; no accepted paired arm.",
+      "kv_cache_dtype": "auto",
+      "prefix_cache": true,
+      "max_batch_tokens": 8192,
+      "prefill_chunk_tokens": 2048,
+      "queue_depth": null,
+      "kv_memory_fraction": 0.9,
+      "status": "experimental",
+      "evidence": [
+        "docs/serving-mimo26.md#speculation-at-c16-and-c32-against-vllm",
+        "docs/serving-mimo26.md#production-qualification-status-2026-09-25",
+        "docs/deploy-common.md#concurrency-and-prefill-policy"
+      ],
+      "prefill_budget": "tbt",
+      "decode_tbt_target_ms": 150
+    },
+    "tp4-dflash": {
+      "bundle_id": "mimo.v26.flash.v2",
+      "topology": "mimo-v26-flash-tp4",
+      "tensor_parallel": 4,
+      "devices_required": 4,
+      "devices": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "speculation": {
+        "mode": "adaptive",
+        "tokens": 7,
+        "draft_cost": "per-block",
+        "drafter": "dflash"
+      },
+      "max_sequences": 32,
+      "qualified_max_sequences": 64,
+      "qualification": "Qualified through 64 sequences with its speculative accuracy gate waived by a maintainer decision (2026-10-06). The C64 pooled speculative logprob gate failed four times (single draws +0.0085, +0.0082 and +0.0076 nats; the mean of four draws +0.0057, CI95 [0.0003, 0.0162], against the 0.005-nat margin), while the paired and absolute teacher gates and every draw's top-1 bound passed. The waiver rests on sampling-level evidence: at temperature 1.0 and top-p 0.95, DFlash draws differ from AR C32 by a mean total variation of 0.0064-0.0072, as AR's own B8, B16 and B64 draws do (0.0065-0.0071), and 71% of the logprob excess sits on tokens below 0.7% probability. MIMO-REQUAL batch 409cd7348ee9 (2026-10-06) then passed every other TP4 C64 gate with BF16 KV: teacher, preemption bit identity and burst, spec_verify, GSM8K 194/200, a 600-second soak and prefix equality. Speculation has workload-specific throughput regressions: at C64 with 64-token outputs, DFlash was slower than AR on chat and GSM8K.",
+      "kv_cache_dtype": "auto",
+      "prefix_cache": true,
+      "max_batch_tokens": 8192,
+      "prefill_chunk_tokens": 2048,
+      "queue_depth": null,
+      "kv_memory_fraction": 0.9,
+      "status": "qualified",
+      "evidence": [
+        "docs/serving-profiles.md#row-local-decode-requalification-2026-10-05",
+        "docs/serving-profiles.md#tp4-concurrency-qualification-2026-10-04",
+        "docs/serving-mimo26.md#mopd-alpha-checkpoint",
+        "docs/deploy-common.md#concurrency-and-prefill-policy",
+        "docs/serving-mimo26.md#speculation-at-c16-and-c32-against-vllm"
+      ],
+      "prefill_budget": "tbt",
+      "decode_tbt_target_ms": 150
+    },
+    "tp2-ar": {
+      "bundle_id": "mimo.v26.flash.v2",
+      "topology": "mimo-v26-flash-tp2",
+      "tensor_parallel": 2,
+      "devices_required": 2,
+      "devices": [
+        0,
+        1
+      ],
+      "speculation": {
+        "mode": "fixed",
+        "tokens": 0,
+        "draft_cost": "per-token",
+        "drafter": "none"
+      },
+      "max_sequences": 32,
+      "qualified_max_sequences": null,
+      "qualification": "MOPD alpha: GPU qualification pending. Historical RL evidence only: Experimental: narrower topology smoke only, no full concurrency qualification. GSM8K at C8: 194/200; 8K and 128K needles passed.",
+      "kv_cache_dtype": "auto",
+      "prefix_cache": true,
+      "max_batch_tokens": 8192,
+      "prefill_chunk_tokens": 2048,
+      "queue_depth": null,
+      "kv_memory_fraction": 0.9,
+      "status": "experimental",
+      "evidence": [
+        "docs/topology-mimo.md",
+        "docs/deploy-common.md#concurrency-and-prefill-policy"
+      ]
+    }
+  }
+}

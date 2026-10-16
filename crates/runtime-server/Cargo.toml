@@ -1,0 +1,28 @@
+[package]
+name = "runtime-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+axum.workspace = true
+hyper = { version = "=1.11.0", features = ["server", "http1"] }
+hyper-util = { version = "=0.1.20", features = ["tokio", "service"] }
+runtime-grammar.workspace = true
+runtime-sampling.workspace = true
+sha2.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["float_roundtrip", "arbitrary_precision"] }
+tokio.workspace = true
+tokio-stream.workspace = true
+
+[dev-dependencies]
+runtime-engine.workspace = true
+runtime-kv.workspace = true
+runtime-model-api.workspace = true
+runtime-scheduler.workspace = true
+
+[lints]
+workspace = true

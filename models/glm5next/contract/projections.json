@@ -1,0 +1,7772 @@
+{
+  "schema": "chopinfer.projection.v1",
+  "namespace": "glm5next",
+  "use_profiles": {
+    "bf16": [
+      {
+        "phase": "Prefill",
+        "capacity": 8192,
+        "graph": false,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 1,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 1,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 1
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 2,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 2,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 2
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 4,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 4,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 4
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 8,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 16,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 16,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 16
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 32,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 32,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 32
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 1,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 1,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 1
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 2,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 2,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 2
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 4,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 4,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 4
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 8,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 16,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 16,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 16
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 32,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 32,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 32
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 64,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 128,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 192,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      }
+    ],
+    "fp8": [
+      {
+        "phase": "Prefill",
+        "capacity": 8192,
+        "graph": false,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 1,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 1,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 1
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 2,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 2,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 2
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 4,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 4,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 4
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 8,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 16,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 16,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 16
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 32,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 32,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 32
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 1,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 1,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 1
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 2,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 2,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 2
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 4,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 4,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 4
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 8,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 16,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 16,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 16
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 32,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 32,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 32
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 64,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 128,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 192,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      }
+    ],
+    "fp8-f32": [
+      {
+        "phase": "Prefill",
+        "capacity": 8192,
+        "graph": false,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 1,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 1,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 1
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 2,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 2,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 2
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 4,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 4,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 4
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 8,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 16,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 16,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 16
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 32,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 32,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 32
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 1,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 1,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 1
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 2,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 2,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 2
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 4,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 4,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 4
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 8,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 16,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 16,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 16
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 32,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 32,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 32
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 64,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 128,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 192,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      }
+    ],
+    "dense-mlp": [
+      {
+        "phase": "Prefill",
+        "capacity": 8192,
+        "graph": false,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 1,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 1,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 1
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 2,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 2,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 2
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 4,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 4,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 4
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 8,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 16,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 16,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 16
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 32,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 32,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 32
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 1,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 1,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 1
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 2,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 2,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 2
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 4,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 4,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 4
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 8,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 16,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 16,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 16
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 32,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 32,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 32
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 64,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 128,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 192,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      }
+    ],
+    "dense-mlp-f32": [
+      {
+        "phase": "Prefill",
+        "capacity": 8192,
+        "graph": false,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 1,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 1,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 1
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 2,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 2,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 2
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 4,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 4,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 4
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 8,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 16,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 16,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 16
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 32,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 32,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 32
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 1,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 1,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 1
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 2,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 2,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 2
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 4,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 4,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 4
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 8,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 16,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 16,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 16
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 32,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 32,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 32
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 64,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 128,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 192,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "bf16",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      }
+    ],
+    "experts": [
+      {
+        "phase": "Prefill",
+        "capacity": 8192,
+        "graph": false,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 1,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 1,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 1
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 2,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 2,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 2
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 4,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 4,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 4
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 8,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 16,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 16,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 16
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 32,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 32,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 32
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 1,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 1,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 1
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 2,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 2,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 2
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 4,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 4,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 4
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 8,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 16,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 16,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 16
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 32,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 32,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 32
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 64,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 128,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 192,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "nvfp4"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      }
+    ],
+    "mtp-experts": [
+      {
+        "phase": "Prefill",
+        "capacity": 8192,
+        "graph": false,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "mxfp8",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 1,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 1,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "mxfp8",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 1
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 2,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 2,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "mxfp8",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 2
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 4,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 4,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "mxfp8",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 4
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 8,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "mxfp8",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 16,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 16,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "mxfp8",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 16
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 32,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 32,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "mxfp8",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 32
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 1,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 1,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "mxfp8",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 1
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 2,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 2,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "mxfp8",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 2
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 4,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 4,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "mxfp8",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 4
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 8,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "mxfp8",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 16,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 16,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "mxfp8",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 16
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 32,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 32,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "mxfp8",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 32
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 64,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "mxfp8",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 128,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "mxfp8",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 192,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.a16-routed.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "fp8_block128",
+                "mxfp8",
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      }
+    ],
+    "bf16-f32": [
+      {
+        "phase": "Prefill",
+        "capacity": 8192,
+        "graph": false,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 1,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 1,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 1
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 2,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 2,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 2
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 4,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 4,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 4
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 8,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 16,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 16,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 16
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 32,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 32,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 32
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 1,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 1,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 1
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 2,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 2,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 2
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 4,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 4,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 4
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 8,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 16,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 16,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 16
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 32,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 32,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 32
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 64,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 128,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 192,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8192
+        }
+      }
+    ],
+    "head-f32": [
+      {
+        "phase": "Prefill",
+        "capacity": 64,
+        "graph": false,
+        "contract": {
+          "compiled_capacity": 64,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 64
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 1,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 1,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 1
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 2,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 2,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 2
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 4,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 4,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 4
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 8,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 16,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 16,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 16
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 32,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 32,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 32
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 1,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 1,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 1
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 2,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 2,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 2
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 4,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 4,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 4
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 8,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 8
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 16,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 16,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 16
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 32,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 32,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 32
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 64,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 64,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 64
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 128,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 128,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 128
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 192,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "F32",
+          "numerical_contract": "glm5next.a16-dense.v1",
+          "activation": "Bf16",
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ],
+          "chunk_rows": 192
+        }
+      }
+    ],
+    "embedding": [
+      {
+        "phase": "Prefill",
+        "capacity": 8192,
+        "graph": false,
+        "contract": {
+          "compiled_capacity": 8192,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.lookup.v1",
+          "activation": null,
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ]
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 1,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 1,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.lookup.v1",
+          "activation": null,
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ]
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 2,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 2,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.lookup.v1",
+          "activation": null,
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ]
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 4,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 4,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.lookup.v1",
+          "activation": null,
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ]
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 8,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.lookup.v1",
+          "activation": null,
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ]
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 16,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 16,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.lookup.v1",
+          "activation": null,
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ]
+        }
+      },
+      {
+        "phase": "Decode",
+        "capacity": 32,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 32,
+          "row_multiplier": 1,
+          "per_item_verify": null,
+          "aggregate_verify": null,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.lookup.v1",
+          "activation": null,
+          "exact_rows": false,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ]
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 1,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 1,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.lookup.v1",
+          "activation": null,
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ]
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 2,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 2,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.lookup.v1",
+          "activation": null,
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ]
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 4,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 4,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.lookup.v1",
+          "activation": null,
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ]
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 8,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 8,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.lookup.v1",
+          "activation": null,
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ]
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 16,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 16,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.lookup.v1",
+          "activation": null,
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ]
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 32,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 32,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.lookup.v1",
+          "activation": null,
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ]
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 64,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 64,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.lookup.v1",
+          "activation": null,
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ]
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 128,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 128,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.lookup.v1",
+          "activation": null,
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ]
+        }
+      },
+      {
+        "phase": "Verify",
+        "capacity": 192,
+        "graph": true,
+        "contract": {
+          "compiled_capacity": 192,
+          "row_multiplier": 1,
+          "per_item_verify": 6,
+          "aggregate_verify": 192,
+          "output_dtype": "Bf16",
+          "numerical_contract": "glm5next.lookup.v1",
+          "activation": null,
+          "exact_rows": true,
+          "support": [
+            {
+              "ranks": [
+                4
+              ],
+              "formats": [
+                "bf16"
+              ],
+              "phases": [],
+              "enabled": true
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "layer_stems": [
+    {
+      "id": "linear",
+      "template": "model.language_model.layers.{i}.self_attn",
+      "indices": {
+        "kind": "list",
+        "indices": [
+          0,
+          1,
+          2,
+          4,
+          5,
+          6,
+          8,
+          9,
+          10,
+          12,
+          13,
+          14,
+          16,
+          17,
+          18,
+          20,
+          21,
+          22,
+          24,
+          25,
+          26,
+          28,
+          29,
+          30,
+          32,
+          33,
+          34,
+          36,
+          37,
+          38,
+          40,
+          41,
+          42,
+          44
+        ]
+      }
+    },
+    {
+      "id": "latent",
+      "template": "model.language_model.layers.{i}.self_attn",
+      "indices": {
+        "kind": "list",
+        "indices": [
+          3,
+          7,
+          11,
+          15,
+          19,
+          23,
+          27,
+          31,
+          35,
+          39,
+          43
+        ]
+      }
+    },
+    {
+      "id": "mtp-latent",
+      "template": "model.language_model.layers.{i}.self_attn",
+      "indices": {
+        "kind": "range",
+        "start": "layers",
+        "end": "mtp_end"
+      }
+    },
+    {
+      "id": "dense-mlp",
+      "template": "model.language_model.layers.{i}.mlp",
+      "indices": {
+        "kind": "range",
+        "start": 0,
+        "end": "dense_layers"
+      }
+    },
+    {
+      "id": "moe",
+      "template": "model.language_model.layers.{i}.mlp",
+      "indices": {
+        "kind": "range",
+        "start": "dense_layers",
+        "end": "layers"
+      }
+    },
+    {
+      "id": "mtp-moe",
+      "template": "model.language_model.layers.{i}.mlp",
+      "indices": {
+        "kind": "range",
+        "start": "layers",
+        "end": "mtp_end"
+      }
+    },
+    {
+      "id": "layer",
+      "template": "model.language_model.layers.{i}",
+      "indices": {
+        "kind": "range",
+        "start": 0,
+        "end": "layers"
+      }
+    },
+    {
+      "id": "mtp",
+      "template": "model.language_model.layers.{i}",
+      "indices": {
+        "kind": "range",
+        "start": "layers",
+        "end": "mtp_end"
+      }
+    },
+    {
+      "id": "vision-block",
+      "template": "model.visual.blocks.{i}",
+      "indices": {
+        "kind": "range",
+        "start": 0,
+        "end": "vision_depth"
+      }
+    }
+  ],
+  "projections": [
+    {
+      "id": "embedding",
+      "source": {
+        "tensor": "model.language_model.embed_tokens.weight"
+      },
+      "shape": [
+        "vocab",
+        "hidden"
+      ],
+      "kind": {
+        "kind": "lookup_table"
+      },
+      "split": {
+        "class": "vocab_sharded",
+        "tile": 16
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.lookup.v1",
+      "use_profile": "embedding"
+    },
+    {
+      "id": "head",
+      "source": {
+        "tensor": "lm_head.weight"
+      },
+      "shape": [
+        "vocab",
+        "hidden"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "column",
+        "tile": 16
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "head-f32"
+    },
+    {
+      "id": "linear.q",
+      "source": {
+        "stem": "linear",
+        "tensor": "{stem}.q_proj.weight"
+      },
+      "shape": [
+        "linear_width",
+        "hidden"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "head_grouped",
+        "heads": "linear_heads",
+        "head_dim": "linear_head_dim",
+        "tile": 16
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "bf16"
+    },
+    {
+      "id": "linear.k",
+      "source": {
+        "stem": "linear",
+        "tensor": "{stem}.k_proj.weight"
+      },
+      "shape": [
+        "linear_width",
+        "hidden"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "head_grouped",
+        "heads": "linear_heads",
+        "head_dim": "linear_head_dim",
+        "tile": 16
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "bf16"
+    },
+    {
+      "id": "linear.v",
+      "source": {
+        "stem": "linear",
+        "tensor": "{stem}.v_proj.weight"
+      },
+      "shape": [
+        "linear_width",
+        "hidden"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "head_grouped",
+        "heads": "linear_heads",
+        "head_dim": "linear_head_dim",
+        "tile": 16
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "bf16"
+    },
+    {
+      "id": "linear.beta",
+      "source": {
+        "stem": "linear",
+        "tensor": "{stem}.b_proj.weight"
+      },
+      "shape": [
+        "linear_heads",
+        "hidden"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "head_grouped",
+        "heads": "linear_heads",
+        "head_dim": 1,
+        "tile": 1
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "bf16"
+    },
+    {
+      "id": "linear.forget-a",
+      "source": {
+        "stem": "linear",
+        "tensor": "{stem}.f_a_proj.weight"
+      },
+      "shape": [
+        "linear_head_dim",
+        "hidden"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "replicate"
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "bf16"
+    },
+    {
+      "id": "linear.forget-b",
+      "source": {
+        "stem": "linear",
+        "tensor": "{stem}.f_b_proj.weight"
+      },
+      "shape": [
+        "linear_width",
+        "linear_head_dim"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "head_grouped",
+        "heads": "linear_heads",
+        "head_dim": "linear_head_dim",
+        "tile": 16
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "bf16"
+    },
+    {
+      "id": "linear.gate-a",
+      "source": {
+        "stem": "linear",
+        "tensor": "{stem}.g_a_proj.weight"
+      },
+      "shape": [
+        "linear_head_dim",
+        "hidden"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "replicate"
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "bf16"
+    },
+    {
+      "id": "linear.gate-b",
+      "source": {
+        "stem": "linear",
+        "tensor": "{stem}.g_b_proj.weight"
+      },
+      "shape": [
+        "linear_width",
+        "linear_head_dim"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "head_grouped",
+        "heads": "linear_heads",
+        "head_dim": "linear_head_dim",
+        "tile": 16
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "bf16"
+    },
+    {
+      "id": "linear.output",
+      "source": {
+        "stem": "linear",
+        "tensor": "{stem}.o_proj.weight"
+      },
+      "shape": [
+        "hidden",
+        "linear_width"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "row",
+        "tile": 16
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "bf16-f32"
+    },
+    {
+      "id": "latent.q-a",
+      "source": {
+        "stem": "latent",
+        "tensor": "{stem}.q_a_proj.weight"
+      },
+      "shape": [
+        "q_rank",
+        "hidden"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "replicate"
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "fp8_block128": {
+            "numerical_contract": "glm5next.fp8-block128.scale-after-block-mma.v1",
+            "a16_recipe": "scale_after_block_mma"
+          },
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "fp8"
+    },
+    {
+      "id": "latent.q-b",
+      "source": {
+        "stem": "latent",
+        "tensor": "{stem}.q_b_proj.weight"
+      },
+      "shape": [
+        "latent_q_rows",
+        "q_rank"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "head_grouped",
+        "heads": "latent_heads",
+        "head_dim": "qk_head",
+        "tile": 128
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "fp8_block128": {
+            "numerical_contract": "glm5next.fp8-block128.scale-after-block-mma.v1",
+            "a16_recipe": "scale_after_block_mma"
+          },
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "fp8"
+    },
+    {
+      "id": "latent.kv-a",
+      "source": {
+        "stem": "latent",
+        "tensor": "{stem}.kv_a_proj_with_mqa.weight"
+      },
+      "shape": [
+        "kv_a_rows",
+        "hidden"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "replicate"
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "fp8_block128": {
+            "numerical_contract": "glm5next.fp8-block128.scale-after-block-mma.v1",
+            "a16_recipe": "scale_after_block_mma"
+          },
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "fp8"
+    },
+    {
+      "id": "latent.output",
+      "source": {
+        "stem": "latent",
+        "tensor": "{stem}.o_proj.weight"
+      },
+      "shape": [
+        "hidden",
+        "latent_v_width"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "row",
+        "tile": 128
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "fp8_block128": {
+            "numerical_contract": "glm5next.fp8-block128.scale-after-block-mma.v1",
+            "a16_recipe": "scale_after_block_mma"
+          },
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "fp8-f32"
+    },
+    {
+      "id": "latent.indexer.q",
+      "source": {
+        "stem": "latent",
+        "tensor": "{stem}.indexer.wq_b.weight"
+      },
+      "shape": [
+        "indexer_width",
+        "q_rank"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "replicate"
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "bf16"
+    },
+    {
+      "id": "latent.indexer.k",
+      "source": {
+        "stem": "latent",
+        "tensor": "{stem}.indexer.wk.weight"
+      },
+      "shape": [
+        "indexer_dim",
+        "hidden"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "replicate"
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "bf16"
+    },
+    {
+      "id": "latent.indexer.weights",
+      "source": {
+        "stem": "latent",
+        "tensor": "{stem}.indexer.weights_proj.weight"
+      },
+      "shape": [
+        "indexer_heads",
+        "hidden"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "replicate"
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "bf16"
+    },
+    {
+      "id": "dense.gate-up",
+      "stem": "dense-mlp",
+      "source": {
+        "stem": "dense-mlp",
+        "tensor": "{stem}.{operand}.weight"
+      },
+      "shape": [
+        "dense_intermediate",
+        "hidden"
+      ],
+      "operands": [
+        "gate_proj",
+        "up_proj"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "column",
+        "tile": 128
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": "ConcatenatedHalves",
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "fp8_block128": {
+            "numerical_contract": "glm5next.fp8-block128.scale-after-block-mma.clamped-swiglu.v1",
+            "a16_recipe": "scale_after_block_mma"
+          },
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.clamped-swiglu.v1",
+            "a16_recipe": "scaled_weight"
+          },
+          "nvfp4": {
+            "numerical_contract": "glm5next.nvfp4.scaled-weight.clamped-swiglu.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        },
+        "implementations": {
+          "fp8_block128": {
+            "id": "glm5next/clamped-swiglu-fp8-block128.v1",
+            "parameters": {
+              "gate_max_bits": "swiglu_limit_bits",
+              "up_limit_bits": "swiglu_limit_bits"
+            },
+            "numerical_contract": "glm5next.fp8-block128.scale-after-block-mma.clamped-swiglu.v1",
+            "inputs": [
+              {
+                "id": "activation",
+                "binding": "activation",
+                "dtype": "Bf16",
+                "shape": [
+                  1,
+                  "hidden"
+                ],
+                "state": false
+              }
+            ],
+            "outputs": [
+              {
+                "id": "output",
+                "binding": "output",
+                "dtype": "Bf16",
+                "shape": [
+                  1,
+                  "dense_intermediate"
+                ],
+                "state": false
+              }
+            ]
+          },
+          "bf16": {
+            "id": "glm5next/clamped-swiglu-bf16.v1",
+            "parameters": {
+              "gate_max_bits": "swiglu_limit_bits",
+              "up_limit_bits": "swiglu_limit_bits"
+            },
+            "numerical_contract": "glm5next.bf16.clamped-swiglu.v1",
+            "inputs": [
+              {
+                "id": "activation",
+                "binding": "activation",
+                "dtype": "Bf16",
+                "shape": [
+                  1,
+                  "hidden"
+                ],
+                "state": false
+              }
+            ],
+            "outputs": [
+              {
+                "id": "output",
+                "binding": "output",
+                "dtype": "Bf16",
+                "shape": [
+                  1,
+                  "dense_intermediate"
+                ],
+                "state": false
+              }
+            ]
+          },
+          "nvfp4": {
+            "id": "glm5next/clamped-swiglu-nvfp4.v1",
+            "parameters": {
+              "gate_max_bits": "swiglu_limit_bits",
+              "up_limit_bits": "swiglu_limit_bits"
+            },
+            "numerical_contract": "glm5next.nvfp4.scaled-weight.clamped-swiglu.v1",
+            "inputs": [
+              {
+                "id": "activation",
+                "binding": "activation",
+                "dtype": "Bf16",
+                "shape": [
+                  1,
+                  "hidden"
+                ],
+                "state": false
+              }
+            ],
+            "outputs": [
+              {
+                "id": "output",
+                "binding": "output",
+                "dtype": "Bf16",
+                "shape": [
+                  1,
+                  "dense_intermediate"
+                ],
+                "state": false
+              }
+            ]
+          }
+        }
+      },
+      "use_profile": "dense-mlp"
+    },
+    {
+      "id": "dense.down",
+      "source": {
+        "stem": "dense-mlp",
+        "tensor": "{stem}.down_proj.weight"
+      },
+      "shape": [
+        "hidden",
+        "dense_intermediate"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "row",
+        "tile": 128
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "fp8_block128": {
+            "numerical_contract": "glm5next.fp8-block128.scale-after-block-mma.v1",
+            "a16_recipe": "scale_after_block_mma"
+          },
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          },
+          "nvfp4": {
+            "numerical_contract": "glm5next.nvfp4.scaled-weight.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "dense-mlp-f32"
+    },
+    {
+      "id": "moe.router",
+      "source": {
+        "stem": "moe",
+        "tensor": "{stem}.gate.weight"
+      },
+      "shape": [
+        "experts",
+        "hidden"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "replicate"
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "bf16-f32"
+    },
+    {
+      "id": "moe.experts.gate-up",
+      "stem": "moe",
+      "source": {
+        "stem": "moe",
+        "tensor": "{stem}.experts.{expert}.{operand}.weight"
+      },
+      "shape": [
+        "expert_intermediate",
+        "hidden"
+      ],
+      "operands": [
+        "gate_proj",
+        "up_proj"
+      ],
+      "kind": {
+        "kind": "expert_bank",
+        "experts": "experts",
+        "top_k": "top_k"
+      },
+      "split": {
+        "class": "expert_sharded",
+        "axis": "rows",
+        "tile": 128
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": "ConcatenatedHalves",
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-routed.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "fp8_block128": {
+            "numerical_contract": "glm5next.fp8-block128.scale-after-block-mma.clamped-swiglu.v1",
+            "a16_recipe": "scale_after_block_mma"
+          },
+          "nvfp4": {
+            "numerical_contract": "glm5next.nvfp4.scaled-weight.clamped-swiglu.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        },
+        "implementations": {
+          "fp8_block128": {
+            "id": "glm5next/clamped-swiglu-fp8-block128.v1",
+            "parameters": {
+              "gate_max_bits": "swiglu_limit_bits",
+              "up_limit_bits": "swiglu_limit_bits",
+              "route_weight": "after-down"
+            },
+            "numerical_contract": "glm5next.fp8-block128.scale-after-block-mma.clamped-swiglu.v1",
+            "inputs": [
+              {
+                "id": "activation",
+                "binding": "activation",
+                "dtype": "Bf16",
+                "shape": [
+                  1,
+                  "hidden"
+                ],
+                "state": false
+              }
+            ],
+            "outputs": [
+              {
+                "id": "output",
+                "binding": "output",
+                "dtype": "Bf16",
+                "shape": [
+                  1,
+                  "expert_intermediate"
+                ],
+                "state": false
+              }
+            ]
+          },
+          "nvfp4": {
+            "id": "glm5next/clamped-swiglu-nvfp4.v1",
+            "parameters": {
+              "gate_max_bits": "swiglu_limit_bits",
+              "up_limit_bits": "swiglu_limit_bits",
+              "route_weight": "after-down"
+            },
+            "numerical_contract": "glm5next.nvfp4.scaled-weight.clamped-swiglu.v1",
+            "inputs": [
+              {
+                "id": "activation",
+                "binding": "activation",
+                "dtype": "Bf16",
+                "shape": [
+                  1,
+                  "hidden"
+                ],
+                "state": false
+              }
+            ],
+            "outputs": [
+              {
+                "id": "output",
+                "binding": "output",
+                "dtype": "Bf16",
+                "shape": [
+                  1,
+                  "expert_intermediate"
+                ],
+                "state": false
+              }
+            ]
+          }
+        }
+      },
+      "use_profile": "experts"
+    },
+    {
+      "id": "moe.experts.down",
+      "source": {
+        "stem": "moe",
+        "tensor": "{stem}.experts.{expert}.down_proj.weight"
+      },
+      "shape": [
+        "hidden",
+        "expert_intermediate"
+      ],
+      "kind": {
+        "kind": "expert_bank",
+        "experts": "experts",
+        "top_k": "top_k"
+      },
+      "split": {
+        "class": "expert_sharded",
+        "axis": "k",
+        "tile": 128
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": true
+      },
+      "numerical_contract": "glm5next.a16-routed.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "fp8_block128": {
+            "numerical_contract": "glm5next.fp8-block128.scale-after-block-mma.v1",
+            "a16_recipe": "scale_after_block_mma"
+          },
+          "nvfp4": {
+            "numerical_contract": "glm5next.nvfp4.scaled-weight.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "experts"
+    },
+    {
+      "id": "moe.shared.gate-up",
+      "stem": "moe",
+      "source": {
+        "stem": "moe",
+        "tensor": "{stem}.shared_experts.{operand}.weight"
+      },
+      "shape": [
+        "shared_intermediate",
+        "hidden"
+      ],
+      "operands": [
+        "gate_proj",
+        "up_proj"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "column",
+        "tile": 128
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": "ConcatenatedHalves",
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "fp8_block128": {
+            "numerical_contract": "glm5next.fp8-block128.scale-after-block-mma.clamped-swiglu.v1",
+            "a16_recipe": "scale_after_block_mma"
+          },
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.clamped-swiglu.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        },
+        "implementations": {
+          "fp8_block128": {
+            "id": "glm5next/clamped-swiglu-fp8-block128.v1",
+            "parameters": {
+              "gate_max_bits": "swiglu_limit_bits",
+              "up_limit_bits": "swiglu_limit_bits"
+            },
+            "numerical_contract": "glm5next.fp8-block128.scale-after-block-mma.clamped-swiglu.v1",
+            "inputs": [
+              {
+                "id": "activation",
+                "binding": "activation",
+                "dtype": "Bf16",
+                "shape": [
+                  1,
+                  "hidden"
+                ],
+                "state": false
+              }
+            ],
+            "outputs": [
+              {
+                "id": "output",
+                "binding": "output",
+                "dtype": "Bf16",
+                "shape": [
+                  1,
+                  "shared_intermediate"
+                ],
+                "state": false
+              }
+            ]
+          },
+          "bf16": {
+            "id": "glm5next/clamped-swiglu-bf16.v1",
+            "parameters": {
+              "gate_max_bits": "swiglu_limit_bits",
+              "up_limit_bits": "swiglu_limit_bits"
+            },
+            "numerical_contract": "glm5next.bf16.clamped-swiglu.v1",
+            "inputs": [
+              {
+                "id": "activation",
+                "binding": "activation",
+                "dtype": "Bf16",
+                "shape": [
+                  1,
+                  "hidden"
+                ],
+                "state": false
+              }
+            ],
+            "outputs": [
+              {
+                "id": "output",
+                "binding": "output",
+                "dtype": "Bf16",
+                "shape": [
+                  1,
+                  "shared_intermediate"
+                ],
+                "state": false
+              }
+            ]
+          }
+        }
+      },
+      "use_profile": "fp8"
+    },
+    {
+      "id": "moe.shared.down",
+      "source": {
+        "stem": "moe",
+        "tensor": "{stem}.shared_experts.down_proj.weight"
+      },
+      "shape": [
+        "hidden",
+        "shared_intermediate"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "row",
+        "tile": 128
+      },
+      "epilogues": {
+        "residual_add": true,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "fp8_block128": {
+            "numerical_contract": "glm5next.fp8-block128.scale-after-block-mma.v1",
+            "a16_recipe": "scale_after_block_mma"
+          },
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "fp8-f32"
+    },
+    {
+      "id": "mtp.eh",
+      "source": {
+        "stem": "mtp",
+        "tensor": "{stem}.eh_proj.weight"
+      },
+      "shape": [
+        "hidden",
+        "mtp_eh_width"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "replicate"
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "bf16"
+    },
+    {
+      "id": "mtp.latent.q-a",
+      "source": {
+        "stem": "mtp-latent",
+        "tensor": "{stem}.q_a_proj.weight"
+      },
+      "shape": [
+        "q_rank",
+        "hidden"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "replicate"
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "fp8_block128": {
+            "numerical_contract": "glm5next.fp8-block128.scale-after-block-mma.v1",
+            "a16_recipe": "scale_after_block_mma"
+          },
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "fp8"
+    },
+    {
+      "id": "mtp.latent.q-b",
+      "source": {
+        "stem": "mtp-latent",
+        "tensor": "{stem}.q_b_proj.weight"
+      },
+      "shape": [
+        "latent_q_rows",
+        "q_rank"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "head_grouped",
+        "heads": "latent_heads",
+        "head_dim": "qk_head",
+        "tile": 128
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "fp8_block128": {
+            "numerical_contract": "glm5next.fp8-block128.scale-after-block-mma.v1",
+            "a16_recipe": "scale_after_block_mma"
+          },
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "fp8"
+    },
+    {
+      "id": "mtp.latent.kv-a",
+      "source": {
+        "stem": "mtp-latent",
+        "tensor": "{stem}.kv_a_proj_with_mqa.weight"
+      },
+      "shape": [
+        "kv_a_rows",
+        "hidden"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "replicate"
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "fp8_block128": {
+            "numerical_contract": "glm5next.fp8-block128.scale-after-block-mma.v1",
+            "a16_recipe": "scale_after_block_mma"
+          },
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "fp8"
+    },
+    {
+      "id": "mtp.latent.output",
+      "source": {
+        "stem": "mtp-latent",
+        "tensor": "{stem}.o_proj.weight"
+      },
+      "shape": [
+        "hidden",
+        "latent_v_width"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "row",
+        "tile": 128
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "fp8_block128": {
+            "numerical_contract": "glm5next.fp8-block128.scale-after-block-mma.v1",
+            "a16_recipe": "scale_after_block_mma"
+          },
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "fp8-f32"
+    },
+    {
+      "id": "mtp.latent.indexer.q",
+      "source": {
+        "stem": "mtp-latent",
+        "tensor": "{stem}.indexer.wq_b.weight"
+      },
+      "shape": [
+        "indexer_width",
+        "q_rank"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "replicate"
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "bf16"
+    },
+    {
+      "id": "mtp.latent.indexer.k",
+      "source": {
+        "stem": "mtp-latent",
+        "tensor": "{stem}.indexer.wk.weight"
+      },
+      "shape": [
+        "indexer_dim",
+        "hidden"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "replicate"
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "bf16"
+    },
+    {
+      "id": "mtp.latent.indexer.weights",
+      "source": {
+        "stem": "mtp-latent",
+        "tensor": "{stem}.indexer.weights_proj.weight"
+      },
+      "shape": [
+        "indexer_heads",
+        "hidden"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "replicate"
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "bf16"
+    },
+    {
+      "id": "mtp.moe.router",
+      "source": {
+        "stem": "mtp-moe",
+        "tensor": "{stem}.gate.weight"
+      },
+      "shape": [
+        "experts",
+        "hidden"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "replicate"
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "bf16-f32"
+    },
+    {
+      "id": "mtp.moe.experts.gate-up",
+      "stem": "mtp-moe",
+      "source": {
+        "stem": "mtp-moe",
+        "tensor": "{stem}.experts.{expert}.{operand}.weight"
+      },
+      "shape": [
+        "expert_intermediate",
+        "hidden"
+      ],
+      "operands": [
+        "gate_proj",
+        "up_proj"
+      ],
+      "kind": {
+        "kind": "expert_bank",
+        "experts": "experts",
+        "top_k": "top_k"
+      },
+      "split": {
+        "class": "expert_sharded",
+        "axis": "rows",
+        "tile": 128
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": "ConcatenatedHalves",
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-routed.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "fp8_block128": {
+            "numerical_contract": "glm5next.fp8-block128.scale-after-block-mma.clamped-swiglu.v1",
+            "a16_recipe": "scale_after_block_mma"
+          },
+          "mxfp8": {
+            "numerical_contract": "glm5next.mxfp8.scaled-operand.clamped-swiglu.v1",
+            "a16_recipe": "scaled_weight"
+          },
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.clamped-swiglu.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        },
+        "implementations": {
+          "fp8_block128": {
+            "id": "glm5next/clamped-swiglu-fp8-block128.v1",
+            "parameters": {
+              "gate_max_bits": "swiglu_limit_bits",
+              "up_limit_bits": "swiglu_limit_bits",
+              "route_weight": "after-down"
+            },
+            "numerical_contract": "glm5next.fp8-block128.scale-after-block-mma.clamped-swiglu.v1",
+            "inputs": [
+              {
+                "id": "activation",
+                "binding": "activation",
+                "dtype": "Bf16",
+                "shape": [
+                  1,
+                  "hidden"
+                ],
+                "state": false
+              }
+            ],
+            "outputs": [
+              {
+                "id": "output",
+                "binding": "output",
+                "dtype": "Bf16",
+                "shape": [
+                  1,
+                  "expert_intermediate"
+                ],
+                "state": false
+              }
+            ]
+          },
+          "mxfp8": {
+            "id": "glm5next/clamped-swiglu-mxfp8.v1",
+            "parameters": {
+              "gate_max_bits": "swiglu_limit_bits",
+              "up_limit_bits": "swiglu_limit_bits",
+              "route_weight": "after-down"
+            },
+            "numerical_contract": "glm5next.mxfp8.scaled-operand.clamped-swiglu.v1",
+            "inputs": [
+              {
+                "id": "activation",
+                "binding": "activation",
+                "dtype": "Bf16",
+                "shape": [
+                  1,
+                  "hidden"
+                ],
+                "state": false
+              }
+            ],
+            "outputs": [
+              {
+                "id": "output",
+                "binding": "output",
+                "dtype": "Bf16",
+                "shape": [
+                  1,
+                  "expert_intermediate"
+                ],
+                "state": false
+              }
+            ]
+          },
+          "bf16": {
+            "id": "glm5next/clamped-swiglu-bf16.v1",
+            "parameters": {
+              "gate_max_bits": "swiglu_limit_bits",
+              "up_limit_bits": "swiglu_limit_bits",
+              "route_weight": "after-down"
+            },
+            "numerical_contract": "glm5next.bf16.clamped-swiglu.v1",
+            "inputs": [
+              {
+                "id": "activation",
+                "binding": "activation",
+                "dtype": "Bf16",
+                "shape": [
+                  1,
+                  "hidden"
+                ],
+                "state": false
+              }
+            ],
+            "outputs": [
+              {
+                "id": "output",
+                "binding": "output",
+                "dtype": "Bf16",
+                "shape": [
+                  1,
+                  "expert_intermediate"
+                ],
+                "state": false
+              }
+            ]
+          }
+        }
+      },
+      "use_profile": "mtp-experts"
+    },
+    {
+      "id": "mtp.moe.experts.down",
+      "source": {
+        "stem": "mtp-moe",
+        "tensor": "{stem}.experts.{expert}.down_proj.weight"
+      },
+      "shape": [
+        "hidden",
+        "expert_intermediate"
+      ],
+      "kind": {
+        "kind": "expert_bank",
+        "experts": "experts",
+        "top_k": "top_k"
+      },
+      "split": {
+        "class": "expert_sharded",
+        "axis": "k",
+        "tile": 128
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": true
+      },
+      "numerical_contract": "glm5next.a16-routed.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "fp8_block128": {
+            "numerical_contract": "glm5next.fp8-block128.scale-after-block-mma.v1",
+            "a16_recipe": "scale_after_block_mma"
+          },
+          "mxfp8": {
+            "numerical_contract": "glm5next.mxfp8.scaled-operand.v1",
+            "a16_recipe": "scaled_weight"
+          },
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "mtp-experts"
+    },
+    {
+      "id": "mtp.moe.shared.gate-up",
+      "stem": "mtp-moe",
+      "source": {
+        "stem": "mtp-moe",
+        "tensor": "{stem}.shared_experts.{operand}.weight"
+      },
+      "shape": [
+        "shared_intermediate",
+        "hidden"
+      ],
+      "operands": [
+        "gate_proj",
+        "up_proj"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "column",
+        "tile": 128
+      },
+      "epilogues": {
+        "residual_add": false,
+        "bias": false,
+        "gelu": null,
+        "swiglu": "ConcatenatedHalves",
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "fp8_block128": {
+            "numerical_contract": "glm5next.fp8-block128.scale-after-block-mma.clamped-swiglu.v1",
+            "a16_recipe": "scale_after_block_mma"
+          },
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.clamped-swiglu.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        },
+        "implementations": {
+          "fp8_block128": {
+            "id": "glm5next/clamped-swiglu-fp8-block128.v1",
+            "parameters": {
+              "gate_max_bits": "swiglu_limit_bits",
+              "up_limit_bits": "swiglu_limit_bits"
+            },
+            "numerical_contract": "glm5next.fp8-block128.scale-after-block-mma.clamped-swiglu.v1",
+            "inputs": [
+              {
+                "id": "activation",
+                "binding": "activation",
+                "dtype": "Bf16",
+                "shape": [
+                  1,
+                  "hidden"
+                ],
+                "state": false
+              }
+            ],
+            "outputs": [
+              {
+                "id": "output",
+                "binding": "output",
+                "dtype": "Bf16",
+                "shape": [
+                  1,
+                  "shared_intermediate"
+                ],
+                "state": false
+              }
+            ]
+          },
+          "bf16": {
+            "id": "glm5next/clamped-swiglu-bf16.v1",
+            "parameters": {
+              "gate_max_bits": "swiglu_limit_bits",
+              "up_limit_bits": "swiglu_limit_bits"
+            },
+            "numerical_contract": "glm5next.bf16.clamped-swiglu.v1",
+            "inputs": [
+              {
+                "id": "activation",
+                "binding": "activation",
+                "dtype": "Bf16",
+                "shape": [
+                  1,
+                  "hidden"
+                ],
+                "state": false
+              }
+            ],
+            "outputs": [
+              {
+                "id": "output",
+                "binding": "output",
+                "dtype": "Bf16",
+                "shape": [
+                  1,
+                  "shared_intermediate"
+                ],
+                "state": false
+              }
+            ]
+          }
+        }
+      },
+      "use_profile": "fp8"
+    },
+    {
+      "id": "mtp.moe.shared.down",
+      "source": {
+        "stem": "mtp-moe",
+        "tensor": "{stem}.shared_experts.down_proj.weight"
+      },
+      "shape": [
+        "hidden",
+        "shared_intermediate"
+      ],
+      "kind": {
+        "kind": "dense"
+      },
+      "split": {
+        "class": "row",
+        "tile": 128
+      },
+      "epilogues": {
+        "residual_add": true,
+        "bias": false,
+        "gelu": null,
+        "swiglu": null,
+        "output_quantization": null,
+        "weighted_moe_combine": false
+      },
+      "numerical_contract": "glm5next.a16-dense.v1",
+      "composition": {
+        "pre": [],
+        "post": [],
+        "numerical_contracts": {
+          "fp8_block128": {
+            "numerical_contract": "glm5next.fp8-block128.scale-after-block-mma.v1",
+            "a16_recipe": "scale_after_block_mma"
+          },
+          "bf16": {
+            "numerical_contract": "glm5next.bf16.v1",
+            "a16_recipe": "scaled_weight"
+          }
+        }
+      },
+      "use_profile": "fp8-f32"
+    }
+  ],
+  "fusion_groups": [],
+  "side_tensors": [
+    {
+      "id": "final-norm",
+      "source": {
+        "tensor": "model.language_model.norm.weight"
+      },
+      "shape": [
+        "hidden"
+      ],
+      "kind": "norm",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "hidden.rmsnorm"
+      }
+    },
+    {
+      "id": "layer.input-layernorm",
+      "source": {
+        "stem": "layer",
+        "tensor": "{stem}.input_layernorm.weight"
+      },
+      "shape": [
+        "hidden"
+      ],
+      "kind": "norm",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "hidden.rmsnorm"
+      }
+    },
+    {
+      "id": "layer.post-attention-layernorm",
+      "source": {
+        "stem": "layer",
+        "tensor": "{stem}.post_attention_layernorm.weight"
+      },
+      "shape": [
+        "hidden"
+      ],
+      "kind": "norm",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "hidden.rmsnorm"
+      }
+    },
+    {
+      "id": "layer.hc-attn-fn",
+      "source": {
+        "stem": "layer",
+        "tensor": "{stem}.hc_attn_fn"
+      },
+      "shape": [
+        "hc_mix",
+        "hc_width"
+      ],
+      "kind": "auxiliary",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "sinkhorn_hyper_connection.attention"
+      }
+    },
+    {
+      "id": "layer.hc-attn-base",
+      "source": {
+        "stem": "layer",
+        "tensor": "{stem}.hc_attn_base"
+      },
+      "shape": [
+        "hc_mix"
+      ],
+      "kind": "bias",
+      "dtypes": [
+        "F32",
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "sinkhorn_hyper_connection.attention"
+      }
+    },
+    {
+      "id": "layer.hc-attn-scale",
+      "source": {
+        "stem": "layer",
+        "tensor": "{stem}.hc_attn_scale"
+      },
+      "shape": [
+        "hc_scales"
+      ],
+      "kind": "auxiliary",
+      "dtypes": [
+        "F32",
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "sinkhorn_hyper_connection.attention"
+      }
+    },
+    {
+      "id": "layer.hc-ffn-fn",
+      "source": {
+        "stem": "layer",
+        "tensor": "{stem}.hc_ffn_fn"
+      },
+      "shape": [
+        "hc_mix",
+        "hc_width"
+      ],
+      "kind": "auxiliary",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "sinkhorn_hyper_connection.mlp"
+      }
+    },
+    {
+      "id": "layer.hc-ffn-base",
+      "source": {
+        "stem": "layer",
+        "tensor": "{stem}.hc_ffn_base"
+      },
+      "shape": [
+        "hc_mix"
+      ],
+      "kind": "bias",
+      "dtypes": [
+        "F32",
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "sinkhorn_hyper_connection.mlp"
+      }
+    },
+    {
+      "id": "layer.hc-ffn-scale",
+      "source": {
+        "stem": "layer",
+        "tensor": "{stem}.hc_ffn_scale"
+      },
+      "shape": [
+        "hc_scales"
+      ],
+      "kind": "auxiliary",
+      "dtypes": [
+        "F32",
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "sinkhorn_hyper_connection.mlp"
+      }
+    },
+    {
+      "id": "linear.q-conv",
+      "placement": {
+        "axis": 0,
+        "split": {
+          "class": "head_grouped",
+          "heads": "linear_heads",
+          "head_dim": "linear_head_dim",
+          "tile": 16
+        }
+      },
+      "source": {
+        "stem": "linear",
+        "tensor": "{stem}.q_conv1d.weight"
+      },
+      "shape": [
+        "linear_width",
+        1,
+        "conv_taps"
+      ],
+      "kind": "conv",
+      "dtypes": [
+        "Bf16",
+        "F32"
+      ],
+      "consumer": {
+        "kernel": "per_channel_decay_delta_rule"
+      }
+    },
+    {
+      "id": "linear.k-conv",
+      "placement": {
+        "axis": 0,
+        "split": {
+          "class": "head_grouped",
+          "heads": "linear_heads",
+          "head_dim": "linear_head_dim",
+          "tile": 16
+        }
+      },
+      "source": {
+        "stem": "linear",
+        "tensor": "{stem}.k_conv1d.weight"
+      },
+      "shape": [
+        "linear_width",
+        1,
+        "conv_taps"
+      ],
+      "kind": "conv",
+      "dtypes": [
+        "Bf16",
+        "F32"
+      ],
+      "consumer": {
+        "kernel": "per_channel_decay_delta_rule"
+      }
+    },
+    {
+      "id": "linear.v-conv",
+      "placement": {
+        "axis": 0,
+        "split": {
+          "class": "head_grouped",
+          "heads": "linear_heads",
+          "head_dim": "linear_head_dim",
+          "tile": 16
+        }
+      },
+      "source": {
+        "stem": "linear",
+        "tensor": "{stem}.v_conv1d.weight"
+      },
+      "shape": [
+        "linear_width",
+        1,
+        "conv_taps"
+      ],
+      "kind": "conv",
+      "dtypes": [
+        "Bf16",
+        "F32"
+      ],
+      "consumer": {
+        "kernel": "per_channel_decay_delta_rule"
+      }
+    },
+    {
+      "id": "linear.a-log",
+      "placement": {
+        "axis": 0,
+        "split": {
+          "class": "head_grouped",
+          "heads": "linear_heads",
+          "head_dim": 1,
+          "tile": 1
+        }
+      },
+      "source": {
+        "stem": "linear",
+        "tensor": "{stem}.A_log"
+      },
+      "shape": [
+        "linear_heads"
+      ],
+      "kind": "state",
+      "dtypes": [
+        "F32"
+      ],
+      "consumer": {
+        "kernel": "per_channel_decay_delta_rule"
+      }
+    },
+    {
+      "id": "linear.dt-bias",
+      "placement": {
+        "axis": 0,
+        "split": {
+          "class": "head_grouped",
+          "heads": "linear_heads",
+          "head_dim": "linear_head_dim",
+          "tile": 16
+        }
+      },
+      "source": {
+        "stem": "linear",
+        "tensor": "{stem}.dt_bias"
+      },
+      "shape": [
+        "linear_width"
+      ],
+      "kind": "state",
+      "dtypes": [
+        "F32"
+      ],
+      "consumer": {
+        "kernel": "per_channel_decay_delta_rule"
+      }
+    },
+    {
+      "id": "linear.output-norm",
+      "source": {
+        "stem": "linear",
+        "tensor": "{stem}.o_norm.weight"
+      },
+      "shape": [
+        "linear_head_dim"
+      ],
+      "kind": "norm",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "per_channel_decay_delta_rule.gated_rmsnorm"
+      }
+    },
+    {
+      "id": "latent.q-a-norm",
+      "source": {
+        "stem": "latent",
+        "tensor": "{stem}.q_a_layernorm.weight"
+      },
+      "shape": [
+        "q_rank"
+      ],
+      "kind": "norm",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "latent_attention.query_rmsnorm"
+      }
+    },
+    {
+      "id": "latent.kv-a-norm",
+      "source": {
+        "stem": "latent",
+        "tensor": "{stem}.kv_a_layernorm.weight"
+      },
+      "shape": [
+        "kv_rank"
+      ],
+      "kind": "norm",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "latent_attention.latent_rmsnorm"
+      }
+    },
+    {
+      "id": "latent.kv-up",
+      "placement": {
+        "axis": 0,
+        "split": {
+          "class": "head_grouped",
+          "heads": "latent_heads",
+          "head_dim": "kv_up_head",
+          "tile": 16
+        }
+      },
+      "source": {
+        "stem": "latent",
+        "tensor": "{stem}.kv_b_proj.weight"
+      },
+      "shape": [
+        "kv_up_rows",
+        "kv_rank"
+      ],
+      "kind": "auxiliary",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "latent_attention.head_batched_gemm"
+      }
+    },
+    {
+      "id": "latent.indexer.k-norm",
+      "source": {
+        "stem": "latent",
+        "tensor": "{stem}.indexer.k_norm.weight"
+      },
+      "shape": [
+        "indexer_dim"
+      ],
+      "kind": "norm",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "pooled_indexer.key_layernorm"
+      }
+    },
+    {
+      "id": "latent.indexer.k-norm-bias",
+      "source": {
+        "stem": "latent",
+        "tensor": "{stem}.indexer.k_norm.bias"
+      },
+      "shape": [
+        "indexer_dim"
+      ],
+      "kind": "bias",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "pooled_indexer.key_layernorm"
+      }
+    },
+    {
+      "id": "latent.indexer.pool-gate",
+      "source": {
+        "stem": "latent",
+        "tensor": "{stem}.indexer.index_kpool_compress_gate"
+      },
+      "shape": [
+        "indexer_dim",
+        "hidden"
+      ],
+      "kind": "gate",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "gated_pooling"
+      }
+    },
+    {
+      "id": "latent.indexer.pool-position",
+      "source": {
+        "stem": "latent",
+        "tensor": "{stem}.indexer.index_kpool_compress_ape"
+      },
+      "shape": [
+        "index_pool",
+        "indexer_dim"
+      ],
+      "kind": "bias",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "gated_pooling"
+      }
+    },
+    {
+      "id": "moe.router-bias",
+      "source": {
+        "stem": "moe",
+        "tensor": "{stem}.gate.e_score_correction_bias"
+      },
+      "shape": [
+        "experts"
+      ],
+      "kind": "bias",
+      "dtypes": [
+        "F32"
+      ],
+      "consumer": "moe.router"
+    },
+    {
+      "id": "mtp.enorm",
+      "source": {
+        "stem": "mtp",
+        "tensor": "{stem}.enorm.weight"
+      },
+      "shape": [
+        "hidden"
+      ],
+      "kind": "norm",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "hidden.rmsnorm"
+      }
+    },
+    {
+      "id": "mtp.hnorm",
+      "source": {
+        "stem": "mtp",
+        "tensor": "{stem}.hnorm.weight"
+      },
+      "shape": [
+        "hidden"
+      ],
+      "kind": "norm",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "hidden.rmsnorm"
+      }
+    },
+    {
+      "id": "mtp.shared-head-norm",
+      "source": {
+        "stem": "mtp",
+        "tensor": "{stem}.shared_head.norm.weight"
+      },
+      "shape": [
+        "hidden"
+      ],
+      "kind": "norm",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "hidden.rmsnorm"
+      }
+    },
+    {
+      "id": "mtp.input-layernorm",
+      "source": {
+        "stem": "mtp",
+        "tensor": "{stem}.input_layernorm.weight"
+      },
+      "shape": [
+        "hidden"
+      ],
+      "kind": "norm",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "hidden.rmsnorm"
+      }
+    },
+    {
+      "id": "mtp.post-attention-layernorm",
+      "source": {
+        "stem": "mtp",
+        "tensor": "{stem}.post_attention_layernorm.weight"
+      },
+      "shape": [
+        "hidden"
+      ],
+      "kind": "norm",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "hidden.rmsnorm"
+      }
+    },
+    {
+      "id": "mtp.latent.q-a-norm",
+      "source": {
+        "stem": "mtp-latent",
+        "tensor": "{stem}.q_a_layernorm.weight"
+      },
+      "shape": [
+        "q_rank"
+      ],
+      "kind": "norm",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "latent_attention.query_rmsnorm"
+      }
+    },
+    {
+      "id": "mtp.latent.kv-a-norm",
+      "source": {
+        "stem": "mtp-latent",
+        "tensor": "{stem}.kv_a_layernorm.weight"
+      },
+      "shape": [
+        "kv_rank"
+      ],
+      "kind": "norm",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "latent_attention.latent_rmsnorm"
+      }
+    },
+    {
+      "id": "mtp.latent.kv-up",
+      "placement": {
+        "axis": 0,
+        "split": {
+          "class": "head_grouped",
+          "heads": "latent_heads",
+          "head_dim": "kv_up_head",
+          "tile": 16
+        }
+      },
+      "source": {
+        "stem": "mtp-latent",
+        "tensor": "{stem}.kv_b_proj.weight"
+      },
+      "shape": [
+        "kv_up_rows",
+        "kv_rank"
+      ],
+      "kind": "auxiliary",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "latent_attention.head_batched_gemm"
+      }
+    },
+    {
+      "id": "mtp.latent.indexer.k-norm",
+      "source": {
+        "stem": "mtp-latent",
+        "tensor": "{stem}.indexer.k_norm.weight"
+      },
+      "shape": [
+        "indexer_dim"
+      ],
+      "kind": "norm",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "pooled_indexer.key_layernorm"
+      }
+    },
+    {
+      "id": "mtp.latent.indexer.k-norm-bias",
+      "source": {
+        "stem": "mtp-latent",
+        "tensor": "{stem}.indexer.k_norm.bias"
+      },
+      "shape": [
+        "indexer_dim"
+      ],
+      "kind": "bias",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "pooled_indexer.key_layernorm"
+      }
+    },
+    {
+      "id": "mtp.latent.indexer.pool-gate",
+      "source": {
+        "stem": "mtp-latent",
+        "tensor": "{stem}.indexer.index_kpool_compress_gate"
+      },
+      "shape": [
+        "indexer_dim",
+        "hidden"
+      ],
+      "kind": "gate",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "gated_pooling"
+      }
+    },
+    {
+      "id": "mtp.latent.indexer.pool-position",
+      "source": {
+        "stem": "mtp-latent",
+        "tensor": "{stem}.indexer.index_kpool_compress_ape"
+      },
+      "shape": [
+        "index_pool",
+        "indexer_dim"
+      ],
+      "kind": "bias",
+      "dtypes": [
+        "Bf16"
+      ],
+      "consumer": {
+        "kernel": "gated_pooling"
+      }
+    },
+    {
+      "id": "mtp.moe.router-bias",
+      "source": {
+        "stem": "mtp-moe",
+        "tensor": "{stem}.gate.e_score_correction_bias"
+      },
+      "shape": [
+        "experts"
+      ],
+      "kind": "bias",
+      "dtypes": [
+        "F32"
+      ],
+      "consumer": "mtp.moe.router"
+    }
+  ],
+  "external_tensors": [
+    {
+      "optional": true,
+      "id": "vision.patch-embed",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "tensor": "model.visual.patch_embed.proj.weight"
+      },
+      "shape": [
+        "vision_hidden",
+        "vision_channels",
+        "vision_temporal_patch",
+        "vision_patch",
+        "vision_patch"
+      ],
+      "dtype": "Bf16"
+    },
+    {
+      "optional": true,
+      "id": "vision.patch-embed-bias",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "tensor": "model.visual.patch_embed.proj.bias"
+      },
+      "shape": [
+        "vision_hidden"
+      ],
+      "dtype": "Bf16"
+    },
+    {
+      "optional": true,
+      "id": "vision.block.norm1-weight",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "stem": "vision-block",
+        "tensor": "{stem}.norm1.weight"
+      },
+      "shape": [
+        "vision_hidden"
+      ],
+      "dtype": "Bf16"
+    },
+    {
+      "optional": true,
+      "id": "vision.block.norm2-weight",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "stem": "vision-block",
+        "tensor": "{stem}.norm2.weight"
+      },
+      "shape": [
+        "vision_hidden"
+      ],
+      "dtype": "Bf16"
+    },
+    {
+      "optional": true,
+      "id": "vision.block.attn-qkv-weight",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "stem": "vision-block",
+        "tensor": "{stem}.attn.qkv.weight"
+      },
+      "shape": [
+        "vision_qkv",
+        "vision_hidden"
+      ],
+      "dtype": "Bf16"
+    },
+    {
+      "optional": true,
+      "id": "vision.block.attn-qkv-bias",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "stem": "vision-block",
+        "tensor": "{stem}.attn.qkv.bias"
+      },
+      "shape": [
+        "vision_qkv"
+      ],
+      "dtype": "Bf16"
+    },
+    {
+      "optional": true,
+      "id": "vision.block.attn-proj-weight",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "stem": "vision-block",
+        "tensor": "{stem}.attn.proj.weight"
+      },
+      "shape": [
+        "vision_hidden",
+        "vision_hidden"
+      ],
+      "dtype": "Bf16"
+    },
+    {
+      "optional": true,
+      "id": "vision.block.attn-proj-bias",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "stem": "vision-block",
+        "tensor": "{stem}.attn.proj.bias"
+      },
+      "shape": [
+        "vision_hidden"
+      ],
+      "dtype": "Bf16"
+    },
+    {
+      "optional": true,
+      "id": "vision.block.attn-q-norm-weight",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "stem": "vision-block",
+        "tensor": "{stem}.attn.q_norm.weight"
+      },
+      "shape": [
+        "vision_head_dim"
+      ],
+      "dtype": "Bf16"
+    },
+    {
+      "optional": true,
+      "id": "vision.block.attn-k-norm-weight",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "stem": "vision-block",
+        "tensor": "{stem}.attn.k_norm.weight"
+      },
+      "shape": [
+        "vision_head_dim"
+      ],
+      "dtype": "Bf16"
+    },
+    {
+      "optional": true,
+      "id": "vision.block.mlp-gate-proj-weight",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "stem": "vision-block",
+        "tensor": "{stem}.mlp.gate_proj.weight"
+      },
+      "shape": [
+        "vision_intermediate",
+        "vision_hidden"
+      ],
+      "dtype": "Bf16"
+    },
+    {
+      "optional": true,
+      "id": "vision.block.mlp-gate-proj-bias",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "stem": "vision-block",
+        "tensor": "{stem}.mlp.gate_proj.bias"
+      },
+      "shape": [
+        "vision_intermediate"
+      ],
+      "dtype": "Bf16"
+    },
+    {
+      "optional": true,
+      "id": "vision.block.mlp-up-proj-weight",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "stem": "vision-block",
+        "tensor": "{stem}.mlp.up_proj.weight"
+      },
+      "shape": [
+        "vision_intermediate",
+        "vision_hidden"
+      ],
+      "dtype": "Bf16"
+    },
+    {
+      "optional": true,
+      "id": "vision.block.mlp-up-proj-bias",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "stem": "vision-block",
+        "tensor": "{stem}.mlp.up_proj.bias"
+      },
+      "shape": [
+        "vision_intermediate"
+      ],
+      "dtype": "Bf16"
+    },
+    {
+      "optional": true,
+      "id": "vision.block.mlp-down-proj-weight",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "stem": "vision-block",
+        "tensor": "{stem}.mlp.down_proj.weight"
+      },
+      "shape": [
+        "vision_hidden",
+        "vision_intermediate"
+      ],
+      "dtype": "Bf16"
+    },
+    {
+      "optional": true,
+      "id": "vision.block.mlp-down-proj-bias",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "stem": "vision-block",
+        "tensor": "{stem}.mlp.down_proj.bias"
+      },
+      "shape": [
+        "vision_hidden"
+      ],
+      "dtype": "Bf16"
+    },
+    {
+      "optional": true,
+      "id": "vision.post-layernorm-weight",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "tensor": "model.visual.post_layernorm.weight"
+      },
+      "shape": [
+        "vision_hidden"
+      ],
+      "dtype": "Bf16"
+    },
+    {
+      "optional": true,
+      "id": "vision.downsample-weight",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "tensor": "model.visual.downsample.weight"
+      },
+      "shape": [
+        "vision_out",
+        "vision_hidden",
+        "vision_merge",
+        "vision_merge"
+      ],
+      "dtype": "Bf16"
+    },
+    {
+      "optional": true,
+      "id": "vision.downsample-bias",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "tensor": "model.visual.downsample.bias"
+      },
+      "shape": [
+        "vision_out"
+      ],
+      "dtype": "Bf16"
+    },
+    {
+      "optional": true,
+      "id": "vision.merger-proj-weight",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "tensor": "model.visual.merger.proj.weight"
+      },
+      "shape": [
+        "vision_out",
+        "vision_out"
+      ],
+      "dtype": "Bf16"
+    },
+    {
+      "optional": true,
+      "id": "vision.merger-post-projection-norm-weight",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "tensor": "model.visual.merger.post_projection_norm.weight"
+      },
+      "shape": [
+        "vision_out"
+      ],
+      "dtype": "Bf16"
+    },
+    {
+      "optional": true,
+      "id": "vision.merger-post-projection-norm-bias",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "tensor": "model.visual.merger.post_projection_norm.bias"
+      },
+      "shape": [
+        "vision_out"
+      ],
+      "dtype": "Bf16"
+    },
+    {
+      "optional": true,
+      "id": "vision.merger-gate-proj-weight",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "tensor": "model.visual.merger.gate_proj.weight"
+      },
+      "shape": [
+        "vision_projection_intermediate",
+        "vision_out"
+      ],
+      "dtype": "Bf16"
+    },
+    {
+      "optional": true,
+      "id": "vision.merger-up-proj-weight",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "tensor": "model.visual.merger.up_proj.weight"
+      },
+      "shape": [
+        "vision_projection_intermediate",
+        "vision_out"
+      ],
+      "dtype": "Bf16"
+    },
+    {
+      "optional": true,
+      "id": "vision.merger-down-proj-weight",
+      "owner": "encoder-spec",
+      "image_role": "encoder-rank-images.v1",
+      "source": {
+        "tensor": "model.visual.merger.down_proj.weight"
+      },
+      "shape": [
+        "vision_out",
+        "vision_projection_intermediate"
+      ],
+      "dtype": "Bf16"
+    }
+  ]
+}

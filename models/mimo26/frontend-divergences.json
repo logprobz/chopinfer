@@ -1,0 +1,113 @@
+{
+  "schema": "chop-frontend-divergences-v1",
+  "lines": [
+    {
+      "id": "string-content-items",
+      "lines": [15],
+      "blocked_by": "content part must be an object",
+      "reason": "the transport refuses a bare string in a content list before render"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "custom-tool-calls",
+      "kind": "refused",
+      "when": ["tool-call:custom"],
+      "outcome": {
+        "message": "invalid JSON request: unknown field `custom`, expected one of `id`, `type`, `function` at line 1 column 192",
+        "parameter": "custom"
+      },
+      "reason": "the transport reads only function tool calls and refuses a custom one before render; the template writes a custom call's raw input (lines 41-46)"
+    },
+    {
+      "id": "invalid-json-arguments",
+      "kind": "refused",
+      "when": ["arguments-text:invalid-json"],
+      "outcome": {
+        "message": "invalid JSON: EOF while parsing a value at line 1 column 10",
+        "parameter": "messages"
+      },
+      "reason": "the template writes argument text that is not JSON as written (lines 48-49); MiMo writes only a JSON object's parameters"
+    },
+    {
+      "id": "empty-arguments",
+      "kind": "refused",
+      "when": ["arguments-text:empty"],
+      "outcome": {
+        "message": "invalid JSON: EOF while parsing a value at line 1 column 0",
+        "parameter": "messages"
+      },
+      "reason": "the template writes empty argument text as no arguments (line 47); MiMo writes only a JSON object's parameters"
+    },
+    {
+      "id": "missing-call-id",
+      "kind": "refused",
+      "when": ["call-id:missing"],
+      "outcome": {
+        "message": "invalid JSON request: missing field `id` at line 1 column 324",
+        "parameter": "id"
+      },
+      "reason": "the transport requires a tool call id; the template does not read it"
+    },
+    {
+      "id": "missing-tool-call-id",
+      "kind": "refused",
+      "when": ["results:missing-id"],
+      "outcome": {
+        "message": "tool message requires tool_call_id",
+        "parameter": "messages"
+      },
+      "reason": "the transport requires a tool result's tool_call_id; the template does not read it"
+    },
+    {
+      "id": "bare-tools",
+      "kind": "refused",
+      "when": ["tools:bare"],
+      "outcome": {
+        "message": "invalid JSON request: missing field `type` at line 1 column 556",
+        "parameter": "type"
+      },
+      "reason": "the transport requires a tool's type and function wrapper; the template writes the tool as sent (line 32)"
+    },
+    {
+      "id": "continue-tool-calls",
+      "kind": "refused",
+      "when": ["ends:continue-calls"],
+      "outcome": {
+        "message": "invalid conversation field: continue_final_message requires a final assistant message without tool calls",
+        "parameter": "messages"
+      },
+      "reason": "the transport's frontend continues only a final assistant message without tool calls"
+    },
+    {
+      "id": "inline-think",
+      "kind": "no-round-trip",
+      "when": ["assistant-content:inline-think", "round-trip:read-back"],
+      "reason": "the template writes content as is, so its think markup is not the generation form"
+    },
+    {
+      "id": "union-arguments",
+      "kind": "no-round-trip",
+      "when": ["round-trip:union"],
+      "reason": "the template writes a union-typed argument's value as its text alone (line 52), so the string \"42\" and the integer 42 write the same bytes and the parser reads one type back"
+    },
+    {
+      "id": "untyped-arguments",
+      "kind": "no-round-trip",
+      "when": ["round-trip:untyped"],
+      "reason": "an argument no schema types (an untyped property, a pattern or any additional property) parses as a string, so a value of another type reads back as its text"
+    },
+    {
+      "id": "delimiter-arguments",
+      "kind": "no-round-trip",
+      "when": ["round-trip:delimiter"],
+      "reason": "the template writes a string argument raw (line 52) without escaping, so a value that spells <parameter=, </parameter> or </function> ends the value or the call early"
+    },
+    {
+      "id": "tokenizer-normalization",
+      "kind": "no-round-trip",
+      "when": ["round-trip:tokenizer"],
+      "reason": "the tokenizer normalizes text to NFC, so a decomposed character in the turn tokenizes to its composed form; the parser keeps the bytes it reads (frontend-format parameter_values.rs)"
+    }
+  ]
+}

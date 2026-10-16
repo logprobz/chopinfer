@@ -1,0 +1,35 @@
+[workspace]
+members = ["bundle", "compiler", "contract", "lab"]
+# The kernel test crate (`lab`) links the CUDA driver; build it explicitly.
+default-members = ["bundle", "compiler", "contract"]
+exclude = ["sdk"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+publish = false
+license = "Apache-2.0"
+
+[workspace.dependencies]
+example-contract = { path = "contract" }
+runtime-bundle-abi = { path = "sdk/crates/runtime-bundle-abi" }
+runtime-bundle-sdk = { path = "sdk/crates/runtime-bundle-sdk" }
+bundle-runtime = { path = "sdk/crates/bundle-runtime" }
+model-compiler-sdk = { path = "sdk/crates/model-compiler-sdk" }
+runtime-bundle = { path = "sdk/crates/runtime-bundle" }
+runtime-weights = { path = "sdk/crates/runtime-weights" }
+runtime-frontend-contract = { path = "sdk/crates/runtime-frontend-contract" }
+frontend-format = { path = "sdk/crates/frontend-format" }
+kernel-build = { path = "sdk/crates/kernel-build" }
+kernel-core = { path = "sdk/crates/kernel-core" }
+kernel-harness = { path = "sdk/crates/kernel-harness" }
+kernels-sm120 = { path = "sdk/crates/kernels-sm120" }
+encoder-spec = { path = "sdk/crates/encoder-spec" }
+runtime-cuda = { path = "sdk/crates/runtime-cuda" }
+runtime-host = { path = "sdk/crates/runtime-host" }
+projection-spec = { path = "sdk/crates/projection-spec" }
+serde_json = "=1.0.143"
+serde = { version = "=1.0.219", features = ["derive"] }
+sha2 = { version = "=0.10.9", default-features = false, features = ["compress"] }

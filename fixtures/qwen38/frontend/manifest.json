@@ -1,0 +1,53 @@
+{
+ "schema": "chopinfer.frontend-hf.v1",
+ "files": {
+  "api-compatibility.json": {
+   "sha256": "b427d921e3a1d8665be263e25c44129bd8df4cd9b3fec6bb150e1d636e5ae45b",
+   "bytes": 1515
+  },
+  "api-generation-reference.json": {
+   "sha256": "692fed0e23fc4de6ad48e816f8585523b4d91950c53365873131fcdd1331541a",
+   "bytes": 20215
+  },
+  "api-generation-reference.workload.json": {
+   "sha256": "dd1aec519e8d3ca09f88e991a1d83a04adddd3aacc97b32e5cce5ca4302ec8d0",
+   "bytes": 11957
+  },
+  "api-prompts.json": {
+   "sha256": "064f7621e417c98da71846280d6c814b3ee0f8aa0efc8a15c8dbd35cf71d7ffb",
+   "bytes": 12896
+  },
+  "api-requests.json": {
+   "sha256": "f75a9b67f8dc1d2492bca901c004d9fe130421fbadc2cfae47ca1f3f81ac6ed8",
+   "bytes": 3684
+  },
+  "api-shapes-metadata.json": {
+   "sha256": "0b8601d488806da41f9f7bbf5937b0591f6dd74fbe2d7e47af779dfc1d0cac4e",
+   "bytes": 419
+  },
+  "api-shapes.json": {
+   "sha256": "b09d1d5325122fa6e21d3e8aa493336df969399ca0a098f300d7fe804977992d",
+   "bytes": 1444
+  },
+  "chat-renders.json": {
+   "sha256": "c9f7706e618b36839bbd3475c4eed9915bf4dd40dc95ef65e22aebed77e8fc25",
+   "bytes": 579698
+  },
+  "identity.json": {
+   "sha256": "0bf7e830dc5db41ef1510c773cbba04a15888a34f466e79828632f5b049adf55",
+   "bytes": 537
+  },
+  "images.json": {
+   "sha256": "35b1b0b5b7fc35ac2c379d1712beade3f531fd02b80183c9dfb2346d0ffce459",
+   "bytes": 189899
+  },
+  "provenance.json": {
+   "sha256": "ef077a578e17ab56ffdb16764d0f622b4c95eff549909476abb07327f4f37d27",
+   "bytes": 1143
+  },
+  "tokenizer-golden.json": {
+   "sha256": "df510637ab6b4dfee9c16fca741398d295b846c7bca32b7ae25e51e2540acda0",
+   "bytes": 53698
+  }
+ }
+}

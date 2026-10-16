@@ -1,0 +1,69 @@
+[package]
+name = "runtime-frontend"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[features]
+# The declared format linked in, for tests only: its in-process loopback
+# export, the declared parser and renderer called directly, and the
+# constructors over them. A deployment serves its package's own export.
+test-support = ["dep:frontend-format", "frontend-format/test-support"]
+
+[dependencies]
+frontend-format = { workspace = true, optional = true }
+runtime-bundle-abi.workspace = true
+runtime-frontend-contract.workspace = true
+runtime-grammar.workspace = true
+runtime-server.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+# The declared format's fixture declarations and shared cases.
+frontend-format = { workspace = true, features = ["test-support"] }
+# The fixture frontends are served over the real transport, so the tests need a
+# loopback listener. Nothing in the library binds a socket.
+tokio.workspace = true
+
+# These serve or decode through the test formats linked in by test-support.
+[[test]]
+name = "bracket_markers"
+required-features = ["test-support"]
+
+[[test]]
+name = "continued_reasoning"
+required-features = ["test-support"]
+
+[[test]]
+name = "completion_decoder"
+required-features = ["test-support"]
+
+[[test]]
+name = "chat_format_support"
+required-features = ["test-support"]
+
+[[test]]
+name = "declared_frontend"
+required-features = ["test-support"]
+
+[[test]]
+name = "function_parameter_tool_grammar"
+required-features = ["test-support"]
+
+[[test]]
+name = "key_value_tool_grammar"
+required-features = ["test-support"]
+
+[[test]]
+name = "whole_completion"
+required-features = ["test-support"]
+
+[[example]]
+name = "frontend_decode_cost"
+required-features = ["test-support"]
+
+[lints]
+workspace = true

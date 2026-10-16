@@ -1,0 +1,121 @@
+[
+  {
+    "name": "row_copy_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_row_copy_broadcast_streams_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "source",
+            "cxx_type": "const uint4"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "destination",
+            "cxx_type": "uint4"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "vectors"
+          },
+          {
+            "kind": "U32",
+            "name": "streams"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_row_copy_column_slice_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "columns"
+          },
+          {
+            "kind": "U32",
+            "name": "source_row"
+          },
+          {
+            "kind": "U32",
+            "name": "source_column"
+          },
+          {
+            "kind": "U32",
+            "name": "source_offset"
+          },
+          {
+            "kind": "U32",
+            "name": "dest_row"
+          },
+          {
+            "kind": "U32",
+            "name": "dest_column"
+          },
+          {
+            "kind": "U32",
+            "name": "dest_offset"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "e46ca62ab1cad7bcf8484b757babd21163f24960b2e6f94b05c50aa9469ad585",
+    "resources": [
+      {
+        "symbol": "chop_row_copy_broadcast_streams_v1",
+        "registers": 23,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_row_copy_column_slice_v1",
+        "registers": 14,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

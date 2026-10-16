@@ -1,0 +1,190 @@
+{
+  "schema": "chopinfer.encoder.v1",
+  "model": "mimo26",
+  "name": "mimo-audio",
+  "precision": "f32-pairs.v1",
+  "checkpoint": {
+    "files": {
+      "encoder.": "audio_tokenizer/model.safetensors",
+      "audio_encoder.": "model_pp0_ep0_shard0.safetensors",
+      "speech_embeddings.": "model_pp0_ep0_shard0.safetensors"
+    },
+    "config": [
+      {
+        "file": "config.json",
+        "pointer": "/audio_config",
+        "values": {
+          "audio_channels": 20,
+          "audio_segment_size": 6000,
+          "group_size": 4,
+          "input_local_layers": 6,
+          "input_local_dim": 1024,
+          "input_local_attn_heads": 16,
+          "input_local_head_dim": 64,
+          "input_local_intermediate_size": 4096,
+          "partial_rotary_factor": 1.0,
+          "rope_theta": 640000,
+          "speech_vocab_size": "1280",
+          "out_hidden_size": 4096
+        }
+      },
+      {
+        "file": "audio_tokenizer/config.json",
+        "pointer": "",
+        "values": {
+          "n_mels": 128,
+          "d_model": 1024,
+          "kernel_size": 3,
+          "stride_size": 2,
+          "avg_pooler": 2,
+          "encoder_layers": 24,
+          "encoder_attention_heads": 16,
+          "encoder_ffn_dim": 4096,
+          "encoder_causal": true,
+          "encoder_attn_window_size": [128, 0],
+          "encoder_skip_layer_id": 3,
+          "hybrid_attention": true,
+          "swa_per_block": 2,
+          "activation_function": "gelu",
+          "ln_type": "LayerNorm",
+          "position_embedding_type": "rope",
+          "rope_theta": 10000,
+          "num_quantizers": 20,
+          "codebook_size": [1024, 1024, 256, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128]
+        }
+      }
+    ]
+  },
+  "input": {
+    "recipes": [{"tag": "audio.log-mel.v1", "mel_bins": 128, "maximum_frames": 60001}],
+    "payload": "f32",
+    "columns": 128,
+    "capacity_rows": 8192,
+    "chunking": "whole-sequences.v1"
+  },
+  "sequences": {"kind": "segments", "input_rows": 6000},
+  "image_layout": "program-order-stacked.v1",
+  "stages": [
+    {
+      "op": "conv1d.im2col.v1", "kernel": 3, "stride": 1, "pad": [1, 1], "out": 1024, "bias": true, "gelu": "erf",
+      "weights": {
+        "weight": {"tensor": "encoder.conv1.weight", "transforms": ["taps_first"]},
+        "bias": "encoder.conv1.bias"
+      }
+    },
+    {
+      "op": "conv1d.im2col.v1", "kernel": 3, "stride": 2, "pad": [1, 1], "out": 1024, "bias": true, "gelu": "erf",
+      "weights": {
+        "weight": {"tensor": "encoder.conv2.weight", "transforms": ["taps_first"]},
+        "bias": "encoder.conv2.bias"
+      }
+    },
+    {
+      "op": "transformer.pre-norm.v1", "blocks": 24, "width": 1024,
+      "norm": {"op": "norm.layer-f32.v1", "eps": 1e-5},
+      "attention": {
+        "op": "attention.varlen.pairs.v1", "q_heads": 16, "kv_heads": 16, "head_dim": 64,
+        "qkv_bias": true, "proj_bias": true, "mask": "causal"
+      },
+      "overrides": [{"blocks": "even", "attention": {"mask": {"causal_window": 128}}}],
+      "rotary": {
+        "op": "rotary.1d.v1", "pairs": 32, "theta": 10000, "style": "neox",
+        "table": "table.hf-f32-angle.v1", "positions": "within-sequence"
+      },
+      "carry": [{"save_after": 2, "add_after": 23}],
+      "mlp": {"op": "mlp.gelu.v1", "hidden": 4096, "gelu": "erf", "bias": true},
+      "weights": {
+        "norm1.weight": "encoder.layers.{i}.self_attn_layer_norm.weight",
+        "norm1.bias": "encoder.layers.{i}.self_attn_layer_norm.bias",
+        "qkv.weight": {"concat_rows": [
+          "encoder.layers.{i}.self_attn.q_proj.weight",
+          "encoder.layers.{i}.self_attn.k_proj.weight",
+          "encoder.layers.{i}.self_attn.v_proj.weight"
+        ]},
+        "qkv.bias": {"concat_rows": [
+          "encoder.layers.{i}.self_attn.q_proj.bias",
+          {"zeros": 1024},
+          "encoder.layers.{i}.self_attn.v_proj.bias"
+        ]},
+        "proj.weight": "encoder.layers.{i}.self_attn.out_proj.weight",
+        "proj.bias": "encoder.layers.{i}.self_attn.out_proj.bias",
+        "norm2.weight": "encoder.layers.{i}.final_layer_norm.weight",
+        "norm2.bias": "encoder.layers.{i}.final_layer_norm.bias",
+        "up.weight": "encoder.layers.{i}.fc1.weight",
+        "up.bias": "encoder.layers.{i}.fc1.bias",
+        "down.weight": "encoder.layers.{i}.fc2.weight",
+        "down.bias": "encoder.layers.{i}.fc2.bias"
+      }
+    },
+    {
+      "op": "norm.layer-f32.v1", "eps": 1e-5,
+      "weights": {"weight": "encoder.layer_norm.weight", "bias": "encoder.layer_norm.bias"}
+    },
+    {
+      "op": "conv1d.im2col.v1", "kernel": 2, "stride": 2, "pad": [0, 1], "out": 1024, "bias": false, "gelu": "erf",
+      "weights": {"weight": {"tensor": "encoder.down_sample_layer.0.weight", "transforms": ["taps_first"]}}
+    },
+    {
+      "op": "norm.layer-f32.v1", "eps": 1e-5,
+      "weights": {"weight": "encoder.down_sample_norm.weight", "bias": "encoder.down_sample_norm.bias"}
+    },
+    {
+      "op": "mimo26:quantize.rvq20-f32.v1",
+      "codebooks": [1024, 1024, 256, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128],
+      "weights": {
+        "codebooks": {"concat_range": "encoder.quantizer.vq.layers.{j}._codebook.embed", "count": 20}
+      }
+    },
+    {"op": "group.repeat-last.v1", "rows": 4},
+    {
+      "op": "mimo26:embed.sum20-f32.v1", "vocab": 1280, "width": 1024,
+      "weights": {"tables": {"concat_range": "speech_embeddings.{j}.weight", "count": 20}}
+    },
+    {
+      "op": "transformer.pre-norm.v1", "blocks": 6, "width": 1024,
+      "sequences": {"kind": "groups", "rows": 4},
+      "norm": {"op": "norm.rms-f32.v1", "eps": 1e-6},
+      "attention": {
+        "op": "attention.varlen.pairs.v1", "q_heads": 16, "kv_heads": 16, "head_dim": 64,
+        "qkv_bias": true, "proj_bias": false, "mask": "full"
+      },
+      "rotary": {
+        "op": "rotary.1d.v1", "pairs": 32, "theta": 640000, "style": "neox",
+        "table": "table.hf-f32-angle.v1", "positions": "within-sequence"
+      },
+      "mlp": {"op": "mlp.swiglu.v1", "hidden": 4096, "bias": false},
+      "weights": {
+        "norm1.weight": "audio_encoder.input_local_transformer.layers.{i}.input_layernorm.weight",
+        "qkv.weight": {"concat_rows": [
+          "audio_encoder.input_local_transformer.layers.{i}.self_attn.q_proj.weight",
+          "audio_encoder.input_local_transformer.layers.{i}.self_attn.k_proj.weight",
+          "audio_encoder.input_local_transformer.layers.{i}.self_attn.v_proj.weight"
+        ]},
+        "qkv.bias": {"concat_rows": [
+          "audio_encoder.input_local_transformer.layers.{i}.self_attn.q_proj.bias",
+          "audio_encoder.input_local_transformer.layers.{i}.self_attn.k_proj.bias",
+          "audio_encoder.input_local_transformer.layers.{i}.self_attn.v_proj.bias"
+        ]},
+        "proj.weight": "audio_encoder.input_local_transformer.layers.{i}.self_attn.o_proj.weight",
+        "norm2.weight": "audio_encoder.input_local_transformer.layers.{i}.post_attention_layernorm.weight",
+        "gate_up.weight": {"concat_rows": [
+          "audio_encoder.input_local_transformer.layers.{i}.mlp.gate_proj.weight",
+          "audio_encoder.input_local_transformer.layers.{i}.mlp.up_proj.weight"
+        ]},
+        "down.weight": "audio_encoder.input_local_transformer.layers.{i}.mlp.down_proj.weight"
+      }
+    },
+    {"op": "norm.rms-f32.v1", "eps": 1e-6, "weights": {"weight": "audio_encoder.input_local_transformer.norm.weight"}},
+    {"op": "merge.consecutive.v1", "rows": 4},
+    {
+      "op": "linear.pairs.v1", "out": 16384, "bias": false, "gelu": "erf",
+      "weights": {"weight": "audio_encoder.projection.mlp.0.weight"}
+    },
+    {
+      "op": "linear.pairs.v1", "out": 4096, "bias": false, "output": "bf16",
+      "weights": {"weight": "audio_encoder.projection.mlp.2.weight"}
+    }
+  ],
+  "output": {"op": "layout.tokens.v1", "hidden": 4096, "positions": "sequential", "media_mask": false},
+  "parallel": ["replicated", "record-parallel"]
+}

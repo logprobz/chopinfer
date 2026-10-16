@@ -1,0 +1,42 @@
+{
+  "format": "chopinfer.synthetic-weight-plan-goldens.v1",
+  "source_commit": "e164febd51744a3fdfe716059a02afc2c029ae1e",
+  "produced_by": "qwen38-materialize's materialize_catalog over the synthetic checkpoint of tools/load-proto/tests/synthetic_plan_goldens.rs at 2, 4 and 8 ranks, before the materializer was deleted; the same run checked that the bundle contract's plan, loaded by the host's direct executor, equals each image and index. Arena sha256 values re-derived at d8f6418cc by that direct executor when the synthetic FP8 codes stopped drawing E4M3 NaN codes (the host refuses them); layouts and lengths unchanged.",
+  "fields": "per rank: arena_bytes and sha256 of the whole image; layout_sha256 of its views as 'name offset bytes dtype shape layout_id' lines in offset order",
+  "text": {
+    "2": [
+      {
+        "arena_bytes": 1421312,
+        "sha256": "283408bccb921f725e07655f892593c75f9fcca04f86243751d18447bb12c20a",
+        "layout_sha256": "aa7718edc303f71a7ffb82d9022c032f8dfd44ecf0ab3ab25d7cf13549559963"
+      },
+      {
+        "arena_bytes": 1421312,
+        "sha256": "b7aa98307c3db3382bc4ac7f86e94d749ca3ae580272b3d2f11d08136adab0eb",
+        "layout_sha256": "aa7718edc303f71a7ffb82d9022c032f8dfd44ecf0ab3ab25d7cf13549559963"
+      }
+    ],
+    "4": [
+      {
+        "arena_bytes": 753664,
+        "sha256": "3ffcc7e7620da248ce28f86c48a8e3c75fa741d5d8c422676b990614fedd6699",
+        "layout_sha256": "d69536da6cffb4a8f82fe3be6141b5a3dcb1bb9824af86e209465a095bfb475a"
+      },
+      {
+        "arena_bytes": 753664,
+        "sha256": "573f1b252324179e5df3592daefe8df3e7c107f2361d124bcb944f0a81960b1b",
+        "layout_sha256": "d69536da6cffb4a8f82fe3be6141b5a3dcb1bb9824af86e209465a095bfb475a"
+      },
+      {
+        "arena_bytes": 749568,
+        "sha256": "c3f2d85f8e7e6ac37084a7a1bb2140eb0116ea8540c06215fcf70010e42fe9ac",
+        "layout_sha256": "4ee8b3945e97571c730e19a7a83e40bd79489ee88bec2b9dcbd5fcec9163f39a"
+      },
+      {
+        "arena_bytes": 749568,
+        "sha256": "1288bb8402976d492634b2fb5648e7396a18b0db7301c16c8ae8443bfb54db6d",
+        "layout_sha256": "4ee8b3945e97571c730e19a7a83e40bd79489ee88bec2b9dcbd5fcec9163f39a"
+      }
+    ]
+  }
+}

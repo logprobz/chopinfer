@@ -1,0 +1,3306 @@
+{
+  "schema": "chopinfer-qual-model/v1",
+  "model": "qwen38",
+  "cohorts": {
+    "quick": {
+      "checks": [
+        "teacher",
+        "api",
+        "structured",
+        "soak",
+        "paired_teacher"
+      ]
+    },
+    "full": {
+      "checks": [
+        "teacher",
+        "long_context",
+        "long_context_128k",
+        "api",
+        "structured",
+        "encoder_parity",
+        "qwen38_layers",
+        "qwen38_capture",
+        "evals_candidate",
+        "evals_compare",
+        "logprobs_candidate",
+        "logprobs_compare",
+        "soak",
+        "spec_verify",
+        "verify_exact",
+        "prefix_exact",
+        "preemption_exact",
+        "preemption_exact_c1",
+        "multimodal",
+        "needle",
+        "media_preprocessing",
+        "paired_teacher",
+        "kv_offload_plain",
+        "kv_offload_pressure"
+      ]
+    }
+  },
+  "change_classes": {
+    "frontend": [
+      "teacher",
+      "api",
+      "structured",
+      "qwen38_capture",
+      "media_preprocessing"
+    ],
+    "quality": [
+      "teacher",
+      "long_context",
+      "long_context_128k",
+      "api",
+      "structured",
+      "encoder_parity",
+      "qwen38_layers",
+      "qwen38_capture",
+      "evals_candidate",
+      "evals_compare",
+      "logprobs_candidate",
+      "logprobs_compare",
+      "multimodal",
+      "needle",
+      "media_preprocessing",
+      "paired_teacher"
+    ],
+    "service": [
+      "soak",
+      "preemption_exact",
+      "preemption_exact_c1",
+      "kv_offload_plain",
+      "kv_offload_pressure"
+    ],
+    "speculation": [
+      "spec_verify",
+      "verify_exact"
+    ],
+    "prefix": [
+      "prefix_exact"
+    ]
+  },
+  "checks": {
+    "teacher": {
+      "module": "teacher",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--server-log",
+        "{server_log}"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-teacher.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "mean_abs_dlogprob"
+          ],
+          "op": "le",
+          "value": 0.1,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "top1_decisive"
+          ],
+          "op": "le",
+          "value": 0.08,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "top1_near_tie"
+          ],
+          "op": "le",
+          "value": 0.08,
+          "source": "docs/numerics.md#top-one-near-ties"
+        },
+        {
+          "path": [
+            "top1_disagreement"
+          ],
+          "op": "le",
+          "value": 0.1,
+          "source": "docs/numerics.md#top-one-near-ties"
+        },
+        {
+          "path": [
+            "failed_categories"
+          ],
+          "op": "eq",
+          "value": [],
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "scored"
+          ],
+          "op": "ge",
+          "value": 4176,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "server",
+            "checkpoint",
+            "checkpoint_identity"
+          ],
+          "op": "eq",
+          "value": "74a79eebe1535a7b16ab26f7984224ef1f0a285a2a8a3b57d094c79f738fe473",
+          "source": "fixtures/qwen38/README.md#teacher-gate-reference"
+        },
+        {
+          "path": [
+            "reference_sha256"
+          ],
+          "op": "eq",
+          "value": "1c8f2f0282d8869ad8201a18004139e4acad6f440796af5b8f7fcbac939b44c9",
+          "source": "fixtures/qwen38/README.md#teacher-gate-reference"
+        }
+      ],
+      "constants": {
+        "teacher": {
+          "MAX_MEAN": {
+            "value": 0.15,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "LARGE_SET_MEAN": {
+            "value": 0.1,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "LARGE_SET_POSITIONS": {
+            "value": 1000,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MAX_TOP1": {
+            "value": 0.08,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MEAN_STEP": {
+            "value": 0.05,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MEAN_MARGIN": {
+            "value": 0.02,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          "TOP1_SIGMAS": {
+            "value": 2.0,
+            "source": "tools/qual/README.md#release-gates"
+          }
+        }
+      },
+      "files": [
+        "server_log"
+      ]
+    },
+    "long_context": {
+      "module": "teacher",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--server-log",
+        "{server_log}",
+        "--reference-name",
+        "long_context",
+        "--receipt",
+        "long-context"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-long-context.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "mean_abs_dlogprob"
+          ],
+          "op": "le",
+          "value": 0.1,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "top1_decisive"
+          ],
+          "op": "le",
+          "value": 0.08,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "top1_near_tie"
+          ],
+          "op": "le",
+          "value": 0.08,
+          "source": "docs/numerics.md#top-one-near-ties"
+        },
+        {
+          "path": [
+            "top1_disagreement"
+          ],
+          "op": "le",
+          "value": 0.1,
+          "source": "docs/numerics.md#top-one-near-ties"
+        },
+        {
+          "path": [
+            "failed_categories"
+          ],
+          "op": "eq",
+          "value": [],
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "scored"
+          ],
+          "op": "ge",
+          "value": 1024,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "server",
+            "checkpoint",
+            "checkpoint_identity"
+          ],
+          "op": "eq",
+          "value": "74a79eebe1535a7b16ab26f7984224ef1f0a285a2a8a3b57d094c79f738fe473",
+          "source": "fixtures/qwen38/README.md#teacher-gate-reference"
+        },
+        {
+          "path": [
+            "reference_sha256"
+          ],
+          "op": "eq",
+          "value": "31dbb9c0d1035d6aed10499d1a69620f792f2282987248294555893894dff122",
+          "source": "fixtures/qwen38/README.md#long-context-reference"
+        }
+      ],
+      "constants": {
+        "teacher": {
+          "MAX_MEAN": {
+            "value": 0.15,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "LARGE_SET_MEAN": {
+            "value": 0.1,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "LARGE_SET_POSITIONS": {
+            "value": 1000,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MAX_TOP1": {
+            "value": 0.08,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MEAN_STEP": {
+            "value": 0.05,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MEAN_MARGIN": {
+            "value": 0.02,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          "TOP1_SIGMAS": {
+            "value": 2.0,
+            "source": "tools/qual/README.md#release-gates"
+          }
+        }
+      },
+      "files": [
+        "server_log"
+      ]
+    },
+    "long_context_128k": {
+      "module": "teacher",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--server-log",
+        "{server_log}",
+        "--reference-name",
+        "long_context_128k",
+        "--receipt",
+        "long-context-128k"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-long-context-128k.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "mean_abs_dlogprob"
+          ],
+          "op": "le",
+          "value": 0.1,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "top1_decisive"
+          ],
+          "op": "le",
+          "value": 0.08,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "top1_near_tie"
+          ],
+          "op": "le",
+          "value": 0.08,
+          "source": "docs/numerics.md#top-one-near-ties"
+        },
+        {
+          "path": [
+            "top1_disagreement"
+          ],
+          "op": "le",
+          "value": 0.1,
+          "source": "docs/numerics.md#top-one-near-ties"
+        },
+        {
+          "path": [
+            "failed_categories"
+          ],
+          "op": "eq",
+          "value": [],
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "scored"
+          ],
+          "op": "ge",
+          "value": 1024,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "server",
+            "checkpoint",
+            "checkpoint_identity"
+          ],
+          "op": "eq",
+          "value": "74a79eebe1535a7b16ab26f7984224ef1f0a285a2a8a3b57d094c79f738fe473",
+          "source": "fixtures/qwen38/README.md#teacher-gate-reference"
+        },
+        {
+          "path": [
+            "reference_sha256"
+          ],
+          "op": "eq",
+          "value": "e3d931c2c6c3d5d84cc571194f097e15292288e88b9ccdea271b41547bb5cfa0",
+          "source": "docs/model-qwen38.md#long-context-qualification"
+        }
+      ],
+      "constants": {
+        "teacher": {
+          "MAX_MEAN": {
+            "value": 0.15,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "LARGE_SET_MEAN": {
+            "value": 0.1,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "LARGE_SET_POSITIONS": {
+            "value": 1000,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MAX_TOP1": {
+            "value": 0.08,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MEAN_STEP": {
+            "value": 0.05,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MEAN_MARGIN": {
+            "value": 0.02,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          "TOP1_SIGMAS": {
+            "value": 2.0,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          "ALLOW_FLOOR_ONLY": {
+            "value": true,
+            "source": "docs/check-kinds.md#teacher_forced-teacher_forcedv1"
+          }
+        }
+      },
+      "files": [
+        "server_log"
+      ]
+    },
+    "api": {
+      "module": "api",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-api.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ]
+    },
+    "structured": {
+      "module": "structured",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--stream"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-structured.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "summary",
+            "overall",
+            "validity_rate"
+          ],
+          "op": "ge",
+          "value": 1.0,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "summary",
+            "overall",
+            "refused"
+          ],
+          "op": "eq",
+          "value": 0,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "summary",
+            "overall",
+            "truncated"
+          ],
+          "op": "eq",
+          "value": 0,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ]
+    },
+    "encoder_parity": {
+      "module": "encoder_parity",
+      "args": [
+        "taps",
+        "--run",
+        "{encoder_parity_run}",
+        "--url",
+        "{url}"
+      ],
+      "timeout_seconds": 1800,
+      "receipt": "*-encoder-parity.json",
+      "files": [
+        "encoder_parity_run"
+      ],
+      "constants": {
+        "encoder_parity": {
+          "PARITY_RATIO": {
+            "value": 3.0,
+            "source": "tools/qual/README.md#encoder-parity"
+          },
+          "ROW_FLOOR": {
+            "value": 0.00390625,
+            "source": "tools/qual/README.md#encoder-parity"
+          }
+        }
+      },
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#encoder-parity"
+        }
+      ]
+    },
+    "qwen38_layers": {
+      "module": "qwen38_layers",
+      "args": [
+        "--dump",
+        "{layer_dump}",
+        "--reference",
+        "{layer_reference}",
+        "--url",
+        "{url}",
+        "--json",
+        "{run}/layers.json"
+      ],
+      "timeout_seconds": 7200,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "first"
+          ],
+          "op": "eq",
+          "value": null,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "rows",
+            "*",
+            "pass"
+          ],
+          "op": "true_count_ge",
+          "value": 240,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        }
+      ],
+      "files": [
+        "layer_dump",
+        "layer_reference"
+      ],
+      "json_file": "{run}/layers.json",
+      "constants": {
+        "qwen38_layers": {
+          "RELATIVE_RMS_LIMIT": {
+            "value": 0.05,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "FLOOR_RATIO": {
+            "value": 3.0,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          }
+        }
+      }
+    },
+    "qwen38_capture": {
+      "module": "frontend_goldens",
+      "args": [
+        "{capture}",
+        "--json",
+        "{run}/capture.json"
+      ],
+      "timeout_seconds": 7200,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "needles.json",
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "api-samples.json",
+            "agrees"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "chat-renders.json",
+            "agrees"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "tokenizer-golden.json",
+            "agrees"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "needles.json",
+            "rows"
+          ],
+          "op": "count_ge",
+          "value": 3,
+          "source": "docs/bundle-qwen38.md"
+        },
+        {
+          "path": [
+            "api-samples.json",
+            "rows"
+          ],
+          "op": "count_ge",
+          "value": 15,
+          "source": "docs/bundle-qwen38.md"
+        },
+        {
+          "path": [
+            "chat-renders.json",
+            "rows"
+          ],
+          "op": "ge",
+          "value": 75,
+          "source": "docs/bundle-qwen38.md"
+        },
+        {
+          "path": [
+            "tokenizer-golden.json",
+            "rows"
+          ],
+          "op": "ge",
+          "value": 81,
+          "source": "docs/bundle-qwen38.md"
+        }
+      ],
+      "files": [
+        "capture"
+      ],
+      "json_file": "{run}/capture.json"
+    },
+    "evals_candidate": {
+      "module": "evals",
+      "args": [
+        "run",
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--arm",
+        "candidate",
+        "--run-id",
+        "{run_id}"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-evals-candidate.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "items"
+          ],
+          "op": "ge",
+          "value": 2819,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "suites",
+            "gsm8k",
+            "count"
+          ],
+          "op": "eq",
+          "value": 1319,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "suites",
+            "mmlu_pro",
+            "count"
+          ],
+          "op": "eq",
+          "value": 1200,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "suites",
+            "longctx",
+            "count"
+          ],
+          "op": "eq",
+          "value": 300,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ]
+    },
+    "evals_compare": {
+      "module": "evals",
+      "args": [
+        "compare",
+        "--arms",
+        "candidate",
+        "reference",
+        "--receipt",
+        "candidate={evals_candidate}",
+        "--stored",
+        "reference={stored_evals_candidate}"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-evals-compare.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "unpaired_items",
+            "candidate"
+          ],
+          "op": "eq",
+          "value": 0,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "unpaired_items",
+            "reference"
+          ],
+          "op": "eq",
+          "value": 0,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ],
+      "constants": {
+        "evals": {
+          "SIGNIFICANCE": {
+            "value": 0.05,
+            "source": "tools/qual/README.md#release-gates"
+          }
+        }
+      }
+    },
+    "logprobs_candidate": {
+      "module": "logprobs_parity",
+      "args": [
+        "capture",
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--arm",
+        "candidate"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-logprobs-*.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "cases"
+          ],
+          "op": "count_ge",
+          "value": 10,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ]
+    },
+    "logprobs_compare": {
+      "module": "logprobs_parity",
+      "args": [
+        "compare",
+        "{stored_logprobs_candidate}",
+        "{logprobs_candidate}"
+      ],
+      "timeout_seconds": 7200,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "cases"
+          ],
+          "op": "count_ge",
+          "value": 10,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "cases",
+            "*",
+            "notes"
+          ],
+          "op": "eq",
+          "value": [],
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ]
+    },
+    "soak": {
+      "module": "soak",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--structured-mix"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-soak.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "completed"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "memory_scope"
+          ],
+          "op": "eq",
+          "value": "serving_process_tree",
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "memory_growth_mib"
+          ],
+          "op": "le",
+          "value": 512,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        },
+        {
+          "path": [
+            "host_memory_growth_mib"
+          ],
+          "op": "le",
+          "value": 512,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        },
+        {
+          "path": [
+            "memory_samples"
+          ],
+          "op": "count_ge",
+          "value": 2,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        }
+      ],
+      "cohort_args": {
+        "quick": [
+          "--duration",
+          "60",
+          "--concurrency",
+          "4"
+        ],
+        "full": [
+          "--duration",
+          "1380",
+          "--concurrency",
+          "32",
+          "--prefix-mix",
+          "--media-mix",
+          "--media-cases",
+          "image-blue-square.png"
+        ]
+      }
+    },
+    "multimodal": {
+      "module": "multimodal",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--server-log",
+        "{server_log}"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-qwen38-multimodal.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/check-kinds.md"
+        },
+        {
+          "path": [
+            "server",
+            "checkpoint",
+            "checkpoint_identity"
+          ],
+          "op": "eq",
+          "value": "74a79eebe1535a7b16ab26f7984224ef1f0a285a2a8a3b57d094c79f738fe473",
+          "source": "docs/check-kinds.md"
+        },
+        {
+          "path": [
+            "reference",
+            "sha256"
+          ],
+          "op": "eq",
+          "value": "e4f674c35b26362802e1f542980ca9002c1698d5146ed8a6ee0ff2b869850000",
+          "source": "docs/check-kinds.md"
+        }
+      ],
+      "files": [
+        "server_log"
+      ]
+    },
+    "spec_verify": {
+      "module": "spec_verify",
+      "args": [
+        "compare",
+        "--ar",
+        "{spec_ar}",
+        "--spec",
+        "{spec_candidate}"
+      ],
+      "timeout_seconds": 7200,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "sets",
+            "copy",
+            "scored_positions"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        }
+      ],
+      "files": [
+        "spec_ar",
+        "spec_candidate"
+      ],
+      "constants": {
+        "spec_verify": {
+          "MAXIMUM_ABS_DLOGPROB": {
+            "value": 0.15,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MAXIMUM_TOP1_DISAGREEMENT": {
+            "value": 0.08,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          }
+        }
+      },
+      "input_rules": {
+        "spec_ar": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "sets",
+              "copy",
+              "requests"
+            ],
+            "op": "count_ge",
+            "value": 16,
+            "source": "tools/qual/README.md#verify-rows-against-autoregressive-rows"
+          },
+          {
+            "path": [
+              "sets",
+              "natural",
+              "requests"
+            ],
+            "op": "count_ge",
+            "value": 16,
+            "source": "tools/qual/README.md#verify-rows-against-autoregressive-rows"
+          }
+        ],
+        "spec_candidate": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "sets",
+              "copy",
+              "requests"
+            ],
+            "op": "count_ge",
+            "value": 16,
+            "source": "tools/qual/README.md#verify-rows-against-autoregressive-rows"
+          },
+          {
+            "path": [
+              "sets",
+              "natural",
+              "requests"
+            ],
+            "op": "count_ge",
+            "value": 16,
+            "source": "tools/qual/README.md#verify-rows-against-autoregressive-rows"
+          }
+        ]
+      }
+    },
+    "verify_exact": {
+      "module": "verify_exact",
+      "args": [
+        "report",
+        "--require-row-shapes",
+        "--ar",
+        "{verify_ar}",
+        "--verify",
+        "{verify_candidate}"
+      ],
+      "timeout_seconds": 7200,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "records"
+          ],
+          "op": "count_ge",
+          "value": 1,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "exact",
+            "all",
+            "gate_against_ar",
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "coverage",
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "k"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ],
+      "files": [
+        "verify_ar",
+        "verify_candidate"
+      ],
+      "constants": {
+        "verify_exact": {
+          "ROW_MEAN_MARGIN": {
+            "value": 0.005,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "HOST_DRAFTED_MINIMUM_POSITIONS": {
+            "value": 4108,
+            "source": "tools/qual/README.md#release-gates"
+          }
+        },
+        "teacher": {
+          "TOP1_SIGMAS": {
+            "value": 2.0,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          }
+        }
+      },
+      "input_rules": {
+        "verify_ar": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "texts"
+            ],
+            "op": "count_ge",
+            "value": 35,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "k"
+            ],
+            "op": "eq",
+            "value": 0,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "checkpoint_identity"
+            ],
+            "op": "eq",
+            "value": "74a79eebe1535a7b16ab26f7984224ef1f0a285a2a8a3b57d094c79f738fe473",
+            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          },
+          {
+            "path": [
+              "reference_sha256"
+            ],
+            "op": "eq",
+            "value": "1c8f2f0282d8869ad8201a18004139e4acad6f440796af5b8f7fcbac939b44c9",
+            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          }
+        ],
+        "verify_candidate": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "texts"
+            ],
+            "op": "count_ge",
+            "value": 35,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "k"
+            ],
+            "op": "ge",
+            "value": 1,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "checkpoint_identity"
+            ],
+            "op": "eq",
+            "value": "74a79eebe1535a7b16ab26f7984224ef1f0a285a2a8a3b57d094c79f738fe473",
+            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          },
+          {
+            "path": [
+              "reference_sha256"
+            ],
+            "op": "eq",
+            "value": "1c8f2f0282d8869ad8201a18004139e4acad6f440796af5b8f7fcbac939b44c9",
+            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          }
+        ]
+      }
+    },
+    "needle": {
+      "module": "needle",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-needle.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ]
+    },
+    "prefix_exact": {
+      "module": "prefix_exact",
+      "args": [
+        "report",
+        "--record",
+        "{prefix_record}"
+      ],
+      "timeout_seconds": 1740,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        }
+      ],
+      "files": [
+        "prefix_record"
+      ]
+    },
+    "preemption_exact": {
+      "module": "preempt_compare",
+      "args": [
+        "compare",
+        "--reserved",
+        "{preemption_reserved}",
+        "--preempted",
+        "{preemption_candidate}",
+        "--every",
+        "32",
+        "--ties-before-preemption"
+      ],
+      "timeout_seconds": 1740,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        },
+        {
+          "path": [
+            "ties_before_preemption"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        },
+        {
+          "path": [
+            "requests"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        },
+        {
+          "path": [
+            "positions_after_first_preemption"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        }
+      ],
+      "files": [
+        "preemption_reserved",
+        "preemption_candidate"
+      ]
+    },
+    "preemption_exact_c1": {
+      "module": "preempt_compare",
+      "args": [
+        "compare",
+        "--reserved",
+        "{preemption_reserved_c1}",
+        "--preempted",
+        "{preemption_candidate_c1}",
+        "--every",
+        "32",
+        "--exact"
+      ],
+      "timeout_seconds": 1740,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        },
+        {
+          "path": [
+            "exact"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        },
+        {
+          "path": [
+            "requests"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        },
+        {
+          "path": [
+            "positions_after_first_preemption"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        }
+      ],
+      "files": [
+        "preemption_reserved_c1",
+        "preemption_candidate_c1"
+      ]
+    },
+    "media_preprocessing": {
+      "module": "media_preprocessing",
+      "args": [],
+      "timeout_seconds": 900,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/reference-runner.md#frontend-preprocessing"
+        },
+        {
+          "path": [
+            "reference_bound"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/reference-runner.md#frontend-preprocessing"
+        }
+      ],
+      "constants": {
+        "media_preprocessing": {
+          "SPREAD_FACTOR": {
+            "value": 2.0,
+            "source": "docs/reference-runner.md#frontend-preprocessing"
+          }
+        }
+      }
+    },
+    "paired_teacher": {
+      "module": "paired_teacher",
+      "args": [
+        "--accepted",
+        "{stored_teacher}",
+        "--candidate",
+        "{teacher}",
+        "--url",
+        "{url}",
+        "--model",
+        "{model}"
+      ],
+      "files": [
+        "stored_teacher",
+        "teacher"
+      ],
+      "timeout_seconds": 900,
+      "receipt": "*-paired_teacher.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/paired-accuracy.md"
+        }
+      ],
+      "constants": {
+        "paired_teacher": {
+          "PROFILE_POLICIES": {
+            "source": "docs/paired-accuracy.md#activation-and-calibration",
+            "value": {
+              "tp4-ar": {
+                "schema": "paired-teacher-margins/v1",
+                "approval": "operator:2026-10-03:accepted-repeat-calibrate-then-adopt;operator:2026-10-04:reviewed-neutral-margins",
+                "rationale": "Report the maximum nonnegative repeat upper CI95 for pooled mean and top-one, the largest category point increase and net tail count. Deterministic repeat spread does not bound legitimate neutral numerics changes. Retain the reviewed proposal: 0.005-nat pooled upper CI95, 0.01-nat category point mean, 1% pooled top-one upper CI95, Holm alpha 0.05 and two net tail positions above 0.5 nats. The accepted alpha.2 TP2-versus-TP4 neutral evidence passes these rules. Operator approved the procedure on 2026-10-03 and corrected margin adoption on 2026-10-04; zero repeat spread must not adopt zero margins.",
+                "reference_sha256": "1c8f2f0282d8869ad8201a18004139e4acad6f440796af5b8f7fcbac939b44c9",
+                "mean_margin": 0.005,
+                "category_mean_margin": 0.01,
+                "top1_delta": 0.01,
+                "category_alpha": 0.05,
+                "min_clusters": 8,
+                "tail_growth_nats": 0.5,
+                "tail_net_allowance": 2,
+                "allow_sparse_pooled": false
+              },
+              "tp4-mtp": {
+                "schema": "paired-teacher-margins/v1",
+                "approval": "operator:2026-10-03:accepted-repeat-calibrate-then-adopt;operator:2026-10-04:reviewed-neutral-margins",
+                "rationale": "Report the maximum nonnegative repeat upper CI95 for pooled mean and top-one, the largest category point increase and net tail count. Deterministic repeat spread does not bound legitimate neutral numerics changes. Retain the reviewed proposal: 0.005-nat pooled upper CI95, 0.01-nat category point mean, 1% pooled top-one upper CI95, Holm alpha 0.05 and two net tail positions above 0.5 nats. The accepted alpha.2 TP2-versus-TP4 neutral evidence passes these rules. Operator approved the procedure on 2026-10-03 and corrected margin adoption on 2026-10-04; zero repeat spread must not adopt zero margins.",
+                "reference_sha256": "1c8f2f0282d8869ad8201a18004139e4acad6f440796af5b8f7fcbac939b44c9",
+                "mean_margin": 0.005,
+                "category_mean_margin": 0.01,
+                "top1_delta": 0.01,
+                "category_alpha": 0.05,
+                "min_clusters": 8,
+                "tail_growth_nats": 0.5,
+                "tail_net_allowance": 2,
+                "allow_sparse_pooled": false
+              },
+              "tp2-ar": {
+                "schema": "paired-teacher-margins/v1",
+                "approval": "operator:2026-10-03:accepted-repeat-calibrate-then-adopt;operator:2026-10-04:reviewed-neutral-margins",
+                "rationale": "Report the maximum nonnegative repeat upper CI95 for pooled mean and top-one, the largest category point increase and net tail count. Deterministic repeat spread does not bound legitimate neutral numerics changes. Retain the reviewed proposal: 0.005-nat pooled upper CI95, 0.01-nat category point mean, 1% pooled top-one upper CI95, Holm alpha 0.05 and two net tail positions above 0.5 nats. The accepted alpha.2 TP2-versus-TP4 neutral evidence passes these rules. Operator approved the procedure on 2026-10-03 and corrected margin adoption on 2026-10-04; zero repeat spread must not adopt zero margins.",
+                "reference_sha256": "1c8f2f0282d8869ad8201a18004139e4acad6f440796af5b8f7fcbac939b44c9",
+                "mean_margin": 0.005,
+                "category_mean_margin": 0.01,
+                "top1_delta": 0.01,
+                "category_alpha": 0.05,
+                "min_clusters": 8,
+                "tail_growth_nats": 0.5,
+                "tail_net_allowance": 2,
+                "allow_sparse_pooled": false
+              },
+              "tp2-mtp": {
+                "schema": "paired-teacher-margins/v1",
+                "approval": "operator:2026-10-03:accepted-repeat-calibrate-then-adopt;operator:2026-10-04:reviewed-neutral-margins",
+                "rationale": "Report the maximum nonnegative repeat upper CI95 for pooled mean and top-one, the largest category point increase and net tail count. Deterministic repeat spread does not bound legitimate neutral numerics changes. Retain the reviewed proposal: 0.005-nat pooled upper CI95, 0.01-nat category point mean, 1% pooled top-one upper CI95, Holm alpha 0.05 and two net tail positions above 0.5 nats. The accepted alpha.2 TP2-versus-TP4 neutral evidence passes these rules. Operator approved the procedure on 2026-10-03 and corrected margin adoption on 2026-10-04; zero repeat spread must not adopt zero margins.",
+                "reference_sha256": "1c8f2f0282d8869ad8201a18004139e4acad6f440796af5b8f7fcbac939b44c9",
+                "mean_margin": 0.005,
+                "category_mean_margin": 0.01,
+                "top1_delta": 0.01,
+                "category_alpha": 0.05,
+                "min_clusters": 8,
+                "tail_growth_nats": 0.5,
+                "tail_net_allowance": 2,
+                "allow_sparse_pooled": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "determinism": {
+      "module": "determinism",
+      "args": [
+        "compare",
+        "{determinism_ar}",
+        "{determinism_spec}"
+      ],
+      "timeout_seconds": 600,
+      "json_file": "{determinism_spec}",
+      "reference_file": "{determinism_ar}",
+      "reference_equal": [
+        [
+          "run_id"
+        ],
+        [
+          "server",
+          "checkpoint",
+          "checkpoint_identity"
+        ],
+        [
+          "server",
+          "health",
+          "serving",
+          "package_identity"
+        ],
+        [
+          "server",
+          "health",
+          "serving",
+          "version"
+        ],
+        [
+          "server",
+          "health",
+          "serving",
+          "source_commit"
+        ]
+      ],
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/check-kinds.md#determinism-determinismv1"
+        }
+      ],
+      "files": [
+        "determinism_ar",
+        "determinism_spec"
+      ],
+      "input_rules": {
+        "determinism_ar": [
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "checkpoint_identity"
+            ],
+            "op": "eq",
+            "value": "74a79eebe1535a7b16ab26f7984224ef1f0a285a2a8a3b57d094c79f738fe473",
+            "source": "docs/model-qwen38.md#context-parallelism"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "tensor_parallel_size"
+            ],
+            "op": "eq",
+            "value": 4,
+            "source": "docs/model-qwen38.md#context-parallelism"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "kv_cache_dtype"
+            ],
+            "op": "eq",
+            "value": "bf16",
+            "source": "docs/model-qwen38.md#context-parallelism"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "context_parallel_size"
+            ],
+            "op": "eq",
+            "value": 2,
+            "source": "docs/model-qwen38.md#context-parallelism"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "speculation",
+              "tokens"
+            ],
+            "op": "eq",
+            "value": 0,
+            "source": "docs/check-kinds.md#determinism-determinismv1"
+          }
+        ],
+        "determinism_spec": [
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "checkpoint_identity"
+            ],
+            "op": "eq",
+            "value": "74a79eebe1535a7b16ab26f7984224ef1f0a285a2a8a3b57d094c79f738fe473",
+            "source": "docs/model-qwen38.md#context-parallelism"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "tensor_parallel_size"
+            ],
+            "op": "eq",
+            "value": 4,
+            "source": "docs/model-qwen38.md#context-parallelism"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "kv_cache_dtype"
+            ],
+            "op": "eq",
+            "value": "bf16",
+            "source": "docs/model-qwen38.md#context-parallelism"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "context_parallel_size"
+            ],
+            "op": "eq",
+            "value": 2,
+            "source": "docs/model-qwen38.md#context-parallelism"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "speculation",
+              "tokens"
+            ],
+            "op": "ge",
+            "value": 1,
+            "source": "docs/check-kinds.md#determinism-determinismv1"
+          }
+        ]
+      }
+    },
+    "kv_offload_plain": {
+      "module": "kv_offload",
+      "args": [
+        "report",
+        "--off",
+        "{kv_offload_plain_off}",
+        "--swap",
+        "{kv_offload_plain_swap}"
+      ],
+      "timeout_seconds": 600,
+      "receipt": "*-kv-offload-plain.json",
+      "files": [
+        "kv_offload_plain_off",
+        "kv_offload_plain_swap"
+      ],
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/serving-kv-pool.md"
+        }
+      ]
+    },
+    "kv_offload_pressure": {
+      "module": "kv_offload",
+      "args": [
+        "report",
+        "--off",
+        "{kv_offload_pressure_off}",
+        "--swap",
+        "{kv_offload_pressure_swap}"
+      ],
+      "timeout_seconds": 600,
+      "receipt": "*-kv-offload-pressure.json",
+      "files": [
+        "kv_offload_pressure_off",
+        "kv_offload_pressure_swap"
+      ],
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/serving-kv-pool.md"
+        }
+      ]
+    }
+  },
+  "renamed_checks": {
+    "qwen38-teacher": "teacher"
+  },
+  "references": {
+    "teacher": {
+      "path": "fixtures/qwen38/teacher-reference.json",
+      "sha256": "1c8f2f0282d8869ad8201a18004139e4acad6f440796af5b8f7fcbac939b44c9",
+      "schema": "chopinfer.qwen38.teacher-reference.v2",
+      "workload_sha256": "5298d2131c90206a2cb30cbce06618e9906f7b4d9bd46529483ca518a2ac6289",
+      "variants": [
+        "exact",
+        "bf16",
+        "f64"
+      ]
+    },
+    "long_context": {
+      "path": "fixtures/qwen38/long-context-reference.json",
+      "sha256": "31dbb9c0d1035d6aed10499d1a69620f792f2282987248294555893894dff122",
+      "schema": "chopinfer.qwen38.teacher-reference.v2",
+      "workload_sha256": "a95daaca66ad1077e4add849c3163eee2a2cb6153311c3c1a360e37d9f1b8db1",
+      "variants": [
+        "exact",
+        "bf16",
+        "f64"
+      ]
+    },
+    "long_context_128k": {
+      "path": {
+        "env": "CHOPINFER_QWEN38_LONG_REFERENCE",
+        "path": "reference.json"
+      },
+      "sha256": "e3d931c2c6c3d5d84cc571194f097e15292288e88b9ccdea271b41547bb5cfa0",
+      "schema": "chopinfer.qwen38.teacher-reference.v2",
+      "workload": {
+        "env": "CHOPINFER_QWEN38_LONG_REFERENCE",
+        "path": "reference.workload.json"
+      },
+      "workload_sha256": "f9cb644f8d8ae56a25f63c63a47cc80742dd766ac844d1792d229937786d4ab1",
+      "variants": [
+        "exact"
+      ]
+    },
+    "image_probes": {
+      "path": "fixtures/qwen38/image-probe-references.json",
+      "sha256": "e4f674c35b26362802e1f542980ca9002c1698d5146ed8a6ee0ff2b869850000",
+      "schema": "chopinfer.qwen38.image-probe-references.v5",
+      "workload": {
+        "env": "CHOPINFER_DATA",
+        "path": "qwen38-refs/refrun/image-probe-references.workload.json"
+      }
+    }
+  },
+  "inputs": {
+    "fixture_root": "fixtures/qwen38",
+    "frontend": "models/qwen38/compiler/src/frontend.json",
+    "chat_renders": "fixtures/qwen38/frontend/chat-renders.json",
+    "exact": "fixtures/qwen38/teacher-reference.json",
+    "teacher_reference": "fixtures/qwen38/teacher-reference.json",
+    "gsm8k": {
+      "env": "CHOPINFER_MIMO_FIXTURES",
+      "default": "fixtures/mimo26",
+      "path": "gsm8k"
+    },
+    "needle": {
+      "env": "CHOPINFER_DATA",
+      "path": "qwen38-refs/prompts/prompts.json"
+    },
+    "spec_teacher": "fixtures/mimo26/teacher-texts.json",
+    "media_cases": "fixtures/mimo26/capture/multimodal_cases.py",
+    "media_fixtures": {
+      "env": "CHOPINFER_MIMO_FIXTURES",
+      "path": "functional",
+      "default": "fixtures/mimo26"
+    },
+    "media_capture": "fixtures/qwen38/frontend/images.json",
+    "media_images": "fixtures/qwen38/capture/images.py",
+    "frontend_capture": "fixtures/qwen38/frontend",
+    "tokenizer_goldens": "fixtures/qwen38/frontend/tokenizer-golden.json",
+    "greedy_baseline": {
+      "env": "CHOPINFER_DATA",
+      "path": "qualification/qwen38/greedy/e59bd3563c787927575ac4a25f8cf0bc105079dbf0ee7dc1f30daf74b6f3f7a3.json"
+    },
+    "greedy_baseline_adoption": {
+      "env": "CHOPINFER_DATA",
+      "path": "qualification/qwen38/greedy/30153529d8b1a4e31b1408e485add24adce9457161feaf1ad2f6e15e26c90075.adoption.json"
+    },
+    "media_preprocessing_reference": {
+      "env": "CHOPINFER_DATA",
+      "path": "refrun/g9-min8192/preprocessing/qwen38"
+    },
+    "media_preprocessing_frontend": "models/qwen38/compiler/src/frontend-multimodal.json",
+    "layer_reference": {
+      "env": "CHOPINFER_QWEN38_LAYER_REFERENCE",
+      "path": "."
+    }
+  },
+  "qualification": {
+    "teacher_reference_kind": "exact",
+    "teacher_receipt": "teacher",
+    "teacher_capture_schema": "chopinfer.qwen38.teacher-capture.v1",
+    "verify_buckets": [
+      2,
+      4
+    ],
+    "chars_per_token": 4.3,
+    "prefix": {
+      "family": "qwen38",
+      "prompt_end": true,
+      "media": true,
+      "acceptance": true,
+      "block_tokens": 64,
+      "prefill_granule": 64,
+      "anchor_boundary": 2051,
+      "anchor_labels": [
+        "anchor_dense",
+        "anchor_sparse"
+      ],
+      "reference_schema": "chopinfer.qwen38.teacher-reference.v2"
+    },
+    "needle": {
+      "format": "prompt-set",
+      "frozen": "fixtures/qwen38/prompts.json",
+      "lengths": [
+        8192,
+        131072,
+        262144
+      ],
+      "match": "alphanumeric"
+    },
+    "checkpoint": {
+      "lock": "models/qwen38/checkpoint-files.json",
+      "repository": "Qwen/Qwen3.8-Flash-Next-FP8",
+      "revision": "236dfdf285828023ca3bcd3f37366c58a3469b13",
+      "served_model_name": "Qwen3.8-Flash-Next-FP8",
+      "source_lock_sha256": "dc54641c530e797e44deffab2215d539e16f6a6884970fe9684b9756aa8d4f3b",
+      "checkpoint_identity": "74a79eebe1535a7b16ab26f7984224ef1f0a285a2a8a3b57d094c79f738fe473"
+    },
+    "media": {
+      "format": "image-probes",
+      "reference": "image_probes",
+      "receipt": "qwen38-multimodal",
+      "stop_token": "<|im_end|>",
+      "expected": {
+        "blue-square": [
+          "blue"
+        ],
+        "four-images": [
+          "4"
+        ]
+      },
+      "fixture_images": {
+        "blue-square": "blue-square.png",
+        "frame-00": "frames/00.png"
+      },
+      "items": {
+        "blue-square": "short",
+        "frame-00": "short",
+        "four-images": "short",
+        "gradient-333x517": "free-text",
+        "small-100x60": "free-text",
+        "wide-1000x40": "free-text",
+        "large-4500x4000": "free-text"
+      }
+    }
+  },
+  "receipts": {
+    "env": "CHOPINFER_DATA",
+    "path": "qual/qwen38"
+  },
+  "limitations": [
+    "Quick is a bounded smoke screen, not full release qualification.",
+    "External evidence must come from this release; the operator must verify its deployment provenance."
+  ],
+  "preview": {
+    "profile": "tp4-mtp",
+    "speculation": {
+      "drafter": "mtp",
+      "tokens": 3,
+      "draft_cost": "per-token"
+    },
+    "spec_greedy": {
+      "rule": "exact"
+    },
+    "soak_prefix_mix": true,
+    "numerical_reference": "teacher gated against the GPU reference runner's F32 reference, limits from its BF16 and f64 spread",
+    "gsm8k_floor": 194,
+    "package_max_sequences": 128
+  },
+  "capabilities": {
+    "text": true,
+    "frontend": true,
+    "api": true,
+    "structured": true,
+    "prefix_cache": true,
+    "preemption": true,
+    "long_context": true,
+    "stability": true,
+    "media": [
+      "image"
+    ],
+    "speculation": "mtp",
+    "kv_offload": true
+  },
+  "configurations": {
+    "dcp2": {
+      "serve": [
+        "--context-parallel-size",
+        "2"
+      ],
+      "checks": [
+        "teacher",
+        "long_context",
+        "long_context_128k",
+        "spec_verify",
+        "verify_exact",
+        "prefix_exact",
+        "preemption_exact",
+        "preemption_exact_c1",
+        "determinism"
+      ],
+      "quick": [
+        "teacher"
+      ],
+      "media": false,
+      "keep_references": [
+        "teacher",
+        "long_context",
+        "long_context_128k"
+      ],
+      "append": {
+        "teacher": {
+          "rules": [
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 4,
+              "source": "docs/model-qwen38.md#context-parallelism"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "kv_cache_dtype"
+              ],
+              "op": "eq",
+              "value": "bf16",
+              "source": "docs/model-qwen38.md#context-parallelism"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "context_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/model-qwen38.md#context-parallelism"
+            }
+          ]
+        },
+        "long_context": {
+          "rules": [
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 4,
+              "source": "docs/model-qwen38.md#context-parallelism"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "kv_cache_dtype"
+              ],
+              "op": "eq",
+              "value": "bf16",
+              "source": "docs/model-qwen38.md#context-parallelism"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "context_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/model-qwen38.md#context-parallelism"
+            }
+          ]
+        },
+        "spec_verify": {
+          "spec_ar": [
+            {
+              "path": [
+                "server",
+                "model"
+              ],
+              "op": "eq",
+              "value": "{model}",
+              "source": "tools/qual/README.md#release-gates",
+              "unless_present": true
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 4,
+              "source": "docs/model-qwen38.md#context-parallelism"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "kv_cache_dtype"
+              ],
+              "op": "eq",
+              "value": "bf16",
+              "source": "docs/model-qwen38.md#context-parallelism"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "context_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/model-qwen38.md#context-parallelism"
+            }
+          ],
+          "spec_candidate": [
+            {
+              "path": [
+                "server",
+                "model"
+              ],
+              "op": "eq",
+              "value": "{model}",
+              "source": "tools/qual/README.md#release-gates",
+              "unless_present": true
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 4,
+              "source": "docs/model-qwen38.md#context-parallelism"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "kv_cache_dtype"
+              ],
+              "op": "eq",
+              "value": "bf16",
+              "source": "docs/model-qwen38.md#context-parallelism"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "context_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/model-qwen38.md#context-parallelism"
+            }
+          ]
+        },
+        "verify_exact": {
+          "verify_ar": [
+            {
+              "path": [
+                "server",
+                "model"
+              ],
+              "op": "eq",
+              "value": "{model}",
+              "source": "tools/qual/README.md#release-gates",
+              "unless_present": true
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 4,
+              "source": "docs/model-qwen38.md#context-parallelism"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "kv_cache_dtype"
+              ],
+              "op": "eq",
+              "value": "bf16",
+              "source": "docs/model-qwen38.md#context-parallelism"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "context_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/model-qwen38.md#context-parallelism"
+            }
+          ],
+          "verify_candidate": [
+            {
+              "path": [
+                "server",
+                "model"
+              ],
+              "op": "eq",
+              "value": "{model}",
+              "source": "tools/qual/README.md#release-gates",
+              "unless_present": true
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 4,
+              "source": "docs/model-qwen38.md#context-parallelism"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "kv_cache_dtype"
+              ],
+              "op": "eq",
+              "value": "bf16",
+              "source": "docs/model-qwen38.md#context-parallelism"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "context_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/model-qwen38.md#context-parallelism"
+            }
+          ]
+        },
+        "prefix_exact": {
+          "prefix_record": [
+            {
+              "path": [
+                "server",
+                "model"
+              ],
+              "op": "eq",
+              "value": "{model}",
+              "source": "tools/qual/README.md#release-gates",
+              "unless_present": true
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 4,
+              "source": "docs/model-qwen38.md#context-parallelism"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "kv_cache_dtype"
+              ],
+              "op": "eq",
+              "value": "bf16",
+              "source": "docs/model-qwen38.md#context-parallelism"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "context_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/model-qwen38.md#context-parallelism"
+            }
+          ]
+        },
+        "preemption_exact": {
+          "preemption_reserved": [
+            {
+              "path": [
+                "server",
+                "model"
+              ],
+              "op": "eq",
+              "value": "{model}",
+              "source": "tools/qual/README.md#release-gates",
+              "unless_present": true
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 4,
+              "source": "docs/model-qwen38.md#context-parallelism"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "kv_cache_dtype"
+              ],
+              "op": "eq",
+              "value": "bf16",
+              "source": "docs/model-qwen38.md#context-parallelism"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "context_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/model-qwen38.md#context-parallelism"
+            }
+          ],
+          "preemption_candidate": [
+            {
+              "path": [
+                "server",
+                "model"
+              ],
+              "op": "eq",
+              "value": "{model}",
+              "source": "tools/qual/README.md#release-gates",
+              "unless_present": true
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 4,
+              "source": "docs/model-qwen38.md#context-parallelism"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "kv_cache_dtype"
+              ],
+              "op": "eq",
+              "value": "bf16",
+              "source": "docs/model-qwen38.md#context-parallelism"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "context_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/model-qwen38.md#context-parallelism"
+            }
+          ]
+        },
+        "preemption_exact_c1": {
+          "preemption_reserved_c1": [
+            {
+              "path": [
+                "server",
+                "model"
+              ],
+              "op": "eq",
+              "value": "{model}",
+              "source": "tools/qual/README.md#release-gates",
+              "unless_present": true
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 4,
+              "source": "docs/model-qwen38.md#context-parallelism"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "kv_cache_dtype"
+              ],
+              "op": "eq",
+              "value": "bf16",
+              "source": "docs/model-qwen38.md#context-parallelism"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "context_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/model-qwen38.md#context-parallelism"
+            }
+          ],
+          "preemption_candidate_c1": [
+            {
+              "path": [
+                "server",
+                "model"
+              ],
+              "op": "eq",
+              "value": "{model}",
+              "source": "tools/qual/README.md#release-gates",
+              "unless_present": true
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 4,
+              "source": "docs/model-qwen38.md#context-parallelism"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "kv_cache_dtype"
+              ],
+              "op": "eq",
+              "value": "bf16",
+              "source": "docs/model-qwen38.md#context-parallelism"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "context_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/model-qwen38.md#context-parallelism"
+            }
+          ]
+        },
+        "long_context_128k": {
+          "rules": [
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 4,
+              "source": "docs/model-qwen38.md#context-parallelism"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "kv_cache_dtype"
+              ],
+              "op": "eq",
+              "value": "bf16",
+              "source": "docs/model-qwen38.md#context-parallelism"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "context_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/model-qwen38.md#context-parallelism"
+            }
+          ]
+        }
+      },
+      "change_classes": {
+        "service": [
+          "determinism"
+        ]
+      },
+      "capabilities": {
+        "text": true,
+        "frontend": false,
+        "api": false,
+        "structured": false,
+        "prefix_cache": true,
+        "preemption": true,
+        "long_context": false,
+        "stability": false,
+        "kv_offload": false,
+        "media": [],
+        "speculation": "mtp"
+      }
+    },
+    "local-lab-nvfp4": {
+      "checkpoint": "QWEN38_LOCAL_LAB_NVFP4",
+      "checks": [
+        "teacher",
+        "spec_verify",
+        "verify_exact"
+      ],
+      "quick": [
+        "teacher"
+      ],
+      "serving": {
+        "checkpoint_identity": "523558398d01331e607d4d2bbcf457dad2454ac0e65201d59161710b4902c824"
+      },
+      "media": false,
+      "references": {
+        "teacher": {
+          "path": "fixtures/qwen38/exports/local-lab-nvfp4/teacher-reference.json",
+          "sha256": "c21c3ac2468822dad990333cb9e5cf147d8e49e4423e597a433d28cf3de22530",
+          "schema": "chopinfer.qwen38.teacher-reference.v2",
+          "workload_sha256": "5298d2131c90206a2cb30cbce06618e9906f7b4d9bd46529483ca518a2ac6289",
+          "variants": [
+            "exact",
+            "bf16",
+            "f64"
+          ]
+        }
+      },
+      "keep_references": [],
+      "inputs": {
+        "exact": "fixtures/qwen38/exports/local-lab-nvfp4/teacher-reference.json",
+        "teacher_reference": "fixtures/qwen38/exports/local-lab-nvfp4/teacher-reference.json",
+        "legacy_reference": null
+      },
+      "qualification": {
+        "checkpoint": {
+          "lock": "models/qwen38/exports/local-lab-nvfp4/checkpoint-files.json",
+          "repository": "local-inference-lab/Qwen3.8-Flash-Next-NVFP4",
+          "revision": "6909a5bed089a48fa07e956d3915af2537de9368",
+          "served_model_name": "local-inference-lab/Qwen3.8-Flash-Next-NVFP4",
+          "source_lock_sha256": "72f4d9e601781362555bc2afa9cb6cf5fe3e646fc033e80882470f855bc3adde",
+          "checkpoint_identity": "523558398d01331e607d4d2bbcf457dad2454ac0e65201d59161710b4902c824"
+        }
+      },
+      "append": {
+        "spec_verify": {
+          "rules": [
+            {
+              "path": [
+                "bound",
+                "checkpoint_identity"
+              ],
+              "op": "eq",
+              "value": "523558398d01331e607d4d2bbcf457dad2454ac0e65201d59161710b4902c824",
+              "source": "tools/qual/README.md#checkpoint-binding"
+            }
+          ],
+          "spec_ar": [
+            {
+              "path": [
+                "server",
+                "checkpoint",
+                "checkpoint_identity"
+              ],
+              "op": "eq",
+              "value": "523558398d01331e607d4d2bbcf457dad2454ac0e65201d59161710b4902c824",
+              "source": "tools/qual/README.md#checkpoint-binding"
+            }
+          ],
+          "spec_candidate": [
+            {
+              "path": [
+                "server",
+                "checkpoint",
+                "checkpoint_identity"
+              ],
+              "op": "eq",
+              "value": "523558398d01331e607d4d2bbcf457dad2454ac0e65201d59161710b4902c824",
+              "source": "tools/qual/README.md#checkpoint-binding"
+            }
+          ]
+        }
+      },
+      "capabilities": null
+    },
+    "nvidia-nvfp4": {
+      "checkpoint": "QWEN38_NVIDIA_NVFP4",
+      "checks": [
+        "teacher",
+        "spec_verify",
+        "verify_exact"
+      ],
+      "quick": [
+        "teacher"
+      ],
+      "serving": {
+        "checkpoint_identity": "89a49896c98129e47732f7edaf06cde980b71e513b7f5a0fd5bc3681a0155e15"
+      },
+      "media": false,
+      "references": {
+        "teacher": {
+          "path": "fixtures/qwen38/exports/nvidia-nvfp4/teacher-reference.json",
+          "sha256": "306f40834bf15bcdaddd3c1ef338483feb3047f2af0ad7521c921ec9e06a7d05",
+          "schema": "chopinfer.qwen38.teacher-reference.v2",
+          "workload_sha256": "5298d2131c90206a2cb30cbce06618e9906f7b4d9bd46529483ca518a2ac6289",
+          "variants": [
+            "exact",
+            "bf16",
+            "f64"
+          ]
+        }
+      },
+      "keep_references": [],
+      "inputs": {
+        "exact": "fixtures/qwen38/exports/nvidia-nvfp4/teacher-reference.json",
+        "teacher_reference": "fixtures/qwen38/exports/nvidia-nvfp4/teacher-reference.json",
+        "legacy_reference": null
+      },
+      "qualification": {
+        "checkpoint": {
+          "lock": "models/qwen38/exports/nvidia-nvfp4/checkpoint-files.json",
+          "repository": "nvidia/Qwen3.8-Flash-Next-NVFP4",
+          "revision": "fc694b54fb0174e0913e6adf86691ef85a4ead47",
+          "served_model_name": "nvidia/Qwen3.8-Flash-Next-NVFP4",
+          "source_lock_sha256": "7a9132701b1fc6dd8c81f39331d77689e9faaa4c2a2e0d2eca5dd84c3e705bfc",
+          "checkpoint_identity": "89a49896c98129e47732f7edaf06cde980b71e513b7f5a0fd5bc3681a0155e15"
+        }
+      },
+      "append": {
+        "spec_verify": {
+          "rules": [
+            {
+              "path": [
+                "bound",
+                "checkpoint_identity"
+              ],
+              "op": "eq",
+              "value": "89a49896c98129e47732f7edaf06cde980b71e513b7f5a0fd5bc3681a0155e15",
+              "source": "tools/qual/README.md#checkpoint-binding"
+            }
+          ],
+          "spec_ar": [
+            {
+              "path": [
+                "server",
+                "checkpoint",
+                "checkpoint_identity"
+              ],
+              "op": "eq",
+              "value": "89a49896c98129e47732f7edaf06cde980b71e513b7f5a0fd5bc3681a0155e15",
+              "source": "tools/qual/README.md#checkpoint-binding"
+            }
+          ],
+          "spec_candidate": [
+            {
+              "path": [
+                "server",
+                "checkpoint",
+                "checkpoint_identity"
+              ],
+              "op": "eq",
+              "value": "89a49896c98129e47732f7edaf06cde980b71e513b7f5a0fd5bc3681a0155e15",
+              "source": "tools/qual/README.md#checkpoint-binding"
+            }
+          ]
+        }
+      },
+      "capabilities": null
+    },
+    "tp2-mtp": {
+      "tensor_parallel_size": 2,
+      "screens": false,
+      "checks": [
+        "teacher",
+        "paired_teacher",
+        "spec_verify",
+        "verify_exact",
+        "prefix_exact"
+      ],
+      "quick": [
+        "teacher",
+        "paired_teacher"
+      ],
+      "serving": {
+        "tensor_parallel_size": 2,
+        "profile_name": "tp2-mtp"
+      },
+      "source": "docs/topology-qwen.md",
+      "media": false,
+      "keep_references": [
+        "teacher"
+      ],
+      "append": {
+        "teacher": {
+          "rules": [
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/topology-qwen.md"
+            }
+          ]
+        },
+        "paired_teacher": {
+          "rules": [
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/topology-qwen.md"
+            }
+          ],
+          "stored_teacher": [
+            {
+              "path": [
+                "server",
+                "model"
+              ],
+              "op": "eq",
+              "value": "{model}",
+              "source": "docs/topology-qwen.md",
+              "unless_present": true
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/topology-qwen.md"
+            }
+          ],
+          "teacher": [
+            {
+              "path": [
+                "server",
+                "model"
+              ],
+              "op": "eq",
+              "value": "{model}",
+              "source": "docs/topology-qwen.md",
+              "unless_present": true
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/topology-qwen.md"
+            }
+          ]
+        },
+        "spec_verify": {
+          "rules": [
+            {
+              "path": [
+                "bound",
+                "serving",
+                "spec",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/topology-qwen.md"
+            }
+          ],
+          "spec_ar": [
+            {
+              "path": [
+                "server",
+                "model"
+              ],
+              "op": "eq",
+              "value": "{model}",
+              "source": "docs/topology-qwen.md",
+              "unless_present": true
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/topology-qwen.md"
+            }
+          ],
+          "spec_candidate": [
+            {
+              "path": [
+                "server",
+                "model"
+              ],
+              "op": "eq",
+              "value": "{model}",
+              "source": "docs/topology-qwen.md",
+              "unless_present": true
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/topology-qwen.md"
+            }
+          ]
+        },
+        "verify_exact": {
+          "rules": [
+            {
+              "path": [
+                "bound",
+                "candidates",
+                "*",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/topology-qwen.md"
+            },
+            {
+              "path": [
+                "bound",
+                "ar",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/topology-qwen.md"
+            }
+          ],
+          "verify_ar": [
+            {
+              "path": [
+                "server",
+                "model"
+              ],
+              "op": "eq",
+              "value": "{model}",
+              "source": "docs/topology-qwen.md",
+              "unless_present": true
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/topology-qwen.md"
+            }
+          ],
+          "verify_candidate": [
+            {
+              "path": [
+                "server",
+                "model"
+              ],
+              "op": "eq",
+              "value": "{model}",
+              "source": "docs/topology-qwen.md",
+              "unless_present": true
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/topology-qwen.md"
+            }
+          ]
+        },
+        "prefix_exact": {
+          "rules": [
+            {
+              "path": [
+                "serving_identity",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/topology-qwen.md"
+            }
+          ],
+          "prefix_record": [
+            {
+              "path": [
+                "server",
+                "model"
+              ],
+              "op": "eq",
+              "value": "{model}",
+              "source": "docs/topology-qwen.md",
+              "unless_present": true
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/topology-qwen.md"
+            }
+          ]
+        }
+      },
+      "capabilities": {
+        "text": true,
+        "frontend": false,
+        "api": false,
+        "structured": false,
+        "prefix_cache": true,
+        "preemption": false,
+        "long_context": false,
+        "stability": false,
+        "kv_offload": false,
+        "media": [],
+        "speculation": "mtp"
+      }
+    },
+    "tp2-ar": {
+      "tensor_parallel_size": 2,
+      "serve": [
+        "--speculative-tokens",
+        "0"
+      ],
+      "screens": false,
+      "checks": [
+        "teacher",
+        "paired_teacher"
+      ],
+      "quick": [
+        "teacher",
+        "paired_teacher"
+      ],
+      "serving": {
+        "tensor_parallel_size": 2,
+        "profile_name": "tp2-mtp",
+        "speculation_tokens": 0
+      },
+      "source": "docs/topology-qwen.md",
+      "media": false,
+      "keep_references": [
+        "teacher"
+      ],
+      "append": {
+        "teacher": {
+          "rules": [
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/topology-qwen.md"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "speculation",
+                "tokens"
+              ],
+              "op": "eq",
+              "value": 0,
+              "source": "docs/topology-qwen.md"
+            }
+          ]
+        },
+        "paired_teacher": {
+          "rules": [
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/topology-qwen.md"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "speculation",
+                "tokens"
+              ],
+              "op": "eq",
+              "value": 0,
+              "source": "docs/topology-qwen.md"
+            }
+          ],
+          "stored_teacher": [
+            {
+              "path": [
+                "server",
+                "model"
+              ],
+              "op": "eq",
+              "value": "{model}",
+              "source": "docs/topology-qwen.md",
+              "unless_present": true
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/topology-qwen.md"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "speculation",
+                "tokens"
+              ],
+              "op": "eq",
+              "value": 0,
+              "source": "docs/topology-qwen.md"
+            }
+          ],
+          "teacher": [
+            {
+              "path": [
+                "server",
+                "model"
+              ],
+              "op": "eq",
+              "value": "{model}",
+              "source": "docs/topology-qwen.md",
+              "unless_present": true
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/topology-qwen.md"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "speculation",
+                "tokens"
+              ],
+              "op": "eq",
+              "value": 0,
+              "source": "docs/topology-qwen.md"
+            }
+          ]
+        }
+      },
+      "capabilities": {
+        "text": true,
+        "frontend": false,
+        "api": false,
+        "structured": false,
+        "prefix_cache": false,
+        "preemption": false,
+        "long_context": false,
+        "stability": false,
+        "kv_offload": false,
+        "media": [],
+        "speculation": "none"
+      }
+    }
+  },
+  "kv_offload": {
+    "budget_gib": 16,
+    "swap_every": 16,
+    "max_preemptions": 3,
+    "min_gated": 18,
+    "pressure_tokens": 32768
+  }
+}

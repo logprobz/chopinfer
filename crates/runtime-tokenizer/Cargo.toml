@@ -1,0 +1,15 @@
+[package]
+name = "runtime-tokenizer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+fancy-regex = "0.16.2"
+runtime-weights.workspace = true
+unicode-normalization.workspace = true
+
+[lints]
+workspace = true

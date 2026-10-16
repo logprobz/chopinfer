@@ -1,0 +1,140 @@
+[
+  {
+    "name": "comm_ll_bf16_glm5next_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_LL_MAX_ROWS",
+        "2"
+      ],
+      [
+        "CHOP_COMM_LL_CLUSTER",
+        "2"
+      ],
+      [
+        "CHOP_COMM_PUSH_CLUSTER",
+        "8"
+      ],
+      [
+        "CHOP_COMM_TWO_SHOT_MIN_RANKS",
+        "4"
+      ],
+      [
+        "CHOP_COMM_ONE_SHOT_BASE",
+        "1048576"
+      ],
+      [
+        "CHOP_COMM_TWO_SHOT_BASE",
+        "5242880"
+      ],
+      [
+        "CHOP_COMM_PHASED_BASE",
+        "8388608"
+      ],
+      [
+        "CHOP_COMM_TWO_SHOT_FLAGS",
+        "82"
+      ],
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ],
+      [
+        "CHOP_COMM_WIDE_MAX_ROWS",
+        "256"
+      ],
+      [
+        "CHOP_COMM_WIDE_BLOCK_ROWS",
+        "16"
+      ],
+      [
+        "CHOP_COMM_WIDE_GATHER_BASE",
+        "5767168"
+      ],
+      [
+        "CHOP_COMM_WIDE_SCATTER_BASE",
+        "8388608"
+      ],
+      [
+        "CHOP_COMM_WIDE_FLAGS",
+        "98"
+      ],
+      [
+        "CHOP_COMM_LL_ROWS_BY_RANKS",
+        "0x0200000002000202ull"
+      ],
+      [
+        "CHOP_COMM_ONESHOT_ROWS_BY_RANKS",
+        "0x1020202010202020ull"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_comm_allreduce_ll_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "inboxes",
+            "slots": 8,
+            "cxx_type": "uint64_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epochs",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements"
+          },
+          {
+            "kind": "U32",
+            "name": "capacity_ctas"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "3b311a7393fa8f9abb25bc9acbe9587b904aa139f12ce68618d10255b0aa4aba",
+    "resources": [
+      {
+        "symbol": "chop_comm_allreduce_ll_bf16_v1",
+        "registers": 43,
+        "shared_static_bytes": 33792,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

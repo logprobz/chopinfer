@@ -1,0 +1,18 @@
+[
+  {
+    "name": "latent_attention_slices_late_wait_latent_h16_l512_sm120",
+    "source_closure_sha256": "53bde7e4ef5b9b6ca122749bf7d2340ffe0f3956d42403dfe8f40340f749d361"
+  },
+  {
+    "name": "latent_attention_slices_latent_h16_l512_sm120",
+    "source_closure_sha256": "c1ade5e3e5d7f43f0b8d22c00dcad80c0ddcd8721346231e159480b003231e7d"
+  },
+  {
+    "name": "latent_attention_slices_skip_first_latent_h16_l512_sm120",
+    "source_closure_sha256": "71adf06bdac9b50efaee569e2c87a244599fa8655f9e5fe72fc5b55d875a00bd"
+  },
+  {
+    "name": "latent_attention_slices_stale_page_latent_h16_l512_sm120",
+    "source_closure_sha256": "cf4317e47a30be7e9e50bb538c41015e1911b49602bc993fc9b09ddd7a8a9942"
+  }
+]

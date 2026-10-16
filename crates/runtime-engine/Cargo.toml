@@ -1,0 +1,21 @@
+[package]
+name = "runtime-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+runtime-bundle-sdk.workspace = true
+runtime-grammar.workspace = true
+runtime-kv.workspace = true
+runtime-model-api.workspace = true
+runtime-sampling.workspace = true
+runtime-scheduler.workspace = true
+sha2.workspace = true
+
+serde_json.workspace = true
+
+[lints]
+workspace = true

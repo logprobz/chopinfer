@@ -1,0 +1,32 @@
+[package]
+name = "kernel-harness"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# The model-free kernel test harness: GPU sessions, launches, poisoned
+# replays, conformance and the kit. It names no model and builds no cubin;
+# kernel-lab and a model's own test crate pass their cubins, catalogs and
+# cases as data.
+
+[features]
+# The kernels the host launches itself (`kit::host`): the shipped sampling
+# cubin, and the CPU sampler as the device sampler's oracle. Building it
+# compiles the sampling cubin.
+host-sampling = ["dep:runtime-kernels", "dep:runtime-sampling"]
+
+[dependencies]
+encoder-spec.workspace = true
+libc.workspace = true
+kernel-build.workspace = true
+kernel-core.workspace = true
+kernels-sm120.workspace = true
+runtime-cuda.workspace = true
+runtime-kernels = { workspace = true, optional = true }
+runtime-sampling = { workspace = true, optional = true }
+serde_json.workspace = true
+
+[lints]
+workspace = true

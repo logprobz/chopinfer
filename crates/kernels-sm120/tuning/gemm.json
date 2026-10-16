@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "target": { "compute_capability": "12.0", "sm_count": 188 },
+  "defaults": {
+    "tile_k_bf16": 64,
+    "tile_k_fp8": 128,
+    "tile_k_fp4": 256,
+    "decode_stages": 4,
+    "prefill_stages": 3,
+    "swizzle": 128,
+    "warps": 12,
+    "decode_split_cap": 64,
+    "prefill_split_cap": 8
+  },
+  "decode": {
+    "m_buckets": [1, 2, 4, 8, 16, 32],
+    "tile_m": 64,
+    "tile_n": "max(8, m_bucket)"
+  },
+  "prefill": {
+    "bf16_tiles": [[64, 64], [64, 128], [128, 128], [128, 256]],
+    "fp8_a16_tiles": [[64, 64], [64, 128]],
+    "fp8_a8_tiles": [[64, 128], [128, 128], [128, 256]],
+    "mxfp8_a16_tiles": [[64, 128]],
+    "mxfp8_a8_tiles": [[64, 128], [128, 128], [128, 256]],
+    "fp4_a16_tiles": [[64, 128]],
+    "mxfp4_a8_tiles": [[64, 128], [128, 128]],
+    "nvfp4_a4_tiles": [[64, 128], [128, 128], [128, 256]]
+  }
+}

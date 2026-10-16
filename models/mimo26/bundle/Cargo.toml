@@ -1,0 +1,55 @@
+[package]
+name = "bundle-mimo26"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+build = "sm120/build.rs"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+# ci/rust_tests.py runs this package's library tests in one process, as cargo
+# test does, beside nextest. Its fake-host tests build plan caches once per
+# process; one process per test took about 6 times the CPU time (2026-10-05).
+[package.metadata.chopinfer]
+lib-tests-in-one-process = true
+
+[features]
+# CHOPINFER_TAPS_DIR (taps): per-layer taps, diagnostic bundles only.
+diagnostic-taps = []
+
+[dependencies]
+model-mimo26-contract.workspace = true
+bundle-runtime.workspace = true
+frontend-format.workspace = true
+runtime-bundle-abi.workspace = true
+runtime-bundle-sdk.workspace = true
+kernel-core.workspace = true
+kernels-sm120.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+encoder-spec.workspace = true
+kernel-build.workspace = true
+
+[build-dependencies]
+kernel-build.workspace = true
+kernels-sm120.workspace = true
+model-mimo26-contract.workspace = true
+
+[dev-dependencies]
+model-compiler-sdk.workspace = true
+bundle-runtime = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true
+
+# Tests that name kernels_sm120 live under tests/sm120 and keep their names.
+[[test]]
+name = "projection_assembly"
+path = "tests/sm120/projection_assembly.rs"
+
+[[test]]
+name = "encoder_catalog_stability"
+path = "tests/sm120/encoder_catalog_stability.rs"

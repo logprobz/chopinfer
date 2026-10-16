@@ -1,0 +1,10 @@
+{
+  "geometries": [
+    {
+      "id": "shared-audio",
+      "file": "geometry.json",
+      "kernel_tag": "mimo_shared_audio",
+      "encoders": true
+    }
+  ]
+}

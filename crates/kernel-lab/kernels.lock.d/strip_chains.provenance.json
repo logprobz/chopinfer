@@ -1,0 +1,30 @@
+[
+  {
+    "name": "strip_chain_mutants_sm120",
+    "source_closure_sha256": "3b9bf056e612b8836e6fc018d4cb755c02fabb348a25f5c588a04b02a052e1d5"
+  },
+  {
+    "name": "strip_chains_n128_k4096_sm120",
+    "source_closure_sha256": "3f653fc4555ac1c833b05c5ad244651129bea21e414c29028005071593ab336b"
+  },
+  {
+    "name": "strip_chains_n2048_k4096_sm120",
+    "source_closure_sha256": "00f62a2f65e85d51011657e01a9edb9421daa5ce483e80aa3ece5b0ba4a22b9f"
+  },
+  {
+    "name": "strip_chains_n320_k4096_f32_sm120",
+    "source_closure_sha256": "e440c77d0ab2f0394f42ca27347722c3e78b2b2c3615020984fd6bbc2df48408"
+  },
+  {
+    "name": "strip_chains_n38720_k4096_f32_sm120",
+    "source_closure_sha256": "9257b1b0774ab864ac7d5dd42de27a8037ac9ffded1e25992c55b71d29cd6004"
+  },
+  {
+    "name": "strip_chains_n4096_k2048_sm120",
+    "source_closure_sha256": "8875a1b9a219243f0185d331e6c22ebee9cb14229bf4c65030b4a6ebbd4f2ba0"
+  },
+  {
+    "name": "strip_chains_n64_k4096_sm120",
+    "source_closure_sha256": "e5ce3e04b720ca042f2f388d61acc2ea50df1a18be1e836fd82fc11c602f0d4f"
+  }
+]

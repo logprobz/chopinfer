@@ -1,0 +1,10 @@
+[
+  {
+    "name": "projection_copies_glm5next_sm120",
+    "source_closure_sha256": "86cddbb713ab59b717180a7f51cc299101fefbe3559e066cdd4a88c337284d01"
+  },
+  {
+    "name": "projections_glm5next_sm120",
+    "source_closure_sha256": "0208112eb456e378140144f0cbb7123159fd7e2a4d33a51f2f0495ded2505575"
+  }
+]

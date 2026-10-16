@@ -1,0 +1,12 @@
+{
+  "geometries": [
+    {
+      "id": "synthetic_small",
+      "file": "geometry.json",
+      "kernel_tag": "glm5next_synthetic_small",
+      "limits": {
+        "text_config.index_topk": 1024
+      }
+    }
+  ]
+}

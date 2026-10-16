@@ -1,0 +1,26 @@
+[
+  {
+    "name": "channel_decay_tiled_h16x128_sm120",
+    "source_closure_sha256": "2a45c66efc2c41578867afeec633fd9257fdd0715c8f2b4b759260377365d224"
+  },
+  {
+    "name": "channel_decay_tiled_late_wait_h16x128_sm120",
+    "source_closure_sha256": "a1056be3230e1e8979ce9d1d17cf3d9f8e9defebf8aa33750dcd6947cf4ce63b"
+  },
+  {
+    "name": "channel_decay_tiled_no_singles_h16x128_sm120",
+    "source_closure_sha256": "fa66b1d1d061cc96c72befe67ca418f4a3cd278d95d9af7bdf4f098450d6ad96"
+  },
+  {
+    "name": "channel_decay_tiled_no_tile_wait_h16x128_sm120",
+    "source_closure_sha256": "2488cd0ec045a63eb5844f74f4e148f15024383ba61a57e19c08ab5c81bc9e9d"
+  },
+  {
+    "name": "channel_decay_tiled_reversed_chain_h16x128_sm120",
+    "source_closure_sha256": "71ea5e8753109a30d910a95c977c7cbce618ff62caacea82bfdd6848a939c383"
+  },
+  {
+    "name": "channel_decay_tiled_short_triangle_h16x128_sm120",
+    "source_closure_sha256": "355f4907565ceec6b8329d92aa865aa8c5a795a89d7962a4915c09d159084761"
+  }
+]

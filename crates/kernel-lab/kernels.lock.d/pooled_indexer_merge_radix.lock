@@ -1,0 +1,273 @@
+[
+  {
+    "name": "pooled_indexer_merge_radix_late_wait_pidx_lab_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_MERGE_RADIX_TEST_LATE_WAIT",
+        "1"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_pooled_indexer_pidx_lab_select_merge_radix_late_wait_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const uint64_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "top_k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          }
+        ],
+        "max_threads": 512,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "d7b166515199c4cef8a7dc2fe8fbf011b5cd4fde6ef9906a0f83f5e031dd1768",
+    "resources": [
+      {
+        "symbol": "chop_pooled_indexer_pidx_lab_select_merge_radix_late_wait_v1",
+        "registers": 116,
+        "shared_static_bytes": 40976,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 512,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "pooled_indexer_merge_radix_pidx_lab_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_pooled_indexer_pidx_lab_select_merge_radix_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const uint64_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "top_k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          }
+        ],
+        "max_threads": 512,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "97ed7951a685d0060b98c9b2129836cd523197594f48f1548513f0c49b79ba37",
+    "resources": [
+      {
+        "symbol": "chop_pooled_indexer_pidx_lab_select_merge_radix_v1",
+        "registers": 116,
+        "shared_static_bytes": 40976,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 512,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "pooled_indexer_merge_radix_skip_last_pidx_lab_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_MERGE_RADIX_TEST_SKIP_LAST",
+        "1"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_pooled_indexer_pidx_lab_select_merge_radix_skip_last_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const uint64_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "top_k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          }
+        ],
+        "max_threads": 512,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "01d8ca98d2ba489bf418c52b8995502e2d00931cdb5fd00b7464e3201444aa06",
+    "resources": [
+      {
+        "symbol": "chop_pooled_indexer_pidx_lab_select_merge_radix_skip_last_v1",
+        "registers": 118,
+        "shared_static_bytes": 40976,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 512,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "pooled_indexer_merge_radix_ties_high_pidx_lab_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_MERGE_RADIX_TEST_TIES_HIGH",
+        "1"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_pooled_indexer_pidx_lab_select_merge_radix_ties_high_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "const uint64_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "top_k"
+          },
+          {
+            "kind": "U32",
+            "name": "splits"
+          }
+        ],
+        "max_threads": 512,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "30cd36b72ecc754ba72112d1a4ae48b25b4005a1f69bf752078a0d4db72a0cc2",
+    "resources": [
+      {
+        "symbol": "chop_pooled_indexer_pidx_lab_select_merge_radix_ties_high_v1",
+        "registers": 117,
+        "shared_static_bytes": 40976,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 512,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

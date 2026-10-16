@@ -1,0 +1,14 @@
+[
+  {
+    "name": "chop_moe_chain_e288l72k8_fp8block",
+    "source_closure_sha256": "7b2d9d2b844011fb0b219d1dbf707c4d6ed32263f0d2146d5183a3ebb2661877"
+  },
+  {
+    "name": "chop_moe_chain_e288l72k8_fp8block_bw4",
+    "source_closure_sha256": "2195fe963aac5840594a6ce285df3f8a6507799a4a49fb3a3beedd16c13d28e4"
+  },
+  {
+    "name": "chop_moe_chain_e288l72k8_fp8block_dt",
+    "source_closure_sha256": "4eb12c518e34e594d9ddd6935a218972c25f1a1f7f429dad1f09758b23b077a4"
+  }
+]

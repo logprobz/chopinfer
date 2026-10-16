@@ -1,0 +1,22 @@
+[
+  {
+    "name": "comm_ll_f32_late_wait_sm120",
+    "source_closure_sha256": "3d0b8c136850e71026e8abf66f0a7db0536286b0f06b65ae464655789505fe4d"
+  },
+  {
+    "name": "comm_ll_f32_no_wait_sm120",
+    "source_closure_sha256": "5fdd66f80839061be8723574fb9e8917d988ce303d8904008ef832cba836b629"
+  },
+  {
+    "name": "comm_ll_f32_sm120",
+    "source_closure_sha256": "8c77d4511b10677283d849e70d08b21434fe968776ba6855ed5ea157a6a6abd3"
+  },
+  {
+    "name": "comm_ll_f32_stale_sm120",
+    "source_closure_sha256": "220aa5c2a528fad96f146f1d88a0cb8e00489138c6fedb86273d63c630100669"
+  },
+  {
+    "name": "probe_pdl_late_trigger_sm120",
+    "source_closure_sha256": "dd95ef0dd324a3b3266c3a75efb42eaed63d60e7245c28d98c7de40d8bd536c4"
+  }
+]

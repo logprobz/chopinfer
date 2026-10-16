@@ -1,0 +1,31 @@
+#[path = "support/frontend.rs"]
+mod frontend_support;
+use frontend_support::frontend;
+use runtime_frontend::test_support::tool_choice;
+
+#[test]
+fn only_an_offered_function_can_be_called() {
+    tool_choice::only_an_offered_function_can_be_called(&frontend());
+}
+
+#[test]
+fn every_tool_choice_renders_the_offered_tools() {
+    tool_choice::every_tool_choice_renders_the_offered_tools(&frontend(), "<tools>");
+}
+
+#[test]
+fn tool_references_are_refused() {
+    tool_choice::tool_references_are_refused(&frontend());
+}
+
+/// A forced call's enumeration and constant values, which the grammar writes
+/// as they are, read back through this model's own parser declaration,
+/// whose wrappers carry the template's whitespace.
+#[test]
+fn forced_literal_values_read_back() {
+    let descriptor = frontend_format::FormatDescriptorV1::from_component_bytes(
+        model_mimo26::frontend::COMPONENT,
+    )
+    .unwrap();
+    frontend_format::test_support::forced_literals::assert_forced_literals_read_back(&descriptor);
+}

@@ -1,0 +1,114 @@
+# Model inventory, checked by tests/bundle-boundary.sh (tests/model_inventory.py).
+# Each role is the crate in the directory of that name. List every bin and
+# cdylib target exactly; libraries are not listed.
+schema = "chopinfer-model-inventory-v1"
+# CPU CI reads CHOPINFER_QWEN38_CHECKPOINT and CHOPINFER_QWEN38_TOKENIZER_DIR.
+checkpoint_env = "QWEN38"
+
+[bundle]
+package = "bundle-qwen38"
+cdylib = ["bundle_qwen38"]
+
+[compiler]
+package = "model-qwen38"
+bin = ["chopinfer-model-qwen38", "qwen38-oracle", "qwen38-package"]
+
+[contract]
+package = "model-qwen38-contract"
+
+[release]
+enabled = true
+bins = ["qwen38-package", "chopinfer-model-qwen38"]
+cdylibs = ["bundle_qwen38"]
+
+[contributor]
+roots = ["model-qwen38"]
+fixtures = [
+  "models/qwen38/compiler/fixtures/config.json",
+  "models/qwen38/compiler/fixtures/contributor-config.json",
+  "models/qwen38/compiler/fixtures/contributor-tensors.json",
+  "models/qwen38/compiler/fixtures/tensor-families.json",
+  "models/qwen38/compiler/fixtures/checkpoints/index.json",
+]
+clear_env = ["CHOPINFER_QWEN38_NATIVE_MODULE"]
+
+[[contributor.tests]]
+name = "compile Qwen fixtures"
+phase = "compile"
+package = "model-qwen38"
+lib = true
+suites = ["chat_goldens", "reasoning_controls", "package_cli"]
+compile = true
+
+[[contributor.tests]]
+phase = "config"
+package = "model-qwen38"
+lib = true
+cases = [
+  { name = "compatible metadata", case = "config::tests::compatible_checkpoint_metadata" },
+  { name = "unsupported dimensions and layer drift", case = "config::tests::pinned_geometry_and_rejected_changes" },
+]
+
+[[contributor.tests]]
+name = "tensor mapping and refusals"
+phase = "mapping"
+package = "model-qwen38"
+lib = true
+case = "catalog::tests::contributor_tensor_names_shapes_scales_and_pairs"
+
+[[contributor.tests]]
+phase = "package_including_verify"
+package = "model-qwen38"
+lib = true
+cases = [
+  { name = "image-free Qwen package", case = "package::tests::an_image_free_text_package_declares_the_serving_contract" },
+  { name = "planned rank images at every topology", case = "package::tests::an_image_free_package_plans_its_rank_images_and_leaves_out_the_indexes" },
+]
+
+[[contributor.tests]]
+name = "rendered chat and decoding"
+phase = "frontend"
+package = "model-qwen38"
+suites = ["chat_goldens"]
+
+[[contributor.tests]]
+name = "reasoning controls"
+phase = "frontend"
+package = "model-qwen38"
+suites = ["reasoning_controls"]
+
+[[contributor.tests]]
+name = "package CLI"
+phase = "package_cli"
+package = "model-qwen38"
+suites = ["package_cli"]
+
+[checks]
+reference_tests = ["test_reference.py", "test_encoder_reference.py", "test_frontend_cases.py",
+                   "test_frontend_corpus.py"]
+
+[[checks.profile_targets]]
+package = "model-qwen38"
+kind = "bin"
+target = "chopinfer-model-qwen38"
+
+[[checks.profile_targets]]
+package = "model-qwen38"
+kind = "bin"
+target = "qwen38-package"
+
+[[checks.profile_targets]]
+package = "bundle-qwen38"
+kind = "cdylib"
+target = "bundle_qwen38"
+
+[kernel_lab]
+catalog = true
+
+# tests/model-geometry-recipe.sh: one `--ci` leg per fixture under
+# fixtures/qwen38/geometries/.
+[geometry_recipe]
+stage = "bundle"
+fixtures = ["synthetic-small", "synthetic-wide"]
+architecture = "QwenGeometryRecipeForConditionalGeneration"
+contract_tests = ["kernel_geometries", "kernel_rank_catalog"]

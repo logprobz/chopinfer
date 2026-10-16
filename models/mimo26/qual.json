@@ -1,0 +1,2280 @@
+{
+  "schema": "chopinfer-qual-model/v1",
+  "model": "mimo26",
+  "cohorts": {
+    "quick": {
+      "checks": [
+        "teacher",
+        "api",
+        "structured",
+        "soak",
+        "paired_teacher"
+      ]
+    },
+    "full": {
+      "checks": [
+        "teacher",
+        "api",
+        "structured",
+        "verify_exact",
+        "spec_verify",
+        "spec_continuation",
+        "prefix_cache",
+        "multimodal",
+        "encoder_parity",
+        "grounding",
+        "needle",
+        "evals_candidate",
+        "evals_compare",
+        "logprobs_candidate",
+        "logprobs_compare",
+        "soak",
+        "frontend_goldens",
+        "prefix_exact",
+        "preemption_exact",
+        "preemption_exact_c1",
+        "media_preprocessing",
+        "paired_teacher",
+        "kv_offload_plain",
+        "kv_offload_pressure"
+      ]
+    }
+  },
+  "change_classes": {
+    "frontend": [
+      "teacher",
+      "api",
+      "structured",
+      "frontend_goldens",
+      "media_preprocessing"
+    ],
+    "quality": [
+      "teacher",
+      "api",
+      "structured",
+      "multimodal",
+      "encoder_parity",
+      "grounding",
+      "needle",
+      "evals_candidate",
+      "evals_compare",
+      "logprobs_candidate",
+      "logprobs_compare",
+      "media_preprocessing",
+      "paired_teacher"
+    ],
+    "service": [
+      "soak",
+      "preemption_exact",
+      "preemption_exact_c1",
+      "kv_offload_plain",
+      "kv_offload_pressure"
+    ],
+    "speculation": [
+      "verify_exact",
+      "spec_verify",
+      "spec_continuation"
+    ],
+    "prefix": [
+      "prefix_cache",
+      "prefix_exact"
+    ]
+  },
+  "checks": {
+    "teacher": {
+      "module": "teacher",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--server-log",
+        "{server_log}"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-teacher.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "mean_abs_dlogprob"
+          ],
+          "op": "le",
+          "value": 0.15,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "top1_decisive"
+          ],
+          "op": "le",
+          "value": 0.08,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "top1_near_tie"
+          ],
+          "op": "le",
+          "value": 0.08,
+          "source": "docs/numerics.md#top-one-near-ties"
+        },
+        {
+          "path": [
+            "top1_disagreement"
+          ],
+          "op": "le",
+          "value": 0.1,
+          "source": "docs/numerics.md#top-one-near-ties"
+        },
+        {
+          "path": [
+            "failed_categories"
+          ],
+          "op": "eq",
+          "value": [],
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "scored"
+          ],
+          "op": "ge",
+          "value": 4108,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "server",
+            "checkpoint",
+            "checkpoint_identity"
+          ],
+          "op": "eq",
+          "value": "4f01392ef1a9b0ad73a852865916066ebc8c81cd0e88502be286ce9022fb2bea",
+          "source": "fixtures/mimo26/README.md#reference-code-references"
+        },
+        {
+          "path": [
+            "reference_sha256"
+          ],
+          "op": "eq",
+          "value": "2c83e750967b169d4381b0b56eb6ce15afa2640ccdc77b54770654f563a67cbd",
+          "source": "fixtures/mimo26/README.md#reference-code-references"
+        }
+      ],
+      "constants": {
+        "teacher": {
+          "MAX_MEAN": {
+            "value": 0.15,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "LARGE_SET_MEAN": {
+            "value": 0.1,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "LARGE_SET_POSITIONS": {
+            "value": 1000,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MAX_TOP1": {
+            "value": 0.08,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MEAN_STEP": {
+            "value": 0.05,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MEAN_MARGIN": {
+            "value": 0.02,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          "TOP1_SIGMAS": {
+            "value": 2.0,
+            "source": "tools/qual/README.md#release-gates"
+          }
+        }
+      },
+      "files": [
+        "server_log"
+      ]
+    },
+    "api": {
+      "module": "api",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-api.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ]
+    },
+    "structured": {
+      "module": "structured",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--stream"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-structured.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "summary",
+            "overall",
+            "validity_rate"
+          ],
+          "op": "ge",
+          "value": 1.0,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "summary",
+            "overall",
+            "refused"
+          ],
+          "op": "eq",
+          "value": 0,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "summary",
+            "overall",
+            "truncated"
+          ],
+          "op": "eq",
+          "value": 0,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ]
+    },
+    "verify_exact": {
+      "module": "verify_exact",
+      "args": [
+        "report",
+        "--require-row-shapes",
+        "--ar",
+        "{verify_ar}",
+        "--verify",
+        "{verify_candidate}"
+      ],
+      "timeout_seconds": 7200,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "records"
+          ],
+          "op": "count_ge",
+          "value": 1,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "exact",
+            "all",
+            "gate_against_ar",
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "coverage",
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "k"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ],
+      "files": [
+        "verify_ar",
+        "verify_candidate"
+      ],
+      "constants": {
+        "verify_exact": {
+          "ROW_MEAN_MARGIN": {
+            "value": 0.005,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "HOST_DRAFTED_MINIMUM_POSITIONS": {
+            "value": 4108,
+            "source": "tools/qual/README.md#release-gates"
+          }
+        },
+        "teacher": {
+          "TOP1_SIGMAS": {
+            "value": 2.0,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          }
+        }
+      },
+      "input_rules": {
+        "verify_ar": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "texts"
+            ],
+            "op": "count_ge",
+            "value": 33,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "k"
+            ],
+            "op": "eq",
+            "value": 0,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "checkpoint_identity"
+            ],
+            "op": "eq",
+            "value": "4f01392ef1a9b0ad73a852865916066ebc8c81cd0e88502be286ce9022fb2bea",
+            "source": "fixtures/mimo26/README.md#reference-code-references"
+          },
+          {
+            "path": [
+              "reference_sha256"
+            ],
+            "op": "eq",
+            "value": "2c83e750967b169d4381b0b56eb6ce15afa2640ccdc77b54770654f563a67cbd",
+            "source": "fixtures/mimo26/README.md#reference-code-references"
+          }
+        ],
+        "verify_candidate": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "texts"
+            ],
+            "op": "count_ge",
+            "value": 33,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "k"
+            ],
+            "op": "ge",
+            "value": 1,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "checkpoint_identity"
+            ],
+            "op": "eq",
+            "value": "4f01392ef1a9b0ad73a852865916066ebc8c81cd0e88502be286ce9022fb2bea",
+            "source": "fixtures/mimo26/README.md#reference-code-references"
+          },
+          {
+            "path": [
+              "reference_sha256"
+            ],
+            "op": "eq",
+            "value": "2c83e750967b169d4381b0b56eb6ce15afa2640ccdc77b54770654f563a67cbd",
+            "source": "fixtures/mimo26/README.md#reference-code-references"
+          }
+        ]
+      }
+    },
+    "spec_verify": {
+      "module": "spec_verify",
+      "args": [
+        "compare",
+        "--ar",
+        "{spec_ar}",
+        "--spec",
+        "{spec_candidate}"
+      ],
+      "timeout_seconds": 7200,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "sets",
+            "copy",
+            "scored_positions"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        }
+      ],
+      "files": [
+        "spec_ar",
+        "spec_candidate"
+      ],
+      "constants": {
+        "spec_verify": {
+          "MAXIMUM_ABS_DLOGPROB": {
+            "value": 0.15,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MAXIMUM_TOP1_DISAGREEMENT": {
+            "value": 0.08,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          }
+        }
+      },
+      "input_rules": {
+        "spec_ar": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "sets",
+              "copy",
+              "requests"
+            ],
+            "op": "count_ge",
+            "value": 16,
+            "source": "tools/qual/README.md#verify-rows-against-autoregressive-rows"
+          },
+          {
+            "path": [
+              "sets",
+              "natural",
+              "requests"
+            ],
+            "op": "count_ge",
+            "value": 16,
+            "source": "tools/qual/README.md#verify-rows-against-autoregressive-rows"
+          }
+        ],
+        "spec_candidate": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "sets",
+              "copy",
+              "requests"
+            ],
+            "op": "count_ge",
+            "value": 16,
+            "source": "tools/qual/README.md#verify-rows-against-autoregressive-rows"
+          },
+          {
+            "path": [
+              "sets",
+              "natural",
+              "requests"
+            ],
+            "op": "count_ge",
+            "value": 16,
+            "source": "tools/qual/README.md#verify-rows-against-autoregressive-rows"
+          }
+        ]
+      }
+    },
+    "spec_continuation": {
+      "module": "spec_continuation",
+      "args": [
+        "compare",
+        "--spec",
+        "{continuation_spec}",
+        "--spec-reference",
+        "{continuation_spec_reference}",
+        "--ar",
+        "{continuation_ar}",
+        "--ar-reference",
+        "{continuation_ar_reference}"
+      ],
+      "timeout_seconds": 1800,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/numerics.md#speculative-continuations"
+        },
+        {
+          "path": [
+            "rule"
+          ],
+          "op": "eq",
+          "value": "spec-continuation.v1",
+          "source": "docs/numerics.md#speculative-continuations"
+        }
+      ],
+      "files": [
+        "continuation_spec",
+        "continuation_ar",
+        "continuation_spec_reference",
+        "continuation_ar_reference"
+      ],
+      "input_rules": {
+        "continuation_spec": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "checkpoint_identity"
+            ],
+            "op": "eq",
+            "value": "4f01392ef1a9b0ad73a852865916066ebc8c81cd0e88502be286ce9022fb2bea",
+            "source": "fixtures/mimo26/README.md#reference-code-references"
+          },
+          {
+            "path": [
+              "arm"
+            ],
+            "op": "eq",
+            "value": "chopinfer-spec",
+            "source": "docs/numerics.md#speculative-continuations"
+          },
+          {
+            "path": [
+              "sets_sha256"
+            ],
+            "op": "eq",
+            "value": "b20729e0352b46c9b15f37c3c0552680f3eaeb0b0f6c05f7e5821ccb4b03ac20",
+            "source": "docs/numerics.md#speculative-continuations"
+          },
+          {
+            "path": [
+              "serving",
+              "speculation",
+              "tokens"
+            ],
+            "op": "ge",
+            "value": 1,
+            "source": "docs/numerics.md#speculative-continuations"
+          },
+          {
+            "path": [
+              "sets",
+              "copy",
+              "requests"
+            ],
+            "op": "count_ge",
+            "value": 16,
+            "source": "docs/numerics.md#speculative-continuations"
+          },
+          {
+            "path": [
+              "sets",
+              "natural",
+              "requests"
+            ],
+            "op": "count_ge",
+            "value": 16,
+            "source": "docs/numerics.md#speculative-continuations"
+          },
+          {
+            "path": [
+              "sets",
+              "open",
+              "requests"
+            ],
+            "op": "count_ge",
+            "value": 16,
+            "source": "docs/numerics.md#speculative-continuations"
+          },
+          {
+            "path": [
+              "sets",
+              "sampled",
+              "requests"
+            ],
+            "op": "count_ge",
+            "value": 64,
+            "source": "docs/numerics.md#speculative-continuations"
+          }
+        ],
+        "continuation_ar": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "checkpoint_identity"
+            ],
+            "op": "eq",
+            "value": "4f01392ef1a9b0ad73a852865916066ebc8c81cd0e88502be286ce9022fb2bea",
+            "source": "fixtures/mimo26/README.md#reference-code-references"
+          },
+          {
+            "path": [
+              "arm"
+            ],
+            "op": "eq",
+            "value": "chopinfer-ar",
+            "source": "docs/numerics.md#speculative-continuations"
+          },
+          {
+            "path": [
+              "sets_sha256"
+            ],
+            "op": "eq",
+            "value": "b20729e0352b46c9b15f37c3c0552680f3eaeb0b0f6c05f7e5821ccb4b03ac20",
+            "source": "docs/numerics.md#speculative-continuations"
+          },
+          {
+            "path": [
+              "serving",
+              "speculation",
+              "tokens"
+            ],
+            "op": "eq",
+            "value": 0,
+            "source": "docs/numerics.md#speculative-continuations"
+          },
+          {
+            "path": [
+              "sets",
+              "copy",
+              "requests"
+            ],
+            "op": "count_ge",
+            "value": 16,
+            "source": "docs/numerics.md#speculative-continuations"
+          },
+          {
+            "path": [
+              "sets",
+              "natural",
+              "requests"
+            ],
+            "op": "count_ge",
+            "value": 16,
+            "source": "docs/numerics.md#speculative-continuations"
+          },
+          {
+            "path": [
+              "sets",
+              "open",
+              "requests"
+            ],
+            "op": "count_ge",
+            "value": 16,
+            "source": "docs/numerics.md#speculative-continuations"
+          },
+          {
+            "path": [
+              "sets",
+              "sampled",
+              "requests"
+            ],
+            "op": "count_ge",
+            "value": 64,
+            "source": "docs/numerics.md#speculative-continuations"
+          }
+        ]
+      }
+    },
+    "prefix_cache": {
+      "module": "prefix_cache",
+      "args": [
+        "compare",
+        "--baseline",
+        "{prefix_baseline}",
+        "--floor",
+        "{prefix_floor}",
+        "--candidate",
+        "{prefix_candidate}"
+      ],
+      "timeout_seconds": 7200,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "candidate",
+            "requests"
+          ],
+          "op": "ge",
+          "value": 18,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "follow_up_ttft"
+          ],
+          "op": "count_ge",
+          "value": 3,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ],
+      "files": [
+        "prefix_baseline",
+        "prefix_floor",
+        "prefix_candidate"
+      ],
+      "constants": {
+        "prefix_cache": {
+          "MEAN_DLOGPROB_SLACK": {
+            "value": 0.01,
+            "source": "tools/qual/README.md#prefix-caching"
+          },
+          "MAX_DLOGPROB_SLACK": {
+            "value": 0.05,
+            "source": "tools/qual/README.md#prefix-caching"
+          }
+        }
+      },
+      "input_rules": {
+        "prefix_baseline": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "lengths"
+            ],
+            "op": "eq",
+            "value": [
+              1024,
+              32768,
+              131072
+            ],
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "requests"
+            ],
+            "op": "count_ge",
+            "value": 18,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "requests",
+              "*",
+              "tokens"
+            ],
+            "op": "count_ge",
+            "value": 1,
+            "source": "tools/qual/README.md#release-gates"
+          }
+        ],
+        "prefix_floor": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "lengths"
+            ],
+            "op": "eq",
+            "value": [
+              1024,
+              32768,
+              131072
+            ],
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "requests"
+            ],
+            "op": "count_ge",
+            "value": 18,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "requests",
+              "*",
+              "tokens"
+            ],
+            "op": "count_ge",
+            "value": 1,
+            "source": "tools/qual/README.md#release-gates"
+          }
+        ],
+        "prefix_candidate": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "lengths"
+            ],
+            "op": "eq",
+            "value": [
+              1024,
+              32768,
+              131072
+            ],
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "requests"
+            ],
+            "op": "count_ge",
+            "value": 18,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "requests",
+              "*",
+              "tokens"
+            ],
+            "op": "count_ge",
+            "value": 1,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "tools/qual/README.md#release-gates"
+          }
+        ]
+      }
+    },
+    "multimodal": {
+      "module": "multimodal",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--server-log",
+        "{server_log}"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-multimodal.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "server",
+            "checkpoint",
+            "checkpoint_identity"
+          ],
+          "op": "eq",
+          "value": "4f01392ef1a9b0ad73a852865916066ebc8c81cd0e88502be286ce9022fb2bea",
+          "source": "fixtures/mimo26/README.md#reference-code-references"
+        },
+        {
+          "path": [
+            "exact_reference_sha256"
+          ],
+          "op": "eq",
+          "value": "25fa52da1e7043aebde5220f5576f6eeb4ab1ca5d9be63d6dfd34b6f45becce9",
+          "source": "fixtures/mimo26/README.md#reference-code-references"
+        },
+        {
+          "path": [
+            "mixed",
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/reference-runner.md#current-bound-fixtures"
+        },
+        {
+          "path": [
+            "mixed",
+            "case_count"
+          ],
+          "op": "eq",
+          "value": 4,
+          "source": "docs/reference-runner.md#current-bound-fixtures"
+        }
+      ],
+      "constants": {
+        "multimodal": {
+          "MEAN_ABS_LOGPROB_LIMIT": {
+            "value": 0.15,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "LARGE_SET_MEAN_LIMIT": {
+            "value": 0.1,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "LARGE_SET_POSITIONS": {
+            "value": 1000,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "TOP1_DISAGREEMENT_LIMIT": {
+            "value": 0.08,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MEAN_STEP": {
+            "value": 0.05,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "NEAR_TIE_LIMIT": {
+            "value": 0.3,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          }
+        }
+      },
+      "files": [
+        "server_log"
+      ]
+    },
+    "encoder_parity": {
+      "module": "encoder_parity",
+      "args": [
+        "taps",
+        "--run",
+        "{encoder_parity_run}",
+        "--url",
+        "{url}"
+      ],
+      "timeout_seconds": 1800,
+      "receipt": "*-encoder-parity.json",
+      "files": [
+        "encoder_parity_run"
+      ],
+      "constants": {
+        "encoder_parity": {
+          "PARITY_RATIO": {
+            "value": 3.0,
+            "source": "tools/qual/README.md#encoder-parity"
+          },
+          "ROW_FLOOR": {
+            "value": 0.00390625,
+            "source": "tools/qual/README.md#encoder-parity"
+          },
+          "CODES_MARGIN": {
+            "value": 0.03,
+            "source": "tools/qual/README.md#encoder-parity"
+          }
+        }
+      },
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#encoder-parity"
+        }
+      ]
+    },
+    "grounding": {
+      "module": "grounding",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-grounding.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ],
+      "constants": {
+        "grounding": {
+          "GAIN_LIMIT": {
+            "value": 1.0,
+            "source": "tools/qual/README.md#multimodal-serving"
+          }
+        }
+      }
+    },
+    "needle": {
+      "module": "needle",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-needle.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ]
+    },
+    "evals_candidate": {
+      "module": "evals",
+      "args": [
+        "run",
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--arm",
+        "candidate",
+        "--run-id",
+        "{run_id}"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-evals-candidate.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "items"
+          ],
+          "op": "ge",
+          "value": 2819,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "suites",
+            "gsm8k",
+            "count"
+          ],
+          "op": "eq",
+          "value": 1319,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "suites",
+            "mmlu_pro",
+            "count"
+          ],
+          "op": "eq",
+          "value": 1200,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "suites",
+            "longctx",
+            "count"
+          ],
+          "op": "eq",
+          "value": 300,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ]
+    },
+    "evals_compare": {
+      "module": "evals",
+      "args": [
+        "compare",
+        "--arms",
+        "candidate",
+        "reference",
+        "--receipt",
+        "candidate={evals_candidate}",
+        "--stored",
+        "reference={stored_evals_candidate}"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-evals-compare.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "unpaired_items",
+            "candidate"
+          ],
+          "op": "eq",
+          "value": 0,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "unpaired_items",
+            "reference"
+          ],
+          "op": "eq",
+          "value": 0,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ],
+      "constants": {
+        "evals": {
+          "SIGNIFICANCE": {
+            "value": 0.05,
+            "source": "tools/qual/README.md#release-gates"
+          }
+        }
+      }
+    },
+    "logprobs_candidate": {
+      "module": "logprobs_parity",
+      "args": [
+        "capture",
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--arm",
+        "candidate"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-logprobs-*.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "cases"
+          ],
+          "op": "count_ge",
+          "value": 10,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ]
+    },
+    "logprobs_compare": {
+      "module": "logprobs_parity",
+      "args": [
+        "compare",
+        "{stored_logprobs_candidate}",
+        "{logprobs_candidate}"
+      ],
+      "timeout_seconds": 7200,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "cases"
+          ],
+          "op": "count_ge",
+          "value": 10,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "cases",
+            "*",
+            "notes"
+          ],
+          "op": "eq",
+          "value": [],
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ]
+    },
+    "soak": {
+      "module": "soak",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--structured-mix"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-soak.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "completed"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "memory_scope"
+          ],
+          "op": "eq",
+          "value": "serving_process_tree",
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "memory_growth_mib"
+          ],
+          "op": "le",
+          "value": 512,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        },
+        {
+          "path": [
+            "host_memory_growth_mib"
+          ],
+          "op": "le",
+          "value": 512,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        },
+        {
+          "path": [
+            "memory_samples"
+          ],
+          "op": "count_ge",
+          "value": 2,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        }
+      ],
+      "cohort_args": {
+        "quick": [
+          "--duration",
+          "60",
+          "--concurrency",
+          "4"
+        ],
+        "full": [
+          "--duration",
+          "1380",
+          "--concurrency",
+          "32",
+          "--prefix-mix",
+          "--media-mix"
+        ]
+      },
+      "constants": {
+        "soak": {
+          "NEAR_TIE_MARGIN": {
+            "value": 0.5,
+            "source": "tools/qual/README.md#prefix-caching"
+          },
+          "PREFIX_DLOGPROB": {
+            "value": 0.5,
+            "source": "tools/qual/README.md#prefix-caching"
+          }
+        }
+      }
+    },
+    "frontend_goldens": {
+      "module": "frontend_goldens",
+      "args": [
+        "{capture}",
+        "--required-file",
+        "chat-renders.json",
+        "--required-file",
+        "tokenizer-golden.json",
+        "--json",
+        "{run}/frontend.json"
+      ],
+      "timeout_seconds": 7200,
+      "stdout_json": true,
+      "json_file": "{run}/frontend.json",
+      "files": [
+        "capture"
+      ],
+      "rules": [
+        {
+          "path": [
+            "chat-renders.json",
+            "agrees"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/check-kinds.md"
+        },
+        {
+          "path": [
+            "tokenizer-golden.json",
+            "agrees"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/check-kinds.md"
+        }
+      ]
+    },
+    "prefix_exact": {
+      "module": "prefix_exact",
+      "args": [
+        "report",
+        "--record",
+        "{prefix_record}"
+      ],
+      "timeout_seconds": 1740,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        }
+      ],
+      "files": [
+        "prefix_record"
+      ]
+    },
+    "preemption_exact": {
+      "module": "preempt_compare",
+      "args": [
+        "compare",
+        "--reserved",
+        "{preemption_reserved}",
+        "--preempted",
+        "{preemption_candidate}",
+        "--every",
+        "32",
+        "--ties-before-preemption"
+      ],
+      "timeout_seconds": 1740,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        },
+        {
+          "path": [
+            "ties_before_preemption"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        },
+        {
+          "path": [
+            "requests"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        },
+        {
+          "path": [
+            "positions_after_first_preemption"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        }
+      ],
+      "files": [
+        "preemption_reserved",
+        "preemption_candidate"
+      ]
+    },
+    "preemption_exact_c1": {
+      "module": "preempt_compare",
+      "args": [
+        "compare",
+        "--reserved",
+        "{preemption_reserved_c1}",
+        "--preempted",
+        "{preemption_candidate_c1}",
+        "--every",
+        "32",
+        "--exact"
+      ],
+      "timeout_seconds": 1740,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        },
+        {
+          "path": [
+            "exact"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        },
+        {
+          "path": [
+            "requests"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        },
+        {
+          "path": [
+            "positions_after_first_preemption"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        }
+      ],
+      "files": [
+        "preemption_reserved_c1",
+        "preemption_candidate_c1"
+      ]
+    },
+    "media_preprocessing": {
+      "module": "media_preprocessing",
+      "args": [],
+      "timeout_seconds": 900,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/reference-runner.md#frontend-preprocessing"
+        },
+        {
+          "path": [
+            "reference_bound"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/reference-runner.md#frontend-preprocessing"
+        }
+      ],
+      "constants": {
+        "media_preprocessing": {
+          "SPREAD_FACTOR": {
+            "value": 2.0,
+            "source": "docs/reference-runner.md#frontend-preprocessing"
+          },
+          "PROCESSOR_OVERRIDES": {
+            "value": {
+              "image_mean": [
+                0.485,
+                0.456,
+                0.406
+              ],
+              "image_std": [
+                0.229,
+                0.224,
+                0.225
+              ],
+              "max_pixels": 1048576,
+              "min_pixels": 8192
+            },
+            "source": "docs/reference-runner.md#frontend-preprocessing"
+          }
+        }
+      }
+    },
+    "paired_teacher": {
+      "module": "paired_teacher",
+      "args": [
+        "--accepted",
+        "{stored_teacher}",
+        "--candidate",
+        "{teacher}",
+        "--url",
+        "{url}",
+        "--model",
+        "{model}"
+      ],
+      "files": [
+        "stored_teacher",
+        "teacher"
+      ],
+      "timeout_seconds": 900,
+      "receipt": "*-paired_teacher.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/paired-accuracy.md"
+        }
+      ],
+      "constants": {
+        "paired_teacher": {
+          "PROFILE_POLICIES": {
+            "source": "docs/paired-accuracy.md#activation-and-calibration",
+            "value": {
+              "tp4-ar": {
+                "schema": "paired-teacher-margins/v1",
+                "approval": "operator:2026-10-03:accepted-repeat-calibrate-then-adopt;operator:2026-10-04:reviewed-neutral-margins",
+                "rationale": "Report the maximum nonnegative repeat upper CI95 for pooled mean and top-one, the largest category point increase and net tail count. Deterministic repeat spread does not bound legitimate neutral numerics changes. Retain the reviewed proposal: 0.005-nat pooled upper CI95, 0.01-nat category point mean, 1% pooled top-one upper CI95, Holm alpha 0.05 and two net tail positions above 0.5 nats. The accepted alpha.2 TP2-versus-TP4 neutral evidence passes these rules. Operator approved the procedure on 2026-10-03 and corrected margin adoption on 2026-10-04; zero repeat spread must not adopt zero margins.",
+                "reference_sha256": "2c83e750967b169d4381b0b56eb6ce15afa2640ccdc77b54770654f563a67cbd",
+                "mean_margin": 0.005,
+                "category_mean_margin": 0.01,
+                "top1_delta": 0.01,
+                "category_alpha": 0.05,
+                "min_clusters": 8,
+                "tail_growth_nats": 0.5,
+                "tail_net_allowance": 2,
+                "allow_sparse_pooled": false
+              },
+              "tp4-dflash": {
+                "schema": "paired-teacher-margins/v1",
+                "approval": "operator:2026-10-03:accepted-repeat-calibrate-then-adopt;operator:2026-10-04:reviewed-neutral-margins",
+                "rationale": "Report the maximum nonnegative repeat upper CI95 for pooled mean and top-one, the largest category point increase and net tail count. Deterministic repeat spread does not bound legitimate neutral numerics changes. Retain the reviewed proposal: 0.005-nat pooled upper CI95, 0.01-nat category point mean, 1% pooled top-one upper CI95, Holm alpha 0.05 and two net tail positions above 0.5 nats. The accepted alpha.2 TP2-versus-TP4 neutral evidence passes these rules. Operator approved the procedure on 2026-10-03 and corrected margin adoption on 2026-10-04; zero repeat spread must not adopt zero margins.",
+                "reference_sha256": "2c83e750967b169d4381b0b56eb6ce15afa2640ccdc77b54770654f563a67cbd",
+                "mean_margin": 0.005,
+                "category_mean_margin": 0.01,
+                "top1_delta": 0.01,
+                "category_alpha": 0.05,
+                "min_clusters": 8,
+                "tail_growth_nats": 0.5,
+                "tail_net_allowance": 2,
+                "allow_sparse_pooled": false
+              },
+              "tp2-ar": {
+                "schema": "paired-teacher-margins/v1",
+                "approval": "operator:2026-10-03:accepted-repeat-calibrate-then-adopt;operator:2026-10-04:reviewed-neutral-margins",
+                "rationale": "Report the maximum nonnegative repeat upper CI95 for pooled mean and top-one, the largest category point increase and net tail count. Deterministic repeat spread does not bound legitimate neutral numerics changes. Retain the reviewed proposal: 0.005-nat pooled upper CI95, 0.01-nat category point mean, 1% pooled top-one upper CI95, Holm alpha 0.05 and two net tail positions above 0.5 nats. The accepted alpha.2 TP2-versus-TP4 neutral evidence passes these rules. Operator approved the procedure on 2026-10-03 and corrected margin adoption on 2026-10-04; zero repeat spread must not adopt zero margins.",
+                "reference_sha256": "2c83e750967b169d4381b0b56eb6ce15afa2640ccdc77b54770654f563a67cbd",
+                "mean_margin": 0.005,
+                "category_mean_margin": 0.01,
+                "top1_delta": 0.01,
+                "category_alpha": 0.05,
+                "min_clusters": 8,
+                "tail_growth_nats": 0.5,
+                "tail_net_allowance": 2,
+                "allow_sparse_pooled": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "kv_offload_plain": {
+      "module": "kv_offload",
+      "args": [
+        "report",
+        "--off",
+        "{kv_offload_plain_off}",
+        "--swap",
+        "{kv_offload_plain_swap}"
+      ],
+      "timeout_seconds": 600,
+      "receipt": "*-kv-offload-plain.json",
+      "files": [
+        "kv_offload_plain_off",
+        "kv_offload_plain_swap"
+      ],
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/serving-kv-pool.md"
+        }
+      ]
+    },
+    "kv_offload_pressure": {
+      "module": "kv_offload",
+      "args": [
+        "report",
+        "--off",
+        "{kv_offload_pressure_off}",
+        "--swap",
+        "{kv_offload_pressure_swap}"
+      ],
+      "timeout_seconds": 600,
+      "receipt": "*-kv-offload-pressure.json",
+      "files": [
+        "kv_offload_pressure_off",
+        "kv_offload_pressure_swap"
+      ],
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/serving-kv-pool.md"
+        }
+      ]
+    }
+  },
+  "references": {
+    "teacher": {
+      "path": "fixtures/mimo26/teacher-exact-reference.json",
+      "sha256": "2c83e750967b169d4381b0b56eb6ce15afa2640ccdc77b54770654f563a67cbd",
+      "schema": "chopinfer.mimo26.teacher-exact-reference.v3",
+      "workload_sha256": "ac39d2fea7424f4eae40b698cf2b8125f2e691e4acfe39a6c4ffd539b5d4a008",
+      "variants": [
+        "exact",
+        "bf16",
+        "f64"
+      ]
+    },
+    "media": {
+      "path": "fixtures/mimo26/multimodal/exact-reference.json",
+      "sha256": "25fa52da1e7043aebde5220f5576f6eeb4ab1ca5d9be63d6dfd34b6f45becce9",
+      "schema": "chopinfer.mimo26.multimodal-exact-reference.v2",
+      "capture_sha256": "bd4faf0c2c395ca30080533b0570bf8bdc250c5abc9ea059f9323c639eacd172",
+      "variants": [
+        "exact",
+        "bf16",
+        "f64"
+      ]
+    },
+    "media_mixed": {
+      "path": "fixtures/mimo26/multimodal/mixed-reference.json",
+      "sha256": "89be7e1c66da0079326fdbc4af24de012aa4b85d11256ae1ac5b97774bd7344c",
+      "schema": "chopinfer.mimo26.mixed-reference.v1",
+      "variants": [
+        "exact",
+        "bf16",
+        "f64"
+      ],
+      "workload": {
+        "env": "CHOPINFER_DATA",
+        "path": "refrun/g9-min8192-no-audio/answers/combined-workload.json"
+      }
+    }
+  },
+  "inputs": {
+    "fixture_root": "fixtures/mimo26",
+    "frontend": "models/mimo26/compiler/src/frontend.json",
+    "chat_renders": "fixtures/mimo26/frontend/chat-renders.json",
+    "exact": "fixtures/mimo26/teacher-exact-reference.json",
+    "teacher_reference": "fixtures/mimo26/teacher-exact-reference.json",
+    "gsm8k": {
+      "env": "CHOPINFER_MIMO_FIXTURES",
+      "default": "fixtures/mimo26",
+      "path": "gsm8k"
+    },
+    "needle": {
+      "env": "CHOPINFER_MIMO_FIXTURES",
+      "default": "fixtures/mimo26",
+      "path": "functional"
+    },
+    "spec_teacher": "fixtures/mimo26/teacher-texts.json",
+    "media_cases": "fixtures/mimo26/capture/multimodal_cases.py",
+    "media_fixtures": {
+      "env": "CHOPINFER_MIMO_FIXTURES",
+      "default": "fixtures/mimo26",
+      "path": "functional"
+    },
+    "media_capture": "fixtures/mimo26/multimodal/reference.json",
+    "frontend_capture": "fixtures/mimo26/frontend",
+    "tokenizer_goldens": "fixtures/mimo26/frontend/tokenizer-golden.json",
+    "media_preprocessing_reference": {
+      "env": "CHOPINFER_DATA",
+      "path": "refrun/g9-min8192/preprocessing/mimo26"
+    },
+    "media_preprocessing_frontend": "models/mimo26/compiler/src/frontend.json",
+    "media_preprocessing_integer_fixture": "fixtures/mimo26/image-processor.json",
+    "media_mixed_requests": {
+      "env": "CHOPINFER_DATA",
+      "path": "refrun/g9-min8192-no-audio/answers/bodies"
+    },
+    "media_preprocessing_ab": {
+      "env": "CHOPINFER_DATA",
+      "path": "refrun/g9-min8192/ab/scores.json"
+    },
+    "media_preprocessing_ab_probes": {
+      "env": "CHOPINFER_DATA",
+      "path": "refrun/g9-review/probes/probes.json"
+    },
+    "media_audio_source": "models/mimo26/audio-preprocessing-source.json",
+    "media_mixed_generation": {
+      "env": "CHOPINFER_DATA",
+      "path": "refrun/g9-min8192-no-audio/answers/generation-reference.json"
+    },
+    "media_mixed_generation_workload": {
+      "env": "CHOPINFER_DATA",
+      "path": "refrun/g9-min8192-no-audio/answers/generation-workload.json"
+    }
+  },
+  "qualification": {
+    "teacher_reference_kind": "exact",
+    "teacher_receipt": "teacher",
+    "teacher_capture_schema": "chopinfer.mimo26.teacher-capture.v1",
+    "verify_buckets": [
+      2,
+      4,
+      8
+    ],
+    "chars_per_token": 4.3,
+    "prefix": {
+      "family": "mimo26",
+      "prompt_end": false,
+      "media": true,
+      "acceptance": true,
+      "block_tokens": 64,
+      "prefill_granule": 1,
+      "anchor_boundary": 128,
+      "anchor_labels": [
+        "anchor_in_window",
+        "anchor_past_window"
+      ],
+      "reference_schema": "chopinfer.mimo26.teacher-exact-reference.v3"
+    },
+    "needle": {
+      "format": "context-files",
+      "lengths": [
+        8192,
+        131072,
+        524288,
+        1048576
+      ],
+      "match": "whitespace"
+    },
+    "checkpoint": {
+      "pin": "mopd",
+      "registry": "models/mimo26/checkpoints.json",
+      "lock": "models/mimo26/checkpoint-files.json",
+      "repository": "XiaomiMiMo/MiMo-V2.6-Flash-MOPD",
+      "revision": "2479e2d0029eca9a34cc7e7f55a121925f81908e",
+      "served_model_name": "MiMo-V2.6-Flash-MOPD",
+      "source_lock_sha256": "1ce69311e5f07390845549db93a5b8dc8926eaec333096bb1d1b94d853c03792",
+      "checkpoint_identity": "4f01392ef1a9b0ad73a852865916066ebc8c81cd0e88502be286ce9022fb2bea"
+    },
+    "media": {
+      "format": "cases",
+      "reference": "media",
+      "receipt": "multimodal",
+      "capture_schema": "mimo26-multimodal-reference/v1",
+      "expectations": {
+        "files": {
+          "blue-square.png": {
+            "field": "image_expected",
+            "single": true
+          }
+        },
+        "kinds": {
+          "video": {
+            "field": "video_expected",
+            "single": false
+          },
+          "text": {
+            "field": "video_expected",
+            "single": false
+          }
+        }
+      },
+      "audio_near_tie": 2.3,
+      "coverage": {
+        "image": [
+          "image-blue-square.png",
+          "image-frames-00.png",
+          "image-frames-01.png",
+          "image-frames-02.png",
+          "image-frames-03.png",
+          "image-frames-04.png",
+          "image-frames-05.png",
+          "image-frames-06.png",
+          "image-frames-07.png"
+        ],
+        "video": [
+          "video-red-then-blue"
+        ]
+      }
+    }
+  },
+  "checkpoint": {
+    "repository": "XiaomiMiMo/MiMo-V2.6-Flash-MOPD",
+    "revision": "2479e2d0029eca9a34cc7e7f55a121925f81908e",
+    "status": "alpha, GPU qualification pending"
+  },
+  "receipts": {
+    "env": "CHOPINFER_DATA",
+    "path": "qual/mimo26"
+  },
+  "limitations": [
+    "Quick is a bounded smoke screen, not full release qualification.",
+    "External evidence must come from this release; the operator must verify its deployment provenance.",
+    "MOPD alpha: teacher, exact verify and multimodal gate against GPU reference runner F32 references of the MOPD checkpoint (fixtures/mimo26/README.md); vLLM captures are informational. A passing alpha screen is not full numerical qualification. Release preview still requires current-run GSM8K >=193/200 in both arms and the declared speculative-verification bounds; C1 greedy differences are informational.",
+    "Audio is served but not qualified in-tree (capabilities.unqualified_media): the repository holds no audio reference input, so the multimodal, mixed-media, soak and encoder parity checks carry no audio items. The audio front end's preprocessing is still checked against torchaudio on generated signals. Test audio with your own inputs.",
+    "Declared preprocessing deviation: ImageNet mean [0.485, 0.456, 0.406] and std [0.229, 0.224, 0.225] replace checkpoint CLIP statistics. The 349-probe paired F32 study favors ImageNet (205 wins, p = 0.0013); docs/serving-mimo26.md#solid-color-images.",
+    "Declared preprocessing deviation: images are capped at 1048576 pixels (1024 image tokens) for serving resources; docs/reference-runner.md#frontend-preprocessing.",
+    "Declared preprocessing deviation: image minimum 8192 pixels, retaining bicubic. Accuracy evidence: 3136 loses 14/21 scenes (mean -1.73 nats; eight losses of 3.4-5.7), with probe sign p=0.0088 and scene t-test p approximately 0.003 despite scene sign p=0.189; small images retain 9 rather than 4 tokens. docs/serving-mimo26.md#image-resize-reference.",
+    "spec_continuation (adopted 2026-10-15) gates tp4-dflash on its own continuations after speculative/AR divergence: each arm's emitted tokens are teacher-forced through the GPU reference runner in the pinned teacher reference's F32 and BF16 modes and judged by the unchanged spread-rule limits with the AR control as validity check (docs/numerics.md#speculative-continuations). It adds no paired margin; the 2026-10-06 DFlash pooled verify-row waiver is unchanged. Its candidate-minus-AR and KL figures are reported, not gated."
+  ],
+  "preview": {
+    "profile": "tp4-dflash",
+    "speculation": {
+      "drafter": "dflash",
+      "tokens": 7,
+      "draft_cost": "per-block"
+    },
+    "spec_greedy": {
+      "rule": "informational",
+      "reason": "DFlash speculative output is gated by the spec_verify copy-set bounds and paired GSM8K; C1 greedy token and finish differences from AR are reported, not gated"
+    },
+    "numerical_reference": "teacher gated against the GPU reference runner F32 reference of the MOPD checkpoint",
+    "gsm8k_floor": 193,
+    "package_max_sequences": 256
+  },
+  "capabilities": {
+    "text": true,
+    "frontend": true,
+    "api": true,
+    "structured": true,
+    "prefix_cache": true,
+    "preemption": true,
+    "long_context": true,
+    "stability": true,
+    "media": [
+      "image",
+      "video"
+    ],
+    "unqualified_media": {
+      "audio": "Served, but not qualified in-tree: the repository holds no audio reference input. Test audio with your own inputs."
+    },
+    "speculation": "dflash",
+    "kv_offload": true
+  },
+  "configurations": {
+    "tp2-ar": {
+      "tensor_parallel_size": 2,
+      "serve": [
+        "--speculative-tokens",
+        "0"
+      ],
+      "screens": false,
+      "checks": [
+        "teacher",
+        "paired_teacher",
+        "prefix_exact"
+      ],
+      "quick": [
+        "teacher",
+        "paired_teacher"
+      ],
+      "serving": {
+        "tensor_parallel_size": 2,
+        "profile_name": "tp2-ar",
+        "speculation_tokens": 0
+      },
+      "source": "docs/topology-mimo.md",
+      "media": false,
+      "keep_references": [
+        "teacher"
+      ],
+      "append": {
+        "teacher": {
+          "rules": [
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/topology-mimo.md"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "speculation",
+                "tokens"
+              ],
+              "op": "eq",
+              "value": 0,
+              "source": "docs/topology-mimo.md"
+            }
+          ]
+        },
+        "paired_teacher": {
+          "rules": [
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/topology-mimo.md"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "speculation",
+                "tokens"
+              ],
+              "op": "eq",
+              "value": 0,
+              "source": "docs/topology-mimo.md"
+            }
+          ],
+          "stored_teacher": [
+            {
+              "path": [
+                "server",
+                "model"
+              ],
+              "op": "eq",
+              "value": "{model}",
+              "source": "docs/topology-mimo.md",
+              "unless_present": true
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/topology-mimo.md"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "speculation",
+                "tokens"
+              ],
+              "op": "eq",
+              "value": 0,
+              "source": "docs/topology-mimo.md"
+            }
+          ],
+          "teacher": [
+            {
+              "path": [
+                "server",
+                "model"
+              ],
+              "op": "eq",
+              "value": "{model}",
+              "source": "docs/topology-mimo.md",
+              "unless_present": true
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/topology-mimo.md"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "speculation",
+                "tokens"
+              ],
+              "op": "eq",
+              "value": 0,
+              "source": "docs/topology-mimo.md"
+            }
+          ]
+        },
+        "prefix_exact": {
+          "rules": [
+            {
+              "path": [
+                "serving_identity",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/topology-mimo.md"
+            },
+            {
+              "path": [
+                "serving_identity",
+                "profile",
+                "speculation",
+                "tokens"
+              ],
+              "op": "eq",
+              "value": 0,
+              "source": "docs/topology-mimo.md"
+            }
+          ],
+          "prefix_record": [
+            {
+              "path": [
+                "server",
+                "model"
+              ],
+              "op": "eq",
+              "value": "{model}",
+              "source": "docs/topology-mimo.md",
+              "unless_present": true
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "tensor_parallel_size"
+              ],
+              "op": "eq",
+              "value": 2,
+              "source": "docs/topology-mimo.md"
+            },
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "speculation",
+                "tokens"
+              ],
+              "op": "eq",
+              "value": 0,
+              "source": "docs/topology-mimo.md"
+            }
+          ]
+        }
+      },
+      "capabilities": {
+        "text": true,
+        "frontend": false,
+        "api": false,
+        "structured": false,
+        "prefix_cache": true,
+        "preemption": false,
+        "long_context": false,
+        "stability": false,
+        "kv_offload": false,
+        "media": [],
+        "speculation": "none"
+      }
+    }
+  },
+  "kv_offload": {
+    "budget_gib": 16,
+    "swap_every": 16,
+    "max_preemptions": 3,
+    "min_gated": 18,
+    "pressure_tokens": 32768
+  }
+}

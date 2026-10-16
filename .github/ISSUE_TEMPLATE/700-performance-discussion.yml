@@ -1,0 +1,21 @@
+name: Performance
+description: Report a slowdown or discuss a performance improvement.
+title: "[Performance]: "
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Performance problem or proposal
+      description: Describe the slowdown or proposed improvement.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Version, hardware and model
+      description: Include chopinfer --version, CUDA and driver versions, GPU model and count, model revision, and whether the GPUs were idle or shared.
+  - type: textarea
+    id: measurement
+    attributes:
+      label: Workload and measurements
+      description: Include commands, configuration, batch size or concurrency, input and output lengths, and comparable timings or throughput. For a regression, identify the baseline revision and check output correctness.

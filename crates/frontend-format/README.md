@@ -113,6 +113,11 @@ parameter's schema is its declared property, else free text when pattern
 properties may type it, none when `additionalProperties` is false, the
 additional-property schema when it is one, and otherwise free text; the
 value scan, the coercion and the tool-choice grammar all resolve it so.
+The grammar writes each declared or required name at most once, and an
+additional or pattern property under none of those names, so every name it
+writes resolves to the schema it wrote the value by. Two additional
+properties may share a name; the parser keeps the last value, which the
+same schema typed.
 Tool regions stream as they are generated, and each
 call's arguments reach the client only once they cannot change. When
 generation ends inside a call, at a stop, a client stop or the length limit,

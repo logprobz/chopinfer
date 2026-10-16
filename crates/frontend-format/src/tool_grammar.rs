@@ -127,14 +127,10 @@ fn call_after_open(
     tool: &FrontendToolV1,
 ) -> Result<Expr, FrontendErrorV1> {
     let schema = tool.parameters.to_json_value();
-    let free_name = || {
-        let charset = &descriptor.tools.name_bytes;
-        let bytes = (0..=127_u8)
-            .filter(|byte| charset.permits(*byte))
-            .map(|byte| (u32::from(byte), u32::from(byte)));
-        Expr::Class(CharClass::from_ranges(bytes))
-            .repeat(1, Some(descriptor.limits.maximum_name_bytes as u32))
-    };
+    let charset = &descriptor.tools.name_bytes;
+    let name_bytes: Vec<u8> = (0..=127_u8).filter(|byte| charset.permits(*byte)).collect();
+    let maximum_name = descriptor.limits.maximum_name_bytes as u32;
+    let free_name = || name_class_v1(&name_bytes).repeat(1, Some(maximum_name));
     // A value is followed by the close marker. Free text ends at the first
     // bare close marker, as the decoder reads it, including one that begins
     // inside the text, and cannot hold a bare marker that would end it
@@ -199,7 +195,11 @@ fn call_after_open(
         let properties = fields.get("properties").and_then(Value::as_object);
         let mut compiler = SchemaCompiler::new(builder, &schema, JsonOptions::default());
         let mut items = Vec::new();
+        // The names written once each: the declared properties, then the
+        // required names that are not properties.
+        let mut written: Vec<&str> = Vec::new();
         for (name, property) in properties.into_iter().flatten() {
+            written.push(name);
             let value = parameter_value(
                 &mut compiler,
                 property,
@@ -216,7 +216,8 @@ fn call_after_open(
         // A required name that is not a property, and any other name, has
         // the schema the decoder resolves it by.
         for name in &required {
-            if !properties.is_some_and(|properties| properties.contains_key(*name)) {
+            if !written.contains(name) {
+                written.push(name);
                 let value = match additional_schema_v1(fields) {
                     ParameterSchemaV1::Typed(schema) => parameter_value(
                         &mut compiler,
@@ -233,7 +234,10 @@ fn call_after_open(
             }
         }
         // Declared properties with no additional-property schema admit no
-        // other name.
+        // other name. Any other name is none of the names written above: the
+        // decoder reads a declared name by its property's schema, not the
+        // tail's, and a repeated name replaces the earlier value.
+        let other_name = || names_except_v1(&name_bytes, &written, 1, maximum_name);
         let closed = properties.is_some()
             && !fields.contains_key("patternProperties")
             && !fields.contains_key("additionalProperties");
@@ -247,7 +251,7 @@ fn call_after_open(
                     other.push('x');
                 }
                 Some(parameter(
-                    free_name(),
+                    other_name(),
                     parameter_value(
                         &mut compiler,
                         schema,
@@ -258,7 +262,7 @@ fn call_after_open(
                     )?,
                 ))
             }
-            ParameterSchemaV1::Free => Some(parameter(free_name(), free_text())),
+            ParameterSchemaV1::Free => Some(parameter(other_name(), free_text())),
             ParameterSchemaV1::Refused => None,
         };
         Expr::OrderedSubset {
@@ -333,6 +337,49 @@ fn parameter_value(
         .schema(schema)
         .map_err(|error| grammar_error(&error))?;
     Ok(Expr::seq([value, close()]))
+}
+
+/// One byte of `bytes`.
+fn name_class_v1(bytes: &[u8]) -> Expr {
+    Expr::Class(CharClass::from_ranges(
+        bytes
+            .iter()
+            .map(|byte| (u32::from(*byte), u32::from(*byte))),
+    ))
+}
+
+/// The names of `minimum` to `maximum` bytes of `bytes` other than those in
+/// `taken`: a trie of the taken names, where each byte that leaves it starts
+/// any name of the remaining length. With nothing taken, any such name.
+fn names_except_v1(bytes: &[u8], taken: &[&str], minimum: u32, maximum: u32) -> Expr {
+    if taken.is_empty() {
+        return name_class_v1(bytes).repeat(minimum, Some(maximum));
+    }
+    let mut names = Vec::new();
+    if minimum == 0 && !taken.contains(&"") {
+        names.push(Expr::Empty);
+    }
+    if maximum == 0 {
+        return Expr::alt(names);
+    }
+    let rest =
+        |taken: &[&str]| names_except_v1(bytes, taken, minimum.saturating_sub(1), maximum - 1);
+    let mut leaving = Vec::new();
+    for byte in bytes {
+        let next: Vec<&str> = taken
+            .iter()
+            .filter_map(|name| name.strip_prefix(char::from(*byte)))
+            .collect();
+        if next.is_empty() {
+            leaving.push(*byte);
+        } else {
+            names.push(Expr::seq([Expr::Literal(vec![*byte]), rest(&next)]));
+        }
+    }
+    if !leaving.is_empty() {
+        names.push(Expr::seq([name_class_v1(&leaving), rest(&[])]));
+    }
+    Expr::alt(names)
 }
 
 /// A declared marker as the bare marker the decoder reads, and the

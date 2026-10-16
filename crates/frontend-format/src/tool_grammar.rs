@@ -12,6 +12,8 @@
 //! A grammar without a function element declares its function markers empty,
 //! and an empty marker is written as nothing and avoided nowhere.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use runtime_grammar::{
     CharClass, Expr, Grammar, GrammarBuilder, GrammarError, JsonOptions, SchemaCompiler,
 };
@@ -349,37 +351,88 @@ fn name_class_v1(bytes: &[u8]) -> Expr {
 }
 
 /// The names of `minimum` to `maximum` bytes of `bytes` other than those in
-/// `taken`: a trie of the taken names, where each byte that leaves it starts
-/// any name of the remaining length. With nothing taken, any such name.
+/// `taken`. With nothing taken that such a name could spell, any such name,
+/// as one bounded run of the byte class.
 fn names_except_v1(bytes: &[u8], taken: &[&str], minimum: u32, maximum: u32) -> Expr {
+    let taken: BTreeSet<&[u8]> = taken
+        .iter()
+        .map(|name| name.as_bytes())
+        .filter(|name| name.iter().all(|byte| bytes.contains(byte)))
+        .collect();
+    words_except_v1(bytes, &taken, minimum as usize, maximum as usize)
+}
+
+/// The words of `minimum` to `maximum` bytes of `bytes` that are not in
+/// `taken`.
+///
+/// A trie of the taken words would nest two expressions for each byte of
+/// the longest word, past the depth the grammar wire admits for the longest
+/// names a declaration permits. Instead the words split at `half` the bound:
+/// the words shorter than it, and a first half followed by a rest. A first
+/// half that begins no taken word is followed by any rest; a taken first
+/// half is followed by the rests its taken words do not end in, written once
+/// for every first half that shares them. Each level halves the bound, so
+/// the expression grows as the bound times its logarithm for each distinct
+/// taken prefix, and nests as deep as that logarithm.
+fn words_except_v1(bytes: &[u8], taken: &BTreeSet<&[u8]>, minimum: usize, maximum: usize) -> Expr {
+    let taken: BTreeSet<&[u8]> = taken
+        .iter()
+        .copied()
+        .filter(|word| (minimum..=maximum).contains(&word.len()))
+        .collect();
+    if minimum > maximum {
+        return Expr::Nothing;
+    }
     if taken.is_empty() {
-        return name_class_v1(bytes).repeat(minimum, Some(maximum));
+        return name_class_v1(bytes).repeat(minimum as u32, Some(maximum as u32));
     }
-    let mut names = Vec::new();
-    if minimum == 0 && !taken.contains(&"") {
-        names.push(Expr::Empty);
-    }
-    if maximum == 0 {
-        return Expr::alt(names);
-    }
-    let rest =
-        |taken: &[&str]| names_except_v1(bytes, taken, minimum.saturating_sub(1), maximum - 1);
-    let mut leaving = Vec::new();
-    for byte in bytes {
-        let next: Vec<&str> = taken
-            .iter()
-            .filter_map(|name| name.strip_prefix(char::from(*byte)))
-            .collect();
-        if next.is_empty() {
-            leaving.push(*byte);
-        } else {
-            names.push(Expr::seq([Expr::Literal(vec![*byte]), rest(&next)]));
+    if maximum <= 1 {
+        let mut words = Vec::new();
+        if minimum == 0 && !taken.contains(&b""[..]) {
+            words.push(Expr::Empty);
         }
+        let other: Vec<u8> = bytes
+            .iter()
+            .copied()
+            .filter(|byte| maximum == 1 && !taken.contains(&[*byte][..]))
+            .collect();
+        if !other.is_empty() {
+            words.push(name_class_v1(&other));
+        }
+        return Expr::alt(words);
     }
-    if !leaving.is_empty() {
-        names.push(Expr::seq([name_class_v1(&leaving), rest(&[])]));
+    let half = maximum.div_ceil(2);
+    let mut words = vec![words_except_v1(bytes, &taken, minimum, half - 1)];
+    let (rest_minimum, rest_maximum) = (minimum.saturating_sub(half), maximum - half);
+    let mut rests: BTreeMap<&[u8], BTreeSet<&[u8]>> = BTreeMap::new();
+    for word in taken.iter().filter(|word| word.len() >= half) {
+        let (first, rest) = word.split_at(half);
+        rests.entry(first).or_default().insert(rest);
     }
-    Expr::alt(names)
+    if rests.is_empty() {
+        words.push(name_class_v1(bytes).repeat(half as u32, Some(maximum as u32)));
+    } else {
+        let firsts: BTreeSet<&[u8]> = rests.keys().copied().collect();
+        words.push(Expr::seq([
+            words_except_v1(bytes, &firsts, half, half),
+            name_class_v1(bytes).repeat(rest_minimum as u32, Some(rest_maximum as u32)),
+        ]));
+    }
+    let mut shared: BTreeMap<BTreeSet<&[u8]>, Vec<&[u8]>> = BTreeMap::new();
+    for (first, rest) in rests {
+        shared.entry(rest).or_default().push(first);
+    }
+    for (rest, firsts) in shared {
+        words.push(Expr::seq([
+            Expr::alt(
+                firsts
+                    .into_iter()
+                    .map(|first| Expr::Literal(first.to_vec())),
+            ),
+            words_except_v1(bytes, &rest, rest_minimum, rest_maximum),
+        ]));
+    }
+    Expr::alt(words)
 }
 
 /// A declared marker as the bare marker the decoder reads, and the
@@ -397,4 +450,107 @@ fn bare_markers_v1<'a>(markers: impl IntoIterator<Item = &'a str>) -> Vec<Vec<u8
         .filter(|marker| !marker.is_empty())
         .map(|marker| marker.as_bytes().to_vec())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use runtime_grammar::{
+        CompiledGrammar, Grammar, GrammarMatcher, TokenVocabulary, VocabularyToken,
+    };
+
+    use super::names_except_v1;
+
+    /// Every word of up to one byte past the bound, over the name bytes and
+    /// one byte outside them, under taken sets of short and bound-length
+    /// names, shared prefixes, names the bytes cannot spell and the empty
+    /// name: the names admitted are exactly the names of one to the bound
+    /// bytes that are not taken.
+    #[test]
+    fn names_except_admits_exactly_the_other_names() {
+        let bytes = b"_ab";
+        let alphabet = b"_abc";
+        let tokens = (0..=255_u8)
+            .map(|byte| VocabularyToken {
+                bytes: vec![byte],
+                special: false,
+            })
+            .collect();
+        let vocabulary = Arc::new(TokenVocabulary::new(256, tokens).unwrap());
+        // The words over the name bytes, and those with the outside byte
+        // up to three bytes long.
+        let mut words = vec![Vec::new()];
+        for length in 1..=7 {
+            let shorter: Vec<Vec<u8>> = words
+                .iter()
+                .filter(|word| word.len() == length - 1)
+                .cloned()
+                .collect();
+            for word in shorter {
+                for byte in alphabet {
+                    if *byte != b'c' || length <= 3 {
+                        words.push([word.as_slice(), &[*byte]].concat());
+                    }
+                }
+            }
+        }
+        let mut sets: Vec<Vec<String>> = [
+            &[][..],
+            &["a"],
+            &["", "_"],
+            &["ab", "aba", "abab", "ababab"],
+            &["aaaaaa", "aaaaab", "aaaab_", "b"],
+            &["ac", "a", "abcab"],
+            &["__", "_a", "_b", "a_", "aa", "ab", "b_", "ba", "bb"],
+        ]
+        .iter()
+        .map(|set| set.iter().map(|name| (*name).to_owned()).collect())
+        .collect();
+        // Pseudo-random sets, fixed by the seed.
+        let mut seed = 0x2545_f491_u32;
+        let mut next = |bound: u32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed % bound
+        };
+        for _ in 0..40 {
+            let count = 1 + next(6);
+            sets.push(
+                (0..count)
+                    .map(|_| {
+                        let length = next(8);
+                        (0..length)
+                            .map(|_| char::from(alphabet[next(3) as usize]))
+                            .collect()
+                    })
+                    .collect(),
+            );
+        }
+        for maximum in [1, 2, 3, 5, 6] {
+            for set in &sets {
+                let taken: Vec<&str> = set.iter().map(String::as_str).collect();
+                let grammar = Grammar::from_expr(names_except_v1(bytes, &taken, 1, maximum));
+                let compiled =
+                    Arc::new(CompiledGrammar::new(&grammar, Arc::clone(&vocabulary)).unwrap());
+                for word in words
+                    .iter()
+                    .filter(|word| word.len() <= maximum as usize + 1)
+                {
+                    let mut matcher = GrammarMatcher::new(Arc::clone(&compiled));
+                    let admitted = matcher.accept_bytes(word).is_ok() && matcher.is_complete();
+                    let expected = (1..=maximum as usize).contains(&word.len())
+                        && word.iter().all(|byte| bytes.contains(byte))
+                        && !taken.contains(&std::str::from_utf8(word).unwrap());
+                    assert_eq!(
+                        admitted,
+                        expected,
+                        "{taken:?} up to {maximum}: {:?}",
+                        String::from_utf8_lossy(word)
+                    );
+                }
+            }
+        }
+    }
 }

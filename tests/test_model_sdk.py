@@ -444,6 +444,32 @@ class ModelExportTests(SourceCase):
         with self.assertRaisesRegex(PolicyError, 'declares no \\[workspace\\]'):
             model_export.manifest(sdk, 'm3', ['compiler'])
 
+    def test_workspace_defaults_keep_only_exported_members(self):
+        sdk = self.base / 'default-members-sdk'
+        sdk.mkdir()
+        path = sdk / 'Cargo.toml'
+        original = '[workspace]\nmembers = ["crates/shared", "models/*/bundle", "models/*/compiler", "models/*/contract"]\n'
+        path.write_text(original)
+        roles = ['bundle', 'compiler', 'contract']
+        unchanged = model_export.manifest(sdk, 'm3', roles)
+        cases = [
+            (['crates/shared', 'models/m3/compiler', 'models/other/bundle'], ['compiler']),
+            (['models/*/bundle', 'models/*/compiler'], ['bundle', 'compiler']),
+            (['models/m3/compiler', 'models/*/compiler'], ['compiler']),
+            (['crates/*', 'compiler', 'models/other/*'], None),
+            ([], None),
+            (['models/*/bundle', 'models/*/compiler', 'models/*/contract'], None),
+        ]
+        for defaults, expected in cases:
+            with self.subTest(defaults=defaults):
+                path.write_text(original + 'default-members = ' + json.dumps(defaults) + '\n')
+                exported = model_export.manifest(sdk, 'm3', roles)
+                workspace = tomllib.loads(exported)['workspace']
+                self.assertEqual(workspace.get('default-members'), expected)
+                self.assertEqual(workspace['members'], roles)
+                if expected is None:
+                    self.assertEqual(exported, unchanged)
+
     def test_a_rewrite_that_names_other_content_fails_the_export(self):
         rooted, climb = model_export.Relocation.rooted, model_export.Relocation.climb
         def first_components(self, match):

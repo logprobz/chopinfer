@@ -1,0 +1,9 @@
+{
+  "geometries": [
+    {
+      "id": "synthetic_small",
+      "file": "geometry.json",
+      "kernel_tag": "deepseek41_synthetic_small"
+    }
+  ]
+}

@@ -721,6 +721,10 @@ dependencies = [
 [[package]]
 name = "model-deepseek41-contract"
 version = "0.1.0-alpha.3"
+dependencies = [
+ "model-compiler-sdk",
+ "serde_json",
+]
 
 [[package]]
 name = "model-deepseek41-lab"

@@ -1,0 +1,62 @@
+{
+  "aliases": {
+    "architecture": [
+      "DeepseekV41ForCausalLM"
+    ],
+    "model_type": [
+      "deepseek_v41"
+    ],
+    "text_type": [
+      "deepseek_v41_text"
+    ],
+    "vision_type": [
+      "deepseek_v41_vision"
+    ]
+  },
+  "geometries": [
+    {
+      "id": "flash",
+      "file": "flash.json",
+      "kernel_tag": "deepseek41"
+    }
+  ],
+  "runtime_fields": {},
+  "semantic_rules": {
+    "dtype": [
+      "bfloat16"
+    ],
+    "text_config.attention_bias": [
+      false
+    ],
+    "text_config.hidden_act": [
+      "silu"
+    ],
+    "text_config.n_shared_experts": [
+      1
+    ],
+    "text_config.norm_topk_prob": [
+      true
+    ],
+    "text_config.num_key_value_heads": [
+      1
+    ],
+    "text_config.rope_scaling.rope_type": [
+      "yarn"
+    ],
+    "text_config.scoring_func": [
+      "sqrtsoftplus"
+    ],
+    "text_config.tie_word_embeddings": [
+      false
+    ],
+    "text_config.topk_method": [
+      "noaux_tc"
+    ],
+    "vision_config.max_wh_ratio": [
+      null
+    ]
+  },
+  "quantization_recipe_classes": [
+    "fp8"
+  ]
+}

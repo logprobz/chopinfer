@@ -1,7 +1,11 @@
 //! DeepSeek V4.1 Flash (`deepseek41`) declarations shared by the compiler,
 //! the bundle and the kernel test crate: the `deepseek41.v1` serving
-//! contract, its topologies, geometry and projection declarations.
+//! contract, its topologies, geometry, admission and projection
+//! declarations.
 #![forbid(unsafe_code)]
+pub mod admission;
+pub mod geometry;
+pub mod structure;
 
 /// The model's one bundle ID. Every rank count it supports is a topology of
 /// this bundle, never a bundle ID of its own.

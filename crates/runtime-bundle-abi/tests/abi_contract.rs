@@ -15,8 +15,8 @@ use runtime_bundle_abi::{
     CompiledImageSpanV1, CustomAddressSpaceV1, CustomCompletionV1, CustomOperandV1,
     CustomOperationV1, DeviceBufferSpanV1, ExecuteResultSinkV1, HostServiceResultV1,
     HostServicesBackendV1, HostServicesTableV1, HostServicesV1, KernelArgumentV1, LaunchClusterV1,
-    LaunchConfigV1, LentLaunchV1, LentRangeV1, LentStreamV1, LogitsRowSinkV1, OwnedLogitsRowV1,
-    PhysicalKvLayoutV1, PhysicalKvRequestV1, ResultSinkLimitsV1, StateRequestV1,
+    LaunchConfigV1, LentHostBytesV1, LentLaunchV1, LentRangeV1, LentStreamV1, LogitsRowSinkV1,
+    OwnedLogitsRowV1, PhysicalKvLayoutV1, PhysicalKvRequestV1, ResultSinkLimitsV1, StateRequestV1,
     UnsupportedHostServicesBackendV1, catch_panic_callback_status_v1, catch_panic_status_v1,
     checked_u64_to_usize_v1, export_custom_operation_v1, validate_byte_view_v1,
     validate_collective_request_v1, validate_compiled_image_view_v1, validate_custom_operand_v1,
@@ -650,6 +650,16 @@ fn c_header_and_rust_layouts_match() {
             query_cluster_residency_v1
         )],
     );
+    assert_layout(
+        &c_layouts,
+        "host-mapped-rows-service-tail",
+        size_of::<abi::BundleHostServicesV1>(),
+        &[
+            offset_of!(abi::BundleHostServicesV1, resolve_mapped_view_v1),
+            offset_of!(abi::BundleHostServicesV1, allocate_staging_buffer_v1),
+            offset_of!(abi::BundleHostServicesV1, lend_staging_buffer_v1),
+        ],
+    );
 
     // A launch flag is part of the ABI, not of one side's opinion of it, so the
     // header's value and this crate's constant have to be the same number.
@@ -1211,6 +1221,67 @@ fn a_second_collective_contract_crosses_v1_as_bytes_rather_than_as_a_change() {
         assert_eq!(collectives[index].rank_count, RANKS);
     }
     assert_eq!(backend.collectives.borrow().len(), 2);
+}
+
+/// A mapped view crosses as the host's own bytes, read in place, and a
+/// staging buffer as bytes the bundle writes in place. Neither can be released
+/// while a closure holds it, and a staging buffer is never lent twice at once.
+#[test]
+fn host_mapped_rows_lend_bytes_in_place_and_refuse_release_while_lent() {
+    let backend = Rc::new(FixtureHostBackend {
+        mapped: (0..96_u8).collect(),
+        ..FixtureHostBackend::default()
+    });
+    let table = HostServicesTableV1::new(Rc::clone(&backend));
+    let services = table.caller();
+    assert!(services.has_host_mapped_rows());
+    let image = abi::BundleCompiledImageHandleV1::from_parts(1, 1);
+    let address = services
+        .with_mapped_view(image, 1, b"rows", |bytes| {
+            assert_eq!(bytes, (0..96_u8).collect::<Vec<_>>());
+            // A lent image cannot be released from inside the closure.
+            assert_eq!(
+                services.release_compiled_image(image),
+                Err(BundleAbiError::Status(abi::BundleStatusV1::InvalidState))
+            );
+            bytes.as_ptr() as usize
+        })
+        .unwrap();
+    assert_eq!(address, backend.mapped.as_ptr() as usize);
+    assert_eq!(
+        services.with_mapped_view(image, 0, b"rows", |_| ()),
+        Err(BundleAbiError::Status(abi::BundleStatusV1::NotFound))
+    );
+    // Released after the closure, the image reaches the host again.
+    assert_eq!(
+        services.release_compiled_image(image),
+        Err(BundleAbiError::Status(abi::BundleStatusV1::Unsupported))
+    );
+
+    let pool = abi::BundleMemoryPoolHandleV1::from_parts(1, 1);
+    let stream = abi::BundleStreamHandleV1::from_parts(1, 1);
+    let staging = services
+        .allocate_staging_buffer(pool, stream, 32, 16)
+        .unwrap();
+    services
+        .with_staging_buffer(staging, |bytes| {
+            assert_eq!(bytes.len(), 32);
+            bytes.copy_from_slice(&[5; 32]);
+            assert_eq!(
+                services.with_staging_buffer(staging, |_| ()),
+                Err(BundleAbiError::Status(abi::BundleStatusV1::InvalidState))
+            );
+            assert_eq!(
+                services.release_device_buffer(staging),
+                Err(BundleAbiError::Status(abi::BundleStatusV1::InvalidState))
+            );
+        })
+        .unwrap();
+    assert_eq!(backend.staging.borrow().as_deref(), Some(&[5_u8; 32][..]));
+    assert_eq!(
+        services.with_staging_buffer(abi::BundleDeviceBufferHandleV1::from_parts(9, 4), |_| ()),
+        Err(BundleAbiError::Status(abi::BundleStatusV1::InvalidArgument))
+    );
 }
 
 #[test]
@@ -2529,7 +2600,14 @@ struct FixtureHostBackend {
     custom_operations: RefCell<Vec<FixtureCustomOperationV1>>,
     /// The refusal this host answers a custom operation with, if any.
     custom_refusal: RefCell<Option<abi::BundleStatusV1>>,
+    /// The bytes of the one mapped view, `rows`, this host lends.
+    mapped: Vec<u8>,
+    /// The one staging buffer this host allocated, if any.
+    staging: RefCell<Option<Box<[u8]>>>,
 }
+
+const FIXTURE_STAGING: abi::BundleDeviceBufferHandleV1 =
+    abi::BundleDeviceBufferHandleV1::from_parts(9, 3);
 
 macro_rules! unused_fixture_service {
     ($name:ident($($argument:ident: $type:ty),* $(,)?) -> $result:ty) => {
@@ -2540,6 +2618,45 @@ macro_rules! unused_fixture_service {
 }
 
 impl HostServicesBackendV1 for FixtureHostBackend {
+    fn resolve_mapped_view(
+        &self,
+        _image: abi::BundleCompiledImageHandleV1,
+        rank: u32,
+        view_id: &[u8],
+    ) -> HostServiceResultV1<LentHostBytesV1> {
+        if view_id != b"rows" || rank != 1 {
+            return Err(abi::BundleStatusV1::NotFound);
+        }
+        Ok(LentHostBytesV1::new(
+            self.mapped.as_ptr(),
+            self.mapped.len() as u64,
+        ))
+    }
+
+    fn allocate_staging_buffer(
+        &self,
+        _pool: abi::BundleMemoryPoolHandleV1,
+        _stream: abi::BundleStreamHandleV1,
+        byte_length: u64,
+        _alignment: u64,
+    ) -> HostServiceResultV1<abi::BundleDeviceBufferHandleV1> {
+        *self.staging.borrow_mut() = Some(vec![0; byte_length as usize].into_boxed_slice());
+        Ok(FIXTURE_STAGING)
+    }
+
+    fn lend_staging_buffer(
+        &self,
+        buffer: abi::BundleDeviceBufferHandleV1,
+    ) -> HostServiceResultV1<LentHostBytesV1> {
+        let mut staging = self.staging.borrow_mut();
+        match staging.as_mut() {
+            Some(bytes) if buffer == FIXTURE_STAGING => {
+                Ok(LentHostBytesV1::new(bytes.as_mut_ptr(), bytes.len() as u64))
+            }
+            _ => Err(abi::BundleStatusV1::InvalidArgument),
+        }
+    }
+
     fn log(&self, message: &[u8]) -> HostServiceResultV1<()> {
         self.messages.borrow_mut().push(message.to_vec());
         Ok(())
@@ -3464,6 +3581,7 @@ int main(void) {
   printf("batch-limits-service-tail %zu %zu\n", sizeof(chop_bundle_host_services_v1), P(chop_bundle_host_services_v1, query_batch_limits_v1));
   printf("cluster-residency %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_cluster_residency_v1), P(chop_bundle_cluster_residency_v1, struct_size), P(chop_bundle_cluster_residency_v1, multiprocessor_count), P(chop_bundle_cluster_residency_v1, usable_multiprocessors), P(chop_bundle_cluster_residency_v1, max_active_clusters), P(chop_bundle_cluster_residency_v1, flags));
   printf("cluster-residency-service-tail %zu %zu\n", sizeof(chop_bundle_host_services_v1), P(chop_bundle_host_services_v1, query_cluster_residency_v1));
+  printf("host-mapped-rows-service-tail %zu %zu %zu %zu\n", sizeof(chop_bundle_host_services_v1), P(chop_bundle_host_services_v1, resolve_mapped_view_v1), P(chop_bundle_host_services_v1, allocate_staging_buffer_v1), P(chop_bundle_host_services_v1, lend_staging_buffer_v1));
   printf("api-header %zu %zu %zu\n", sizeof(chop_bundle_api_header_v1), P(chop_bundle_api_header_v1, struct_size), P(chop_bundle_api_header_v1, abi_version));
   printf("api %zu %zu %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_api_v1), P(chop_bundle_api_v1, struct_size), P(chop_bundle_api_v1, abi_version), P(chop_bundle_api_v1, create), P(chop_bundle_api_v1, execute), P(chop_bundle_api_v1, commit), P(chop_bundle_api_v1, cancel), P(chop_bundle_api_v1, destroy));
   return 0;

@@ -16,10 +16,10 @@ pub use host_services::{
     AuthenticatedComponentMetadataV1, CollectiveRequestV1, CompiledImageSpanV1,
     CustomAddressSpaceV1, CustomCompletionV1, CustomOperandV1, DeviceBufferSpanV1,
     HostServiceResultV1, HostServicesBackendV1, KernelArgumentV1, LaunchClusterV1, LaunchConfigV1,
-    LentLaunchV1, LentRangeV1, LentStreamV1, LogitsRowSinkV1, OwnedDraftTokensV1, OwnedLogitsRowV1,
-    OwnedLogitsViewV1, PhysicalKvLayoutV1, PhysicalKvRequestV1, RankArenaUploadV1,
-    ResultSinkLimitsV1, StateRequestV1, TensorMapElementV1, TensorMapSwizzleV1, TensorMapV1,
-    UnsupportedHostServicesBackendV1,
+    LentHostBytesV1, LentLaunchV1, LentRangeV1, LentStreamV1, LogitsRowSinkV1, OwnedDraftTokensV1,
+    OwnedLogitsRowV1, OwnedLogitsViewV1, PhysicalKvLayoutV1, PhysicalKvRequestV1,
+    RankArenaUploadV1, ResultSinkLimitsV1, StateRequestV1, TensorMapElementV1, TensorMapSwizzleV1,
+    TensorMapV1, UnsupportedHostServicesBackendV1,
 };
 pub use loader::{BundleLibraryV1, BundleLoaderError, LoadedBundleInstanceV1};
 pub use trampoline::call_weight_transform_v1;
@@ -1177,6 +1177,33 @@ pub type BundleQueryClusterResidencyFnV1 = unsafe extern "C" fn(
     *mut BundleRawClusterResidencyV1,
 ) -> BundleStatusV1;
 
+/// Lends the CPU-readable bytes of one host-mapped view of a compiled image
+/// (`chop.host-mapped-rows.v1`).
+pub type BundleResolveMappedViewFnV1 = unsafe extern "C" fn(
+    *mut c_void,
+    BundleCompiledImageHandleV1,
+    u32,
+    BundleByteViewV1,
+    *mut BundleByteViewV1,
+) -> BundleStatusV1;
+/// Allocates one bundle-owned staging buffer: page-locked, device-mapped host
+/// memory (`chop.host-mapped-rows.v1`).
+pub type BundleAllocateStagingBufferFnV1 = unsafe extern "C" fn(
+    *mut c_void,
+    BundleMemoryPoolHandleV1,
+    BundleStreamHandleV1,
+    u64,
+    u64,
+    *mut BundleDeviceBufferHandleV1,
+) -> BundleStatusV1;
+/// Lends the CPU-writable bytes of one staging buffer
+/// (`chop.host-mapped-rows.v1`).
+pub type BundleLendStagingBufferFnV1 = unsafe extern "C" fn(
+    *mut c_void,
+    BundleDeviceBufferHandleV1,
+    *mut BundleMutByteViewV1,
+) -> BundleStatusV1;
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct BundleHostServicesV1 {
@@ -1248,6 +1275,11 @@ pub struct BundleHostServicesV1 {
     pub query_speculation_v1: Option<BundleQuerySpeculationFnV1>,
     pub query_batch_limits_v1: Option<BundleQueryBatchLimitsFnV1>,
     pub query_cluster_residency_v1: Option<BundleQueryClusterResidencyFnV1>,
+    /// Optional host-mapped rows tail (`chop.host-mapped-rows.v1`): a host
+    /// fills all three or none.
+    pub resolve_mapped_view_v1: Option<BundleResolveMappedViewFnV1>,
+    pub allocate_staging_buffer_v1: Option<BundleAllocateStagingBufferFnV1>,
+    pub lend_staging_buffer_v1: Option<BundleLendStagingBufferFnV1>,
 }
 
 impl BundleHostServicesV1 {
@@ -1322,6 +1354,9 @@ impl BundleHostServicesV1 {
             query_speculation_v1: None,
             query_batch_limits_v1: None,
             query_cluster_residency_v1: None,
+            resolve_mapped_view_v1: None,
+            allocate_staging_buffer_v1: None,
+            lend_staging_buffer_v1: None,
         }
     }
 }
@@ -1735,6 +1770,23 @@ pub const fn raw_state_slots_v1(served: u32) -> u64 {
 /// package declaring host views must require this capability, so a host
 /// without it refuses the package.
 pub const HOST_RESIDENT_VIEWS_CAPABILITY_V1: &str = "chop.host-resident-views.v1";
+
+/// Capability for packages whose weight plans map checkpoint tensors into
+/// host memory instead of uploading them.
+///
+/// A planned view placed `ViewPlacementV1::Mapped` is one checkpoint tensor,
+/// or one contiguous run of its leading-axis rows, stored unchanged. The host
+/// maps those bytes read-only from the checkpoint file it opened without
+/// following links and checked against its header, once per process for
+/// every rank that names the same bytes, and cuts the span out of the rank
+/// arena as it does a host-resident view. Neither the device nor any
+/// page-locked budget holds them. `resolve_mapped_view_v1` lends the bytes
+/// for the CPU to read; `allocate_staging_buffer_v1` and
+/// `lend_staging_buffer_v1` give the bundle page-locked buffers it gathers
+/// rows into and copies to the device on its own streams. A package with
+/// mapped views must require this capability, so a host without it refuses
+/// the package.
+pub const HOST_MAPPED_ROWS_CAPABILITY_V1: &str = "chop.host-mapped-rows.v1";
 
 pub type BundleRetireRequestFnV1 = extern "C" fn(BundleHandleV1, u64) -> BundleStatusV1;
 

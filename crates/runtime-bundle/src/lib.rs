@@ -65,6 +65,9 @@ pub const SPECULATIVE_CAPABILITY_V1: &str = "chop.speculative.v1";
 /// Required by a package whose weight plan places views in host memory; the
 /// bundle ABI states what the host does for it.
 pub const HOST_RESIDENT_VIEWS_CAPABILITY_V1: &str = "chop.host-resident-views.v1";
+/// Required by a package whose weight plan maps checkpoint tensors into host
+/// memory; the bundle ABI states what the host does for it.
+pub const HOST_MAPPED_ROWS_CAPABILITY_V1: &str = "chop.host-mapped-rows.v1";
 /// Required by a package whose bundle reads the served item count; the bundle
 /// ABI states what the host sends for it.
 pub const SERVED_ITEMS_CAPABILITY_V1: &str = "chop.served-items.v1";

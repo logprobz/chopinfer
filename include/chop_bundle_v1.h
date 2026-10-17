@@ -1066,6 +1066,36 @@ typedef chop_bundle_status_v1 (*chop_bundle_query_cluster_residency_fn_v1)(
     const chop_bundle_launch_config_v1 *config,
     chop_bundle_cluster_residency_v1 *out);
 
+/*
+ * Host-mapped rows (CHOP_HOST_MAPPED_ROWS_CAPABILITY_V1). Optional tail: a host
+ * fills all three or none, and a bundle reads them only when struct_size covers
+ * lend_staging_buffer_v1.
+ *
+ * resolve_mapped_view_v1 answers a view the image's plan placed "mapped" with
+ * the CPU-readable checkpoint bytes it names, unchanged and read-only. They
+ * stay readable until the image is released. A view held anywhere else, or not
+ * for this rank, is NOT_FOUND.
+ *
+ * allocate_staging_buffer_v1 allocates one zeroed bundle-owned buffer of
+ * page-locked host memory on the stream's context, which the device reads
+ * through its handle: copies and kernels take it like any device buffer, and
+ * release_device_buffer frees it. lend_staging_buffer_v1 answers the whole
+ * buffer for the CPU to write, valid until the buffer is released. The bundle
+ * orders its writes after the device work it queued that reads them (for
+ * example an event it recorded after the copy and synchronized). A buffer that
+ * is not a staging buffer is INVALID_ARGUMENT.
+ */
+typedef chop_bundle_status_v1 (*chop_bundle_resolve_mapped_view_fn_v1)(
+    void *user_data, chop_bundle_compiled_image_handle_v1 image, uint32_t rank,
+    chop_bundle_byte_view_v1 view_id, chop_bundle_byte_view_v1 *out_bytes);
+typedef chop_bundle_status_v1 (*chop_bundle_allocate_staging_buffer_fn_v1)(
+    void *user_data, chop_bundle_memory_pool_handle_v1 pool,
+    chop_bundle_stream_handle_v1 stream, uint64_t byte_length, uint64_t alignment,
+    chop_bundle_device_buffer_handle_v1 *out_buffer);
+typedef chop_bundle_status_v1 (*chop_bundle_lend_staging_buffer_fn_v1)(
+    void *user_data, chop_bundle_device_buffer_handle_v1 buffer,
+    chop_bundle_mut_byte_view_v1 *out_bytes);
+
 typedef struct chop_bundle_host_services_v1 {
   uint32_t struct_size;
   uint32_t abi_version;
@@ -1140,6 +1170,10 @@ typedef struct chop_bundle_host_services_v1 {
   chop_bundle_query_batch_limits_fn_v1 query_batch_limits_v1;
   /* Optional cluster residency tail. An absent callback reports nothing. */
   chop_bundle_query_cluster_residency_fn_v1 query_cluster_residency_v1;
+  /* Optional host-mapped rows tail. Check struct_size before reading these. */
+  chop_bundle_resolve_mapped_view_fn_v1 resolve_mapped_view_v1;
+  chop_bundle_allocate_staging_buffer_fn_v1 allocate_staging_buffer_v1;
+  chop_bundle_lend_staging_buffer_fn_v1 lend_staging_buffer_v1;
 } chop_bundle_host_services_v1;
 
 typedef struct chop_bundle_create_result_v1 {
@@ -1301,6 +1335,19 @@ typedef struct chop_bundle_api_with_request_retirement_v1 {
  */
 #define CHOP_HOST_RESIDENT_VIEWS_CAPABILITY_V1 "chop.host-resident-views.v1"
 
+/*
+ * Host-mapped weight-plan views. A planned view with placement 2 ("mapped") is
+ * one checkpoint tensor, or one contiguous run of its leading-axis rows, stored
+ * unchanged by exactly one plain-copy record. The host maps those bytes
+ * read-only from the checkpoint file it opened without following links and
+ * checked against its header, once per process for every rank naming the same
+ * bytes, and cuts the span out of the rank arena as it does a host-resident
+ * view. Neither the device nor a page-locked budget holds them;
+ * resolve_mapped_view_v1 lends them to the CPU. A package declaring mapped
+ * views must require this capability.
+ */
+#define CHOP_HOST_MAPPED_ROWS_CAPABILITY_V1 "chop.host-mapped-rows.v1"
+
 /* Array elements have exact size because this callback carries no stride. */
 typedef struct chop_bundle_kept_rows_v1 {
   uint32_t struct_size;
@@ -1461,8 +1508,8 @@ const chop_bundle_api_v1 *chop_bundle_get_api_v1(void);
  *
  *   plan "CHOPWPLN": u32 ranks, u32 rank, str image_role, u64 alignment,
  *     u64 arena_bytes; list views {str id, u64 alignment, u32 placement
- *     (0 device, 1 host), u64 offset, u64 byte_length}; list components
- *     {str role, bytes}; list records {u64 arena_offset, u64 byte_length,
+ *     (0 device, 1 host, 2 mapped), u64 offset, u64 byte_length}; list
+ *     components {str role, bytes}; list records {u64 arena_offset, u64 byte_length,
  *     u32 transform, bytes params, list sources {u32 file, str tensor},
  *     u32 axis (UINT32_MAX for the whole tensor), list ranges {u64 start,
  *     u64 end}, list stored_shape {u64}}. Records are in increasing arena

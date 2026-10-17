@@ -24,8 +24,8 @@ use std::sync::{Arc, Mutex};
 use crate::host_services::{
     AuthenticatedComponentMetadataV1, CollectiveRequestV1, CompiledImageSpanV1,
     CustomAddressSpaceV1, CustomCompletionV1, CustomOperandV1, DeviceBufferSpanV1,
-    HostServiceResultV1, HostServicesBackendV1, KernelArgumentV1, LaunchConfigV1, LentLaunchV1,
-    LentRangeV1, LentStreamV1, LogitsRowSinkV1, OwnedDraftTokensV1, OwnedLogitsRowV1,
+    HostServiceResultV1, HostServicesBackendV1, KernelArgumentV1, LaunchConfigV1, LentHostBytesV1,
+    LentLaunchV1, LentRangeV1, LentStreamV1, LogitsRowSinkV1, OwnedDraftTokensV1, OwnedLogitsRowV1,
     OwnedLogitsViewV1, PhysicalKvLayoutV1, PhysicalKvRequestV1, RankArenaUploadV1,
     ResultSinkLimitsV1, StateRequestV1, TensorMapV1,
 };
@@ -275,6 +275,9 @@ impl HostServicesTableV1 {
             query_speculation_v1: Some(query_speculation_trampoline_v1::<B>),
             query_batch_limits_v1: Some(query_batch_limits_trampoline_v1::<B>),
             query_cluster_residency_v1: Some(query_cluster_residency_trampoline_v1::<B>),
+            resolve_mapped_view_v1: Some(resolve_mapped_view_trampoline_v1::<B>),
+            allocate_staging_buffer_v1: Some(allocate_staging_buffer_trampoline_v1::<B>),
+            lend_staging_buffer_v1: Some(lend_staging_buffer_trampoline_v1::<B>),
         });
         // SAFETY-REVIEWED: this table builds every callback itself and owns the backend they read.
         let checked = unsafe { HostServicesV1::new(*raw) };
@@ -643,6 +646,17 @@ output_service_trampoline_v1!(
     )
 );
 output_service_trampoline_v1!(
+    allocate_staging_buffer_trampoline_v1,
+    allocate_staging_buffer,
+    BundleDeviceBufferHandleV1,
+    (
+        pool: BundleMemoryPoolHandleV1,
+        stream: BundleStreamHandleV1,
+        byte_length: u64,
+        alignment: u64,
+    )
+);
+output_service_trampoline_v1!(
     upload_rank_arena_trampoline_v1,
     upload_rank_arena,
     BundleRankArenaHandleV1,
@@ -863,6 +877,73 @@ unsafe extern "C" fn resolve_compiled_image_view_trampoline_v1<B: HostServicesBa
             backend.resolve_compiled_image_view(image, arena, rank, view_id)
         })?;
         finish_output_v1(out_view, result)
+    })
+}
+
+/// A lent range the host answered with: null exactly when empty, and inside
+/// this process's addresses.
+fn checked_lent_bytes_v1(bytes: LentHostBytesV1) -> Result<(usize, u64), BundleAbiError> {
+    let length = checked_u64_to_usize_v1("lent host bytes", bytes.length())?;
+    if (bytes.address() == 0) != (length == 0) || bytes.address().checked_add(length).is_none() {
+        return Err(BundleAbiError::InvalidPointerLength("lent host bytes"));
+    }
+    Ok((bytes.address(), bytes.length()))
+}
+
+// SAFETY-REVIEWED: a V1 caller supplies its own live user_data and views for this callback.
+unsafe extern "C" fn resolve_mapped_view_trampoline_v1<B: HostServicesBackendV1>(
+    user_data: *mut c_void,
+    image: BundleCompiledImageHandleV1,
+    rank: u32,
+    view_id: BundleByteViewV1,
+    out_bytes: *mut BundleByteViewV1,
+) -> BundleStatusV1 {
+    catch_panic_callback_status_v1(|| {
+        let backend = backend_from_user_data_v1::<B>(user_data)?;
+        validate_output_pointer_v1(out_bytes, "resolve_mapped_view output")?;
+        let result = with_byte_view_v1(view_id, |view_id| {
+            backend.resolve_mapped_view(image, rank, view_id)
+        })?;
+        match result {
+            Ok(bytes) => {
+                let (address, length) = checked_lent_bytes_v1(bytes)?;
+                write_output_v1(
+                    out_bytes,
+                    BundleByteViewV1 {
+                        data: address as *const u8,
+                        length,
+                    },
+                )?;
+                Ok(BundleStatusV1::Success)
+            }
+            Err(status) => Ok(failed_host_status_v1(status)),
+        }
+    })
+}
+
+// SAFETY-REVIEWED: a V1 caller supplies its own live user_data and output storage for this callback.
+unsafe extern "C" fn lend_staging_buffer_trampoline_v1<B: HostServicesBackendV1>(
+    user_data: *mut c_void,
+    buffer: BundleDeviceBufferHandleV1,
+    out_bytes: *mut BundleMutByteViewV1,
+) -> BundleStatusV1 {
+    catch_panic_callback_status_v1(|| {
+        let backend = backend_from_user_data_v1::<B>(user_data)?;
+        validate_output_pointer_v1(out_bytes, "lend_staging_buffer output")?;
+        match backend.lend_staging_buffer(buffer) {
+            Ok(bytes) => {
+                let (address, length) = checked_lent_bytes_v1(bytes)?;
+                write_output_v1(
+                    out_bytes,
+                    BundleMutByteViewV1 {
+                        data: address as *mut u8,
+                        length,
+                    },
+                )?;
+                Ok(BundleStatusV1::Success)
+            }
+            Err(status) => Ok(failed_host_status_v1(status)),
+        }
     })
 }
 
@@ -1564,6 +1645,11 @@ fn owned_collective_request_v1(
 /// step, because only the ABI contract can promise it outlives this value.
 pub struct HostServicesV1 {
     raw: BundleHostServicesV1,
+    /// Raw handles of the images and staging buffers whose bytes a closure
+    /// of this caller holds now, once per lend. Releasing one of them, or
+    /// lending a staging buffer twice at once, is refused, so lent bytes
+    /// never outlive their owner or alias a writable lend.
+    lent: std::cell::RefCell<Vec<u64>>,
 }
 
 impl HostServicesV1 {
@@ -1635,7 +1721,10 @@ impl HostServicesV1 {
     // SAFETY-REVIEWED: capturing a caller-owned service table is the documented unsafe step.
     pub unsafe fn new(raw: BundleHostServicesV1) -> Result<Self, BundleAbiError> {
         validate_host_services_v1(&raw)?;
-        Ok(Self { raw })
+        Ok(Self {
+            raw,
+            lent: std::cell::RefCell::new(Vec::new()),
+        })
     }
 }
 
@@ -2094,6 +2183,146 @@ impl HostServicesV1 {
         Ok(result)
     }
 
+    fn refuse_lent(&self, raw: u64) -> Result<(), BundleAbiError> {
+        if self.lent.borrow().contains(&raw) {
+            return Err(BundleAbiError::Status(BundleStatusV1::InvalidState));
+        }
+        Ok(())
+    }
+
+    /// Runs `callback` with `raw` recorded as lent, then forgets it.
+    fn while_lent<R>(&self, raw: u64, callback: impl FnOnce() -> R) -> R {
+        struct Lend<'a>(&'a std::cell::RefCell<Vec<u64>>, u64);
+        impl Drop for Lend<'_> {
+            fn drop(&mut self) {
+                let mut lent = self.0.borrow_mut();
+                if let Some(index) = lent.iter().position(|raw| *raw == self.1) {
+                    lent.swap_remove(index);
+                }
+            }
+        }
+        self.lent.borrow_mut().push(raw);
+        let _lend = Lend(&self.lent, raw);
+        callback()
+    }
+
+    /// Whether the host fills the host-mapped rows tail
+    /// (`chop.host-mapped-rows.v1`).
+    #[must_use]
+    pub fn has_host_mapped_rows(&self) -> bool {
+        let end = std::mem::offset_of!(BundleHostServicesV1, lend_staging_buffer_v1)
+            + std::mem::size_of_val(&self.raw.lend_staging_buffer_v1);
+        (self.raw.struct_size as usize) >= end
+            && self.raw.resolve_mapped_view_v1.is_some()
+            && self.raw.allocate_staging_buffer_v1.is_some()
+            && self.raw.lend_staging_buffer_v1.is_some()
+    }
+
+    fn host_mapped_rows_service<T>(
+        &self,
+        service: Option<T>,
+        name: &'static str,
+    ) -> Result<T, BundleAbiError> {
+        if !self.has_host_mapped_rows() {
+            return Err(BundleAbiError::MissingHostService(name));
+        }
+        required_service_v1(service, name)
+    }
+
+    /// Runs `read` over the bytes of one host-mapped view of `image` for
+    /// `rank` (`chop.host-mapped-rows.v1`): the checkpoint tensor bytes the
+    /// plan names, unchanged. The image cannot be released while `read` runs.
+    pub fn with_mapped_view<R>(
+        &self,
+        image: BundleCompiledImageHandleV1,
+        rank: u32,
+        view_id: &[u8],
+        read: impl FnOnce(&[u8]) -> R,
+    ) -> Result<R, BundleAbiError> {
+        let service = self
+            .host_mapped_rows_service(self.raw.resolve_mapped_view_v1, "resolve_mapped_view_v1")?;
+        let mut output = BundleByteViewV1::empty();
+        // SAFETY-REVIEWED: the view borrows the caller's identifier and the output is this frame's storage.
+        status_result(unsafe {
+            service(
+                self.raw.user_data,
+                image,
+                rank,
+                BundleByteViewV1::from_bytes(view_id),
+                &mut output,
+            )
+        })?;
+        validate_byte_view_v1(output)?;
+        let length = checked_u64_to_usize_v1("mapped view", output.length)?;
+        Ok(self.while_lent(image.raw, || {
+            if length == 0 {
+                return read(&[]);
+            }
+            // SAFETY-REVIEWED: the host keeps a mapped view's bytes readable and
+            // unchanged until its image is released, which this caller refuses
+            // while the lend is recorded.
+            read(unsafe { slice::from_raw_parts(output.data, length) })
+        }))
+    }
+
+    /// Allocates one zeroed staging buffer on `stream`'s context: page-locked
+    /// host memory the device reads through its handle, which device copies
+    /// and kernels take like any buffer (`chop.host-mapped-rows.v1`).
+    pub fn allocate_staging_buffer(
+        &self,
+        pool: BundleMemoryPoolHandleV1,
+        stream: BundleStreamHandleV1,
+        byte_length: u64,
+        alignment: u64,
+    ) -> Result<BundleDeviceBufferHandleV1, BundleAbiError> {
+        let service = self.host_mapped_rows_service(
+            self.raw.allocate_staging_buffer_v1,
+            "allocate_staging_buffer_v1",
+        )?;
+        let mut output = BundleDeviceBufferHandleV1::from_raw(0);
+        // SAFETY-REVIEWED: the captured table stays live and the output is this frame's own storage.
+        status_result(unsafe {
+            service(
+                self.raw.user_data,
+                pool,
+                stream,
+                byte_length,
+                alignment,
+                &mut output,
+            )
+        })?;
+        output.validate()?;
+        Ok(output)
+    }
+
+    /// Runs `write` over the whole of one staging buffer. The caller orders
+    /// it after the device work it queued that reads the buffer (an event
+    /// it synchronized). The buffer cannot be released, or lent again,
+    /// while `write` runs.
+    pub fn with_staging_buffer<R>(
+        &self,
+        buffer: BundleDeviceBufferHandleV1,
+        write: impl FnOnce(&mut [u8]) -> R,
+    ) -> Result<R, BundleAbiError> {
+        self.refuse_lent(buffer.raw)?;
+        let service = self
+            .host_mapped_rows_service(self.raw.lend_staging_buffer_v1, "lend_staging_buffer_v1")?;
+        let mut output = BundleMutByteViewV1::empty();
+        // SAFETY-REVIEWED: the captured table stays live and the output is this frame's own storage.
+        status_result(unsafe { service(self.raw.user_data, buffer, &mut output) })?;
+        validate_mut_byte_view_v1(output)?;
+        let length = checked_u64_to_usize_v1("staging buffer", output.length)?;
+        Ok(self.while_lent(buffer.raw, || {
+            if length == 0 {
+                return write(&mut []);
+            }
+            // SAFETY-REVIEWED: the host keeps a staging buffer's bytes until the
+            // buffer is released, and this caller refuses that release and a
+            // second lend while this one is recorded.
+            write(unsafe { slice::from_raw_parts_mut(output.data, length) })
+        }))
+    }
+
     pub fn prepare_kv(
         &self,
         request: BundleKvRequestHandleV1,
@@ -2255,15 +2484,28 @@ impl HostServicesV1 {
 
     status_service_call_v1!(release_context, (context: BundleContextHandleV1));
     status_service_call_v1!(release_memory_pool, (pool: BundleMemoryPoolHandleV1));
-    status_service_call_v1!(
-        release_device_buffer,
-        (buffer: BundleDeviceBufferHandleV1)
-    );
+    /// Releases one buffer; refused while a closure holds its staging bytes.
+    pub fn release_device_buffer(
+        &self,
+        buffer: BundleDeviceBufferHandleV1,
+    ) -> Result<(), BundleAbiError> {
+        self.refuse_lent(buffer.raw)?;
+        let service = required_service_v1(self.raw.release_device_buffer, "release_device_buffer")?;
+        // SAFETY-REVIEWED: the captured table stays live and this call passes only a handle.
+        status_result(unsafe { service(self.raw.user_data, buffer) })
+    }
     status_service_call_v1!(release_rank_arena, (arena: BundleRankArenaHandleV1));
-    status_service_call_v1!(
-        release_compiled_image,
-        (image: BundleCompiledImageHandleV1)
-    );
+    /// Releases one image; refused while a closure holds its mapped bytes.
+    pub fn release_compiled_image(
+        &self,
+        image: BundleCompiledImageHandleV1,
+    ) -> Result<(), BundleAbiError> {
+        self.refuse_lent(image.raw)?;
+        let service =
+            required_service_v1(self.raw.release_compiled_image, "release_compiled_image")?;
+        // SAFETY-REVIEWED: the captured table stays live and this call passes only a handle.
+        status_result(unsafe { service(self.raw.user_data, image) })
+    }
     status_service_call_v1!(
         release_authenticated_component,
         (component: BundleAuthenticatedComponentHandleV1)
@@ -4584,6 +4826,46 @@ mod tests {
             caller.query_cluster_residency(symbol, config).unwrap(),
             crate::BundleRawClusterResidencyV1::unreported()
         );
+    }
+
+    /// A table without the host-mapped rows tail, or with any of its three
+    /// services missing, reports each service missing instead of calling it.
+    #[test]
+    fn older_host_service_tail_reports_no_host_mapped_rows() {
+        let table = HostServicesTableV1::new(Rc::new(UnsupportedHostServicesBackendV1));
+        assert!(table.caller().has_host_mapped_rows());
+        let image = crate::BundleCompiledImageHandleV1::from_parts(1, 1);
+        let pool = crate::BundleMemoryPoolHandleV1::from_parts(1, 1);
+        let stream = BundleStreamHandleV1::from_parts(1, 1);
+        let buffer = BundleDeviceBufferHandleV1::from_parts(1, 1);
+        // The current table reaches the backend, which refuses.
+        assert_eq!(
+            table.caller().with_mapped_view(image, 0, b"rows", |_| ()),
+            Err(BundleAbiError::Status(BundleStatusV1::Unsupported))
+        );
+        let mut old = *table.services();
+        old.struct_size = std::mem::offset_of!(BundleHostServicesV1, lend_staging_buffer_v1) as u32;
+        let mut partial = *table.services();
+        partial.allocate_staging_buffer_v1 = None;
+        for raw in [old, partial] {
+            // SAFETY-REVIEWED: the table and backend remain live for this copied prefix.
+            let caller = unsafe { HostServicesV1::new(raw) }.unwrap();
+            assert!(!caller.has_host_mapped_rows());
+            assert_eq!(
+                caller.with_mapped_view(image, 0, b"rows", |_| ()),
+                Err(BundleAbiError::MissingHostService("resolve_mapped_view_v1"))
+            );
+            assert_eq!(
+                caller.allocate_staging_buffer(pool, stream, 64, 64),
+                Err(BundleAbiError::MissingHostService(
+                    "allocate_staging_buffer_v1"
+                ))
+            );
+            assert_eq!(
+                caller.with_staging_buffer(buffer, |_| ()),
+                Err(BundleAbiError::MissingHostService("lend_staging_buffer_v1"))
+            );
+        }
     }
 
     #[test]

@@ -62,6 +62,38 @@ impl AuthenticatedComponentMetadataV1 {
     }
 }
 
+/// Host memory a host lends a bundle past one call: the bytes of a mapped view
+/// (read only) or of a staging buffer (writable), named by address and length.
+///
+/// The host keeps them valid, and a mapped view's bytes unchanged, until the
+/// image or buffer they belong to is released. Building one reads nothing;
+/// only the bundle side of the trampoline turns it into a slice.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LentHostBytesV1 {
+    address: usize,
+    length: u64,
+}
+
+impl LentHostBytesV1 {
+    #[must_use]
+    pub fn new(address: *const u8, length: u64) -> Self {
+        Self {
+            address: address as usize,
+            length,
+        }
+    }
+
+    #[must_use]
+    pub const fn address(self) -> usize {
+        self.address
+    }
+
+    #[must_use]
+    pub const fn length(self) -> u64 {
+        self.length
+    }
+}
+
 /// A device-buffer range that carries no ABI pointer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DeviceBufferSpanV1 {
@@ -802,6 +834,44 @@ pub trait HostServicesBackendV1 {
     ) -> HostServiceResultV1<CompiledImageSpanV1>;
     fn release_compiled_image(&self, image: BundleCompiledImageHandleV1)
     -> HostServiceResultV1<()>;
+
+    /// The bytes of one host-mapped view of `image` for `rank`
+    /// (`chop.host-mapped-rows.v1`), lent for the CPU to read until the image
+    /// is released. A view the image holds elsewhere, or not for this rank,
+    /// is [`BundleStatusV1::NotFound`].
+    fn resolve_mapped_view(
+        &self,
+        _image: BundleCompiledImageHandleV1,
+        _rank: u32,
+        _view_id: &[u8],
+    ) -> HostServiceResultV1<LentHostBytesV1> {
+        Err(BundleStatusV1::Unsupported)
+    }
+
+    /// Allocates one zeroed staging buffer on `stream`'s context: page-locked
+    /// host memory the device reads through a device address, so device copies
+    /// and kernels take it like any buffer. The bundle owns it and releases it
+    /// with `release_device_buffer`.
+    fn allocate_staging_buffer(
+        &self,
+        _pool: BundleMemoryPoolHandleV1,
+        _stream: BundleStreamHandleV1,
+        _byte_length: u64,
+        _alignment: u64,
+    ) -> HostServiceResultV1<BundleDeviceBufferHandleV1> {
+        Err(BundleStatusV1::Unsupported)
+    }
+
+    /// The whole of one staging buffer, lent for the CPU to write until the
+    /// buffer is released. The bundle orders its writes after the device work
+    /// it queued that reads them. A buffer that is not a staging buffer is
+    /// [`BundleStatusV1::InvalidArgument`].
+    fn lend_staging_buffer(
+        &self,
+        _buffer: BundleDeviceBufferHandleV1,
+    ) -> HostServiceResultV1<LentHostBytesV1> {
+        Err(BundleStatusV1::Unsupported)
+    }
 
     fn open_authenticated_component(
         &self,

@@ -37,6 +37,7 @@ import collections
 import contextlib
 import copy
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -514,6 +515,27 @@ def _verdict(index):
     return expected, why, proven, reason
 
 
+def _orphan_guard(parent):
+    """A forked worker's initializer: the kernel sends it SIGTERM when its
+    parent dies (Linux PR_SET_PDEATHSIG), and it exits now if the parent
+    is already gone. A killed run then leaves no idle worker behind holding
+    the parent's inherited descriptors, such as a launcher slot lock."""
+    if sys.platform.startswith('linux'):
+        import ctypes
+        import signal
+        ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGTERM, 0, 0, 0)  # PR_SET_PDEATHSIG
+    if os.getppid() != parent:
+        os._exit(1)
+
+
+def workers(jobs):
+    """A pool of `jobs` forked workers that exit with their parent."""
+    import concurrent.futures
+    import multiprocessing
+    return concurrent.futures.ProcessPoolExecutor(jobs, mp_context=multiprocessing.get_context('fork'),
+                                                  initializer=_orphan_guard, initargs=(os.getpid(),))
+
+
 def run(cases, weaken=None, per_resource=1, positions=('before', 'start', 'after'), log=None, jobs=1):
     """Prove every case and each of its mutations, with `jobs` forked
     workers. Returns the report."""
@@ -530,9 +552,7 @@ def run(cases, weaken=None, per_resource=1, positions=('before', 'start', 'after
         _WORK.extend((case, facts, m) for m in mutations(facts, per_resource, positions))
     with weakened(weaken):
         if jobs > 1:
-            import concurrent.futures
-            import multiprocessing
-            with concurrent.futures.ProcessPoolExecutor(jobs, mp_context=multiprocessing.get_context('fork')) as pool:
+            with workers(jobs) as pool:
                 verdicts = pool.map(_verdict, range(len(_WORK)), chunksize=4)
                 verdicts = list(_logged(verdicts, log))
         else:

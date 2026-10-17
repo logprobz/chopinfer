@@ -12,8 +12,11 @@ refused and every control proven; with any one write rule weakened, the
 harness must report escapes of that class. The same harness runs on real
 captures through `mutations.py pair` and `mutations.py overlay`."""
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
+import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -37,6 +40,16 @@ def peers(raws, length):
 
 def launch(stream, symbol, args):
     return f'launch {stream} {symbol} {CONFIG} [' + ', '.join(args) + ']'
+
+
+def alive(pid):
+    """Whether process `pid` exists and is not a zombie awaiting its reaper."""
+    try:
+        os.kill(pid, 0)
+        with open(f'/proc/{pid}/stat') as stat:
+            return stat.read().rsplit(')', 1)[1].split()[0] != 'Z'
+    except (ProcessLookupError, FileNotFoundError):
+        return False
 
 
 def toy_device(head=False, steps=2):
@@ -199,6 +212,37 @@ class MutationHarnessTests(unittest.TestCase):
                 report = mutations.run(self.cases, weaken=cls)
                 self.assertIn(cls, report['summary']['escaped_classes'], report['summary'])
                 self.assertIs(layout.reads_only, REAL_READS_ONLY)
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'the parent-death signal is Linux only')
+    def test_pool_workers_exit_when_their_parent_is_killed(self):
+        # A parent killed while its workers idle must not leave them running
+        # with its inherited descriptors (such as a launcher slot lock).
+        script = ('import os, sys, time\n'
+                  f'sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})\n'
+                  'import mutations\n'
+                  'def pid(_):\n'
+                  '    time.sleep(0.5)\n'
+                  '    return os.getpid()\n'
+                  'pool = mutations.workers(2)\n'
+                  'print(" ".join(map(str, sorted(set(pool.map(pid, range(2)))))), flush=True)\n'
+                  'time.sleep(60)\n')
+        parent = subprocess.Popen([sys.executable, '-B', '-c', script], stdout=subprocess.PIPE, text=True)
+        pids = []
+        try:
+            pids = [int(p) for p in parent.stdout.readline().split()]
+            self.assertEqual(len(pids), 2)
+            parent.kill()
+            parent.wait(10)
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline and any(alive(p) for p in pids):
+                time.sleep(0.1)
+            self.assertEqual([p for p in pids if alive(p)], [])
+        finally:
+            parent.kill()
+            parent.stdout.close()
+            for p in pids:
+                if alive(p):
+                    os.kill(p, 9)
 
     def test_the_oracle_reads_the_journal(self):
         raw, base, x = GEN + 20, GEN + 9, GEN + 8

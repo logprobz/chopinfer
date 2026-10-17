@@ -501,6 +501,7 @@ mod tests {
                     process(7, Some("0.0.0.0:8311"), Kind::Compute),
                     process(9, None, Kind::Graphics),
                 ],
+                answered: true,
                 ..Reading::default()
             }]),
             &mut registry,

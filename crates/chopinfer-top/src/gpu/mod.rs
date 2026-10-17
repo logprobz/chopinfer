@@ -216,6 +216,9 @@ pub struct Reading {
     pub activity: Option<Activity>,
     /// The GPU stopped answering: it fell off the bus or is otherwise lost.
     pub lost: bool,
+    /// Whether any query of this reading succeeded. A reading where none
+    /// did says nothing about the GPU, not even that it is back.
+    pub answered: bool,
 }
 
 impl Reading {
@@ -396,21 +399,25 @@ impl Gpus {
         let device = &self.devices[index];
         let who = format!("GPU {}", device.index);
         let watch = &mut self.watches[index];
-        if reading.lost != watch.lost {
-            watch.lost = reading.lost;
-            if reading.lost {
+        if reading.lost {
+            if !watch.lost {
+                watch.lost = true;
                 registry.note(
                     now,
                     &who,
                     "stopped answering NVML: lost or off the bus",
                     Tone::Bad,
                 );
-            } else {
-                registry.note(now, &who, "answering NVML again", Tone::Good);
             }
-        }
-        if reading.lost {
             return;
+        }
+        // Every query failed: nothing is known, so nothing changes.
+        if !reading.answered {
+            return;
+        }
+        if watch.lost {
+            watch.lost = false;
+            registry.note(now, &who, "answering NVML again", Tone::Good);
         }
         // A reading without reasons, from a failed query, says nothing
         // about a slowdown.
@@ -742,6 +749,7 @@ mod tests {
                 ecc_uncorrected: Some(ecc),
                 processes,
                 lost,
+                answered: !lost,
                 ..Reading::default()
             }
         };
@@ -832,6 +840,7 @@ mod tests {
         let reading = |reasons, ecc| Reading {
             reasons,
             ecc_uncorrected: ecc,
+            answered: true,
             ..Reading::default()
         };
         for (at, reading) in [
@@ -857,6 +866,46 @@ mod tests {
                 (1.0, "thermal slowdown"),
                 (1.0, "4 uncorrected ECC errors since the driver loaded"),
                 (5.0, "1 uncorrected ECC error since the driver loaded"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_lost_gpu_is_back_only_when_a_query_answers() {
+        let mut registry = Registry::new(1.0);
+        let mut gpus = Gpus::new(Status::Opening, true, 1.0);
+        gpus.apply(
+            Report::Opened {
+                driver: None,
+                devices: vec![Device::default()],
+            },
+            &mut registry,
+            0.0,
+        );
+        let reading = |lost, answered| Reading {
+            lost,
+            answered,
+            ..Reading::default()
+        };
+        for (at, reading) in [
+            (1.0, reading(true, false)),
+            // Every query failed, but not as lost: no news.
+            (2.0, reading(false, false)),
+            (3.0, reading(false, true)),
+        ] {
+            gpus.apply(Report::Polled(vec![reading]), &mut registry, at);
+        }
+        let events = registry
+            .events
+            .iter()
+            .skip(1)
+            .map(|event| (event.at, event.what.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            events,
+            [
+                (1.0, "stopped answering NVML: lost or off the bus"),
+                (3.0, "answering NVML again"),
             ]
         );
     }

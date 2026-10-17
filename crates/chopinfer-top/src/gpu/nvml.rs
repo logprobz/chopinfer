@@ -313,10 +313,12 @@ impl Api {
     }
 }
 
-/// The status of each query of one reading, so a lost GPU is noticed.
+/// The status of each query of one reading: whether the GPU is lost, and
+/// whether any query answered.
 #[derive(Default)]
 struct Statuses {
     lost: bool,
+    answered: bool,
 }
 
 impl Statuses {
@@ -324,6 +326,7 @@ impl Statuses {
         if code == ERROR_GPU_IS_LOST {
             self.lost = true;
         }
+        self.answered |= code == SUCCESS;
         code == SUCCESS
     }
 }
@@ -625,9 +628,11 @@ impl Nvml {
             processes: super::merge(&compute, &graphics),
             activity: None,
             lost: false,
+            answered: false,
         };
         Reading {
             lost: statuses.lost,
+            answered: statuses.answered,
             ..reading
         }
     }

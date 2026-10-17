@@ -352,6 +352,7 @@ fn with_gpus(app: &mut App, counters: bool) {
                     pcie_tx: Some(6.0e9),
                 }),
                 lost: false,
+                answered: true,
             }
         };
         gpus.apply(

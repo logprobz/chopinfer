@@ -128,15 +128,18 @@ chop_decode_future_seconds_sum 0.2
         from agentic_server import mode_evidence, verify_arm
         before = {'text': 'chop_prefill_budget_selected_tokens_count 0\n'}
         after = {'text': 'chop_prefill_budget_selected_tokens_count 4\n'}
+        # Both tbt and decode-aware select budgets, so the counter alone
+        # establishes neither.
         evidence = mode_evidence(before, after, 'M')
-        self.assertTrue(verify_arm('tbt', evidence)['passed'])
+        self.assertIsNone(evidence['mode'])
+        self.assertFalse(verify_arm('tbt', evidence)['passed'])
         self.assertFalse(verify_arm('fixed', evidence)['passed'])
         unknown = mode_evidence({'text': ''}, {'text': ''}, 'M')
         self.assertIsNone(unknown['mode'])
         self.assertFalse(verify_arm('fixed', unknown)['passed'])
         conflict = mode_evidence(before, after, 'M', {'mode': 'fixed'})
         self.assertIsNone(conflict['mode'])
-        self.assertIn('conflicting mode evidence', conflict['errors'])
+        self.assertIn('selected-budget observations under the fixed budget', conflict['errors'])
         fixed = mode_evidence({'text': ''}, {'text': ''}, 'M', {'mode': 'fixed'})
         self.assertTrue(verify_arm('fixed', fixed)['passed'])
         idle_tbt = mode_evidence({'text': ''}, {'text': ''}, 'M', {'mode': 'tbt'})
@@ -144,6 +147,36 @@ chop_decode_future_seconds_sum 0.2
         self.assertTrue(checked['passed'])
         self.assertTrue(checked['warnings'])
         self.assertFalse(checked['policy_exercised'])
+
+    def test_decode_aware_never_passes_as_tbt(self):
+        """The runtime's tbt and decode-aware budgets are separate policies;
+        each arm needs evidence specific to its own."""
+        from agentic_server import mode_evidence, verify_arm
+        selected = 'chop_prefill_budget_selected_tokens_count{model_name="M"} %d\n'
+        decode_aware = 'chop_prefill_budget_decode_estimate_seconds{model_name="M",rows_le="1"} 0.004\n'
+        tbt = ('chop_mixed_budget_samples{model_name="M"} 12\n'
+               'chop_mixed_step_actual_over_predicted_count{model_name="M"} %d\n')
+        def evidence(before, after, startup=None):
+            return mode_evidence({'text': before}, {'text': after}, 'M', startup, startup)
+        cases = [
+            ('decode-aware startup', evidence(selected % 0, selected % 5, {'mode': 'decode-aware'}), 'decode-aware'),
+            ('decode-aware metrics', evidence(selected % 0 + decode_aware, selected % 5 + decode_aware), 'decode-aware'),
+            ('tbt metrics', evidence(selected % 0 + tbt % 0, selected % 5 + tbt % 3), 'tbt'),
+            ('tbt startup', evidence(selected % 0, selected % 5, {'mode': 'tbt'}), 'tbt'),
+        ]
+        for name, observed, mode in cases:
+            with self.subTest(name):
+                self.assertEqual(observed['mode'], mode)
+                for arm in ('tbt', 'tbt-150ms', 'decode-aware', 'fixed'):
+                    self.assertEqual(verify_arm(arm, observed)['passed'], arm.split('-1')[0] == mode, arm)
+        self.assertEqual(mode_evidence({'text': ''}, {'text': ''}, 'M', {'mode': 'decode-aware'})['mode'], 'decode-aware')
+        mixed = evidence(selected % 0 + decode_aware, selected % 5 + tbt % 3)
+        self.assertIsNone(mixed['mode'])
+        self.assertIn('conflicting mode evidence', mixed['errors'])
+        # A selected budget cannot come from the fixed policy.
+        fixed = evidence(selected % 0, selected % 5, {'mode': 'fixed'})
+        self.assertIsNone(fixed['mode'])
+        self.assertFalse(verify_arm('fixed', fixed)['passed'])
 
     def test_request_seed_and_slot_assignment(self):
         import threading

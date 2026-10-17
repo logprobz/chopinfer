@@ -105,7 +105,7 @@ def parse_metrics(text):
         name, raw_labels, raw_value = match.groups()
         if not name.startswith(('chop_', 'vllm:')):
             continue
-        if not any(part in name for part in ('step_', 'decode_', 'prefix_cache', 'prefill_budget', 'inter_token_latency_seconds', 'time_to_first_token_seconds', 'scheduler_info')):
+        if not any(part in name for part in ('step_', 'decode_', 'prefix_cache', 'prefill_budget', 'mixed_budget', 'inter_token_latency_seconds', 'time_to_first_token_seconds', 'scheduler_info')):
             continue
         labels = []
         pos = 0

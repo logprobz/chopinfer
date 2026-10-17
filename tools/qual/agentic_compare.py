@@ -22,7 +22,7 @@ from common import compared_timing
 def validate_pair(left, right):
     labels = [left.get('arm'), right.get('arm')]
     if not all(isinstance(label, str) and arm_mode(label) for label in labels):
-        raise ValueError('arm labels must name a verified mode: fixed or tbt, optionally with a -suffix')
+        raise ValueError('arm labels must name a verified mode (fixed, tbt or decode-aware), optionally with a -suffix')
     if labels[0] == labels[1]:
         raise ValueError('expected two different arms')
     for receipt in (left, right):

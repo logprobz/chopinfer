@@ -1303,10 +1303,15 @@ with replica R of the other and reports, per figure, both arms' spreads, the
 per-replica differences and whether the arms' ranges overlap.
 
 `agentic_compare.py BASELINE CANDIDATE` compares any two arms whose labels
-name a prefill-budget mode, `fixed` or `tbt`, alone or with a `-` suffix for
-the arm's other server settings: `--arm fixed-mbt4096` for a fixed budget at
-`--max-batch-tokens 4096`. Each level's mode is verified against the label,
-so pass `--prefill-budget` to the server explicitly (no metric reports it).
+name a prefill-budget mode, `fixed`, `tbt` or `decode-aware`, alone or with
+a `-` suffix for the arm's other server settings: `--arm fixed-mbt4096` for a
+fixed budget at `--max-batch-tokens 4096`. Each level's mode is verified
+against the label from the listener's `--prefill-budget` or from series only
+that policy renders (`chop_mixed_budget_*` and `chop_mixed_step_*` for
+`tbt`, `chop_prefill_budget_decode_estimate_*` for `decode-aware`); the
+selected-budget histogram comes from both and establishes neither. Pass
+`--prefill-budget` to the server explicitly for a `fixed` arm, which renders
+no policy series.
 The output names the arms (`arms`) and reports `candidate_minus_baseline`.
 Of a `fixed` and `tbt` pair, `fixed` is the baseline in either order.
 

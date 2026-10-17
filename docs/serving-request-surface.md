@@ -106,7 +106,7 @@ continuations exceeds a limit:
 | Compile work | 536,870,912 units per schema construction or automaton compilation |
 | Compile allocation accounting | 2 GiB (not a process RSS ceiling) |
 | Choices or schema-source array elements | 16,384 |
-| Determinization growth | 32 DFA states per reachable NFA state in a rule |
+| Determinization growth | 32 DFA states per reachable NFA state in a rule, counted as if every use of a shared fragment were built separately |
 | Expression expansion | 64 MiB of expression-copy accounting |
 | Reference analysis | 1,000,000 expression and reference visits |
 | Literal compilations | 1,024 per schema construction |

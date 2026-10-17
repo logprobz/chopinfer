@@ -303,23 +303,15 @@ impl Automaton {
         };
         let mut nfas = Vec::with_capacity(order.len());
         for &id in &order {
-            let (start, end) = builder.build_rule(id)?;
-            nfas.push((start, end));
+            nfas.push(builder.build_rule(id)?);
         }
         let nfa = builder.states;
         let mut states = Vec::new();
         let mut rules = Vec::with_capacity(order.len());
         let mut entries = 0_usize;
-        for (rule, &(start, end)) in nfas.iter().enumerate() {
-            let compiled = determinize(
-                &nfa,
-                rule as u32,
-                start,
-                end,
-                &mut states,
-                &mut entries,
-                budget,
-            )?;
+        for (rule, &built) in nfas.iter().enumerate() {
+            let compiled =
+                determinize(&nfa, rule as u32, built, &mut states, &mut entries, budget)?;
             rules.push(compiled);
         }
         let mut automaton = Self {
@@ -630,18 +622,82 @@ struct NfaState {
 /// that continue to the same state are one fragment, so an expanded rule, an
 /// ordered subset's item or tail, and a run of bounded repetitions are built
 /// once for each place they lead to rather than once for each use.
+///
+/// Each build also returns its [`Unshared`] count, which determinization
+/// growth is charged against, so sharing a fragment refuses no grammar the
+/// unshared construction admits.
 struct NfaBuilder<'a> {
     grammar: &'a Grammar,
     budget: &'a Budget,
     compiled_index: &'a HashMap<RuleId, u32>,
     states: Vec<NfaState>,
     expanding: Vec<RuleId>,
-    /// The start of each expanded rule, by the rule and the state it
-    /// continues to.
-    expanded: HashMap<(RuleId, u32), u32>,
+    /// The start of each expanded rule and its unshared count, by the rule
+    /// and the state it continues to.
+    expanded: HashMap<(RuleId, u32), (u32, Unshared)>,
     /// For a repeated rule, literal or class and the state its repetitions
-    /// continue to, `optional[j]` starts up to `j` more of them.
-    optional: HashMap<(&'a Expr, u32), Vec<u32>>,
+    /// continue to, `optional[j]` starts up to `j` more of them; with the
+    /// unshared count of one of them.
+    optional: HashMap<(&'a Expr, u32), (Vec<u32>, Unshared)>,
+}
+
+/// The states the construction that builds every use of an expression
+/// separately reaches from the expression's start, and whether it reaches
+/// the expression's end. That construction gives each sequence a start state
+/// and each alternative, class, repetition, marked text and `Nothing` an end
+/// state, builds an ordered subset's items and tail once before any entry and
+/// once after a separator, and builds every copy of a repetition.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct Unshared {
+    states: usize,
+    finishes: bool,
+}
+
+impl Unshared {
+    fn new(states: usize, finishes: bool) -> Self {
+        Self { states, finishes }
+    }
+
+    /// A start state followed by `items` in order: each item is reached only
+    /// when every item before it finishes.
+    fn sequence(items: impl IntoIterator<Item = Self>) -> Self {
+        let mut sequence = Self::new(1, true);
+        for item in items {
+            if !sequence.finishes {
+                break;
+            }
+            sequence.states = sequence.states.saturating_add(item.states);
+            sequence.finishes = item.finishes;
+        }
+        sequence
+    }
+
+    /// `Expr::seq([first, second])`, as that constructor flattens its parts:
+    /// a nested sequence contributes its items without its start state.
+    fn flattened(first: (&Expr, Self), second: (&Expr, Self)) -> Self {
+        let mut items = 0;
+        let mut parts = Vec::new();
+        for (expr, count) in [first, second] {
+            match expr {
+                Expr::Empty => {}
+                Expr::Nothing => return Self::new(1, false),
+                Expr::Seq(inner) => {
+                    items += inner.len();
+                    parts.push(Self::new(count.states.saturating_sub(1), count.finishes));
+                }
+                _ => {
+                    items += 1;
+                    parts.push(count);
+                }
+            }
+        }
+        let joined = Self::sequence(parts);
+        match items {
+            0 => Self::new(1, true),
+            1 => Self::new(joined.states.saturating_sub(1), joined.finishes),
+            _ => joined,
+        }
+    }
 }
 
 impl<'a> NfaBuilder<'a> {
@@ -658,25 +714,29 @@ impl<'a> NfaBuilder<'a> {
         self.states[from as usize].epsilon.push(to);
     }
 
-    /// A rule compiled on its own: its start and its accepting state.
-    fn build_rule(&mut self, id: RuleId) -> Result<(u32, u32), GrammarError> {
+    /// A rule compiled on its own: its start, its accepting state and the
+    /// states its unshared construction reaches, at most the NFA states that
+    /// construction could build at all.
+    fn build_rule(&mut self, id: RuleId) -> Result<(u32, u32, usize), GrammarError> {
         let end = self.add()?;
-        Ok((self.expand(id, end)?, end))
+        let (start, unshared) = self.expand(id, end)?;
+        Ok((start, end, unshared.states.min(MAX_NFA_STATES)))
     }
 
-    fn expand(&mut self, id: RuleId, next: u32) -> Result<u32, GrammarError> {
+    fn expand(&mut self, id: RuleId, next: u32) -> Result<(u32, Unshared), GrammarError> {
         let grammar = self.grammar;
         self.expanding.push(id);
-        let start = self.build(&grammar.rules[id.0 as usize], next);
+        let built = self.build(&grammar.rules[id.0 as usize], next);
         self.expanding.pop();
-        start
+        built
     }
 
-    fn build(&mut self, expr: &'a Expr, next: u32) -> Result<u32, GrammarError> {
+    /// The start of `expr` continuing to `next`, and its unshared count.
+    fn build(&mut self, expr: &'a Expr, next: u32) -> Result<(u32, Unshared), GrammarError> {
         self.budget.charge(1, 0)?;
         match expr {
-            Expr::Empty => Ok(next),
-            Expr::Nothing => self.add(),
+            Expr::Empty => Ok((next, Unshared::new(1, true))),
+            Expr::Nothing => Ok((self.add()?, Unshared::new(1, false))),
             Expr::Literal(bytes) => {
                 let mut current = next;
                 for &byte in bytes.iter().rev() {
@@ -686,14 +746,16 @@ impl<'a> NfaBuilder<'a> {
                         .push((byte, byte, current));
                     current = state;
                 }
-                Ok(current)
+                Ok((current, Unshared::new(bytes.len() + 1, true)))
             }
             Expr::Class(class) => {
+                let first = self.states.len();
                 let start = self.add()?;
                 let mut sequences = Vec::new();
                 for &(lo, hi) in class.ranges() {
                     scalar_range_sequences(lo, hi, &mut sequences);
                 }
+                let finishes = !sequences.is_empty();
                 for ranges in sequences {
                     let mut current = next;
                     for (index, &(lo, hi)) in ranges.iter().enumerate().rev() {
@@ -702,22 +764,32 @@ impl<'a> NfaBuilder<'a> {
                         current = state;
                     }
                 }
-                Ok(start)
+                let states = self.states.len() - first + usize::from(finishes);
+                Ok((start, Unshared::new(states, finishes)))
             }
             Expr::Seq(items) => {
                 let mut current = next;
+                let mut counts = Vec::with_capacity(items.len());
                 for item in items.iter().rev() {
-                    current = self.build(item, current)?;
+                    let (start, count) = self.build(item, current)?;
+                    current = start;
+                    counts.push(count);
                 }
-                Ok(current)
+                Ok((current, Unshared::sequence(counts.into_iter().rev())))
             }
             Expr::Alt(items) => {
                 let start = self.add()?;
+                let mut unshared = Unshared::new(1, false);
                 for item in items {
-                    let item_start = self.build(item, next)?;
+                    let (item_start, count) = self.build(item, next)?;
                     self.epsilon(start, item_start);
+                    unshared.states = unshared.states.saturating_add(count.states);
+                    unshared.finishes |= count.finishes;
                 }
-                Ok(start)
+                unshared.states = unshared
+                    .states
+                    .saturating_add(usize::from(unshared.finishes));
+                Ok((start, unshared))
             }
             Expr::Repeat { expr, min, max } => {
                 if *min > MAX_REPEAT || max.is_some_and(|max| max > MAX_REPEAT) {
@@ -726,26 +798,44 @@ impl<'a> NfaBuilder<'a> {
                 if max.is_some_and(|max| max < *min) {
                     return Err(GrammarError::invalid("a repetition has max below min"));
                 }
-                let (mut start, required) = match max {
+                let (mut start, required, mut copy) = match max {
                     // The last required copy, or a loop state without one,
                     // repeats through the loop.
                     None => {
                         let repeat = self.add()?;
                         self.epsilon(repeat, next);
-                        let item = self.build(expr, repeat)?;
+                        let (item, copy) = self.build(expr, repeat)?;
                         self.epsilon(repeat, item);
                         if *min == 0 {
-                            (repeat, 0)
+                            (repeat, 0, copy)
                         } else {
-                            (item, min - 1)
+                            (item, min - 1, copy)
                         }
                     }
-                    Some(max) => (self.optional(expr, max - min, next)?, *min),
+                    Some(max) => {
+                        let (start, copy) = self.optional(expr, max - min, next)?;
+                        (start, *min, copy)
+                    }
                 };
                 for _ in 0..required {
-                    start = self.build(expr, start)?;
+                    (start, copy) = self.build(expr, start)?;
                 }
-                Ok(start)
+                // The unshared construction builds a start state, `min`
+                // copies, then a loop state and one copy, or an end state and
+                // copies up to `max`, each reached when the one before it
+                // finishes.
+                let unshared = if *min > 0 && !copy.finishes {
+                    Unshared::new(copy.states.saturating_add(1), false)
+                } else {
+                    let optional = match max {
+                        None => 1,
+                        Some(max) if copy.finishes => max - min,
+                        Some(max) => (max - min).min(1),
+                    };
+                    let copies = (*min + optional) as usize;
+                    Unshared::new(copy.states.saturating_mul(copies).saturating_add(2), true)
+                };
+                Ok((start, unshared))
             }
             Expr::Rule(id) => {
                 if id.0 as usize >= self.grammar.rules.len() {
@@ -756,17 +846,17 @@ impl<'a> NfaBuilder<'a> {
                 if let Some(&compiled) = self.compiled_index.get(id) {
                     let start = self.add()?;
                     self.states[start as usize].calls.push((compiled, next));
-                    return Ok(start);
+                    return Ok((start, Unshared::new(2, true)));
                 }
                 if self.expanding.contains(id) {
                     return Err(GrammarError::invalid("a grammar rule refers to itself"));
                 }
-                if let Some(&start) = self.expanded.get(&(*id, next)) {
-                    return Ok(start);
+                if let Some(&built) = self.expanded.get(&(*id, next)) {
+                    return Ok(built);
                 }
-                let start = self.expand(*id, next)?;
-                self.expanded.insert((*id, next), start);
-                Ok(start)
+                let built = self.expand(*id, next)?;
+                self.expanded.insert((*id, next), built);
+                Ok(built)
             }
             Expr::TextExcluding(markers) => self.marked_text(markers, None, next),
             Expr::TextUntil { end, avoid } => self.marked_text(avoid, Some(end), next),
@@ -779,12 +869,18 @@ impl<'a> NfaBuilder<'a> {
     }
 
     /// A state that admits up to `count` copies of `expr` and then continues
-    /// to `next`. The states for fewer copies are a suffix of the states for
-    /// more, so every run of a rule, literal or class bounded above with one
+    /// to `next`, and the unshared count of one copy (none when `count` is
+    /// 0). The states for fewer copies are a suffix of the states for more,
+    /// so every run of a rule, literal or class bounded above with one
     /// continuation shares one chain.
-    fn optional(&mut self, expr: &'a Expr, count: u32, next: u32) -> Result<u32, GrammarError> {
+    fn optional(
+        &mut self,
+        expr: &'a Expr,
+        count: u32,
+        next: u32,
+    ) -> Result<(u32, Unshared), GrammarError> {
         if count == 0 {
-            return Ok(next);
+            return Ok((next, Unshared::default()));
         }
         let shared = match expr {
             Expr::Rule(_) => true,
@@ -798,10 +894,10 @@ impl<'a> NfaBuilder<'a> {
             }
             _ => false,
         };
-        let mut chain = if shared {
+        let (mut chain, mut copy) = if shared {
             self.optional.remove(&(expr, next)).unwrap_or_default()
         } else {
-            Vec::new()
+            (Vec::new(), Unshared::default())
         };
         if chain.is_empty() {
             chain.push(next);
@@ -809,15 +905,16 @@ impl<'a> NfaBuilder<'a> {
         while chain.len() <= count as usize {
             let state = self.add()?;
             self.epsilon(state, next);
-            let item = self.build(expr, chain[chain.len() - 1])?;
+            let item;
+            (item, copy) = self.build(expr, chain[chain.len() - 1])?;
             self.epsilon(state, item);
             chain.push(state);
         }
         let start = chain[count as usize];
         if shared {
-            self.optional.insert((expr, next), chain);
+            self.optional.insert((expr, next), (chain, copy));
         }
-        Ok(start)
+        Ok((start, copy))
     }
 
     /// Two chains of states: `before[i]` has written no entry yet, and
@@ -831,44 +928,94 @@ impl<'a> NfaBuilder<'a> {
         tail: Option<&'a Expr>,
         separator: &'a Expr,
         next: u32,
-    ) -> Result<u32, GrammarError> {
+    ) -> Result<(u32, Unshared), GrammarError> {
         let joined = matches!(separator, Expr::Empty);
+        // An entry that matches nothing is not written after a separator
+        // either, as the unshared construction's `Expr::seq` drops it.
+        let separable = |entry: &Expr| !joined && !matches!(entry, Expr::Nothing);
         let mut before = self.add()?;
         let mut after = if joined { before } else { self.add()? };
         self.epsilon(before, next);
         if !joined {
             self.epsilon(after, next);
         }
+        // The unshared counts of each entry alone and after a separator.
+        let mut tail_counts = None;
+        let mut item_counts = vec![(Unshared::default(), Unshared::default()); items.len()];
         if let Some(tail) = tail {
-            let start = self.build(tail, after)?;
+            let (start, count) = self.build(tail, after)?;
             self.epsilon(before, start);
-            if !joined {
-                let separated = self.build(separator, start)?;
+            let mut separator_count = Unshared::new(1, true);
+            if separable(tail) {
+                let separated;
+                (separated, separator_count) = self.build(separator, start)?;
                 self.epsilon(after, separated);
             }
+            let separated = Unshared::flattened((separator, separator_count), (tail, count));
+            tail_counts = Some((count, separated));
         }
         for (index, (item, required)) in items.iter().enumerate().rev() {
-            let start = self.build(item, after)?;
+            let (start, count) = self.build(item, after)?;
             let item_before = self.add()?;
             self.epsilon(item_before, start);
             if !required {
                 self.epsilon(item_before, before);
             }
+            let mut separator_count = Unshared::new(1, true);
             let item_after = if joined || index == 0 {
                 item_before
             } else {
                 let item_after = self.add()?;
-                let separated = self.build(separator, start)?;
-                self.epsilon(item_after, separated);
+                if separable(item) {
+                    let separated;
+                    (separated, separator_count) = self.build(separator, start)?;
+                    self.epsilon(item_after, separated);
+                }
                 if !required {
                     self.epsilon(item_after, after);
                 }
                 item_after
             };
+            let separated = Unshared::flattened((separator, separator_count), (item, count));
+            item_counts[index] = (count, separated);
             before = item_before;
             after = item_after;
         }
-        Ok(before)
+        // What the unshared construction reaches: its chains of `before`
+        // and `after` states, its end state, and each entry from the chain
+        // states that enter it.
+        let mut states = 0_usize;
+        let mut reached_before = true;
+        let mut reached_after = false;
+        for (&(count, separated), (_, required)) in item_counts.iter().zip(items) {
+            states =
+                states.saturating_add(usize::from(reached_before) + usize::from(reached_after));
+            let mut next_after = false;
+            if reached_before {
+                states = states.saturating_add(count.states);
+                next_after |= count.finishes;
+            }
+            if reached_after {
+                states = states.saturating_add(separated.states);
+                next_after |= separated.finishes;
+            }
+            reached_before &= !required;
+            reached_after = next_after || (reached_after && !required);
+        }
+        if let Some((count, separated)) = tail_counts {
+            if reached_before {
+                states = states.saturating_add(count.states);
+                reached_after |= count.finishes;
+            }
+            if reached_after {
+                states = states.saturating_add(separated.states);
+            }
+        }
+        let finishes = reached_before || reached_after;
+        states = states.saturating_add(
+            usize::from(reached_before) + usize::from(reached_after) + usize::from(finishes),
+        );
+        Ok((before, Unshared::new(states, finishes)))
     }
 
     /// UTF-8 text that never contains one of the `avoid` markers, and, with
@@ -881,7 +1028,7 @@ impl<'a> NfaBuilder<'a> {
         avoid: &[Vec<u8>],
         end_marker: Option<&[u8]>,
         next: u32,
-    ) -> Result<u32, GrammarError> {
+    ) -> Result<(u32, Unshared), GrammarError> {
         let markers: Vec<&[u8]> = avoid.iter().map(Vec::as_slice).chain(end_marker).collect();
         if markers.is_empty() || markers.iter().any(|marker| marker.is_empty()) || markers.len() > 4
         {
@@ -906,6 +1053,8 @@ impl<'a> NfaBuilder<'a> {
             }
         };
         let end = next;
+        let first_state = self.states.len();
+        let mut ended_anywhere = false;
         let mut ids: HashMap<(Utf8State, Vec<usize>), u32> = HashMap::new();
         let first = (Utf8State::Boundary, vec![0_usize; markers.len()]);
         let start = self.add()?;
@@ -916,6 +1065,7 @@ impl<'a> NfaBuilder<'a> {
             let (utf8, matched) = key;
             if utf8 == Utf8State::Boundary && end_marker.is_none() {
                 self.epsilon(from, end);
+                ended_anywhere = true;
             }
             let mut run: Option<(u8, u8, u32)> = None;
             for byte in 0..=255_u8 {
@@ -934,6 +1084,7 @@ impl<'a> NfaBuilder<'a> {
                         end_marker.is_some_and(|marker| matched[avoid.len()] == marker.len());
                     if ended && !avoided && next == Utf8State::Boundary {
                         target = Some(end);
+                        ended_anywhere = true;
                     } else if !ended && !avoided {
                         let key = (next, matched);
                         target = Some(match ids.get(&key) {
@@ -963,7 +1114,9 @@ impl<'a> NfaBuilder<'a> {
                 self.states[from as usize].bytes.push((lo, hi, id));
             }
         }
-        Ok(start)
+        // The unshared construction builds its own end state too.
+        let states = self.states.len() - first_state + usize::from(ended_anywhere);
+        Ok((start, Unshared::new(states, ended_anywhere)))
     }
 }
 
@@ -1027,11 +1180,14 @@ fn states_log_bound(count: usize) -> usize {
     count.max(1).ilog2() as usize + 1
 }
 
+/// Determinizes one rule's automaton, given its start, its accepting state
+/// and the states the unshared construction builds for it (see
+/// `NfaBuilder`). Growth is charged against that count, which sharing
+/// fragments does not reduce.
 fn determinize(
     nfa: &[NfaState],
     rule: u32,
-    start: u32,
-    accept: u32,
+    (start, accept, unshared): (u32, u32, usize),
     states: &mut Vec<DfaState>,
     entries: &mut usize,
     budget: &Budget,
@@ -1091,7 +1247,7 @@ fn determinize(
     };
     let mut ids: HashMap<Vec<u32>, u32> = HashMap::new();
     let mut sets: Vec<Vec<u32>> = Vec::new();
-    budget.dfa_growth(1, reachable.len())?;
+    budget.dfa_growth(1, unshared)?;
     *entries += class_count;
     if *entries > MAX_TABLE_ENTRIES {
         return Err(GrammarError::too_large("the constraint is too large"));
@@ -1146,7 +1302,7 @@ fn determinize(
             if *entries > MAX_TABLE_ENTRIES || id == DEAD {
                 return Err(GrammarError::too_large("the constraint is too large"));
             }
-            budget.dfa_growth(sets.len() + 1, reachable.len())?;
+            budget.dfa_growth(sets.len() + 1, unshared)?;
             let bytes = target.len() * 16 + 256 + class_count * 64;
             // Transition buffers remain live while subsets are interned.
             budget.scratch(scratch.saturating_add(bytes))?;
@@ -1585,15 +1741,14 @@ mod tests {
     }
 
     /// Random grammars of shared rules, repetitions, ordered subsets and
-    /// marked text admit exactly the words their definitions do, so building
-    /// each use of an expression that continues to the same state once
-    /// changes no language.
+    /// marked text compile within the budgets and admit exactly the words
+    /// their definitions do, so building each use of an expression that
+    /// continues to the same state once changes no language.
     #[test]
     fn built_automata_match_the_definitions() {
         const LIMIT: usize = 5;
         let candidates = every_word(LIMIT);
         let mut random = Random(0x9e37_79b9_7f4a_7c15);
-        let mut refused = 0;
         for case in 0..400 {
             let count = 1 + random.below(3) as u32;
             let rules: Vec<Expr> = (0..count)
@@ -1607,11 +1762,6 @@ mod tests {
             let expected = words(&rules[0], &rules, LIMIT);
             let automaton = match Automaton::compile(&grammar) {
                 Ok(automaton) => automaton,
-                // Some random grammars determinize past the growth budget.
-                Err(GrammarError::TooLarge(_)) => {
-                    refused += 1;
-                    continue;
-                }
                 Err(error) => {
                     assert_eq!(
                         error,
@@ -1632,6 +1782,5 @@ mod tests {
                 );
             }
         }
-        assert!(refused < 20, "{refused} of 400 grammars too large");
     }
 }

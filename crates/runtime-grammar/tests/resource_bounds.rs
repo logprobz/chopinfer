@@ -4,8 +4,11 @@
 mod common;
 use common::bounded;
 
+use std::sync::Arc;
+
 use runtime_grammar::{
-    CompiledGrammar, GrammarError, JsonOptions, choice_grammar, json_schema_grammar, regex_grammar,
+    CompiledGrammar, GrammarError, GrammarMatcher, JsonOptions, choice_grammar,
+    json_schema_grammar, regex_grammar,
 };
 use serde_json::json;
 
@@ -44,6 +47,52 @@ fn dfa_subsets_have_a_memory_budget() {
             Err(GrammarError::TooLarge(_))
         ));
     });
+}
+
+/// The determinization growth budget admits the same patterns it did before
+/// fragments were shared: each pattern compiles at the largest bound that
+/// compiled then, as a regular expression and as a string schema, and admits
+/// a match, and the next bound is still refused. The budget is charged against
+/// the states the unshared construction reaches, so a smaller automaton for
+/// the same language does not tighten it.
+#[test]
+fn growth_admits_what_the_unshared_construction_admits() {
+    let growth = "grammar determinization growth budget exceeded (limit: 32 DFA states per reachable NFA state)";
+    for (largest, witness, refused) in [
+        ("[ab]*a[ab]{8}", "abbbbbbbb", "[ab]*a[ab]{9}"),
+        ("(a|b)*a(a|b){10}", "abbbbbbbbbb", "(a|b)*a(a|b){11}"),
+        ("[abc]*a[abc]{8}b", "accccccccb", "[abc]*a[abc]{9}b"),
+        (
+            "[0-9a-f]*f[0-9a-f]{8}",
+            "0f12345678",
+            "[0-9a-f]*f[0-9a-f]{9}",
+        ),
+    ] {
+        let schema = |pattern: &str| {
+            json_schema_grammar(
+                &json!({"type": "string", "pattern": pattern}),
+                JsonOptions::default(),
+            )
+            .unwrap()
+        };
+        for (grammar, text) in [
+            (regex_grammar(largest).unwrap(), witness.to_owned()),
+            (schema(largest), format!("\"{witness}\"")),
+        ] {
+            let compiled = CompiledGrammar::new(&grammar, common::adversarial_vocabulary())
+                .unwrap_or_else(|error| panic!("{largest}: {error}"));
+            let mut matcher = GrammarMatcher::new(Arc::new(compiled));
+            matcher.accept_bytes(text.as_bytes()).unwrap();
+            assert!(matcher.is_complete(), "{largest}: {text}");
+        }
+        for grammar in [regex_grammar(refused).unwrap(), schema(refused)] {
+            assert_eq!(
+                CompiledGrammar::new(&grammar, common::adversarial_vocabulary()).unwrap_err(),
+                GrammarError::TooLarge(growth.to_owned()),
+                "{refused}"
+            );
+        }
+    }
 }
 
 #[test]

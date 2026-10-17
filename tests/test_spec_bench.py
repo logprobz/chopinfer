@@ -1,9 +1,12 @@
 """CPU checks for adaptive benchmark cohorts and fixed request bodies."""
 
 import importlib.util
+import json
+import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -15,6 +18,7 @@ from qual_test_config import setUpModule
 SPEC = importlib.util.spec_from_file_location("spec_bench", QUAL / "spec_bench.py")
 BENCH = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BENCH)
+import common  # noqa: E402
 
 
 class SpecBenchTests(unittest.TestCase):
@@ -98,6 +102,97 @@ class SpecBenchTests(unittest.TestCase):
         code, receipt = self.run_benchmark("fixed", [1, 0, 0, 0] * 2)
         self.assertEqual(code, 1)
         self.assertFalse(receipt["passed"])
+
+
+class FakeHost:
+    """CPU ticks and uptime that advance only with the work the benchmark
+    does, sampled as common.host_load_sample reports them."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.uptime, self.idle, self.total = 0.0, 0, 0
+
+    def advance(self, seconds, idle_fraction):
+        with self.lock:
+            ticks = round(seconds * 100)
+            self.uptime += seconds
+            self.idle += round(ticks * idle_fraction)
+            self.total += ticks
+
+    def sample(self):
+        with self.lock:
+            return {"at": self.uptime, "uptime_seconds": self.uptime, "load_average": [1.0, 1.0, 1.0],
+                    "cpu_idle_ticks": self.idle, "cpu_ticks": self.total, "cpus": 48,
+                    "pressure_some_us": {"cpu": 0, "io": 0}}
+
+
+class HostLoadTests(unittest.TestCase):
+    """The receipt's host load is judged over the cohorts' windows only."""
+
+    def run_benchmark(self, request_idle, events=None):
+        """A two-cohort run (C1 and C4 per category) after 1,200 s of quiet
+        start-up, each request taking 1 s at `request_idle` CPU idle;
+        returns the written receipt and the host's first sample."""
+        host = FakeHost()
+        first = host.sample()
+        events = [] if events is None else events
+
+        def identity(model):
+            host.advance(1200, 0.99)
+            return {"model": "fixture"}
+
+        def request(path, body, stream):
+            events.append("request")
+            host.advance(1, request_idle)
+            return [], 1.0
+
+        def metrics(client):
+            events.append("metrics")
+            host.advance(0.1, 1.0)
+            return ""
+
+        def sample():
+            events.append("sample")
+            return host.sample()
+
+        directory = Path(os.environ["CHOPINFER_QUAL_RECEIPTS"])
+        before = set(directory.iterdir())
+        with patch.object(sys, "argv", ["spec_bench.py", "--arm", "chopinfer-ar", "--run-id", "cpu",
+                                        "--concurrencies", "1", "4"]), \
+                patch.object(BENCH, "gsm8k_questions", return_value=(
+                    {"instruction": "Solve.", "examples_sha256": "fixture"}, [f"Question {i}" for i in range(4)])), \
+                patch.object(BENCH, "Client") as client, patch.object(BENCH, "metrics_text", metrics), \
+                patch.object(BENCH, "snapshot", return_value={}), \
+                patch.object(BENCH, "difference", side_effect=lambda before, after: {"available": True}), \
+                patch.object(BENCH, "chat_events", return_value=(
+                    0.0, {"completion_tokens": 64, "prompt_tokens": 10}, "length")), \
+                patch.object(BENCH, "host_load_sample", sample):
+            client.return_value.identity.side_effect = identity
+            client.return_value.request.side_effect = request
+            with self.assertRaises(SystemExit) as result:
+                BENCH.main()
+        self.assertEqual(result.exception.code, 0)
+        written, = set(directory.iterdir()) - before
+        return json.loads(written.read_text()), first
+
+    def test_samples_bound_each_cohort_window(self):
+        events = []
+        value, _ = self.run_benchmark(0.99, events)
+        # Each cohort: the scrape before it, its window, the scrape after.
+        cohort = lambda width: ["metrics", "sample", *["request"] * width, "sample", "metrics"]
+        self.assertEqual(events, cohort(1) + cohort(4) + cohort(1) + cohort(4))
+        load = value["host_load"]
+        self.assertEqual(len(load["samples"]), 8)
+        self.assertEqual((load["timing"], load["reasons"]), ("evidence", []))
+
+    def test_busy_cohorts_after_a_quiet_start_read_informational(self):
+        value, first = self.run_benchmark(0.7)
+        load = value["host_load"]
+        self.assertEqual((load["idle"], load["timing"]), (False, "informational"))
+        self.assertEqual(load["reasons"], ["CPU idle fell to 0.700"])
+        # A window from the start would have averaged the quiet start-up in.
+        self.assertTrue(common.host_load([first, load["samples"][-1]])["idle"])
+        self.assertTrue(value["passed"])
 
 
 if __name__ == "__main__":

@@ -1029,18 +1029,21 @@ microseconds, the "some" totals of `/proc/pressure/cpu` and
 receipt. A `common.receipt` caller passes `load_samples` taken around its
 timed work, the first at its start and the last at its end: `soak.py` (its
 start, each memory sample, and after the last request in flight),
-`bench.py` (the decode passes and the timed prefill), `prefix_cache.py
-record` and `spec_verify.py record` (their requests). A caller with several
-separate timed windows passes `load_windows`, one list of samples per
-window, judged one by one (`common.host_load_windows`, scope
-`check_host_windows`): `agentic_mixed.py` samples at the start and end of
-each level's measured window, so its warm-up, drain and other levels are
-never judged, and each level also records its own `host_load`. A receipt without
-them has `timing` `informational` ("no host load samples bound the timed
-work"), since a window from the check's start would average warm-up into
-the timed work. The host is idle when, over every interval between
-samples, the CPU idle fraction (idle plus iowait; niced work is busy) is at
-least 0.9 and the shares of elapsed time (uptime, not wall time) in which
+`bench.py` (the decode passes and the timed prefill), `spec_bench.py`
+(each cohort's window), `prefix_cache.py record` and `spec_verify.py
+record` (their requests). A caller with several separate timed windows
+passes `load_windows`, one list of samples per window, judged one by one
+(`common.host_load_windows`, scope `check_host_windows`):
+`agentic_mixed.py` samples at the start and end of each level's measured
+window, so its warm-up, drain and other levels are never judged, and each
+level also records its own `host_load`. A receipt without them has
+`timing` `informational` ("no host load samples bound the timed work"),
+since a window from the check's start would average warm-up into the timed
+work. The other `common.receipt` writers take none: they time nothing, or
+their per-request seconds describe an accuracy check rather than measure
+performance (each says which where it writes its receipt). The host is
+idle when, over every interval between samples, the CPU idle fraction
+(idle plus iowait; niced work is busy) is at least 0.9 and the shares of elapsed time (uptime, not wall time) in which
 some task stalled waiting for a CPU and for I/O are each at most 0.1. The
 1-minute load average is recorded but not judged: it carries minutes of
 work from before the window, such as a server's startup reads. Otherwise,

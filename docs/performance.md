@@ -117,8 +117,10 @@ Each `spec_bench.py` receipt (under `$CHOPINFER_DATA/qual/<model>`) records
 every cohort's `aggregate_tokens_per_second`, the snapshot's rate:
 concurrency times output tokens over the longest request, time to first
 token included. Take the median of the three passes' chat cohorts per
-concurrency. The tool also runs a GSM8K cohort, so it needs the frozen
-GSM8K inputs the model's `qual.json` declares. For an autoregressive
+concurrency, from receipts whose `host_load.timing` is `evidence`: the
+[host load rule](../tools/qual/README.md#gsm8k-needles-and-soak), judged
+over the cohorts' windows. The tool also runs a GSM8K cohort, so it needs
+the frozen GSM8K inputs the model's `qual.json` declares. For an autoregressive
 profile use `--arm chopinfer-ar` without `--speculation`. `bench.py`'s
 prefill is one repeated-text prompt at concurrency 1; its decode figures
 use another workload and are not the snapshot's. The

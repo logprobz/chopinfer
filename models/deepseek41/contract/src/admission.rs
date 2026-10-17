@@ -194,7 +194,7 @@ mod tests {
             (
                 "architectures",
                 json!(["DeepseekV4ForCausalLM"]),
-                // A geometry recipe adds its own alias after the checkpoint's.
+                // A geometry recipe appends its own alias to the list.
                 "unsupported architectures: expected some of [\"DeepseekV41ForCausalLM\"",
             ),
             (

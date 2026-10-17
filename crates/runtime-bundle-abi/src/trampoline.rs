@@ -278,6 +278,8 @@ impl HostServicesTableV1 {
             resolve_mapped_view_v1: Some(resolve_mapped_view_trampoline_v1::<B>),
             allocate_staging_buffer_v1: Some(allocate_staging_buffer_trampoline_v1::<B>),
             lend_staging_buffer_v1: Some(lend_staging_buffer_trampoline_v1::<B>),
+            return_mapped_view_v1: Some(return_mapped_view_trampoline_v1::<B>),
+            return_staging_buffer_v1: Some(return_staging_buffer_trampoline_v1::<B>),
         });
         // SAFETY-REVIEWED: this table builds every callback itself and owns the backend they read.
         let checked = unsafe { HostServicesV1::new(*raw) };
@@ -528,6 +530,16 @@ status_service_trampoline_v1!(
     release_compiled_image_trampoline_v1,
     release_compiled_image,
     (image: BundleCompiledImageHandleV1)
+);
+status_service_trampoline_v1!(
+    return_mapped_view_trampoline_v1,
+    return_mapped_view,
+    (image: BundleCompiledImageHandleV1)
+);
+status_service_trampoline_v1!(
+    return_staging_buffer_trampoline_v1,
+    return_staging_buffer,
+    (buffer: BundleDeviceBufferHandleV1)
 );
 status_service_trampoline_v1!(
     release_authenticated_component_trampoline_v1,
@@ -931,6 +943,9 @@ unsafe extern "C" fn lend_staging_buffer_trampoline_v1<B: HostServicesBackendV1>
         let backend = backend_from_user_data_v1::<B>(user_data)?;
         validate_output_pointer_v1(out_bytes, "lend_staging_buffer output")?;
         match backend.lend_staging_buffer(buffer) {
+            // A staging loan the host cannot vouch is writable is its own
+            // fault; the loan it took stays for the bundle to return.
+            Ok(bytes) if !bytes.is_writable() => Ok(BundleStatusV1::HostError),
             Ok(bytes) => {
                 let (address, length) = checked_lent_bytes_v1(bytes)?;
                 write_output_v1(
@@ -1645,11 +1660,6 @@ fn owned_collective_request_v1(
 /// step, because only the ABI contract can promise it outlives this value.
 pub struct HostServicesV1 {
     raw: BundleHostServicesV1,
-    /// Raw handles of the images and staging buffers whose bytes a closure
-    /// of this caller holds now, once per lend. Releasing one of them, or
-    /// lending a staging buffer twice at once, is refused, so lent bytes
-    /// never outlive their owner or alias a writable lend.
-    lent: std::cell::RefCell<Vec<u64>>,
 }
 
 impl HostServicesV1 {
@@ -1721,10 +1731,7 @@ impl HostServicesV1 {
     // SAFETY-REVIEWED: capturing a caller-owned service table is the documented unsafe step.
     pub unsafe fn new(raw: BundleHostServicesV1) -> Result<Self, BundleAbiError> {
         validate_host_services_v1(&raw)?;
-        Ok(Self {
-            raw,
-            lent: std::cell::RefCell::new(Vec::new()),
-        })
+        Ok(Self { raw })
     }
 }
 
@@ -2183,39 +2190,18 @@ impl HostServicesV1 {
         Ok(result)
     }
 
-    fn refuse_lent(&self, raw: u64) -> Result<(), BundleAbiError> {
-        if self.lent.borrow().contains(&raw) {
-            return Err(BundleAbiError::Status(BundleStatusV1::InvalidState));
-        }
-        Ok(())
-    }
-
-    /// Runs `callback` with `raw` recorded as lent, then forgets it.
-    fn while_lent<R>(&self, raw: u64, callback: impl FnOnce() -> R) -> R {
-        struct Lend<'a>(&'a std::cell::RefCell<Vec<u64>>, u64);
-        impl Drop for Lend<'_> {
-            fn drop(&mut self) {
-                let mut lent = self.0.borrow_mut();
-                if let Some(index) = lent.iter().position(|raw| *raw == self.1) {
-                    lent.swap_remove(index);
-                }
-            }
-        }
-        self.lent.borrow_mut().push(raw);
-        let _lend = Lend(&self.lent, raw);
-        callback()
-    }
-
     /// Whether the host fills the host-mapped rows tail
     /// (`chop.host-mapped-rows.v1`).
     #[must_use]
     pub fn has_host_mapped_rows(&self) -> bool {
-        let end = std::mem::offset_of!(BundleHostServicesV1, lend_staging_buffer_v1)
-            + std::mem::size_of_val(&self.raw.lend_staging_buffer_v1);
+        let end = std::mem::offset_of!(BundleHostServicesV1, return_staging_buffer_v1)
+            + std::mem::size_of_val(&self.raw.return_staging_buffer_v1);
         (self.raw.struct_size as usize) >= end
             && self.raw.resolve_mapped_view_v1.is_some()
             && self.raw.allocate_staging_buffer_v1.is_some()
             && self.raw.lend_staging_buffer_v1.is_some()
+            && self.raw.return_mapped_view_v1.is_some()
+            && self.raw.return_staging_buffer_v1.is_some()
     }
 
     fn host_mapped_rows_service<T>(
@@ -2229,9 +2215,33 @@ impl HostServicesV1 {
         required_service_v1(service, name)
     }
 
+    /// Runs `callback` while the host holds one loan, then returns the loan
+    /// with `give_back`, also when `callback` panics. A refused return after
+    /// `callback` finished is the result.
+    fn on_loan<R>(
+        &self,
+        callback: impl FnOnce() -> R,
+        give_back: impl Fn() -> Result<(), BundleAbiError>,
+    ) -> Result<R, BundleAbiError> {
+        struct Loan<F: Fn() -> Result<(), BundleAbiError>>(Option<F>);
+        impl<F: Fn() -> Result<(), BundleAbiError>> Drop for Loan<F> {
+            fn drop(&mut self) {
+                if let Some(give_back) = self.0.take() {
+                    let _ = give_back();
+                }
+            }
+        }
+        let mut loan = Loan(Some(give_back));
+        let result = callback();
+        let give_back = loan.0.take().expect("the loan is returned once");
+        give_back()?;
+        Ok(result)
+    }
+
     /// Runs `read` over the bytes of one host-mapped view of `image` for
     /// `rank` (`chop.host-mapped-rows.v1`): the checkpoint tensor bytes the
-    /// plan names, unchanged. The image cannot be released while `read` runs.
+    /// plan names, unchanged. The host holds the loan while `read` runs and
+    /// refuses to release the image meanwhile.
     pub fn with_mapped_view<R>(
         &self,
         image: BundleCompiledImageHandleV1,
@@ -2241,6 +2251,8 @@ impl HostServicesV1 {
     ) -> Result<R, BundleAbiError> {
         let service = self
             .host_mapped_rows_service(self.raw.resolve_mapped_view_v1, "resolve_mapped_view_v1")?;
+        let give_back =
+            self.host_mapped_rows_service(self.raw.return_mapped_view_v1, "return_mapped_view_v1")?;
         let mut output = BundleByteViewV1::empty();
         // SAFETY-REVIEWED: the view borrows the caller's identifier and the output is this frame's storage.
         status_result(unsafe {
@@ -2252,17 +2264,29 @@ impl HostServicesV1 {
                 &mut output,
             )
         })?;
-        validate_byte_view_v1(output)?;
-        let length = checked_u64_to_usize_v1("mapped view", output.length)?;
-        Ok(self.while_lent(image.raw, || {
-            if length == 0 {
-                return read(&[]);
+        // SAFETY-REVIEWED: the captured table stays live and this call passes only a handle.
+        let give_back = || status_result(unsafe { give_back(self.raw.user_data, image) });
+        let length = match validate_byte_view_v1(output)
+            .and_then(|()| checked_u64_to_usize_v1("mapped view", output.length))
+        {
+            Ok(length) => length,
+            Err(error) => {
+                let _ = give_back();
+                return Err(error);
             }
-            // SAFETY-REVIEWED: the host keeps a mapped view's bytes readable and
-            // unchanged until its image is released, which this caller refuses
-            // while the lend is recorded.
-            read(unsafe { slice::from_raw_parts(output.data, length) })
-        }))
+        };
+        self.on_loan(
+            || {
+                if length == 0 {
+                    return read(&[]);
+                }
+                // SAFETY-REVIEWED: the host vouched (`LentHostBytesV1::readable`)
+                // for these bytes, unchanged, until this loan is returned,
+                // which happens only after `read` ends.
+                read(unsafe { slice::from_raw_parts(output.data, length) })
+            },
+            give_back,
+        )
     }
 
     /// Allocates one zeroed staging buffer on `stream`'s context: page-locked
@@ -2295,32 +2319,47 @@ impl HostServicesV1 {
         Ok(output)
     }
 
-    /// Runs `write` over the whole of one staging buffer. The caller orders
-    /// it after the device work it queued that reads the buffer (an event
-    /// it synchronized). The buffer cannot be released, or lent again,
-    /// while `write` runs.
+    /// Runs `write` over the whole of one staging buffer. The host first
+    /// waits for the device work that named the buffer since its last loan,
+    /// then holds the loan while `write` runs, refusing meanwhile a second
+    /// loan, the buffer's release and any device work naming it.
     pub fn with_staging_buffer<R>(
         &self,
         buffer: BundleDeviceBufferHandleV1,
         write: impl FnOnce(&mut [u8]) -> R,
     ) -> Result<R, BundleAbiError> {
-        self.refuse_lent(buffer.raw)?;
         let service = self
             .host_mapped_rows_service(self.raw.lend_staging_buffer_v1, "lend_staging_buffer_v1")?;
+        let give_back = self.host_mapped_rows_service(
+            self.raw.return_staging_buffer_v1,
+            "return_staging_buffer_v1",
+        )?;
         let mut output = BundleMutByteViewV1::empty();
         // SAFETY-REVIEWED: the captured table stays live and the output is this frame's own storage.
         status_result(unsafe { service(self.raw.user_data, buffer, &mut output) })?;
-        validate_mut_byte_view_v1(output)?;
-        let length = checked_u64_to_usize_v1("staging buffer", output.length)?;
-        Ok(self.while_lent(buffer.raw, || {
-            if length == 0 {
-                return write(&mut []);
+        // SAFETY-REVIEWED: the captured table stays live and this call passes only a handle.
+        let give_back = || status_result(unsafe { give_back(self.raw.user_data, buffer) });
+        let length = match validate_mut_byte_view_v1(output)
+            .and_then(|()| checked_u64_to_usize_v1("staging buffer", output.length))
+        {
+            Ok(length) => length,
+            Err(error) => {
+                let _ = give_back();
+                return Err(error);
             }
-            // SAFETY-REVIEWED: the host keeps a staging buffer's bytes until the
-            // buffer is released, and this caller refuses that release and a
-            // second lend while this one is recorded.
-            write(unsafe { slice::from_raw_parts_mut(output.data, length) })
-        }))
+        };
+        self.on_loan(
+            || {
+                if length == 0 {
+                    return write(&mut []);
+                }
+                // SAFETY-REVIEWED: the host vouched (`LentHostBytesV1::writable`)
+                // that nothing but this loan reads or writes these bytes until
+                // it is returned, which happens only after `write` ends.
+                write(unsafe { slice::from_raw_parts_mut(output.data, length) })
+            },
+            give_back,
+        )
     }
 
     pub fn prepare_kv(
@@ -2484,28 +2523,15 @@ impl HostServicesV1 {
 
     status_service_call_v1!(release_context, (context: BundleContextHandleV1));
     status_service_call_v1!(release_memory_pool, (pool: BundleMemoryPoolHandleV1));
-    /// Releases one buffer; refused while a closure holds its staging bytes.
-    pub fn release_device_buffer(
-        &self,
-        buffer: BundleDeviceBufferHandleV1,
-    ) -> Result<(), BundleAbiError> {
-        self.refuse_lent(buffer.raw)?;
-        let service = required_service_v1(self.raw.release_device_buffer, "release_device_buffer")?;
-        // SAFETY-REVIEWED: the captured table stays live and this call passes only a handle.
-        status_result(unsafe { service(self.raw.user_data, buffer) })
-    }
+    status_service_call_v1!(
+        release_device_buffer,
+        (buffer: BundleDeviceBufferHandleV1)
+    );
     status_service_call_v1!(release_rank_arena, (arena: BundleRankArenaHandleV1));
-    /// Releases one image; refused while a closure holds its mapped bytes.
-    pub fn release_compiled_image(
-        &self,
-        image: BundleCompiledImageHandleV1,
-    ) -> Result<(), BundleAbiError> {
-        self.refuse_lent(image.raw)?;
-        let service =
-            required_service_v1(self.raw.release_compiled_image, "release_compiled_image")?;
-        // SAFETY-REVIEWED: the captured table stays live and this call passes only a handle.
-        status_result(unsafe { service(self.raw.user_data, image) })
-    }
+    status_service_call_v1!(
+        release_compiled_image,
+        (image: BundleCompiledImageHandleV1)
+    );
     status_service_call_v1!(
         release_authenticated_component,
         (component: BundleAuthenticatedComponentHandleV1)
@@ -4843,10 +4869,13 @@ mod tests {
             table.caller().with_mapped_view(image, 0, b"rows", |_| ()),
             Err(BundleAbiError::Status(BundleStatusV1::Unsupported))
         );
+        // A table whose return services are missing lends nothing, since no
+        // loan could be returned.
         let mut old = *table.services();
-        old.struct_size = std::mem::offset_of!(BundleHostServicesV1, lend_staging_buffer_v1) as u32;
+        old.struct_size =
+            std::mem::offset_of!(BundleHostServicesV1, return_staging_buffer_v1) as u32;
         let mut partial = *table.services();
-        partial.allocate_staging_buffer_v1 = None;
+        partial.return_mapped_view_v1 = None;
         for raw in [old, partial] {
             // SAFETY-REVIEWED: the table and backend remain live for this copied prefix.
             let caller = unsafe { HostServicesV1::new(raw) }.unwrap();

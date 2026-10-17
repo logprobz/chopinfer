@@ -70,14 +70,20 @@ rows a step needs into a staging buffer: page-locked, device-mapped host
 memory it allocates and writes in place (`allocate_staging_buffer`,
 `with_staging_buffer`), one per rank, which device copies and kernels take
 like any buffer. A step launches the work that does not need the rows,
-gathers them on the CPU meanwhile, copies them on its own stream, and has
-the consuming work wait on an event recorded after the copy; before it
-writes the staging buffer again it synchronizes the event of the last copy
-that read it.
+gathers them on the CPU meanwhile, copies them on a stream of their own, and
+has the consuming work wait on an event recorded after the copy.
 
-A mapping reads what the file holds, so serve from a checkpoint nobody
-rewrites while the server runs: a file truncated while mapped makes reads of
-the lost pages fault.
+The host keeps every loan. A closure's loan of a mapped view keeps its image
+from being released; a staging buffer's loan first waits for the device work
+that named the buffer since its last loan (an event recorded behind it on
+each such stream, so copy on a stream that does little else), and while it
+lasts the host refuses a second loan, the buffer's release and any device
+work naming it. A graph capture and a device pointer table may not name a
+staging buffer, since their work would reach it where no loan waits.
+
+The checkpoint must not change while it is served. A mapping reads what the
+file holds, and a file truncated while mapped makes reads of the lost pages
+fault (`SIGBUS`), which the host does not handle.
 
 ## Streaming a plan
 

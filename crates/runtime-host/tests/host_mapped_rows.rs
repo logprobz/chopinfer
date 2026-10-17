@@ -19,7 +19,7 @@ use runtime_bundle_abi::{
 use runtime_host::direct::{
     DirectCheckpointV1, DirectLoadOptionsV1, PlannedImageV1, implementation_v1,
 };
-use runtime_host::fake::FakeHostDeviceV1;
+use runtime_host::fake::{FakeHostDeviceV1, FakeRefusalV1};
 use runtime_host::{HostInstanceConfigV1, HostMemoryV1, HostServicesV1Backend, HostTopologyV1};
 
 const ROLE: &str = "fixture.rank-images.v1";
@@ -304,6 +304,100 @@ fn mapped_views_lend_the_checkpoint_bytes_and_leave_the_arena() {
         .flat_map(|row| codes()[row * 8..row * 8 + 8].to_vec())
         .collect();
     assert_eq!(gathered, expected);
+    // The host keeps every loan, whichever caller asks: a second table over
+    // the same host can neither lend the buffer again nor release it, and no
+    // device work may name it while it is lent.
+    let other_table = HostServicesTableV1::new(Rc::clone(&backend));
+    let other = other_table.caller();
+    let refused = Err(BundleAbiError::Status(BundleStatusV1::InvalidState));
+    let staging_span = DeviceBufferSpanV1::new(staging, 0, 32);
+    let device_span = DeviceBufferSpanV1::new(device, 0, 32);
+    host.with_staging_buffer(staging, |_| {
+        assert_eq!(
+            other.with_staging_buffer(staging, |_| unreachable!()),
+            refused
+        );
+        assert_eq!(other.release_device_buffer(staging), refused);
+        assert_eq!(
+            host.copy_device_to_device(stream, device_span, staging_span),
+            refused
+        );
+        assert_eq!(
+            host.copy_device_to_device(stream, staging_span, device_span),
+            refused
+        );
+        assert_eq!(
+            host.copy_host_to_device(stream, staging_span, &[0; 32]),
+            refused
+        );
+        assert_eq!(
+            host.copy_device_to_host(stream, &mut [0; 32], staging_span),
+            refused
+        );
+        assert_eq!(host.zero_device_buffer(stream, staging_span), refused);
+    })
+    .unwrap();
+    // A loan first waits for the device work that named the buffer since the
+    // last one, through an event it records and releases; with no such work
+    // it waits for nothing.
+    host.copy_device_to_device(stream, device_span, staging_span)
+        .unwrap();
+    backend.with_device_mut(|device| device.refuse(FakeRefusalV1::ReleaseEvent));
+    assert_eq!(
+        host.with_staging_buffer(staging, |_| unreachable!()),
+        Err(BundleAbiError::Status(BundleStatusV1::HostError))
+    );
+    backend.with_device_mut(|device| device.allow(FakeRefusalV1::ReleaseEvent));
+    host.with_staging_buffer(staging, |_| ()).unwrap();
+    backend.with_device_mut(|device| device.refuse(FakeRefusalV1::ReleaseEvent));
+    host.with_staging_buffer(staging, |_| ()).unwrap();
+    backend.with_device_mut(|device| device.allow(FakeRefusalV1::ReleaseEvent));
+    // A stored address could reach the buffer where no loan waits for it.
+    assert_eq!(
+        host.write_device_pointer_table(
+            stream,
+            DeviceBufferSpanV1::new(device, 0, 8),
+            &[Some(staging_span)]
+        ),
+        Err(BundleAbiError::Status(BundleStatusV1::InvalidArgument))
+    );
+    // A graph could replay work on the buffer that no loan waits for, so a
+    // capture may not name it.
+    let module = host.load_cuda_module(ranks[1].0, b"module").unwrap();
+    let symbol = host.resolve_cuda_symbol(module, b"gather").unwrap();
+    let config = runtime_bundle_abi::LaunchConfigV1 {
+        flags: 0,
+        grid_x: 1,
+        grid_y: 1,
+        grid_z: 1,
+        block_x: 32,
+        block_y: 1,
+        block_z: 1,
+        shared_memory_bytes: 0,
+        cluster: runtime_bundle_abi::LaunchClusterV1 { x: 1, y: 1, z: 1 },
+    };
+    host.begin_graph_capture(stream).unwrap();
+    assert_eq!(
+        host.launch_cuda_symbol(
+            stream,
+            symbol,
+            config,
+            &[runtime_bundle_abi::KernelArgumentV1::DeviceBuffer(
+                staging_span
+            )]
+        ),
+        refused
+    );
+    let graph = host.end_graph_capture(stream).unwrap();
+    host.release_graph(graph).unwrap();
+    host.release_cuda_symbol(symbol).unwrap();
+    host.release_cuda_module(module).unwrap();
+    // An image with a mapped-view loan outstanding is not released.
+    host.with_mapped_view(compiled, 0, b"codes", |_| {
+        assert_eq!(other.release_compiled_image(compiled), refused);
+    })
+    .unwrap();
+    drop(other_table);
     // Only a staging buffer is lent, and only on its own context's stream is
     // one allocated.
     assert_eq!(

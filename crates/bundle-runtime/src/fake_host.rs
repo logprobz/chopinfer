@@ -208,6 +208,10 @@ pub struct FakeDevice<O = NoObserver> {
     /// The host bytes of every staging buffer, by buffer slot
     /// (`chop.host-mapped-rows.v1`).
     pub staging: RefCell<BTreeMap<u32, Box<[u8]>>>,
+    /// The staging buffers lent now, by slot, and the mapped-view loans
+    /// outstanding, by image slot.
+    pub staging_lent: RefCell<BTreeSet<u32>>,
+    pub mapped_loans: RefCell<BTreeMap<u32, u32>>,
     /// (stream, collective) of every launch, eager or captured, for the
     /// captures to count their nodes in.
     launched: RefCell<Vec<(u32, bool)>>,

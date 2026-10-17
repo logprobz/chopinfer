@@ -1068,22 +1068,25 @@ typedef chop_bundle_status_v1 (*chop_bundle_query_cluster_residency_fn_v1)(
 
 /*
  * Host-mapped rows (CHOP_HOST_MAPPED_ROWS_CAPABILITY_V1). Optional tail: a host
- * fills all three or none, and a bundle reads them only when struct_size covers
- * lend_staging_buffer_v1.
+ * fills all five or none, and a bundle reads them only when struct_size covers
+ * return_staging_buffer_v1. The host keeps every loan these lend.
  *
- * resolve_mapped_view_v1 answers a view the image's plan placed "mapped" with
- * the CPU-readable checkpoint bytes it names, unchanged and read-only. They
- * stay readable until the image is released. A view held anywhere else, or not
- * for this rank, is NOT_FOUND.
+ * resolve_mapped_view_v1 lends a view the image's plan placed "mapped": the
+ * CPU-readable checkpoint bytes it names, unchanged and read-only, until
+ * return_mapped_view_v1 ends that loan. The host refuses to release an image
+ * with loans outstanding. A view held anywhere else, or not for this rank, is
+ * NOT_FOUND.
  *
  * allocate_staging_buffer_v1 allocates one zeroed bundle-owned buffer of
  * page-locked host memory on the stream's context, which the device reads
  * through its handle: copies and kernels take it like any device buffer, and
- * release_device_buffer frees it. lend_staging_buffer_v1 answers the whole
- * buffer for the CPU to write, valid until the buffer is released. The bundle
- * orders its writes after the device work it queued that reads them (for
- * example an event it recorded after the copy and synchronized). A buffer that
- * is not a staging buffer is INVALID_ARGUMENT.
+ * release_device_buffer frees it. A graph capture may not name it.
+ * lend_staging_buffer_v1 waits for the device work that named the buffer since
+ * its last loan, then lends the whole buffer for the CPU to write until
+ * return_staging_buffer_v1. While it is lent the host refuses a second loan,
+ * its release and any device work naming it (INVALID_STATE). A buffer that is
+ * not a staging buffer is INVALID_ARGUMENT; a loan not outstanding is
+ * INVALID_STATE.
  */
 typedef chop_bundle_status_v1 (*chop_bundle_resolve_mapped_view_fn_v1)(
     void *user_data, chop_bundle_compiled_image_handle_v1 image, uint32_t rank,
@@ -1095,6 +1098,10 @@ typedef chop_bundle_status_v1 (*chop_bundle_allocate_staging_buffer_fn_v1)(
 typedef chop_bundle_status_v1 (*chop_bundle_lend_staging_buffer_fn_v1)(
     void *user_data, chop_bundle_device_buffer_handle_v1 buffer,
     chop_bundle_mut_byte_view_v1 *out_bytes);
+typedef chop_bundle_status_v1 (*chop_bundle_return_mapped_view_fn_v1)(
+    void *user_data, chop_bundle_compiled_image_handle_v1 image);
+typedef chop_bundle_status_v1 (*chop_bundle_return_staging_buffer_fn_v1)(
+    void *user_data, chop_bundle_device_buffer_handle_v1 buffer);
 
 typedef struct chop_bundle_host_services_v1 {
   uint32_t struct_size;
@@ -1174,6 +1181,8 @@ typedef struct chop_bundle_host_services_v1 {
   chop_bundle_resolve_mapped_view_fn_v1 resolve_mapped_view_v1;
   chop_bundle_allocate_staging_buffer_fn_v1 allocate_staging_buffer_v1;
   chop_bundle_lend_staging_buffer_fn_v1 lend_staging_buffer_v1;
+  chop_bundle_return_mapped_view_fn_v1 return_mapped_view_v1;
+  chop_bundle_return_staging_buffer_fn_v1 return_staging_buffer_v1;
 } chop_bundle_host_services_v1;
 
 typedef struct chop_bundle_create_result_v1 {
@@ -1343,8 +1352,9 @@ typedef struct chop_bundle_api_with_request_retirement_v1 {
  * checked against its header, once per process for every rank naming the same
  * bytes, and cuts the span out of the rank arena as it does a host-resident
  * view. Neither the device nor a page-locked budget holds them;
- * resolve_mapped_view_v1 lends them to the CPU. A package declaring mapped
- * views must require this capability.
+ * resolve_mapped_view_v1 lends them to the CPU. The checkpoint must not change
+ * while it is served: a file truncated while mapped makes reads of the lost
+ * pages fault. A package declaring mapped views must require this capability.
  */
 #define CHOP_HOST_MAPPED_ROWS_CAPABILITY_V1 "chop.host-mapped-rows.v1"
 

@@ -127,6 +127,8 @@ impl<B: HostServicesBackendV1> HostServicesBackendV1 for ObservedHost<B> {
     acquire!("buffer", allocate_staging_buffer(pool: BundleMemoryPoolHandleV1, stream: BundleStreamHandleV1, byte_length: u64, alignment: u64) -> BundleDeviceBufferHandleV1);
     forward!(lend_staging_buffer(buffer: BundleDeviceBufferHandleV1) -> LentHostBytesV1);
     forward!(resolve_mapped_view(image: BundleCompiledImageHandleV1, rank: u32, view_id: &[u8]) -> LentHostBytesV1);
+    forward!(return_mapped_view(image: BundleCompiledImageHandleV1) -> ());
+    forward!(return_staging_buffer(buffer: BundleDeviceBufferHandleV1) -> ());
     acquire!("image", open_compiled_image(component_role: &[u8]) -> BundleCompiledImageHandleV1);
     acquire!("arena", upload_rank_arena(context: BundleContextHandleV1, pool: BundleMemoryPoolHandleV1, stream: BundleStreamHandleV1, image: BundleCompiledImageHandleV1, rank: u32) -> BundleRankArenaHandleV1);
     release!("arena", release_rank_arena(arena: BundleRankArenaHandleV1));

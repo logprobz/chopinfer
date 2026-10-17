@@ -1203,6 +1203,13 @@ pub type BundleLendStagingBufferFnV1 = unsafe extern "C" fn(
     BundleDeviceBufferHandleV1,
     *mut BundleMutByteViewV1,
 ) -> BundleStatusV1;
+/// Ends one loan of a mapped view of a compiled image
+/// (`chop.host-mapped-rows.v1`).
+pub type BundleReturnMappedViewFnV1 =
+    unsafe extern "C" fn(*mut c_void, BundleCompiledImageHandleV1) -> BundleStatusV1;
+/// Ends the loan of one staging buffer (`chop.host-mapped-rows.v1`).
+pub type BundleReturnStagingBufferFnV1 =
+    unsafe extern "C" fn(*mut c_void, BundleDeviceBufferHandleV1) -> BundleStatusV1;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1276,10 +1283,12 @@ pub struct BundleHostServicesV1 {
     pub query_batch_limits_v1: Option<BundleQueryBatchLimitsFnV1>,
     pub query_cluster_residency_v1: Option<BundleQueryClusterResidencyFnV1>,
     /// Optional host-mapped rows tail (`chop.host-mapped-rows.v1`): a host
-    /// fills all three or none.
+    /// fills all five or none.
     pub resolve_mapped_view_v1: Option<BundleResolveMappedViewFnV1>,
     pub allocate_staging_buffer_v1: Option<BundleAllocateStagingBufferFnV1>,
     pub lend_staging_buffer_v1: Option<BundleLendStagingBufferFnV1>,
+    pub return_mapped_view_v1: Option<BundleReturnMappedViewFnV1>,
+    pub return_staging_buffer_v1: Option<BundleReturnStagingBufferFnV1>,
 }
 
 impl BundleHostServicesV1 {
@@ -1357,6 +1366,8 @@ impl BundleHostServicesV1 {
             resolve_mapped_view_v1: None,
             allocate_staging_buffer_v1: None,
             lend_staging_buffer_v1: None,
+            return_mapped_view_v1: None,
+            return_staging_buffer_v1: None,
         }
     }
 }
@@ -1781,11 +1792,15 @@ pub const HOST_RESIDENT_VIEWS_CAPABILITY_V1: &str = "chop.host-resident-views.v1
 /// every rank that names the same bytes, and cuts the span out of the rank
 /// arena as it does a host-resident view. Neither the device nor any
 /// page-locked budget holds them. `resolve_mapped_view_v1` lends the bytes
-/// for the CPU to read; `allocate_staging_buffer_v1` and
-/// `lend_staging_buffer_v1` give the bundle page-locked buffers it gathers
-/// rows into and copies to the device on its own streams. A package with
-/// mapped views must require this capability, so a host without it refuses
-/// the package.
+/// for the CPU to read until `return_mapped_view_v1`;
+/// `allocate_staging_buffer_v1` gives the bundle page-locked buffers it
+/// gathers rows into and copies to the device on its own streams, and
+/// `lend_staging_buffer_v1` lends one for the CPU to write until
+/// `return_staging_buffer_v1`. The host keeps every loan: it refuses to
+/// release a lent image or buffer, to lend a staging buffer twice, and any
+/// device work naming a lent staging buffer. A package with mapped views
+/// must require this capability, so a host without it refuses the
+/// package.
 pub const HOST_MAPPED_ROWS_CAPABILITY_V1: &str = "chop.host-mapped-rows.v1";
 
 pub type BundleRetireRequestFnV1 = extern "C" fn(BundleHandleV1, u64) -> BundleStatusV1;

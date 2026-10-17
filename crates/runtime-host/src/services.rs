@@ -395,6 +395,21 @@ impl CompiledImageDescriptionV1 {
     }
 }
 
+/// Every buffer span kernel arguments name: buffers, tensor maps and the
+/// slots of by-value address arrays.
+fn argument_spans_v1(arguments: &[KernelArgumentV1]) -> Vec<DeviceBufferSpanV1> {
+    let mut spans = Vec::new();
+    for argument in arguments {
+        match argument {
+            KernelArgumentV1::DeviceBuffer(span) => spans.push(*span),
+            KernelArgumentV1::TensorMap(map) => spans.push(map.buffer),
+            KernelArgumentV1::DevicePointerArray(slots) => spans.extend(slots.iter().flatten()),
+            _ => {}
+        }
+    }
+    spans
+}
+
 /// The rank-image bytes one host-placed span removes from the rank arena.
 ///
 /// The span is rounded up to the image alignment, so every byte after it
@@ -946,7 +961,15 @@ struct DeviceBufferRecordV1 {
     origin: Option<BufferOriginV1>,
     /// A bundle's staging buffer: page-locked host memory whose bytes the
     /// host lends the CPU (`chop.host-mapped-rows.v1`).
-    staging: bool,
+    staging: Option<StagingV1>,
+}
+
+/// A staging buffer's loan, and the streams whose work named the buffer since
+/// its last loan, which the next loan waits for.
+#[derive(Debug, Default)]
+struct StagingV1 {
+    lent: bool,
+    streams: BTreeSet<SlotKeyV1>,
 }
 
 /// The pool and context one allocation came from.
@@ -1454,6 +1477,8 @@ struct HostStateV1<D> {
     kv_transactions: SlotTableV1<KvTransactionRecordV1>,
     states: SlotTableV1<StateRecordV1>,
     collectives: SlotTableV1<CollectiveRecordV1>,
+    /// Mapped-view loans outstanding, by compiled image.
+    mapped_loans: BTreeMap<SlotKeyV1, u64>,
     #[cfg(test)]
     probe_fault: Option<HostDeviceProbeServiceFaultV1>,
     #[cfg(test)]
@@ -1629,6 +1654,7 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
                 kv_transactions: SlotTableV1::new(),
                 states: SlotTableV1::new(),
                 collectives: SlotTableV1::new(),
+                mapped_loans: BTreeMap::new(),
                 #[cfg(test)]
                 probe_fault: None,
                 #[cfg(test)]
@@ -1671,7 +1697,7 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
         let staging_bytes = state
             .buffers
             .values()
-            .filter(|buffer| buffer.staging)
+            .filter(|buffer| buffer.staging.is_some())
             .map(|buffer| buffer.byte_length)
             .sum();
         let arenas = state.arenas.values();
@@ -2174,6 +2200,10 @@ impl<D: HostDeviceBackendV1> HostStateV1<D> {
     fn resolve_range(&self, span: DeviceBufferSpanV1) -> HostServiceResultV1<DeviceRangeV1> {
         let key = slot_key_v1(span.buffer.generation(), span.buffer.slot())?;
         let record = self.buffers.get(key)?;
+        // A lent staging buffer is the CPU's until its loan is returned.
+        if record.staging.as_ref().is_some_and(|staging| staging.lent) {
+            return Err(BundleStatusV1::InvalidState);
+        }
         let end = span
             .offset
             .checked_add(span.length)
@@ -2237,6 +2267,46 @@ impl<D: HostDeviceBackendV1> HostStateV1<D> {
                 }
             })
             .collect()
+    }
+
+    /// Records that work about to be queued on `stream` names `spans`, so the
+    /// next loan of each staging buffer among them waits for it. A lent
+    /// staging buffer is refused, and so is one on a capturing device: a
+    /// graph would replay work on it that no loan waits for.
+    fn note_staging(
+        &mut self,
+        stream: BundleStreamHandleV1,
+        spans: impl IntoIterator<Item = DeviceBufferSpanV1>,
+    ) -> HostServiceResultV1<()> {
+        let stream_key = slot_key_v1(stream.generation(), stream.slot())?;
+        let capturing = self
+            .capture_on_device_of(self.streams.get(stream_key)?.context)
+            .is_some();
+        for span in spans {
+            let key = slot_key_v1(span.buffer.generation(), span.buffer.slot())?;
+            if let Some(staging) = self.buffers.get_mut(key)?.staging.as_mut() {
+                if staging.lent || capturing {
+                    return Err(BundleStatusV1::InvalidState);
+                }
+                staging.streams.insert(stream_key);
+            }
+        }
+        Ok(())
+    }
+
+    /// Refuses a staging buffer among `spans`: work that reaches it through a
+    /// stored address could run where no loan waits for it.
+    fn refuse_staging(
+        &self,
+        spans: impl IntoIterator<Item = DeviceBufferSpanV1>,
+    ) -> HostServiceResultV1<()> {
+        for span in spans {
+            let key = slot_key_v1(span.buffer.generation(), span.buffer.slot())?;
+            if self.buffers.get(key)?.staging.is_some() {
+                return Err(BundleStatusV1::InvalidArgument);
+            }
+        }
+        Ok(())
     }
 
     fn stream_object(&self, stream: BundleStreamHandleV1) -> HostServiceResultV1<DeviceObjectV1> {
@@ -2413,7 +2483,7 @@ impl<D: HostDeviceBackendV1> HostStateV1<D> {
             byte_length,
             owner: BufferOwnerV1::Host,
             origin,
-            staging: false,
+            staging: None,
         }) {
             Ok(key) => Ok(key),
             Err(status) => {
@@ -2463,7 +2533,7 @@ impl<D: HostDeviceBackendV1> HostStateV1<D> {
             byte_length,
             owner: BufferOwnerV1::Host,
             origin,
-            staging: false,
+            staging: None,
         }) {
             Ok(key) => Ok(key),
             Err(status) => {
@@ -3039,7 +3109,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             byte_length,
             owner: BufferOwnerV1::Bundle(order),
             origin: Some(pool_origin),
-            staging: false,
+            staging: None,
         }) {
             Ok(key) => Ok(BundleDeviceBufferHandleV1::from_parts(
                 key.generation,
@@ -3064,6 +3134,9 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             // A rank arena or KV pool owns this allocation and releases it.
             return Err(BundleStatusV1::InvalidState);
         };
+        if record.staging.as_ref().is_some_and(|staging| staging.lent) {
+            return Err(BundleStatusV1::InvalidState);
+        }
         let object = record.object;
         state.order.preflight(order)?;
         state.device.release_device_buffer(object)?;
@@ -3125,7 +3198,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                 context,
                 pool: pool_key,
             }),
-            staging: true,
+            staging: Some(StagingV1::default()),
         }) {
             Ok(key) => Ok(BundleDeviceBufferHandleV1::from_parts(
                 key.generation,
@@ -3138,18 +3211,74 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         }
     }
 
+    #[allow(unsafe_code)]
     fn lend_staging_buffer(
         &self,
         buffer: BundleDeviceBufferHandleV1,
     ) -> HostServiceResultV1<LentHostBytesV1> {
         let mut state = self.state.borrow_mut();
-        let record = state.buffers.get(key_of_v1!(buffer))?;
-        if !record.staging || !matches!(record.owner, BufferOwnerV1::Bundle(_)) {
+        let key = key_of_v1!(buffer);
+        let record = state.buffers.get(key)?;
+        let Some(staging) = record.staging.as_ref() else {
             return Err(BundleStatusV1::InvalidArgument);
+        };
+        if staging.lent || !matches!(record.owner, BufferOwnerV1::Bundle(_)) {
+            return Err(BundleStatusV1::InvalidState);
         }
         let (object, byte_length) = (record.object, record.byte_length);
+        // Wait for the work that named the buffer since its last loan: an
+        // event recorded behind it on each of those streams, synchronized.
+        // A stream released since then had its work finished with it.
+        let streams: Vec<(DeviceObjectV1, SlotKeyV1)> = staging
+            .streams
+            .iter()
+            .filter_map(|stream| {
+                let stream = state.streams.get(*stream).ok()?;
+                Some((stream.object, stream.context))
+            })
+            .collect();
+        for (stream, context) in streams {
+            state.refuse_during_capture(context)?;
+            let context = state.contexts.get(context)?.object;
+            let event = state.device.create_event(context)?;
+            let waited = state
+                .device
+                .record_event(event, stream)
+                .and_then(|()| state.device.synchronize_event(event));
+            state.device.release_event(event)?;
+            waited?;
+        }
         let address = state.device.mapped_host_address(object)?;
-        Ok(LentHostBytesV1::new(address as *const u8, byte_length))
+        let staging = state
+            .buffers
+            .get_mut(key)?
+            .staging
+            .as_mut()
+            .expect("checked a staging buffer");
+        staging.streams.clear();
+        staging.lent = true;
+        // SAFETY-REVIEWED: a staging buffer's mapped host bytes stay allocated
+        // until its release, which this host refuses while the loan lasts, and
+        // while it lasts the host refuses a second loan and every device
+        // operation naming the buffer (`resolve_range`, `note_staging`); the
+        // device work queued before it was waited for above, and no graph
+        // captured it (`note_staging`).
+        Ok(unsafe { LentHostBytesV1::writable(address as *mut u8, byte_length) })
+    }
+
+    fn return_staging_buffer(&self, buffer: BundleDeviceBufferHandleV1) -> HostServiceResultV1<()> {
+        let mut state = self.state.borrow_mut();
+        let staging = state
+            .buffers
+            .get_mut(key_of_v1!(buffer))?
+            .staging
+            .as_mut()
+            .ok_or(BundleStatusV1::InvalidArgument)?;
+        if !staging.lent {
+            return Err(BundleStatusV1::InvalidState);
+        }
+        staging.lent = false;
+        Ok(())
     }
 
     fn open_compiled_image(
@@ -3472,29 +3601,54 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         image: BundleCompiledImageHandleV1,
     ) -> HostServiceResultV1<()> {
         let mut state = self.state.borrow_mut();
+        if state.mapped_loans.contains_key(&key_of_v1!(image)) {
+            return Err(BundleStatusV1::InvalidState);
+        }
         release_tracked_resource_v1!(state, images, key_of_v1!(image))
     }
 
+    #[allow(unsafe_code)]
     fn resolve_mapped_view(
         &self,
         image: BundleCompiledImageHandleV1,
         rank: u32,
         view_id: &[u8],
     ) -> HostServiceResultV1<LentHostBytesV1> {
-        let state = self.state.borrow();
+        let mut state = self.state.borrow_mut();
         if rank >= state.config.topology.rank_count() {
             return Err(BundleStatusV1::InvalidArgument);
         }
-        let record = state.images.get(key_of_v1!(image))?;
+        let key = key_of_v1!(image);
+        let record = state.images.get(key)?;
         let ComponentStorageV1::Planned(planned) = &record.storage else {
             return Err(BundleStatusV1::NotFound);
         };
-        // The instance's configuration holds the planned image, and with it
-        // the mapping, for as long as the instance lives.
-        let rows = planned
-            .mapped_view(rank, view_id)
-            .ok_or(BundleStatusV1::NotFound)?;
-        Ok(LentHostBytesV1::new(rows.bytes().as_ptr(), rows.len()))
+        let rows = Arc::clone(
+            planned
+                .mapped_view(rank, view_id)
+                .ok_or(BundleStatusV1::NotFound)?,
+        );
+        *state.mapped_loans.entry(key).or_default() += 1;
+        // SAFETY-REVIEWED: the instance's configuration holds the planned
+        // image, and with it this read-only mapping, for the instance's whole
+        // life, and the mapping's bytes are the checkpoint's, which a server
+        // serves unchanged; the image itself cannot be released while the
+        // loan lasts.
+        Ok(unsafe { LentHostBytesV1::readable(rows.bytes().as_ptr(), rows.len()) })
+    }
+
+    fn return_mapped_view(&self, image: BundleCompiledImageHandleV1) -> HostServiceResultV1<()> {
+        let mut state = self.state.borrow_mut();
+        let key = key_of_v1!(image);
+        let loans = state
+            .mapped_loans
+            .get_mut(&key)
+            .ok_or(BundleStatusV1::InvalidState)?;
+        *loans -= 1;
+        if *loans == 0 {
+            state.mapped_loans.remove(&key);
+        }
+        Ok(())
     }
 
     fn open_authenticated_component(
@@ -3981,6 +4135,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         if range.length != source.len() as u64 {
             return Err(BundleStatusV1::InvalidArgument);
         }
+        state.note_staging(stream, [destination])?;
         // Stream-ordered: a bundle orders its own later work on this stream.
         state
             .device
@@ -4007,6 +4162,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         if range.length != destination.len() as u64 {
             return Err(BundleStatusV1::InvalidArgument);
         }
+        state.note_staging(stream, [source])?;
         state
             .device
             .copy_device_to_host(stream_object, destination, range)
@@ -4021,11 +4177,13 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         let mut state = self.state.borrow_mut();
         state.admit_during_capture(key_of_v1!(stream), CaptureSubmissionV1::Other)?;
         let stream_object = state.stream_object(stream)?;
+        let spans = [destination, source];
         let destination = state.resolve_range(destination)?;
         let source = state.resolve_range(source)?;
         if destination.length != source.length {
             return Err(BundleStatusV1::InvalidArgument);
         }
+        state.note_staging(stream, spans)?;
         state
             .device
             .copy_device_to_device(stream_object, destination, source)
@@ -4047,11 +4205,13 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         let stream_object = state.stream_object(stream)?;
         let destination_object = state.context_object(destination_context)?;
         let source_object = state.context_object(source_context)?;
+        let spans = [destination, source];
         let destination = state.resolve_range(destination)?;
         let source = state.resolve_range(source)?;
         if destination.length != source.length {
             return Err(BundleStatusV1::InvalidArgument);
         }
+        state.note_staging(stream, spans)?;
         state.device.copy_peer_to_peer(
             stream_object,
             destination_object,
@@ -4070,6 +4230,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         state.refuse_during_capture(state.streams.get(key_of_v1!(stream))?.context)?;
         let stream_object = state.stream_object(stream)?;
         let range = state.resolve_range(destination)?;
+        state.note_staging(stream, [destination])?;
         state
             .device
             .zero_device_buffer(stream_object, range)
@@ -4128,6 +4289,8 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             .iter()
             .map(|slot| slot.map(|span| state.resolve_range(span)).transpose())
             .collect::<HostServiceResultV1<Vec<Option<DeviceRangeV1>>>>()?;
+        state.refuse_staging(slots.iter().flatten().copied())?;
+        state.note_staging(stream, [destination])?;
         state
             .device
             .write_device_pointer_table(stream_object, range, &resolved)
@@ -4259,12 +4422,14 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                     })?;
             }
         }
+        let spans = argument_spans_v1(arguments);
         let arguments = state.resolve_arguments(arguments).inspect_err(|status| {
             eprintln!(
                 "host launch_cuda_symbol {} arguments: {status:?}",
                 symbol.slot()
             );
         })?;
+        state.note_staging(stream, spans)?;
         state
             .device
             .launch_symbol(stream_object, symbol_object, config, &arguments)
@@ -4697,7 +4862,9 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             .binding
             .clone();
         let stream_object = state.stream_object(stream)?;
+        let spans = argument_spans_v1(arguments);
         let arguments = state.resolve_arguments(arguments)?;
+        state.note_staging(stream, spans)?;
         state
             .device
             .execute_collective(stream_object, &binding, operation, &arguments)
@@ -4742,6 +4909,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             })
             .collect::<HostServiceResultV1<Vec<DeviceCustomOperandV1>>>()?;
         reject_aliased_custom_operands_v1(&resolved)?;
+        state.note_staging(stream, operands.iter().map(|operand| operand.span))?;
         // Whatever was ordered on this stream earlier has to land before the
         // operation is lent anything, because the addresses it is about to
         // receive name buffers that work may still be writing. The wait comes

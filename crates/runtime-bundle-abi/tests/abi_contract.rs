@@ -658,6 +658,8 @@ fn c_header_and_rust_layouts_match() {
             offset_of!(abi::BundleHostServicesV1, resolve_mapped_view_v1),
             offset_of!(abi::BundleHostServicesV1, allocate_staging_buffer_v1),
             offset_of!(abi::BundleHostServicesV1, lend_staging_buffer_v1),
+            offset_of!(abi::BundleHostServicesV1, return_mapped_view_v1),
+            offset_of!(abi::BundleHostServicesV1, return_staging_buffer_v1),
         ],
     );
 
@@ -1224,10 +1226,11 @@ fn a_second_collective_contract_crosses_v1_as_bytes_rather_than_as_a_change() {
 }
 
 /// A mapped view crosses as the host's own bytes, read in place, and a
-/// staging buffer as bytes the bundle writes in place. Neither can be released
-/// while a closure holds it, and a staging buffer is never lent twice at once.
+/// staging buffer as bytes the bundle writes in place. Each loan is the
+/// host's and is returned when the closure ends, a panic included; a loan
+/// the host refuses runs no closure.
 #[test]
-fn host_mapped_rows_lend_bytes_in_place_and_refuse_release_while_lent() {
+fn host_mapped_rows_lend_bytes_in_place_and_return_every_loan() {
     let backend = Rc::new(FixtureHostBackend {
         mapped: (0..96_u8).collect(),
         ..FixtureHostBackend::default()
@@ -1239,23 +1242,15 @@ fn host_mapped_rows_lend_bytes_in_place_and_refuse_release_while_lent() {
     let address = services
         .with_mapped_view(image, 1, b"rows", |bytes| {
             assert_eq!(bytes, (0..96_u8).collect::<Vec<_>>());
-            // A lent image cannot be released from inside the closure.
-            assert_eq!(
-                services.release_compiled_image(image),
-                Err(BundleAbiError::Status(abi::BundleStatusV1::InvalidState))
-            );
+            assert_eq!(backend.mapped_loans.get(), 1);
             bytes.as_ptr() as usize
         })
         .unwrap();
     assert_eq!(address, backend.mapped.as_ptr() as usize);
+    assert_eq!(backend.mapped_loans.get(), 0);
     assert_eq!(
-        services.with_mapped_view(image, 0, b"rows", |_| ()),
+        services.with_mapped_view(image, 0, b"rows", |_| unreachable!()),
         Err(BundleAbiError::Status(abi::BundleStatusV1::NotFound))
-    );
-    // Released after the closure, the image reaches the host again.
-    assert_eq!(
-        services.release_compiled_image(image),
-        Err(BundleAbiError::Status(abi::BundleStatusV1::Unsupported))
     );
 
     let pool = abi::BundleMemoryPoolHandleV1::from_parts(1, 1);
@@ -1267,17 +1262,22 @@ fn host_mapped_rows_lend_bytes_in_place_and_refuse_release_while_lent() {
         .with_staging_buffer(staging, |bytes| {
             assert_eq!(bytes.len(), 32);
             bytes.copy_from_slice(&[5; 32]);
+            // The host keeps the loan, so a second one is refused whoever
+            // asks.
             assert_eq!(
-                services.with_staging_buffer(staging, |_| ()),
-                Err(BundleAbiError::Status(abi::BundleStatusV1::InvalidState))
-            );
-            assert_eq!(
-                services.release_device_buffer(staging),
+                services.with_staging_buffer(staging, |_| unreachable!()),
                 Err(BundleAbiError::Status(abi::BundleStatusV1::InvalidState))
             );
         })
         .unwrap();
+    assert!(!backend.staging_lent.get());
     assert_eq!(backend.staging.borrow().as_deref(), Some(&[5_u8; 32][..]));
+    // A closure that panics still returns its loan.
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        services.with_staging_buffer(staging, |_| panic!("the gather failed"))
+    }));
+    assert!(panicked.is_err());
+    assert!(!backend.staging_lent.get());
     assert_eq!(
         services.with_staging_buffer(abi::BundleDeviceBufferHandleV1::from_parts(9, 4), |_| ()),
         Err(BundleAbiError::Status(abi::BundleStatusV1::InvalidArgument))
@@ -2604,6 +2604,10 @@ struct FixtureHostBackend {
     mapped: Vec<u8>,
     /// The one staging buffer this host allocated, if any.
     staging: RefCell<Option<Box<[u8]>>>,
+    /// Loans outstanding: mapped-view loans, and whether the staging buffer
+    /// is lent.
+    mapped_loans: std::cell::Cell<u32>,
+    staging_lent: std::cell::Cell<bool>,
 }
 
 const FIXTURE_STAGING: abi::BundleDeviceBufferHandleV1 =
@@ -2618,6 +2622,7 @@ macro_rules! unused_fixture_service {
 }
 
 impl HostServicesBackendV1 for FixtureHostBackend {
+    #[allow(unsafe_code)]
     fn resolve_mapped_view(
         &self,
         _image: abi::BundleCompiledImageHandleV1,
@@ -2627,10 +2632,22 @@ impl HostServicesBackendV1 for FixtureHostBackend {
         if view_id != b"rows" || rank != 1 {
             return Err(abi::BundleStatusV1::NotFound);
         }
-        Ok(LentHostBytesV1::new(
-            self.mapped.as_ptr(),
-            self.mapped.len() as u64,
-        ))
+        self.mapped_loans.set(self.mapped_loans.get() + 1);
+        // SAFETY-REVIEWED: this backend owns `mapped` for its whole life and
+        // never changes it.
+        Ok(unsafe { LentHostBytesV1::readable(self.mapped.as_ptr(), self.mapped.len() as u64) })
+    }
+
+    fn return_mapped_view(
+        &self,
+        _image: abi::BundleCompiledImageHandleV1,
+    ) -> HostServiceResultV1<()> {
+        let loans = self.mapped_loans.get();
+        if loans == 0 {
+            return Err(abi::BundleStatusV1::InvalidState);
+        }
+        self.mapped_loans.set(loans - 1);
+        Ok(())
     }
 
     fn allocate_staging_buffer(
@@ -2644,17 +2661,32 @@ impl HostServicesBackendV1 for FixtureHostBackend {
         Ok(FIXTURE_STAGING)
     }
 
+    #[allow(unsafe_code)]
     fn lend_staging_buffer(
         &self,
         buffer: abi::BundleDeviceBufferHandleV1,
     ) -> HostServiceResultV1<LentHostBytesV1> {
         let mut staging = self.staging.borrow_mut();
         match staging.as_mut() {
+            Some(_) if self.staging_lent.get() => Err(abi::BundleStatusV1::InvalidState),
             Some(bytes) if buffer == FIXTURE_STAGING => {
-                Ok(LentHostBytesV1::new(bytes.as_mut_ptr(), bytes.len() as u64))
+                self.staging_lent.set(true);
+                // SAFETY-REVIEWED: the box stays allocated, and this backend
+                // touches it no more, until the loan is returned.
+                Ok(unsafe { LentHostBytesV1::writable(bytes.as_mut_ptr(), bytes.len() as u64) })
             }
             _ => Err(abi::BundleStatusV1::InvalidArgument),
         }
+    }
+
+    fn return_staging_buffer(
+        &self,
+        _buffer: abi::BundleDeviceBufferHandleV1,
+    ) -> HostServiceResultV1<()> {
+        if !self.staging_lent.replace(false) {
+            return Err(abi::BundleStatusV1::InvalidState);
+        }
+        Ok(())
     }
 
     fn log(&self, message: &[u8]) -> HostServiceResultV1<()> {
@@ -3581,7 +3613,7 @@ int main(void) {
   printf("batch-limits-service-tail %zu %zu\n", sizeof(chop_bundle_host_services_v1), P(chop_bundle_host_services_v1, query_batch_limits_v1));
   printf("cluster-residency %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_cluster_residency_v1), P(chop_bundle_cluster_residency_v1, struct_size), P(chop_bundle_cluster_residency_v1, multiprocessor_count), P(chop_bundle_cluster_residency_v1, usable_multiprocessors), P(chop_bundle_cluster_residency_v1, max_active_clusters), P(chop_bundle_cluster_residency_v1, flags));
   printf("cluster-residency-service-tail %zu %zu\n", sizeof(chop_bundle_host_services_v1), P(chop_bundle_host_services_v1, query_cluster_residency_v1));
-  printf("host-mapped-rows-service-tail %zu %zu %zu %zu\n", sizeof(chop_bundle_host_services_v1), P(chop_bundle_host_services_v1, resolve_mapped_view_v1), P(chop_bundle_host_services_v1, allocate_staging_buffer_v1), P(chop_bundle_host_services_v1, lend_staging_buffer_v1));
+  printf("host-mapped-rows-service-tail %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_host_services_v1), P(chop_bundle_host_services_v1, resolve_mapped_view_v1), P(chop_bundle_host_services_v1, allocate_staging_buffer_v1), P(chop_bundle_host_services_v1, lend_staging_buffer_v1), P(chop_bundle_host_services_v1, return_mapped_view_v1), P(chop_bundle_host_services_v1, return_staging_buffer_v1));
   printf("api-header %zu %zu %zu\n", sizeof(chop_bundle_api_header_v1), P(chop_bundle_api_header_v1, struct_size), P(chop_bundle_api_header_v1, abi_version));
   printf("api %zu %zu %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_api_v1), P(chop_bundle_api_v1, struct_size), P(chop_bundle_api_v1, abi_version), P(chop_bundle_api_v1, create), P(chop_bundle_api_v1, execute), P(chop_bundle_api_v1, commit), P(chop_bundle_api_v1, cancel), P(chop_bundle_api_v1, destroy));
   return 0;

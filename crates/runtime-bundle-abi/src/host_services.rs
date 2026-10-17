@@ -62,24 +62,51 @@ impl AuthenticatedComponentMetadataV1 {
     }
 }
 
-/// Host memory a host lends a bundle past one call: the bytes of a mapped view
-/// (read only) or of a staging buffer (writable), named by address and length.
-///
-/// The host keeps them valid, and a mapped view's bytes unchanged, until the
-/// image or buffer they belong to is released. Building one reads nothing;
-/// only the bundle side of the trampoline turns it into a slice.
+/// Host memory a host lends a bundle past one call: the bytes of a mapped
+/// view (readable) or of a staging buffer (writable), named by address and
+/// length. Only a host builds one, through an unsafe constructor that states
+/// what it vouches for; the bundle side of the trampoline turns it into a
+/// slice for one closure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LentHostBytesV1 {
     address: usize,
     length: u64,
+    writable: bool,
 }
 
 impl LentHostBytesV1 {
+    /// Bytes the bundle may read for the loan this answers.
+    ///
+    /// # Safety
+    ///
+    /// `length` bytes at `address` (null exactly when `length` is zero) must
+    /// be allocated, initialized, readable and unchanged from the call that
+    /// answers with this value until the bundle returns the loan, and the
+    /// host must refuse to free them before then.
+    #[allow(unsafe_code)]
     #[must_use]
-    pub fn new(address: *const u8, length: u64) -> Self {
+    pub unsafe fn readable(address: *const u8, length: u64) -> Self {
         Self {
             address: address as usize,
             length,
+            writable: false,
+        }
+    }
+
+    /// Bytes the bundle may read and write for the loan this answers.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::readable`], and the bytes must be writable, and nothing but
+    /// the bundle (no other loan, no host access and no device work) may
+    /// read or write them until the bundle returns the loan.
+    #[allow(unsafe_code)]
+    #[must_use]
+    pub unsafe fn writable(address: *mut u8, length: u64) -> Self {
+        Self {
+            address: address as usize,
+            length,
+            writable: true,
         }
     }
 
@@ -91,6 +118,11 @@ impl LentHostBytesV1 {
     #[must_use]
     pub const fn length(self) -> u64 {
         self.length
+    }
+
+    #[must_use]
+    pub const fn is_writable(self) -> bool {
+        self.writable
     }
 }
 
@@ -835,10 +867,11 @@ pub trait HostServicesBackendV1 {
     fn release_compiled_image(&self, image: BundleCompiledImageHandleV1)
     -> HostServiceResultV1<()>;
 
-    /// The bytes of one host-mapped view of `image` for `rank`
-    /// (`chop.host-mapped-rows.v1`), lent for the CPU to read until the image
-    /// is released. A view the image holds elsewhere, or not for this rank,
-    /// is [`BundleStatusV1::NotFound`].
+    /// Lends the bytes of one host-mapped view of `image` for `rank`
+    /// (`chop.host-mapped-rows.v1`) for the CPU to read, until
+    /// [`Self::return_mapped_view`]; the host refuses to release an image
+    /// with loans outstanding. A view the image holds elsewhere, or not for
+    /// this rank, is [`BundleStatusV1::NotFound`].
     fn resolve_mapped_view(
         &self,
         _image: BundleCompiledImageHandleV1,
@@ -862,14 +895,31 @@ pub trait HostServicesBackendV1 {
         Err(BundleStatusV1::Unsupported)
     }
 
-    /// The whole of one staging buffer, lent for the CPU to write until the
-    /// buffer is released. The bundle orders its writes after the device work
-    /// it queued that reads them. A buffer that is not a staging buffer is
+    /// Lends the whole of one staging buffer for the CPU to write, until
+    /// [`Self::return_staging_buffer`]. The host first waits for the device
+    /// work that named the buffer since its last loan, then refuses, while
+    /// the loan lasts, a second loan, its release and any device work naming
+    /// it. A buffer that is not a staging buffer is
     /// [`BundleStatusV1::InvalidArgument`].
     fn lend_staging_buffer(
         &self,
         _buffer: BundleDeviceBufferHandleV1,
     ) -> HostServiceResultV1<LentHostBytesV1> {
+        Err(BundleStatusV1::Unsupported)
+    }
+
+    /// Ends one loan of a mapped view of `image`; a loan that is not
+    /// outstanding is [`BundleStatusV1::InvalidState`].
+    fn return_mapped_view(&self, _image: BundleCompiledImageHandleV1) -> HostServiceResultV1<()> {
+        Err(BundleStatusV1::Unsupported)
+    }
+
+    /// Ends the loan of a staging buffer; one not lent is
+    /// [`BundleStatusV1::InvalidState`].
+    fn return_staging_buffer(
+        &self,
+        _buffer: BundleDeviceBufferHandleV1,
+    ) -> HostServiceResultV1<()> {
         Err(BundleStatusV1::Unsupported)
     }
 

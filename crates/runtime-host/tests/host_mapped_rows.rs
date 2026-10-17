@@ -419,7 +419,10 @@ fn prewarmed_views_are_resident_after_load() {
     let refused = planned(&root.0, vec![prewarmed(2, 0, true), prewarmed(2, 1, false)])
         .err()
         .unwrap();
-    assert!(refused.contains("view codes differs between ranks"), "{refused}");
+    assert!(
+        refused.contains("view codes differs between ranks"),
+        "{refused}"
+    );
 }
 
 /// A mapped view takes exactly one plain copy of tensor bytes, whole or one

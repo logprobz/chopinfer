@@ -1234,7 +1234,10 @@ def replica_lines(spreads, number):
         for name in SPREAD_FIGURES:
             figure = spread['figures'].get(name)
             if figure:
-                values = ', '.join(f'{number(v)} (n={n})' for v, n in zip(figure['values'], figure['samples']))
+                # A star marks a percentile its samples do not support, as in the level rows.
+                values = ', '.join(f"{number(v)}{'*' if supported is False else ''} (n={n})"
+                                   for v, n, supported in zip(figure['values'], figure['samples'],
+                                                              figure.get('supported') or [None] * len(figure['values'])))
                 lines.append(f"| {spread['concurrency']} | {name} | {values} | "
                              f"{number(figure['min'])} / {number(figure['median'])} / {number(figure['max'])} |")
     return lines

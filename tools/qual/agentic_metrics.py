@@ -407,7 +407,8 @@ def replica_figures(level):
 
 
 def replica_spread(levels):
-    """Per concurrency, each figure's value and samples in every replica,
+    """Per concurrency, each figure's value and samples in every replica
+    (and, for a percentile, whether its samples support it; None otherwise),
     with their min, median and max. Replicas are repeated passes of one
     workload, so the spread is across replicas; no tail pools their samples."""
     groups = {}
@@ -420,7 +421,8 @@ def replica_spread(levels):
         spread = {}
         for name in sorted(set().union(*figures)):
             values = [f.get(name, {}).get('value') for f in figures]
-            spread[name] = dict(values=values, samples=[f.get(name, {}).get('samples', 0) for f in figures], **span(values))
+            spread[name] = dict(values=values, samples=[f.get(name, {}).get('samples', 0) for f in figures],
+                                supported=[f.get(name, {}).get('supported') for f in figures], **span(values))
         spreads.append(dict(concurrency=concurrency, replicas=[level.get('replica', 0) for level in group], figures=spread))
     return spreads
 

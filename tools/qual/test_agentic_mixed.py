@@ -505,6 +505,27 @@ class ReplicaTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'versions'):
             compare(new['tbt'], old['fixed'])
 
+    def test_the_spread_keeps_and_shows_which_tails_are_supported(self):
+        """A replica's tail keeps its `supported` flag in the receipt's and
+        the comparison's spreads, and the summary stars it as the level rows do."""
+        from agentic_compare import compare
+        from agentic_metrics import replica_spread
+        receipts = self.sweeps('--replicas', '2', '--levels', '1')
+        levels = receipts['tbt']['levels']
+        figures = replica_spread(levels)[0]['figures']
+        self.assertEqual(figures['ttft_p95_ms']['supported'],
+                         [level['ttft_ms']['samples'] >= 20 for level in levels])
+        self.assertEqual(figures['output_tokens_per_second']['supported'], [None, None])
+        spread = compare(receipts['fixed'], receipts['tbt'])['levels'][0]['spread']['ttft_p95_ms']
+        self.assertEqual(spread['candidate']['supported'], figures['ttft_p95_ms']['supported'])
+        few = [dict(concurrency=1, replicas=[0, 1], figures={
+            'ttft_p95_ms': dict(values=[3.0, 4.0], samples=[12, 40], supported=[False, True], min=3.0, median=3.5, max=4.0),
+            'output_tokens_per_second': dict(values=[9.0, 8.0], samples=[5, 6], supported=[None, None],
+                                             min=8.0, median=8.5, max=9.0)})]
+        summary = markdown({**receipts['tbt'], 'replica_spread': few})
+        self.assertIn('| 1 | ttft_p95_ms | 3.000* (n=12), 4.000 (n=40) |', summary)
+        self.assertIn('| 1 | output_tokens_per_second | 9.000 (n=5), 8.000 (n=6) |', summary)
+
     def test_comparison_refuses_a_missing_replica(self):
         from agentic_compare import validate_pair
         receipts = self.sweeps('--replicas', '2')

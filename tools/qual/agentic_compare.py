@@ -75,7 +75,8 @@ def spread(replicas):
         for arm in ARMS:
             rows = [pair['figures'][arm].get(name, {}) for pair in replicas]
             values = [row.get('value') for row in rows]
-            arms[arm] = dict(values=values, samples=[row.get('samples', 0) for row in rows], **span(values))
+            arms[arm] = dict(values=values, samples=[row.get('samples', 0) for row in rows],
+                             supported=[row.get('supported') for row in rows], **span(values))
         differences = [b - a if a is not None and b is not None else None
                        for a, b in zip(arms['baseline']['values'], arms['candidate']['values'])]
         overlap = None

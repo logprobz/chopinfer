@@ -98,16 +98,25 @@ def mode_evidence(before, after, model, startup_before=None, startup_after=None)
                 startup_before=startup_before, startup_after=startup_after)
 
 
+def arm_mode(arm):
+    """The prefill-budget mode an arm label claims: `fixed` or `tbt`, alone
+    or before a `-` suffix naming the arm's other server settings
+    (`fixed-mbt4096`), else None."""
+    mode = arm.split('-', 1)[0]
+    return mode if mode in ('fixed', 'tbt') else None
+
+
 def verify_arm(arm, evidence):
-    if arm not in ('fixed', 'tbt'):
+    mode = arm_mode(arm)
+    if mode is None:
         return dict(passed=True, reason='unlabeled scheduling arm; mode not gated')
     reason = None
     if evidence['errors']:
         reason = '; '.join(evidence['errors'])
-    elif evidence['mode'] != arm:
+    elif evidence['mode'] != mode:
         reason = f"arm {arm} disagrees with observed mode {evidence['mode'] or 'unknown'}"
     warnings = []
-    if arm == 'tbt' and evidence['mode'] == 'tbt' and not evidence['selected_budget_observations']:
+    if mode == 'tbt' and evidence['mode'] == 'tbt' and not evidence['selected_budget_observations']:
         warnings.append('verified tbt mode but no selected-budget observations in the measured window')
     return dict(passed=reason is None, reason=reason, warnings=warnings,
                 policy_exercised=bool(evidence['selected_budget_observations']))

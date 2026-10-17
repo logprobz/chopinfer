@@ -359,7 +359,8 @@ class ReplicaTests(unittest.TestCase):
     figures, and the receipt and comparison give their spread, never tails
     pooled across replicas."""
 
-    def sweeps(self, *flags):
+    def sweeps(self, *flags, arms=(('tbt', 'tbt'), ('fixed', 'fixed'))):
+        """Fake sweeps of each (arm label, fake server mode) in ARMS, by label."""
         receipts = {}
         with tempfile.TemporaryDirectory() as name:
             def receipt(check, identity, result, mechanics_only):
@@ -368,9 +369,9 @@ class ReplicaTests(unittest.TestCase):
                 return Path(name) / f"{result['arm']}-{result['receipt_kind']}-{len(result['level_receipts'])}.json"
             with patch('agentic_mixed.common.startup'), patch('agentic_mixed.common.receipt', side_effect=receipt), \
                     fake_time(FakeClock()), redirect_stdout(io.StringIO()):
-                for arm in ('tbt', 'fixed'):
+                for arm, mode in arms:
                     self.assertEqual(main(['--dry-run', '--levels', '1,2', '--seconds', '.4', '--warmup-waves', '0',
-                                           '--min-samples', '2', '--no-decode', '--arm', arm, '--fake-prefill-budget', arm,
+                                           '--min-samples', '2', '--no-decode', '--arm', arm, '--fake-prefill-budget', mode,
                                            '--label', 'replicas', *flags]), 0)
         for receipt in receipts.values():
             receipt.update(schema='chopinfer-qualification/v1', check='agentic-mixed', mechanics_only=True)
@@ -403,6 +404,8 @@ class ReplicaTests(unittest.TestCase):
         with patch('agentic_compare.validate_pair'):
             compared = compare(receipts['tbt'], receipts['fixed'])
         self.assertEqual(compared['schema'], 'chopinfer.agentic-mixed-comparison.v2')
+        # Of a tbt and fixed pair, fixed is the baseline in either order.
+        self.assertEqual(compared['arms'], {'baseline': 'fixed', 'candidate': 'tbt'})
         self.assertEqual([level['concurrency'] for level in compared['levels']], [1, 2])
         level = compared['levels'][0]
         self.assertEqual([pair['replica'] for pair in level['replicas']], [0, 1])
@@ -413,12 +416,37 @@ class ReplicaTests(unittest.TestCase):
         figure = level['spread']['ttft_p95_ms']
         fixed = [l for l in receipts['fixed']['levels'] if l['concurrency'] == 1]
         tbt = [l for l in receipts['tbt']['levels'] if l['concurrency'] == 1]
-        self.assertEqual(figure['fixed']['values'], [l['ttft_ms']['p95'] for l in fixed])
-        self.assertEqual(figure['fixed']['samples'], [l['ttft_ms']['samples'] for l in fixed])
-        self.assertEqual(figure['tbt_minus_fixed']['values'],
+        self.assertEqual(figure['baseline']['values'], [l['ttft_ms']['p95'] for l in fixed])
+        self.assertEqual(figure['baseline']['samples'], [l['ttft_ms']['samples'] for l in fixed])
+        self.assertEqual(figure['candidate_minus_baseline']['values'],
                          [b['ttft_ms']['p95'] - a['ttft_ms']['p95'] for a, b in zip(fixed, tbt)])
         self.assertIn(figure['ranges_overlap'], (True, False))
         self.assertNotIn('pooled', json.dumps(compared))
+
+    def test_any_two_verified_arms_compare_in_order(self):
+        """Two arms of one mode with different server settings (a fixed
+        budget at another --max-batch-tokens) compare as baseline and
+        candidate, in argument order; each label's mode prefix is verified."""
+        from agentic_compare import compare, validate_pair
+        from agentic_server import verify_arm
+        fixed = {'mode': 'fixed', 'errors': [], 'selected_budget_observations': 0}
+        tbt = {'mode': 'tbt', 'errors': [], 'selected_budget_observations': 3}
+        self.assertTrue(verify_arm('fixed-mbt4096', fixed)['passed'])
+        self.assertFalse(verify_arm('fixed-mbt4096', tbt)['passed'])
+        self.assertTrue(verify_arm('tbt-150ms', tbt)['passed'])
+        self.assertFalse(verify_arm('tbt-150ms', fixed)['passed'])
+        receipts = self.sweeps('--replicas', '1', arms=(('fixed', 'fixed'), ('fixed-mbt4096', 'fixed')))
+        compared = compare(receipts['fixed'], receipts['fixed-mbt4096'])
+        self.assertEqual(compared['arms'], {'baseline': 'fixed', 'candidate': 'fixed-mbt4096'})
+        self.assertEqual(set(compared['levels'][0]['replicas'][0]['coverage']), {'baseline', 'candidate'})
+        self.assertEqual(compare(receipts['fixed-mbt4096'], receipts['fixed'])['arms']['baseline'], 'fixed-mbt4096')
+        same = json.loads(json.dumps(receipts['fixed-mbt4096']))
+        same['arm'] = 'fixed'
+        with self.assertRaisesRegex(ValueError, 'two different arms'):
+            validate_pair(receipts['fixed'], same)
+        unlabeled = self.sweeps('--replicas', '1', arms=(('other', 'fixed'),))['other']
+        with self.assertRaisesRegex(ValueError, 'arm labels'):
+            validate_pair(receipts['fixed'], unlabeled)
 
     def test_comparison_refuses_a_missing_replica(self):
         from agentic_compare import validate_pair

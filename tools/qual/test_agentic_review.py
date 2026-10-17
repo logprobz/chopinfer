@@ -321,13 +321,14 @@ class DurabilityAndComparisonTests(unittest.TestCase):
             self.assertTrue(replica['primary_server_step_evidence'])
             # Each compared figure states its samples in both arms.
             for figure in replica['secondary_client_metrics'].values():
-                for arm in ('fixed', 'tbt'):
+                for arm in ('baseline', 'candidate'):
                     self.assertIsInstance(figure[arm]['samples'], int)
             for name in ('ttft_p95_ms', 'client_step_gap_p95_ms'):
                 figure = replica['secondary_client_metrics'][name]
-                self.assertEqual(set(figure['fixed']), {'value', 'samples', 'supported'})
+                self.assertEqual(set(figure['baseline']), {'value', 'samples', 'supported'})
             for pair in replica['primary_server_step_evidence']:
-                self.assertEqual(pair['samples'], {'fixed': pair['fixed']['count'], 'tbt': pair['tbt']['count']})
+                self.assertEqual(pair['samples'], {'baseline': pair['baseline']['count'],
+                                                   'candidate': pair['candidate']['count']})
             trajectory = replica['trajectories']
             self.assertGreater(trajectory['shared_turns'], 0)
             self.assertEqual(trajectory['equal_requests'], trajectory['shared_turns'])

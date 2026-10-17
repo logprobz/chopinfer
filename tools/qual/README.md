@@ -1236,7 +1236,7 @@ python3 -B tools/qual/agentic_mixed.py --url http://127.0.0.1:8101 \
   --model MiMo-V2.6-Flash-MOPD --levels 1,4,8,16 --seconds 60 \
   --arm tbt --label sched-1 --seed runyard-coding-v1 --temperature 0
 # Run again against the fixed-budget server with --arm fixed and the same label.
-python3 -B tools/qual/agentic_compare.py TBT-SWEEP.json FIXED-SWEEP.json
+python3 -B tools/qual/agentic_compare.py FIXED-SWEEP.json TBT-SWEEP.json
 ```
 
 Pass the root URL (without `/v1`). Use a new shared label per pair of
@@ -1301,6 +1301,14 @@ pool: each is its own level entry with its own figures, and the receipt's
 their min, median and max. `agentic_compare.py` pairs replica R of one arm
 with replica R of the other and reports, per figure, both arms' spreads, the
 per-replica differences and whether the arms' ranges overlap.
+
+`agentic_compare.py BASELINE CANDIDATE` compares any two arms whose labels
+name a prefill-budget mode, `fixed` or `tbt`, alone or with a `-` suffix for
+the arm's other server settings: `--arm fixed-mbt4096` for a fixed budget at
+`--max-batch-tokens 4096`. Each level's mode is verified against the label,
+so pass `--prefill-budget` to the server explicitly (no metric reports it).
+The output names the arms (`arms`) and reports `candidate_minus_baseline`.
+Of a `fixed` and `tbt` pair, `fixed` is the baseline in either order.
 
 The raw re-parse reads the served model's frontend declaration: `--frontend`,
 else the `frontend` input of `CHOPINFER_QUAL_CONFIG`, else the inventoried

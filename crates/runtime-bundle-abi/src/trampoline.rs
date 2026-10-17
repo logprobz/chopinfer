@@ -24,10 +24,10 @@ use std::sync::{Arc, Mutex};
 use crate::host_services::{
     AuthenticatedComponentMetadataV1, CollectiveRequestV1, CompiledImageSpanV1,
     CustomAddressSpaceV1, CustomCompletionV1, CustomOperandV1, DeviceBufferSpanV1,
-    HostServiceResultV1, HostServicesBackendV1, KernelArgumentV1, LaunchConfigV1, LentHostBytesV1,
-    LentLaunchV1, LentRangeV1, LentStreamV1, LogitsRowSinkV1, OwnedDraftTokensV1, OwnedLogitsRowV1,
-    OwnedLogitsViewV1, PhysicalKvLayoutV1, PhysicalKvRequestV1, RankArenaUploadV1,
-    ResultSinkLimitsV1, StateRequestV1, TensorMapV1,
+    HostServiceResultV1, HostServicesBackendV1, KernelArgumentV1, LaunchConfigV1, LentLaunchV1,
+    LentRangeV1, LentStreamV1, LogitsRowSinkV1, MappedRowGatherV1, OwnedDraftTokensV1,
+    OwnedLogitsRowV1, OwnedLogitsViewV1, PhysicalKvLayoutV1, PhysicalKvRequestV1,
+    RankArenaUploadV1, ResultSinkLimitsV1, StateRequestV1, TensorMapV1,
 };
 use crate::{
     BUNDLE_ABI_VERSION_V1, BUNDLE_CUSTOM_OPERATION_V1_CONTAINED_FAULT,
@@ -45,17 +45,18 @@ use crate::{
     BundleExecuteFnV1, BundleExecuteResultSinkV1, BundleGraphHandleV1, BundleHandleV1,
     BundleHostServicesV1, BundleKeptRowsV1, BundleKernelArgumentV1, BundleKvRequestHandleV1,
     BundleKvTransactionHandleV1, BundleLaunchConfigV1, BundleLogitsRowV1, BundleLogitsViewV1,
-    BundleMemoryPoolHandleV1, BundleMutByteViewV1, BundlePeerAccessHandleV1,
-    BundlePhysicalKvHandleV1, BundlePhysicalKvRequestV1, BundleRankArenaHandleV1,
-    BundleRankArenaUploadV1, BundleRawApiV1, BundleRawBatchLimitsV1, BundleRawClusterResidencyV1,
-    BundleRawCompiledImageViewV1, BundleRawSpeculationV1, BundleStateHandleV1,
-    BundleStateRequestV1, BundleStatusV1, BundleStreamHandleV1, BundleTensorMapV1,
-    ExecuteResultSinkV1, charge_result_capacity_rows_v1, charge_result_capacity_v1, status_result,
-    struct_size_v1, validate_authenticated_component_metadata_v1, validate_batch_limits_v1,
-    validate_byte_view_v1, validate_cluster_residency_v1, validate_collective_request_v1,
-    validate_compiled_image_view_v1, validate_custom_operand_struct_size_v1,
-    validate_custom_operands_v1, validate_device_buffer_view_v1, validate_device_pointer_array_v1,
-    validate_draft_tokens_v1, validate_execute_logits_row_v1, validate_execute_logits_view_v1,
+    BundleMappedRowGatherV1, BundleMemoryPoolHandleV1, BundleMutByteViewV1,
+    BundlePeerAccessHandleV1, BundlePhysicalKvHandleV1, BundlePhysicalKvRequestV1,
+    BundleRankArenaHandleV1, BundleRankArenaUploadV1, BundleRawApiV1, BundleRawBatchLimitsV1,
+    BundleRawClusterResidencyV1, BundleRawCompiledImageViewV1, BundleRawSpeculationV1,
+    BundleStateHandleV1, BundleStateRequestV1, BundleStatusV1, BundleStreamHandleV1,
+    BundleTensorMapV1, ExecuteResultSinkV1, charge_result_capacity_rows_v1,
+    charge_result_capacity_v1, status_result, struct_size_v1,
+    validate_authenticated_component_metadata_v1, validate_batch_limits_v1, validate_byte_view_v1,
+    validate_cluster_residency_v1, validate_collective_request_v1, validate_compiled_image_view_v1,
+    validate_custom_operand_struct_size_v1, validate_custom_operands_v1,
+    validate_device_buffer_view_v1, validate_device_pointer_array_v1, validate_draft_tokens_v1,
+    validate_execute_logits_row_v1, validate_execute_logits_view_v1,
     validate_execute_result_sink_v1, validate_host_services_v1, validate_kept_rows_v1,
     validate_kernel_argument_struct_size_v1, validate_kernel_arguments_v1,
     validate_launch_config_v1, validate_mut_byte_view_v1, validate_physical_kv_request_v1,
@@ -275,11 +276,7 @@ impl HostServicesTableV1 {
             query_speculation_v1: Some(query_speculation_trampoline_v1::<B>),
             query_batch_limits_v1: Some(query_batch_limits_trampoline_v1::<B>),
             query_cluster_residency_v1: Some(query_cluster_residency_trampoline_v1::<B>),
-            resolve_mapped_view_v1: Some(resolve_mapped_view_trampoline_v1::<B>),
-            allocate_staging_buffer_v1: Some(allocate_staging_buffer_trampoline_v1::<B>),
-            lend_staging_buffer_v1: Some(lend_staging_buffer_trampoline_v1::<B>),
-            return_mapped_view_v1: Some(return_mapped_view_trampoline_v1::<B>),
-            return_staging_buffer_v1: Some(return_staging_buffer_trampoline_v1::<B>),
+            gather_mapped_rows_v1: Some(gather_mapped_rows_trampoline_v1::<B>),
         });
         // SAFETY-REVIEWED: this table builds every callback itself and owns the backend they read.
         let checked = unsafe { HostServicesV1::new(*raw) };
@@ -532,16 +529,6 @@ status_service_trampoline_v1!(
     (image: BundleCompiledImageHandleV1)
 );
 status_service_trampoline_v1!(
-    return_mapped_view_trampoline_v1,
-    return_mapped_view,
-    (image: BundleCompiledImageHandleV1)
-);
-status_service_trampoline_v1!(
-    return_staging_buffer_trampoline_v1,
-    return_staging_buffer,
-    (buffer: BundleDeviceBufferHandleV1)
-);
-status_service_trampoline_v1!(
     release_authenticated_component_trampoline_v1,
     release_authenticated_component,
     (component: BundleAuthenticatedComponentHandleV1)
@@ -649,17 +636,6 @@ output_service_trampoline_v1!(
 output_service_trampoline_v1!(
     allocate_device_buffer_trampoline_v1,
     allocate_device_buffer,
-    BundleDeviceBufferHandleV1,
-    (
-        pool: BundleMemoryPoolHandleV1,
-        stream: BundleStreamHandleV1,
-        byte_length: u64,
-        alignment: u64,
-    )
-);
-output_service_trampoline_v1!(
-    allocate_staging_buffer_trampoline_v1,
-    allocate_staging_buffer,
     BundleDeviceBufferHandleV1,
     (
         pool: BundleMemoryPoolHandleV1,
@@ -892,73 +868,42 @@ unsafe extern "C" fn resolve_compiled_image_view_trampoline_v1<B: HostServicesBa
     })
 }
 
-/// A lent range the host answered with: null exactly when empty, and inside
-/// this process's addresses.
-fn checked_lent_bytes_v1(bytes: LentHostBytesV1) -> Result<(usize, u64), BundleAbiError> {
-    let length = checked_u64_to_usize_v1("lent host bytes", bytes.length())?;
-    if (bytes.address() == 0) != (length == 0) || bytes.address().checked_add(length).is_none() {
-        return Err(BundleAbiError::InvalidPointerLength("lent host bytes"));
-    }
-    Ok((bytes.address(), bytes.length()))
-}
-
-// SAFETY-REVIEWED: a V1 caller supplies its own live user_data and views for this callback.
-unsafe extern "C" fn resolve_mapped_view_trampoline_v1<B: HostServicesBackendV1>(
+// SAFETY-REVIEWED: a V1 caller supplies its own live user_data, view and gather record for this callback.
+unsafe extern "C" fn gather_mapped_rows_trampoline_v1<B: HostServicesBackendV1>(
     user_data: *mut c_void,
-    image: BundleCompiledImageHandleV1,
-    rank: u32,
-    view_id: BundleByteViewV1,
-    out_bytes: *mut BundleByteViewV1,
+    stream: BundleStreamHandleV1,
+    destination: BundleDeviceBufferViewV1,
+    gather: *const BundleMappedRowGatherV1,
 ) -> BundleStatusV1 {
     catch_panic_callback_status_v1(|| {
         let backend = backend_from_user_data_v1::<B>(user_data)?;
-        validate_output_pointer_v1(out_bytes, "resolve_mapped_view output")?;
-        let result = with_byte_view_v1(view_id, |view_id| {
-            backend.resolve_mapped_view(image, rank, view_id)
-        })?;
-        match result {
-            Ok(bytes) => {
-                let (address, length) = checked_lent_bytes_v1(bytes)?;
-                write_output_v1(
-                    out_bytes,
-                    BundleByteViewV1 {
-                        data: address as *const u8,
-                        length,
-                    },
-                )?;
-                Ok(BundleStatusV1::Success)
+        let destination = checked_device_buffer_span_v1(destination)?;
+        with_input_record_v1(gather, "mapped row gather", |gather| {
+            if gather.struct_size != struct_size_v1::<BundleMappedRowGatherV1>() {
+                return Err(BundleAbiError::StructSizeExact {
+                    surface: "mapped row gather",
+                    expected: struct_size_v1::<BundleMappedRowGatherV1>(),
+                    actual: gather.struct_size,
+                });
             }
-            Err(status) => Ok(failed_host_status_v1(status)),
-        }
-    })
-}
-
-// SAFETY-REVIEWED: a V1 caller supplies its own live user_data and output storage for this callback.
-unsafe extern "C" fn lend_staging_buffer_trampoline_v1<B: HostServicesBackendV1>(
-    user_data: *mut c_void,
-    buffer: BundleDeviceBufferHandleV1,
-    out_bytes: *mut BundleMutByteViewV1,
-) -> BundleStatusV1 {
-    catch_panic_callback_status_v1(|| {
-        let backend = backend_from_user_data_v1::<B>(user_data)?;
-        validate_output_pointer_v1(out_bytes, "lend_staging_buffer output")?;
-        match backend.lend_staging_buffer(buffer) {
-            // A staging loan the host cannot vouch is writable is its own
-            // fault; the loan it took stays for the bundle to return.
-            Ok(bytes) if !bytes.is_writable() => Ok(BundleStatusV1::HostError),
-            Ok(bytes) => {
-                let (address, length) = checked_lent_bytes_v1(bytes)?;
-                write_output_v1(
-                    out_bytes,
-                    BundleMutByteViewV1 {
-                        data: address as *mut u8,
-                        length,
-                    },
-                )?;
-                Ok(BundleStatusV1::Success)
-            }
-            Err(status) => Ok(failed_host_status_v1(status)),
-        }
+            let result =
+                with_u32_array_v1(gather.rows, gather.row_count, "mapped rows", |rows| {
+                    with_byte_view_v1(gather.view_id, |view_id| {
+                        backend.gather_mapped_rows(
+                            stream,
+                            destination,
+                            MappedRowGatherV1 {
+                                image: gather.image,
+                                rank: gather.rank,
+                                view_id,
+                                row_bytes: gather.row_bytes,
+                                rows,
+                            },
+                        )
+                    })
+                })??;
+            Ok(host_unit_status_v1(result))
+        })
     })
 }
 
@@ -2190,176 +2135,46 @@ impl HostServicesV1 {
         Ok(result)
     }
 
-    /// Whether the host fills the host-mapped rows tail
-    /// (`chop.host-mapped-rows.v1`).
+    /// Whether the host fills the host-mapped gather tail
+    /// (`chop.host-mapped-gather.v1`).
     #[must_use]
-    pub fn has_host_mapped_rows(&self) -> bool {
-        let end = std::mem::offset_of!(BundleHostServicesV1, return_staging_buffer_v1)
-            + std::mem::size_of_val(&self.raw.return_staging_buffer_v1);
-        (self.raw.struct_size as usize) >= end
-            && self.raw.resolve_mapped_view_v1.is_some()
-            && self.raw.allocate_staging_buffer_v1.is_some()
-            && self.raw.lend_staging_buffer_v1.is_some()
-            && self.raw.return_mapped_view_v1.is_some()
-            && self.raw.return_staging_buffer_v1.is_some()
+    pub fn has_host_mapped_gather(&self) -> bool {
+        let end = std::mem::offset_of!(BundleHostServicesV1, gather_mapped_rows_v1)
+            + std::mem::size_of_val(&self.raw.gather_mapped_rows_v1);
+        (self.raw.struct_size as usize) >= end && self.raw.gather_mapped_rows_v1.is_some()
     }
 
-    fn host_mapped_rows_service<T>(
+    /// Copies rows of one host-mapped view of `gather.image` for
+    /// `gather.rank` into `destination`, ordered on `stream`
+    /// (`chop.host-mapped-gather.v1`): row `i` of `destination` is row
+    /// `gather.rows[i]` of the view. The host has read the rows when this
+    /// returns, so `gather.rows` may be reused at once.
+    pub fn gather_mapped_rows(
         &self,
-        service: Option<T>,
-        name: &'static str,
-    ) -> Result<T, BundleAbiError> {
-        if !self.has_host_mapped_rows() {
-            return Err(BundleAbiError::MissingHostService(name));
-        }
-        required_service_v1(service, name)
-    }
-
-    /// Runs `callback` while the host holds one loan, then returns the loan
-    /// with `give_back`, also when `callback` panics. A refused return after
-    /// `callback` finished is the result.
-    fn on_loan<R>(
-        &self,
-        callback: impl FnOnce() -> R,
-        give_back: impl Fn() -> Result<(), BundleAbiError>,
-    ) -> Result<R, BundleAbiError> {
-        struct Loan<F: Fn() -> Result<(), BundleAbiError>>(Option<F>);
-        impl<F: Fn() -> Result<(), BundleAbiError>> Drop for Loan<F> {
-            fn drop(&mut self) {
-                if let Some(give_back) = self.0.take() {
-                    let _ = give_back();
-                }
-            }
-        }
-        let mut loan = Loan(Some(give_back));
-        let result = callback();
-        let give_back = loan.0.take().expect("the loan is returned once");
-        give_back()?;
-        Ok(result)
-    }
-
-    /// Runs `read` over the bytes of one host-mapped view of `image` for
-    /// `rank` (`chop.host-mapped-rows.v1`): the checkpoint tensor bytes the
-    /// plan names, unchanged. The host holds the loan while `read` runs and
-    /// refuses to release the image meanwhile.
-    pub fn with_mapped_view<R>(
-        &self,
-        image: BundleCompiledImageHandleV1,
-        rank: u32,
-        view_id: &[u8],
-        read: impl FnOnce(&[u8]) -> R,
-    ) -> Result<R, BundleAbiError> {
-        let service = self
-            .host_mapped_rows_service(self.raw.resolve_mapped_view_v1, "resolve_mapped_view_v1")?;
-        let give_back =
-            self.host_mapped_rows_service(self.raw.return_mapped_view_v1, "return_mapped_view_v1")?;
-        let mut output = BundleByteViewV1::empty();
-        // SAFETY-REVIEWED: the view borrows the caller's identifier and the output is this frame's storage.
-        status_result(unsafe {
-            service(
-                self.raw.user_data,
-                image,
-                rank,
-                BundleByteViewV1::from_bytes(view_id),
-                &mut output,
-            )
-        })?;
-        // SAFETY-REVIEWED: the captured table stays live and this call passes only a handle.
-        let give_back = || status_result(unsafe { give_back(self.raw.user_data, image) });
-        let length = match validate_byte_view_v1(output)
-            .and_then(|()| checked_u64_to_usize_v1("mapped view", output.length))
-        {
-            Ok(length) => length,
-            Err(error) => {
-                let _ = give_back();
-                return Err(error);
-            }
-        };
-        self.on_loan(
-            || {
-                if length == 0 {
-                    return read(&[]);
-                }
-                // SAFETY-REVIEWED: the host vouched (`LentHostBytesV1::readable`)
-                // for these bytes, unchanged, until this loan is returned,
-                // which happens only after `read` ends.
-                read(unsafe { slice::from_raw_parts(output.data, length) })
-            },
-            give_back,
-        )
-    }
-
-    /// Allocates one zeroed staging buffer on `stream`'s context: page-locked
-    /// host memory the device reads through its handle, which device copies
-    /// and kernels take like any buffer (`chop.host-mapped-rows.v1`).
-    pub fn allocate_staging_buffer(
-        &self,
-        pool: BundleMemoryPoolHandleV1,
         stream: BundleStreamHandleV1,
-        byte_length: u64,
-        alignment: u64,
-    ) -> Result<BundleDeviceBufferHandleV1, BundleAbiError> {
-        let service = self.host_mapped_rows_service(
-            self.raw.allocate_staging_buffer_v1,
-            "allocate_staging_buffer_v1",
-        )?;
-        let mut output = BundleDeviceBufferHandleV1::from_raw(0);
-        // SAFETY-REVIEWED: the captured table stays live and the output is this frame's own storage.
-        status_result(unsafe {
-            service(
-                self.raw.user_data,
-                pool,
-                stream,
-                byte_length,
-                alignment,
-                &mut output,
-            )
-        })?;
-        output.validate()?;
-        Ok(output)
-    }
-
-    /// Runs `write` over the whole of one staging buffer. The host first
-    /// waits for the device work that named the buffer since its last loan,
-    /// then holds the loan while `write` runs, refusing meanwhile a second
-    /// loan, the buffer's release and any device work naming it.
-    pub fn with_staging_buffer<R>(
-        &self,
-        buffer: BundleDeviceBufferHandleV1,
-        write: impl FnOnce(&mut [u8]) -> R,
-    ) -> Result<R, BundleAbiError> {
-        let service = self
-            .host_mapped_rows_service(self.raw.lend_staging_buffer_v1, "lend_staging_buffer_v1")?;
-        let give_back = self.host_mapped_rows_service(
-            self.raw.return_staging_buffer_v1,
-            "return_staging_buffer_v1",
-        )?;
-        let mut output = BundleMutByteViewV1::empty();
-        // SAFETY-REVIEWED: the captured table stays live and the output is this frame's own storage.
-        status_result(unsafe { service(self.raw.user_data, buffer, &mut output) })?;
-        // SAFETY-REVIEWED: the captured table stays live and this call passes only a handle.
-        let give_back = || status_result(unsafe { give_back(self.raw.user_data, buffer) });
-        let length = match validate_mut_byte_view_v1(output)
-            .and_then(|()| checked_u64_to_usize_v1("staging buffer", output.length))
-        {
-            Ok(length) => length,
-            Err(error) => {
-                let _ = give_back();
-                return Err(error);
-            }
-        };
-        self.on_loan(
-            || {
-                if length == 0 {
-                    return write(&mut []);
-                }
-                // SAFETY-REVIEWED: the host vouched (`LentHostBytesV1::writable`)
-                // that nothing but this loan reads or writes these bytes until
-                // it is returned, which happens only after `write` ends.
-                write(unsafe { slice::from_raw_parts_mut(output.data, length) })
+        destination: DeviceBufferSpanV1,
+        gather: MappedRowGatherV1<'_>,
+    ) -> Result<(), BundleAbiError> {
+        if !self.has_host_mapped_gather() {
+            return Err(BundleAbiError::MissingHostService("gather_mapped_rows_v1"));
+        }
+        let service = required_service_v1(self.raw.gather_mapped_rows_v1, "gather_mapped_rows_v1")?;
+        let destination = checked_device_buffer_view_v1(destination)?;
+        let record = BundleMappedRowGatherV1 {
+            struct_size: struct_size_v1::<BundleMappedRowGatherV1>(),
+            rank: gather.rank,
+            image: gather.image,
+            view_id: BundleByteViewV1::from_bytes(gather.view_id),
+            row_bytes: gather.row_bytes,
+            rows: if gather.rows.is_empty() {
+                ptr::null()
+            } else {
+                gather.rows.as_ptr()
             },
-            give_back,
-        )
+            row_count: gather.rows.len() as u64,
+        };
+        // SAFETY-REVIEWED: the record borrows the caller's identifier and rows for the length of this call.
+        status_result(unsafe { service(self.raw.user_data, stream, destination, &record) })
     }
 
     pub fn prepare_kv(
@@ -3453,6 +3268,26 @@ pub(crate) fn with_byte_view_v1<T>(
     // SAFETY-REVIEWED: the ABI callback guarantees a readable byte range for its duration.
     let bytes = unsafe { slice::from_raw_parts(view.data, length) };
     Ok(callback(bytes))
+}
+
+/// Exposes a caller's `u32` array only while `callback` runs: null exactly
+/// when empty, aligned otherwise.
+fn with_u32_array_v1<T>(
+    values: *const u32,
+    count: u64,
+    surface: &'static str,
+    callback: impl FnOnce(&[u32]) -> T,
+) -> Result<T, BundleAbiError> {
+    let count = checked_slice_count_v1::<u32>(surface, count)?;
+    if count == 0 {
+        if !values.is_null() {
+            return Err(BundleAbiError::InvalidPointerLength(surface));
+        }
+        return Ok(callback(&[]));
+    }
+    validate_input_pointer_v1(values, surface)?;
+    // SAFETY-REVIEWED: the ABI callback guarantees a readable aligned array of `count` values for its duration.
+    Ok(callback(unsafe { slice::from_raw_parts(values, count) }))
 }
 
 /// Copies an immutable byte view while the native ABI callback owns it.
@@ -4854,45 +4689,40 @@ mod tests {
         );
     }
 
-    /// A table without the host-mapped rows tail, or with any of its three
-    /// services missing, reports each service missing instead of calling it.
+    /// A table without the host-mapped gather tail reports the service
+    /// missing instead of calling it.
     #[test]
-    fn older_host_service_tail_reports_no_host_mapped_rows() {
+    fn older_host_service_tail_reports_no_host_mapped_gather() {
         let table = HostServicesTableV1::new(Rc::new(UnsupportedHostServicesBackendV1));
-        assert!(table.caller().has_host_mapped_rows());
-        let image = crate::BundleCompiledImageHandleV1::from_parts(1, 1);
-        let pool = crate::BundleMemoryPoolHandleV1::from_parts(1, 1);
+        assert!(table.caller().has_host_mapped_gather());
         let stream = BundleStreamHandleV1::from_parts(1, 1);
-        let buffer = BundleDeviceBufferHandleV1::from_parts(1, 1);
+        let destination =
+            crate::DeviceBufferSpanV1::new(BundleDeviceBufferHandleV1::from_parts(1, 1), 0, 8);
+        let gather = crate::MappedRowGatherV1 {
+            image: crate::BundleCompiledImageHandleV1::from_parts(1, 1),
+            rank: 0,
+            view_id: b"rows",
+            row_bytes: 8,
+            rows: &[3],
+        };
         // The current table reaches the backend, which refuses.
         assert_eq!(
-            table.caller().with_mapped_view(image, 0, b"rows", |_| ()),
+            table
+                .caller()
+                .gather_mapped_rows(stream, destination, gather),
             Err(BundleAbiError::Status(BundleStatusV1::Unsupported))
         );
-        // A table whose return services are missing lends nothing, since no
-        // loan could be returned.
         let mut old = *table.services();
-        old.struct_size =
-            std::mem::offset_of!(BundleHostServicesV1, return_staging_buffer_v1) as u32;
-        let mut partial = *table.services();
-        partial.return_mapped_view_v1 = None;
-        for raw in [old, partial] {
+        old.struct_size = std::mem::offset_of!(BundleHostServicesV1, gather_mapped_rows_v1) as u32;
+        let mut absent = *table.services();
+        absent.gather_mapped_rows_v1 = None;
+        for raw in [old, absent] {
             // SAFETY-REVIEWED: the table and backend remain live for this copied prefix.
             let caller = unsafe { HostServicesV1::new(raw) }.unwrap();
-            assert!(!caller.has_host_mapped_rows());
+            assert!(!caller.has_host_mapped_gather());
             assert_eq!(
-                caller.with_mapped_view(image, 0, b"rows", |_| ()),
-                Err(BundleAbiError::MissingHostService("resolve_mapped_view_v1"))
-            );
-            assert_eq!(
-                caller.allocate_staging_buffer(pool, stream, 64, 64),
-                Err(BundleAbiError::MissingHostService(
-                    "allocate_staging_buffer_v1"
-                ))
-            );
-            assert_eq!(
-                caller.with_staging_buffer(buffer, |_| ()),
-                Err(BundleAbiError::MissingHostService("lend_staging_buffer_v1"))
+                caller.gather_mapped_rows(stream, destination, gather),
+                Err(BundleAbiError::MissingHostService("gather_mapped_rows_v1"))
             );
         }
     }

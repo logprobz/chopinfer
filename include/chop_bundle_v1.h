@@ -1067,41 +1067,34 @@ typedef chop_bundle_status_v1 (*chop_bundle_query_cluster_residency_fn_v1)(
     chop_bundle_cluster_residency_v1 *out);
 
 /*
- * Host-mapped rows (CHOP_HOST_MAPPED_ROWS_CAPABILITY_V1). Optional tail: a host
- * fills all five or none, and a bundle reads them only when struct_size covers
- * return_staging_buffer_v1. The host keeps every loan these lend.
+ * Host-mapped gather (CHOP_HOST_MAPPED_GATHER_CAPABILITY_V1). Optional tail: a
+ * bundle reads gather_mapped_rows_v1 only when struct_size covers it.
  *
- * resolve_mapped_view_v1 lends a view the image's plan placed "mapped": the
- * CPU-readable checkpoint bytes it names, unchanged and read-only, until
- * return_mapped_view_v1 ends that loan. The host refuses to release an image
- * with loans outstanding. A view held anywhere else, or not for this rank, is
- * NOT_FOUND.
- *
- * allocate_staging_buffer_v1 allocates one zeroed bundle-owned buffer of
- * page-locked host memory on the stream's context, which the device reads
- * through its handle: copies and kernels take it like any device buffer, and
- * release_device_buffer frees it. A graph capture may not name it.
- * lend_staging_buffer_v1 waits for the device work that named the buffer since
- * its last loan, then lends the whole buffer for the CPU to write until
- * return_staging_buffer_v1. While it is lent the host refuses a second loan,
- * its release and any device work naming it (INVALID_STATE). A buffer that is
- * not a staging buffer is INVALID_ARGUMENT; a loan not outstanding is
- * INVALID_STATE.
+ * gather_mapped_rows_v1 copies rows of one view the image's plan placed
+ * "mapped" into the destination, ordered on the stream like
+ * copy_host_to_device: row i of the destination is row rows[i] of the view
+ * view_id of image for rank, each row_bytes long, so the destination is
+ * row_count * row_bytes bytes. The host reads the rows on the CPU into
+ * page-locked memory it owns before the call returns, and keeps that memory
+ * until the copy completes; rows may be reused at once. rows is null exactly
+ * when row_count is zero, which is refused. A view the image does not map for
+ * this rank is NOT_FOUND; a row length that does not divide the view, a row
+ * past its end or a destination of another length is INVALID_ARGUMENT; a
+ * stream being captured is refused like other host copies.
  */
-typedef chop_bundle_status_v1 (*chop_bundle_resolve_mapped_view_fn_v1)(
-    void *user_data, chop_bundle_compiled_image_handle_v1 image, uint32_t rank,
-    chop_bundle_byte_view_v1 view_id, chop_bundle_byte_view_v1 *out_bytes);
-typedef chop_bundle_status_v1 (*chop_bundle_allocate_staging_buffer_fn_v1)(
-    void *user_data, chop_bundle_memory_pool_handle_v1 pool,
-    chop_bundle_stream_handle_v1 stream, uint64_t byte_length, uint64_t alignment,
-    chop_bundle_device_buffer_handle_v1 *out_buffer);
-typedef chop_bundle_status_v1 (*chop_bundle_lend_staging_buffer_fn_v1)(
-    void *user_data, chop_bundle_device_buffer_handle_v1 buffer,
-    chop_bundle_mut_byte_view_v1 *out_bytes);
-typedef chop_bundle_status_v1 (*chop_bundle_return_mapped_view_fn_v1)(
-    void *user_data, chop_bundle_compiled_image_handle_v1 image);
-typedef chop_bundle_status_v1 (*chop_bundle_return_staging_buffer_fn_v1)(
-    void *user_data, chop_bundle_device_buffer_handle_v1 buffer);
+typedef struct chop_bundle_mapped_row_gather_v1 {
+  uint32_t struct_size;
+  uint32_t rank;
+  chop_bundle_compiled_image_handle_v1 image;
+  chop_bundle_byte_view_v1 view_id;
+  uint64_t row_bytes;
+  const uint32_t *rows;
+  uint64_t row_count;
+} chop_bundle_mapped_row_gather_v1;
+typedef chop_bundle_status_v1 (*chop_bundle_gather_mapped_rows_fn_v1)(
+    void *user_data, chop_bundle_stream_handle_v1 stream,
+    chop_bundle_device_buffer_view_v1 destination,
+    const chop_bundle_mapped_row_gather_v1 *gather);
 
 typedef struct chop_bundle_host_services_v1 {
   uint32_t struct_size;
@@ -1177,12 +1170,8 @@ typedef struct chop_bundle_host_services_v1 {
   chop_bundle_query_batch_limits_fn_v1 query_batch_limits_v1;
   /* Optional cluster residency tail. An absent callback reports nothing. */
   chop_bundle_query_cluster_residency_fn_v1 query_cluster_residency_v1;
-  /* Optional host-mapped rows tail. Check struct_size before reading these. */
-  chop_bundle_resolve_mapped_view_fn_v1 resolve_mapped_view_v1;
-  chop_bundle_allocate_staging_buffer_fn_v1 allocate_staging_buffer_v1;
-  chop_bundle_lend_staging_buffer_fn_v1 lend_staging_buffer_v1;
-  chop_bundle_return_mapped_view_fn_v1 return_mapped_view_v1;
-  chop_bundle_return_staging_buffer_fn_v1 return_staging_buffer_v1;
+  /* Optional host-mapped gather tail. Check struct_size before reading this. */
+  chop_bundle_gather_mapped_rows_fn_v1 gather_mapped_rows_v1;
 } chop_bundle_host_services_v1;
 
 typedef struct chop_bundle_create_result_v1 {
@@ -1351,12 +1340,13 @@ typedef struct chop_bundle_api_with_request_retirement_v1 {
  * read-only from the checkpoint file it opened without following links and
  * checked against its header, once per process for every rank naming the same
  * bytes, and cuts the span out of the rank arena as it does a host-resident
- * view. Neither the device nor a page-locked budget holds them;
- * resolve_mapped_view_v1 lends them to the CPU. The checkpoint must not change
- * while it is served: a file truncated while mapped makes reads of the lost
- * pages fault. A package declaring mapped views must require this capability.
+ * view. Neither the device nor a page-locked budget holds them, and no bundle
+ * sees their address: gather_mapped_rows_v1 copies chosen rows to a device
+ * buffer. The checkpoint must not change while it is served: a file truncated
+ * while mapped makes the host's reads of the lost pages fault. A package
+ * declaring mapped views must require this capability.
  */
-#define CHOP_HOST_MAPPED_ROWS_CAPABILITY_V1 "chop.host-mapped-rows.v1"
+#define CHOP_HOST_MAPPED_GATHER_CAPABILITY_V1 "chop.host-mapped-gather.v1"
 
 /* Array elements have exact size because this callback carries no stride. */
 typedef struct chop_bundle_kept_rows_v1 {

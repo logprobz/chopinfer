@@ -15,7 +15,7 @@ use runtime_bundle_abi::{
     CompiledImageSpanV1, CustomAddressSpaceV1, CustomCompletionV1, CustomOperandV1,
     CustomOperationV1, DeviceBufferSpanV1, ExecuteResultSinkV1, HostServiceResultV1,
     HostServicesBackendV1, HostServicesTableV1, HostServicesV1, KernelArgumentV1, LaunchClusterV1,
-    LaunchConfigV1, LentHostBytesV1, LentLaunchV1, LentRangeV1, LentStreamV1, LogitsRowSinkV1,
+    LaunchConfigV1, LentLaunchV1, LentRangeV1, LentStreamV1, LogitsRowSinkV1, MappedRowGatherV1,
     OwnedLogitsRowV1, PhysicalKvLayoutV1, PhysicalKvRequestV1, ResultSinkLimitsV1, StateRequestV1,
     UnsupportedHostServicesBackendV1, catch_panic_callback_status_v1, catch_panic_status_v1,
     checked_u64_to_usize_v1, export_custom_operation_v1, validate_byte_view_v1,
@@ -652,15 +652,23 @@ fn c_header_and_rust_layouts_match() {
     );
     assert_layout(
         &c_layouts,
-        "host-mapped-rows-service-tail",
-        size_of::<abi::BundleHostServicesV1>(),
+        "mapped-row-gather",
+        size_of::<abi::BundleMappedRowGatherV1>(),
         &[
-            offset_of!(abi::BundleHostServicesV1, resolve_mapped_view_v1),
-            offset_of!(abi::BundleHostServicesV1, allocate_staging_buffer_v1),
-            offset_of!(abi::BundleHostServicesV1, lend_staging_buffer_v1),
-            offset_of!(abi::BundleHostServicesV1, return_mapped_view_v1),
-            offset_of!(abi::BundleHostServicesV1, return_staging_buffer_v1),
+            offset_of!(abi::BundleMappedRowGatherV1, struct_size),
+            offset_of!(abi::BundleMappedRowGatherV1, rank),
+            offset_of!(abi::BundleMappedRowGatherV1, image),
+            offset_of!(abi::BundleMappedRowGatherV1, view_id),
+            offset_of!(abi::BundleMappedRowGatherV1, row_bytes),
+            offset_of!(abi::BundleMappedRowGatherV1, rows),
+            offset_of!(abi::BundleMappedRowGatherV1, row_count),
         ],
+    );
+    assert_layout(
+        &c_layouts,
+        "host-mapped-gather-service-tail",
+        size_of::<abi::BundleHostServicesV1>(),
+        &[offset_of!(abi::BundleHostServicesV1, gather_mapped_rows_v1)],
     );
 
     // A launch flag is part of the ABI, not of one side's opinion of it, so the
@@ -1225,63 +1233,83 @@ fn a_second_collective_contract_crosses_v1_as_bytes_rather_than_as_a_change() {
     assert_eq!(backend.collectives.borrow().len(), 2);
 }
 
-/// A mapped view crosses as the host's own bytes, read in place, and a
-/// staging buffer as bytes the bundle writes in place. Each loan is the
-/// host's and is returned when the closure ends, a panic included; a loan
-/// the host refuses runs no closure.
+/// A gather crosses as the host's copy of the bundle's rows, view name and
+/// destination; a record of another length, or rows whose pointer and count
+/// disagree, never reach the host.
 #[test]
-fn host_mapped_rows_lend_bytes_in_place_and_return_every_loan() {
-    let backend = Rc::new(FixtureHostBackend {
-        mapped: (0..96_u8).collect(),
-        ..FixtureHostBackend::default()
-    });
+#[allow(unsafe_code)]
+fn mapped_row_gathers_cross_as_copied_rows() {
+    let backend = Rc::new(FixtureHostBackend::default());
     let table = HostServicesTableV1::new(Rc::clone(&backend));
     let services = table.caller();
-    assert!(services.has_host_mapped_rows());
+    assert!(services.has_host_mapped_gather());
     let image = abi::BundleCompiledImageHandleV1::from_parts(1, 1);
-    let address = services
-        .with_mapped_view(image, 1, b"rows", |bytes| {
-            assert_eq!(bytes, (0..96_u8).collect::<Vec<_>>());
-            assert_eq!(backend.mapped_loans.get(), 1);
-            bytes.as_ptr() as usize
-        })
+    let stream = abi::BundleStreamHandleV1::from_parts(1, 1);
+    let buffer = abi::BundleDeviceBufferHandleV1::from_parts(1, 2);
+    let destination = DeviceBufferSpanV1::new(buffer, 64, 24);
+    let mut rows = vec![7_u32, 0, 7];
+    services
+        .gather_mapped_rows(
+            stream,
+            destination,
+            MappedRowGatherV1 {
+                image,
+                rank: 2,
+                view_id: b"rows",
+                row_bytes: 8,
+                rows: &rows,
+            },
+        )
         .unwrap();
-    assert_eq!(address, backend.mapped.as_ptr() as usize);
-    assert_eq!(backend.mapped_loans.get(), 0);
+    // The host copied the rows during the call.
+    rows.fill(9);
     assert_eq!(
-        services.with_mapped_view(image, 0, b"rows", |_| unreachable!()),
+        *backend.gathers.borrow(),
+        [(destination, image, 2, b"rows".to_vec(), 8, vec![7, 0, 7])]
+    );
+    let absent = MappedRowGatherV1 {
+        image,
+        rank: 0,
+        view_id: b"absent",
+        row_bytes: 8,
+        rows: &[1],
+    };
+    assert_eq!(
+        services.gather_mapped_rows(stream, destination, absent),
         Err(BundleAbiError::Status(abi::BundleStatusV1::NotFound))
     );
-
-    let pool = abi::BundleMemoryPoolHandleV1::from_parts(1, 1);
-    let stream = abi::BundleStreamHandleV1::from_parts(1, 1);
-    let staging = services
-        .allocate_staging_buffer(pool, stream, 32, 16)
-        .unwrap();
-    services
-        .with_staging_buffer(staging, |bytes| {
-            assert_eq!(bytes.len(), 32);
-            bytes.copy_from_slice(&[5; 32]);
-            // The host keeps the loan, so a second one is refused whoever
-            // asks.
-            assert_eq!(
-                services.with_staging_buffer(staging, |_| unreachable!()),
-                Err(BundleAbiError::Status(abi::BundleStatusV1::InvalidState))
-            );
-        })
-        .unwrap();
-    assert!(!backend.staging_lent.get());
-    assert_eq!(backend.staging.borrow().as_deref(), Some(&[5_u8; 32][..]));
-    // A closure that panics still returns its loan.
-    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        services.with_staging_buffer(staging, |_| panic!("the gather failed"))
-    }));
-    assert!(panicked.is_err());
-    assert!(!backend.staging_lent.get());
-    assert_eq!(
-        services.with_staging_buffer(abi::BundleDeviceBufferHandleV1::from_parts(9, 4), |_| ()),
-        Err(BundleAbiError::Status(abi::BundleStatusV1::InvalidArgument))
-    );
+    // The raw callback checks the record before the host sees it.
+    let raw = table.services().gather_mapped_rows_v1.unwrap();
+    let view = abi::BundleDeviceBufferViewV1 {
+        struct_size: size_of::<abi::BundleDeviceBufferViewV1>() as u32,
+        reserved: 0,
+        buffer,
+        offset: 0,
+        length: 8,
+    };
+    let record =
+        |rows: *const u32, row_count: u64, struct_size: u32| abi::BundleMappedRowGatherV1 {
+            struct_size,
+            rank: 0,
+            image,
+            view_id: abi::BundleByteViewV1::from_bytes(b"rows"),
+            row_bytes: 8,
+            rows,
+            row_count,
+        };
+    let size = size_of::<abi::BundleMappedRowGatherV1>() as u32;
+    let one = [1_u32];
+    for refused in [
+        record(one.as_ptr(), 1, size - 8),
+        record(std::ptr::null(), 1, size),
+        record(one.as_ptr(), 0, size),
+    ] {
+        // SAFETY-REVIEWED: the table is live, and each record and its rows
+        // stay live for the call.
+        let status = unsafe { raw(table.services().user_data, stream, view, &refused) };
+        assert_eq!(status, abi::BundleStatusV1::InvalidArgument);
+    }
+    assert_eq!(backend.gathers.borrow().len(), 1);
 }
 
 #[test]
@@ -2600,18 +2628,19 @@ struct FixtureHostBackend {
     custom_operations: RefCell<Vec<FixtureCustomOperationV1>>,
     /// The refusal this host answers a custom operation with, if any.
     custom_refusal: RefCell<Option<abi::BundleStatusV1>>,
-    /// The bytes of the one mapped view, `rows`, this host lends.
-    mapped: Vec<u8>,
-    /// The one staging buffer this host allocated, if any.
-    staging: RefCell<Option<Box<[u8]>>>,
-    /// Loans outstanding: mapped-view loans, and whether the staging buffer
-    /// is lent.
-    mapped_loans: std::cell::Cell<u32>,
-    staging_lent: std::cell::Cell<bool>,
+    /// Every gather of the one mapped view, `rows`, this host maps:
+    /// destination, image, rank, view, row length and rows.
+    gathers: RefCell<FixtureGathersV1>,
 }
 
-const FIXTURE_STAGING: abi::BundleDeviceBufferHandleV1 =
-    abi::BundleDeviceBufferHandleV1::from_parts(9, 3);
+type FixtureGathersV1 = Vec<(
+    DeviceBufferSpanV1,
+    abi::BundleCompiledImageHandleV1,
+    u32,
+    Vec<u8>,
+    u64,
+    Vec<u32>,
+)>;
 
 macro_rules! unused_fixture_service {
     ($name:ident($($argument:ident: $type:ty),* $(,)?) -> $result:ty) => {
@@ -2622,70 +2651,23 @@ macro_rules! unused_fixture_service {
 }
 
 impl HostServicesBackendV1 for FixtureHostBackend {
-    #[allow(unsafe_code)]
-    fn resolve_mapped_view(
+    fn gather_mapped_rows(
         &self,
-        _image: abi::BundleCompiledImageHandleV1,
-        rank: u32,
-        view_id: &[u8],
-    ) -> HostServiceResultV1<LentHostBytesV1> {
-        if view_id != b"rows" || rank != 1 {
+        _stream: abi::BundleStreamHandleV1,
+        destination: DeviceBufferSpanV1,
+        gather: MappedRowGatherV1<'_>,
+    ) -> HostServiceResultV1<()> {
+        if gather.view_id != b"rows" {
             return Err(abi::BundleStatusV1::NotFound);
         }
-        self.mapped_loans.set(self.mapped_loans.get() + 1);
-        // SAFETY-REVIEWED: this backend owns `mapped` for its whole life and
-        // never changes it.
-        Ok(unsafe { LentHostBytesV1::readable(self.mapped.as_ptr(), self.mapped.len() as u64) })
-    }
-
-    fn return_mapped_view(
-        &self,
-        _image: abi::BundleCompiledImageHandleV1,
-    ) -> HostServiceResultV1<()> {
-        let loans = self.mapped_loans.get();
-        if loans == 0 {
-            return Err(abi::BundleStatusV1::InvalidState);
-        }
-        self.mapped_loans.set(loans - 1);
-        Ok(())
-    }
-
-    fn allocate_staging_buffer(
-        &self,
-        _pool: abi::BundleMemoryPoolHandleV1,
-        _stream: abi::BundleStreamHandleV1,
-        byte_length: u64,
-        _alignment: u64,
-    ) -> HostServiceResultV1<abi::BundleDeviceBufferHandleV1> {
-        *self.staging.borrow_mut() = Some(vec![0; byte_length as usize].into_boxed_slice());
-        Ok(FIXTURE_STAGING)
-    }
-
-    #[allow(unsafe_code)]
-    fn lend_staging_buffer(
-        &self,
-        buffer: abi::BundleDeviceBufferHandleV1,
-    ) -> HostServiceResultV1<LentHostBytesV1> {
-        let mut staging = self.staging.borrow_mut();
-        match staging.as_mut() {
-            Some(_) if self.staging_lent.get() => Err(abi::BundleStatusV1::InvalidState),
-            Some(bytes) if buffer == FIXTURE_STAGING => {
-                self.staging_lent.set(true);
-                // SAFETY-REVIEWED: the box stays allocated, and this backend
-                // touches it no more, until the loan is returned.
-                Ok(unsafe { LentHostBytesV1::writable(bytes.as_mut_ptr(), bytes.len() as u64) })
-            }
-            _ => Err(abi::BundleStatusV1::InvalidArgument),
-        }
-    }
-
-    fn return_staging_buffer(
-        &self,
-        _buffer: abi::BundleDeviceBufferHandleV1,
-    ) -> HostServiceResultV1<()> {
-        if !self.staging_lent.replace(false) {
-            return Err(abi::BundleStatusV1::InvalidState);
-        }
+        self.gathers.borrow_mut().push((
+            destination,
+            gather.image,
+            gather.rank,
+            gather.view_id.to_vec(),
+            gather.row_bytes,
+            gather.rows.to_vec(),
+        ));
         Ok(())
     }
 
@@ -3613,7 +3595,8 @@ int main(void) {
   printf("batch-limits-service-tail %zu %zu\n", sizeof(chop_bundle_host_services_v1), P(chop_bundle_host_services_v1, query_batch_limits_v1));
   printf("cluster-residency %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_cluster_residency_v1), P(chop_bundle_cluster_residency_v1, struct_size), P(chop_bundle_cluster_residency_v1, multiprocessor_count), P(chop_bundle_cluster_residency_v1, usable_multiprocessors), P(chop_bundle_cluster_residency_v1, max_active_clusters), P(chop_bundle_cluster_residency_v1, flags));
   printf("cluster-residency-service-tail %zu %zu\n", sizeof(chop_bundle_host_services_v1), P(chop_bundle_host_services_v1, query_cluster_residency_v1));
-  printf("host-mapped-rows-service-tail %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_host_services_v1), P(chop_bundle_host_services_v1, resolve_mapped_view_v1), P(chop_bundle_host_services_v1, allocate_staging_buffer_v1), P(chop_bundle_host_services_v1, lend_staging_buffer_v1), P(chop_bundle_host_services_v1, return_mapped_view_v1), P(chop_bundle_host_services_v1, return_staging_buffer_v1));
+  printf("mapped-row-gather %zu %zu %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_mapped_row_gather_v1), P(chop_bundle_mapped_row_gather_v1, struct_size), P(chop_bundle_mapped_row_gather_v1, rank), P(chop_bundle_mapped_row_gather_v1, image), P(chop_bundle_mapped_row_gather_v1, view_id), P(chop_bundle_mapped_row_gather_v1, row_bytes), P(chop_bundle_mapped_row_gather_v1, rows), P(chop_bundle_mapped_row_gather_v1, row_count));
+  printf("host-mapped-gather-service-tail %zu %zu\n", sizeof(chop_bundle_host_services_v1), P(chop_bundle_host_services_v1, gather_mapped_rows_v1));
   printf("api-header %zu %zu %zu\n", sizeof(chop_bundle_api_header_v1), P(chop_bundle_api_header_v1, struct_size), P(chop_bundle_api_header_v1, abi_version));
   printf("api %zu %zu %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_api_v1), P(chop_bundle_api_v1, struct_size), P(chop_bundle_api_v1, abi_version), P(chop_bundle_api_v1, create), P(chop_bundle_api_v1, execute), P(chop_bundle_api_v1, commit), P(chop_bundle_api_v1, cancel), P(chop_bundle_api_v1, destroy));
   return 0;

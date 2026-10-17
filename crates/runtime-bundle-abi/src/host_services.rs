@@ -62,68 +62,15 @@ impl AuthenticatedComponentMetadataV1 {
     }
 }
 
-/// Host memory a host lends a bundle past one call: the bytes of a mapped
-/// view (readable) or of a staging buffer (writable), named by address and
-/// length. Only a host builds one, through an unsafe constructor that states
-/// what it vouches for; the bundle side of the trampoline turns it into a
-/// slice for one closure.
+/// One gather of rows of a host-mapped view
+/// ([`HostServicesBackendV1::gather_mapped_rows`]).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct LentHostBytesV1 {
-    address: usize,
-    length: u64,
-    writable: bool,
-}
-
-impl LentHostBytesV1 {
-    /// Bytes the bundle may read for the loan this answers.
-    ///
-    /// # Safety
-    ///
-    /// `length` bytes at `address` (null exactly when `length` is zero) must
-    /// be allocated, initialized, readable and unchanged from the call that
-    /// answers with this value until the bundle returns the loan, and the
-    /// host must refuse to free them before then.
-    #[allow(unsafe_code)]
-    #[must_use]
-    pub unsafe fn readable(address: *const u8, length: u64) -> Self {
-        Self {
-            address: address as usize,
-            length,
-            writable: false,
-        }
-    }
-
-    /// Bytes the bundle may read and write for the loan this answers.
-    ///
-    /// # Safety
-    ///
-    /// As [`Self::readable`], and the bytes must be writable, and nothing but
-    /// the bundle (no other loan, no host access and no device work) may
-    /// read or write them until the bundle returns the loan.
-    #[allow(unsafe_code)]
-    #[must_use]
-    pub unsafe fn writable(address: *mut u8, length: u64) -> Self {
-        Self {
-            address: address as usize,
-            length,
-            writable: true,
-        }
-    }
-
-    #[must_use]
-    pub const fn address(self) -> usize {
-        self.address
-    }
-
-    #[must_use]
-    pub const fn length(self) -> u64 {
-        self.length
-    }
-
-    #[must_use]
-    pub const fn is_writable(self) -> bool {
-        self.writable
-    }
+pub struct MappedRowGatherV1<'a> {
+    pub image: BundleCompiledImageHandleV1,
+    pub rank: u32,
+    pub view_id: &'a [u8],
+    pub row_bytes: u64,
+    pub rows: &'a [u32],
 }
 
 /// A device-buffer range that carries no ABI pointer.
@@ -867,58 +814,21 @@ pub trait HostServicesBackendV1 {
     fn release_compiled_image(&self, image: BundleCompiledImageHandleV1)
     -> HostServiceResultV1<()>;
 
-    /// Lends the bytes of one host-mapped view of `image` for `rank`
-    /// (`chop.host-mapped-rows.v1`) for the CPU to read, until
-    /// [`Self::return_mapped_view`]; the host refuses to release an image
-    /// with loans outstanding. A view the image holds elsewhere, or not for
-    /// this rank, is [`BundleStatusV1::NotFound`].
-    fn resolve_mapped_view(
+    /// Copies rows of one host-mapped view of `gather.image` for
+    /// `gather.rank` (`chop.host-mapped-gather.v1`) into `destination`,
+    /// ordered on `stream` like [`Self::copy_host_to_device`]: row `i` of
+    /// `destination` is row `gather.rows[i]` of the view, each
+    /// `gather.row_bytes` long. The host reads the rows into page-locked
+    /// memory of its own before it returns and keeps that memory until the
+    /// copy completes. A view the image does not map for this rank is
+    /// [`BundleStatusV1::NotFound`]; no rows, a row length that does not
+    /// divide the view, a row past its end or a destination of any length
+    /// but `rows.len() * row_bytes` is [`BundleStatusV1::InvalidArgument`].
+    fn gather_mapped_rows(
         &self,
-        _image: BundleCompiledImageHandleV1,
-        _rank: u32,
-        _view_id: &[u8],
-    ) -> HostServiceResultV1<LentHostBytesV1> {
-        Err(BundleStatusV1::Unsupported)
-    }
-
-    /// Allocates one zeroed staging buffer on `stream`'s context: page-locked
-    /// host memory the device reads through a device address, so device copies
-    /// and kernels take it like any buffer. The bundle owns it and releases it
-    /// with `release_device_buffer`.
-    fn allocate_staging_buffer(
-        &self,
-        _pool: BundleMemoryPoolHandleV1,
         _stream: BundleStreamHandleV1,
-        _byte_length: u64,
-        _alignment: u64,
-    ) -> HostServiceResultV1<BundleDeviceBufferHandleV1> {
-        Err(BundleStatusV1::Unsupported)
-    }
-
-    /// Lends the whole of one staging buffer for the CPU to write, until
-    /// [`Self::return_staging_buffer`]. The host first waits for the device
-    /// work that named the buffer since its last loan, then refuses, while
-    /// the loan lasts, a second loan, its release and any device work naming
-    /// it. A buffer that is not a staging buffer is
-    /// [`BundleStatusV1::InvalidArgument`].
-    fn lend_staging_buffer(
-        &self,
-        _buffer: BundleDeviceBufferHandleV1,
-    ) -> HostServiceResultV1<LentHostBytesV1> {
-        Err(BundleStatusV1::Unsupported)
-    }
-
-    /// Ends one loan of a mapped view of `image`; a loan that is not
-    /// outstanding is [`BundleStatusV1::InvalidState`].
-    fn return_mapped_view(&self, _image: BundleCompiledImageHandleV1) -> HostServiceResultV1<()> {
-        Err(BundleStatusV1::Unsupported)
-    }
-
-    /// Ends the loan of a staging buffer; one not lent is
-    /// [`BundleStatusV1::InvalidState`].
-    fn return_staging_buffer(
-        &self,
-        _buffer: BundleDeviceBufferHandleV1,
+        _destination: DeviceBufferSpanV1,
+        _gather: MappedRowGatherV1<'_>,
     ) -> HostServiceResultV1<()> {
         Err(BundleStatusV1::Unsupported)
     }

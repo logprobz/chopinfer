@@ -170,8 +170,9 @@ pub enum ViewPlacementV1 {
     /// Page-locked, device-mapped host memory; the span is cut out of the
     /// arena as `HOST_RESIDENT_VIEWS_CAPABILITY_V1` describes.
     Host,
-    /// A read-only mapping of the checkpoint bytes the CPU reads, cut out of
-    /// the arena the same way (`HOST_MAPPED_ROWS_CAPABILITY_V1`). Exactly
+    /// A read-only host mapping of the checkpoint bytes, whose rows the host
+    /// gathers to the device, cut out of the arena the same way
+    /// (`HOST_MAPPED_GATHER_CAPABILITY_V1`). Exactly
     /// one record covers the view: a plain copy of one tensor, whole or one
     /// range of its leading axis, stored unchanged.
     Mapped,

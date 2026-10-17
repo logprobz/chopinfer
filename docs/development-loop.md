@@ -169,7 +169,9 @@ bash tools/dev/heavy.sh --status
   `CHOPINFER_TARGET_WARN_GB` (default 250).
 - Each finished run is one line of `$CHOPINFER_HEAVY_DIR/runs.jsonl` (its
   wait, run time and exit status); `--status` also prints the median wait of
-  the last day.
+  the last day. A run that a signal ends while it still waits, such as a
+  caller's timeout, is a line too, marked `"abandoned": true`, and `--status`
+  counts those separately.
 
 Kernel builds in fresh targets can share cubins through the
 [cubin cache](../crates/kernel-build/README.md#shared-cubin-cache). Never

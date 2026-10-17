@@ -214,9 +214,19 @@ class Queue(unittest.TestCase):
         self.assertTrue(self.started("a"))
         waiter = self.start("b", env=env)
         self.assertTrue(self.queued(1))
+        self.assertTrue(self.stays_waiting("b"))
         waiter.send_signal(signal.SIGINT)
         self.assertEqual(waiter.wait(timeout=20), 128 + signal.SIGINT)
         self.assertEqual(self.tickets(), [])
+        record = json.loads((self.dir / "state/runs.jsonl").read_text().splitlines()[0])
+        self.assertEqual((record["label"], record["slot"], record["exit"], record["ran"], record["abandoned"]),
+                         ("b", None, 128 + signal.SIGINT, 0, True))
+        self.assertGreaterEqual(record["waited"], 0.4)
+        self.release("a")
+        output = subprocess.run([str(HEAVY), "--status"], env={**self.env, **env}, capture_output=True, text=True,
+                                check=True).stdout
+        self.assertIn("lane runs in the last 24 h: 1,", output)
+        self.assertIn("waits given up in the last 24 h: 1, longest", output)
 
     def test_a_nested_call_inherits_the_admission_and_a_forged_marker_queues(self):
         env = {"CHOPINFER_HEAVY_SLOTS": "1"}

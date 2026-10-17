@@ -35,7 +35,8 @@ With `CHOPINFER_TARGET_ROOT` set and `CARGO_TARGET_DIR` unset, the command
 builds into one target per worktree under the root: Cargo judges freshness
 by source mtimes, so a target shared between worktrees can test another
 checkout's code. The launcher never deletes a target; `--status` reports the
-root's size. Each finished run appends one line to `runs.jsonl`.
+root's size. Each finished run appends one line to `runs.jsonl`, and so
+does a lane run that a signal ends while it waits (`"abandoned": true`).
 """
 
 import argparse
@@ -412,6 +413,12 @@ def run(settings, command, label, gate):
     except Stop as stop:
         if ticket is not None:
             ticket.unlink(missing_ok=True)
+            # A caller's timeout ends most long waits, so record them too.
+            signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
+            left = time.time()
+            record(settings, {"class": "lane", "slot": None, "label": label, "cwd": info["cwd"],
+                              "command": info["command"], "waited": round(left - asked, 1), "ran": 0,
+                              "exit": 128 + stop.number, "finished": round(left), "abandoned": True})
         return 128 + stop.number
     admitted = time.time()
     info.update(slot=slot, admitted=admitted, cpus=cpus)
@@ -493,7 +500,7 @@ def status(settings, out):
         waited = f"{now - entry['asked']:.0f} s" if "asked" in entry else "?"
         out.write(f"  {position}. waited {waited}, pid {ticket_owner(path)[0]}, {entry.get('label') or ''} "
                   f"{entry.get('cwd', '')}: {entry.get('command', '(unreadable ticket)')}\n")
-    waits = []
+    waits, abandoned = [], []
     try:
         lines = settings.path("runs.jsonl").read_text().splitlines()
     except OSError:
@@ -504,10 +511,12 @@ def status(settings, out):
         except ValueError:
             continue
         if entry.get("class") == "lane" and entry.get("finished", 0) > now - 86400 and "waited" in entry:
-            waits.append(entry["waited"])
+            (abandoned if entry.get("abandoned") else waits).append(entry["waited"])
     if waits:
         out.write(f"lane runs in the last 24 h: {len(waits)}, median wait {statistics.median(waits):.0f} s, "
                   f"max {max(waits):.0f} s\n")
+    if abandoned:
+        out.write(f"waits given up in the last 24 h: {len(abandoned)}, longest {max(abandoned):.0f} s\n")
     if settings.target_root is not None:
         size = target_size(settings.target_root)
         if size is None:

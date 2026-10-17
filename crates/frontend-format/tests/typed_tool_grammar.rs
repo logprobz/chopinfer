@@ -190,3 +190,29 @@ fn a_forced_call_writes_strings_raw_and_everything_else_as_json() {
         r#"{"city": "Oslo", "days": 3}"#
     );
 }
+
+#[test]
+fn a_tool_choice_prefill_opens_the_declared_calls_and_never_thinks() {
+    let policy = |prefill: &str, refused: bool| {
+        let mut descriptor = descriptor();
+        descriptor.tools.choice = Some(runtime_frontend_contract::FrontendToolChoicePolicyV1 {
+            none_omits_tools: true,
+            named_renders_its_tool_only: true,
+            forced_prefill: prefill.into(),
+            forced_refused_in_thinking: refused,
+        });
+        descriptor.validate().map_err(|error| error.to_string())
+    };
+    policy("\n\n<calls>\n", true).unwrap();
+    policy("", false).unwrap();
+    assert!(
+        policy("<calls>", true)
+            .unwrap_err()
+            .contains("must begin format.parser tool_call_open")
+    );
+    assert!(
+        policy("\n\n<calls>\n", false)
+            .unwrap_err()
+            .contains("needs forced_refused_in_thinking")
+    );
+}

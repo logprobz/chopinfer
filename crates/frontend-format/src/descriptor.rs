@@ -251,6 +251,15 @@ impl FormatDescriptorV1 {
             }
         }
         validate_tool_grammar_markers(parser)?;
+        // A forced choice's constraint and parser read the prefill as the
+        // start of the calls they force.
+        if let Some(choice) = &self.tools.choice
+            && !parser.tool_call_open.starts_with(&choice.forced_prefill)
+        {
+            return Err(invalid(
+                "tools.choice forced_prefill must begin format.parser tool_call_open",
+            ));
+        }
         self.validate_stop_texts()?;
         let vocabulary = &self.vocabulary;
         if parser.turn_open.is_empty() || parser.turn_open.len() > MAX_MARKERS {

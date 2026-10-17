@@ -497,6 +497,34 @@ fn stop_tokens_are_admitted_only_at_the_end() {
     assert!(!state.is_active());
 }
 
+/// A prefix the prompt ends with advances the constraint, so the rows
+/// continue after it; a gated constraint, which begins where its gate
+/// opens, takes none.
+#[test]
+fn a_prefix_advances_the_constraint() {
+    let vocabulary = adversarial_vocabulary();
+    let compiled = compile(&choice_grammar(&["ab".to_owned()]).unwrap(), &vocabulary);
+    let state = ConstraintState::new(Arc::clone(&compiled), None, vec![STOP])
+        .with_prefix(b"a")
+        .unwrap();
+    let mut mask = vec![0; vocabulary.mask_words()];
+    state.fill_mask(&mut mask).unwrap();
+    let b = token_id(&vocabulary, b"b");
+    assert!(bit(&mask, b));
+    assert!(!bit(&mask, token_id(&vocabulary, b"a")));
+    assert!(
+        ConstraintState::new(Arc::clone(&compiled), None, vec![STOP])
+            .with_prefix(b"x")
+            .is_err()
+    );
+    let gate = token_id(&vocabulary, b"xyz");
+    assert!(
+        ConstraintState::new(compiled, Some(vec![gate]), vec![STOP])
+            .with_prefix(b"a")
+            .is_err()
+    );
+}
+
 fn token_id(vocabulary: &TokenVocabulary, bytes: &[u8]) -> u32 {
     (0..vocabulary.size() as u32)
         .find(|&token| vocabulary.ordinary_bytes(token) == Some(bytes))

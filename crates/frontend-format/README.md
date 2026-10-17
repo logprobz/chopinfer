@@ -142,6 +142,16 @@ parse.
 The tool-choice grammar a request's `tool_choice` imposes writes calls in
 the same family, so a forced call reads back as the parser reads any call.
 
+A declaration may also state how a tool choice changes the render, in the
+host-read `tools.choice` section: `none_omits_tools`,
+`named_renders_its_tool_only`, a `forced_prefill` that ends the prompt of a
+`required` or named choice, and `forced_refused_in_thinking`. The host
+applies it around the render. The prefill must begin the parser section's
+`tool_call_open`; the completion's parser and the forced choice's
+constraint read it as the completion's start. A declaration without the
+section renders every offered tool for every choice, and the constraint
+alone forces a call.
+
 ## A model's own chat format
 
 A model's renderer implements `ChatFormatV1`:

@@ -287,6 +287,20 @@ impl CompletionDecoderV1 {
         Ok(())
     }
 
+    /// Primes the parser with text the prompt ends with that the completion
+    /// continues, a forced tool choice's prefill: the parser reads it as the
+    /// completion's start, while client stops, the byte limit and the token
+    /// accounting begin after it.
+    pub fn prime_completion_prefix(&mut self, text: &str) -> Result<(), String> {
+        if !self.tokens.is_empty() || self.parser.is_some() {
+            return Err(sequence_v1("a completion prefix must precede generation"));
+        }
+        self.bytes.extend_from_slice(text.as_bytes());
+        self.stable_end = self.bytes.len();
+        self.prompt_context_bytes += text.len();
+        Ok(())
+    }
+
     /// Suppresses textual stops through the minimum generation length.
     ///
     /// The host applies the minimum to each token, so unlike the other
@@ -826,6 +840,64 @@ mod host_tests {
             PromptModeV1::Chat,
             DecoderLimitsV1::declared(&descriptor),
         )
+    }
+
+    /// A forced choice's prefill, which the prompt ends with, is the start of
+    /// the completion the parser reads: the call it opens parses, while a
+    /// client stop it spells does not end the completion and no token
+    /// carries it.
+    #[test]
+    fn a_completion_prefix_opens_what_the_completion_continues() {
+        let descriptor = Arc::new(
+            FrontendDescriptorV1::from_component_bytes(test_common::KEY_VALUE.as_bytes()).unwrap(),
+        );
+        let mut decoder = CompletionDecoderV1::with_client_stops(
+            Arc::clone(&descriptor),
+            PromptModeV1::Chat,
+            DecoderLimitsV1::declared(&descriptor),
+            &["<tool".to_owned()],
+        )
+        .unwrap();
+        decoder.prime_completion_prefix("<tool_call>").unwrap();
+        let mut updates = decoder
+            .push(GeneratedTokenV1::new(
+                0,
+                200,
+                b"get_weather<arg_key>city</arg_key><arg_value>Paris</arg_value></tool_call>"
+                    .to_vec(),
+            ))
+            .unwrap();
+        updates.extend(
+            decoder
+                .push(GeneratedTokenV1::new(1, 1, b"[EOS]".to_vec()))
+                .unwrap(),
+        );
+        assert!(
+            !updates
+                .iter()
+                .any(|update| matches!(update, CompletionUpdateV1::Content(_)))
+        );
+        let calls: Vec<_> = updates
+            .iter()
+            .filter_map(|update| match update {
+                CompletionUpdateV1::ToolCalls(calls) => Some(calls),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].calls[0].name, "get_weather");
+        assert_eq!(calls[0].calls[0].arguments, r#"{"city": "Paris"}"#);
+        // The prefix bytes belong to no generated token.
+        assert!(
+            calls[0]
+                .contributions
+                .iter()
+                .all(|contribution| contribution.ordinal == 0)
+        );
+        let mut late = key_value_decoder();
+        late.push(GeneratedTokenV1::new(0, 200, b"x".to_vec()))
+            .unwrap();
+        assert!(late.prime_completion_prefix("<tool_call>").is_err());
     }
 
     /// A thinking completion begins in reasoning unless the render that

@@ -416,6 +416,22 @@ impl ConstraintState {
         }
     }
 
+    /// This constraint advanced over `bytes` the prompt ends with, which the
+    /// completion continues: a forced tool choice's prefill. A gated
+    /// constraint begins where its gate opens, so it takes no prefix.
+    pub fn with_prefix(mut self, bytes: &[u8]) -> Result<Self, GrammarError> {
+        if bytes.is_empty() {
+            return Ok(self);
+        }
+        if self.gate.is_some() {
+            return Err(GrammarError::invalid(
+                "a gated constraint cannot take a prefix",
+            ));
+        }
+        self.matcher.accept_bytes(bytes)?;
+        Ok(self)
+    }
+
     /// A copy at the same position without rollback history, for deriving
     /// the rows after speculative tokens.
     #[must_use]

@@ -1958,10 +1958,22 @@ fn admit<E: ModelExecutor>(
             return;
         }
     };
-    let constraint = constraint.map(|grammar| {
-        let gate = constraint_gate_v1(chat_state, declaration);
-        ConstraintState::new(grammar, gate, stop_ids.clone())
-    });
+    // A forced choice's constraint begins after the prefill the prompt ends
+    // with, which the completion continues.
+    let prefix = chat_state.map_or("", BundleChatStateV1::completion_prefix);
+    let constraint = match constraint
+        .map(|grammar| {
+            let gate = constraint_gate_v1(chat_state, declaration);
+            ConstraintState::new(grammar, gate, stop_ids.clone()).with_prefix(prefix.as_bytes())
+        })
+        .transpose()
+    {
+        Ok(constraint) => constraint,
+        Err(_) => {
+            let _ = response.send(Err(AdmissionError::InvalidRequest));
+            return;
+        }
+    };
     let engine_request = match EngineRequest::new(
         id,
         prompt,
@@ -2160,6 +2172,9 @@ pub(crate) fn completion_decoder_v1(
         // The completion begins in reasoning exactly when its render left
         // reasoning open at the end of the prompt.
         decoder.set_reasoning_open(state.reasoning_open());
+        decoder
+            .prime_completion_prefix(state.completion_prefix())
+            .map_err(|_| AdmissionError::InvalidPrompt)?;
     }
     Ok(decoder)
 }

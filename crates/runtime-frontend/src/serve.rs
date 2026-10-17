@@ -14,7 +14,7 @@ use runtime_bundle_abi::frontend::FrontendExportV1;
 use runtime_bundle_abi::frontend_document::OpenedV1;
 use runtime_server::{
     ChatStateV1, FrontendChatRequestV1, FrontendErrorV1, FrontendJsonV1, FrontendMediaPartKindV1,
-    FrontendModelV1, FrontendRenderedChatV1, FrontendToolChoiceV1, FrontendToolV1,
+    FrontendModelV1, FrontendRenderedChatV1, FrontendToolChoiceV1, FrontendToolV1, PromptSegmentV1,
     ServerFrontendV1,
 };
 
@@ -39,6 +39,9 @@ pub struct BundleChatStateV1 {
     reasoning_open: bool,
     tools: Vec<runtime_server::FrontendToolV1>,
     extract_tool_calls: bool,
+    /// What the prompt ends with that the completion continues: a forced
+    /// tool choice's declared prefill, or empty.
+    completion_prefix: String,
     /// The frontend that rendered the prompt and the state its render
     /// returned; `None` for a frontend that calls a chat format directly.
     parser: Option<BundleParserSourceV1>,
@@ -53,6 +56,7 @@ impl PartialEq for BundleChatStateV1 {
             && self.reasoning_open == other.reasoning_open
             && self.tools == other.tools
             && self.extract_tool_calls == other.extract_tool_calls
+            && self.completion_prefix == other.completion_prefix
             && self.parser.as_ref().map(BundleParserSourceV1::state)
                 == other.parser.as_ref().map(BundleParserSourceV1::state)
     }
@@ -91,6 +95,14 @@ impl BundleChatStateV1 {
     #[must_use]
     pub const fn extracts_tool_calls(&self) -> bool {
         self.extract_tool_calls
+    }
+
+    /// The text the prompt ends with that the completion's parser and a
+    /// forced choice's constraint read as the completion's start: the
+    /// declared prefill of a forced tool choice, or empty.
+    #[must_use]
+    pub fn completion_prefix(&self) -> &str {
+        &self.completion_prefix
     }
 
     /// Where the completion's parser opens: the frontend that rendered the
@@ -522,12 +534,45 @@ impl ServerFrontendV1 for BundleFrontendV1 {
         } = request;
         // Every choice renders every offered tool, as the reference template
         // does by default; a forced choice's constraint does the forcing, and
-        // none only takes away the calls a completion may make.
+        // none only takes away the calls a completion may make. A declared
+        // tool choice policy may omit tools for none, keep only a named
+        // choice's tool, and end a forced choice's prompt with a prefill.
+        let policy = self.descriptor.tools.choice.as_ref();
+        let forced = matches!(
+            tool_choice,
+            FrontendToolChoiceV1::Required | FrontendToolChoiceV1::Named(_)
+        );
+        let keep = |tool: &runtime_server::FrontendToolV1| match (&tool_choice, policy) {
+            (FrontendToolChoiceV1::None, Some(policy)) => !policy.none_omits_tools,
+            (FrontendToolChoiceV1::Named(name), Some(policy))
+                if policy.named_renders_its_tool_only =>
+            {
+                tool.name == *name
+            }
+            _ => true,
+        };
+        let kept: Vec<bool> = tools.iter().map(keep).collect();
+        let rendered_tools: Vec<runtime_server::FrontendToolV1> = tools
+            .iter()
+            .zip(&kept)
+            .filter(|(_, keep)| **keep)
+            .map(|(tool, _)| tool.clone())
+            .collect();
+        // The function objects sent follow the offered tools one for one.
+        let tool_objects = if tool_objects.len() == tools.len() {
+            tool_objects
+                .into_iter()
+                .zip(&kept)
+                .filter_map(|(object, keep)| keep.then_some(object))
+                .collect()
+        } else {
+            tool_objects
+        };
         let rendered = self.renderer.render(FormatRenderRequestV1 {
             messages,
             continue_final_message,
             add_generation_prompt,
-            tools: &tools,
+            tools: &rendered_tools,
             tool_objects,
             response_format,
             reasoning_effort,
@@ -539,6 +584,25 @@ impl ServerFrontendV1 for BundleFrontendV1 {
             add_vision_id,
             chat_template_kwargs,
         })?;
+        let mut rendered = rendered;
+        let mut completion_prefix = String::new();
+        if forced && let Some(policy) = policy {
+            if policy.forced_refused_in_thinking && rendered.mode == PromptModeV1::Thinking {
+                return Err(FrontendErrorV1::new(
+                    "thinking mode does not support a required or named tool_choice",
+                    Some("tool_choice"),
+                ));
+            }
+            completion_prefix.clone_from(&policy.forced_prefill);
+            rendered.prompt.push_str(&completion_prefix);
+            match rendered.segments.last_mut() {
+                Some(PromptSegmentV1::Text(text)) => text.push_str(&completion_prefix),
+                _ if completion_prefix.is_empty() => {}
+                _ => rendered
+                    .segments
+                    .push(PromptSegmentV1::Text(completion_prefix.clone())),
+            }
+        }
         let extract_tool_calls = tool_choice != FrontendToolChoiceV1::None && !tools.is_empty();
         let allowed_function_names = if extract_tool_calls {
             tools.iter().map(|tool| tool.name.clone()).collect()
@@ -556,6 +620,7 @@ impl ServerFrontendV1 for BundleFrontendV1 {
                 reasoning_open: rendered.reasoning_open,
                 tools,
                 extract_tool_calls,
+                completion_prefix,
                 parser: self
                     .parser
                     .as_ref()

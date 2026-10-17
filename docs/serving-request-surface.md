@@ -121,7 +121,10 @@ records each successful compilation's costs, limits and smallest margin,
 without schema text; it never changes limits or refusals.
 
 **Tools and reasoning.** `tool_choice` `required`, a named function, or `auto`
-with a strict tool constrains output to the model's call format. Tool names
+with a strict tool constrains output to the model's call format. A model
+whose declaration has a `tools.choice` policy may also render no tools for
+`none`, only the named tool for a named choice, end a forced choice's prompt
+with the opening of its calls, and refuse a forced choice in thinking mode. Tool names
 can stream before a call closes; argument deltas wait for the close, since a
 later parameter can replace an earlier one. A generation that ends inside a
 call (length, stop token or client stop) finishes it with the same complete

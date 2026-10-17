@@ -246,6 +246,33 @@ pub enum FrontendToolArgumentsV1 {
 pub struct FrontendToolPolicyV1 {
     pub name_bytes: FrontendNameBytesV1,
     pub arguments: FrontendToolArgumentsV1,
+    /// How a tool choice changes the render, for a model whose request
+    /// mapping says so. Absent, every choice renders every offered tool and
+    /// a forced choice's constraint alone does the forcing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub choice: Option<FrontendToolChoicePolicyV1>,
+}
+
+/// The longest prefill a tool choice policy may declare.
+pub const FRONTEND_TOOL_CHOICE_PREFILL_MAX_BYTES: usize = 1024;
+
+/// What the host does around the render for each tool choice. The
+/// constraint of a forced choice still does the forcing; a prefill is the
+/// opening of the calls it forces, which the prompt then ends with and the
+/// completion continues.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FrontendToolChoicePolicyV1 {
+    /// Whether `none` renders without the offered tools.
+    pub none_omits_tools: bool,
+    /// Whether a named choice renders only the tool it names.
+    pub named_renders_its_tool_only: bool,
+    /// What follows the rendered prompt for `required` and a named choice;
+    /// empty for nothing.
+    #[serde(default)]
+    pub forced_prefill: String,
+    /// Whether `required` and a named choice are refused in thinking mode.
+    pub forced_refused_in_thinking: bool,
 }
 
 /// The response field assistant reasoning is returned in, which history
@@ -816,6 +843,22 @@ impl FrontendDescriptorV1 {
         }
         if !self.tools.name_bytes.ascii_alphanumeric && extra.is_empty() {
             return Err(invalid("the tool name byte set is empty"));
+        }
+        if let Some(choice) = &self.tools.choice {
+            if choice.forced_prefill.len() > FRONTEND_TOOL_CHOICE_PREFILL_MAX_BYTES {
+                return Err(invalid(format!(
+                    "tools.choice forced_prefill is {} bytes and the limit is \
+                     {FRONTEND_TOOL_CHOICE_PREFILL_MAX_BYTES}",
+                    choice.forced_prefill.len()
+                )));
+            }
+            // A prefill opens calls after the answer begins, which a prompt
+            // that leaves reasoning open has not reached.
+            if !choice.forced_prefill.is_empty() && !choice.forced_refused_in_thinking {
+                return Err(invalid(
+                    "tools.choice forced_prefill needs forced_refused_in_thinking",
+                ));
+            }
         }
         Ok(())
     }

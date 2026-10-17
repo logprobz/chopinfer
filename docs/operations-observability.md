@@ -319,8 +319,11 @@ tensor pipes and DRAM bandwidth were; these overlap rather than add up.
 GPU processes map to instances through `/proc`: process rows by pid and start
 time, container rows by the Docker container id in the process's cgroup, and
 explicit targets on this host by serve's `--listen` port, so a systemd unit
-watched with `--target` names its GPUs. Each pid is read once per start time,
-so a serve that restarts is found under its new pid. Enter on a GPU opens its
+watched with `--target` names its GPUs. A listen port counts only for
+`chopinfer` or `chopinfer-host` running serve on this host's network: in
+chopinfer-top's network namespace or, where that cannot be read, in no
+container. Each pid is read once per start time, so a serve that restarts is
+found under its new pid. Enter on a GPU opens its
 instance's details, which name the instance's GPUs, and Esc returns.
 
 Each change is one event in the log: GPUs found or not read, a thermal or

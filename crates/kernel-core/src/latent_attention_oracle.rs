@@ -309,9 +309,14 @@ fn head_softmax(q: &[f64], keys: &[Vec<f64>], scale: f64) -> HeadSoftmax {
 /// The bounds follow the attention core (`attend::Attend` with
 /// `logit_reduction_bound`): with n listed keys, width d and score
 /// magnitude `g_j = scale * sum_i |q_i c_ji|`, a normalized output's S is
-/// `(sum_j w_j |c_j| + (d / n) sum_j w_j |c_j - o / l| g_j) / l` and K is n;
-/// a numerator's S is `sum_j w_j |c_j| (1 + (d / n) g_j)` and the
-/// denominator's `sum_j w_j (1 + (d / n) g_j)`.
+/// `(sum_j w_j |c_j| + (d / n) sum_j w_j |c_j - o / l| g_j) / l` and K is n.
+/// In a partial, `dw_j = w_j * (ds_j - dm)`: the maximum's error reaches
+/// every weight. Let `g_m` be the argmax key's magnitude (`maximum_bound`).
+/// The score and maximum allowances `u * d * g_j` and `u * d * g_m`, with
+/// `u = 2^-22`, give a numerator's S of
+/// `sum_j w_j |c_j| (1 + (d / n) (g_j + g_m))` and a denominator's S of
+/// `sum_j w_j (1 + (d / n) (g_j + g_m))`. Normalized outputs cancel the
+/// common maximum error through their centered term above.
 pub fn latent_attention(
     query: LatentAttentionQuery,
     input: LatentAttentionInput<'_>,
@@ -405,7 +410,7 @@ pub fn latent_attention(
             let mut l_bound = NeumaierSum::default();
             for (&w, &g) in softmax.weights.iter().zip(&softmax.magnitudes) {
                 l.add(w);
-                l_bound.add(w * (1.0 + spread * g));
+                l_bound.add(w * (1.0 + spread * (g + softmax.maximum_bound)));
             }
             let l = l.value();
             match output {
@@ -429,7 +434,7 @@ pub fn latent_attention(
                 for ((&w, key), &g) in softmax.weights.iter().zip(&keys).zip(&softmax.magnitudes) {
                     o.add(w * key[column]);
                     abs.add((w * key[column]).abs());
-                    abs_spread.add((w * key[column]).abs() * g);
+                    abs_spread.add((w * key[column]).abs() * (g + softmax.maximum_bound));
                 }
                 let o = o.value();
                 match output {
@@ -849,6 +854,89 @@ mod tests {
             let decoded = cache.decoded(position as i32);
             for (&x, &bits) in decoded.iter().zip(row) {
                 assert_eq!(x, f64::from(bf16_to_f32(bits)));
+            }
+        }
+    }
+
+    #[test]
+    fn partial_bounds_propagate_maximum_score_cancellation() {
+        let width = 512;
+        let scale = (width as f32).powf(-0.5);
+        let a = 2_f32.powi(24);
+        let mut q = vec![0.0; width];
+        q[0] = f64::from(a);
+        q[128] = 1.0;
+        q[256] = -f64::from(a);
+        for kv in [LatentKvFormat::Bf16, LatentKvFormat::Fp8E4M3Block128] {
+            let mut pool = vec![0; kv.page_bytes(width as u32, 2) as usize];
+            for at in [0, 128, 256, width + 1] {
+                if kv == LatentKvFormat::Bf16 {
+                    pool[2 * at..2 * at + 2].copy_from_slice(&f32_to_bf16(1.0).to_le_bytes());
+                } else {
+                    pool[at] = 0x38;
+                }
+            }
+            if kv == LatentKvFormat::Fp8E4M3Block128 {
+                for bytes in pool[2 * width..].chunks_exact_mut(4) {
+                    bytes.copy_from_slice(&1_f32.to_le_bytes());
+                }
+            }
+            let query = LatentAttentionQuery::Attention {
+                heads: 1,
+                latent: width as u32,
+                max_keys: 2,
+                softmax_scale_bits: scale.to_bits(),
+                page_size: 2,
+                kv,
+                phase: AttentionPhase::Decode,
+                output: LatentAttentionOutput::Partial,
+                sink: false,
+                tail_rope_dims: 0,
+                second_fp4_keys: false,
+                capacity: 1,
+            };
+            let result = partials(
+                latent_attention(
+                    query,
+                    LatentAttentionInput {
+                        q: &q,
+                        row_batch: &[0],
+                        key_lists: &[0, 1],
+                        budget: 2,
+                        paging: LatentPaging {
+                            block_tables: &[0],
+                            max_pages: 1,
+                            page_stride: pool.len(),
+                        },
+                        pool: &pool,
+                    },
+                )
+                .unwrap(),
+            );
+            assert_eq!(result.maximum.values[0], f64::from(scale));
+            assert_eq!(result.numerator.values[1], (-f64::from(scale)).exp());
+            // Exact 128-channel chains fold as (A + 1) - A = 0 in F32.
+            // Both device probabilities are one, including the second key,
+            // whose own score has no error but whose maximum does.
+            let device_score = ((a + 1.0) - a) * scale;
+            assert_eq!(device_score, 0.0);
+            for (out, at, actual) in [
+                (&result.maximum, 0, f64::from(device_score)),
+                (&result.denominator, 0, 2.0),
+                (&result.numerator, 1, 1.0),
+            ] {
+                let reference = OracleOutput::new(
+                    vec![out.values[at]],
+                    vec![out.sum_abs_products[at]],
+                    out.reduction_lengths[at],
+                )
+                .unwrap();
+                check_numeric(&[actual], &reference, DType::F32).unwrap();
+                let bound = crate::oracle::numeric_bound(&reference, 0, DType::F32);
+                assert!(
+                    check_numeric(&[reference.values[0] + 2.0 * bound], &reference, DType::F32)
+                        .is_err()
+                );
             }
         }
     }

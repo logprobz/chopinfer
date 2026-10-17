@@ -68,6 +68,24 @@ path.write_text(json.dumps(received))
 """
 
 
+# Holds slot.<slot>.lock as an older launcher or a stray descendant would,
+# with a record of the given CPUs (JSON null: no record) and the pid given
+# (0: its own), until its release file appears.
+HOLDER = """
+import fcntl, json, os, pathlib, sys, time
+state, slot, cpus, pid, release = (pathlib.Path(sys.argv[1]), sys.argv[2], json.loads(sys.argv[3]),
+                                   int(sys.argv[4]) or os.getpid(), pathlib.Path(sys.argv[5]))
+lock = os.open(state / f"slot.{slot}.lock", os.O_RDONLY | os.O_CREAT, 0o664)
+fcntl.flock(lock, fcntl.LOCK_EX)
+if cpus is not None:
+    start = int(pathlib.Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]) if pid == os.getpid() else 1
+    (state / f"slot.{slot}.json").write_text(json.dumps({"pid": pid, "start": start, "cpus": cpus}))
+release.with_suffix(".held").write_text("")
+while not release.exists():
+    time.sleep(0.02)
+"""
+
+
 def gone(pid):
     try:
         state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
@@ -89,10 +107,17 @@ class Queue(unittest.TestCase):
                         CHOPINFER_HEAVY_SLOTS="2", CHOPINFER_HEAVY_SLOTS_DURING_GATE="1",
                         CHOPINFER_HEAVY_THREADS="1")
         self.processes = {}
+        # Release files of processes the launcher did not start: HOLDERs and descendants.
+        self.releases = []
+        self.holders = []
 
     def tearDown(self):
         for name in self.processes:
             (self.dir / (name + ".release")).write_text("")
+        for release in self.releases:
+            release.write_text("")
+        for holder in self.holders:
+            holder.wait(timeout=20)
         for process in self.processes.values():
             try:
                 process.wait(timeout=10)
@@ -103,12 +128,40 @@ class Queue(unittest.TestCase):
             process.stderr.close()
         self.temporary.cleanup()
 
-    def start(self, name, *options, env=None, command=None):
-        argv = [str(HEAVY), *options, "--label", name, *(command or [sys.executable, "-c", HOLD, name, str(self.dir)])]
+    def start(self, name, *options, env=None, command=None, launcher=None, affinity=None):
+        argv = [*(launcher or [str(HEAVY)]), *options, "--label", name,
+                *(command or [sys.executable, "-c", HOLD, name, str(self.dir)])]
         process = subprocess.Popen(argv, env={**self.env, **(env or {})}, start_new_session=True,
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                   preexec_fn=(lambda: os.sched_setaffinity(0, affinity)) if affinity else None)
         self.processes[name] = process
         return process
+
+    def patched(self, patch):
+        """The launcher, run with `patch` applied to its module first."""
+        return [sys.executable, "-c",
+                f"import importlib.util, os, pathlib, signal, sys\n"
+                f"spec = importlib.util.spec_from_file_location('heavy', {str(ROOT / 'tools/dev/heavy.py')!r})\n"
+                f"heavy = importlib.util.module_from_spec(spec); spec.loader.exec_module(heavy)\n"
+                f"{patch}\n"
+                f"sys.exit(heavy.main(sys.argv[1:]))\n"]
+
+    def hold(self, name, slot, cpus, pid=0):
+        """Starts a HOLDER of `slot`; returns once it holds the lock."""
+        release = self.dir / (name + ".release")
+        process = subprocess.Popen([sys.executable, "-c", HOLDER, str(self.dir / "state"), str(slot), json.dumps(cpus),
+                                    str(pid), str(release)])
+        self.releases.append(release)
+        self.holders.append(process)
+        deadline = time.monotonic() + 20
+        while not release.with_suffix(".held").exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertTrue(release.with_suffix(".held").exists())
+        return process
+
+    def records(self):
+        path = self.dir / "state/runs.jsonl"
+        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
     def started(self, name, timeout=20):
         deadline = time.monotonic() + timeout
@@ -227,6 +280,83 @@ class Queue(unittest.TestCase):
                                 check=True).stdout
         self.assertIn("lane runs in the last 24 h: 1,", output)
         self.assertIn("waits given up in the last 24 h: 1, longest", output)
+
+    def test_a_second_signal_during_the_cancellation_is_held(self):
+        env = {"CHOPINFER_HEAVY_SLOTS": "1"}
+        self.start("a", env=env)
+        self.assertTrue(self.started("a"))
+        # The ticket's removal brings a SIGTERM, as a caller's timeout might.
+        patch = ("real = pathlib.Path.unlink\n"
+                 "def unlink(path, *args, **kwargs):\n"
+                 "    real(path, *args, **kwargs)\n"
+                 "    if path.parent.name == 'queue':\n"
+                 "        os.kill(os.getpid(), signal.SIGTERM)\n"
+                 "pathlib.Path.unlink = unlink")
+        waiter = self.start("b", env=env, launcher=self.patched(patch))
+        self.assertTrue(self.queued(1))
+        waiter.send_signal(signal.SIGINT)
+        self.assertEqual(waiter.wait(timeout=20), 128 + signal.SIGINT, waiter.stderr.read())
+        self.assertEqual([(r["label"], r["exit"], r.get("abandoned")) for r in self.records()],
+                         [("b", 128 + signal.SIGINT, True)])
+        self.assertEqual(self.tickets(), [])
+
+    def test_a_signal_during_the_admission_reaches_the_command_and_is_recorded(self):
+        patch = ("real = heavy.lane_environment\n"
+                 "def interrupted(*args):\n"
+                 "    os.kill(os.getpid(), signal.SIGINT)\n"
+                 "    return real(*args)\n"
+                 "heavy.lane_environment = interrupted")
+        process = self.start("a", launcher=self.patched(patch), command=["true"])
+        code = process.wait(timeout=20)
+        self.assertEqual([(r["label"], r["slot"], r["exit"], r.get("abandoned")) for r in self.records()],
+                         [("a", 1, code, None)])
+
+    def test_callers_with_different_layouts_never_share_a_cpu(self):
+        # With one CPU per slot, an affinity of CPUs x, y gives slots x and y;
+        # one of y, z gives y and z. "shifted" finds its slot 1 free by
+        # number, but "second" runs on that CPU.
+        x, y, z = sorted(os.sched_getaffinity(0))[:3]
+        env = {"CHOPINFER_HEAVY_THREADS": "1"}
+        self.start("first", env=env, affinity=[x, y])
+        self.assertEqual(self.started("first")["cpus"], [x])
+        self.start("second", env=env, affinity=[x, y])
+        self.assertEqual(self.started("second")["cpus"], [y])
+        self.release("first")
+        self.start("shifted", env=env, affinity=[y, z])
+        self.assertTrue(self.stays_waiting("shifted"))
+        self.release("second")
+        self.assertEqual(self.started("shifted")["cpus"], [y])
+
+    def test_an_older_launchers_recorded_cpus_keep_an_overlapping_slot_waiting(self):
+        env = {"CHOPINFER_HEAVY_THREADS": "1"}
+        sets = LAUNCHER.cpu_sets(LAUNCHER.Settings({**self.env, **env}))
+        # Slot 1, held by a launcher whose layout put it on this layout's slot 2.
+        older = self.hold("older", 1, sets[2])
+        self.start("new", env=env)
+        self.assertTrue(self.stays_waiting("new"))
+        (self.dir / "older.release").write_text("")
+        older.wait(timeout=20)
+        self.assertEqual(self.started("new")["cpus"], sets[1])
+
+    def test_held_slots_without_a_live_record_count_both_layouts(self):
+        settings = LAUNCHER.Settings({**self.env, "CHOPINFER_HEAVY_THREADS": "1"})
+        allowed = sorted(os.sched_getaffinity(0))
+        sets = {1: [1001], 2: [1002], 3: [1003], 4: [1004]}
+        self.hold("live", 1, [2001])
+        self.hold("unrecorded", 2, None)
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        self.hold("orphaned", 3, [2003], pid=dead.pid)
+        self.assertEqual(LAUNCHER.busy_cpus(settings, sets), {2001, 1002, allowed[1], 2003, 1003, allowed[2]})
+
+    def test_a_descendant_that_keeps_the_slot_keeps_its_record(self):
+        grand = ["bash", "-c", '"$0" -c "$1" grand "$2" &', sys.executable, HOLD, str(self.dir)]
+        self.releases.append(self.dir / "grand.release")
+        self.assertEqual(self.start("a", command=grand).wait(timeout=20), 0)
+        self.assertIsNotNone(self.started("grand"))
+        self.assertTrue(LAUNCHER.held(self.dir / "state/slot.1.lock"))
+        record = json.loads((self.dir / "state/slot.1.json").read_text())
+        self.assertEqual((record["label"], record["cpus"]), ("a", self.started("grand")["cpus"]))
 
     def test_a_nested_call_inherits_the_admission_and_a_forged_marker_queues(self):
         env = {"CHOPINFER_HEAVY_SLOTS": "1"}
@@ -488,22 +618,33 @@ class Queue(unittest.TestCase):
         self.assertIn("CPUs", refused.stderr)
 
 
+def cpu_list_text(cpus):
+    """A sysfs CPU list, such as `0-5,24-29`."""
+    runs = []
+    for cpu in sorted(cpus):
+        if runs and cpu == runs[-1][1] + 1:
+            runs[-1][1] = cpu
+        else:
+            runs.append([cpu, cpu])
+    return ",".join(f"{first}-{last}" if first != last else str(first) for first, last in runs)
+
+
 def write_topology(root, cores, caches):
     """A sysfs CPU tree: `cores` lists each physical core's CPUs, `caches`
     each L3 cache's CPUs (empty for none)."""
     for core in cores:
         for cpu in core:
             (root / f"cpu{cpu}/topology").mkdir(parents=True)
-            (root / f"cpu{cpu}/topology/thread_siblings_list").write_text(",".join(map(str, core)) + "\n")
+            (root / f"cpu{cpu}/topology/thread_siblings_list").write_text(cpu_list_text(core) + "\n")
             for index, level in enumerate((1, 2)):
                 (root / f"cpu{cpu}/cache/index{index}").mkdir(parents=True)
                 (root / f"cpu{cpu}/cache/index{index}/level").write_text(f"{level}\n")
-                (root / f"cpu{cpu}/cache/index{index}/shared_cpu_list").write_text(",".join(map(str, core)) + "\n")
+                (root / f"cpu{cpu}/cache/index{index}/shared_cpu_list").write_text(cpu_list_text(core) + "\n")
     for cache in caches:
         for cpu in cache:
             (root / f"cpu{cpu}/cache/index3").mkdir(parents=True)
             (root / f"cpu{cpu}/cache/index3/level").write_text("3\n")
-            (root / f"cpu{cpu}/cache/index3/shared_cpu_list").write_text(f"{min(cache)}-{max(cache)}\n")
+            (root / f"cpu{cpu}/cache/index3/shared_cpu_list").write_text(cpu_list_text(cache) + "\n")
 
 
 class CpuSets(unittest.TestCase):
@@ -515,7 +656,7 @@ class CpuSets(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
 
     def sets(self, slots, threads, cores, caches=(), allowed=None):
-        root = self.dir / f"sys-{len(list(self.dir.iterdir()))}"
+        root = self.root = self.dir / f"sys-{len(list(self.dir.iterdir()))}"
         root.mkdir()
         write_topology(root, cores, caches)
         settings = LAUNCHER.Settings({"CHOPINFER_HEAVY_DIR": str(self.dir / "state"),
@@ -528,6 +669,10 @@ class CpuSets(unittest.TestCase):
         cores = [[n, n + 24] for n in range(24)]
         caches = [list(range(6 * c, 6 * c + 6)) + list(range(24 + 6 * c, 30 + 6 * c)) for c in range(4)]
         sets = self.sets(5, 8, cores, caches)
+        self.assertEqual((self.root / "cpu0/cache/index3/shared_cpu_list").read_text(), "0-5,24-29\n")
+        for cache in caches:
+            for cpu in cache:
+                self.assertEqual(LAUNCHER.shared_l3(self.root / f"cpu{cpu}"), set(cache))
         self.assertEqual(sets, {1: [0, 1, 2, 3, 24, 25, 26, 27], 2: [6, 7, 8, 9, 30, 31, 32, 33],
                                 3: [12, 13, 14, 15, 36, 37, 38, 39], 4: [18, 19, 20, 21, 42, 43, 44, 45],
                                 5: [4, 5, 10, 11, 28, 29, 34, 35]})

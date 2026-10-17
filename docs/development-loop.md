@@ -145,11 +145,16 @@ bash tools/dev/heavy.sh --status
   makes the files and directories it creates group-writable.
 - An admitted command runs on its slot's own `CHOPINFER_HEAVY_THREADS` CPUs
   (default 8): whole physical cores with their SMT siblings, from one L3
-  cache where they fit, so two slots never share a core (consecutive CPU
-  numbers when sysfs has no topology). It runs at `nice -n 19` and idle I/O
-  priority, with Cargo's jobs, the test threads,
-  `CHOPINFER_KERNEL_BUILD_JOBS` and the OpenMP, BLAS and Rayon pools capped
-  at the same count. A command started inside an admitted one
+  cache where they fit, so two slots do not share a core. The exceptions
+  take consecutive CPU numbers instead, and those slots can share a core's
+  siblings: sysfs has no topology, the CPUs the caller may use hold unequal
+  numbers of siblings per core (an affinity that leaves out one sibling),
+  or the thread count is not a whole number of cores. A slot is never
+  admitted while its CPUs overlap those a running slot recorded, so callers
+  with different layouts, or launcher versions, wait rather than share a
+  CPU. It runs at `nice -n 19` and idle I/O priority, with Cargo's jobs, the
+  test threads, `CHOPINFER_KERNEL_BUILD_JOBS` and the OpenMP, BLAS and Rayon
+  pools capped at the same count. A command started inside an admitted one
   runs at once instead of queueing for a second slot. Slots bound CPUs, not
   memory: a full `ci/cpu.sh` peaks near 35 GB and a single-process bundle
   suite near 30 GB, so size the slot count to the host's memory too.

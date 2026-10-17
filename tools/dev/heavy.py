@@ -19,13 +19,17 @@ slot and thread settings (set them in the host's shared local.env).
 
 An admitted lane command runs pinned to its slot's own set of
 `CHOPINFER_HEAVY_THREADS` (default 8) CPUs, whole physical cores with their
-SMT siblings where the topology allows, under `nice -n 19 ionice -c3`,
+SMT siblings where the topology allows (see cpu_sets), under
+`nice -n 19 ionice -c3`,
 with the Cargo, test and native thread-pool variables capped at that count,
 so the worker pools it starts (nvcc workers, nextest groups, BLAS and OpenMP
 pools) stay inside it. It runs in the launcher's own process group, so a
 caller that signals that group (tools/journal_proof/capture.py) reaches the
 whole command. The command inherits the slot's lock, so the slot stays held
-while the command, or any descendant that keeps the descriptor, lives. A
+while the command, or any descendant that keeps the descriptor, lives, and
+so does the slot's record of its CPUs. A slot is not admitted while any
+holder's recorded CPUs overlap its own, so callers whose layouts differ (an
+affinity that changes the layout, or an older launcher) never share a CPU. A
 signal only the launcher receives goes on to the command; a terminal's
 signal, which already reached the whole foreground group, is not sent again.
 A command started under an admitted run or gate (marked by
@@ -382,32 +386,76 @@ class Stop(Exception):
 
 
 def interrupt(number, _frame):
+    # The cleanup that follows runs with every further signal held, so a
+    # second one can neither interrupt it nor end the process unrecorded.
+    signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
     raise Stop(number)
 
 
-def wait_for_slot(settings, ticket, info, slots):
-    """Waits in ticket order; returns (slot, open lock descriptor) with the ticket removed."""
+def wait_for_slot(settings, ticket, info, sets):
+    """Waits in ticket order; returns (slot, open lock descriptor) with the
+    ticket removed and the signals in SIGNALS blocked, so a signal that comes
+    during the admission waits for the command instead of ending the run
+    unrecorded. A signal while it waits interrupts it with the ticket still
+    in place."""
     queue_lock = open_lock(settings.path("queue.lock"))
     if queue_lock is None:
         raise Refused(f"cannot open {settings.path('queue.lock')}; make {settings.dir} group-writable")
     try:
         while True:
+            signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
             fcntl.flock(queue_lock, fcntl.LOCK_EX)
             try:
-                admitted = admit(settings, ticket, info, slots)
+                admitted = admit(settings, ticket, info, sets)
             finally:
                 fcntl.flock(queue_lock, fcntl.LOCK_UN)
             if admitted is not None:
                 return admitted
+            signal.pthread_sigmask(signal.SIG_UNBLOCK, SIGNALS)
             time.sleep(settings.poll)
     finally:
         os.close(queue_lock)
 
 
-def admit(settings, ticket, info, slots):
+def busy_cpus(settings, sets):
+    """The CPUs that holders of any slot run on, from their records, whatever
+    slot count, CPU affinity or launcher version admitted them. A held slot
+    with no record, or one whose launcher is gone, is taken to use both the
+    CPUs its number has in `sets` and the consecutive CPUs an older launcher
+    gave it: an older launcher writes its record only after its admission,
+    and removes it when its command ends even if a descendant keeps the lock."""
+    allowed = sorted(os.sched_getaffinity(0))
+    busy = set()
+    for lock in settings.dir.glob("slot.*.lock"):
+        try:
+            slot = int(lock.name.split(".")[1])
+        except (IndexError, ValueError):
+            continue
+        if not held(lock):
+            continue
+        info = read_json(settings.path(f"slot.{slot}.json"))
+        cpus = info.get("cpus") if isinstance(info, dict) else None
+        if isinstance(cpus, list) and all(isinstance(cpu, int) for cpu in cpus):
+            busy.update(cpus)
+            try:
+                known = alive(int(info["pid"]), int(info["start"]))
+            except (KeyError, TypeError, ValueError):
+                known = False
+            if known:
+                continue
+        busy.update(sets.get(slot, ()))
+        busy.update(allowed[(slot - 1) * settings.threads:slot * settings.threads])
+    return busy
+
+
+def admit(settings, ticket, info, sets):
     """One admission check, under queue.lock: (slot, descriptor) or None.
     The pause check is here too, so no admission follows a --pause that
-    returned, and a gate takes queue.lock once it holds gate.lock."""
+    returned, and a gate takes queue.lock once it holds gate.lock. A free
+    slot whose CPUs a holder already runs on is not taken, so callers whose
+    layouts differ never share a CPU. The admitted slot's record, with its
+    CPUs, is written here, before any other check can see the slot held."""
+    slots = sorted(sets)
     if settings.path("paused").exists():
         return None
     if not ticket.exists():
@@ -425,7 +473,10 @@ def admit(settings, ticket, info, slots):
     room = limit - (len(slots) - len(free))
     if ticket not in waiting or waiting.index(ticket) >= room:
         return None
+    busy = busy_cpus(settings, sets)
     for slot in free:
+        if busy.intersection(sets[slot]):
+            continue
         descriptor = open_lock(settings.path(f"slot.{slot}.lock"))
         if descriptor is None:
             continue
@@ -435,6 +486,8 @@ def admit(settings, ticket, info, slots):
             os.close(descriptor)
             continue
         ticket.unlink(missing_ok=True)
+        info.update(slot=slot, admitted=time.time(), cpus=sets[slot])
+        write_json(settings.path(f"slot.{slot}.json"), info)
         return slot, descriptor
     return None
 
@@ -468,7 +521,7 @@ def run(settings, command, label, gate):
             sets = cpu_sets(settings)
             ticket = settings.path("queue") / f"{time.monotonic_ns():020d}-{pid}-{start}.json"
             write_json(ticket, info)
-            slot, descriptor = wait_for_slot(settings, ticket, info, sorted(sets))
+            slot, descriptor = wait_for_slot(settings, ticket, info, sets)
             ticket = None
             env = lane_environment(settings, env, slot, pid, start)
             argv, cpus = ["nice", "-n", "19", "ionice", "-c3", *command], sets[slot]
@@ -479,16 +532,16 @@ def run(settings, command, label, gate):
         if ticket is not None:
             ticket.unlink(missing_ok=True)
             # A caller's timeout ends most long waits, so record them too.
-            signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
             left = time.time()
             record(settings, {"class": "lane", "slot": None, "label": label, "cwd": info["cwd"],
                               "command": info["command"], "waited": round(left - asked, 1), "ran": 0,
                               "exit": 128 + stop.number, "finished": round(left), "abandoned": True})
         return 128 + stop.number
-    admitted = time.time()
-    info.update(slot=slot, admitted=admitted, cpus=cpus)
     info_path = settings.path("gate.json" if gate else f"slot.{slot}.json")
-    write_json(info_path, info)
+    if gate:
+        info.update(slot=slot, admitted=time.time(), cpus=cpus)
+        write_json(info_path, info)
+    admitted = info["admitted"]
     os.set_inheritable(descriptor, True)
 
     def prepare():
@@ -520,13 +573,29 @@ def run(settings, command, label, gate):
                 pass
     status = child.returncode
     finished = time.time()
-    info_path.unlink(missing_ok=True)
-    os.close(descriptor)
+    release(settings, descriptor, settings.path("gate.lock" if gate else f"slot.{slot}.lock"), info_path)
     code = status if status >= 0 else 128 - status
     record(settings, {"class": "gate" if gate else "lane", "slot": slot, "label": label, "cwd": info["cwd"],
                       "command": info["command"], "waited": round(admitted - asked, 1),
                       "ran": round(finished - admitted, 1), "exit": code, "finished": round(finished)})
     return code
+
+
+def release(settings, descriptor, lock, info_path):
+    """Gives up the launcher's hold on a slot or the gate. The record stays
+    while a descendant of the command keeps the lock, since that descendant
+    still runs on the recorded CPUs; under queue.lock, so it never removes the
+    record of a holder admitted after."""
+    queue_lock = open_lock(settings.path("queue.lock"))
+    try:
+        if queue_lock is not None:
+            fcntl.flock(queue_lock, fcntl.LOCK_EX)
+        os.close(descriptor)
+        if not held(lock):
+            info_path.unlink(missing_ok=True)
+    finally:
+        if queue_lock is not None:
+            os.close(queue_lock)
 
 
 def target_size(root):

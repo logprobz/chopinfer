@@ -39,8 +39,8 @@
   },
   "agentic_workload": {
    "CORPUS": "number",
+   "DEFAULT_MAX_TOOL_RESULT_BYTES": "int",
    "ROOT": "number",
-   "RUNYARD_MAX_TOOL_RESULT_BYTES": "int",
    "STAGED_MAX_TOOL_RESULT_BYTES": "int",
    "STAGED_REVISION": "str",
    "STAGED_TASKS": "dict"

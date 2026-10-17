@@ -10,7 +10,7 @@ from unittest.mock import patch
 import agentic_mixed
 from agentic_fake import FakeClock
 from agentic_mixed import Markup, parser, session, stream_request
-from agentic_workload import Workspace, load_corpus
+from agentic_workload import STAGED_TASKS, Workspace, load_corpus
 from test_agentic_markup import frontends, stop_texts, undeclared_ending
 from test_agentic_mixed import fake_time
 
@@ -48,7 +48,7 @@ class ReviewRegressions(unittest.TestCase):
         self.assertNotIn('secret', json.dumps(trace))
 
 class MeasurementReviewTests(unittest.TestCase):
-    def test_floor_percentiles_match_runyard(self):
+    def test_floor_rank_percentiles(self):
         from agentic_metrics import distribution
         self.assertEqual(distribution([1, 2, 3, 4, 5])['p50'], 2)
         self.assertEqual(distribution(range(1, 31))['p95'], 28)
@@ -367,7 +367,9 @@ class DurabilityAndComparisonTests(unittest.TestCase):
             self.assertEqual(trajectory['equal_requests'], trajectory['shared_turns'])
             self.assertEqual(trajectory['equal_answers'], trajectory['shared_turns'])
             variants = []
-            for key, value in [('mechanics_only', False), ('workload_digest', 'changed'), ('label', 'other')]:
+            for key, value in [('mechanics_only', False), ('source_revision', 'other-corpus.v1'),
+                               ('source_commit', '0' * 40), ('corpus_digest', '0' * 64),
+                               ('workload_digest', 'changed'), ('label', 'other')]:
                 bad = copy.deepcopy(b)
                 bad[key] = value
                 variants.append(bad)
@@ -551,7 +553,7 @@ class LevelVerdict(unittest.TestCase):
         cls.enterClassContext(patch.object(agentic_mixed, 'MARKUP', served_markup()))
         cls.manifest, groups = load_corpus()
         cls.files = groups['coding']
-        cls.task = task_for(cls.manifest, cls.files, 'runyard-coding-v1', 1, 0)
+        cls.task = task_for(cls.manifest, cls.files, 'chopinfer-coding-v1', 1, 0)
         content = cls.files[cls.task['focus_path']]
         cls.span = next(line for line in content.splitlines() if len(line) > 12 and content.count(line) == 1)
 
@@ -885,8 +887,7 @@ class RecordedOutcomes(unittest.TestCase):
         cls.fixture = json.loads(OUTCOMES.read_text())
         token_bytes = {int(k): bytes.fromhex(v) for k, v in cls.fixture['token_bytes'].items()}
         cls.decode = staticmethod(lambda ids: b''.join(token_bytes[i] for i in ids).decode('utf-8', 'replace'))
-        cls.manifest, groups = load_corpus()
-        cls.files = groups['coding']
+        cls.manifest, _ = load_corpus()
 
     def answers(self, recorded):
         answers = [recorded_answer(self.decode(turn['token_ids']), self.manifest['tools']) for turn in recorded['turns']]
@@ -898,12 +899,24 @@ class RecordedOutcomes(unittest.TestCase):
     def replay(self, recorded, changes=None):
         """The driver's trace of RECORDED, with CHANGES {turn: (IDs, answer)}
         to the generated IDs or the parsed answer of single turns."""
+        answers = self.answers(recorded)
+        calls = [call for answer in answers for call in answer['calls']]
+        read = next(args for name, args in calls if name == 'read')
+        path = read['path']
+        # Keep recorded paths and edit spans in a synthetic workspace. The
+        # token/parser regression does not depend on today's default corpus.
+        lines = [f'// Synthetic replay line {i}\n' for i in range(1, 201)]
+        edit = next((args for name, args in calls if name == 'edit' and args['path'] == path), None)
+        if edit:
+            lines[read.get('offset', 1) - 1] = edit['oldString'] + '\n'
+        files = {path: ''.join(lines)}
+        manifest = {**self.manifest, 'tasks': {path: dict(STAGED_TASKS)}}
         streams = []
-        for index, (turn, answer) in enumerate(zip(recorded['turns'], self.answers(recorded))):
+        for index, (turn, answer) in enumerate(zip(recorded['turns'], answers)):
             ids, answer = (changes or {}).get(index, (None, answer))
             streams.append(recorded_stream(turn, answer, ids))
         profile = vars(parser().parse_args(['--temperature', '0']))
-        trace = session(ScriptedServer(streams, self.decode), 'model', profile, self.manifest, self.files,
+        trace = session(ScriptedServer(streams, self.decode), 'model', profile, manifest, files,
                         recorded['concurrency'], recorded['index'], recorded['phase'])
         self.assertEqual((trace['case_id'], len(trace['turns'])), (recorded['case_id'], len(streams)))
         return trace

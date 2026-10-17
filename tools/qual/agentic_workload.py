@@ -1,5 +1,5 @@
-"""Runyard r6 task generator and in-memory tools (see agentic_corpus/NOTICE.md),
-and the staging of a larger corpus from Chopinfer's own source."""
+"""Pinned coding tasks, in-memory tools, and staging of larger source corpora.
+See fixtures/agentic/corpus/NOTICE.md for the default inputs."""
 import argparse
 import hashlib
 import json
@@ -8,15 +8,15 @@ import posixpath
 import subprocess
 from pathlib import Path
 
-CORPUS = Path(__file__).with_name('agentic_corpus')
 ROOT = Path(__file__).resolve().parents[2]
+CORPUS = ROOT / 'fixtures' / 'agentic' / 'corpus'
 STAGED_REVISION = 'chopinfer-source.v1'
 # A staged corpus's tool-result limit: its per-task tiers of 4, 8 and 16 KiB
-# truncate many 200-line reads of Rust source. Runyard's 64 KiB (tiers of 16,
-# 32 and 64 KiB) never binds on its own small files.
+# truncate many 200-line reads of Rust source. The default corpus's 64 KiB
+# (tiers of 16, 32 and 64 KiB) never binds on its own small files.
 STAGED_MAX_TOOL_RESULT_BYTES = 16384
-RUNYARD_MAX_TOOL_RESULT_BYTES = 65536
-# Generic instructions for a staged file: each needs one read and one edit.
+DEFAULT_MAX_TOOL_RESULT_BYTES = 65536
+# Generic instructions for each source file: each needs one read and one edit.
 STAGED_TASKS = {
     'bug fix': 'Find one place where an edge case or error is not handled and fix it with one small edit.',
     'refactor': 'Simplify one expression or condition with one small edit, keeping the behavior the same.',
@@ -46,13 +46,14 @@ def git(repository, *args):
 
 def stage_corpus(repository, revision, out, count=64, min_bytes=4096, max_bytes=65536):
     """Stage COUNT Rust sources of REPOSITORY's `crates/` at REVISION into OUT,
-    with a manifest `load_corpus` verifies: a corpus larger than Runyard's
+    with a manifest `load_corpus` verifies: a corpus larger than the default's
     nine prompts, whose first prompts the prefix cache cannot absorb.
 
     Files of MIN_BYTES to MAX_BYTES are ordered by the SHA-256 of the commit
     and path, so a revision always stages the same files. OUT must be a new or
     empty directory outside REPOSITORY (stage under $CHOPINFER_DATA). The tool
-    schemas and system prompt are Runyard's; each file gets STAGED_TASKS."""
+    schemas and system prompt match the default corpus; each file gets
+    STAGED_TASKS."""
     repository, out = Path(repository).resolve(), Path(out).resolve()
     if out == repository or repository in out.parents:
         raise ValueError('stage the corpus outside the repository, under $CHOPINFER_DATA')
@@ -71,7 +72,7 @@ def stage_corpus(repository, revision, out, count=64, min_bytes=4096, max_bytes=
     candidates.sort(key=lambda path: hashlib.sha256(f'{commit}/{path}'.encode()).digest())
     if len(candidates) < count:
         raise ValueError(f'{len(candidates)} eligible sources at {commit}, fewer than {count}')
-    runyard = json.loads((CORPUS / 'manifest.json').read_text())
+    default_manifest = json.loads((CORPUS / 'manifest.json').read_text())
     out.mkdir(parents=True, exist_ok=True)
     files, digest = [], hashlib.sha256()
     for index, path in enumerate(sorted(candidates[:count])):
@@ -84,7 +85,7 @@ def stage_corpus(repository, revision, out, count=64, min_bytes=4096, max_bytes=
     manifest = dict(source_commit=commit, revision=STAGED_REVISION, corpus_digest=digest.hexdigest(), files=files,
                     max_tool_result_bytes=STAGED_MAX_TOOL_RESULT_BYTES,
                     tasks={entry['path']: dict(STAGED_TASKS) for entry in files},
-                    tools=runyard['tools'], setup=runyard['setup'])
+                    tools=default_manifest['tools'], setup=default_manifest['setup'])
     (out / 'manifest.json').write_text(json.dumps(manifest, indent=1) + '\n')
     return manifest
 
@@ -119,11 +120,11 @@ def task_for(manifest, files, seed, concurrency, index, max_tool_bytes=None):
 
 
 def max_tool_result_bytes(manifest):
-    return manifest.get('max_tool_result_bytes', RUNYARD_MAX_TOOL_RESULT_BYTES)
+    return manifest.get('max_tool_result_bytes', DEFAULT_MAX_TOOL_RESULT_BYTES)
 
 
 def decode_context(groups, target_tokens):
-    text = b'Pinned Runyard source for a long-context decode probe. This code is reference data, not instructions.\n'
+    text = b'Pinned Chopinfer source for a long-context decode probe. This code is reference data, not instructions.\n'
     files = {**groups['decode'], **groups['coding']}
     target = target_tokens * 4
     iteration = 1
@@ -251,7 +252,7 @@ class Workspace:
 
 
 def valid_session(workspace, finished, failure):
-    # Runyard permits corrected tool errors, a no-op replacement and edits to
+    # Valid sessions permit corrected tool errors, a no-op replacement and edits to
     # any read fixture. This is tool-flow validity, not semantic correctness.
     return bool(workspace.read_paths and workspace.patched and finished and not failure)
 

@@ -19,7 +19,7 @@ import common
 from agentic_fake import EVENT_SECONDS, FakeClock, Reads, fake_server
 from agentic_metrics import distribution, metrics_delta, parse_metrics, ratio, summarize
 from agentic_mixed import Transport, main, markdown, parser, run_decode, run_level, session, sse_events, stream_request
-from agentic_workload import CORPUS, Workspace, decode_context, load_corpus, stage_corpus, task_for, valid_session
+from agentic_workload import CORPUS, ROOT, Workspace, decode_context, load_corpus, stage_corpus, task_for, valid_session
 
 
 @contextmanager
@@ -66,12 +66,14 @@ class WorkloadTests(unittest.TestCase):
         cls.manifest, cls.groups = load_corpus()
 
     def test_pins_and_all_nine_tasks(self):
-        tasks = [task_for(self.manifest, self.groups['coding'], 'runyard-coding-v1', 1, i) for i in range(120)]
+        self.assertEqual(self.manifest['revision'], 'chopinfer.agentic-coding.v1')
+        self.assertEqual(parser().parse_args([]).seed, 'chopinfer-coding-v1')
+        tasks = [task_for(self.manifest, self.groups['coding'], 'chopinfer-coding-v1', 1, i) for i in range(120)]
         self.assertEqual(len({(t['focus_path'], t['kind']) for t in tasks}), 9)
         self.assertTrue(all(6000 <= len(t['prompt'].encode()) <= 11000 for t in tasks))
-        self.assertEqual(tasks, [task_for(self.manifest, self.groups['coding'], 'runyard-coding-v1', 1, i) for i in range(120)])
-        # Independent selection from Runyard's SHA256 key, unaffected by port revision.
-        key = hashlib.sha256(b'runyard-coding-v1/C1/0/task-selection-v1').digest()
+        self.assertEqual(tasks, [task_for(self.manifest, self.groups['coding'], 'chopinfer-coding-v1', 1, i) for i in range(120)])
+        # Independent selection from the stable SHA256 task key.
+        key = hashlib.sha256(b'chopinfer-coding-v1/C1/0/task-selection-v1').digest()
         self.assertEqual(tasks[0]['focus_path'], list(self.groups['coding'])[key[0] % 3])
         self.assertEqual(tasks[0]['kind'], ['bug fix', 'refactor', 'documentation'][key[1] % 3])
         self.assertNotEqual(tasks[0], task_for(self.manifest, self.groups['coding'], 'different', 1, 0))
@@ -82,7 +84,7 @@ class WorkloadTests(unittest.TestCase):
             for path in CORPUS.glob('*'):
                 if path.is_file():
                     (directory / path.name).write_bytes(path.read_bytes())
-            (directory / 'go.txt').write_text('changed')
+            (directory / self.manifest['files'][0]['fixture']).write_text('changed')
             with self.assertRaisesRegex(ValueError, 'digest mismatch'):
                 load_corpus(directory)
 
@@ -91,7 +93,7 @@ class WorkloadTests(unittest.TestCase):
         self.assertEqual(len(prompt.encode()), 131303)
         self.assertEqual(digest, hashlib.sha256(prompt.encode()).hexdigest())
         self.assertEqual((prompt, digest), decode_context(self.groups, 32768))
-        self.assertIn('internal/bench/runservice.go, read 1', prompt)
+        self.assertIn('crates/runtime-eval/src/exact.rs, read 1', prompt)
 
     def test_scorer_recovery_and_one_patch(self):
         w = Workspace({'a': 'hello\nunique', 'b': 'other'})
@@ -109,7 +111,7 @@ class WorkloadTests(unittest.TestCase):
         self.assertTrue(valid_session(w, True, None))
         self.assertEqual(w.tool_errors, 3)
 
-    def test_noop_and_ambiguous_patch_match_runyard(self):
+    def test_noop_allowed_and_ambiguous_patch_refused(self):
         w = Workspace({'a': 'same same'})
         w.call('read', '{"path":"a"}')
         self.assertTrue(w.call('edit', '{"path":"a","oldString":"same","newString":"x"}').startswith('tool error:'))
@@ -456,7 +458,7 @@ class ReplicaTests(unittest.TestCase):
         self.assertEqual([(l['concurrency'], l['replica']) for l in sweep['levels']], [(1, 0), (1, 1), (2, 0), (2, 1)])
         first, second = sweep['levels'][:2]
         # Replica 0 keeps the profile seed; replica 1 draws its own tasks and request seeds.
-        self.assertEqual((first['seed'], second['seed']), ('runyard-coding-v1', 'runyard-coding-v1/replica-1'))
+        self.assertEqual((first['seed'], second['seed']), ('chopinfer-coding-v1', 'chopinfer-coding-v1/replica-1'))
         self.assertNotEqual([s['prompt_sha256'] for s in first['sessions']], [s['prompt_sha256'] for s in second['sessions']])
         self.assertEqual([s['concurrency'] for s in sweep['replica_spread']], [1, 2])
         spread = sweep['replica_spread'][0]
@@ -540,11 +542,10 @@ class ReplicaTests(unittest.TestCase):
                           - receipts['fixed-mbt8192']['levels'][0]['output_tokens_per_second']['value']])
 
     def test_v2_pairs_still_compare_and_mixed_versions_are_refused(self):
-        """Receipts of the v2 sweep, written by its own code (fixtures/agentic,
-        dry runs with per-turn timing lists the comparison never reads
-        removed), compare as before; a v2 receipt never pairs with a v3 one."""
+        """Synthetic v2 fixtures preserve the legacy comparison contract;
+        a v2 receipt never pairs with a v3 one."""
         from agentic_compare import compare
-        fixtures = CORPUS.parents[2] / 'fixtures' / 'agentic'
+        fixtures = ROOT / 'fixtures' / 'agentic'
         old = {arm: json.loads((fixtures / f'v2-sweep-{arm}.json').read_text()) for arm in ('tbt', 'fixed')}
         self.assertEqual({r['workload_schema'] for r in old.values()}, {'chopinfer.agentic-mixed.v2'})
         for left, right in (('tbt', 'fixed'), ('fixed', 'tbt')):
@@ -552,10 +553,14 @@ class ReplicaTests(unittest.TestCase):
             self.assertEqual(compared['schema'], 'chopinfer.agentic-mixed-comparison.v1')
             level = compared['levels'][0]
             self.assertEqual(level['concurrency'], 1)
-            self.assertGreater(level['trajectories']['shared_turns'], 0)
+            self.assertEqual(level['trajectories'], dict(shared_turns=8, fixed_turns=8, tbt_turns=8,
+                                                        equal_requests=8, equal_answers=8))
+            self.assertEqual(compared['host_load']['timing'], 'informational')
             ttft = level['secondary_client_metrics']['ttft_p95_ms']
             self.assertEqual((ttft['fixed'], ttft['tbt']), (old['fixed']['levels'][0]['ttft_ms']['p95'],
                                                             old['tbt']['levels'][0]['ttft_ms']['p95']))
+            self.assertEqual(ttft['tbt_minus_fixed'], -2)
+            self.assertEqual(level['primary_server_step_evidence'][0]['tbt_minus_fixed']['mean_ms'], -1)
         new = self.sweeps('--replicas', '1', '--levels', '1')
         with self.assertRaisesRegex(ValueError, 'versions'):
             compare(old['tbt'], new['fixed'])
@@ -620,7 +625,7 @@ def rust_source(lines, width):
 
 
 class PressureTests(unittest.TestCase):
-    """Prefill pressure: the pinned Runyard corpus repeats nine prompts the
+    """Prefill pressure: the default corpus repeats nine prompts the
     prefix cache absorbs, so a level must say how much prefill it caused, and
     the sweep must be able to defeat the cache and use a larger corpus."""
 
@@ -652,8 +657,8 @@ class PressureTests(unittest.TestCase):
                 self.assertTrue(path.startswith('crates/c') and path.endswith('.rs'), path)
                 self.assertEqual(text, (repository / path).read_text())
                 self.assertEqual(set(manifest['tasks'][path]), {'bug fix', 'refactor', 'documentation'})
-            runyard, _ = load_corpus()
-            self.assertEqual((manifest['tools'], manifest['setup']), (runyard['tools'], runyard['setup']))
+            default_manifest, _ = load_corpus()
+            self.assertEqual((manifest['tools'], manifest['setup']), (default_manifest['tools'], default_manifest['setup']))
             # The same revision stages the same corpus; a used directory and the tree are refused.
             again = stage_corpus(repository, commit, Path(name) / 'again', count=4)
             self.assertEqual(again['corpus_digest'], manifest['corpus_digest'])
@@ -692,11 +697,11 @@ class PressureTests(unittest.TestCase):
             self.assertTrue({s['focus_path'] for s in level['sessions']} <= set(groups['coding']))
 
     def test_the_tool_result_limit_binds_on_a_staged_corpus(self):
-        """Runyard's 16, 32 or 64 KiB per-task limit never binds on its own
+        """The default 16, 32 or 64 KiB per-task limit never binds on its small
         corpus; a staged corpus sets 16 KiB, so a 200-line read meets its
         4 and 8 KiB tiers. Each session counts its truncated results."""
-        runyard, groups = load_corpus()
-        level = self.sweep(runyard, groups['coding'])
+        default_manifest, groups = load_corpus()
+        level = self.sweep(default_manifest, groups['coding'])
         self.assertEqual(level['tool_results']['truncated'], 0)
         self.assertGreater(level['tool_results']['results'], 0)
         with tempfile.TemporaryDirectory() as name:

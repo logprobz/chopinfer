@@ -1,60 +1,43 @@
 {
-  "source_commit": "9e6022c0fb7e075734a9602e227ea08d9b1fe442",
-  "revision": "runyard.agentic-coding.r6",
-  "corpus_digest": "b7f1c8384a0351a61364a7958c5cc4fb4a0468b8df96dea8e092675b3e22a643",
+  "source_commit": "4c725dd8deb02592999120507fee775f6aba3fa6",
+  "revision": "chopinfer.agentic-coding.v1",
+  "corpus_digest": "383eb541e99afc3abd204acf368e02b9e50449fc02f5a284bf172bd1b6ce6dd5",
   "files": [
     {
       "group": "coding",
-      "fixture": "go.txt",
-      "path": "internal/bench/guardrails.go",
-      "sha256": "6aa0a5400dda15b526e8d312d35a9d260a377fdc3e92fd430dc05052f9d48689"
+      "fixture": "exact.rs.txt",
+      "path": "crates/runtime-eval/src/exact.rs",
+      "sha256": "b1a200f4530a0385d33b19b77f0d33f0d639ebfa46eb4cf22b2721971f869294"
     },
     {
       "group": "coding",
-      "fixture": "typescript.txt",
-      "path": "web/src/components/metricText.ts",
-      "sha256": "70f17d2d3410fb6d7f67ac53bd1638bbad5b0bb67091ce5209a5a4106d00fc61"
+      "fixture": "launch.rs.txt",
+      "path": "crates/runtime-eval/src/launch.rs",
+      "sha256": "5a91f8c64ad5be97859b7af5e63533057dc701a1c3d97469fa8d97df41aa125b"
     },
     {
       "group": "coding",
-      "fixture": "python.txt",
-      "path": "scripts/e2e_fixture.py",
-      "sha256": "a0ac6c23547e39b5ae831ddf2a7bc62b04a2cc3f2d4a966e03fcc1fb289e5321"
-    },
-    {
-      "group": "decode",
-      "fixture": "runservice.txt",
-      "path": "internal/bench/runservice.go",
-      "sha256": "02a151ec057bd204d199adf2b397bd6fe72585816c4c70d95addc1774faaf7d5"
-    },
-    {
-      "group": "decode",
-      "fixture": "rundrive.txt",
-      "path": "internal/bench/rundrive.go",
-      "sha256": "5dd9e127ce2d064b4f49b63bea8af91023d4051cc849d9d8cda8e51de83ba770"
-    },
-    {
-      "group": "decode",
-      "fixture": "runstore.txt",
-      "path": "internal/bench/runstore.go",
-      "sha256": "82183586aec98c81e0d00d7380b1c13eecdf1295b27459a7a4d1a566ca18250b"
+      "fixture": "intake.rs.txt",
+      "path": "crates/runtime-server/src/intake.rs",
+      "sha256": "c3f3ec08bdceddea2a769b57963112b5d1ce2e4eec3f4580d0c4c91702149d07"
     }
   ],
+  "max_tool_result_bytes": 65536,
   "tasks": {
-    "internal/bench/guardrails.go": {
-      "bug fix": "In outputSpend, treat the output-byte ceiling as reached when the total equals the ceiling. Change the stopping comparison only.",
-      "refactor": "In requestSpend, rename the local used counter to requestsUsed and update its later references. Keep the logic the same.",
-      "documentation": "Clarify the comment above outputSpend: it counts response bytes after they are read, and the recorded total can exceed the ceiling."
+    "crates/runtime-eval/src/exact.rs": {
+      "bug fix": "Find one place where an edge case or error is not handled and fix it with one small edit.",
+      "refactor": "Simplify one expression or condition with one small edit, keeping the behavior the same.",
+      "documentation": "Add or clarify one comment above a function or type whose purpose is not obvious."
     },
-    "web/src/components/metricText.ts": {
-      "bug fix": "In formatMetric, clamp a negative digits argument to zero before computing the rounding factor. Keep the other behavior the same.",
-      "refactor": "In formatLatest, replace the two return branches with one equivalent expression. Keep the output the same.",
-      "documentation": "Clarify the formatSpan comment to say that seconds are rounded to the nearest whole second before formatting."
+    "crates/runtime-eval/src/launch.rs": {
+      "bug fix": "Find one place where an edge case or error is not handled and fix it with one small edit.",
+      "refactor": "Simplify one expression or condition with one small edit, keeping the behavior the same.",
+      "documentation": "Add or clarify one comment above a function or type whose purpose is not obvious."
     },
-    "scripts/e2e_fixture.py": {
-      "bug fix": "When --counter names a file in a missing parent directory, create that parent directory before appending the start marker.",
-      "refactor": "In do_POST, store request.get(\"model\") in a local variable before the require-model check. Keep the response behavior the same.",
-      "documentation": "Add a short comment at the require-model check in do_POST explaining why an unknown model returns 404."
+    "crates/runtime-server/src/intake.rs": {
+      "bug fix": "Find one place where an edge case or error is not handled and fix it with one small edit.",
+      "refactor": "Simplify one expression or condition with one small edit, keeping the behavior the same.",
+      "documentation": "Add or clarify one comment above a function or type whose purpose is not obvious."
     }
   },
   "tools": [

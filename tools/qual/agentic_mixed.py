@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Self-contained Runyard agentic coding sweep, with Chopinfer receipts."""
+"""Agentic coding sweep over pinned source, with Chopinfer receipts."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor, wait
 from contextlib import nullcontext
@@ -1066,12 +1066,12 @@ def parser():
                                         "inventoried model whose frontend declares the served model")
     p.add_argument('--levels', default='1,2,4,8,12,16,24,32,48,64')
     p.add_argument('--corpus', type=Path, default=CORPUS,
-                   help='a corpus directory with a verified manifest: the pinned Runyard corpus (default), or a larger '
+                   help='a corpus directory with a verified manifest: the pinned Chopinfer corpus (default), or a larger '
                         'one staged under $CHOPINFER_DATA by `agentic_workload.py stage`')
     p.add_argument('--cache-salt', choices=('session', 'none'), default='session',
                    help='session (default): send each session its own cache_salt, so no other session or run absorbs '
                         'its prefill and the prefill budgets see real pressure; none: share prefixes across sessions')
-    p.add_argument('--seed', default='runyard-coding-v1')
+    p.add_argument('--seed', default='chopinfer-coding-v1')
     p.add_argument('--replicas', type=int, default=3,
                    help='passes of each level, run back to back against the same server (default %(default)s). '
                         'Replica R draws its tasks, request seeds and cache salts from SEED/replica-R (the first from '
@@ -1317,7 +1317,7 @@ def main(argv=None):
         manifest, groups = load_corpus(args.corpus)
     except (OSError, ValueError, KeyError) as error:
         p.error(f'corpus: {error}')
-    # The decode probe always reads the pinned Runyard source.
+    # The decode probe always reads the pinned Chopinfer source.
     decode_groups = load_corpus()[1]
     # The corpus is identified by its digest and commit, never its local path.
     profile = {k: v for k, v in vars(args).items()

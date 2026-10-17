@@ -378,6 +378,19 @@ class TransportTests(unittest.TestCase):
         both = dict(turn, reasoning="wins")
         self.assertEqual(corpus.hf_messages([both], TRANSPORT)[0]["reasoning_content"], "wins")
 
+    def test_a_reasoning_content_field_is_read_alone(self):
+        turn = {"role": "assistant", "content": "a", "reasoning": "ignored", "reasoning_content": "kept"}
+        self.assertEqual(corpus.hf_messages([turn], TRANSPORT, "reasoning_content")[0]["reasoning_content"], "kept")
+        alone = {"role": "assistant", "content": "a", "reasoning": "ignored"}
+        self.assertNotIn("reasoning_content", corpus.hf_messages([alone], TRANSPORT, "reasoning_content")[0])
+
+    def test_arguments_stay_text_for_a_reference_that_decodes_them(self):
+        turn = {"role": "assistant", "content": "", "tool_calls": [call("f", {"n": 1})]}
+        turn["tool_calls"][0]["function"]["arguments"] = "[1,  2]"
+        kept = corpus.hf_messages([turn], TRANSPORT, decode_arguments=False)[0]
+        self.assertEqual(kept["tool_calls"][0]["function"]["arguments"], "[1,  2]")
+        self.assertEqual(corpus.hf_messages([turn], TRANSPORT)[0]["tool_calls"][0]["function"]["arguments"], [1, 2])
+
     def test_tool_objects_are_whole_only_when_the_transport_carries_them(self):
         tool = {"type": "function", "function": {"name": "f", "description": None, "parameters": {},
                                                  "defer_loading": True}}
@@ -467,6 +480,11 @@ class VectorShapeTests(unittest.TestCase):
                              "tool_calls": [{"function": {"name": "f", "arguments": {}}}]},
                             {"role": "tool", "content": ""}]}
         self.assertEqual(len(corpus.capture_normalization(raw)), 4)
+        # A frontend whose reasoning field is reasoning_content keeps it there.
+        served = corpus.canonical_messages([user(), {"role": "assistant", "content": "a", "reasoning": "x",
+                                                     "reasoning_content": "r"}], TRANSPORT, "reasoning_content")
+        self.assertEqual(served[1], {"role": "assistant", "content": "a", "reasoning_content": "r"})
+        self.assertEqual(corpus.capture_normalization({"messages": served}, "reasoning_content"), [])
 
     def test_every_generated_vector_obeys_the_raw_reader(self):
         for name in CASES_MODELS:

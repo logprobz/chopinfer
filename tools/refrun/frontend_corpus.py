@@ -136,12 +136,20 @@ class Model:
         reasoning controls (`hf_input`), with each request field the cases
         module lists in `INPUT_FIELDS` passed through as sent: a reference
         that renders a field a template never reads (a Python encoder's
-        `response_format`) receives it."""
-        arguments = hf_input(request, self.transport, self.declaration["reasoning"])
+        `response_format`) receives it. A cases module that sets
+        `RAW_TOOL_ARGUMENTS` receives tool-call arguments as the text sent,
+        for a reference that decodes them itself."""
+        arguments = hf_input(request, self.transport, self.declaration["reasoning"], self.reasoning_field,
+                             not getattr(self.cases, "RAW_TOOL_ARGUMENTS", False))
         for field in getattr(self.cases, "INPUT_FIELDS", ()):
             if field in request:
                 arguments[field] = copy.deepcopy(request[field])
         return arguments
+
+    @property
+    def reasoning_field(self):
+        """The request and response field assistant reasoning travels in."""
+        return (self.declaration.get("response") or {}).get("reasoning_field", "reasoning")
 
     def full_cases(self, seed):
         """The full corpus's cases: the shared generator's and the model's."""
@@ -212,24 +220,29 @@ def case_divergence(table, features, failure=None):
 
 # Transport translation ------------------------------------------------------
 
-def hf_messages(messages, transport):
+def hf_messages(messages, transport, reasoning_field="reasoning", decode_arguments=True):
     """The messages a template reads for `messages` as the transport carries
     them. An assistant turn's reasoning is `reasoning`, else, where the
-    transport falls back to it, `reasoning_content`; it reaches the template
-    as `reasoning_content`. Tool-call arguments become objects. Media parts
-    become the template's media items; every other part is kept as sent."""
+    transport falls back to it, `reasoning_content`; a declaration whose
+    reasoning field is `reasoning_content` reads that field alone. It
+    reaches the template as `reasoning_content`. Tool-call arguments become
+    objects, unless `decode_arguments` is false (a reference that reads the
+    text as sent). Media parts become the template's media items; every
+    other part is kept as sent."""
     result = []
     for message in copy.deepcopy(messages):
         if isinstance(message, dict) and message.get("role") == "assistant":
             reasoning = message.pop("reasoning", None)
             fallback = message.pop("reasoning_content", None)
             calls = message.get("tool_calls") is not None
-            if reasoning is None and (transport["reasoning_content_fallback"]
-                                      or (calls and transport["tool_call_reasoning_fallback"])):
+            if reasoning_field == "reasoning_content":
+                reasoning = fallback
+            elif reasoning is None and (transport["reasoning_content_fallback"]
+                                        or (calls and transport["tool_call_reasoning_fallback"])):
                 reasoning = fallback
             if reasoning is not None:
                 message["reasoning_content"] = reasoning
-            for call in message.get("tool_calls") or []:
+            for call in (message.get("tool_calls") or []) if decode_arguments else ():
                 function = call.get("function") if isinstance(call, dict) else None
                 if isinstance(function, dict) and isinstance(function.get("arguments"), str):
                     try:
@@ -283,7 +296,7 @@ def hf_tools(tools, transport):
     return result
 
 
-def hf_input(request, transport, reasoning):
+def hf_input(request, transport, reasoning, reasoning_field="reasoning", decode_arguments=True):
     """The keyword arguments of one `apply_chat_template` call for `request`.
 
     The template keywords are the client's `chat_template_kwargs`, then the
@@ -305,7 +318,7 @@ def hf_input(request, transport, reasoning):
         keywords.setdefault("enable_thinking", effort != reasoning["disable_value"])
     continued = bool(request.get("continue_final_message"))
     generation = request.get("add_generation_prompt")
-    return {"messages": hf_messages(request["messages"], transport),
+    return {"messages": hf_messages(request["messages"], transport, reasoning_field, decode_arguments),
             "tools": hf_tools(request.get("tools"), transport),
             "add_generation_prompt": (not continued) if generation is None else bool(generation),
             "continue_final_message": continued,
@@ -338,14 +351,15 @@ def file_media(request, kinds=(*HF_MEDIA, "input_audio")):
     return places
 
 
-def capture_normalization(request):
+def capture_normalization(request, reasoning_field="reasoning"):
     """What a streaming vector reader's capture normalization would change in
     `request` (crates/runtime-host/src/frontend_check.rs `VectorRequestV1::body`):
     a filled id or type, string arguments, a moved reasoning field or an
     inline media source. A round-trip request must have none."""
     changes = []
     for index, message in enumerate(request.get("messages") or []):
-        if message.get("role") == "assistant" and "reasoning_content" in message:
+        if (message.get("role") == "assistant" and "reasoning_content" in message
+                and reasoning_field != "reasoning_content"):
             changes.append(f"message {index}: reasoning_content may move to the served reasoning field")
         if message.get("role") == "tool" and "tool_call_id" not in message:
             changes.append(f"message {index}: an empty tool_call_id is filled")
@@ -525,18 +539,18 @@ def normalized_request(model, entry, request):
 
 # Round trips --------------------------------------------------------------------------
 
-def canonical_messages(messages, transport):
-    """`messages` with each assistant turn's reasoning under `reasoning`
-    alone, as the transport reads it, so a vector reader that moves
-    `reasoning_content` has nothing to move."""
+def canonical_messages(messages, transport, reasoning_field="reasoning"):
+    """`messages` with each assistant turn's reasoning under the declared
+    reasoning field alone, as the transport reads it, so a vector reader
+    that moves `reasoning_content` has nothing to move."""
     result = []
     for message in copy.deepcopy(messages):
         if message.get("role") == "assistant":
-            reasoning = hf_messages([message], transport)[0].get("reasoning_content")
+            reasoning = hf_messages([message], transport, reasoning_field)[0].get("reasoning_content")
             message.pop("reasoning_content", None)
             message.pop("reasoning", None)
             if reasoning is not None:
-                message["reasoning"] = reasoning
+                message[reasoning_field] = reasoning
         result.append(message)
     return result
 
@@ -756,8 +770,9 @@ def round_vectors(model, reference, case):
     if expected.get("tool_calls"):
         expect["tool_calls"] = expected["tool_calls"]
     expect["finish_reason"] = "tool_calls" if expected.get("tool_calls") else "stop"
-    vector_request = {"messages": canonical_messages(request["messages"][:-1], transport), **fields}
-    changes = capture_normalization(vector_request)
+    vector_request = {"messages": canonical_messages(request["messages"][:-1], transport, model.reasoning_field),
+                      **fields}
+    changes = capture_normalization(vector_request, model.reasoning_field)
     if changes:
         raise CorpusError(f"case {case['id']}: capture normalization would change its round-trip request: "
                           + "; ".join(changes))

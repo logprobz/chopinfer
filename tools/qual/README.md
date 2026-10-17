@@ -1021,22 +1021,30 @@ records) and their total; truncation still counts in
 capability.
 
 Every receipt `common.receipt` or a `chopinfer eval` capture writes records
-`host_load`: the host's load averages, cumulative CPU ticks and cumulative
-pressure stall microseconds (the "some" totals of `/proc/pressure/cpu` and
-`/proc/pressure/io`) over the check's timed work, from when the check
-started (the soak: when its timed load started, then with each memory
-sample) to when it wrote the receipt, and its verdict under
-`common.HOST_LOAD_RULE`. The host is idle when, over every interval between
+`host_load`: the samples that bound the check's timed work (wall time,
+uptime, load averages, cumulative CPU ticks and cumulative pressure stall
+microseconds, the "some" totals of `/proc/pressure/cpu` and
+`/proc/pressure/io`) and their verdict under `common.HOST_LOAD_RULE`. A
+`chopinfer eval` capture samples at its start and when it writes the
+receipt. A `common.receipt` caller passes `load_samples` taken around its
+timed work, the first at its start and the last at its end: `soak.py` (its
+start, each memory sample, and after the last request in flight),
+`bench.py` (the decode passes and the timed prefill), `prefix_cache.py
+record` and `spec_verify.py record` (their requests). A receipt without
+them has `timing` `informational` ("no host load samples bound the timed
+work"), since a window from the check's start would average warm-up into
+the timed work. The host is idle when, over every interval between
 samples, the CPU idle fraction (idle plus iowait; niced work is busy) is at
-least 0.9 and the shares of wall time in which some task stalled waiting
-for a CPU and for I/O are each at most 0.1. The 1-minute load average is
-recorded but not judged: it carries minutes of work from before the window,
-such as a server's startup reads. Otherwise, or with fewer than two samples
-or without pressure stall information, `host_load.timing` is
-`informational`: the receipt's throughput and latency figures are not
-performance evidence. The label never changes whether a check passes.
-`common.py` gives the rule's reasoning and the 2026-10-17 measurement it
-rests on.
+least 0.9 and the shares of elapsed time (uptime, not wall time) in which
+some task stalled waiting for a CPU and for I/O are each at most 0.1. The
+1-minute load average is recorded but not judged: it carries minutes of
+work from before the window, such as a server's startup reads. Otherwise,
+or with fewer than two samples, an incomplete sample, an interval whose
+counters or uptime do not advance, or without uptime or pressure stall
+information, `host_load.timing` is `informational`: the receipt's
+throughput and latency figures are not performance evidence. The label
+never changes whether a check passes. `common.py` gives the rule's
+reasoning and the 2026-10-17 measurement it rests on.
 `step_overlap_ab.py compare`, `agentic_compare.py`, `prefix_cache.py
 compare` (its follow-up TTFT) and `spec_verify.py compare` (its
 `ms_per_token`) label a comparison the same way, as evidence only when

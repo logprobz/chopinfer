@@ -11,7 +11,7 @@ import hashlib
 import statistics
 import time
 
-from common import Client, arguments, receipt
+from common import Client, arguments, host_load_sample, receipt
 from concurrency import add_arguments, validate
 from spec_metrics import difference, metrics_text, snapshot
 
@@ -179,6 +179,8 @@ def main():
         except Exception as error:
             return {"index": index, "error": str(error)}
 
+    # The timed work: the decode passes and the timed prefill request.
+    load = [host_load_sample()]
     for concurrency in args.concurrencies:
         streams = []
         try:
@@ -206,6 +208,7 @@ def main():
             tokens_per_unit = probe["usage"]["prompt_tokens"] / 64
             repeats = max(1, round(args.prefill_tokens / tokens_per_unit))
             prompt = args.prefill_prefix + unit * repeats
+        load.append(host_load_sample())
         started = time.monotonic()
         # A single generated special token can have no visible text. Request
         # logprobs, as decode does, so its SSE arrival still identifies TTFT.
@@ -226,6 +229,7 @@ def main():
     except Exception as error:
         prefill = None
         errors.append({"prefill": str(error)})
+    load.append(host_load_sample())
     try:
         metrics_after = settled_metrics(client)
         if metrics_before is None:
@@ -248,7 +252,7 @@ def main():
                              "output_tokens": output_tokens, "sampling": args.sampling,
                              "prompts": args.prompts, "cohort_only": args.cohort_only,
                              "ignore_eos": True, "min_tokens": output_tokens,
-                             "speculation": speculation}, args.mechanics_only)
+                             "speculation": speculation}, args.mechanics_only, load_samples=load)
     raise SystemExit(0 if passed else 1)
 
 

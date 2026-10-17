@@ -41,13 +41,13 @@ class ComparisonTests(unittest.TestCase):
 
     def test_ms_per_token_carries_both_records_host_load_label(self):
         stall = {"cpu": 0, "io": 0}
-        idle = common.host_load([{"at": 0, "load_average": [1, 1, 1], "cpu_idle_ticks": 0, "cpu_ticks": 0,
+        idle = common.host_load([{"at": 0, "uptime_seconds": 0, "load_average": [1, 1, 1], "cpu_idle_ticks": 0, "cpu_ticks": 0,
                                   "pressure_some_us": stall},
-                                 {"at": 1, "load_average": [1, 1, 1], "cpu_idle_ticks": 990, "cpu_ticks": 1000,
+                                 {"at": 1, "uptime_seconds": 1, "load_average": [1, 1, 1], "cpu_idle_ticks": 990, "cpu_ticks": 1000,
                                   "pressure_some_us": stall}], cpus=48)
-        busy = common.host_load([{"at": 0, "load_average": [70, 70, 70], "cpu_idle_ticks": 0, "cpu_ticks": 0,
+        busy = common.host_load([{"at": 0, "uptime_seconds": 0, "load_average": [70, 70, 70], "cpu_idle_ticks": 0, "cpu_ticks": 0,
                                   "pressure_some_us": stall},
-                                 {"at": 1, "load_average": [70, 70, 70], "cpu_idle_ticks": 80, "cpu_ticks": 1000,
+                                 {"at": 1, "uptime_seconds": 1, "load_average": [70, 70, 70], "cpu_idle_ticks": 80, "cpu_ticks": 1000,
                                   "pressure_some_us": stall}], cpus=48)
         spec, ar = copy_records([(["a", "b"], ["a", "b"])])
         for record in (spec, ar):
@@ -245,6 +245,33 @@ class IdentityTests(unittest.TestCase):
                 ((spec, changed(ar, "1" * 32, "server", "checkpoint", "startup_nonce")), "one server process")):
             with self.subTest(message), self.assertRaisesRegex(ValueError, message):
                 spec_verify.compare_records(spec_record, ar_record)
+
+    def test_record_samples_host_load_around_its_requests(self):
+        events = []
+
+        def request(client, model, prompt, output_tokens):
+            events.append("request")
+            return {"tokens": ["x"], "logprobs": [-0.1], "top": [{}], "finish_reason": "length", "seconds": 0.1}
+
+        def sample():
+            events.append("sample")
+            return {"sample": len(events)}
+
+        args = SimpleNamespace(url="http://127.0.0.1:1", timeout=1, model=None, server_log=None, include_chat=False,
+                               arm="chopinfer-spec", run_id="x", output_tokens=4)
+        with mock.patch.object(spec_verify, "Client") as client, \
+                mock.patch.object(spec_verify, "bind_checkpoint"), \
+                mock.patch.object(spec_verify, "serving_profile", return_value={}), \
+                mock.patch.object(spec_verify, "prompt_sets", return_value={"a": ["p", "q"], "b": ["r"]}), \
+                mock.patch.object(spec_verify, "metrics_text", return_value=""), \
+                mock.patch.object(spec_verify, "completion", request), \
+                mock.patch.object(spec_verify, "confirm_live"), \
+                mock.patch.object(spec_verify, "host_load_sample", sample), \
+                mock.patch.object(spec_verify, "receipt") as receipt:
+            client.return_value.identity.return_value = {"model": "fake"}
+            spec_verify.record(args)
+        self.assertEqual(events, ["sample", "request", "request", "request", "sample"])
+        self.assertEqual(receipt.call_args.kwargs["load_samples"], [{"sample": 1}, {"sample": 5}])
 
     def test_record_refuses_a_server_not_bound_to_the_pin(self):
         import declaration

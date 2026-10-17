@@ -63,7 +63,6 @@
   "common": {
    "CHECKPOINT_RECORDS": "number",
    "HOST_LOAD_RULE": "str",
-   "HOST_LOAD_START": "number",
    "IDLE_CPU_FRACTION": "number",
    "IDLE_PRESSURE_SHARE": "number",
    "LOCAL_ENV": "number",
@@ -73,7 +72,8 @@
    "REASONING_TOKENS": "int",
    "RECEIPTS": "null",
    "ROOT": "number",
-   "STARTUP_NONCE": "number"
+   "STARTUP_NONCE": "number",
+   "UNBOUNDED_TIMING": "str"
   },
   "concurrency": {},
   "declaration": {

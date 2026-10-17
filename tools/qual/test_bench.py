@@ -143,14 +143,17 @@ class ConfigurableCohortTests(unittest.TestCase):
                      patch.object(bench, 'settled_metrics', side_effect=ValueError('no metrics')), \
                      patch.object(bench, 'token_events', return_value=(
                          [(10**12, 'x')], {'prompt_tokens': 10, 'completion_tokens': 8}, 'length')), \
-                     patch.object(bench, 'receipt', side_effect=lambda _, server, result, mechanics:
-                                  receipts.append(result)):
+                     patch.object(bench, 'receipt', side_effect=lambda _, server, result, mechanics,
+                                  load_samples: receipts.append({**result, 'load_samples': load_samples})):
                     with self.assertRaises(SystemExit) as exit:
                         bench.main()
                 self.assertEqual(receipts[0]['errors'], [])
                 self.assertEqual(exit.exception.code, 0)
                 self.assertTrue(receipts[0]['passed'])
                 self.assertEqual(len(receipts[0]['decode']), len(concurrencies))
+                # Samples bound the decode passes and the timed prefill.
+                self.assertEqual(len(receipts[0]['load_samples']), 3)
+                self.assertTrue(all(row and row['pressure_some_us'] for row in receipts[0]['load_samples']))
 
 
 class QueuedCohortTests(unittest.TestCase):

@@ -36,7 +36,7 @@ import statistics
 import sys
 
 from common import (input_bytes, input_path, Client, arguments, bind_checkpoint, compared_timing, confirm_live,
-                    receipt, serving_profile, startup_nonce)
+                    host_load_sample, receipt, serving_profile, startup_nonce)
 from spec_metrics import difference, metrics_text, snapshot
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -90,6 +90,7 @@ def record(args):
     except ValueError as error:
         raise SystemExit(f"refused: {error}")
     sets = {}
+    load = [host_load_sample()]
     for name, prompts in prompt_sets(args.include_chat).items():
         text = metrics_text(client)
         before, engine_before = snapshot(text, "chopinfer", server["model"]), engine_counters(text)
@@ -108,10 +109,12 @@ def record(args):
                       # Prefill steps are included, so this slightly
                       # understates decode tokens per step.
                       "tokens_per_engine_step": generated / steps if steps else None}
+    load.append(host_load_sample())
     confirm_live(client, server)
     receipt(f"spec-verify-{args.arm}", server, {
         "passed": True, "arm": args.arm, "run_id": args.run_id, "serving": serving,
-        "output_tokens": args.output_tokens, "sampling": {"temperature": 0, "top_p": 1, "logprobs": 5}, "sets": sets}, False)
+        "output_tokens": args.output_tokens, "sampling": {"temperature": 0, "top_p": 1, "logprobs": 5}, "sets": sets}, False,
+        load_samples=load)
 
 
 def top_one(top):

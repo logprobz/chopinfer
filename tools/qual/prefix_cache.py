@@ -30,7 +30,7 @@ import statistics
 import sys
 import time
 
-from common import answer_kwargs, Client, arguments, compared_timing, receipt
+from common import answer_kwargs, Client, arguments, compared_timing, host_load_sample, receipt
 
 WORDS = ("amber", "basalt", "cedar", "delta", "ember", "fjord", "garnet", "harbor",
          "indigo", "juniper", "kelp", "lagoon", "meadow", "nimbus", "onyx", "prairie")
@@ -104,6 +104,7 @@ def record(args):
     server = client.identity(args.model)
     lengths = [64] if args.mechanics_only else [int(value) for value in args.lengths.split(",")]
     rows, answers = [], {}
+    load = [host_load_sample()]
     for scenario, length, name, messages in scenarios(lengths, args.run_id, args.answer_tokens):
         if callable(messages):
             messages = messages(answers)
@@ -112,10 +113,11 @@ def record(args):
         rows.append({"scenario": scenario, "length": length, "name": name,
                      "messages_sha256": hashlib.sha256(json.dumps(messages).encode()).hexdigest(),
                      **row})
+    load.append(host_load_sample())
     receipt(f"prefix-cache-{args.arm}", server, {
         "passed": all(row["tokens"] for row in rows), "arm": args.arm, "run_id": args.run_id,
         "lengths": lengths, "answer_tokens": args.answer_tokens, "requests": rows},
-        args.mechanics_only)
+        args.mechanics_only, load_samples=load)
 
 
 def pair_stats(left, right):

@@ -227,9 +227,12 @@ class StructuredKeepTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 soak.main()
         samples = receipt.call_args.kwargs["load_samples"]
+        # The start, each sample during the soak, and the end once the last
+        # request in flight finished, so even a soak whose start overruns
+        # its deadline has its timed work bounded.
         self.assertGreaterEqual(len(samples), 2)
-        self.assertTrue(all(set(row) == {"at", "load_average", "cpu_idle_ticks", "cpu_ticks", "cpus", "pressure_some_us"}
-                            for row in samples))
+        self.assertTrue(all(set(row) == {"at", "uptime_seconds", "load_average", "cpu_idle_ticks", "cpu_ticks",
+                                         "cpus", "pressure_some_us"} for row in samples))
 
     def test_keeping_outputs_leaves_the_verdict_alone(self):
         report = self.soak()

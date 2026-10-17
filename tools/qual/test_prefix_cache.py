@@ -99,13 +99,13 @@ class PrefixCacheTests(unittest.TestCase):
         idle host; the label never changes `passed` or the TTFT rows."""
         import common
         stall = {"cpu": 0, "io": 0}
-        idle = common.host_load([{"at": 0, "load_average": [1, 1, 1], "cpu_idle_ticks": 0, "cpu_ticks": 0,
+        idle = common.host_load([{"at": 0, "uptime_seconds": 0, "load_average": [1, 1, 1], "cpu_idle_ticks": 0, "cpu_ticks": 0,
                                   "pressure_some_us": stall},
-                                 {"at": 1, "load_average": [1, 1, 1], "cpu_idle_ticks": 990, "cpu_ticks": 1000,
+                                 {"at": 1, "uptime_seconds": 1, "load_average": [1, 1, 1], "cpu_idle_ticks": 990, "cpu_ticks": 1000,
                                   "pressure_some_us": stall}], cpus=48)
-        busy = common.host_load([{"at": 0, "load_average": [70, 70, 70], "cpu_idle_ticks": 0, "cpu_ticks": 0,
+        busy = common.host_load([{"at": 0, "uptime_seconds": 0, "load_average": [70, 70, 70], "cpu_idle_ticks": 0, "cpu_ticks": 0,
                                   "pressure_some_us": stall},
-                                 {"at": 1, "load_average": [70, 70, 70], "cpu_idle_ticks": 80, "cpu_ticks": 1000,
+                                 {"at": 1, "uptime_seconds": 1, "load_average": [70, 70, 70], "cpu_idle_ticks": 80, "cpu_ticks": 1000,
                                   "pressure_some_us": stall}], cpus=48)
         baseline = record()
         candidate = copy.deepcopy(baseline)
@@ -135,6 +135,29 @@ class PrefixCacheTests(unittest.TestCase):
             self.assertTrue(report["passed"])
             self.assertEqual(report["follow_up_ttft"], reports["idle"]["follow_up_ttft"])
             self.assertEqual(len(report["follow_up_ttft"]), 3)
+
+    def test_record_samples_host_load_around_its_requests(self):
+        import prefix_cache
+        from types import SimpleNamespace
+        events = []
+
+        def request(client, model, messages, answer_tokens):
+            events.append("request")
+            return {"tokens": ["a"], "logprobs": [-0.1], "content": "a", "ttft_seconds": 0.1,
+                    "prompt_tokens": 64, "cached_tokens": 0}
+
+        def sample():
+            events.append("sample")
+            return {"sample": len(events)}
+
+        args = SimpleNamespace(url="http://127.0.0.1:1", timeout=1, model=None, mechanics_only=True, lengths="64",
+                               run_id="x", answer_tokens=8, arm="candidate")
+        with patch.object(prefix_cache, "Client") as client, patch.object(prefix_cache, "stream_chat", request), \
+                patch.object(prefix_cache, "host_load_sample", sample), patch.object(prefix_cache, "receipt") as receipt:
+            client.return_value.identity.return_value = {"model": "fake"}
+            prefix_cache.record(args)
+        self.assertEqual((events[0], events[-1], events.count("sample")), ("sample", "sample", 2))
+        self.assertEqual(receipt.call_args.kwargs["load_samples"], [{"sample": 1}, {"sample": len(events)}])
 
     def test_empty_common_prefix_has_no_numeric_evidence(self):
         stats = pair_stats([row(["a"], [-0.5])], [row(["b"], [-0.5])])

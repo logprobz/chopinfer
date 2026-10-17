@@ -10,13 +10,14 @@ from unittest.mock import patch
 import common
 
 SOAKS = json.loads((common.ROOT / "fixtures/host-load/soak-samples.json").read_text())
+CASES = json.loads((common.ROOT / "fixtures/host-load/judge-cases.json").read_text())["cases"]
 
 
 def sample(idle, total, at, cpu=0, io=0, load=1.0):
-    """A host load sample `at` seconds with `idle` of `total` CPU ticks and
-    `cpu` and `io` cumulative pressure stall microseconds."""
-    return {"at": at, "load_average": [load, load, load], "cpu_idle_ticks": idle, "cpu_ticks": total,
-            "pressure_some_us": {"cpu": cpu, "io": io}}
+    """A host load sample at uptime `at` seconds with `idle` of `total` CPU
+    ticks and `cpu` and `io` cumulative pressure stall microseconds."""
+    return {"at": at, "uptime_seconds": at, "load_average": [load, load, load], "cpu_idle_ticks": idle,
+            "cpu_ticks": total, "pressure_some_us": {"cpu": cpu, "io": io}}
 
 
 class HostLoadRuleTests(unittest.TestCase):
@@ -26,13 +27,15 @@ class HostLoadRuleTests(unittest.TestCase):
                  "/proc/pressure/cpu": "some avg10=0.00 avg60=0.10 avg300=0.20 total=4567\n"
                                        "full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n",
                  "/proc/pressure/io": "some avg10=1.00 avg60=0.50 avg300=0.20 total=89012\n"
-                                      "full avg10=1.00 avg60=0.50 avg300=0.20 total=88000\n"}
+                                      "full avg10=1.00 avg60=0.50 avg300=0.20 total=88000\n",
+                 "/proc/uptime": "5832.17 270000.00\n"}
         with patch.object(common.Path, "read_text", lambda path: files[str(path)]):
             row = common.host_load_sample()
         self.assertEqual(row["load_average"], [1.25, 0.90, 0.50])
         self.assertEqual((row["cpu_idle_ticks"], row["cpu_ticks"]), (850, 1000))
         self.assertEqual(row["cpus"], 1)
         self.assertEqual(row["pressure_some_us"], {"cpu": 4567, "io": 89012})
+        self.assertEqual(row["uptime_seconds"], 5832.17)
         self.assertEqual(common.host_load([row, row])["cpus"], 1)
 
     def test_missing_proc_gives_no_sample(self):
@@ -51,8 +54,9 @@ class HostLoadRuleTests(unittest.TestCase):
         with patch.object(common.Path, "read_text", read):
             row = common.host_load_sample()
         self.assertIsNone(row["pressure_some_us"])
+        self.assertIsNone(row["uptime_seconds"])
         verdict = common.host_load([row, {**row, "at": row["at"] + 1, "cpu_ticks": 2000, "cpu_idle_ticks": 1850}])
-        self.assertEqual(verdict["reasons"], ["no pressure stall information"])
+        self.assertEqual(verdict["reasons"], ["no uptime or pressure stall information"])
 
     def test_an_idle_host_keeps_timing_as_evidence(self):
         # The 2026-10-17 spec soak's steady state: 97% idle on 48 CPUs and
@@ -100,7 +104,8 @@ class HostLoadRuleTests(unittest.TestCase):
     def test_unknown_load_is_not_idle(self):
         for rows in ([], [sample(0, 0, 0)], [None, sample(990, 1000, 1)], [sample(5, 10, 0), sample(5, 10, 1)],
                      [sample(0, 0, 1), sample(990, 1000, 1)],
-                     [sample(0, 0, 0), {**sample(990, 1000, 1), "pressure_some_us": None}]):
+                     [sample(0, 0, 0), {**sample(990, 1000, 1), "pressure_some_us": None}],
+                     [sample(0, 0, 0), {**sample(990, 1000, 1), "uptime_seconds": None}]):
             with self.subTest(rows=rows):
                 verdict = common.host_load(rows, cpus=48)
                 self.assertEqual((verdict["idle"], verdict["timing"]), (False, "informational"))
@@ -111,6 +116,19 @@ class HostLoadRuleTests(unittest.TestCase):
         self.assertIn(f"pub const RULE: &str = {json.dumps(common.HOST_LOAD_RULE)};", source)
         self.assertIn(f"pub const IDLE_CPU_FRACTION: f64 = {common.IDLE_CPU_FRACTION};", source)
         self.assertIn(f"pub const IDLE_PRESSURE_SHARE: f64 = {common.IDLE_PRESSURE_SHARE};", source)
+
+
+class SharedCaseTests(unittest.TestCase):
+    """fixtures/host-load/judge-cases.json: clock steps, invalid intervals,
+    counters going back, malformed and extreme inputs. host_load.rs judges
+    the same cases to the same reasons."""
+
+    def test_every_case_gives_its_reasons(self):
+        for case in CASES:
+            with self.subTest(case["name"]):
+                verdict = common.host_load(case["samples"])
+                self.assertEqual(verdict["reasons"], case["reasons"])
+                self.assertEqual(verdict["timing"], "informational" if case["reasons"] else "evidence")
 
 
 class RecordedSoakTests(unittest.TestCase):
@@ -128,47 +146,56 @@ class RecordedSoakTests(unittest.TestCase):
         self.assertLess(verdict["max_cpu_pressure_share"], 0.002)
 
     def test_older_soaks_lose_the_load_average_reason_only(self):
-        # They predate pressure stall sampling, so an I/O neighbour cannot
-        # be ruled out; the Qwen soak's CPU interval at 80% idle stays.
+        # They predate uptime and pressure stall sampling, so an I/O
+        # neighbour cannot be ruled out; the Qwen soak's CPU interval at 80%
+        # idle stays.
         mimo = common.host_load(SOAKS["mimo26-2026-10-16"])
-        self.assertEqual(mimo["reasons"], ["no pressure stall information"])
+        self.assertEqual(mimo["reasons"], ["no uptime or pressure stall information"])
         self.assertEqual(mimo["max_load_average_1m"], 9.43)
         qwen = common.host_load(SOAKS["qwen38-2026-10-16"])
-        self.assertEqual(qwen["reasons"], ["CPU idle fell to 0.804", "no pressure stall information"])
+        self.assertEqual(qwen["reasons"], ["CPU idle fell to 0.804", "no uptime or pressure stall information"])
         self.assertEqual(qwen["max_load_average_1m"], 11.81)
 
 
 class ReceiptHostLoadTests(unittest.TestCase):
-    def write(self, result, samples=None, end=None):
-        with patch.object(common, "host_load_sample", return_value=end):
+    def write(self, result, samples=None):
+        with patch.object(common, "host_load_sample", side_effect=AssertionError("the receipt took a sample")):
             return json.loads(Path(common.receipt("probe", {"model": "fake"}, result,
                                                   load_samples=samples)).read_text())
 
-    def test_every_receipt_records_host_load_from_start_to_end(self):
-        with patch.object(common, "HOST_LOAD_START", sample(0, 0, 0)):
-            value = self.write({"passed": True, "latency_mean_seconds": 1.0}, end=sample(950, 1000, 10))
+    def test_the_samples_that_bound_the_timed_work_are_judged(self):
+        value = self.write({"passed": True, "latency_mean_seconds": 1.0},
+                           samples=[sample(0, 0, 0), sample(950, 1000, 10)])
         load = value["host_load"]
         self.assertEqual(load["rule"], common.HOST_LOAD_RULE)
         self.assertEqual(load["scope"], "check_host")
-        self.assertEqual(len(load["samples"]), 2)
+        self.assertEqual([row["at"] for row in load["samples"]], [0, 10])
         self.assertEqual((load["idle"], load["timing"]), (True, "evidence"))
+        value = self.write({"passed": True}, samples=[sample(0, 0, 0), sample(100, 1000, 10)])
+        self.assertEqual(value["host_load"]["reasons"], ["CPU idle fell to 0.100"])
 
-    def test_samples_taken_during_the_check_start_its_window(self):
-        # A busy start before the timed work is outside the window.
-        with patch.object(common, "HOST_LOAD_START", sample(0, 0, 0, io=0)):
-            value = self.write({"passed": True}, samples=[sample(100, 1000, 10, io=9000000),
-                                                          sample(1090, 2000, 20, io=9000000)],
-                               end=sample(2080, 3000, 30, io=9000000))
-        self.assertEqual([row["at"] for row in value["host_load"]["samples"]], [10, 20, 30])
-        self.assertTrue(value["host_load"]["idle"])
-        with patch.object(common, "HOST_LOAD_START", sample(0, 0, 0)):
-            value = self.write({"passed": True}, samples=[sample(100, 1000, 10)], end=sample(1090, 2000, 20, io=3000000))
-        self.assertFalse(value["host_load"]["idle"])
+    def test_timing_without_bounding_samples_is_informational(self):
+        # A warm-up before the timed work would dilute its contention, so no
+        # window from the check's start stands in for the missing samples.
+        for samples in (None, []):
+            with self.subTest(samples=samples):
+                value = self.write({"passed": True, "latency_mean_seconds": 1.0}, samples=samples)
+                self.assertEqual((value["host_load"]["timing"], value["host_load"]["reasons"]),
+                                 ("informational", [common.UNBOUNDED_TIMING]))
+                self.assertEqual(value["host_load"]["samples"], [])
+
+    def test_a_warm_up_outside_the_samples_does_not_dilute_them(self):
+        # The review's probe: 120 s of quiet warm-up, then 30 s at 72.9% idle.
+        warm, start, end = sample(0, 0, 0), sample(11760, 12000, 120), sample(15259, 16800, 150)
+        self.assertTrue(common.host_load([warm, end])["idle"])
+        value = self.write({"passed": True}, samples=[start, end])
+        self.assertEqual(value["host_load"]["reasons"], ["CPU idle fell to 0.729"])
 
     def test_a_busy_host_leaves_the_verdict_alone(self):
         for passed in (True, False):
-            with self.subTest(passed=passed), patch.object(common, "HOST_LOAD_START", sample(0, 0, 0, load=70)):
-                value = self.write({"passed": passed, "errors": []}, end=sample(80, 1000, 10, load=70))
+            with self.subTest(passed=passed):
+                value = self.write({"passed": passed, "errors": []},
+                                   samples=[sample(0, 0, 0, load=70), sample(80, 1000, 10, load=70)])
             self.assertEqual(value["host_load"]["timing"], "informational")
             self.assertIs(value["passed"], passed)
             self.assertEqual(value["errors"], [])

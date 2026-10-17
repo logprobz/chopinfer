@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
@@ -609,7 +610,7 @@ def confirm_live(client, server):
 # changes a verdict. The host is idle for timing evidence when, over every
 # interval between samples, the CPU idle fraction (idle plus iowait over all
 # CPU time, so niced work counts as busy) is at least IDLE_CPU_FRACTION and
-# the shares of wall time in which some task stalled waiting for a CPU and
+# the shares of elapsed time in which some task stalled waiting for a CPU and
 # for I/O (the kernel's pressure stall information: the "some" totals of
 # /proc/pressure/cpu and /proc/pressure/io) are each at most
 # IDLE_PRESSURE_SHARE. Otherwise, or without two samples or pressure stall
@@ -635,6 +636,19 @@ def confirm_live(client, server):
 # milliseconds. A stall in a tenth of the window is therefore other work
 # keeping CPUs or storage busy. iowait counts as idle CPU because the I/O
 # pressure judges I/O.
+#
+# Every interval must be valid: the CPU tick totals advance with the idle
+# ticks between none and all of them, the elapsed time advances, and the
+# pressure stall totals do not go back. An invalid interval makes the timing
+# informational; it is never skipped, since it could hide the busy one.
+# Elapsed time is the host's uptime (/proc/uptime: monotonic, 10 ms steps),
+# not wall time, which can step. The counters are integers below 2**64,
+# differenced before any conversion to a float, as host_load.rs does.
+#
+# A receipt is judged over the samples its check takes around its timed
+# work, the first at its start and the last at its end. Without them the
+# timing is informational: a window from the check's start would average
+# warm-up and setup into it and dilute contention during the timed work.
 IDLE_CPU_FRACTION = 0.9
 IDLE_PRESSURE_SHARE = 0.1
 # crates/runtime-eval/src/capture/host_load.rs applies the same rule to the
@@ -643,6 +657,7 @@ HOST_LOAD_RULE = ("idle when, over every interval between samples, the CPU idle 
                   "the CPU and I/O pressure stall shares are at most 0.1; otherwise throughput and latency are "
                   "informational")
 PRESSURE_KINDS = (("cpu", "CPU"), ("io", "I/O"))
+UNBOUNDED_TIMING = "no host load samples bound the timed work"
 
 
 def pressure_some_us():
@@ -652,19 +667,29 @@ def pressure_some_us():
     try:
         for kind, _ in PRESSURE_KINDS:
             fields = Path(f"/proc/pressure/{kind}").read_text().splitlines()[0].split()
-            if fields[0] != "some":
+            total = next((field[6:] for field in fields[1:] if field.startswith("total=")), "")
+            if fields[0] != "some" or not re.fullmatch(r"[0-9]+", total):
                 return None
-            value[kind] = int(dict(field.split("=", 1) for field in fields[1:])["total"])
-    except (OSError, ValueError, IndexError, KeyError):
+            value[kind] = int(total)
+    except (OSError, IndexError):
         return None
     return value
 
 
+def uptime_seconds():
+    """The host's uptime in seconds (/proc/uptime), or None without it."""
+    try:
+        field = Path("/proc/uptime").read_text().split()[0]
+        return float(field) if re.fullmatch(r"[0-9.]+", field) else None
+    except (OSError, ValueError, IndexError):
+        return None
+
+
 def host_load_sample():
-    """The 1-minute, 5-minute and 15-minute load averages, the cumulative
-    idle and total CPU ticks, the online CPUs and the cumulative pressure
-    stall microseconds (`pressure_some_us`, None without them) of this host,
-    or None without /proc."""
+    """The wall time, uptime, 1-minute, 5-minute and 15-minute load
+    averages, the cumulative idle and total CPU ticks, the online CPUs and
+    the cumulative pressure stall microseconds (`pressure_some_us`) of this
+    host, the uptime and stalls None without them, or None without /proc."""
     try:
         load = [float(field) for field in Path("/proc/loadavg").read_text().split()[:3]]
         lines = Path("/proc/stat").read_text().splitlines()
@@ -674,53 +699,87 @@ def host_load_sample():
         return None
     if len(load) != 3 or len(ticks) != 8:
         return None
-    return {"at": time.time(), "load_average": load, "cpu_idle_ticks": ticks[3] + ticks[4],
-            "cpu_ticks": sum(ticks), "cpus": sum(bool(re.match(r"cpu\d", line)) for line in lines),
-            "pressure_some_us": pressure_some_us()}
+    return {"at": time.time(), "uptime_seconds": uptime_seconds(), "load_average": load,
+            "cpu_idle_ticks": ticks[3] + ticks[4], "cpu_ticks": sum(ticks),
+            "cpus": sum(bool(re.match(r"cpu\d", line)) for line in lines), "pressure_some_us": pressure_some_us()}
 
 
-# The check's start: the process imports this module before its work.
-HOST_LOAD_START = host_load_sample()
+def counter(value):
+    """`value` if it is a cumulative counter (an integer from 0 below
+    2**64), else None."""
+    return value if type(value) is int and 0 <= value < 2**64 else None
+
+
+def seconds(value):
+    """`value` as a float if it is a finite JSON number, else None."""
+    return float(value) if type(value) in (int, float) and math.isfinite(value) else None
+
+
+def judged_sample(row):
+    """Whether `row` has what the CPU part of the rule reads."""
+    return (isinstance(row, dict) and isinstance(row.get("load_average"), list) and bool(row["load_average"])
+            and seconds(row["load_average"][0]) is not None
+            and counter(row.get("cpu_idle_ticks")) is not None and counter(row.get("cpu_ticks")) is not None)
+
+
+def timed_sample(row):
+    """Whether `row` also has the uptime and stalls the pressure part reads."""
+    stalls = row.get("pressure_some_us")
+    return (seconds(row.get("uptime_seconds")) is not None and isinstance(stalls, dict)
+            and all(counter(stalls.get(kind)) is not None for kind, _ in PRESSURE_KINDS))
 
 
 def host_load(samples, cpus=None):
     """`samples` (oldest first) judged by HOST_LOAD_RULE, recording `cpus`
     online CPUs (default: the latest sample's count)."""
-    cpus = cpus or next((row["cpus"] for row in reversed(samples) if row and row.get("cpus")), None) or os.cpu_count()
+    cpus = cpus or next((row["cpus"] for row in reversed(samples)
+                         if isinstance(row, dict) and row.get("cpus")), None) or os.cpu_count()
     result = {"rule": HOST_LOAD_RULE, "scope": "check_host", "cpus": cpus, "samples": samples,
               "max_load_average_1m": None, "cpu_idle_fraction": None, "min_cpu_idle_fraction": None,
               "max_cpu_pressure_share": None, "max_io_pressure_share": None}
     reasons = []
-    if len(samples) < 2 or any(row is None for row in samples):
+    pairs = list(zip(samples, samples[1:]))
+    if len(samples) < 2:
         reasons.append("fewer than two host load samples")
+    elif not all(map(judged_sample, samples)):
+        reasons.append("a host load sample is missing or incomplete")
     else:
         # Recorded, not judged (see above).
-        result["max_load_average_1m"] = max(row["load_average"][0] for row in samples)
-        intervals = [(a, b) for a, b in zip(samples, samples[1:])
-                     if b["cpu_ticks"] > a["cpu_ticks"] and b["at"] > a["at"]]
-        if not intervals:
-            reasons.append("no CPU time between host load samples")
+        result["max_load_average_1m"] = max(seconds(row["load_average"][0]) for row in samples)
+        ticks = [(b["cpu_idle_ticks"] - a["cpu_idle_ticks"], b["cpu_ticks"] - a["cpu_ticks"]) for a, b in pairs]
+        if not all(total > 0 and 0 <= idle <= total for idle, total in ticks):
+            reasons.append("CPU ticks do not advance between host load samples")
         else:
             first, last = samples[0], samples[-1]
-            result["cpu_idle_fraction"] = ((last["cpu_idle_ticks"] - first["cpu_idle_ticks"])
-                                           / (last["cpu_ticks"] - first["cpu_ticks"]))
-            result["min_cpu_idle_fraction"] = low = min(
-                (b["cpu_idle_ticks"] - a["cpu_idle_ticks"]) / (b["cpu_ticks"] - a["cpu_ticks"]) for a, b in intervals)
+            result["cpu_idle_fraction"] = (float(last["cpu_idle_ticks"] - first["cpu_idle_ticks"])
+                                           / float(last["cpu_ticks"] - first["cpu_ticks"]))
+            result["min_cpu_idle_fraction"] = low = min(float(idle) / float(total) for idle, total in ticks)
             if low < IDLE_CPU_FRACTION:
                 reasons.append(f"CPU idle fell to {low:.3f}")
-            if not all(isinstance(row.get("pressure_some_us"), dict)
-                       and all(type(row["pressure_some_us"].get(kind)) in (int, float) for kind, _ in PRESSURE_KINDS)
-                       for row in samples):
-                reasons.append("no pressure stall information")
+            if not all(map(timed_sample, samples)):
+                reasons.append("no uptime or pressure stall information")
             else:
-                for kind, name in PRESSURE_KINDS:
-                    result[f"max_{kind}_pressure_share"] = high = max(
-                        (b["pressure_some_us"][kind] - a["pressure_some_us"][kind]) / 1e6 / (b["at"] - a["at"])
-                        for a, b in intervals)
-                    if high > IDLE_PRESSURE_SHARE:
-                        reasons.append(f"{name} pressure stall share reached {high:.3f}")
+                elapsed = [seconds(b["uptime_seconds"]) - seconds(a["uptime_seconds"]) for a, b in pairs]
+                stalls = {kind: [b["pressure_some_us"][kind] - a["pressure_some_us"][kind] for a, b in pairs]
+                          for kind, _ in PRESSURE_KINDS}
+                if not (all(span > 0 for span in elapsed)
+                        and all(stall >= 0 for values in stalls.values() for stall in values)):
+                    reasons.append("uptime or pressure stalls do not advance between host load samples")
+                else:
+                    for kind, name in PRESSURE_KINDS:
+                        result[f"max_{kind}_pressure_share"] = high = max(
+                            float(stall) / 1e6 / span for stall, span in zip(stalls[kind], elapsed))
+                        if high > IDLE_PRESSURE_SHARE:
+                            reasons.append(f"{name} pressure stall share reached {high:.3f}")
     return {**result, "idle": not reasons, "reasons": reasons,
             "timing": "informational" if reasons else "evidence"}
+
+
+def unbounded_host_load():
+    """The host load of a receipt whose check took no samples around its
+    timed work: informational, since what it would judge could include
+    warm-up or setup that dilutes contention in the timed work."""
+    return {**host_load([]), "reasons": [UNBOUNDED_TIMING]}
 
 
 def compared_timing(loads):
@@ -733,10 +792,11 @@ def compared_timing(loads):
 
 
 def receipt(check, identity, result, mechanics_only=False, load_samples=None):
-    """Writes a receipt with the host load over the check's timed work to
-    now: from the first of the `load_samples` taken during it, or without
-    them from the check's start."""
-    load = host_load([*(load_samples or [HOST_LOAD_START]), host_load_sample()])
+    """Writes a receipt with the host load of `load_samples`, the host load
+    samples that bound the check's timed work (oldest first, the first at
+    its start and the last at its end). Without them the receipt's timing is
+    informational (`unbounded_host_load`)."""
+    load = host_load(load_samples) if load_samples else unbounded_host_load()
     directory = receipt_root()
     directory.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")

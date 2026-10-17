@@ -474,6 +474,8 @@ def main():
         measured_duration = time.monotonic() - started
         for future in futures:
             future.result()
+    # The timed work ends with the last request in flight at the deadline.
+    load.append(host_load_sample())
     growth = host_growth = None
     rule = {}
     if memory:

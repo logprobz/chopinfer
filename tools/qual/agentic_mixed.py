@@ -15,6 +15,7 @@ import sys
 import uuid
 import threading
 import time
+from time import monotonic_ns, time_ns
 from urllib.parse import urlsplit
 
 import common
@@ -899,6 +900,13 @@ def session(client, model, profile, manifest, files, concurrency, index, phase):
                 slot=index % concurrency, slot_sequence=index // concurrency)
 
 
+def realtime_offset_ns():
+    """Realtime minus monotonic nanoseconds of the host clocks (never a
+    patched `time`): turns are timed on the monotonic clock and traced server
+    steps (`completed_unix_ns`) on the realtime one."""
+    return time_ns() - monotonic_ns()
+
+
 def run_level(client, model, profile, manifest, files, concurrency, on_partial=None):
     outcomes = []
     lock = threading.Lock()
@@ -909,6 +917,7 @@ def run_level(client, model, profile, manifest, files, concurrency, on_partial=N
     before = boundary = {'text': None, 'error': 'window not started'}
     after = {'text': None, 'error': 'drain scrape not completed'}
     startup_before = startup_after = None
+    offsets = dict(start=None, end=None)
     cap_reached = False
     aborted = None
 
@@ -952,6 +961,7 @@ def run_level(client, model, profile, manifest, files, concurrency, on_partial=N
         summary = summarize(saved, start, measured_end, concurrency, profile['stall_threshold_ms'])
         summary.update(replica=profile.get('replica', 0), seed=profile['seed'], aborted=aborted, target_window_end=end,
                        burst_window_ms=profile['burst_window_ms'], stall_threshold_ms=profile['stall_threshold_ms'], sessions=saved,
+                       realtime_offset_ns=dict(offsets),
                        drain_seconds=max(0, max((r['ended'] for r in saved), default=measured_end) - measured_end))
         summary['insufficient'] = (aborted or ('session cap reached before measured interval ended' if cap_reached else
                                    f"too few completed measured sessions: {summary['measured_completed']} of {profile['min_samples']}"
@@ -980,6 +990,7 @@ def run_level(client, model, profile, manifest, files, concurrency, on_partial=N
         startup_before = observe_startup(client.url) if hasattr(client, 'url') else None
         before = client.scrape()
         start = time.monotonic()
+        offsets['start'] = realtime_offset_ns()
         end = start + profile['seconds']
         futures = [pool.submit(worker, slot) for slot in range(concurrency)]
         wait(futures, timeout=max(0, end - time.monotonic()))
@@ -990,6 +1001,7 @@ def run_level(client, model, profile, manifest, files, concurrency, on_partial=N
         for future in futures:
             future.result()
         after = client.scrape()
+        offsets['end'] = realtime_offset_ns()
     except (KeyboardInterrupt, Exception) as error:
         aborted = 'KeyboardInterrupt' if isinstance(error, KeyboardInterrupt) else 'runner error: ' + type(error).__name__
         stop.set()

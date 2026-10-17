@@ -314,6 +314,25 @@ class FakeIntegrationTests(unittest.TestCase):
         self.assertEqual(row['insufficient'], f"too few completed measured sessions: {row['measured_completed']} of 20")
         self.assertIn('insufficient', ' '.join(row['verdict']['problems']))
 
+    def test_levels_record_the_realtime_offset_of_their_monotonic_times(self):
+        """Turns are timed on the monotonic clock and traced steps on the
+        realtime one; each level records realtime minus monotonic at its
+        window start and after its drain, read from the host clocks even
+        when the sweep runs on a fake clock."""
+        manifest, groups = load_corpus()
+        profile = vars(parser().parse_args(['--levels', '1', '--seconds', '.1', '--warmup-waves', '0']))
+        clock, reads = FakeClock(), Reads()
+        before = time.time_ns() - time.monotonic_ns()
+        with fake_server(groups['coding'], clock=clock, reads=reads) as url, patch('agentic_mixed.time', clock):
+            row = run_level(ConfirmingTransport(url, 5, reads), 'fake-agentic', profile, manifest, groups['coding'], 1)
+        after = time.time_ns() - time.monotonic_ns()
+        offsets = row['realtime_offset_ns']
+        self.assertEqual(set(offsets), {'start', 'end'})
+        for value in offsets.values():
+            self.assertIsInstance(value, int)
+            self.assertLess(abs(value - before), 10**9)
+            self.assertLess(abs(value - after), 10**9)
+
     def test_unconfirmed_reads(self):
         """A named stream whose reads are not confirmed in time ends in a
         stream error, and a client that confirms nothing keeps the real

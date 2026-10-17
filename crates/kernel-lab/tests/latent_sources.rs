@@ -48,14 +48,35 @@ fn check(report: &kit::Report, gpu: bool) {
 
 #[test]
 fn native_sources_prepare_every_required_case() {
-    let report = kit::conform(
-        &backend(),
-        &LabModules,
-        None,
-        &cases::latent_sources::family(&family::catalog()),
-    )
-    .unwrap();
-    check(&report, false);
+    for cases in [
+        cases::latent_sources::family(&family::catalog()),
+        cases::latent_sources::numerical_family(&family::catalog()),
+    ] {
+        let report = kit::conform(&backend(), &LabModules, None, &cases).unwrap();
+        check(&report, false);
+    }
+}
+
+#[test]
+fn native_sources_nonzero_queries_meet_f64_bounds() {
+    kernel_lab::gpu_test(1 << 30, |session| {
+        let report = kit::conform(
+            &backend(),
+            &LabModules,
+            Some(session),
+            &cases::latent_sources::numerical_family(&family::catalog()),
+        )?;
+        session.receipt(
+            "native-latent-numerical",
+            std::collections::BTreeMap::from([
+                ("report".into(), report.json()),
+                ("power_cap_watts".into(), serde_json::json!(250)),
+            ]),
+        )?;
+        check(&report, true);
+        Ok(())
+    })
+    .expect("native source numerical gates");
 }
 
 #[test]

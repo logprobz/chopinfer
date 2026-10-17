@@ -3,11 +3,11 @@
 //! inverse tail permutation from probability-quantization error.
 
 use crate::LabResult;
-use crate::conformance::{Expected, Images, Rows};
+use crate::conformance::{Expected, Holes, Images, Rows};
 use crate::kit::{OpCase, Required, Spec, bf16_bytes};
 use kernel_core::backend::{Need, Prepared, View};
-use kernel_core::codec::bf16_to_f32;
-use kernel_core::contract::DType;
+use kernel_core::codec::{bf16_to_f32, f32_to_bf16};
+use kernel_core::contract::{AttentionPhase, DType};
 use kernel_core::latent_attention::{
     BlockTables, LatentAttentionOutput, LatentAttentionQuery, LatentCompressedBuffers,
     LatentKvCache, LatentKvFormat, LatentPartial, LatentSourcesBuffers, LatentWindowBuffers,
@@ -102,6 +102,25 @@ pub fn case<'a>(
     capacity: u32,
     prepared: Prepared<LatentSourcesBuffers<View>>,
 ) -> LabResult<OpCase<'a>> {
+    with_queries(query, capacity, prepared, false)
+}
+
+/// Signed nonzero BF16 queries span several exponents. Every finite QK
+/// maximum and partial stays under the native f64 oracle's original gate.
+pub fn numerical_case<'a>(
+    query: LatentAttentionQuery,
+    capacity: u32,
+    prepared: Prepared<LatentSourcesBuffers<View>>,
+) -> LabResult<OpCase<'a>> {
+    with_queries(query, capacity, prepared, true)
+}
+
+fn with_queries<'a>(
+    query: LatentAttentionQuery,
+    capacity: u32,
+    prepared: Prepared<LatentSourcesBuffers<View>>,
+    nonzero: bool,
+) -> LabResult<OpCase<'a>> {
     let LatentAttentionQuery::Attention {
         heads,
         latent,
@@ -111,6 +130,7 @@ pub fn case<'a>(
         tail_rope_dims,
         second_fp4_keys,
         output,
+        phase,
         ..
     } = query
     else {
@@ -122,34 +142,57 @@ pub fn case<'a>(
         capacity as usize,
         page_size as usize,
     );
-    let window_budget = max_keys.min(128) as usize;
+    let window_budget = if second_fp4_keys {
+        max_keys.min(128)
+    } else {
+        max_keys
+    } as usize;
     let compressed_budget = if second_fp4_keys {
-        (max_keys as usize - window_budget).min(128)
+        max_keys as usize - window_budget
     } else {
         0
     };
-    let pages_per_sequence = 128_usize.div_ceil(page);
-    let pages = pages_per_sequence * SEQUENCES;
-    let (window, window_stride) = pool(LatentKvFormat::Fp8E4M3Ue8M0Block32, width, 128, SEQUENCES);
+    if !nonzero && window_budget + compressed_budget > 4096 {
+        return Err("exact native storage fixture supports at most 4096 keys".into());
+    }
+    let slots = if nonzero && phase == AttentionPhase::Prefill {
+        window_budget + 17
+    } else {
+        window_budget.max(128)
+    };
+    let storage = if slots == 128 {
+        LatentWindowStorage::Ring128
+    } else {
+        LatentWindowStorage::Staged {
+            slots: slots as u32,
+        }
+    };
+    let pages_per_sequence = compressed_budget.max(1).div_ceil(page);
+    let visible_pages = pages_per_sequence * SEQUENCES;
+    let pages = visible_pages + 1;
+    let (window, window_stride) =
+        pool(LatentKvFormat::Fp8E4M3Ue8M0Block32, width, slots, SEQUENCES);
     let (compressed, page_stride) = pool(LatentKvFormat::Fp4E2M1E4M3Block16, width, page, pages);
-    let tables = (0..pages as i32).rev().collect::<Vec<_>>();
+    let tables = (0..visible_pages as i32).rev().collect::<Vec<_>>();
     let mut window_keys = vec![-1; rows * window_budget];
     let mut compressed_keys = vec![-1; rows * compressed_budget];
     for row in 0..rows {
         for key in 0..window_budget {
             if row != 1 && key % 7 != 6 {
-                window_keys[row * window_budget + key] = ((127 + key) % 128) as i32;
+                window_keys[row * window_budget + key] = ((slots - 1 + key) % slots) as i32;
             }
         }
         for key in 0..compressed_budget {
             if row != 1 && key % 5 != 4 {
                 compressed_keys[row * compressed_budget + key] =
-                    ((key * 37 + row * 5) % 128) as i32;
+                    ((key + row * 5) % compressed_budget) as i32;
             }
         }
     }
     let partial = output == LatentAttentionOutput::Partial;
-    let sinks = (0..heads).map(|h| h as f32 * 0.125).collect::<Vec<_>>();
+    let sinks = (0..heads)
+        .map(|h| if nonzero { h as f32 * 0.125 } else { 0.0 })
+        .collect::<Vec<_>>();
     // Exact quarter turn isolates the inverse operation without an extra
     // rounding error between the attention bound and this first smoke.
     let cos_sin = [0.0_f32, 1.0].repeat(rows * tail_rope_dims as usize / 2);
@@ -157,11 +200,20 @@ pub fn case<'a>(
         .info()
         .bytes_of("workspace")
         .ok_or("native latent workspace missing")? as usize;
+    let queries = if nonzero {
+        crate::wide_values(rows * heads * width, 0x128c)
+            .into_iter()
+            .enumerate()
+            .map(|(at, q)| f32_to_bf16(q * [0.015625, 1.0, 8.0, 64.0][(at / width) % 4]))
+            .collect()
+    } else {
+        vec![0; rows * heads * width]
+    };
     let roles = LatentSourcesBuffers {
         q: Spec::input(
             DType::Bf16,
             (Rows::Live, heads * width),
-            bf16_bytes(&vec![0; rows * heads * width]),
+            bf16_bytes(&queries),
         ),
         row_batch: Spec::input(
             DType::I32,
@@ -172,7 +224,7 @@ pub fn case<'a>(
             pool: Spec::input(DType::U8, (Rows::Fixed(SEQUENCES), window_stride), window),
             sequences: SEQUENCES as u32,
             sequence_stride: window_stride as u64,
-            storage: LatentWindowStorage::Ring128,
+            storage,
             key_lists: Spec::input(
                 DType::I32,
                 (Rows::Live, window_budget),
@@ -188,11 +240,20 @@ pub fn case<'a>(
                 page_stride: page_stride as u64,
             },
             block_tables: BlockTables {
-                tables: Spec::input(
-                    DType::I32,
-                    (Rows::Fixed(SEQUENCES), pages_per_sequence),
-                    i32_bytes(&tables),
-                ),
+                tables: if nonzero {
+                    Spec::input(
+                        DType::I32,
+                        (Rows::Fixed(SEQUENCES), pages_per_sequence),
+                        i32_bytes(&tables),
+                    )
+                } else {
+                    Spec::ids(
+                        (Rows::Fixed(SEQUENCES), pages_per_sequence),
+                        tables,
+                        &[("compressed.cache.pool", page_stride)],
+                        Holes::Never,
+                    )
+                },
                 sequences: SEQUENCES as u32,
                 max_pages: pages_per_sequence as u32,
             },
@@ -265,7 +326,7 @@ pub fn case<'a>(
                 window: LatentWindowInput {
                     pool: images.bytes("window.pool")?,
                     sequence_stride: window_stride,
-                    storage: LatentWindowStorage::Ring128,
+                    storage,
                     lists: LatentKeyLists {
                         indices: &window_list,
                         stride: window_budget,
@@ -294,31 +355,80 @@ pub fn case<'a>(
                         }
                     }
                 }
-                vec![("output".into(), Expected::Values(out))]
+                let expected = if nonzero {
+                    Expected::Values(out)
+                } else {
+                    // P is exactly one, the sink contributes one, and these
+                    // bounded fixed-point values sum exactly in F32. The
+                    // division and BF16 conversion are the declared stores.
+                    Expected::Bits(bf16_bytes(
+                        &out.values
+                            .iter()
+                            .map(|&v| f32_to_bf16(v as f32))
+                            .collect::<Vec<_>>(),
+                    ))
+                };
+                vec![("output".into(), expected)]
             }
-            LatentAttentionResult::Partial(p) => vec![
-                (
-                    "partial.max".into(),
-                    maximum_expected(p.maximum, live as usize * heads),
-                ),
-                ("partial.den".into(), Expected::Values(p.denominator)),
-                ("partial.num".into(), Expected::Values(p.numerator)),
-            ],
+            LatentAttentionResult::Partial(p) => {
+                if nonzero {
+                    vec![
+                        (
+                            "partial.max".into(),
+                            maximum_expected(p.maximum, live as usize * heads),
+                        ),
+                        ("partial.den".into(), Expected::Values(p.denominator)),
+                        ("partial.num".into(), Expected::Values(p.numerator)),
+                    ]
+                } else {
+                    [
+                        ("partial.max", p.maximum),
+                        ("partial.den", p.denominator),
+                        ("partial.num", p.numerator),
+                    ]
+                    .into_iter()
+                    .map(|(name, values)| {
+                        (
+                            name.into(),
+                            Expected::Bits(f32_bytes(
+                                &values.values.iter().map(|&v| v as f32).collect::<Vec<_>>(),
+                            )),
+                        )
+                    })
+                    .collect()
+                }
+            }
         })
     };
     Ok(OpCase::new(prepared, capacity, roles)?.oracle(oracle))
 }
 
 pub fn family<'a>(entries: &[Entry]) -> Vec<Required<'a>> {
+    family_with_queries(entries, false)
+}
+
+pub fn numerical_family<'a>(entries: &[Entry]) -> Vec<Required<'a>> {
+    family_with_queries(entries, true)
+}
+
+fn family_with_queries<'a>(entries: &[Entry], nonzero: bool) -> Vec<Required<'a>> {
     entries
         .iter()
         .map(|entry| {
             let query = entry.query;
             Required::new(
-                format!("native latent constant-query {}", entry.name),
+                format!(
+                    "native latent {} {}",
+                    if nonzero {
+                        "nonzero-query"
+                    } else {
+                        "constant-query"
+                    },
+                    entry.name
+                ),
                 Need::rows(CAPACITY),
                 move |backend, need| backend.latent_attention_sources(&query, need),
-                move |prepared| case(query, CAPACITY, prepared),
+                move |prepared| with_queries(query, CAPACITY, prepared, nonzero),
             )
             .required()
         })
@@ -361,8 +471,10 @@ mod tests {
             .latent_attention_sources(&query, Need::rows(CAPACITY))
             .unwrap();
         let workspace = prepared.info().bytes_of("workspace").unwrap() as usize;
-        let case = case(query, CAPACITY, prepared).unwrap().case;
-        let images = case.images();
+        let case = numerical_case(query, CAPACITY, prepared).unwrap().case;
+        let images = case
+            .images()
+            .with("q", vec![0; CAPACITY as usize * 4 * 128 * 2]);
         let mut result = std::collections::BTreeMap::new();
         for (name, expected) in case.expected(&images, CAPACITY).unwrap() {
             let bytes = if name == "partial.max" {

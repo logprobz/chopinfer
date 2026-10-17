@@ -58,7 +58,7 @@
       ],
       [
         "DS41_RW11",
-        "0x3d2cba15u"
+        "0x3d2cba16u"
       ],
       [
         "DS41_RW12",
@@ -114,7 +114,7 @@
       ],
       [
         "DS41_RW25",
-        "0x3a44948cu"
+        "0x3a44948du"
       ],
       [
         "DS41_RW26",
@@ -238,7 +238,7 @@
       ],
       [
         "DS41_RC24",
-        "0x37a3d70cu"
+        "0x37a3d708u"
       ],
       [
         "DS41_RC25",
@@ -445,7 +445,7 @@
         "allowed_local_bytes": 40
       }
     ],
-    "cubin_sha256": "807b02c6bad4c8ce7077a4e2c24e0a605b1a440ea7120dacdbf612fe92302d3c",
+    "cubin_sha256": "1321d542a7284dd7c76b0e959db0e265e7a1a727766aae26eb022ae5b207f1b4",
     "resources": [
       {
         "symbol": "chop_deepseek41_engram_gate_w5120_s4_masked_v1",

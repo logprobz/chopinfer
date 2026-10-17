@@ -367,15 +367,16 @@
     "tensor": "{stem}.attn.wo_a.weight"
    },
    "shape": [
-    "wo_a_rows",
+    "o_rank",
     "o_group_k"
    ],
    "kind": {
-    "kind": "dense"
+    "kind": "grouped_dense",
+    "groups": "o_groups"
    },
    "split": {
-    "class": "column",
-    "tile": "o_rank"
+    "class": "expert_owned",
+    "tile": 1
    },
    "epilogues": {
     "residual_add": false,
@@ -668,15 +669,16 @@
     "tensor": "{stem}.attn.wo_a.weight"
    },
    "shape": [
-    "wo_a_rows",
+    "o_rank",
     "o_group_k"
    ],
    "kind": {
-    "kind": "dense"
+    "kind": "grouped_dense",
+    "groups": "o_groups"
    },
    "split": {
-    "class": "column",
-    "tile": "o_rank"
+    "class": "expert_owned",
+    "tile": 1
    },
    "epilogues": {
     "residual_add": false,

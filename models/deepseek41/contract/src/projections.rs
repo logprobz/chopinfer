@@ -29,6 +29,7 @@ pub fn geometry(g: &Geometry) -> projection_spec::Geometry {
     set("head_dim", a.head_dim.into());
     set("q_rank", a.q_rank.into());
     set("o_rank", a.o_rank.into());
+    set("o_groups", a.o_groups.into());
     set("attn_q_rows", u64::from(a.heads) * u64::from(a.head_dim));
     set("wo_a_rows", u64::from(a.o_groups) * u64::from(a.o_rank));
     set("o_group_k", g.o_group_width().into());
@@ -158,12 +159,48 @@ mod tests {
         }
     }
 
+    /// The output LoRA runs per group (model.py:784, :1072): each rank holds
+    /// whole [o_rank, o_group_k] groups, never one dense matrix over them.
+    #[test]
+    fn wo_a_selects_whole_groups_at_every_rank_count() {
+        for g in crate::geometry::GEOMETRIES {
+            let declaration = declaration(g).unwrap();
+            let keys = geometry(g);
+            let groups = g.shape.attention.o_groups;
+            for id in ["layer.wo_a", "dspark.wo_a"] {
+                let p = declaration.projections.iter().find(|p| p.id == id).unwrap();
+                assert_eq!(
+                    p.kind,
+                    projection_spec::ProjectionKind::GroupedDense {
+                        groups: projection_spec::Dim::Key("o_groups".into())
+                    }
+                );
+                for &ranks in crate::admission::SUPPORTED_RANKS {
+                    for rank in 0..ranks {
+                        let topology = projection_spec::derive::Topology { ranks, rank };
+                        let selection =
+                            projection_spec::derive::rank_selection(p, &keys, topology, 0).unwrap();
+                        let local = groups / ranks;
+                        assert_eq!(selection.experts, rank * local..(rank + 1) * local);
+                        assert_eq!(
+                            (selection.logical.rows, selection.logical.k),
+                            (
+                                u64::from(g.shape.attention.o_rank),
+                                u64::from(g.o_group_width())
+                            )
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn the_declaration_digest_is_pinned() {
         let declaration = declaration(&crate::geometry::FLASH).unwrap();
         assert_eq!(
             declaration.digest(),
-            "93b04b3f9c6d0456f695636de99740737bc35f1a88e3c56b476a197a294ccf18"
+            "da88089d11c2038b02026bd098dac1c88cdc2b723559bd49ec13e27e170c179c"
         );
     }
 }

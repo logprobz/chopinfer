@@ -17,15 +17,18 @@ pub(crate) mod own_entries;
     reason = "instance creation prepares the own ops once the program lands"
 )]
 pub(crate) mod own_ops;
+// The build compiles each registration file's cubins; the bundle registers
+// their entries.
+#[allow(dead_code, reason = "the build script compiles the cubin specs")]
+mod rows;
 
 impl crate::Kernels {
     /// The SM120 backend over the entries the build compiles for `shape`,
     /// and the model's own kernels.
-    #[allow(dead_code, reason = "the instance prepares its ops on it")]
     pub(crate) fn new(shape: &crate::shape::Shape) -> Result<Self, String> {
-        let _ = shape;
+        let sm120 = rows::register(Sm120::new(), shape.geometry, shape.ranks());
         Ok(Self {
-            backend: Box::new(Sm120::new()),
+            backend: Box::new(sm120),
             own: Box::new(own_ops::Sm120Own::new()),
         })
     }

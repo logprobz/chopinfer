@@ -5,20 +5,16 @@
 //! copied into every residual stream.
 
 use kernel_core::backend::{Backend, Counts, Prepared, Refused, View};
-use kernel_core::contract::{DType, Refusal, RmsNormKind, RowQuery};
-use kernel_core::rmsnorm::{RmsNormBuffers, RmsNormRequirement};
-use kernel_core::row_copy::{RowCopyBuffers, StreamBroadcast};
+use kernel_core::contract::Refusal;
+use kernel_core::rmsnorm::RmsNormBuffers;
+use kernel_core::row_copy::RowCopyBuffers;
 use kernel_core::rows::EmbeddingBuffers;
+use model_deepseek41_contract::rows;
 use model_deepseek41_contract::serving::{DeepSeek, PREFILL_TOKENS};
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
 use super::{Asks, Bind, Lowered, exact};
 use crate::shape::Shape;
-
-/// The norm epsilon of every RMSNorm (`rms_norm_eps`).
-pub(crate) const NORM_EPS: f32 = 1e-20;
-/// The alignment of every row view the bundle binds.
-const ALIGNMENT_BYTES: u32 = 16;
 
 /// The most rows a decode or verify launch carries: the widest verify
 /// bucket, which holds every decode bucket.
@@ -26,21 +22,6 @@ pub(crate) fn verify_rows() -> u32 {
     bundle_runtime::graphs::verify_tokens::<DeepSeek>(bundle_runtime::geometry::Items::package::<
         DeepSeek,
     >())
-}
-
-/// The RMSNorm of rows `width` wide.
-pub(crate) fn norm(width: u32) -> RmsNormRequirement {
-    RmsNormRequirement::bf16_backend_chosen(width, NORM_EPS, RmsNormKind::Plain, false)
-}
-
-/// The embedding copied into every residual stream.
-pub(crate) fn expand_streams(shape: &Shape) -> StreamBroadcast {
-    StreamBroadcast {
-        dtype: DType::Bf16,
-        width: shape.dims().hidden,
-        streams: shape.dims().hc.streams,
-        alignment_bytes: ALIGNMENT_BYTES,
-    }
 }
 
 /// The row ops of an instance, each prepared for a prefill's rows, the
@@ -92,23 +73,20 @@ impl RowOps {
     ) -> Result<RowOps, Refused> {
         // Every phase normalizes, embeds and expands its rows.
         let need = exact::need(PREFILL_TOKENS, exact::every_phase(verify_rows()));
-        let d = shape.dims();
+        let g = shape.geometry;
         let mut norms = Vec::new();
-        for width in [d.hidden, d.attention.q_rank, d.attention.head_dim] {
+        for width in rows::norm_widths(g) {
             if norms.iter().any(|&(w, _)| w == width) {
                 continue;
             }
-            let requirement = norm(width);
+            let requirement = rows::norm(g, width);
             let op = asks.ask(format!("rows.norm {width}"), need, |need| {
                 backend.rmsnorm(&requirement, need)
             })?;
             norms.push((width, op));
         }
         let shard = shape.vocab_rows();
-        let query = RowQuery::EmbeddingGather {
-            vocab: shard,
-            width: d.hidden,
-        };
+        let query = rows::embedding(g, shape.ranks());
         let embeddings = (0..shape.ranks())
             .map(|rank| {
                 asks.ask(format!("rows.embedding rank {rank}"), need, |need| {
@@ -121,7 +99,7 @@ impl RowOps {
             embeddings,
             shard,
             expand_streams: asks.ask("rows.expand_streams", need, |need| {
-                backend.broadcast_streams(&expand_streams(shape), need)
+                backend.broadcast_streams(&rows::expand_streams(g), need)
             })?,
         })
     }
@@ -192,22 +170,5 @@ impl RowOps {
             live_rows: bind.view(views.live_rows),
         };
         bind.launch(&self.expand_streams, &buffers, Counts::rows(bucket))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn norms_round_once_after_the_weight_at_eps_1e_20() {
-        let n = norm(5120);
-        assert_eq!(n.kind, RmsNormKind::Plain);
-        assert_eq!(f32::from_bits(n.epsilon_bits), 1e-20);
-        assert_eq!(
-            (n.input, n.weight, n.output),
-            (DType::Bf16, DType::Bf16, DType::Bf16)
-        );
-        assert!(!n.fused_residual);
     }
 }

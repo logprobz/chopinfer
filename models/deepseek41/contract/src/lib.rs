@@ -9,6 +9,7 @@ pub mod projections;
 pub mod structure;
 
 pub mod own_ops;
+pub mod rows;
 pub mod serving;
 pub mod state;
 

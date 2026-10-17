@@ -1,22 +1,31 @@
-//! The bundle's build script, which compiles and locks the model's SM120
-//! cubins (`kernels.lock.d/`), so it lives in the sm120 module (`build` in
-//! Cargo.toml). Each engine adds its selection here as it registers.
+//! The bundle's build script, which compiles and locks SM120 cubins, so it
+//! lives in the sm120 module (`build` in Cargo.toml). Each engine's cubins
+//! gate on their own family of `kernels.lock.d` (`kernel_build::LockDir`),
+//! one cubin per geometry within it where its entries depend on the
+//! geometry, so a geometry added later only appends records. Each engine
+//! adds its selection here as it registers.
+
 use std::env;
 use std::path::PathBuf;
 
 use kernel_build::{LockDir, ModelLock, Toolchain};
+use model_deepseek41_contract::geometry::GEOMETRIES;
 
 mod own_cubin;
 // The build compiles the entries; the bundle launches them.
 #[allow(dead_code)]
 mod own_entries;
+#[path = "rows.rs"]
+#[allow(dead_code, reason = "the bundle registers the entries")]
+mod rows;
 
 fn main() {
-    println!("cargo:rerun-if-changed=src/sm120/build.rs");
+    println!("cargo:rerun-if-changed=src/sm120");
     let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest directory"));
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("output directory"));
     // (family, cubin) pairs; one family per engine or own-op set.
-    let specs = vec![(own_entries::FAMILY, own_cubin::cubin_spec(&manifest))];
+    let mut specs = vec![(own_entries::FAMILY, own_cubin::cubin_spec(&manifest))];
+    specs.extend(rows::cubins(GEOMETRIES).expect("deepseek41 row cubins"));
     let mut families: Vec<(&str, Vec<&str>)> = Vec::new();
     for (family, spec) in &specs {
         match families.iter_mut().find(|(name, _)| name == family) {
@@ -42,5 +51,6 @@ fn main() {
         None,
     )
     .expect("locked deepseek41 cubin build and audit");
+    // Every cubin serves each rank count it holds entries for.
     kernel_build::write_embedded(&out, &built, |_| 0).expect("write embedded cubin list");
 }

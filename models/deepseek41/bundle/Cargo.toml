@@ -13,6 +13,7 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 bundle-runtime.workspace = true
+kernel-build.workspace = true
 kernel-core.workspace = true
 kernels-sm120.workspace = true
 model-deepseek41-contract.workspace = true

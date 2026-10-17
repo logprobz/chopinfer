@@ -390,27 +390,60 @@ fn every_topology_and_layout_runs_the_lifecycle() {
     }
 }
 
-/// A step refuses while its stages are unlowered unless the instance runs
-/// the lowered stages alone; create refuses kernels that miss a family.
+/// A step refuses, before its ledger step opens, while a stage of its
+/// program is not lowered, unless the instance runs the lowered stages
+/// alone; the prepared row ops launch through the row cubin's entries.
 #[test]
-fn create_refuses_kernels_that_miss_a_family() {
+fn a_step_refuses_while_a_stage_is_unlowered() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
     let record = crate::config::tests::record(&shape, KV_LAYOUTS[0], 4, false);
-    let refused = api()
+    let mut instance = api()
         .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
-        .err()
-        .unwrap();
+        .unwrap_or_else(|error| panic!("{error:?} {:?}", host.logs.borrow()));
+    let refused = instance
+        .execute(&prompt(7, 0, 0, 3, true), &mut Views::default())
+        .unwrap_err();
     assert_eq!(refused, BundleAbiError::Status(BundleStatusV1::Unsupported));
     assert!(
         host.logs
             .borrow()
             .iter()
-            .any(|line| line.contains("refuses DeepSeek V4.1's row ops")),
+            .any(|line| line.contains("stage EmbeddingReduce is not lowered yet")),
         "{:?}",
         host.logs.borrow()
     );
+    // No step opened: commit has nothing to commit.
+    assert!(instance.commit().is_err());
+    instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
+    // The partial instance launches the row ops' entries.
+    let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+    let mut instance = create(&host, 4);
+    instance
+        .execute(&prompt(7, 0, 0, 3, true), &mut Views::default())
+        .unwrap();
+    let journal = host.device.journal.borrow().clone();
+    for symbol in [
+        "chop_row_embedding_deepseek41_tp4_v1",
+        kernels_sm120_broadcast(),
+        "chop_row_rmsnorm_deepseek41_w5120_v1",
+    ] {
+        assert!(
+            journal
+                .iter()
+                .any(|line| line.starts_with("launch") && line.contains(symbol)),
+            "{symbol}"
+        );
+    }
+    instance.commit().unwrap();
+    instance.retire_request(7).unwrap();
+    instance.destroy().unwrap();
+}
+
+/// The shared stream broadcast's symbol.
+fn kernels_sm120_broadcast() -> &'static str {
+    "chop_row_copy_broadcast_streams_v1"
 }
 
 /// A request's rings and tails reach snapshot pages after a prompt and

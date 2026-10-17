@@ -1,7 +1,10 @@
 {
  "modules": {
   "__main__": {},
-  "agentic_compare": {},
+  "agentic_compare": {
+   "ARMS": "list",
+   "V2": "str"
+  },
   "agentic_fake": {
    "EVENT_SECONDS": "number"
   },
@@ -16,7 +19,8 @@
    "RAW_MALFORMED_CALL": "str",
    "RAW_OUTCOMES": "number",
    "RAW_REASONING_ONLY": "str",
-   "SAMPLE": "number"
+   "SAMPLE": "number",
+   "TAIL_SAMPLES": "dict"
   },
   "agentic_mixed": {
    "MARKUP": "null",
@@ -26,11 +30,20 @@
    "PROMPT_TAIL_IDS": "int",
    "RAW_TURN_IDS": "int",
    "REVISION": "str",
+   "SPREAD_FIGURES": "list",
    "TOOL_GRAMMARS": "list"
   },
-  "agentic_server": {},
+  "agentic_server": {
+   "MODES": "list",
+   "POLICY_METRICS": "dict"
+  },
   "agentic_workload": {
-   "CORPUS": "number"
+   "CORPUS": "number",
+   "ROOT": "number",
+   "RUNYARD_MAX_TOOL_RESULT_BYTES": "int",
+   "STAGED_MAX_TOOL_RESULT_BYTES": "int",
+   "STAGED_REVISION": "str",
+   "STAGED_TASKS": "dict"
   },
   "api": {
    "TOOL_RESULT_MAX_TOKENS": "int"

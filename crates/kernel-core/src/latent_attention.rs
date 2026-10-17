@@ -172,9 +172,11 @@ pub enum LatentAttentionQuery {
     ///
     /// Native code/scale products decode exactly into BF16 before both QK
     /// and PV. They do not apply scales after the QK reduction. The native
-    /// online softmax casts the unnormalized probabilities to BF16 before
-    /// PV; its denominator uses the F32 probabilities. The numerical oracle
-    /// remains f64 over those decoded operands.
+    /// online softmax rounds `exp(score - running_max)` to BF16 after the
+    /// max shift and before PV; its denominator uses the unrounded F32
+    /// probabilities. The f64 oracle keeps ideal probabilities and bounds
+    /// this storage rounding separately from accumulation, independently
+    /// of the engine's key tiles and split count.
     ///
     /// With two sources, concatenate the window list then the compressed
     /// list before one softmax, with at most `max_keys` entries in total.

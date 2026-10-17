@@ -2015,6 +2015,125 @@ mod latent_parameters {
     }
 
     #[test]
+    fn latent_probability_rounding_bound_covers_cancellation() {
+        use kernel_core::latent_attention_oracle::latent_online_softmax;
+        use kernel_core::oracle::{OracleOutput, check_numeric};
+        let mut source = Sources::new();
+        source.window.fill(0);
+        source.sinks = [0.0; 2];
+        source.q[0] = -22.625;
+        let mut keys = vec![0.0; 2 * D];
+        keys[1] = 1.0;
+        keys[D] = 1.0;
+        keys[D + 1] = -2.75;
+        let bits = keys
+            .iter()
+            .map(|&x| f32_to_bf16(x as f32))
+            .collect::<Vec<_>>();
+        latent_kv_write(
+            Query::KvWrite {
+                latent: D as u32,
+                page_size: 128,
+                kv: WINDOW,
+                capacity: 2,
+            },
+            &bits,
+            &[0, 0],
+            &[0, 1],
+            LatentPaging {
+                block_tables: &[0],
+                max_pages: 1,
+                page_stride: source.window.len(),
+            },
+            &mut source.window,
+        )
+        .unwrap();
+        for row in 0..2 {
+            assert_eq!(
+                decode_native_page(WINDOW, D, 128, &source.window, row).unwrap(),
+                keys[row * D..(row + 1) * D]
+            );
+        }
+        let mut query = query(Output::Normalized);
+        if let Query::Attention {
+            second_fp4_keys,
+            tail_rope_dims,
+            ..
+        } = &mut query
+        {
+            *second_fp4_keys = false;
+            *tail_rope_dims = 0;
+        }
+        let mut input = source.input(&[0, 1], &[]);
+        input.compressed = None;
+        let ResultRows::Normalized(ideal) = latent_attention_with_sources(query, input).unwrap()
+        else {
+            panic!()
+        };
+        let scores = [0.0, -22.625 * f64::from((D as f32).powf(-0.5))];
+        let staged = latent_online_softmax(&scores, &keys, D, 0.0).unwrap();
+        let actual = bf16(staged[1]);
+        assert!((actual - (-0.004119873046875)).abs() < 1e-12);
+        assert!((ideal.values[1] - (-0.004973376)).abs() < 1e-9);
+        let reference = OracleOutput::new(
+            vec![ideal.values[1]],
+            vec![ideal.sum_abs_products[1]],
+            ideal.reduction_lengths[1],
+        )
+        .unwrap();
+        check_numeric(&[actual], &reference, DType::Bf16).unwrap();
+        let limit = kernel_core::oracle::numeric_bound(&reference, 0, DType::Bf16);
+        assert!(
+            check_numeric(
+                &[reference.values[0] + 2.0 * limit],
+                &reference,
+                DType::Bf16
+            )
+            .is_err()
+        );
+
+        // Partials must carry the same PV rounding allowance into their
+        // final sink-once merge. Their denominator still uses unrounded P.
+        if let Query::Attention { output, .. } = &mut query {
+            *output = Output::Partial;
+        }
+        let ResultRows::Partial(partial) = latent_attention_with_sources(query, input).unwrap()
+        else {
+            panic!()
+        };
+        let p = scores[1].exp();
+        assert_eq!(partial.denominator.values[0], 1.0 + p);
+        let numerator = 1.0 - 2.75 * bf16(p);
+        let num_reference = OracleOutput::new(
+            vec![partial.numerator.values[1]],
+            vec![partial.numerator.sum_abs_products[1]],
+            partial.numerator.reduction_lengths[1],
+        )
+        .unwrap();
+        check_numeric(&[numerator], &num_reference, DType::F32).unwrap();
+        let merged = merge_partials_with_sink(&[partial], &source.sinks).unwrap();
+        let merged_reference = OracleOutput::new(
+            vec![merged.values[1]],
+            vec![merged.sum_abs_products[1]],
+            merged.reduction_lengths[1],
+        )
+        .unwrap();
+        check_numeric(&[actual], &merged_reference, DType::Bf16).unwrap();
+
+        // Reversing keys across two tiles changes the rounded P path but
+        // not the ideal reference or the bound it must satisfy.
+        let mut tiled_scores = vec![f64::NEG_INFINITY; 65];
+        let mut tiled_values = vec![f64::NAN; 65];
+        tiled_scores[0] = scores[1];
+        tiled_values[0] = -2.75;
+        tiled_scores[64] = scores[0];
+        tiled_values[64] = 1.0;
+        let tiled = bf16(latent_online_softmax(&tiled_scores, &tiled_values, 1, 0.0).unwrap()[0]);
+        assert_ne!(tiled, actual);
+        check_numeric(&[tiled], &reference, DType::Bf16).unwrap();
+    }
+
+    #[test]
     fn latent_sources_refuse_malformed_storage_and_operands() {
         let source = Sources::new();
         for (w, c) in [

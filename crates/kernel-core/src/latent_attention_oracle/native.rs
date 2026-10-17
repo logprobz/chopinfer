@@ -180,12 +180,26 @@ pub struct LatentSourcesInput<'a> {
     pub sinks: Option<&'a [f32]>,
 }
 
+/// Add the declared probability storage error to the oracle's S so the
+/// unchanged gate `2^-22 * K * S` includes it. BF16 RNE has relative unit
+/// roundoff 2^-8 (seven stored fraction bits). A tile's later max rescale
+/// multiplies both its probability and its rounding error, so
+/// `2^-8 * sum |p_j v_j|` bounds the numerator error independently of tiles.
+/// The half-minimum-subnormal term also covers probabilities below BF16's
+/// normal range. The denominator never rounds P to BF16 and gets no term.
+fn probability_rounding_s(abs_products: f64, abs_values: f64, k: usize) -> f64 {
+    let error = 2_f64.powi(-8) * abs_products + 2_f64.powi(-134) * abs_values;
+    error / (2_f64.powi(-22) * k.max(1) as f64)
+}
+
 /// F64 attention over the window list followed by the paged compressed
 /// list, with one denominator and one sink. Partials omit the sink even
 /// when the query declares it. Normalized results are before BF16 storage
 /// and the inverse rotation: gate that stage separately with
 /// [`latent_tail_rope`] on the stored BF16 attention result. This preserves
 /// the mandatory rounding boundary rather than rotating an unrounded sum.
+/// Values use ideal f64 probabilities; S includes their BF16 storage error
+/// before PV as well as the F32 accumulation and score reduction bounds.
 pub fn latent_attention_with_sources(
     query: LatentAttentionQuery,
     input: LatentSourcesInput<'_>,
@@ -335,21 +349,30 @@ pub fn latent_attention_with_sources(
                         push(&mut normalized, 0.0, 0.0, 1);
                         continue;
                     }
-                    let (mut num, mut abs) = (NeumaierSum::default(), NeumaierSum::default());
+                    let (mut num, mut abs, mut abs_values) = (
+                        NeumaierSum::default(),
+                        NeumaierSum::default(),
+                        NeumaierSum::default(),
+                    );
                     for (&w, key) in weights.iter().zip(&keys) {
                         num.add(w * key[column]);
                         abs.add((w * key[column]).abs());
+                        abs_values.add(key[column].abs());
                     }
                     let value = num.value() / den;
                     let mut centered = NeumaierSum::default();
                     for ((&w, key), &g) in weights.iter().zip(&keys).zip(&softmax.magnitudes) {
                         centered.add(w * (key[column] - value).abs() * g);
                     }
+                    let k = n + usize::from(sink.is_some());
                     push(
                         &mut normalized,
                         value,
-                        (abs.value() + spread * centered.value()) / den,
-                        n + usize::from(sink.is_some()),
+                        (abs.value()
+                            + spread * centered.value()
+                            + probability_rounding_s(abs.value(), abs_values.value(), k))
+                            / den,
+                        k,
                     );
                 }
                 continue;
@@ -367,12 +390,24 @@ pub fn latent_attention_with_sources(
             );
             push(&mut partial.denominator, l.value(), lb.value(), n);
             for column in 0..d {
-                let (mut num, mut bound) = (NeumaierSum::default(), NeumaierSum::default());
+                let (mut num, mut bound, mut abs, mut abs_values) = (
+                    NeumaierSum::default(),
+                    NeumaierSum::default(),
+                    NeumaierSum::default(),
+                    NeumaierSum::default(),
+                );
                 for ((&w, key), &g) in softmax.weights.iter().zip(&keys).zip(&softmax.magnitudes) {
                     num.add(w * key[column]);
                     bound.add((w * key[column]).abs() * (1.0 + spread * g));
+                    abs.add((w * key[column]).abs());
+                    abs_values.add(key[column].abs());
                 }
-                push(&mut partial.numerator, num.value(), bound.value(), n);
+                push(
+                    &mut partial.numerator,
+                    num.value(),
+                    bound.value() + probability_rounding_s(abs.value(), abs_values.value(), n),
+                    n,
+                );
             }
         }
     }
@@ -383,7 +418,10 @@ pub fn latent_attention_with_sources(
 }
 
 /// Reference of the native softmax's probability rounding, separate from
-/// the ideal f64 attention bound. Scores are already scaled; -inf is a
+/// the ideal f64 attention values and their P-rounding allowance. This
+/// diagnostic keeps the vendor's tile-dependent BF16 probabilities; the
+/// acceptance oracle above keeps tile-independent ideal values instead.
+/// Scores are already scaled; -inf is a
 /// masked key. Values are `[scores.len(), width]`. For each 64-key tile,
 /// update the running maximum, rescale the old numerator and denominator,
 /// cast unnormalized exp(score - max) to BF16 for PV only, and add the
@@ -488,4 +526,35 @@ pub fn latent_tail_rope(
         }
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod probability_bound_tests {
+    use super::*;
+
+    #[test]
+    fn bf16_probability_rounding_uses_relative_unit_roundoff() {
+        let p = 0.501953125_f64;
+        let rounded = f64::from(bf16_to_f32(f32_to_bf16(p as f32)));
+        let error = (rounded - p).abs();
+        assert_eq!(rounded, 0.5);
+        assert!(error > 2_f64.powi(-9) * p);
+        assert!(error <= 2_f64.powi(-8) * p);
+        for k in [1, 2, 64, 128, 2176] {
+            let allowed = crate::oracle::accumulation_bound(k, probability_rounding_s(p, 1.0, k));
+            assert!(error <= allowed);
+            assert!((allowed - 2_f64.powi(-8) * p).abs() < 1e-18);
+        }
+    }
+
+    #[test]
+    fn bf16_probability_underflow_keeps_its_absolute_floor() {
+        let p = 2_f64.powi(-134);
+        let value = 2_f64.powi(120);
+        assert_eq!(f32_to_bf16(p as f32), 0);
+        let error = p * value;
+        let allowed = crate::oracle::accumulation_bound(2, probability_rounding_s(error, value, 2));
+        assert!(error > 2_f64.powi(-8) * error);
+        assert!(error <= allowed);
+    }
 }

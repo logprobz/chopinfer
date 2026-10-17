@@ -21,11 +21,12 @@ import common
 import declaration
 import model_modules
 from agentic_metrics import (INVALID_SESSION, RAW_CALLS_AGREE, RAW_MALFORMED_CALL, RAW_REASONING_ONLY, burst_metrics,
-                             distribution, histogram_reports, level_verdict, metrics_delta, ratio, summarize)
+                             distribution, histogram_reports, level_verdict, metrics_delta, prefill_evidence, ratio,
+                             summarize)
 from agentic_server import observe_startup, mode_evidence, verify_arm
-from agentic_workload import Workspace, decode_context, load_corpus, task_for, valid_session
+from agentic_workload import CORPUS, Workspace, decode_context, load_corpus, task_for, valid_session
 
-REVISION = 'chopinfer.agentic-mixed.v2'
+REVISION = 'chopinfer.agentic-mixed.v3'
 MAX_REQUEST = 4 << 20
 MAX_RESPONSE = 8 << 20
 # Generated token IDs kept in memory per turn for re-parsing an invalid
@@ -803,8 +804,19 @@ def request_seed(seed, concurrency, case, turn):
     return int.from_bytes(hashlib.sha256(raw).digest()[:8], 'big') & ((1 << 63) - 1)
 
 
+def cache_salt(profile, concurrency, case):
+    """The session's `cache_salt` under `--cache-salt session`, else None.
+    It includes the run ID, so no other run's or session's cached prefix can
+    absorb the session's prefill."""
+    if profile.get('cache_salt', 'none') != 'session':
+        return None
+    raw = f"{profile.get('run_id', '')}/{profile['seed']}/C{concurrency}/{case}/cache-salt-v1".encode()
+    return hashlib.sha256(raw).hexdigest()[:32]
+
+
 def session(client, model, profile, manifest, files, concurrency, index, phase):
     task = task_for(manifest, files, profile['seed'], concurrency, index)
+    salt = cache_salt(profile, concurrency, task['id'])
     workspace = Workspace(files, task['tool_result_bytes'])
     started = time.monotonic()
     deadline = started + profile['session_timeout_seconds']
@@ -823,12 +835,16 @@ def session(client, model, profile, manifest, files, concurrency, index, phase):
             body = request_body(profile, model, messages, manifest['tools'], seed=seed)
             if not profile.get('no_token_evidence'):
                 body['return_token_ids'] = True
+            # The arms compare request identity without the run's salt.
+            identity = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+            if salt:
+                body['cache_salt'] = salt
             evidence = TokenIds()
             row, answer = stream_request(client, body, deadline, profile['stall_threshold_ms'], profile['burst_window_ms'],
                                          evidence)
             parsed.append((evidence, answer))
             row.update(seed=seed, turn_index=turn_index,
-                       request_sha256=hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest(),
+                       request_sha256=identity,
                        answer_sha256=hashlib.sha256(json.dumps(answer, sort_keys=True).encode()).hexdigest())
             turns.append(row)
             if row['failure'] or row['finish_reason'] == 'length':
@@ -866,7 +882,7 @@ def session(client, model, profile, manifest, files, concurrency, index, phase):
                                          manifest['tools'])
     ended = time.monotonic()
     return dict(index=index, case_id=task['id'], phase=phase, focus_path=task['focus_path'], task_kind=task['kind'],
-                prompt_sha256=task['prompt_sha256'], tool_result_bytes=task['tool_result_bytes'],
+                prompt_sha256=task['prompt_sha256'], tool_result_bytes=task['tool_result_bytes'], cache_salt=salt,
                 started=started, ended=ended, elapsed_seconds=ended - started, turns=turns,
                 tool_seconds=tool_seconds, model_seconds=sum(t['elapsed_seconds'] for t in turns),
                 read_before_edit=bool(workspace.read_paths), patch_applied=workspace.patched,
@@ -939,6 +955,7 @@ def run_level(client, model, profile, manifest, files, concurrency, on_partial=N
                                         sample_interval_seconds=max(0, boundary.get('ended', end) - before.get('ended', start)),
                                         boundary_lag_ms=max(0, boundary.get('started', end) - end) * 1000,
                                         boundary_scrape_seconds=max(0, boundary.get('ended', end) - boundary.get('started', end)))
+        summary['prefill'] = prefill_evidence(delta, summary)
         summary['drain_server_metrics'] = dict(scope='boundary scrape through drain completion',
                                               before=boundary, after=after, **drain_delta,
                                               histograms=histogram_reports(drain_delta, profile['stall_threshold_ms']))
@@ -1021,6 +1038,12 @@ def parser():
                                         "no library tool grammar; default: CHOPINFER_QUAL_MODEL_ROOT, else the "
                                         "inventoried model whose frontend declares the served model")
     p.add_argument('--levels', default='1,2,4,8,12,16,24,32,48,64')
+    p.add_argument('--corpus', type=Path, default=CORPUS,
+                   help='a corpus directory with a verified manifest: the pinned Runyard corpus (default), or a larger '
+                        'one staged under $CHOPINFER_DATA by `agentic_workload.py stage`')
+    p.add_argument('--cache-salt', choices=('session', 'none'), default='session',
+                   help='session (default): send each session its own cache_salt, so no other session or run absorbs '
+                        'its prefill and the prefill budgets see real pressure; none: share prefixes across sessions')
     p.add_argument('--seed', default='runyard-coding-v1')
     p.add_argument('--seconds', type=float, default=60)
     p.add_argument('--warmup-waves', type=int, default=1)
@@ -1210,9 +1233,16 @@ def main(argv=None):
     args = p.parse_args(argv)
     levels = validate(p, args)
     common.startup()
-    manifest, groups = load_corpus()
+    try:
+        manifest, groups = load_corpus(args.corpus)
+    except (OSError, ValueError, KeyError) as error:
+        p.error(f'corpus: {error}')
+    # The decode probe always reads the pinned Runyard source.
+    decode_groups = load_corpus()[1]
+    # The corpus is identified by its digest and commit, never its local path.
     profile = {k: v for k, v in vars(args).items()
-               if k not in ('url', 'model', 'label', 'arm', 'dry_run', 'fake_prefill_budget', 'frontend', 'model_root')}
+               if k not in ('url', 'model', 'label', 'arm', 'dry_run', 'fake_prefill_budget', 'frontend', 'model_root',
+                            'corpus')}
     profile['levels'] = levels
     profile.update(max_request_bytes=MAX_REQUEST, max_response_bytes=MAX_RESPONSE, max_tool_result_bytes=65536,
                    case_assignment='slot-strided-v1', request_seed_derivation='sha256-case-turn-v1')
@@ -1266,7 +1296,8 @@ def main(argv=None):
                 def partial(level):
                     path, _ = save('partial', [level], level['aborted'])
                     result['level_receipts'].append(str(path))
-                level = run_level(client, model, {**profile, 'arm': args.arm}, manifest, groups['coding'], c, on_partial=partial)
+                level = run_level(client, model, {**profile, 'arm': args.arm, 'run_id': result['run_id']}, manifest,
+                                  groups['coding'], c, on_partial=partial)
                 result['levels'].append(level)
                 path, _ = save('level', [level], level.get('aborted'))
                 result['level_receipts'].append(str(path))
@@ -1274,7 +1305,7 @@ def main(argv=None):
                     result['aborted'] = level['aborted']
                     break
             if not args.no_decode and not result['aborted']:
-                result['decode'] = run_decode(client, model, profile, groups, context_window)
+                result['decode'] = run_decode(client, model, profile, decode_groups, context_window)
     except (KeyboardInterrupt, Exception) as error:
         result['aborted'] = 'KeyboardInterrupt' if isinstance(error, KeyboardInterrupt) else 'runner error: ' + type(error).__name__
         if isinstance(error, ReParserUnavailable):

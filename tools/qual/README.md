@@ -1250,6 +1250,31 @@ primary evidence; client burst gaps and stalls are secondary. A pass does not
 mean a performance target was met. `--dry-run` runs against an owned
 loopback fake server on CPU.
 
+The pinned corpus has three small files and nine tasks, so with shared
+prefixes the prefix cache absorbs almost all prefill: earlier Qwen receipts
+(2026-09-30 to 10-02, C4 and C8) show 95-99% reuse and under 200 prefill
+tokens per prefill step, too few for the budget modes to differ. Two changes
+add pressure:
+
+- `--cache-salt session` (the default) sends each session its own
+  `cache_salt`, derived from the run ID, seed, level and case. A session
+  still reuses its own earlier turns. The request identity the arms compare
+  leaves the salt out. `--cache-salt none` shares prefixes across sessions.
+- `--corpus DIR` reads a larger corpus: Chopinfer's own Rust source at a
+  pinned commit, staged outside the tree with
+  `python3 -B tools/qual/agentic_workload.py stage --revision COMMIT`
+  (default destination `$CHOPINFER_DATA/agentic/corpus-<commit>`). It picks
+  64 files of 4 to 64 KiB under `crates/` by a hash of commit and path, with
+  three generic tasks per file and Runyard's tools and system prompt. The
+  receipt records the corpus digest and commit, not its path. The separate
+  decode probe always reads the pinned Runyard source.
+
+Each level's `prefill` record states how much prefill the window caused:
+the server's prefill tokens per prefill-carrying step and prefix-cache reuse,
+the client's prompt and uncached prompt tokens per turn, and the
+`chop_mixed_step_actual_over_predicted` histogram (count, mean and bucket
+bounds).
+
 The raw re-parse reads the served model's frontend declaration: `--frontend`,
 else the `frontend` input of `CHOPINFER_QUAL_CONFIG`, else the inventoried
 model whose frontend declares the served model ID. It is independent of the

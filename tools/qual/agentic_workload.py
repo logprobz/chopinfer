@@ -1,10 +1,22 @@
-"""Runyard r6 task generator and in-memory tools. See agentic_corpus/NOTICE.md."""
+"""Runyard r6 task generator and in-memory tools (see agentic_corpus/NOTICE.md),
+and the staging of a larger corpus from Chopinfer's own source."""
+import argparse
 import hashlib
 import json
+import os
 import posixpath
+import subprocess
 from pathlib import Path
 
 CORPUS = Path(__file__).with_name('agentic_corpus')
+ROOT = Path(__file__).resolve().parents[2]
+STAGED_REVISION = 'chopinfer-source.v1'
+# Generic instructions for a staged file: each needs one read and one edit.
+STAGED_TASKS = {
+    'bug fix': 'Find one place where an edge case or error is not handled and fix it with one small edit.',
+    'refactor': 'Simplify one expression or condition with one small edit, keeping the behavior the same.',
+    'documentation': 'Add or clarify one comment above a function or type whose purpose is not obvious.',
+}
 
 
 def load_corpus(directory=CORPUS):
@@ -21,6 +33,54 @@ def load_corpus(directory=CORPUS):
     if digest.hexdigest() != manifest['corpus_digest']:
         raise ValueError('coding corpus digest mismatch')
     return manifest, groups
+
+
+def git(repository, *args):
+    return subprocess.run(['git', '-C', str(repository), *args], check=True, capture_output=True).stdout
+
+
+def stage_corpus(repository, revision, out, count=64, min_bytes=4096, max_bytes=65536):
+    """Stage COUNT Rust sources of REPOSITORY's `crates/` at REVISION into OUT,
+    with a manifest `load_corpus` verifies: a corpus larger than Runyard's
+    nine prompts, whose first prompts the prefix cache cannot absorb.
+
+    Files of MIN_BYTES to MAX_BYTES are ordered by the SHA-256 of the commit
+    and path, so a revision always stages the same files. OUT must be a new or
+    empty directory outside REPOSITORY (stage under $CHOPINFER_DATA). The tool
+    schemas and system prompt are Runyard's; each file gets STAGED_TASKS."""
+    repository, out = Path(repository).resolve(), Path(out).resolve()
+    if out == repository or repository in out.parents:
+        raise ValueError('stage the corpus outside the repository, under $CHOPINFER_DATA')
+    if out.exists() and any(out.iterdir()):
+        raise ValueError(f'{out} is not empty')
+    commit = git(repository, 'rev-parse', '--verify', revision + '^{commit}').decode().strip()
+    candidates = []
+    for line in git(repository, 'ls-tree', '-r', '-l', '-z', commit, '--', 'crates').split(b'\0'):
+        if not line:
+            continue
+        meta, path = line.split(b'\t', 1)
+        mode, kind, _, size = meta.split()
+        path = path.decode()
+        if kind == b'blob' and mode == b'100644' and path.endswith('.rs') and min_bytes <= int(size) <= max_bytes:
+            candidates.append(path)
+    candidates.sort(key=lambda path: hashlib.sha256(f'{commit}/{path}'.encode()).digest())
+    if len(candidates) < count:
+        raise ValueError(f'{len(candidates)} eligible sources at {commit}, fewer than {count}')
+    runyard = json.loads((CORPUS / 'manifest.json').read_text())
+    out.mkdir(parents=True, exist_ok=True)
+    files, digest = [], hashlib.sha256()
+    for index, path in enumerate(sorted(candidates[:count])):
+        raw = git(repository, 'cat-file', 'blob', f'{commit}:{path}')
+        raw.decode('utf-8')
+        fixture = f'source-{index:03d}.txt'
+        (out / fixture).write_bytes(raw)
+        files.append(dict(group='coding', fixture=fixture, path=path, sha256=hashlib.sha256(raw).hexdigest()))
+        digest.update(path.encode() + b'\0' + raw + b'\0')
+    manifest = dict(source_commit=commit, revision=STAGED_REVISION, corpus_digest=digest.hexdigest(), files=files,
+                    tasks={entry['path']: dict(STAGED_TASKS) for entry in files},
+                    tools=runyard['tools'], setup=runyard['setup'])
+    (out / 'manifest.json').write_text(json.dumps(manifest, indent=1) + '\n')
+    return manifest
 
 
 def task_for(manifest, files, seed, concurrency, index, max_tool_bytes=65536):
@@ -176,3 +236,31 @@ def valid_session(workspace, finished, failure):
     # Runyard permits corrected tool errors, a no-op replacement and edits to
     # any read fixture. This is tool-flow validity, not semantic correctness.
     return bool(workspace.read_paths and workspace.patched and finished and not failure)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description='Stage a larger agentic corpus from Chopinfer source at a pinned revision.')
+    commands = parser.add_subparsers(dest='command', required=True)
+    stage = commands.add_parser('stage', help=stage_corpus.__doc__.split('\n\n')[0])
+    stage.add_argument('--revision', required=True, help='commit to stage (recorded as source_commit)')
+    stage.add_argument('--out', type=Path, help='new directory; default $CHOPINFER_DATA/agentic/corpus-<commit>')
+    stage.add_argument('--repository', type=Path, default=ROOT)
+    stage.add_argument('--count', type=int, default=64)
+    args = parser.parse_args(argv)
+    out = args.out
+    if out is None:
+        if not os.environ.get('CHOPINFER_DATA'):
+            parser.error('set CHOPINFER_DATA or pass --out')
+        commit = git(args.repository, 'rev-parse', '--verify', args.revision + '^{commit}').decode().strip()
+        out = Path(os.environ['CHOPINFER_DATA']) / 'agentic' / f'corpus-{commit[:12]}'
+    try:
+        manifest = stage_corpus(args.repository, args.revision, out, args.count)
+    except (ValueError, subprocess.CalledProcessError) as error:
+        parser.exit(1, f'agentic_workload: {error}\n')
+    print(f"staged {len(manifest['files'])} files of {manifest['source_commit']} into {out}, "
+          f"corpus digest {manifest['corpus_digest']}")
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

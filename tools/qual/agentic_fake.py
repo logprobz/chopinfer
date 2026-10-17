@@ -1,5 +1,6 @@
 """Owned loopback fixture for agentic_mixed dry runs. No model or GPU required."""
 from contextlib import contextmanager
+import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import itertools
 import json
@@ -64,6 +65,36 @@ class Unconfirmed(Exception):
     pass
 
 
+class PrefixCache:
+    """A stand-in for the server's prefix cache: a request reuses the
+    longest message prefix an earlier request with the same `cache_salt`
+    sent. Tokens are counted as 4 bytes of each message's JSON."""
+
+    def __init__(self):
+        self.seen = set()
+        self.prefill_tokens = self.prefill_steps = self.reused = self.queried = 0
+
+    def request(self, request):
+        """(prompt tokens, cached tokens) of REQUEST, recorded as one prefill step."""
+        key = hashlib.sha256(json.dumps([request.get('cache_salt'), request.get('tools')], sort_keys=True).encode())
+        tokens = len(json.dumps(request.get('tools'))) // 4
+        cached = 0
+        prefixes = []
+        for message in request['messages']:
+            key.update(json.dumps(message, sort_keys=True).encode())
+            tokens += len(json.dumps(message)) // 4 + 1
+            prefixes.append(key.hexdigest())
+            if prefixes[-1] in self.seen:
+                cached = tokens
+        cached = min(cached, tokens - 1)
+        self.seen.update(prefixes)
+        self.prefill_tokens += tokens - cached
+        self.prefill_steps += 1
+        self.reused += cached
+        self.queried += tokens
+        return tokens, cached
+
+
 @contextmanager
 def fake_server(files, mode='fixed', clock=None, reads=None):
     """`clock` (a FakeClock) advances by the pacing interval per event. With
@@ -71,6 +102,7 @@ def fake_server(files, mode='fixed', clock=None, reads=None):
     of each event instead of sleeping, and ends in a stream error if the read
     is not confirmed in time; any other request sleeps the pacing interval."""
     state = {'requests': 0}
+    cache = PrefixCache()
     lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
@@ -84,6 +116,7 @@ def fake_server(files, mode='fixed', clock=None, reads=None):
             elif self.path == '/metrics':
                 with lock:
                     n = state['requests']
+                    prefill, steps, reused, queried = cache.prefill_tokens, cache.prefill_steps, cache.reused, cache.queried
                 raw = (f'chop_prefill_budget_mode{{mode="{mode}"}} 1\n'
                        f'chop_prefill_budget_selected_tokens_count {n if mode == "tbt" else 0}\n'
                        f'vllm:inter_token_latency_seconds_count {n * 2}\n'
@@ -94,10 +127,10 @@ def fake_server(files, mode='fixed', clock=None, reads=None):
                        f'chop_step_execution_seconds_sum{{phase="mixed"}} {n * .003}\n'
                        f'chop_step_execution_seconds_count{{phase="decode"}} {n * 2}\n'
                        f'chop_step_execution_seconds_sum{{phase="decode"}} {n * .006}\n'
-                       f'chop_step_prefill_tokens_sum {n * 100}\n'
-                       f'chop_step_prefill_tokens_count {n}\n'
-                       f'chop_prefix_cache_reused_tokens_total {n * 50}\n'
-                       f'chop_prefix_cache_queried_tokens_total {n * 100}\n').encode()
+                       f'chop_step_prefill_tokens_sum {prefill}\n'
+                       f'chop_step_prefill_tokens_count {steps}\n'
+                       f'chop_prefix_cache_reused_tokens_total {reused}\n'
+                       f'chop_prefix_cache_queried_tokens_total {queried}\n').encode()
                 content_type = 'text/plain'
             else:
                 self.send_error(404)
@@ -124,6 +157,7 @@ def fake_server(files, mode='fixed', clock=None, reads=None):
             request = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
             with lock:
                 state['requests'] += 1
+                prompt_tokens, cached_tokens = cache.request(request)
             self.send_response(200)
             self.send_header('Content-Type', 'text/event-stream')
             self.end_headers()
@@ -170,8 +204,8 @@ def fake_server(files, mode='fixed', clock=None, reads=None):
                 finish, output = 'length', request['max_tokens']
             emit({'choices': [{'index': 0, 'delta': {}, 'finish_reason': finish}]})
             if request.get('stream_options'):
-                emit({'choices': [], 'usage': {'prompt_tokens': 2000, 'completion_tokens': output,
-                                              'prompt_tokens_details': {'cached_tokens': 1000}},
+                emit({'choices': [], 'usage': {'prompt_tokens': prompt_tokens, 'completion_tokens': output,
+                                              'prompt_tokens_details': {'cached_tokens': cached_tokens}},
                       'metrics': {'speculative_decoding': {'num_accepted_draft_tokens': 8, 'num_draft_tokens': 10}}})
             self.wfile.write(b'data: [DONE]\n\n')
             self.wfile.flush()

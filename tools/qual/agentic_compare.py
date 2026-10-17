@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Compare a verified tbt/fixed pair of completed agentic-mixed v2 sweeps."""
+"""Compare a verified tbt/fixed pair of completed agentic-mixed v3 sweeps."""
 import argparse
 import hashlib
 import json
 from pathlib import Path
 
+from agentic_mixed import REVISION
 from agentic_server import mode_evidence, verify_arm
 from common import compared_timing
 
@@ -17,8 +18,8 @@ def validate_pair(left, right):
             raise ValueError('not an agentic qualification receipt')
         if type(receipt.get('mechanics_only')) is not bool or receipt.get('dry_run') != receipt['mechanics_only']:
             raise ValueError('inconsistent mechanics identity')
-        if receipt.get('workload_schema') != 'chopinfer.agentic-mixed.v2' or receipt.get('receipt_kind') != 'sweep':
-            raise ValueError('comparison requires completed v2 sweep receipts, not checkpoints')
+        if receipt.get('workload_schema') != REVISION or receipt.get('receipt_kind') != 'sweep':
+            raise ValueError('comparison requires completed v3 sweep receipts, not checkpoints')
         if receipt.get('aborted') or not receipt.get('passed'):
             raise ValueError('aborted, insufficient or invalid sweep cannot support a performance comparison')
         profile = receipt['profile']

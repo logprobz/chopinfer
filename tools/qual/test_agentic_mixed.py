@@ -4,7 +4,9 @@ import io
 from contextlib import contextmanager, redirect_stdout
 from functools import partial
 import json
+import os
 from pathlib import Path
+import subprocess
 import tempfile
 import time
 import unittest
@@ -14,7 +16,7 @@ import agentic_fake
 from agentic_fake import EVENT_SECONDS, FakeClock, Reads, fake_server
 from agentic_metrics import distribution, metrics_delta, parse_metrics, ratio, summarize
 from agentic_mixed import Transport, main, parser, run_decode, run_level, session, sse_events, stream_request
-from agentic_workload import CORPUS, Workspace, decode_context, load_corpus, task_for, valid_session
+from agentic_workload import CORPUS, Workspace, decode_context, load_corpus, stage_corpus, task_for, valid_session
 
 
 @contextmanager
@@ -267,7 +269,8 @@ class FakeIntegrationTests(unittest.TestCase):
             self.assertEqual(row['invalid_sessions'], 0)
             self.assertTrue(all(s['valid'] for s in row['sessions']))
             self.assertEqual(row['draft_acceptance']['value'], .8)
-            self.assertEqual(row['cache_hit_rate']['value'], .5)
+            # The fake's prefix cache reuses each salted session's earlier turns.
+            self.assertTrue(0 < row['cache_hit_rate']['value'] < 1)
             self.assertTrue(row['server_metrics']['series'])
             self.assertTrue(all(r['delta'] >= 0 for r in row['server_metrics']['series'] if r['delta'] is not None))
             probe = run_decode(client, 'fake-agentic', profile, groups, 262144)
@@ -313,6 +316,113 @@ class FakeIntegrationTests(unittest.TestCase):
         self.assertFalse(result['valid'])
         self.assertFalse(result['patch_applied'])
         self.assertEqual(result['failure'], 'output token limit')
+
+
+def source_repository(directory, files):
+    """A git repository at DIRECTORY with one commit of FILES {path: text}: (path, commit)."""
+    for path, text in files.items():
+        (directory / path).parent.mkdir(parents=True, exist_ok=True)
+        (directory / path).write_text(text)
+    def git(*args):
+        return subprocess.run(['git', '-C', str(directory), *args], check=True, capture_output=True, text=True,
+                              env={**os.environ, 'GIT_AUTHOR_NAME': 'test', 'GIT_AUTHOR_EMAIL': 'test@example.invalid',
+                                   'GIT_COMMITTER_NAME': 'test', 'GIT_COMMITTER_EMAIL': 'test@example.invalid'}).stdout
+    git('init', '-q')
+    git('add', '.')
+    git('commit', '-q', '-m', 'fixture')
+    return directory, git('rev-parse', 'HEAD').strip()
+
+
+def rust_source(lines, width):
+    return ''.join(f'// line {i:05d} ' + 'x' * width + '\n' for i in range(lines))
+
+
+class PressureTests(unittest.TestCase):
+    """Prefill pressure: the pinned Runyard corpus repeats nine prompts the
+    prefix cache absorbs, so a level must say how much prefill it caused, and
+    the sweep must be able to defeat the cache and use a larger corpus."""
+
+    def staged(self, directory, count=4):
+        files = {f'crates/c{i}/src/lib.rs': rust_source(120 + 60 * i, 40) for i in range(6)}
+        files['crates/tiny/src/lib.rs'] = 'fn f() {}\n'
+        files['README.md'] = 'not source\n'
+        repository, commit = source_repository(directory / 'repo', files)
+        out = directory / 'corpus'
+        manifest = stage_corpus(repository, commit, out, count=count)
+        return repository, commit, out, manifest
+
+    def sweep(self, manifest, files, *flags):
+        profile = vars(parser().parse_args(['--levels', '2', '--seconds', '.5', '--warmup-waves', '0', *flags]))
+        clock, reads = FakeClock(), Reads()
+        with fake_server(files, clock=clock, reads=reads) as url, patch('agentic_mixed.time', clock):
+            return run_level(ConfirmingTransport(url, 5, reads), 'fake-agentic', {**profile, 'run_id': 'run'},
+                             manifest, files, 2)
+
+    def test_stage_pins_source_outside_the_tree(self):
+        with tempfile.TemporaryDirectory() as name:
+            repository, commit, out, manifest = self.staged(Path(name))
+            loaded, groups = load_corpus(out)
+            self.assertEqual(loaded, manifest)
+            self.assertEqual((manifest['source_commit'], manifest['revision']), (commit, 'chopinfer-source.v1'))
+            self.assertEqual(len(groups['coding']), 4)
+            # Rust sources inside the size bounds only, byte for byte.
+            for path, text in groups['coding'].items():
+                self.assertTrue(path.startswith('crates/c') and path.endswith('.rs'), path)
+                self.assertEqual(text, (repository / path).read_text())
+                self.assertEqual(set(manifest['tasks'][path]), {'bug fix', 'refactor', 'documentation'})
+            runyard, _ = load_corpus()
+            self.assertEqual((manifest['tools'], manifest['setup']), (runyard['tools'], runyard['setup']))
+            # The same revision stages the same corpus; a used directory and the tree are refused.
+            again = stage_corpus(repository, commit, Path(name) / 'again', count=4)
+            self.assertEqual(again['corpus_digest'], manifest['corpus_digest'])
+            with self.assertRaisesRegex(ValueError, 'not empty'):
+                stage_corpus(repository, commit, out, count=4)
+            with self.assertRaisesRegex(ValueError, 'outside the repository'):
+                stage_corpus(repository, commit, repository / 'staged', count=4)
+
+    def test_cache_salt_defeats_shared_prefixes_and_the_level_reports_prefill(self):
+        manifest, groups = load_corpus()
+        self.assertEqual(parser().parse_args([]).cache_salt, 'session')
+        shared = self.sweep(manifest, groups['coding'], '--cache-salt', 'none')
+        salted = self.sweep(manifest, groups['coding'])
+        salts = [s['cache_salt'] for s in salted['sessions']]
+        self.assertTrue(all(salts) and len(set(salts)) == len(salts))
+        self.assertTrue(all(s['cache_salt'] is None for s in shared['sessions']))
+        for level in (shared, salted):
+            prefill = level['prefill']
+            self.assertGreater(prefill['server_prefill_tokens_per_step']['samples'], 0)
+            self.assertGreater(prefill['uncached_prompt_tokens']['samples'], 0)
+        # Nine shared first prompts hit the cache without a salt; a salted session's first turn misses.
+        self.assertGreater(shared['cache_hit_rate']['value'], salted['cache_hit_rate']['value'])
+        self.assertGreater(salted['prefill']['server_prefill_tokens_per_step']['value'],
+                           shared['prefill']['server_prefill_tokens_per_step']['value'])
+        # The salt is not part of the request identity the arms compare.
+        self.assertEqual([t['request_sha256'] for t in salted['sessions'][0]['turns']],
+                         [t['request_sha256'] for t in shared['sessions'][0]['turns']])
+
+    def test_a_staged_corpus_drives_the_sweep(self):
+        with tempfile.TemporaryDirectory() as name:
+            _, _, out, _ = self.staged(Path(name))
+            manifest, groups = load_corpus(out)
+            level = self.sweep(manifest, groups['coding'])
+            self.assertGreater(level['measured_completed'], 0)
+            self.assertTrue(all(s['valid'] for s in level['sessions']))
+            self.assertTrue({s['focus_path'] for s in level['sessions']} <= set(groups['coding']))
+
+    def test_main_records_the_staged_corpus_identity_and_no_path(self):
+        with tempfile.TemporaryDirectory() as name:
+            _, commit, out, manifest = self.staged(Path(name))
+            receipts = []
+            def receipt(check, identity, result, mechanics_only):
+                receipts.append(json.dumps({k: v for k, v in result.items() if k != 'level_receipts'}))
+                return Path(name) / f'{len(receipts)}.json'
+            with patch('agentic_mixed.common.startup'), patch('agentic_mixed.common.receipt', side_effect=receipt), \
+                    fake_time(FakeClock()), redirect_stdout(io.StringIO()):
+                self.assertEqual(main(['--dry-run', '--levels', '1', '--seconds', '.5', '--warmup-waves', '0',
+                                       '--no-decode', '--min-samples', '2', '--corpus', str(out)]), 0)
+            sweep = json.loads(receipts[-1])
+            self.assertEqual((sweep['source_commit'], sweep['corpus_digest']), (commit, manifest['corpus_digest']))
+            self.assertTrue(all(name not in r for r in receipts))
 
 
 if __name__ == '__main__':

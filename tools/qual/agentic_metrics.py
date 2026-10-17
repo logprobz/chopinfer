@@ -70,6 +70,10 @@ def summarize(sessions, start, end, concurrency, stall_threshold_ms=100):
                                  for reason in sorted({failure_reason(s) for s in completed if not s['valid']})},
                 prompt_tokens=token_total(turns, 'prompt_tokens'), output_tokens=token_total(generated, 'output_tokens'),
                 tpot_ms=distribution([t['tpot_ms'] for t in turns if t.get('tpot_ms') is not None]),
+                prompt_tokens_per_turn=distribution([t['prompt_tokens'] for t in turns if type(t.get('prompt_tokens')) is int]),
+                uncached_prompt_tokens=distribution([t['prompt_tokens'] - t['cached_tokens'] for t in turns
+                                                     if type(t.get('prompt_tokens')) is int and type(t.get('cached_tokens')) is int
+                                                     and 0 <= t['cached_tokens'] <= t['prompt_tokens']]),
                 **summarize_gaps(turns, stall_threshold_ms))
 
 
@@ -327,6 +331,48 @@ def summarize_gaps(turns, threshold=100):
                 client_stalls=stall_stats(values, threshold), within_run_client_stalls=stall_stats(within, threshold),
                 request_max_gap_ms=distribution([t['step_gap_ms']['max'] for t in turns
                                                 if t.get('step_gap_ms', {}).get('max') is not None]))
+
+
+def counter_total(delta, name):
+    """The summed delta of every NAME series (any labels), or None when one is unavailable or none exists."""
+    rows = [row for row in delta['series'] if row['name'] == name]
+    if not rows or any(row['delta'] is None for row in rows):
+        return None
+    return sum(row['delta'] for row in rows)
+
+
+def value_histogram(delta, name):
+    """A histogram of plain values (not seconds) summed over its label sets:
+    count, mean and bucket upper bounds for p50, p95 and p99 (bounds, not samples)."""
+    count, total = counter_total(delta, name + '_count'), counter_total(delta, name + '_sum')
+    buckets = {}
+    for row in delta['series']:
+        if row['name'] == name + '_bucket' and row['delta'] is not None:
+            le = float(row['labels']['le'])
+            buckets[le] = buckets.get(le, 0) + row['delta']
+    good = bool(count) and total is not None
+    upper = {}
+    for label, q in [('p50', .5), ('p95', .95), ('p99', .99)]:
+        bound = next((le for le, n in sorted(buckets.items()) if good and n >= max(1, int(count * q))), None)
+        upper[label] = bound if bound is not None and math.isfinite(bound) else None
+    return dict(name=name, count=count or 0, mean=total / count if good else None, quantile_upper=upper)
+
+
+def prefill_evidence(delta, summary):
+    """How much prefill a window caused: the server's prefill tokens per
+    prefill-carrying step and its prefix-cache reuse, the client's uncached
+    prompt tokens per turn, and the TBT budget's actual-over-predicted ratio.
+    A budget mode can only matter when prefill per step approaches its cap."""
+    tokens, steps = counter_total(delta, 'chop_step_prefill_tokens_sum'), counter_total(delta, 'chop_step_prefill_tokens_count')
+    reused, queried = (counter_total(delta, 'chop_prefix_cache_reused_tokens_total'),
+                       counter_total(delta, 'chop_prefix_cache_queried_tokens_total'))
+    return dict(server_prefill_tokens_per_step=metric(tokens / steps, int(steps)) if steps and tokens is not None
+                else metric(unavailable='no prefill step counters'),
+                server_prefix_cache_reuse=metric(reused / queried, int(queried)) if queried and reused is not None
+                else metric(unavailable='no prefix cache counters'),
+                uncached_prompt_tokens=summary['uncached_prompt_tokens'],
+                prompt_tokens_per_turn=summary['prompt_tokens_per_turn'],
+                mixed_actual_over_predicted=value_histogram(delta, 'chop_mixed_step_actual_over_predicted'))
 
 
 def histogram_reports(delta, threshold_ms):

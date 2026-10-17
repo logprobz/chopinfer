@@ -106,8 +106,11 @@ const PINNED_SERVICE_TRANSFER_CHUNK_BYTES: usize = 1024 * 1024;
 const PINNED_UPLOAD_RING_BYTES: usize = 4 * 1024 * 1024;
 
 /// Page-locked bytes of each stream's ring for filled uploads. A gather the
-/// ring cannot hold waits for its oldest copies on the stream, so the ring
-/// holds a decode step's rows of every table without waiting.
+/// ring cannot hold waits for its oldest copies on the stream. 64 MiB holds
+/// the 52 MB a 4096-token step gathers from two 384M-row tables of 264-byte
+/// rows at 24 rows per token, so steps up to that size never wait on the
+/// ring; a larger one waits for its own earlier copies and whatever the
+/// stream queued ahead of them.
 const FILL_RING_BYTES: usize = 64 * 1024 * 1024;
 
 fn record_diagnostic_v1(entries: &mut Vec<Vec<u8>>, value: &[u8]) {

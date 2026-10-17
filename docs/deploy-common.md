@@ -210,10 +210,11 @@ server's lifetime: `--kv-offload-gib 16`, the qualification reference size,
 adds 16 GiB across the ranks ([KV pool](serving-kv-pool.md)). Count it with
 the n-gram table and other pinned use before setting memlock and container
 limits. Every server also pins two 64 MiB upload buffers per rank while
-loading weights. A model's staging buffers for host-mapped views are pinned
-too; the mapped checkpoint bytes themselves are not, and live in the page
-cache ([host-mapped views](direct-loading.md#host-mapped-views)), so count
-them toward the host RAM a warm cache needs rather than toward memlock.
+loading weights. A model with host-mapped views also pins a 64 MiB gather
+ring per stream that gathers rows; the mapped checkpoint bytes themselves are
+not pinned and live in the page cache
+([host-mapped views](direct-loading.md#host-mapped-views)), so count them
+toward the host RAM a warm cache needs rather than toward memlock.
 
 - Keep `LimitMEMLOCK=infinity` (systemd units) and `--ulimit memlock=-1:-1`
   (Docker examples). Where a finite limit is required, size it for the pinned

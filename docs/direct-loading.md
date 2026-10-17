@@ -53,7 +53,7 @@ plan keeps the n-gram table in host memory; see
 ## Host-mapped views
 
 A plan may instead map a view from the checkpoint
-(`ViewPlacementV1::Mapped`, capability `chop.host-mapped-rows.v1`): a table
+(`ViewPlacementV1::Mapped`, capability `chop.host-mapped-gather.v1`): a table
 read a few rows at a time, too large to keep in device or page-locked
 memory. Exactly one record covers such a view, a plain copy of one tensor,
 whole or one contiguous range of its leading axis, stored unchanged; the
@@ -65,25 +65,28 @@ arena as a host view is, and no upload reads it; the page cache holds the
 bytes, and neither the device nor any page-locked budget counts them.
 `startup direct_load` states their total as `mapped_bytes`.
 
-A bundle reads a mapped view on the CPU (`with_mapped_view`) and gathers the
-rows a step needs into a staging buffer: page-locked, device-mapped host
-memory it allocates and writes in place (`allocate_staging_buffer`,
-`with_staging_buffer`), one per rank, which device copies and kernels take
-like any buffer. A step launches the work that does not need the rows,
-gathers them on the CPU meanwhile, copies them on a stream of their own, and
-has the consuming work wait on an event recorded after the copy.
+A bundle never sees a mapping. It names the rows a step needs, computed on
+the CPU, and calls `gather_mapped_rows` with a device buffer and a stream:
+the host reads those rows from the mapping into page-locked memory of its
+own and queues their copy on that stream, ordered like `copy_host_to_device`,
+before the call returns. The page-locked memory is a 64 MiB ring per stream
+(the CUDA backend's), each region reused only after an event recorded
+behind its copy completes; a gather larger than the ring, or one that wraps
+onto copies still queued, waits for them. Gathers of a megabyte or more read
+on up to eight threads, so the page faults of a cold mapping overlap. A
+capturing stream is refused, since a graph would replay a copy of rows the
+host read once.
 
-The host keeps every loan. A closure's loan of a mapped view keeps its image
-from being released; a staging buffer's loan first waits for the device work
-that named the buffer since its last loan (an event recorded behind it on
-each such stream, so copy on a stream that does little else), and while it
-lasts the host refuses a second loan, the buffer's release and any device
-work naming it. A graph capture and a device pointer table may not name a
-staging buffer, since their work would reach it where no loan waits.
+A step launches the work that does not need the rows, gathers them meanwhile,
+and the work after the gather on the same stream reads them. Gathering on a
+stream with no long work queued ahead, then having the consuming stream wait
+on an event recorded after the gather, keeps a wrapped ring from waiting
+behind that work. Each rank gathers its own copy; ranks naming the same rows
+read the same mapping.
 
 The checkpoint must not change while it is served. A mapping reads what the
-file holds, and a file truncated while mapped makes reads of the lost pages
-fault (`SIGBUS`), which the host does not handle.
+file holds, and a file truncated while mapped makes the host's reads of the
+lost pages fault (`SIGBUS`), which the host does not handle.
 
 ## Streaming a plan
 

@@ -255,9 +255,10 @@ the host executes records with no model code. A transform the set cannot
 express may use a bundle-owned identifier, which the host runs through the
 bundle's `chop_bundle_weight_transform_v1` export. A plan may also map a
 view read-only from the checkpoint instead of uploading it
-(`chop.host-mapped-rows.v1`); the host then lends its bytes to the CPU and
-page-locked staging buffers to the bundle through an optional services
-tail. Identities, host-placed and host-mapped views and streaming are in
+(`chop.host-mapped-gather.v1`); the bundle then has the host gather rows
+of it into a device buffer through an optional services tail, and never
+sees the mapping. Identities, host-placed and host-mapped views and
+streaming are in
 [direct weight loading](docs/direct-loading.md).
 
 ## Kernel ownership and reuse

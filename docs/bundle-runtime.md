@@ -141,9 +141,9 @@ Create and lifetime:
   the serving KV pool and the closing synchronize. Views are placed in the
   device arena, in pinned host memory (`chop.host-resident-views.v1`), or as
   this rank's rows of a row-sharded table; `place_views_mapped` also cuts
-  out the views a plan maps from the checkpoint (`chop.host-mapped-rows.v1`),
-  which the bundle reads with `with_mapped_view` instead. The bundle
-  chooses the order.
+  out the views a plan maps from the checkpoint
+  (`chop.host-mapped-gather.v1`), whose rows the bundle copies to its own
+  buffers with `gather_mapped_rows` instead. The bundle chooses the order.
 - `scratch`: `bind` maps a model's `Traversal<Allocation>` to typed host
   spans in declaration order, stopping at the first error. Declare the record
   once with `kernel_core::scratch_record!`; arrays, optional leaves and nested

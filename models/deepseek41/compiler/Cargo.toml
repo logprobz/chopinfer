@@ -7,13 +7,17 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+model-compiler-sdk.workspace = true
 model-deepseek41-contract.workspace = true
+projection-spec.workspace = true
 runtime-frontend-contract.workspace = true
 runtime-tokenizer.workspace = true
+runtime-weights.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+kernel-core.workspace = true
 sha2.workspace = true
 
 [lints]

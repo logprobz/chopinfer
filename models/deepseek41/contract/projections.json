@@ -1,0 +1,2076 @@
+{
+ "schema": "chopinfer.projection.v1",
+ "namespace": "deepseek41",
+ "use_profiles": {
+  "served": [
+   {
+    "phase": "Prefill",
+    "capacity": 8192,
+    "graph": false
+   },
+   {
+    "phase": "Decode",
+    "capacity": 1,
+    "graph": true
+   },
+   {
+    "phase": "Verify",
+    "capacity": 6,
+    "graph": true
+   }
+  ]
+ },
+ "layer_stems": [
+  {
+   "id": "layer",
+   "template": "layers.{i}",
+   "indices": {
+    "kind": "range",
+    "start": 0,
+    "end": "layers"
+   },
+   "support": [
+    {
+     "ranks": [
+      1,
+      2,
+      4
+     ],
+     "formats": [],
+     "phases": [],
+     "enabled": true
+    }
+   ]
+  },
+  {
+   "id": "kv_source",
+   "template": "layers.{i}.attn",
+   "indices": {
+    "kind": "list",
+    "indices": [
+     "kv_source_0",
+     "kv_source_1",
+     "kv_source_2",
+     "kv_source_3"
+    ]
+   },
+   "support": [
+    {
+     "ranks": [
+      1,
+      2,
+      4
+     ],
+     "formats": [],
+     "phases": [],
+     "enabled": true
+    }
+   ]
+  },
+  {
+   "id": "pooled_source",
+   "template": "layers.{i}.attn",
+   "indices": {
+    "kind": "list",
+    "indices": [
+     "kv_source_0",
+     "kv_source_1",
+     "kv_source_2"
+    ]
+   },
+   "support": [
+    {
+     "ranks": [
+      1,
+      2,
+      4
+     ],
+     "formats": [],
+     "phases": [],
+     "enabled": true
+    }
+   ]
+  },
+  {
+   "id": "index_source",
+   "template": "layers.{i}.attn.indexer",
+   "indices": {
+    "kind": "list",
+    "indices": [
+     "kv_source_0",
+     "kv_source_1",
+     "kv_source_2",
+     "kv_source_3",
+     "reindex_0",
+     "reindex_1",
+     "reindex_2",
+     "reindex_3"
+    ]
+   },
+   "support": [
+    {
+     "ranks": [
+      1,
+      2,
+      4
+     ],
+     "formats": [],
+     "phases": [],
+     "enabled": true
+    }
+   ]
+  },
+  {
+   "id": "engram",
+   "template": "layers.{i}.engram",
+   "indices": {
+    "kind": "list",
+    "indices": [
+     "engram_layer_0",
+     "engram_layer_1"
+    ]
+   },
+   "support": [
+    {
+     "ranks": [
+      1,
+      2,
+      4
+     ],
+     "formats": [],
+     "phases": [],
+     "enabled": true
+    }
+   ]
+  },
+  {
+   "id": "engram_table_0",
+   "template": "layers.{i}.engram",
+   "indices": {
+    "kind": "list",
+    "indices": [
+     "engram_layer_0"
+    ]
+   },
+   "support": [
+    {
+     "ranks": [
+      1,
+      2,
+      4
+     ],
+     "formats": [],
+     "phases": [],
+     "enabled": true
+    }
+   ]
+  },
+  {
+   "id": "engram_table_1",
+   "template": "layers.{i}.engram",
+   "indices": {
+    "kind": "list",
+    "indices": [
+     "engram_layer_1"
+    ]
+   },
+   "support": [
+    {
+     "ranks": [
+      1,
+      2,
+      4
+     ],
+     "formats": [],
+     "phases": [],
+     "enabled": true
+    }
+   ]
+  },
+  {
+   "id": "dspark",
+   "template": "mtp.{i}",
+   "indices": {
+    "kind": "range",
+    "start": 0,
+    "end": "dspark_stages"
+   },
+   "support": [
+    {
+     "ranks": [
+      1,
+      2,
+      4
+     ],
+     "formats": [],
+     "phases": [],
+     "enabled": true
+    }
+   ]
+  },
+  {
+   "id": "dspark_first",
+   "template": "mtp.{i}",
+   "indices": {
+    "kind": "list",
+    "indices": [
+     0
+    ]
+   },
+   "support": [
+    {
+     "ranks": [
+      1,
+      2,
+      4
+     ],
+     "formats": [],
+     "phases": [],
+     "enabled": true
+    }
+   ]
+  },
+  {
+   "id": "dspark_last",
+   "template": "mtp.{i}",
+   "indices": {
+    "kind": "list",
+    "indices": [
+     "dspark_last"
+    ]
+   },
+   "support": [
+    {
+     "ranks": [
+      1,
+      2,
+      4
+     ],
+     "formats": [],
+     "phases": [],
+     "enabled": true
+    }
+   ]
+  },
+  {
+   "id": "vision_block",
+   "template": "vision.blocks.{i}",
+   "indices": {
+    "kind": "range",
+    "start": 0,
+    "end": "vision_layers"
+   },
+   "support": [
+    {
+     "ranks": [
+      1,
+      2,
+      4
+     ],
+     "formats": [],
+     "phases": [],
+     "enabled": true
+    }
+   ]
+  }
+ ],
+ "projections": [
+  {
+   "id": "layer.wq_a",
+   "source": {
+    "stem": "layer",
+    "tensor": "{stem}.attn.wq_a.weight"
+   },
+   "shape": [
+    "q_rank",
+    "hidden"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "replicate"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "fp8_block32",
+   "use_profile": "served"
+  },
+  {
+   "id": "layer.wq_b",
+   "source": {
+    "stem": "layer",
+    "tensor": "{stem}.attn.wq_b.weight"
+   },
+   "shape": [
+    "attn_q_rows",
+    "q_rank"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "column",
+    "tile": "head_dim"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "fp8_block32",
+   "use_profile": "served"
+  },
+  {
+   "id": "layer.wkv",
+   "source": {
+    "stem": "layer",
+    "tensor": "{stem}.attn.wkv.weight"
+   },
+   "shape": [
+    "head_dim",
+    "hidden"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "replicate"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "fp8_block32",
+   "use_profile": "served"
+  },
+  {
+   "id": "layer.wo_a",
+   "source": {
+    "stem": "layer",
+    "tensor": "{stem}.attn.wo_a.weight"
+   },
+   "shape": [
+    "wo_a_rows",
+    "o_group_k"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "column",
+    "tile": "o_rank"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "fp8_block32",
+   "use_profile": "served"
+  },
+  {
+   "id": "layer.wo_b",
+   "source": {
+    "stem": "layer",
+    "tensor": "{stem}.attn.wo_b.weight"
+   },
+   "shape": [
+    "hidden",
+    "wo_a_rows"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "row",
+    "tile": "o_rank"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "fp8_block32",
+   "use_profile": "served"
+  },
+  {
+   "id": "layer.experts.gate-up",
+   "source": {
+    "stem": "layer",
+    "tensor": "{stem}.ffn.experts.{expert}.{operand}.weight"
+   },
+   "shape": [
+    "moe_inter",
+    "hidden"
+   ],
+   "operands": [
+    "w1",
+    "w3"
+   ],
+   "kind": {
+    "kind": "expert_bank",
+    "experts": "experts",
+    "top_k": "top_k"
+   },
+   "split": {
+    "class": "expert_sharded",
+    "axis": "rows",
+    "tile": 32
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "mxfp4",
+   "use_profile": "served"
+  },
+  {
+   "id": "layer.experts.down",
+   "source": {
+    "stem": "layer",
+    "tensor": "{stem}.ffn.experts.{expert}.w2.weight"
+   },
+   "shape": [
+    "hidden",
+    "moe_inter"
+   ],
+   "kind": {
+    "kind": "expert_bank",
+    "experts": "experts",
+    "top_k": "top_k"
+   },
+   "split": {
+    "class": "expert_sharded",
+    "axis": "k",
+    "tile": 32
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "mxfp4",
+   "use_profile": "served"
+  },
+  {
+   "id": "layer.shared.gate-up",
+   "source": {
+    "stem": "layer",
+    "tensor": "{stem}.ffn.shared_experts.{operand}.weight"
+   },
+   "shape": [
+    "moe_inter",
+    "hidden"
+   ],
+   "operands": [
+    "w1",
+    "w3"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "column",
+    "tile": 32
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "fp8_block32",
+   "use_profile": "served"
+  },
+  {
+   "id": "layer.shared.down",
+   "source": {
+    "stem": "layer",
+    "tensor": "{stem}.ffn.shared_experts.w2.weight"
+   },
+   "shape": [
+    "hidden",
+    "moe_inter"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "row",
+    "tile": 32
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "fp8_block32",
+   "use_profile": "served"
+  },
+  {
+   "id": "layer.router",
+   "source": {
+    "stem": "layer",
+    "tensor": "{stem}.ffn.gate.weight"
+   },
+   "shape": [
+    "experts",
+    "hidden"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "replicate"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "bf16",
+   "use_profile": "served"
+  },
+  {
+   "id": "dspark.wq_a",
+   "source": {
+    "stem": "dspark",
+    "tensor": "{stem}.attn.wq_a.weight"
+   },
+   "shape": [
+    "q_rank",
+    "hidden"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "replicate"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "fp8_block32",
+   "use_profile": "served"
+  },
+  {
+   "id": "dspark.wq_b",
+   "source": {
+    "stem": "dspark",
+    "tensor": "{stem}.attn.wq_b.weight"
+   },
+   "shape": [
+    "attn_q_rows",
+    "q_rank"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "column",
+    "tile": "head_dim"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "fp8_block32",
+   "use_profile": "served"
+  },
+  {
+   "id": "dspark.wkv",
+   "source": {
+    "stem": "dspark",
+    "tensor": "{stem}.attn.wkv.weight"
+   },
+   "shape": [
+    "head_dim",
+    "hidden"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "replicate"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "fp8_block32",
+   "use_profile": "served"
+  },
+  {
+   "id": "dspark.wo_a",
+   "source": {
+    "stem": "dspark",
+    "tensor": "{stem}.attn.wo_a.weight"
+   },
+   "shape": [
+    "wo_a_rows",
+    "o_group_k"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "column",
+    "tile": "o_rank"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "fp8_block32",
+   "use_profile": "served"
+  },
+  {
+   "id": "dspark.wo_b",
+   "source": {
+    "stem": "dspark",
+    "tensor": "{stem}.attn.wo_b.weight"
+   },
+   "shape": [
+    "hidden",
+    "wo_a_rows"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "row",
+    "tile": "o_rank"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "fp8_block32",
+   "use_profile": "served"
+  },
+  {
+   "id": "dspark.experts.gate-up",
+   "source": {
+    "stem": "dspark",
+    "tensor": "{stem}.ffn.experts.{expert}.{operand}.weight"
+   },
+   "shape": [
+    "moe_inter",
+    "hidden"
+   ],
+   "operands": [
+    "w1",
+    "w3"
+   ],
+   "kind": {
+    "kind": "expert_bank",
+    "experts": "dspark_experts",
+    "top_k": "dspark_top_k"
+   },
+   "split": {
+    "class": "expert_sharded",
+    "axis": "rows",
+    "tile": 32
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "mxfp4",
+   "use_profile": "served"
+  },
+  {
+   "id": "dspark.experts.down",
+   "source": {
+    "stem": "dspark",
+    "tensor": "{stem}.ffn.experts.{expert}.w2.weight"
+   },
+   "shape": [
+    "hidden",
+    "moe_inter"
+   ],
+   "kind": {
+    "kind": "expert_bank",
+    "experts": "dspark_experts",
+    "top_k": "dspark_top_k"
+   },
+   "split": {
+    "class": "expert_sharded",
+    "axis": "k",
+    "tile": 32
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "mxfp4",
+   "use_profile": "served"
+  },
+  {
+   "id": "dspark.shared.gate-up",
+   "source": {
+    "stem": "dspark",
+    "tensor": "{stem}.ffn.shared_experts.{operand}.weight"
+   },
+   "shape": [
+    "moe_inter",
+    "hidden"
+   ],
+   "operands": [
+    "w1",
+    "w3"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "column",
+    "tile": 32
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "fp8_block32",
+   "use_profile": "served"
+  },
+  {
+   "id": "dspark.shared.down",
+   "source": {
+    "stem": "dspark",
+    "tensor": "{stem}.ffn.shared_experts.w2.weight"
+   },
+   "shape": [
+    "hidden",
+    "moe_inter"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "row",
+    "tile": 32
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "fp8_block32",
+   "use_profile": "served"
+  },
+  {
+   "id": "dspark.router",
+   "source": {
+    "stem": "dspark",
+    "tensor": "{stem}.ffn.gate.weight"
+   },
+   "shape": [
+    "dspark_experts",
+    "hidden"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "replicate"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "bf16",
+   "use_profile": "served"
+  },
+  {
+   "id": "csa.compressor.wkv",
+   "source": {
+    "stem": "kv_source",
+    "tensor": "{stem}.compressor.wkv.weight"
+   },
+   "shape": [
+    "head_dim",
+    "hidden"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "replicate"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "bf16",
+   "use_profile": "served"
+  },
+  {
+   "id": "csa.compressor.wgate",
+   "source": {
+    "stem": "pooled_source",
+    "tensor": "{stem}.compressor.wgate.weight"
+   },
+   "shape": [
+    "head_dim",
+    "hidden"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "replicate"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "bf16",
+   "use_profile": "served"
+  },
+  {
+   "id": "csa.indexer.wk",
+   "source": {
+    "stem": "kv_source",
+    "tensor": "{stem}.indexer.wk.weight"
+   },
+   "shape": [
+    "index_dim",
+    "head_dim"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "replicate"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "bf16",
+   "use_profile": "served"
+  },
+  {
+   "id": "csa.indexer.wq_b",
+   "source": {
+    "stem": "index_source",
+    "tensor": "{stem}.wq_b.weight"
+   },
+   "shape": [
+    "index_q_rows",
+    "q_rank"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "replicate"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "fp8_block32",
+   "use_profile": "served"
+  },
+  {
+   "id": "csa.indexer.weights_proj",
+   "source": {
+    "stem": "index_source",
+    "tensor": "{stem}.weights_proj.weight"
+   },
+   "shape": [
+    "index_heads",
+    "hidden"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "replicate"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "bf16",
+   "use_profile": "served"
+  },
+  {
+   "id": "engram.wkv",
+   "source": {
+    "stem": "engram",
+    "tensor": "{stem}.wkv.weight"
+   },
+   "shape": [
+    "engram_kv_rows",
+    "engram_k"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "replicate"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "fp8_block32",
+   "use_profile": "served"
+  },
+  {
+   "id": "engram.table_0",
+   "source": {
+    "stem": "engram_table_0",
+    "tensor": "{stem}.embed.weight"
+   },
+   "shape": [
+    "engram_rows_0",
+    "engram_dim"
+   ],
+   "kind": {
+    "kind": "lookup_table"
+   },
+   "split": {
+    "class": "replicate"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "mxfp8",
+   "use_profile": "served"
+  },
+  {
+   "id": "engram.table_1",
+   "source": {
+    "stem": "engram_table_1",
+    "tensor": "{stem}.embed.weight"
+   },
+   "shape": [
+    "engram_rows_1",
+    "engram_dim"
+   ],
+   "kind": {
+    "kind": "lookup_table"
+   },
+   "split": {
+    "class": "replicate"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "mxfp8",
+   "use_profile": "served"
+  },
+  {
+   "id": "dspark.main_proj",
+   "source": {
+    "stem": "dspark_first",
+    "tensor": "{stem}.main_proj.weight"
+   },
+   "shape": [
+    "hidden",
+    "dspark_proj_k"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "replicate"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "fp8_block32",
+   "use_profile": "served"
+  },
+  {
+   "id": "dspark.confidence",
+   "source": {
+    "stem": "dspark_last",
+    "tensor": "{stem}.confidence_head.proj.weight"
+   },
+   "shape": [
+    1,
+    "confidence_k"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "replicate"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "bf16",
+   "use_profile": "served"
+  },
+  {
+   "id": "dspark.markov_embed",
+   "source": {
+    "stem": "dspark_last",
+    "tensor": "{stem}.markov_head.embed.weight"
+   },
+   "shape": [
+    "vocab",
+    "markov_rank"
+   ],
+   "kind": {
+    "kind": "lookup_table"
+   },
+   "split": {
+    "class": "replicate"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "bf16",
+   "use_profile": "served"
+  },
+  {
+   "id": "dspark.markov_head",
+   "source": {
+    "stem": "dspark_last",
+    "tensor": "{stem}.markov_head.head.weight"
+   },
+   "shape": [
+    "vocab",
+    "markov_rank"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "replicate"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "bf16",
+   "use_profile": "served"
+  },
+  {
+   "id": "embedding",
+   "source": {
+    "tensor": "embed.weight"
+   },
+   "shape": [
+    "vocab",
+    "hidden"
+   ],
+   "kind": {
+    "kind": "lookup_table"
+   },
+   "split": {
+    "class": "replicate"
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "bf16",
+   "use_profile": "served"
+  },
+  {
+   "id": "head",
+   "source": {
+    "tensor": "head.weight"
+   },
+   "shape": [
+    "vocab",
+    "hidden"
+   ],
+   "kind": {
+    "kind": "dense"
+   },
+   "split": {
+    "class": "column",
+    "tile": 32
+   },
+   "epilogues": {
+    "residual_add": false,
+    "bias": false,
+    "gelu": null,
+    "swiglu": null,
+    "output_quantization": null,
+    "weighted_moe_combine": false
+   },
+   "numerical_contract": "deepseek41.source-recipe.v1",
+   "format": "bf16",
+   "use_profile": "served"
+  }
+ ],
+ "fusion_groups": [],
+ "side_tensors": [
+  {
+   "id": "layer.attn_sink",
+   "source": {
+    "stem": "layer",
+    "tensor": "{stem}.attn.attn_sink"
+   },
+   "shape": [
+    "heads"
+   ],
+   "kind": "sink",
+   "dtypes": [
+    "F32"
+   ],
+   "consumer": "layer.wq_b",
+   "placement": {
+    "axis": 0,
+    "split": {
+     "class": "column",
+     "tile": 1
+    }
+   }
+  },
+  {
+   "id": "layer.q_norm",
+   "source": {
+    "stem": "layer",
+    "tensor": "{stem}.attn.q_norm.weight"
+   },
+   "shape": [
+    "q_rank"
+   ],
+   "kind": "norm",
+   "dtypes": [
+    "Bf16"
+   ],
+   "consumer": {
+    "kernel": "row.rmsnorm"
+   }
+  },
+  {
+   "id": "layer.kv_norm",
+   "source": {
+    "stem": "layer",
+    "tensor": "{stem}.attn.kv_norm.weight"
+   },
+   "shape": [
+    "head_dim"
+   ],
+   "kind": "norm",
+   "dtypes": [
+    "Bf16"
+   ],
+   "consumer": {
+    "kernel": "row.rmsnorm"
+   }
+  },
+  {
+   "id": "layer.attn_norm",
+   "source": {
+    "stem": "layer",
+    "tensor": "{stem}.attn_norm.weight"
+   },
+   "shape": [
+    "hidden"
+   ],
+   "kind": "norm",
+   "dtypes": [
+    "Bf16"
+   ],
+   "consumer": {
+    "kernel": "row.rmsnorm"
+   }
+  },
+  {
+   "id": "layer.ffn_norm",
+   "source": {
+    "stem": "layer",
+    "tensor": "{stem}.ffn_norm.weight"
+   },
+   "shape": [
+    "hidden"
+   ],
+   "kind": "norm",
+   "dtypes": [
+    "Bf16"
+   ],
+   "consumer": {
+    "kernel": "row.rmsnorm"
+   }
+  },
+  {
+   "id": "layer.router.bias",
+   "source": {
+    "stem": "layer",
+    "tensor": "{stem}.ffn.gate.bias"
+   },
+   "shape": [
+    "experts"
+   ],
+   "kind": "bias",
+   "dtypes": [
+    "F32"
+   ],
+   "consumer": "layer.router"
+  },
+  {
+   "id": "layer.router.bias_vl",
+   "source": {
+    "stem": "layer",
+    "tensor": "{stem}.ffn.gate.bias_vl"
+   },
+   "shape": [
+    "experts"
+   ],
+   "kind": "bias",
+   "dtypes": [
+    "F32"
+   ],
+   "consumer": "layer.router"
+  },
+  {
+   "id": "layer.hc_attn_fn",
+   "source": {
+    "stem": "layer",
+    "tensor": "{stem}.hc_attn_fn"
+   },
+   "shape": [
+    "hc_mix",
+    "hc_mix_k"
+   ],
+   "kind": "auxiliary",
+   "dtypes": [
+    "F32"
+   ],
+   "consumer": {
+    "kernel": "row.sinkhorn_hc"
+   }
+  },
+  {
+   "id": "layer.hc_attn_base",
+   "source": {
+    "stem": "layer",
+    "tensor": "{stem}.hc_attn_base"
+   },
+   "shape": [
+    "hc_mix"
+   ],
+   "kind": "auxiliary",
+   "dtypes": [
+    "F32"
+   ],
+   "consumer": {
+    "kernel": "row.sinkhorn_hc"
+   }
+  },
+  {
+   "id": "layer.hc_attn_scale",
+   "source": {
+    "stem": "layer",
+    "tensor": "{stem}.hc_attn_scale"
+   },
+   "shape": [
+    3
+   ],
+   "kind": "auxiliary",
+   "dtypes": [
+    "F32"
+   ],
+   "consumer": {
+    "kernel": "row.sinkhorn_hc"
+   }
+  },
+  {
+   "id": "layer.hc_ffn_fn",
+   "source": {
+    "stem": "layer",
+    "tensor": "{stem}.hc_ffn_fn"
+   },
+   "shape": [
+    "hc_mix",
+    "hc_mix_k"
+   ],
+   "kind": "auxiliary",
+   "dtypes": [
+    "F32"
+   ],
+   "consumer": {
+    "kernel": "row.sinkhorn_hc"
+   }
+  },
+  {
+   "id": "layer.hc_ffn_base",
+   "source": {
+    "stem": "layer",
+    "tensor": "{stem}.hc_ffn_base"
+   },
+   "shape": [
+    "hc_mix"
+   ],
+   "kind": "auxiliary",
+   "dtypes": [
+    "F32"
+   ],
+   "consumer": {
+    "kernel": "row.sinkhorn_hc"
+   }
+  },
+  {
+   "id": "layer.hc_ffn_scale",
+   "source": {
+    "stem": "layer",
+    "tensor": "{stem}.hc_ffn_scale"
+   },
+   "shape": [
+    3
+   ],
+   "kind": "auxiliary",
+   "dtypes": [
+    "F32"
+   ],
+   "consumer": {
+    "kernel": "row.sinkhorn_hc"
+   }
+  },
+  {
+   "id": "dspark.attn_sink",
+   "source": {
+    "stem": "dspark",
+    "tensor": "{stem}.attn.attn_sink"
+   },
+   "shape": [
+    "heads"
+   ],
+   "kind": "sink",
+   "dtypes": [
+    "F32"
+   ],
+   "consumer": "dspark.wq_b",
+   "placement": {
+    "axis": 0,
+    "split": {
+     "class": "column",
+     "tile": 1
+    }
+   }
+  },
+  {
+   "id": "dspark.q_norm",
+   "source": {
+    "stem": "dspark",
+    "tensor": "{stem}.attn.q_norm.weight"
+   },
+   "shape": [
+    "q_rank"
+   ],
+   "kind": "norm",
+   "dtypes": [
+    "Bf16"
+   ],
+   "consumer": {
+    "kernel": "row.rmsnorm"
+   }
+  },
+  {
+   "id": "dspark.kv_norm",
+   "source": {
+    "stem": "dspark",
+    "tensor": "{stem}.attn.kv_norm.weight"
+   },
+   "shape": [
+    "head_dim"
+   ],
+   "kind": "norm",
+   "dtypes": [
+    "Bf16"
+   ],
+   "consumer": {
+    "kernel": "row.rmsnorm"
+   }
+  },
+  {
+   "id": "dspark.attn_norm",
+   "source": {
+    "stem": "dspark",
+    "tensor": "{stem}.attn_norm.weight"
+   },
+   "shape": [
+    "hidden"
+   ],
+   "kind": "norm",
+   "dtypes": [
+    "Bf16"
+   ],
+   "consumer": {
+    "kernel": "row.rmsnorm"
+   }
+  },
+  {
+   "id": "dspark.ffn_norm",
+   "source": {
+    "stem": "dspark",
+    "tensor": "{stem}.ffn_norm.weight"
+   },
+   "shape": [
+    "hidden"
+   ],
+   "kind": "norm",
+   "dtypes": [
+    "Bf16"
+   ],
+   "consumer": {
+    "kernel": "row.rmsnorm"
+   }
+  },
+  {
+   "id": "dspark.router.bias",
+   "source": {
+    "stem": "dspark",
+    "tensor": "{stem}.ffn.gate.bias"
+   },
+   "shape": [
+    "dspark_experts"
+   ],
+   "kind": "bias",
+   "dtypes": [
+    "F32"
+   ],
+   "consumer": "dspark.router"
+  },
+  {
+   "id": "dspark.router.bias_vl",
+   "source": {
+    "stem": "dspark",
+    "tensor": "{stem}.ffn.gate.bias_vl"
+   },
+   "shape": [
+    "dspark_experts"
+   ],
+   "kind": "bias",
+   "dtypes": [
+    "F32"
+   ],
+   "consumer": "dspark.router"
+  },
+  {
+   "id": "dspark.hc_attn_fn",
+   "source": {
+    "stem": "dspark",
+    "tensor": "{stem}.hc_attn_fn"
+   },
+   "shape": [
+    "hc_mix",
+    "hc_mix_k"
+   ],
+   "kind": "auxiliary",
+   "dtypes": [
+    "F32"
+   ],
+   "consumer": {
+    "kernel": "row.sinkhorn_hc"
+   }
+  },
+  {
+   "id": "dspark.hc_attn_base",
+   "source": {
+    "stem": "dspark",
+    "tensor": "{stem}.hc_attn_base"
+   },
+   "shape": [
+    "hc_mix"
+   ],
+   "kind": "auxiliary",
+   "dtypes": [
+    "F32"
+   ],
+   "consumer": {
+    "kernel": "row.sinkhorn_hc"
+   }
+  },
+  {
+   "id": "dspark.hc_attn_scale",
+   "source": {
+    "stem": "dspark",
+    "tensor": "{stem}.hc_attn_scale"
+   },
+   "shape": [
+    3
+   ],
+   "kind": "auxiliary",
+   "dtypes": [
+    "F32"
+   ],
+   "consumer": {
+    "kernel": "row.sinkhorn_hc"
+   }
+  },
+  {
+   "id": "dspark.hc_ffn_fn",
+   "source": {
+    "stem": "dspark",
+    "tensor": "{stem}.hc_ffn_fn"
+   },
+   "shape": [
+    "hc_mix",
+    "hc_mix_k"
+   ],
+   "kind": "auxiliary",
+   "dtypes": [
+    "F32"
+   ],
+   "consumer": {
+    "kernel": "row.sinkhorn_hc"
+   }
+  },
+  {
+   "id": "dspark.hc_ffn_base",
+   "source": {
+    "stem": "dspark",
+    "tensor": "{stem}.hc_ffn_base"
+   },
+   "shape": [
+    "hc_mix"
+   ],
+   "kind": "auxiliary",
+   "dtypes": [
+    "F32"
+   ],
+   "consumer": {
+    "kernel": "row.sinkhorn_hc"
+   }
+  },
+  {
+   "id": "dspark.hc_ffn_scale",
+   "source": {
+    "stem": "dspark",
+    "tensor": "{stem}.hc_ffn_scale"
+   },
+   "shape": [
+    3
+   ],
+   "kind": "auxiliary",
+   "dtypes": [
+    "F32"
+   ],
+   "consumer": {
+    "kernel": "row.sinkhorn_hc"
+   }
+  },
+  {
+   "id": "csa.compressor.norm",
+   "source": {
+    "stem": "kv_source",
+    "tensor": "{stem}.compressor.norm.weight"
+   },
+   "shape": [
+    "head_dim"
+   ],
+   "kind": "norm",
+   "dtypes": [
+    "Bf16"
+   ],
+   "consumer": {
+    "kernel": "row.rmsnorm"
+   }
+  },
+  {
+   "id": "csa.indexer.k_norm",
+   "source": {
+    "stem": "kv_source",
+    "tensor": "{stem}.indexer.k_norm.weight"
+   },
+   "shape": [
+    "index_dim"
+   ],
+   "kind": "norm",
+   "dtypes": [
+    "Bf16"
+   ],
+   "consumer": {
+    "kernel": "row.rmsnorm"
+   }
+  },
+  {
+   "id": "engram.q_weight",
+   "source": {
+    "stem": "engram",
+    "tensor": "{stem}.q_weight"
+   },
+   "shape": [
+    "hc_streams",
+    "hidden"
+   ],
+   "kind": "auxiliary",
+   "dtypes": [
+    "Bf16"
+   ],
+   "consumer": {
+    "kernel": "row.engram_gate"
+   }
+  },
+  {
+   "id": "engram.k_weight",
+   "source": {
+    "stem": "engram",
+    "tensor": "{stem}.k_weight"
+   },
+   "shape": [
+    "hc_streams",
+    "hidden"
+   ],
+   "kind": "auxiliary",
+   "dtypes": [
+    "Bf16"
+   ],
+   "consumer": {
+    "kernel": "row.engram_gate"
+   }
+  },
+  {
+   "id": "dspark.main_norm",
+   "source": {
+    "stem": "dspark_first",
+    "tensor": "{stem}.main_norm.weight"
+   },
+   "shape": [
+    "hidden"
+   ],
+   "kind": "norm",
+   "dtypes": [
+    "Bf16"
+   ],
+   "consumer": {
+    "kernel": "row.rmsnorm"
+   }
+  },
+  {
+   "id": "dspark.norm",
+   "source": {
+    "stem": "dspark_last",
+    "tensor": "{stem}.norm.weight"
+   },
+   "shape": [
+    "hidden"
+   ],
+   "kind": "norm",
+   "dtypes": [
+    "Bf16"
+   ],
+   "consumer": {
+    "kernel": "row.rmsnorm"
+   }
+  },
+  {
+   "id": "norm",
+   "source": {
+    "tensor": "norm.weight"
+   },
+   "shape": [
+    "hidden"
+   ],
+   "kind": "norm",
+   "dtypes": [
+    "Bf16"
+   ],
+   "consumer": {
+    "kernel": "row.rmsnorm"
+   }
+  }
+ ],
+ "external_tensors": [
+  {
+   "id": "vision.wqkv",
+   "owner": "encoder-spec",
+   "image_role": "encoder-rank-images.v1",
+   "source": {
+    "stem": "vision_block",
+    "tensor": "{stem}.attn.wqkv.weight"
+   },
+   "shape": [
+    "vision_qkv_rows",
+    "vision_hidden"
+   ],
+   "dtype": "Bf16"
+  },
+  {
+   "id": "vision.wqkv.bias",
+   "owner": "encoder-spec",
+   "image_role": "encoder-rank-images.v1",
+   "source": {
+    "stem": "vision_block",
+    "tensor": "{stem}.attn.wqkv.bias"
+   },
+   "shape": [
+    "vision_qkv_rows"
+   ],
+   "dtype": "Bf16"
+  },
+  {
+   "id": "vision.wo",
+   "owner": "encoder-spec",
+   "image_role": "encoder-rank-images.v1",
+   "source": {
+    "stem": "vision_block",
+    "tensor": "{stem}.attn.wo.weight"
+   },
+   "shape": [
+    "vision_hidden",
+    "vision_hidden"
+   ],
+   "dtype": "Bf16"
+  },
+  {
+   "id": "vision.wo.bias",
+   "owner": "encoder-spec",
+   "image_role": "encoder-rank-images.v1",
+   "source": {
+    "stem": "vision_block",
+    "tensor": "{stem}.attn.wo.bias"
+   },
+   "shape": [
+    "vision_hidden"
+   ],
+   "dtype": "Bf16"
+  },
+  {
+   "id": "vision.w1",
+   "owner": "encoder-spec",
+   "image_role": "encoder-rank-images.v1",
+   "source": {
+    "stem": "vision_block",
+    "tensor": "{stem}.mlp.w1.weight"
+   },
+   "shape": [
+    "vision_up_rows",
+    "vision_hidden"
+   ],
+   "dtype": "Bf16"
+  },
+  {
+   "id": "vision.w2",
+   "owner": "encoder-spec",
+   "image_role": "encoder-rank-images.v1",
+   "source": {
+    "stem": "vision_block",
+    "tensor": "{stem}.mlp.w2.weight"
+   },
+   "shape": [
+    "vision_hidden",
+    "vision_inter"
+   ],
+   "dtype": "Bf16"
+  },
+  {
+   "id": "vision.norm1",
+   "owner": "encoder-spec",
+   "image_role": "encoder-rank-images.v1",
+   "source": {
+    "stem": "vision_block",
+    "tensor": "{stem}.norm1.weight"
+   },
+   "shape": [
+    "vision_hidden"
+   ],
+   "dtype": "Bf16"
+  },
+  {
+   "id": "vision.norm2",
+   "owner": "encoder-spec",
+   "image_role": "encoder-rank-images.v1",
+   "source": {
+    "stem": "vision_block",
+    "tensor": "{stem}.norm2.weight"
+   },
+   "shape": [
+    "vision_hidden"
+   ],
+   "dtype": "Bf16"
+  },
+  {
+   "id": "vision.norm",
+   "owner": "encoder-spec",
+   "image_role": "encoder-rank-images.v1",
+   "source": {
+    "tensor": "vision.norm.weight"
+   },
+   "shape": [
+    "vision_hidden"
+   ],
+   "dtype": "Bf16"
+  },
+  {
+   "id": "vision.patch",
+   "owner": "encoder-spec",
+   "image_role": "encoder-rank-images.v1",
+   "source": {
+    "tensor": "vision.patch_embed.proj.weight"
+   },
+   "shape": [
+    "vision_hidden",
+    "vision_patch_k"
+   ],
+   "dtype": "Bf16"
+  },
+  {
+   "id": "vision.patch.bias",
+   "owner": "encoder-spec",
+   "image_role": "encoder-rank-images.v1",
+   "source": {
+    "tensor": "vision.patch_embed.proj.bias"
+   },
+   "shape": [
+    "vision_hidden"
+   ],
+   "dtype": "Bf16"
+  },
+  {
+   "id": "aligner.w1",
+   "owner": "encoder-spec",
+   "image_role": "encoder-rank-images.v1",
+   "source": {
+    "tensor": "aligner.w1.weight"
+   },
+   "shape": [
+    "hidden",
+    "aligner_k"
+   ],
+   "dtype": "Bf16"
+  },
+  {
+   "id": "aligner.w1.bias",
+   "owner": "encoder-spec",
+   "image_role": "encoder-rank-images.v1",
+   "source": {
+    "tensor": "aligner.w1.bias"
+   },
+   "shape": [
+    "hidden"
+   ],
+   "dtype": "Bf16"
+  },
+  {
+   "id": "aligner.w2",
+   "owner": "encoder-spec",
+   "image_role": "encoder-rank-images.v1",
+   "source": {
+    "tensor": "aligner.w2.weight"
+   },
+   "shape": [
+    "hidden",
+    "hidden"
+   ],
+   "dtype": "Bf16"
+  },
+  {
+   "id": "aligner.w2.bias",
+   "owner": "encoder-spec",
+   "image_role": "encoder-rank-images.v1",
+   "source": {
+    "tensor": "aligner.w2.bias"
+   },
+   "shape": [
+    "hidden"
+   ],
+   "dtype": "Bf16"
+  },
+  {
+   "id": "image_start",
+   "owner": "encoder-spec",
+   "image_role": "encoder-rank-images.v1",
+   "source": {
+    "tensor": "image_start"
+   },
+   "shape": [
+    "hidden"
+   ],
+   "dtype": "Bf16"
+  },
+  {
+   "id": "image_end",
+   "owner": "encoder-spec",
+   "image_role": "encoder-rank-images.v1",
+   "source": {
+    "tensor": "image_end"
+   },
+   "shape": [
+    "hidden"
+   ],
+   "dtype": "Bf16"
+  },
+  {
+   "id": "image_newline",
+   "owner": "encoder-spec",
+   "image_role": "encoder-rank-images.v1",
+   "source": {
+    "tensor": "image_newline"
+   },
+   "shape": [
+    "hidden"
+   ],
+   "dtype": "Bf16"
+  }
+ ]
+}

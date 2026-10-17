@@ -156,6 +156,29 @@ pub fn check(config: &Value) -> Result<(), String> {
         }
     }
 
+    // The projection declaration names the CSA2 roles by position: three
+    // pooling (ratio 2) KV sources, then the ratio-1 candidate source, then
+    // four reindexing index sources reading its candidates.
+    let pooled = kv.iter().filter(|&&id| ratios[id as usize] == 2).count();
+    if kv.len() != 4 || pooled != 3 || kv[3] != candidate {
+        return Err(refuse(
+            &kv_path,
+            "three ratio-2 sources, then the ratio-1 candidate source",
+            &kv,
+        ));
+    }
+    let reindex = index
+        .iter()
+        .filter(|id| !kv.contains(id))
+        .collect::<Vec<_>>();
+    if reindex.len() != 4 || reindex.iter().any(|&&id| id <= candidate) {
+        return Err(refuse(
+            &index_path,
+            format!("the KV sources and four more layers after layer {candidate}"),
+            &index,
+        ));
+    }
+
     // Attention: whole output groups of whole heads, and a RoPE tail inside
     // the latent.
     let heads = number(config, &t("num_attention_heads"))?;
@@ -190,7 +213,15 @@ pub fn check(config: &Value) -> Result<(), String> {
 
     // Engram tables: one per Engram layer, sized as the vendor lays out
     // its hash buckets.
-    let engram = layer_ids(config, &t("engram_layer_ids"), layers)?;
+    let engram_path = t("engram_layer_ids");
+    let engram = layer_ids(config, &engram_path, layers)?;
+    if engram.len() != 2 {
+        return Err(refuse(
+            &engram_path,
+            "two layers (the declared tables)",
+            &engram,
+        ));
+    }
     let rows_path = t("engram_num_embeddings");
     let rows = list(config, &rows_path)?;
     let expected = engram_rows(
@@ -210,10 +241,17 @@ pub fn check(config: &Value) -> Result<(), String> {
     // DSpark reads the attention inputs of backbone target layers.
     let targets_path = t("dspark_target_layer_ids");
     let targets = layer_ids(config, &targets_path, layers)?;
-    if stages > 0 && targets.is_empty() {
+    if stages == 0 {
+        return Err(refuse(
+            &t("num_nextn_predict_layers"),
+            "at least one DSpark stage",
+            0,
+        ));
+    }
+    if targets.is_empty() {
         return Err(refuse(&targets_path, "at least one target layer", &targets));
     }
-    if stages > 0 && number(config, &t("dspark_block_size"))? == 0 {
+    if number(config, &t("dspark_block_size"))? == 0 {
         return Err(refuse(&t("dspark_block_size"), "a positive block", 0));
     }
     Ok(())

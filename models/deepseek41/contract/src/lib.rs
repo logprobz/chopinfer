@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 pub mod admission;
 pub mod geometry;
+pub mod projections;
 pub mod structure;
 
 /// The model's one bundle ID. Every rank count it supports is a topology of

@@ -715,9 +715,13 @@ dependencies = [
 name = "model-deepseek41"
 version = "0.1.0-alpha.3"
 dependencies = [
+ "kernel-core",
+ "model-compiler-sdk",
  "model-deepseek41-contract",
+ "projection-spec",
  "runtime-frontend-contract",
  "runtime-tokenizer",
+ "runtime-weights",
  "serde",
  "serde_json",
  "sha2",
@@ -727,7 +731,9 @@ dependencies = [
 name = "model-deepseek41-contract"
 version = "0.1.0-alpha.3"
 dependencies = [
+ "kernel-core",
  "model-compiler-sdk",
+ "projection-spec",
  "serde_json",
 ]
 

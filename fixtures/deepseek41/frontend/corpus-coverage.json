@@ -27841,6 +27841,14 @@
   }
  },
  "rounds": {
+  "g0002-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=1/content=0/chat",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "g0020-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=1/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
   "g0026-round-endofsentence": {
    "shape": "answer/calls=0/reasoning=1/content=1/chat",
    "ending": "<｜end▁of▁sentence｜>"
@@ -27849,8 +27857,16 @@
    "shape": "answer/calls=0/reasoning=0/content=1/chat",
    "ending": "<｜end▁of▁sentence｜>"
   },
+  "g0040-round-endofsentence": {
+   "shape": "tool_calls/calls=2/reasoning=0/content=1/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
   "g0059-round-endofsentence": {
    "shape": "answer/calls=0/reasoning=1/content=0/chat",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "g0065-round-endofsentence": {
+   "shape": "tool_calls/calls=2/reasoning=0/content=0/thinking",
    "ending": "<｜end▁of▁sentence｜>"
   },
   "g0067-round-endofsentence": {
@@ -27859,6 +27875,126 @@
   },
   "g0100-round-endofsentence": {
    "shape": "answer/calls=0/reasoning=0/content=1/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "g0103-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-schema-additional-integer-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-schema-additional-object-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-schema-additional-string-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-schema-additional-required-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-schema-additional-any-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-schema-pattern-integer-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-schema-untyped-string-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-schema-untyped-integer-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-schema-enum-string-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-schema-number-integer-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-schema-additional-number-integer-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-schema-union-string-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-schema-union-integer-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-schema-any-of-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-value-empty-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-value-lf-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-value-crlf-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-value-boundary-newlines-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-value-leading-lf-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-value-trailing-lf-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-value-inner-crlf-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-value-decomposed-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-string-type-string-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-string-type-str-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-string-type-text-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-string-type-varchar-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-string-type-char-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-string-type-enum-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
+   "ending": "<｜end▁of▁sentence｜>"
+  },
+  "s-string-type-str-decomposed-round-endofsentence": {
+   "shape": "tool_calls/calls=1/reasoning=0/content=0/thinking",
    "ending": "<｜end▁of▁sentence｜>"
   },
   "vendor-pair-1-round-endofsentence": {

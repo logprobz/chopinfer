@@ -1,5 +1,291 @@
 [
  {
+  "id": "g0002-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "  Weather?  \n"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "The get_weather tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "object"
+        },
+        "city": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      },
+      "defer_loading": "true"
+     }
+    }
+   ],
+   "chat_template_kwargs": {
+    "reasoning_effort": "max",
+    "thinking": false
+   },
+   "response_format": {
+    "type": "text"
+   }
+  },
+  "token_ids": [
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   1133,
+   65,
+   50219,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   5197,
+   4,
+   3418,
+   1281,
+   19836,
+   3320,
+   24313,
+   15165,
+   3362,
+   582,
+   69,
+   1760,
+   582,
+   63324,
+   3362,
+   764,
+   19,
+   14,
+   223,
+   20,
+   16,
+   23,
+   14,
+   5100,
+   3031,
+   582,
+   633,
+   3362,
+   5062,
+   24568,
+   128825,
+   10767,
+   1018,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   37399,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   51119,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "get_weather",
+     "arguments": "{\"value\": {\"unit\": \"c\", \"hours\": [1, 2.5, null], \"ok\": false}, \"city\": \"Paris\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "g0020-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "  Weather?  \n"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "The get_weather tool.",
+      "parameters": null
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      }
+     }
+    }
+   ],
+   "chat_template_kwargs": {
+    "reasoning_effort": "high",
+    "preserve_thinking": false
+   },
+   "response_format": {
+    "type": "json_schema",
+    "json_schema": {
+     "name": "answer",
+     "strict": true,
+     "schema": {
+      "type": "object",
+      "properties": {
+       "city": {
+        "type": "string"
+       },
+       "days": {
+        "type": "integer"
+       }
+      },
+      "required": [
+       "city"
+      ],
+      "additionalProperties": false
+     }
+    }
+   }
+  },
+  "token_ids": [
+   128822,
+   223,
+   983,
+   344,
+   223,
+   864,
+   8490,
+   37,
+   16,
+   6776,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   1133,
+   65,
+   50219,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   5197,
+   4,
+   3418,
+   1281,
+   19836,
+   3320,
+   61,
+   19,
+   14,
+   582,
+   23315,
+   1760,
+   223,
+   21,
+   16,
+   23,
+   14,
+   5100,
+   63,
+   1718,
+   128825,
+   10767,
+   1018,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   37399,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   51119,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "content": "  It is 18 °C.  ",
+   "tool_calls": [
+    {
+     "name": "get_weather",
+     "arguments": "{\"value\": [1, \"two\", 3.5, null], \"city\": \"Paris\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
   "id": "g0026-round-endofsentence",
   "request": {
    "messages": [
@@ -117,6 +403,246 @@
   "separator": ""
  },
  {
+  "id": "g0040-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "You are terse."
+    },
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "Look at this "
+      },
+      {
+       "type": "text",
+       "text": " and say what it is."
+      }
+     ]
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "integer"
+        },
+        "city": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "convert",
+      "description": "The convert tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "array"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "ping",
+      "description": "The ping tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "number"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      },
+      "defer_loading": true
+     }
+    }
+   ],
+   "chat_template_kwargs": {
+    "reasoning_effort": "low",
+    "thinking": true,
+    "clear_thinking": true,
+    "preserve_thinking": false
+   },
+   "response_format": {
+    "type": "json_object"
+   }
+  },
+  "token_ids": [
+   128822,
+   539,
+   1004,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   1133,
+   65,
+   50219,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   5197,
+   4,
+   3418,
+   1281,
+   19836,
+   3320,
+   21,
+   1718,
+   128825,
+   10767,
+   1018,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   37399,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   51119,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   54276,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   5197,
+   4,
+   3418,
+   1281,
+   19836,
+   3320,
+   61,
+   19,
+   14,
+   582,
+   23315,
+   1760,
+   223,
+   21,
+   16,
+   23,
+   14,
+   5100,
+   63,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   22153,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   5197,
+   4,
+   3418,
+   1281,
+   19836,
+   3320,
+   18,
+   16,
+   1069,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "content": " \n ",
+   "tool_calls": [
+    {
+     "name": "get_weather",
+     "arguments": "{\"value\": 3, \"city\": \"Paris\"}"
+    },
+    {
+     "name": "convert",
+     "arguments": "{\"value\": [1, \"two\", 3.5, null]}"
+    },
+    {
+     "name": "ping",
+     "arguments": "{\"value\": 0.25}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
   "id": "g0059-round-endofsentence",
   "request": {
    "messages": [
@@ -143,6 +669,221 @@
   ],
   "expect": {
    "finish_reason": "stop"
+  },
+  "separator": ""
+ },
+ {
+  "id": "g0065-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "What is the weather in Paris?"
+    },
+    {
+     "role": "assistant",
+     "content": "One moment."
+    },
+    {
+     "role": "system",
+     "content": "Now answer in French."
+    },
+    {
+     "role": "user",
+     "content": "Go on."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "The get_weather tool.",
+      "parameters": null
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "convert",
+      "description": "The convert tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "boolean"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "ping",
+      "description": "The ping tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      },
+      "defer_loading": true
+     }
+    }
+   ],
+   "reasoning_effort": "max",
+   "chat_template_kwargs": {
+    "preserve_thinking": false
+   },
+   "response_format": {
+    "type": "json_object"
+   }
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   1133,
+   65,
+   50219,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   5197,
+   4,
+   3418,
+   1281,
+   19836,
+   3320,
+   16042,
+   1718,
+   128825,
+   10767,
+   1018,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   37399,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   51119,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   54276,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   5197,
+   4,
+   3418,
+   1281,
+   19836,
+   3320,
+   11476,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   22153,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   5197,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   6127,
+   8490,
+   37,
+   10943,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "get_weather",
+     "arguments": "{\"value\": null, \"city\": \"Paris\"}"
+    },
+    {
+     "name": "convert",
+     "arguments": "{\"value\": true}"
+    },
+    {
+     "name": "ping",
+     "arguments": "{\"value\": \"北京 °C ü\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
   },
   "separator": ""
  },
@@ -251,6 +992,2504 @@
   "expect": {
    "content": "  It is 18 °C.  ",
    "finish_reason": "stop"
+  },
+  "separator": ""
+ },
+ {
+  "id": "g0103-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "What is the weather in Paris?"
+    },
+    {
+     "role": "assistant",
+     "content": "One moment."
+    },
+    {
+     "role": "system",
+     "content": "Now answer in French."
+    },
+    {
+     "role": "user",
+     "content": "Go on."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "The get_weather tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "number"
+        },
+        "city": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      },
+      "defer_loading": true
+     }
+    }
+   ],
+   "chat_template_kwargs": {
+    "clear_thinking": false,
+    "preserve_thinking": true
+   },
+   "response_format": {
+    "type": "json_schema",
+    "json_schema": {
+     "name": "answer",
+     "strict": true,
+     "schema": {
+      "type": "object",
+      "properties": {
+       "city": {
+        "type": "string"
+       },
+       "days": {
+        "type": "integer"
+       }
+      },
+      "required": [
+       "city"
+      ],
+      "additionalProperties": false
+     }
+    }
+   }
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   1133,
+   65,
+   50219,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   5197,
+   4,
+   3418,
+   1281,
+   19836,
+   3320,
+   19,
+   71,
+   13,
+   926,
+   1718,
+   128825,
+   10767,
+   1018,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   37399,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   51119,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "get_weather",
+     "arguments": "{\"value\": 1e+16, \"city\": \"Paris\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-schema-additional-integer-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "additionalProperties": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   19836,
+   3320,
+   3180,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": 42}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-schema-additional-object-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "additionalProperties": {
+        "type": "object"
+       }
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   19836,
+   3320,
+   24313,
+   67,
+   3362,
+   764,
+   19,
+   14,
+   3292,
+   14,
+   5100,
+   3031,
+   582,
+   68,
+   3362,
+   582,
+   2067,
+   4,
+   24568,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": {\"a\": [1, true, null], \"b\": \"text\"}}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-schema-additional-string-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "additionalProperties": {
+        "type": "string"
+       }
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   3180,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"42\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-schema-additional-required-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "y": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "x",
+        "y"
+       ],
+       "additionalProperties": {
+        "type": "integer"
+       }
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   19836,
+   3320,
+   25,
+   1718,
+   128825,
+   10767,
+   1018,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   91,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   92,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": 7, \"y\": \"z\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-schema-additional-any-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "additionalProperties": true
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   19836,
+   3320,
+   3180,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": 42}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-schema-pattern-integer-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "patternProperties": {
+        "^x$": {
+         "type": "integer"
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   19836,
+   3320,
+   3180,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": 42}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-schema-untyped-string-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {}
+       }
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   2067,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"text\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-schema-untyped-integer-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {}
+       }
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   19836,
+   3320,
+   3180,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": 42}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-schema-enum-string-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "enum": [
+          "a",
+          "b"
+         ]
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   67,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"a\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-schema-number-integer-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "number"
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   19836,
+   3320,
+   3180,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": 42}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-schema-additional-number-integer-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "additionalProperties": {
+        "type": "number"
+       }
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   19836,
+   3320,
+   3180,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": 42}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-schema-union-string-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": [
+          "string",
+          "integer"
+         ]
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   3180,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"42\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-schema-union-integer-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": [
+          "string",
+          "integer"
+         ]
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   19836,
+   3320,
+   3180,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": 42}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-schema-any-of-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "anyOf": [
+          {
+           "type": "integer"
+          },
+          {
+           "type": "null"
+          }
+         ]
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   19836,
+   3320,
+   16042,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": null}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-value-empty-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   11476,
+   11387,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-value-lf-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   11476,
+   3816,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"\\n\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-value-crlf-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   204,
+   201,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"\\r\\n\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-value-boundary-newlines-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   11476,
+   32572,
+   2067,
+   271,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"\\n\\ntext\\n\\n\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-value-leading-lf-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   11476,
+   3816,
+   2067,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"\\ntext\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-value-trailing-lf-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   2067,
+   201,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"text\\n\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-value-inner-crlf-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   67,
+   204,
+   201,
+   68,
+   204,
+   201,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"a\\r\\nb\\r\\n\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-value-decomposed-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   71,
+   17793,
+   223,
+   6127,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"é 北京\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-string-type-string-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   4,
+   403,
+   12284,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"\\\"quoted\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-string-type-str-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "str"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   4,
+   619,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"\\\"é\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-string-type-text-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "text"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   24313,
+   67,
+   3362,
+   223,
+   19,
+   24568,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"{\\\"a\\\": 1}\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-string-type-varchar-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "varchar"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   61,
+   19,
+   14,
+   223,
+   20,
+   63,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"[1, 2]\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-string-type-char-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "char"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   3180,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"42\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-string-type-enum-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "enum"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   4,
+   90,
+   4,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"\\\"x\\\"\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "s-string-type-str-decomposed-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "str"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   4,
+   71,
+   17793,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"\\\"é\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
   },
   "separator": ""
  },

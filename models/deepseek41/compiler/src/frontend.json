@@ -207,7 +207,7 @@
   },
   "format": {
     "parser": {
-      "tool_grammar": "xml-function-parameters-v1",
+      "tool_grammar": "xml-typed-parameters-v1",
       "json_encoding": "python-json-v1",
       "reasoning_open": "<think>",
       "reasoning_close": "</think>",
@@ -218,6 +218,7 @@
       "function_close": "</｜DSML｜ invoke>\n",
       "parameter_open": "<｜DSML｜ parameter name=\"",
       "parameter_name_close": "\" string=\"true\">",
+      "parameter_json_name_close": "\" string=\"false\">",
       "parameter_close": "</｜DSML｜ parameter>\n",
       "turn_open": [
         "<｜Assistant｜>",

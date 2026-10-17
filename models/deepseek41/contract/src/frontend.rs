@@ -85,16 +85,16 @@ const THINKING_KEYWORDS: [&str; 2] = ["enable_thinking", "thinking"];
 /// The parser section for the markers this renderer writes.
 ///
 /// The encoder writes tool calls in DSML (lines 428-437, 524-555): a
-/// `calls` block of `invoke` elements whose parameters carry
-/// `string="true|false"`. Neither shared tool grammar reads that flag, so
-/// until the DSML parser family exists this declares the function-parameter
-/// grammar over the same markers, which reads string parameters only. Tool
-/// calls with non-string arguments do not parse back until then.
+/// `calls` block, opened after a blank line, of `invoke` elements whose
+/// parameters carry `string="true"` for a string written raw and
+/// `string="false"` for any other value written as JSON. The shared typed
+/// tool grammar reads exactly that, as `parse_message_from_completion_text`
+/// (lines 897-990) does.
 #[must_use]
 pub fn parser_declaration() -> FrontendParserDeclarationV1 {
     let text = |value: &str| value.to_owned();
     FrontendParserDeclarationV1 {
-        tool_grammar: FrontendToolGrammarV1::XmlFunctionParametersV1,
+        tool_grammar: FrontendToolGrammarV1::XmlTypedParametersV1,
         json_encoding: FrontendJsonEncodingV1::PythonJsonV1,
         reasoning_open: text(encoding::THINKING_START),
         reasoning_close: text(encoding::THINKING_END),
@@ -107,6 +107,7 @@ pub fn parser_declaration() -> FrontendParserDeclarationV1 {
         function_close: text("</｜DSML｜ invoke>\n"),
         parameter_open: text("<｜DSML｜ parameter name=\""),
         parameter_name_close: text("\" string=\"true\">"),
+        parameter_json_name_close: text("\" string=\"false\">"),
         parameter_value_open: String::new(),
         parameter_close: text("</｜DSML｜ parameter>\n"),
         drop_blank_tool_call_content: false,

@@ -346,12 +346,20 @@
       "reason": "this declaration serves no media; the encoder writes images as <｜deepseek_image｜> and has no audio form"
     },
     {
-      "id": "tool-call-read-back",
+      "id": "marker-in-raw-value",
+      "kind": "no-round-trip",
+      "when": [
+        "round-trip:delimiter"
+      ],
+      "reason": "the encoder writes a string argument raw (lines 547-553), so one that spells a DSML parameter or invoke marker ends there when read back, by the vendor parser (lines 897-943) and the served one alike"
+    },
+    {
+      "id": "special-token-in-turn",
       "kind": "no-round-trip",
       "when": [
         "round-trip:read-back"
       ],
-      "reason": "a turn with tool calls reads back only through a parser of DSML, whose parameters carry string=\"true|false\" (lines 524-555); the declared parser section reads string parameters only until that parser family exists"
+      "reason": "the vendor parser refuses a turn whose content or reasoning holds a special token or DSML marker (lines 981-983), so no generated turn carries one and none reads back"
     }
   ],
   "mapping": [

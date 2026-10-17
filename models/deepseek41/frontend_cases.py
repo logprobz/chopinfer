@@ -144,15 +144,29 @@ def encoder_render(namespace, messages, tools, add_generation_prompt, continue_f
         reasoning_effort=effort)
 
 
+def turn_arguments(text):
+    """A call's arguments as the encoder writes them (`encode_arguments_to_dsml`,
+    lines 524-555): the text read as JSON up to twice, and an object
+    whose every value is written as itself, else one string parameter
+    named `arguments` holding the text."""
+    value = text
+    for _ in range(2):
+        if not isinstance(value, str):
+            break
+        try:
+            value = json.loads(value)
+        except ValueError:
+            break
+    return value if isinstance(value, dict) else {"arguments": text}
+
+
 def expected_turn(message, context):
     """What the vendor's `parse_message_from_completion_text` (lines
     946-990) reads back from a generated assistant turn: the reasoning in
-    thinking mode (the prompt leaves `<think>` open), and the content. A
-    turn with tool calls reads back only through the DSML parser family,
-    which the declaration does not use yet, so it reads no turn back; nor
-    does a turn whose text holds a marker the vendor parser refuses."""
-    if message.get("tool_calls"):
-        return None
+    thinking mode (the prompt leaves `<think>` open), the content, and each
+    call's arguments as `decode_dsml_to_arguments` (lines 156-177) writes
+    them from the DSML the encoder wrote, the object `json.dumps` writes.
+    None for a turn whose text holds a marker the vendor parser refuses."""
     reasoning = message.get("reasoning_content") if context["prompt"].endswith("<think>") else None
     content = message.get("content")
     if isinstance(content, list):
@@ -162,7 +176,10 @@ def expected_turn(message, context):
     reasoning = reasoning or ""
     if any(marker in text for marker in SPECIAL for text in (content, reasoning)):
         return None
-    return {"reasoning": reasoning, "content": content, "tool_calls": []}
+    calls = [{"name": call["function"]["name"],
+              "arguments": json.dumps(turn_arguments(call["function"]["arguments"]), ensure_ascii=False)}
+             for call in message.get("tool_calls") or []]
+    return {"reasoning": reasoning, "content": content, "tool_calls": calls}
 
 
 RESPONSE_FORMATS = {

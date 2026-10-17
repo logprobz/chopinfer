@@ -430,7 +430,7 @@ mod tests {
         );
         let soaks: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
         let judged = |name: &str| judge(soaks[name].as_array().unwrap(), None);
-        let after_startup = judged("qwen38-2026-10-17");
+        let after_startup = judged("soak-after-startup-2026-10-17");
         assert_eq!(
             (
                 after_startup["timing"].clone(),
@@ -440,11 +440,11 @@ mod tests {
             (json!("evidence"), json!([]), json!(10.35))
         );
         assert_eq!(
-            judged("mimo26-2026-10-16")["reasons"],
+            judged("soak-unsampled-2026-10-16")["reasons"],
             json!(["no uptime or pressure stall information"])
         );
         assert_eq!(
-            judged("qwen38-2026-10-16")["reasons"],
+            judged("soak-busy-cpu-2026-10-16")["reasons"],
             json!([
                 "CPU idle fell to 0.804",
                 "no uptime or pressure stall information"

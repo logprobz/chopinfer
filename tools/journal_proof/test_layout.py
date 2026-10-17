@@ -1142,6 +1142,75 @@ class LayoutTests(unittest.TestCase):
                 layout.unzeroed_uses(['allocate 128 256', write, collective], [use], {raw: 'comm.f32_inbox'}, {raw: {base}},
                                      {raw: {(base, 2)}})
 
+    # An earlier declared argument replacing the same buffer leaves it
+    # unwritten only where the head makes that site's write to the same added
+    # buffer: the site launch names the buffer in no other argument, and the
+    # same added buffer replaces it there (found by the mutation harness).
+
+    def test_an_earlier_site_naming_the_buffer_in_another_argument_writes_it(self):
+        # Rank 0's MoE reduce also takes its old inbox as a plain buffer, which
+        # stays the old inbox in the head; rank 1's reduce then reads an inbox
+        # the base wrote and the F32 inbox did not see written. The site
+        # itself already fails: which argument it writes first is unknown.
+        self.without_instance_create(self.base, self.head)
+        self.zero_after_the_first_launch(self.base, [(8, 64)])
+        self.zero_after_the_first_launch(self.head, [(10, 64)])
+        for world, inbox in ((self.base, 9), (self.head, 11)):
+            k = next(k for k, line in enumerate(world['step']) if line.startswith(f'launch r0 Reduce {BF16 if world is self.base else F32}'))
+            world['step'][k] = world['step'][k][:-1] + f', {span(GEN + inbox, 0, 128)}]'
+        report = self.run_without_instance_create(1, False)
+        self.assertIn(f'the collective at base note 9 also names {GEN + 9} in an argument {GEN + 13} does not replace',
+                      report['journals'][STEP]['reasons'][0])
+
+    def test_an_earlier_site_of_another_added_buffer_writes_the_replaced_buffer(self):
+        raw, other, base = GEN + 13, GEN + 14, GEN + 9
+        collective = launch(1, BF16, 4, [peers((base, 128), (GEN + 12, 128))])
+        notes_a = ['allocate 128 256', collective, collective]
+        sites = {other: {(base, 1)}, raw: {(base, 2)}}
+        zeroed = {raw: 'comm.f32_inbox', other: 'comm.other_inbox'}
+        with self.assertRaisesRegex(Unproven, f'added comm.f32_inbox {raw}: .* base note 2 writes {base}'):
+            layout.unzeroed_uses(notes_a, [launch(1, F32, 4, [span(raw)])], zeroed, {raw: {base}, other: {base}}, sites)
+        # The same added buffer replacing it at both sites leaves it unwritten.
+        layout.unzeroed_uses(notes_a, [launch(1, F32, 4, [span(raw)])], {raw: 'comm.f32_inbox'}, {raw: {base}},
+                             {raw: {(base, 1), (base, 2)}})
+
+    # What the journal cannot order fails as not modelled (review of the
+    # mutation harness).
+
+    def unzeroed(self, notes_a, plan=False, shared=frozenset(), regions=None, sites=None):
+        raw, base = GEN + 13, GEN + 9
+        sites = sites or {raw: {(base, k) for k, line in enumerate(notes_a) if line.startswith(f'launch 1 {BF16}')}}
+        layout.unzeroed_uses(notes_a, [launch(1, F32, 4, [span(raw)])], {raw: 'comm.f32_inbox'}, {raw: {base}}, sites, plan, shared,
+                             regions)
+
+    def test_a_site_naming_its_base_buffer_in_another_argument_fails(self):
+        raw, base = GEN + 13, GEN + 9
+        notes_a = ['allocate 128 256', launch(1, BF16, 4, [span(base), span(base)])]
+        with self.assertRaisesRegex(Unproven, f'base note 2 also names {base} in an argument {raw} does not replace'):
+            self.unzeroed(notes_a, shared={(raw, base, 1)})
+        self.unzeroed(notes_a)
+
+    def test_an_added_buffer_standing_for_two_base_regions_fails(self):
+        raw, base = GEN + 13, GEN + 9
+        notes_a = ['allocate 128 256', launch(1, BF16, 4, [span(base)])]
+        with self.assertRaisesRegex(Unproven, 'it replaces 2 different base regions'):
+            self.unzeroed(notes_a, regions={raw: {(base, 0, 64), (base, 64, 64)}})
+        self.unzeroed(notes_a, regions={raw: {(base, 0, 128)}})
+
+    def test_a_graph_on_an_executing_device_fails(self):
+        notes_a = ['allocate 128 256', 'capture 1', launch(1, BF16, 4, [span(GEN + 9)]), 'captured 1 7 1', 'replay 1 7']
+        with self.assertRaisesRegex(Unproven, 'base note 2 captures or replays a graph on an executing device'):
+            self.unzeroed(notes_a)
+        self.unzeroed(['allocate 128 256', launch(1, BF16, 4, [span(GEN + 9)])])
+
+    def test_a_later_write_on_another_stream_fails_until_the_host_waits(self):
+        site, zero = launch(1, BF16, 4, [span(GEN + 9)]), f'zero 2 {bare(GEN + 9, 128)}'
+        with self.assertRaisesRegex(Unproven, 'base note 3 writes .* on another stream after the collective at base note 2'):
+            self.unzeroed(['allocate 128 256', site, zero])
+        self.unzeroed(['allocate 128 256', site, 'synchronize 1', zero])
+        self.unzeroed(['allocate 128 256', site, f'zero 1 {bare(GEN + 9, 128)}'])
+        self.unzeroed(['allocate 128 256', site, f'download 2 {bare(GEN + 9, 128)}'])
+
     def test_plan_records_are_writes_unless_the_device_is_plan_only(self):
         raw, base = GEN + 13, GEN + 9
         use = launch('r0 Reduce', F32, 4, [span(raw)])

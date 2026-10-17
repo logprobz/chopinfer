@@ -621,7 +621,7 @@ def confirm_live(client, server):
 # is recorded but not judged: it is an exponential average with a 60 s time
 # constant, so it carries minutes of work from before the window. On
 # 2026-10-17 a 1 s sampler classed every thread of the 48-CPU host through a
-# Qwen3.8 spec soak with the shared CPU launcher paused. When the check
+# spec soak with the shared CPU launcher paused. When the check
 # started the load average was 10.35, nearly all of it the server's own
 # startup (17 threads blocked on weight reads; I/O pressure 0.57 over its
 # 45 s). During the soak no server thread was in uninterruptible sleep, the

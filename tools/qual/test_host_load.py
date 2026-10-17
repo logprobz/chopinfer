@@ -138,7 +138,7 @@ class RecordedSoakTests(unittest.TestCase):
     def test_a_soak_after_the_servers_startup_reads_is_evidence(self):
         # The startup left the 1-minute load average at 10.35, the reason the
         # receipt was labelled informational under the load-average rule.
-        verdict = common.host_load(SOAKS["qwen38-2026-10-17"])
+        verdict = common.host_load(SOAKS["soak-after-startup-2026-10-17"])
         self.assertEqual((verdict["timing"], verdict["reasons"]), ("evidence", []))
         self.assertEqual(verdict["max_load_average_1m"], 10.35)
         self.assertGreaterEqual(verdict["min_cpu_idle_fraction"], 0.949)
@@ -147,14 +147,14 @@ class RecordedSoakTests(unittest.TestCase):
 
     def test_older_soaks_lose_the_load_average_reason_only(self):
         # They predate uptime and pressure stall sampling, so an I/O
-        # neighbour cannot be ruled out; the Qwen soak's CPU interval at 80%
+        # neighbour cannot be ruled out; the busy soak's CPU interval at 80%
         # idle stays.
-        mimo = common.host_load(SOAKS["mimo26-2026-10-16"])
-        self.assertEqual(mimo["reasons"], ["no uptime or pressure stall information"])
-        self.assertEqual(mimo["max_load_average_1m"], 9.43)
-        qwen = common.host_load(SOAKS["qwen38-2026-10-16"])
-        self.assertEqual(qwen["reasons"], ["CPU idle fell to 0.804", "no uptime or pressure stall information"])
-        self.assertEqual(qwen["max_load_average_1m"], 11.81)
+        unsampled = common.host_load(SOAKS["soak-unsampled-2026-10-16"])
+        self.assertEqual(unsampled["reasons"], ["no uptime or pressure stall information"])
+        self.assertEqual(unsampled["max_load_average_1m"], 9.43)
+        busy = common.host_load(SOAKS["soak-busy-cpu-2026-10-16"])
+        self.assertEqual(busy["reasons"], ["CPU idle fell to 0.804", "no uptime or pressure stall information"])
+        self.assertEqual(busy["max_load_average_1m"], 11.81)
 
 
 class ReceiptHostLoadTests(unittest.TestCase):

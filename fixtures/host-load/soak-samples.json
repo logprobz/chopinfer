@@ -1,6 +1,6 @@
 {
- "about": "Host load samples of three 48-CPU spec soaks run with the shared CPU launcher paused. qwen38-2026-10-16 and mimo26-2026-10-16 are the soak receipts' recorded samples (no uptime or pressure stall information). qwen38-2026-10-17 is the 1 s attribution sampler's rows nearest the soak receipt's own sample times, with the PSI cpu and io 'some' totals; its uptime_seconds is the sampler's CLOCK_MONOTONIC reading, which advances with /proc/uptime on a host that does not suspend. Its server's startup reads left the 1-minute load average at 10.35 when the check started.",
- "qwen38-2026-10-16": [
+ "about": "Host load samples of three 48-CPU spec soaks run with the shared CPU launcher paused. soak-busy-cpu-2026-10-16 (Qwen3.8) and soak-unsampled-2026-10-16 (MiMo) are the soak receipts' recorded samples (no uptime or pressure stall information). soak-after-startup-2026-10-17 (Qwen3.8) is the 1 s attribution sampler's rows nearest the soak receipt's own sample times, with the PSI cpu and io 'some' totals; its uptime_seconds is the sampler's CLOCK_MONOTONIC reading, which advances with /proc/uptime on a host that does not suspend. Its server's startup reads left the 1-minute load average at 10.35 when the check started.",
+ "soak-busy-cpu-2026-10-16": [
   {"at": 1792146036.148782, "load_average": [11.81, 9.98, 10.0], "cpu_idle_ticks": 292296179, "cpu_ticks": 576910070, "cpus": 48},
   {"at": 1792146036.7634878, "load_average": [11.81, 9.98, 10.0], "cpu_idle_ticks": 292299060, "cpu_ticks": 576913018, "cpus": 48},
   {"at": 1792146066.829561, "load_average": [7.62, 9.14, 9.72], "cpu_idle_ticks": 292439616, "cpu_ticks": 577057295, "cpus": 48},
@@ -51,7 +51,7 @@
   {"at": 1792147416.7635539, "load_average": [1.13, 1.25, 3.32], "cpu_idle_ticks": 298683077, "cpu_ticks": 583535112, "cpus": 48},
   {"at": 1792147419.228982, "load_average": [1.12, 1.24, 3.31], "cpu_idle_ticks": 298694736, "cpu_ticks": 583546943, "cpus": 48}
  ],
- "mimo26-2026-10-16": [
+ "soak-unsampled-2026-10-16": [
   {"at": 1792147481.6208777, "load_average": [9.43, 3.44, 3.92], "cpu_idle_ticks": 298982266, "cpu_ticks": 583845728, "cpus": 48},
   {"at": 1792147482.2265546, "load_average": [9.43, 3.44, 3.92], "cpu_idle_ticks": 298985112, "cpu_ticks": 583848635, "cpus": 48},
   {"at": 1792147512.2934217, "load_average": [6.11, 3.21, 3.83], "cpu_idle_ticks": 299125936, "cpu_ticks": 583992922, "cpus": 48},
@@ -102,7 +102,7 @@
   {"at": 1792148862.2268078, "load_average": [1.06, 1.12, 1.71], "cpu_idle_ticks": 305450331, "cpu_ticks": 590470965, "cpus": 48},
   {"at": 1792148864.4684956, "load_average": [1.05, 1.12, 1.71], "cpu_idle_ticks": 305460945, "cpu_ticks": 590481720, "cpus": 48}
  ],
- "qwen38-2026-10-17": [
+ "soak-after-startup-2026-10-17": [
   {"at": 1792224885.2229254, "uptime_seconds": 5880.022384811, "load_average": [10.35, 4.21, 2.09], "cpu_idle_ticks": 27924999, "cpu_ticks": 28209700, "cpus": 48, "pressure_some_us": {"cpu": 35141297, "io": 114268487}},
   {"at": 1792224886.222921, "uptime_seconds": 5881.022380348, "load_average": [10.35, 4.21, 2.09], "cpu_idle_ticks": 27929705, "cpu_ticks": 28214499, "cpus": 48, "pressure_some_us": {"cpu": 35142245, "io": 114269302}},
   {"at": 1792224916.2229233, "uptime_seconds": 5911.022382647, "load_average": [7.09, 4.03, 2.1], "cpu_idle_ticks": 28069981, "cpu_ticks": 28358443, "cpus": 48, "pressure_some_us": {"cpu": 35174233, "io": 114285264}},

@@ -766,8 +766,8 @@ def plan_view(events, records, journal, test, host, max_launches=None, executed=
 def collective_candidates(allocs, plans):
     """(symbol, argument index, ranks, (bytes, alignment), exclusive) of every
     launch symbol whose launches all hold, at that argument, a peer array over
-    distinct ranks' allocations of one size, each always the same span, that
-    no other argument of those launches names. `exclusive` when no other
+    distinct ranks' allocations of one size, always the same allocation and
+    span for a rank, that no other argument of those launches names. `exclusive` when no other
     launch names those allocations."""
     rows = {row[1]: row for row in allocs.values()}
     by_symbol = collections.defaultdict(list)
@@ -778,7 +778,7 @@ def collective_candidates(allocs, plans):
     for symbol, launches in sorted(by_symbol.items()):
         width = len(items[launches[0]]['args'])
         for a in range(width):
-            entries, spans, ok = set(), collections.defaultdict(set), True
+            entries, spans, per_rank, ok = set(), collections.defaultdict(set), collections.defaultdict(set), True
             for k in launches:
                 args = items[k]['args']
                 m = PEERS.fullmatch(args[a]) if a < len(args) else None
@@ -789,11 +789,14 @@ def collective_candidates(allocs, plans):
                     ok = False
                     break
                 entries |= set(raws)
+                for raw, key in zip(raws, keys):
+                    per_rank[key].add(raw)
                 for m in SPAN_OF.finditer(args[a]):
                     spans[int(m[1])].add((int(m[2]), int(m[3])))
-            # One region per buffer (an added buffer stands for one region),
-            # and no other argument of the collective names its buffers.
-            if (not ok or any(len(v) != 1 for v in spans.values())
+            # One buffer per rank and one region per buffer (a rank's added
+            # buffer stands for one region), and no other argument of the
+            # collective names its buffers.
+            if (not ok or any(len(v) != 1 for v in spans.values()) or any(len(v) != 1 for v in per_rank.values())
                     or any(named(arg) & entries for k in launches for i, arg in enumerate(items[k]['args']) if i != a)):
                 continue
             shapes = {(rows[r][3], rows[r][4]) for r in entries}

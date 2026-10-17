@@ -170,6 +170,16 @@ class MutationHarnessTests(unittest.TestCase):
             {e[1] & 0xffffffff: e for e in mutations.plan_view(*args[:5])[0] if e[0] == 'allocation'},
             [e[1] for e in mutations.plan_view(*args[:5])[1]])})
 
+    def test_a_collective_whose_rank_entries_change_is_never_chosen(self):
+        # Rank 0's entry of the second launch is another buffer of the same
+        # size: one added buffer would stand for two base buffers.
+        allocs = {k: ['allocation', GEN + k, rank, 32, 256, GEN + rank + 1] for k, rank in ((1, 0), (2, 1), (3, 0))}
+        first = launch('r0 Plan', PAIR, [peers([GEN + 1, GEN + 2], 32)])
+        for second, chosen in ((first, True), (launch('r0 Plan', PAIR, [peers([GEN + 3, GEN + 2], 32)]), False)):
+            with self.subTest(chosen=chosen):
+                found = {c[0] for c in mutations.collective_candidates(allocs, [first, second])}
+                self.assertEqual(PAIR in found, chosen)
+
     def test_every_unsafe_mutation_is_refused_and_every_control_proven(self):
         summary = self.report['summary']
         escapes = [(r['case'], r['context'], r['mutation'], r['why']) for r in self.rows(outcome='escape')]

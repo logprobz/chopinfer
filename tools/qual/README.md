@@ -1249,15 +1249,22 @@ from stopping early and `--require-preemptions` is the gate.
 
 ## Agentic coding mixed prefill/decode sweep
 
-`agentic_mixed.py` ports Runyard's pinned coding workload
-([source and license](agentic_corpus/NOTICE.md)): multi-turn sessions that
-list, search, read and edit private in-memory code copies (no generated code
-runs). It compares prefill-budget modes under mixed prefill and decode load.
+`agentic_mixed.py` runs a pinned Chopinfer coding workload
+([source and license](../../fixtures/agentic/corpus/NOTICE.md)): multi-turn
+sessions that list, search, read and edit private in-memory code copies
+(no generated code runs). It compares prefill-budget modes under mixed
+prefill and decode load.
+
+The default corpus, `chopinfer.agentic-coding.v1`, contains three Rust source
+snapshots with nine tasks and uses the seed `chopinfer-coding-v1`. This is a
+new baseline: rerun both arms with the same corpus and settings. Measurements
+from earlier default inputs cannot be compared with this workload. Receipt
+schemas and comparison support for existing v2 and v3 pairs are unchanged.
 
 ```sh
 python3 -B tools/qual/agentic_mixed.py --url http://127.0.0.1:8101 \
   --model MiMo-V2.6-Flash-MOPD --levels 1,4,8,16 --seconds 60 \
-  --arm tbt --label sched-1 --seed runyard-coding-v1 --temperature 0
+  --arm tbt --label sched-1 --seed chopinfer-coding-v1 --temperature 0
 # Run again against the fixed-budget server with --arm fixed and the same label.
 python3 -B tools/qual/agentic_compare.py FIXED-SWEEP.json TBT-SWEEP.json
 ```
@@ -1273,11 +1280,8 @@ primary evidence; client burst gaps and stalls are secondary. A pass does not
 mean a performance target was met. `--dry-run` runs against an owned
 loopback fake server on CPU.
 
-The pinned corpus has three small files and nine tasks, so with shared
-prefixes the prefix cache absorbs almost all prefill: earlier Qwen receipts
-(2026-09-30 to 10-02, C4 and C8) show 95-99% reuse and under 200 prefill
-tokens per prefill step, too few for the budget modes to differ. Two changes
-add pressure:
+The small default corpus repeats nine prompts, which shared prefixes can
+cache. Two controls add prefill pressure:
 
 - `--cache-salt session` (the default) sends each session its own
   `cache_salt`, derived from the run ID, seed, level and case. A session
@@ -1288,9 +1292,10 @@ add pressure:
   `python3 -B tools/qual/agentic_workload.py stage --revision COMMIT`
   (default destination `$CHOPINFER_DATA/agentic/corpus-<commit>`). It picks
   64 files of 4 to 64 KiB under `crates/` by a hash of commit and path, with
-  three generic tasks per file and Runyard's tools and system prompt. The
-  receipt records the corpus digest and commit, not its path. The separate
-  decode probe always reads the pinned Runyard source.
+  three generic tasks per file and the default corpus's tools and system
+  prompt. The receipt records the corpus digest and commit, not its path.
+  The separate decode probe always repeats the three pinned default source
+  snapshots to reach its approximate context target.
 
 Each level's `prefill` record states how much prefill the window caused:
 the server's prefill tokens per prefill-carrying step and prefix-cache reuse,
@@ -1299,10 +1304,10 @@ the client's prompt and uncached prompt tokens per turn, and the
 bounds).
 
 The tool-result limit belongs to the corpus: each task's limit is a quarter,
-half or all of the manifest's `max_tool_result_bytes`. Runyard's 64 KiB
-never binds on its small files. A staged corpus sets 16 KiB, so its 4 and
-8 KiB tiers cut many 200-line reads. Each session records `tool_results`
-and `truncated_tool_results`, and each level totals them per limit
+half or all of the manifest's `max_tool_result_bytes`. The default
+corpus's 64 KiB ceiling never binds on its small files. A staged corpus sets
+16 KiB, so its 4 and 8 KiB tiers cut many 200-line reads. Each session records
+`tool_results` and `truncated_tool_results`, and each level totals them per limit
 (`tool_results`).
 
 The summary's `Timing` line is the receipt's `host_load` verdict over the

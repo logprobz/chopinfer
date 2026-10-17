@@ -84,16 +84,6 @@ Citation: Merity, Xiong, Bradbury and Socher, "Pointer Sentinel Mixture
           Models", 2016, arXiv:1609.07843
 
 ========================================================================
-Runyard agentic benchmark corpus and port
-Files: tools/qual/agentic_corpus/ (corpus files copied unchanged), and the
-       Python port of Runyard's agentic sweep in tools/qual/
-       (tools/qual/agentic_corpus/NOTICE.md lists the ported sources)
-Source: Runyard, revision 9e6022c0fb7e075734a9602e227ea08d9b1fe442, by the
-        Chopinfer maintainer
-License: Apache-2.0, included with the author's permission
-         (tools/qual/agentic_corpus/NOTICE.md)
-
-========================================================================
 Hugging Face transformers
 Files: models/glm5next/reference.py (`indexer_forward`, adapted from
        Glm5NextTextIndexer.forward; `grouped_experts`, adapted from the

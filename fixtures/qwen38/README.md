@@ -68,6 +68,9 @@ checkpoint's `tokenizer.json`. `capture/agentic_outcomes.py` rebuilds it from
 `$CHOPINFER_DATA/qwen-agentic-nofinal`; `tools/qual/test_agentic_review.py`
 rebuilds each turn's parsed stream from its tokens, checks it against that
 digest, and replays the sessions through the agentic driver.
+The replay uses a synthetic workspace with the recorded paths, readable
+line ranges, and first edit span, independent of the default coding corpus.
+It preserves the recorded tokens and parsed-stream digests.
 
 The [frontend references](frontend/README.md) use HF templates, tokenizers,
 processors and F32 API answers. The [capture instructions](capture/README.md)

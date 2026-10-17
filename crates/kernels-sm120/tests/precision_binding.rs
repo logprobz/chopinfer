@@ -903,6 +903,110 @@ fn generated_adoptions_preserve_code_and_capabilities_except_names() {
 }
 
 #[test]
+fn generated_mxfp8_offer_binds_declared_ceil_before_naming_entries() {
+    use kernel_core::precision::capability::ActivationCapability;
+    let mut source = operation(OperationKind::Dense, ActivationFormat::Bf16);
+    source.weights = vec![WeightSpec {
+        codes: tensor("matrix", DType::Fp8E4M3, vec![256, 256]),
+        logical_shape: vec![256, 256],
+        format: WeightFormat::Mxfp8,
+        encoding: CodeEncoding::E4M3,
+        layout: WeightLayout::row_major(),
+        local_scale: Some(ScaleSpec {
+            tensor: tensor("local", DType::Ue8M0, vec![256, 8]),
+            scope: ScaleScope::Block,
+            convention: ScaleConvention::Multiply,
+            groups: vec![
+                GroupAxis {
+                    axis: 0,
+                    size: 1,
+                    origin: 0,
+                },
+                GroupAxis {
+                    axis: 1,
+                    size: 32,
+                    origin: 0,
+                },
+            ],
+        }),
+        global_scale: None,
+        transforms: vec![],
+    }];
+    source.activations = vec![ActivationSpec::mxfp8_ceil(1e-4_f32.to_bits())];
+    source.arithmetic.weight_operand = DType::Fp8E4M3;
+    source.arithmetic.decode_order = DecodeOrder::NativeBlockScaledMma;
+    source.validate().unwrap();
+    let generate = |source: &OperationSpec, aliases: &[generated::Adoption]| {
+        generated::offer(
+            generated::Request {
+                operation: source,
+                format: format::FormatId::Mxfp8,
+                usage: source.uses[0],
+                implementation: generated::Implementation::Dense {
+                    kernel: DenseKernel::Tiled { splits: 1 },
+                    capacity: 1,
+                    knobs: None,
+                },
+            },
+            aliases,
+        )
+        .unwrap()
+    };
+    let ceil = generate(&source, &[]);
+    assert_eq!(
+        ceil.offer.capability().unwrap().activation,
+        Some(ActivationCapability::Mxfp8Ceil {
+            amax_floor_bits: 1e-4_f32.to_bits()
+        })
+    );
+    assert_eq!(
+        ceil.offer.handle().quantizer.as_ref().unwrap().scale_rule(),
+        Some(DynamicScale::MXFP8_CEIL)
+    );
+    assert!(
+        ceil.offer
+            .handle()
+            .cubin_specs("generated")
+            .unwrap()
+            .iter()
+            .any(|spec| spec
+                .headers
+                .iter()
+                .any(|header| header.contains("row/block_quantize.cuh")))
+    );
+    let aliases: Vec<_> = ceil
+        .identities
+        .iter()
+        .cloned()
+        .map(|mut identity| {
+            identity.symbol = identity.generated.replace("chop_proj", "chop_adopted");
+            identity
+        })
+        .collect();
+    let adopted = generate(&source, &aliases);
+    assert_eq!(
+        adopted.offer.capability().unwrap().stages,
+        aliases
+            .iter()
+            .map(|identity| identity.symbol.clone())
+            .collect::<Vec<_>>()
+    );
+    source.activations[0] = ActivationSpec::mxfp8_ceil(2e-4_f32.to_bits());
+    assert_ne!(ceil.identities, generate(&source, &[]).identities);
+    source.activations[0]
+        .quantizer
+        .as_mut()
+        .unwrap()
+        .calibration = Calibration::Dynamic(DynamicScale::MxPowerOfTwo);
+    let ocp = generate(&source, &[]);
+    assert_eq!(
+        ocp.offer.capability().unwrap().activation,
+        Some(ActivationCapability::Mxfp8)
+    );
+    assert_ne!(ceil.identities, ocp.identities);
+}
+
+#[test]
 fn generated_offers_refuse_contract_drift() {
     let mut source = operation(OperationKind::Dense, ActivationFormat::Bf16);
     source.arithmetic.decode_order = DecodeOrder::CodeThenScale;

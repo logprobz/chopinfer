@@ -255,7 +255,19 @@ pub fn offer(request: Request<'_>, adoptions: &[Adoption]) -> Result<GeneratedOf
             ),
             _ => return Err(fail("implementation family differs from operation kind")),
         };
-        result.map_err(|e| e.to_string())
+        let mut result = result.map_err(|e| e.to_string())?;
+        // Calibration selects the row code before its identity and aliases are computed.
+        if let Some(Calibration::Dynamic(rule)) = operation
+            .activations
+            .first()
+            .and_then(|activation| activation.quantizer.as_ref())
+            .map(|quantizer| &quantizer.calibration)
+        {
+            result = result
+                .with_dynamic_scale(*rule, &names[2])
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(result)
     };
     let neutral = [
         "projection_compute_v1".into(),

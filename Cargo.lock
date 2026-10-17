@@ -744,9 +744,12 @@ dependencies = [
 name = "model-deepseek41-lab"
 version = "0.1.0-alpha.3"
 dependencies = [
+ "kernel-build",
  "kernel-core",
  "kernel-harness",
  "model-deepseek41-contract",
+ "runtime-cuda",
+ "serde_json",
 ]
 
 [[package]]

@@ -350,7 +350,14 @@ The rules:
   an upload, a copy into it, a launch, an annotation, or an earlier declared
   argument of another added buffer or of a launch that also names the
   buffer elsewhere. A use that no declared argument explains, or that
-  replaces a buffer the base writes first, fails. The one exception is a
+  replaces a buffer the base writes first, fails. What the journal cannot
+  order fails as not modelled: a site launch that also names the base
+  buffer in an argument the same added buffer does not replace (which it
+  writes first), an added buffer standing for more than one base region
+  (buffer, offset and length) across its sites, and, on an executing
+  device, any graph capture or replay (a captured site runs at its
+  replays) and a write of the base buffer on another stream after an
+  executed site before the host synchronizes the site's stream. The one exception is a
   plan-only device: when every note on it in both revisions is an `allocate`
   or a `launch rN` plan record (which lowering tests write with
   `device.note`), nothing executes, so its plan records are not writes. Any

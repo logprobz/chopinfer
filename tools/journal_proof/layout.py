@@ -614,7 +614,54 @@ def unwritten_site(k, base, raw, sites, shared):
     return (base, k) in sites.get(raw, ()) and (raw, base, k) not in shared
 
 
-def unzeroed_uses(notes_a, notes_b, zeroed, replaced, sites, plan=False, shared=frozenset()):
+def check_site_alias(raw, name, base, i, shared):
+    """A site whose launch also names the base buffer in an argument the same
+    added buffer does not replace fails: nothing tells whether the launch
+    writes that argument before it reads the replaced one."""
+    require((raw, base, i) not in shared,
+            f'added {name} {raw}: the collective at base note {i + 1} also names {base} in an argument {raw} does not replace; '
+            'whether it writes that argument before reading the replaced one is not in the journal')
+
+
+def check_regions(raw, name, regions):
+    """An added buffer that replaces more than one base region ((buffer,
+    offset, length) in `regions`) fails: the head would alias what the base
+    keeps apart."""
+    found = sorted(regions.get(raw, ()))
+    require(len(found) <= 1, f'added {name} {raw}: it replaces {len(found)} different base regions {found[:3]} on a device that '
+            'never runs the instance create; one added buffer standing for several base regions is not modelled')
+
+
+def check_graphs(raw, name, notes_a, plan):
+    """On an executing device a graph capture or replay fails: a captured site
+    runs at each replay, not where its launch is recorded."""
+    if plan:
+        return
+    k = next((k for k, line in enumerate(notes_a) if (history.form(line) or ('',))[0] in ('capture', 'captured', 'replay')), None)
+    require(k is None, f'added {name} {raw}: base note {(k or 0) + 1} captures or replays a graph on an executing device that '
+            'never runs the instance create; when a captured collective reads the buffer is not modelled')
+
+
+def check_later_writes(raw, name, base, i, notes_a, sites, shared, plan):
+    """On an executing device, a write of the base buffer issued on another
+    stream after an executed site, before the host synchronizes the site's
+    stream, fails: it may run before the collective reads the buffer.
+    Records without a stream (plan records) keep their recorded order."""
+    stream = history.stream_of(notes_a[i]) if not plan and i < len(notes_a) else None
+    if stream is None:
+        return
+    for k in range(i + 1, len(notes_a)):
+        line = notes_a[k]
+        if line == f'synchronize {stream}':
+            return
+        if (base not in {int(r) for r in HANDLE.findall(line)} or unwritten_site(k, base, raw, sites, shared)
+                or reads_only(line, base) or history.stream_of(line) in (None, stream)):
+            continue
+        require(False, f'added {name} {raw}: base note {k + 1} writes {base} on another stream after the collective at base '
+                f'note {i + 1} reads it, before the host waits for that collective; their order is not in the journal')
+
+
+def unzeroed_uses(notes_a, notes_b, zeroed, replaced, sites, plan=False, shared=frozenset(), regions=None):
     """A device whose create is only its allocation prefix never runs the
     instance create that zeroes a declared `init: zero` buffer. The head may
     then use such a buffer unzeroed only where it keeps the base's
@@ -628,14 +675,21 @@ def unzeroed_uses(notes_a, notes_b, zeroed, replaced, sites, plan=False, shared=
     instead, leave it unwritten; any other record naming it counts as
     initializing it. With `plan` (both revisions' devices are plan_only)
     plan records do not count as writes, because nothing executes. `zeroed`
-    maps added head handles to resources."""
+    maps added head handles to resources. What the journal cannot order
+    fails as not modelled: check_site_alias, check_regions (with `regions`),
+    check_graphs and check_later_writes."""
     for j, line in enumerate(notes_b):
         for raw in {int(r) for r in HANDLE.findall(line)} & set(zeroed):
             name = zeroed[raw]
             require(replaced.get(raw), f'added {name} {raw}: head note {j + 1} uses it on a device that never runs the instance '
                     'create, and no declared collective argument identifies the base buffer it replaces')
     for raw, name in zeroed.items():
-        for base, i in sorted(sites.get(raw, ())):
+        if not sites.get(raw):
+            continue
+        check_regions(raw, name, regions or {})
+        check_graphs(raw, name, notes_a, plan)
+        for base, i in sorted(sites[raw]):
+            check_site_alias(raw, name, base, i, shared)
             for k in range(i):
                 if base not in {int(r) for r in HANDLE.findall(notes_a[k])} or unwritten_site(k, base, raw, sites, shared):
                     continue
@@ -644,6 +698,9 @@ def unzeroed_uses(notes_a, notes_b, zeroed, replaced, sites, plan=False, shared=
                 require(reads_only(notes_a[k], base),
                         f'added {name} {raw}: it is used unzeroed on a device that never runs the instance create, but base '
                         f'note {k + 1} writes {base}, which it replaces, before the collective at base note {i + 1} reads it')
+    for raw, name in zeroed.items():
+        for base, i in sorted(sites.get(raw, ())):
+            check_later_writes(raw, name, base, i, notes_a, sites, shared, plan)
 
 
 def declared_record(line, ids, resolves, j, side):
@@ -710,6 +767,9 @@ class Device:
         # whose launch also names the base buffer in an argument that added
         # buffer does not replace (unwritten_site).
         self.shared = set()
+        # Added head handle -> the (base buffer, offset, length) regions it
+        # replaces.
+        self.regions = collections.defaultdict(set)
         self.note_index = None
         self.resized = {w['base_raw']: w for w in witness.resized.values()}
         resized_notes = {alloc_a[slot][0]: (slot, w) for slot, w in witness.resized.items()}
@@ -784,7 +844,8 @@ class Device:
             require(found[raw] == expected,
                     f'added {name} {raw}: {found[raw]} whole zeros in the create range ({head_create["kind"]}), the declaration {expected}')
         if not expected:
-            unzeroed_uses(notes_a, notes_b, zeroed, self.replaced, self.sites, plan_only(notes_a) and plan_only(notes_b), self.shared)
+            unzeroed_uses(notes_a, notes_b, zeroed, self.replaced, self.sites, plan_only(notes_a) and plan_only(notes_b), self.shared,
+                          self.regions)
         # The zero is not compared (it is a declared addition), so its place
         # relative to the buffer's uses is checked here.
         initialization_order(notes_b, {raw: (name, alloc_b[raw & 0xffffffff][0], at[raw], streams[raw])
@@ -862,14 +923,14 @@ class Device:
                 require(None not in keys and len(set(keys)) == len(keys),
                         f'{change["name"]}: argument {i} does not name {change["ranks"]} distinct ranks')
                 new['args'][i] = 'DevicePointerArray([' + ', '.join(
-                    f'Some({self.peer(raw, resource, change, swaps[i])})' for raw, _, _ in entries) + '])'
+                    f'Some({self.peer(raw, resource, change, swaps[i], (offset, length))})' for raw, offset, length in entries) + '])'
                 tags['collective_peer_arrays'] += 1
             for key, resource in change.get('buffers', {}).items():
                 i = int(key)
                 require(i < len(new['args']), f'{change["name"]}: argument {i} is out of range')
                 m = re.fullmatch(r'DeviceBuffer\(' + SPAN.pattern + r'\)', new['args'][i])
                 require(m is not None, f'{change["name"]}: argument {i} is not a buffer span')
-                new['args'][i] = f'DeviceBuffer({self.peer(int(m[1]), resource, change, swaps[i])})'
+                new['args'][i] = f'DeviceBuffer({self.peer(int(m[1]), resource, change, swaps[i], (int(m[2]), int(m[3])))})'
                 tags['collective_buffers'] += 1
             for swap in swaps.values():
                 for raw, head in swap.items():
@@ -894,9 +955,10 @@ class Device:
         require(int(m[1]) not in self.base_sizes, f'{change["name"]}: argument {i} is a device allocation; declare a resized resource')
         return m
 
-    def peer(self, raw, resource, change, swap):
-        """The same rank's added `resource`, whole, for a base buffer,
-        recorded in `swap` (base buffer -> added head handle)."""
+    def peer(self, raw, resource, change, swap, region):
+        """The same rank's added `resource`, whole, for a base buffer's
+        span `region` (offset, length), recorded in `swap` (base buffer ->
+        added head handle)."""
         row = self.base_sizes.get(raw)
         require(row is not None, f'{change["name"]}: a replaced buffer {raw} is not a base allocation')
         head = self.w.by_rank.get((resource, rank_key(row)), [])
@@ -904,6 +966,7 @@ class Device:
         self.replaced[head[0]].add(raw)
         self.sites[head[0]].add((raw, self.note_index))
         swap[raw] = head[0]
+        self.regions[head[0]].add((raw, *region))
         return placeholder_span(head[0], self.decl['resources'][resource]['bytes'])
 
     def spans(self, line, tags):

@@ -936,6 +936,12 @@ pub enum RouterKind {
     /// sigmoid scores divided by their sum plus 1e-20, times
     /// `scaling_factor`.
     SigmoidBiasSelectNormalized { scaling_factor: f32 },
+    /// Select the top-k of sqrt(softplus(logit)) + bias in F32, with
+    /// lower expert ids first on ties. Weights use only the unbiased
+    /// scores, divided by their selected sum plus 1e-20, then multiplied
+    /// by `scaling_factor`. `router::RowBiasRouterQuery` selects one of
+    /// two bias vectors independently for each row.
+    SqrtSoftplusBiasSelectNormalized { scaling_factor: f32 },
     /// Keep the `topk_group` of `n_group` contiguous expert groups with the
     /// largest sums of their two largest logits (one in groups of one), take
     /// the top-k logits among them, and weight by the softmax over the
@@ -1846,6 +1852,7 @@ impl Validate for RowQuery {
                         return Err(Refusal("invalid grouped top-k groups"));
                     }
                     RouterKind::SigmoidBiasSelectNormalized { scaling_factor }
+                    | RouterKind::SqrtSoftplusBiasSelectNormalized { scaling_factor }
                         if !scaling_factor.is_finite() || scaling_factor <= 0.0 =>
                     {
                         return Err(Refusal("invalid router scaling factor"));
@@ -2314,6 +2321,10 @@ impl NumericalContract for RowQuery {
                 kind: RouterKind::SigmoidBiasSelectNormalized { .. },
                 ..
             } => "router-sigmoid-bias-noaux-tc",
+            RowQuery::Router {
+                kind: RouterKind::SqrtSoftplusBiasSelectNormalized { .. },
+                ..
+            } => "router-sqrt-softplus-bias-normalized",
             RowQuery::Router {
                 kind: RouterKind::GroupLimitedSelectedSoftmax { .. },
                 ..

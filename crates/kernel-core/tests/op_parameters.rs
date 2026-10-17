@@ -4,7 +4,8 @@
 
 use kernel_core::codec::{SmallFloat, bf16_to_f32, decode_ue8m0_f64, f32_to_bf16};
 use kernel_core::contract::{
-    DType, RmsNormKind, RouterKind, ScaleMode, SigmoidMeanHyperConnectionQuery,
+    DType, NumericalContract, RmsNormKind, RouterKind, ScaleMode, SigmoidMeanHyperConnectionQuery,
+    Validate,
 };
 use kernel_core::hyper_connection_oracle::grouped_norm;
 use kernel_core::moe_oracle::{
@@ -160,6 +161,308 @@ fn values(len: usize, seed: u64, scale: f64) -> Vec<f64> {
             (((state >> 11) as f64 / (1_u64 << 53) as f64) * 2.0 - 1.0) * scale
         })
         .collect()
+}
+
+#[test]
+fn row_bias_router_contract_matches_the_pinned_formula() {
+    use kernel_core::router::RowBiasRouterQuery;
+    use kernel_core::router_oracle::{row_bias_router, select_f32_scores, sqrt_softplus_scores};
+    for (experts, top_k) in [(384, 6), (128, 3)] {
+        let op = RowBiasRouterQuery {
+            experts,
+            top_k,
+            scaling_factor: 1.5,
+        };
+        let row = (0..experts)
+            .map(|i| (i % 17) as f32 / 8.0 - 1.0)
+            .collect::<Vec<_>>();
+        let first = (0..experts)
+            .map(|i| if i < top_k { 8.0 } else { 0.0 })
+            .collect::<Vec<_>>();
+        let second = (0..experts)
+            .map(|i| if i >= experts - top_k { 8.0 } else { 0.0 })
+            .collect::<Vec<_>>();
+        let logits = row.repeat(4);
+        let select = [0, 1, 1, 0];
+        let actual = row_bias_router(op, &logits, [&first, &second], &select).unwrap();
+        let scores = row
+            .iter()
+            .map(|&v| (1.0 + f64::from(v).exp()).ln().sqrt())
+            .collect::<Vec<_>>();
+        for (r, result) in actual.iter().enumerate() {
+            let bias = [&first, &second][select[r] as usize];
+            let mut ids = (0..experts as usize).collect::<Vec<_>>();
+            ids.sort_by(|&a, &b| {
+                (scores[b] + f64::from(bias[b]))
+                    .total_cmp(&(scores[a] + f64::from(bias[a])))
+                    .then(a.cmp(&b))
+            });
+            ids.truncate(top_k as usize);
+            assert_eq!(result.expert_ids, ids);
+            let sum = ids.iter().map(|&i| scores[i]).sum::<f64>() + 1e-20;
+            for (&i, &w) in ids.iter().zip(&result.weights) {
+                assert!((w - scores[i] / sum * 1.5).abs() < 1e-14);
+            }
+        }
+        assert_ne!(actual[0].expert_ids, actual[1].expert_ids);
+        assert_eq!(actual[0], actual[3]);
+        assert_eq!(actual[1], actual[2]);
+        let own_scores = sqrt_softplus_scores(&logits)
+            .unwrap()
+            .into_iter()
+            .map(|v| v as f32)
+            .collect::<Vec<_>>();
+        let exact = select_f32_scores(op, &own_scores, [&first, &second], &select).unwrap();
+        assert!(
+            exact
+                .iter()
+                .zip(actual)
+                .all(|(a, b)| a.expert_ids == b.expert_ids)
+        );
+        assert_ne!(
+            op.numerical_contract_id().unwrap(),
+            op.query().numerical_contract_id().unwrap()
+        );
+    }
+}
+
+#[test]
+fn row_bias_router_selection_uses_rounded_f32_keys_and_unbiased_weights() {
+    use kernel_core::router::RowBiasRouterQuery;
+    use kernel_core::router_oracle::select_f32_scores;
+    let op = RowBiasRouterQuery {
+        experts: 4,
+        top_k: 2,
+        scaling_factor: 1.5,
+    };
+    let scores = [1.0, 1.0 + f32::EPSILON, 0.5, 0.25];
+    let bias = [33_554_432.0, 33_554_432.0, 0.0, 0.0];
+    let exact = select_f32_scores(op, &scores, [&bias, &[0.0; 4]], &[0]).unwrap();
+    assert_eq!(exact[0].expert_ids, [0, 1]);
+    // F64 bias addition reverses these F32 ties.
+    assert!(f64::from(scores[1]) + f64::from(bias[1]) > f64::from(scores[0]) + f64::from(bias[0]));
+    let sum = scores[0] + scores[1] + 1e-20_f32;
+    assert_eq!(
+        exact[0].weights,
+        [
+            f64::from(scores[0] / sum * 1.5),
+            f64::from(scores[1] / sum * 1.5)
+        ]
+    );
+    let zero = select_f32_scores(op, &[0.0; 4], [&bias, &bias], &[0]).unwrap();
+    assert_eq!(zero[0].weights, [0.0, 0.0]);
+}
+
+#[test]
+fn row_bias_router_refuses_invalid_selectors_and_nonfinite_operands() {
+    use kernel_core::router::RowBiasRouterQuery;
+    use kernel_core::router_oracle::{row_bias_router, select_f32_scores, sqrt_softplus_scores};
+    let op = RowBiasRouterQuery {
+        experts: 4,
+        top_k: 2,
+        scaling_factor: 1.5,
+    };
+    for scaling_factor in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+        assert!(
+            RowBiasRouterQuery {
+                scaling_factor,
+                ..op
+            }
+            .validate()
+            .is_err()
+        );
+    }
+    assert!(RowBiasRouterQuery { top_k: 5, ..op }.validate().is_err());
+    for selectors in [&[][..], &[2][..], &[0, 1][..]] {
+        assert!(row_bias_router(op, &[1.0; 4], [&[0.0; 4]; 2], selectors).is_err());
+    }
+    assert!(row_bias_router(op, &[1.0; 4], [&[0.0; 4], &[f32::NAN; 4]], &[0]).is_err());
+    assert!(row_bias_router(op, &[1.0; 4], [&[0.0; 3], &[0.0; 4]], &[0]).is_err());
+    assert!(select_f32_scores(op, &[-1.0; 4], [&[0.0; 4]; 2], &[0]).is_err());
+    assert!(select_f32_scores(op, &[f32::MAX; 4], [&[f32::MAX; 4]; 2], &[0]).is_err());
+    assert!(select_f32_scores(op, &[f32::MAX; 4], [&[0.0; 4]; 2], &[0]).is_err());
+    assert!(sqrt_softplus_scores(&[f32::NAN]).is_err());
+    let edge = sqrt_softplus_scores(&[-1000.0, 0.0, 1000.0, f32::MAX]).unwrap();
+    assert_eq!(edge[0], 0.0);
+    assert_eq!(edge[1], 2_f64.ln().sqrt());
+    assert!(edge.iter().all(|v| v.is_finite()));
+}
+
+fn quantized_chained_projection(
+    gate_up: bool,
+) -> kernel_core::moe_chained::ChainedMlpProjectionQuery {
+    use kernel_core::contract::{
+        ActivationFormat, Epilogues, GemmQuery, GroupedGemm, OutputQuantization, RoutedCapacity,
+        SwigluColumns, WeightFormat,
+    };
+    use kernel_core::gated_mlp::{
+        GatedMlpProjection, GatedMlpProjectionQuery, RouteWeightPoint, SwigluClamp,
+    };
+    use kernel_core::moe_chained::{ChainedK, ChainedMlpProjectionQuery};
+    let k = ChainedK::new(if gate_up { 5120 } else { 576 }).unwrap();
+    ChainedMlpProjectionQuery {
+        projection: GatedMlpProjectionQuery {
+            gemm: GemmQuery {
+                m_capacity: 18,
+                n: if gate_up { 1152 } else { 5120 },
+                k: k.stored,
+                weight: WeightFormat::Mxfp4,
+                activation: ActivationFormat::Mxfp8,
+                output: if gate_up { DType::Bf16 } else { DType::F32 },
+                epilogues: Epilogues {
+                    swiglu: gate_up.then_some(SwigluColumns::ConcatenatedHalves),
+                    output_quantization: gate_up.then_some(OutputQuantization::Mxfp8),
+                    ..Epilogues::default()
+                },
+                grouped: Some(GroupedGemm {
+                    experts: 384,
+                    top_k: 6,
+                    capacity: RoutedCapacity::TotalRows(18),
+                }),
+            },
+            projection: if gate_up {
+                GatedMlpProjection::GateUp
+            } else {
+                GatedMlpProjection::Down
+            },
+            swiglu_clamp: gate_up.then_some(SwigluClamp::symmetric(10.0)),
+            route_weight: Some(RouteWeightPoint::BeforeDown),
+        },
+        k,
+    }
+}
+
+#[test]
+fn quantized_chained_contract_pins_before_down_and_separate_stored_k() {
+    use kernel_core::gated_mlp::RouteWeightPoint;
+    use kernel_core::moe_chained::ChainedK;
+    let gate = quantized_chained_projection(true);
+    let down = quantized_chained_projection(false);
+    gate.validate().unwrap();
+    down.validate().unwrap();
+    assert_eq!(
+        down.k,
+        ChainedK {
+            stored: 576,
+            loop_k: 640
+        }
+    );
+    assert!(
+        down.numerical_contract_id()
+            .unwrap()
+            .as_str()
+            .contains("chain128.zero-tail.ceil-mxfp8-bf16-amax")
+    );
+    assert_ne!(
+        gate.numerical_contract_id().unwrap(),
+        down.numerical_contract_id().unwrap()
+    );
+    let mut bad = down;
+    bad.projection.gemm.k = 640;
+    assert!(bad.validate().is_err());
+    bad = down;
+    bad.projection.gemm.epilogues.weighted_moe_combine = true;
+    assert!(bad.validate().is_err());
+    bad = down;
+    bad.projection.route_weight = Some(RouteWeightPoint::AfterDown);
+    assert!(bad.validate().is_err());
+    bad = gate;
+    bad.projection.gemm.output = DType::F32;
+    assert!(bad.validate().is_err());
+    bad = gate;
+    bad.projection.gemm.epilogues.output_quantization = None;
+    assert!(bad.validate().is_err());
+    for stored in [0, 32, 575, 577, u32::MAX, u32::MAX - 63] {
+        assert!(ChainedK::new(stored).is_err());
+    }
+    assert!(
+        ChainedK {
+            stored: 576,
+            loop_k: 768
+        }
+        .validate()
+        .is_err()
+    );
+}
+
+#[test]
+fn chained_k_tail_has_64_real_products_then_exact_zeros() {
+    use kernel_core::moe_chained::ChainedK;
+    use kernel_core::moe_chained_oracle::{fold_f32_chains, partial_chains};
+    let k = ChainedK::new(576).unwrap();
+    let x = vec![1.0; 576];
+    let mut weight = vec![1.0; 576];
+    for (i, w) in weight[512..].iter_mut().enumerate() {
+        *w = (i + 1) as f64;
+    }
+    let actual = partial_chains(&x, &weight, k).unwrap();
+    assert_eq!(actual.values, [128.0, 128.0, 128.0, 128.0, 2080.0]);
+    assert_eq!(actual.sum_abs_products, actual.values);
+    assert_eq!(actual.reduction_lengths, [128; 5]);
+    let mut poisoned = weight.clone();
+    poisoned.extend([f64::NAN; 64]);
+    assert!(partial_chains(&x, &poisoned, k).is_err());
+    assert_eq!(partial_chains(&x, &poisoned[..576], k).unwrap(), actual);
+    assert_eq!(
+        fold_f32_chains(&[16_777_216.0, 1.0, -16_777_216.0, 1.0, 64.0]).unwrap(),
+        65.0
+    );
+    assert!(fold_f32_chains(&[f32::MAX, f32::MAX]).is_err());
+}
+
+#[test]
+fn before_down_epilogue_clamps_then_multiplies_in_vendor_order() {
+    use kernel_core::gated_mlp::SwigluClamp;
+    use kernel_core::moe_chained_oracle::{before_down_f64, weight_before_down};
+    let clamp = Some(SwigluClamp::symmetric(10.0));
+    for (g, u, w) in [
+        (12.0_f64, -20.0_f64, 0.25_f64),
+        (-12.0, 20.0, 0.75),
+        (0.0, 2.0, 1.5),
+    ] {
+        let gate = g.min(10.0);
+        let up = u.clamp(-10.0, 10.0);
+        assert_eq!(
+            before_down_f64(g, u, w, clamp).unwrap(),
+            w * ((gate / (1.0 + (-gate).exp())) * up)
+        );
+    }
+    // Reassociation loses a subnormal SiLU before the up branch rescales it.
+    let (silu, up, weight) = (f32::from_bits(1 << 9), 2_f32.powi(100), 2_f32.powi(-10));
+    assert_eq!(weight_before_down(silu, up, weight), 2_f32.powi(-50));
+    assert_eq!((weight * silu) * up, 0.0);
+    assert!(before_down_f64(f64::NAN, 1.0, 1.0, None).is_err());
+}
+
+#[test]
+fn before_down_quantization_rounds_bf16_before_amax_and_uses_ceil_scales() {
+    use kernel_core::moe_chained_oracle::quantize_before_down;
+    let mut values = vec![0.0; 64];
+    values[0] = 448.03125;
+    values[1] = -0.0;
+    values[32] = 500.0;
+    let result = quantize_before_down(&values, 1, 64).unwrap();
+    assert_eq!(result.scales, Scales::Ue8M0(vec![127, 128]));
+    assert_eq!(result.codes[0], 0x7e);
+    assert_eq!(result.codes[1], 0x80);
+    let zero = quantize_before_down(&[0.0; 32], 1, 32).unwrap();
+    assert_eq!(zero.scales, Scales::Ue8M0(vec![105]));
+    let unrounded = quantize(
+        &values,
+        1,
+        64,
+        Quantizer {
+            rule: ScaleRule::CeilPowerOfTwo(AmaxRatio::MultiplyReciprocal),
+            amax_floor: Some(1e-4),
+            ..Quantizer::mx(SmallFloat::E4M3)
+        },
+    )
+    .unwrap();
+    assert_ne!(result.scales, unrounded.scales);
+    let ocp = quantize(&values, 1, 64, Quantizer::mx(SmallFloat::E4M3)).unwrap();
+    assert_ne!(result.scales, ocp.scales);
+    assert!(quantize_before_down(&[f32::NAN; 32], 1, 32).is_err());
+    assert!(quantize_before_down(&[1.0; 31], 1, 31).is_err());
 }
 
 fn bf16(value: f64) -> f64 {

@@ -1144,6 +1144,13 @@ impl Routing {
                 scale: f64::from(scaling_factor),
                 ..base
             },
+            RouterKind::SqrtSoftplusBiasSelectNormalized { scaling_factor } => Self {
+                score: RouterScore::SqrtSoftplus,
+                key: RouteKey::Scores,
+                normalize: Some(1e-20),
+                scale: f64::from(scaling_factor),
+                ..base
+            },
             RouterKind::GroupLimitedSelectedSoftmax {
                 n_group,
                 topk_group,
@@ -1319,7 +1326,8 @@ pub fn router(
         return Err(Refusal("router scores, bias or top-k invalid"));
     }
     let bias = match kind {
-        RouterKind::SigmoidBiasSelectNormalized { .. } => bias,
+        RouterKind::SigmoidBiasSelectNormalized { .. }
+        | RouterKind::SqrtSoftplusBiasSelectNormalized { .. } => bias,
         RouterKind::SoftmaxTopK { .. } | RouterKind::GroupLimitedSelectedSoftmax { .. } => None,
     };
     route(scores, bias, top_k, Routing::of_kind(kind, scores.len()))

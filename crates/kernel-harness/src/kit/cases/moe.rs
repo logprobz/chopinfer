@@ -173,7 +173,7 @@ pub(super) fn route_tokens(
     }
     // The oracle's bound is 2^-22 K S with K = 1: S carries the weight's
     // relative error in F32 unit roundoffs, a quarter of 2^-22 each.
-    let units = weight_roundoffs(kind, experts, top_k);
+    let units = weight_roundoffs(kind, experts, top_k)?;
     let bounds = weights
         .iter()
         .map(|w: &f64| w.abs() * units / 4.0)
@@ -198,14 +198,19 @@ pub(super) fn route_tokens(
 ///   and `experts - 1`), the division (1);
 /// - grouped: `expf(v - max)` over the selected logits (4), their sum (4 and
 ///   `top_k - 1`), the division (1).
-fn weight_roundoffs(kind: RouterKind, experts: usize, top_k: usize) -> f64 {
+fn weight_roundoffs(kind: RouterKind, experts: usize, top_k: usize) -> LabResult<f64> {
     let k = top_k as f64;
-    match kind {
+    Ok(match kind {
+        RouterKind::SqrtSoftplusBiasSelectNormalized { .. } => {
+            return Err(
+                "sqrt-softplus routing needs the separate F32 score and selection case".into(),
+            );
+        }
         RouterKind::SigmoidBiasSelectNormalized { .. } => 8.0 + 8.0 + (k - 1.0) + 3.0,
         RouterKind::SoftmaxTopK { renormalize: true } => 5.0 + 5.0 + (k - 1.0) + 1.0,
         RouterKind::SoftmaxTopK { renormalize: false } => 4.0 + 4.0 + (experts as f64 - 1.0) + 1.0,
         RouterKind::GroupLimitedSelectedSoftmax { .. } => 4.0 + 4.0 + (k - 1.0) + 1.0,
-    }
+    })
 }
 
 /// The case of a router over `capacity` tokens: F32 logits and a bias per
@@ -1159,6 +1164,24 @@ mod tests {
                 "{kind:?}"
             );
         }
+    }
+
+    #[test]
+    fn sqrt_softplus_refuses_the_legacy_router_case() {
+        let error = route_tokens(
+            &[0.0; 4],
+            &[0.0; 4],
+            4,
+            2,
+            RouterKind::SqrtSoftplusBiasSelectNormalized {
+                scaling_factor: 1.5,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            "sqrt-softplus routing needs the separate F32 score and selection case"
+        );
     }
 
     /// The selection bias moves experts: a router that ignores it selects

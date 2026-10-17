@@ -412,8 +412,11 @@ impl Gpus {
         if reading.lost {
             return;
         }
-        let reasons = reading.reasons.unwrap_or_default();
-        if reasons.slowdown() != watch.slowdown {
+        // A reading without reasons, from a failed query, says nothing
+        // about a slowdown.
+        if let Some(reasons) = reading.reasons
+            && reasons.slowdown() != watch.slowdown
+        {
             watch.slowdown = reasons.slowdown();
             let clock = reading.sm_mhz.map(|mhz| integer(f64::from(mhz)));
             if watch.slowdown {
@@ -453,19 +456,22 @@ impl Gpus {
                 watch.hot = false;
             }
         }
-        if let Some(errors) = reading.ecc_uncorrected
-            && errors > watch.ecc
-        {
+        if let Some(errors) = reading.ecc_uncorrected {
+            // Each reading is the new baseline, so a cleared counter counts
+            // again from its new value.
+            let rose = errors > watch.ecc;
             watch.ecc = errors;
-            registry.note(
-                now,
-                &who,
-                format!(
-                    "{errors} uncorrected ECC error{} since the driver loaded",
-                    if errors == 1 { "" } else { "s" }
-                ),
-                Tone::Bad,
-            );
+            if rose {
+                registry.note(
+                    now,
+                    &who,
+                    format!(
+                        "{errors} uncorrected ECC error{} since the driver loaded",
+                        if errors == 1 { "" } else { "s" }
+                    ),
+                    Tone::Bad,
+                );
+            }
         }
         let rows = reading
             .processes
@@ -806,6 +812,51 @@ mod tests {
                     Tone::Bad
                 ),
                 (7.0, "GPU 2", "answering NVML again", Tone::Good),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_failed_query_or_a_cleared_counter_keeps_events_true() {
+        let mut registry = Registry::new(1.0);
+        let mut gpus = Gpus::new(Status::Opening, true, 1.0);
+        gpus.apply(
+            Report::Opened {
+                driver: None,
+                devices: vec![Device::default()],
+            },
+            &mut registry,
+            0.0,
+        );
+        let thermal = Some(Reasons(Reasons::SOFTWARE_THERMAL));
+        let reading = |reasons, ecc| Reading {
+            reasons,
+            ecc_uncorrected: ecc,
+            ..Reading::default()
+        };
+        for (at, reading) in [
+            (1.0, reading(thermal, Some(4))),
+            // The reasons query failed: still slowing down, no second start.
+            (2.0, reading(None, None)),
+            (3.0, reading(thermal, Some(4))),
+            // The counter was cleared, then one more error.
+            (4.0, reading(thermal, Some(0))),
+            (5.0, reading(thermal, Some(1))),
+        ] {
+            gpus.apply(Report::Polled(vec![reading]), &mut registry, at);
+        }
+        let events = registry
+            .events
+            .iter()
+            .skip(1)
+            .map(|event| (event.at, event.what.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            events,
+            [
+                (1.0, "thermal slowdown"),
+                (1.0, "4 uncorrected ECC errors since the driver loaded"),
+                (5.0, "1 uncorrected ECC error since the driver loaded"),
             ]
         );
     }

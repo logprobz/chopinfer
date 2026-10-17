@@ -1561,6 +1561,9 @@ pub fn cubin_spec(instantiations: &[InstantiationSpec]) -> Result<CubinSpec, Ref
         }
         let (kernel, query, knobs, decode) = shape(&item.key)?;
         let kind = match query.weight {
+            WeightFormat::Fp8Block32x32 => {
+                return Err(Refusal("32x32 UE8M0 weights require the MXFP8 fold engine"));
+            }
             WeightFormat::Bf16 => "bf16",
             WeightFormat::Fp8PerTensor => "fp8_tensor",
             WeightFormat::Fp8PerChannel => "fp8_channel",

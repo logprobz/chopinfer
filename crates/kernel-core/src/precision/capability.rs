@@ -18,12 +18,14 @@ pub const CAPABILITY_SECTION: &str = ".chopinfer.precision";
     feature = "precision-serde",
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(feature = "precision-serde", serde(deny_unknown_fields))]
 pub enum ActivationCapability {
     Bf16,
     Fp8Group128(ScaleMode),
     Mxfp8,
     Nvfp4StaticScalar,
     Nvfp4TensorAmax,
+    Mxfp8Ceil { amax_floor_bits: u32 },
 }
 
 impl ActivationCapability {
@@ -31,7 +33,7 @@ impl ActivationCapability {
         match self {
             Self::Bf16 => ActivationFormat::Bf16,
             Self::Fp8Group128(mode) => ActivationFormat::Fp8Group128(mode),
-            Self::Mxfp8 => ActivationFormat::Mxfp8,
+            Self::Mxfp8 | Self::Mxfp8Ceil { .. } => ActivationFormat::Mxfp8,
             Self::Nvfp4StaticScalar | Self::Nvfp4TensorAmax => ActivationFormat::Nvfp4,
         }
     }
@@ -62,6 +64,12 @@ impl ActivationCapability {
             .ok_or("missing activation quantizer contract")?
             .calibration;
         let fits = match (self, calibration) {
+            (
+                Self::Mxfp8Ceil { amax_floor_bits },
+                Calibration::Dynamic(DynamicScale::CeilPowerOfTwo {
+                    amax_floor_bits: actual,
+                }),
+            ) => amax_floor_bits == *actual,
             (Self::Fp8Group128(mode), Calibration::Dynamic(DynamicScale::GroupAmax(actual))) => {
                 mode == *actual
             }

@@ -616,6 +616,11 @@ impl GroupedScales {
             ActivationFormat::Fp8Group128(_) => (unused, required(activation_scales)?),
         };
         let (weight_bytes, weight_f32) = match query.weight {
+            WeightFormat::Fp8Block32x32 => {
+                return Err(Refusal(
+                    "32x32 UE8M0 weights require a lossless per-row repack before grouped execution",
+                ));
+            }
             WeightFormat::Bf16 => (unused, unused),
             WeightFormat::Mxfp8 | WeightFormat::Mxfp4 => (required(weight_scales)?, unused),
             WeightFormat::Nvfp4 => (required(weight_scales)?, required(weight_global)?),

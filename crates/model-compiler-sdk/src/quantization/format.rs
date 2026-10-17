@@ -89,7 +89,7 @@ pub fn section_record(
         }
         (PackedSection::Codes, _) => source_dtype == DType::Fp8E4M3,
         (PackedSection::LocalScales, FormatId::Bf16) => false,
-        (PackedSection::LocalScales, FormatId::Mxfp4 | FormatId::Mxfp8) => {
+        (PackedSection::LocalScales, FormatId::Fp8Block32 | FormatId::Mxfp4 | FormatId::Mxfp8) => {
             matches!(source_dtype, DType::U8 | DType::Ue8M0)
         }
         (PackedSection::LocalScales, FormatId::Nvfp4 | FormatId::Nvfp4WeightOnly) => {

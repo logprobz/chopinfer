@@ -1084,3 +1084,85 @@ fn silu_and_weighted_outputs_round_where_declared() {
     assert_eq!(out.combined.values, [bf16(y * 0.3) + bf16(y * 0.7)]);
     assert_eq!(plain.combined.values, [y * 0.3 + y * 0.7]);
 }
+
+#[test]
+fn trained_ceil_quantization_rounds_to_bf16_before_selecting_scales() {
+    use kernel_core::precision::quantizer::BlockQuantization;
+    let recipe = BlockQuantization::E4M3_CEIL32;
+    let input = [448.03125_f32; 32];
+    let trained = recipe.apply(&input, 1, 32).unwrap();
+    assert_eq!(trained.scales, Scales::Ue8M0(vec![127]));
+    assert_eq!(trained.codes, vec![0x7e; 32]);
+    assert_eq!(trained.decoded(), vec![448.0; 32]);
+    let unrounded = quantize(&input, 1, 32, recipe.quantizer().unwrap()).unwrap();
+    assert_eq!(unrounded.scales, Scales::Ue8M0(vec![128]));
+}
+
+#[test]
+fn fp4_fake_quant_preserves_all_e2m1_values_and_signed_zeros() {
+    use kernel_core::precision::quantizer::BlockQuantization;
+    for format in [
+        BlockQuantization::E2M1E4M3Scale16,
+        BlockQuantization::E2M1Ceil32,
+    ] {
+        let width = format.group_size() as usize;
+        let input: Vec<_> = (0..width)
+            .map(|i| SmallFloat::E2M1.decode_f32((i % 16) as u8))
+            .collect();
+        let actual = format.fake_quant(&input, 1, width).unwrap();
+        let expected: Vec<_> = input.iter().map(|&v| f32_to_bf16(v)).collect();
+        assert_eq!(actual, expected);
+    }
+}
+
+#[test]
+fn clamped_silu_mul_rounds_only_its_product_before_ceil_quantization() {
+    use kernel_core::gated_mlp::{SwigluClamp, quantized::SiluMulQuantizeQuery};
+    use kernel_core::precision::quantizer::BlockQuantization;
+    let (rows, width) = (32, 32);
+    let query = SiluMulQuantizeQuery {
+        width: width as u32,
+        clamp: SwigluClamp::symmetric(10.0),
+        amax_floor_bits: 1e-4_f32.to_bits(),
+    };
+    let mut gate: Vec<_> = values(rows * width, 45, 15.0)
+        .into_iter()
+        .map(|v| v as f32)
+        .collect();
+    let mut up: Vec<_> = values(rows * width, 61, 13.0)
+        .into_iter()
+        .map(|v| v as f32)
+        .collect();
+    gate[..4].copy_from_slice(&[-100.0, 12.0, -0.0, 3.0]);
+    up[..4].copy_from_slice(&[4.0, 11.0, 1.0, -15.0]);
+    let wide = query.oracle(&gate, &up, rows).unwrap();
+    for (i, &value) in wide.iter().enumerate() {
+        let g = f64::from(gate[i]).min(10.0);
+        let u = f64::from(up[i]).clamp(-10.0, 10.0);
+        assert_eq!(value.to_bits(), ((g / (1.0 + (-g).exp())) * u).to_bits());
+    }
+    let reference: Vec<_> = wide.iter().map(|&v| v as f32).collect();
+    let expected = BlockQuantization::E4M3_CEIL32
+        .apply(&reference, rows, width)
+        .unwrap();
+    let actual = query.apply(&gate, &up, rows).unwrap();
+    assert_eq!(actual, expected);
+    let early: Vec<_> = gate
+        .iter()
+        .zip(&up)
+        .map(|(&g, &u)| {
+            let g = g.min(10.0);
+            let silu = bf16_to_f32(f32_to_bf16(g / (1.0 + (-g).exp())));
+            silu * u.clamp(-10.0, 10.0)
+        })
+        .collect();
+    assert_ne!(
+        actual,
+        BlockQuantization::E4M3_CEIL32
+            .apply(&early, rows, width)
+            .unwrap()
+    );
+    gate[0] = f32::NAN;
+    assert!(query.apply(&gate, &up, rows).is_err());
+    assert!(query.oracle(&gate, &up, rows).is_err());
+}

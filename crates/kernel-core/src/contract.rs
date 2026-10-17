@@ -113,6 +113,9 @@ pub enum WeightFormat {
     Mxfp4,
     /// E2M1 and UE4M3 per 16 K values, plus one F32 global scale.
     Nvfp4,
+    /// E4M3 with one multiplicative UE8M0 scale per 32 rows and 32 K.
+    /// A lossless repack repeats each block scale for each of its rows.
+    Fp8Block32x32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -1149,7 +1152,7 @@ impl Validate for GemmQuery {
             ));
         }
         let w_block = match self.weight {
-            WeightFormat::Mxfp8 | WeightFormat::Mxfp4 => 32,
+            WeightFormat::Fp8Block32x32 | WeightFormat::Mxfp8 | WeightFormat::Mxfp4 => 32,
             WeightFormat::Nvfp4 => 16,
             WeightFormat::Fp8Block128x128(_) | WeightFormat::Fp8Rows64x128(_) => 128,
             _ => 1,
@@ -1947,6 +1950,7 @@ fn gemm_numerical_id(query: &GemmQuery) -> String {
         WeightFormat::Fp8Block128x128(ScaleMode::PowerOfTwoF32) => "fp8-block128-pow2",
         WeightFormat::Fp8Rows64x128(ScaleMode::ExactF32) => "fp8-rows64-f32",
         WeightFormat::Fp8Rows64x128(ScaleMode::PowerOfTwoF32) => "fp8-rows64-pow2",
+        WeightFormat::Fp8Block32x32 => "fp8-block32-ue8m0",
         WeightFormat::Mxfp8 => "mxfp8",
         WeightFormat::Mxfp4 => "mxfp4",
         WeightFormat::Nvfp4 => "nvfp4",

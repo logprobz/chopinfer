@@ -48,7 +48,10 @@ impl PackedWeightBuilder {
         let result = Self {
             codes: vec![0; (plan.total_rows() * plan.code_bytes()) as usize],
             scales: vec![
-                if matches!(plan.format, WeightFormat::Mxfp4 | WeightFormat::Mxfp8) {
+                if matches!(
+                    plan.format,
+                    WeightFormat::Fp8Block32x32 | WeightFormat::Mxfp4 | WeightFormat::Mxfp8
+                ) {
                     127
                 } else {
                     0

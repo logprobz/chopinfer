@@ -76,6 +76,7 @@ impl PackingPlan {
             WeightFormat::Fp8PerChannel => (1, u32::MAX),
             WeightFormat::Fp8Block128x128(_) => (128, 128),
             WeightFormat::Fp8Rows64x128(_) => (64, 128),
+            WeightFormat::Fp8Block32x32 => (32, 32),
             WeightFormat::Mxfp8 | WeightFormat::Mxfp4 => (1, 32),
             WeightFormat::Nvfp4 => (1, 16),
         }
@@ -147,7 +148,7 @@ impl PackingPlan {
             WeightFormat::Nvfp4 => {
                 matches!(self.local_scale_dtype, Some(DType::Fp8E4M3 | DType::Ue4M3))
             }
-            WeightFormat::Mxfp4 | WeightFormat::Mxfp8 => {
+            WeightFormat::Fp8Block32x32 | WeightFormat::Mxfp4 | WeightFormat::Mxfp8 => {
                 self.local_scale_dtype == Some(DType::Ue8M0)
             }
             WeightFormat::Fp8PerTensor => {

@@ -108,6 +108,7 @@ impl MatrixView<'_> {
             WeightFormat::Fp8PerChannel => (1, usize::MAX),
             WeightFormat::Fp8Block128x128(_) => (128, 128),
             WeightFormat::Fp8Rows64x128(_) => (64, 128),
+            WeightFormat::Fp8Block32x32 => (32, 32),
             WeightFormat::Mxfp8 | WeightFormat::Mxfp4 => (1, 32),
             WeightFormat::Nvfp4 => (1, 16),
         }
@@ -164,7 +165,9 @@ impl MatrixView<'_> {
             }
             (format, Some(local), None) => {
                 let dtype_ok = match format {
-                    WeightFormat::Mxfp4 | WeightFormat::Mxfp8 => local.dtype == DType::Ue8M0,
+                    WeightFormat::Fp8Block32x32 | WeightFormat::Mxfp4 | WeightFormat::Mxfp8 => {
+                        local.dtype == DType::Ue8M0
+                    }
                     WeightFormat::Fp8PerTensor => matches!(local.dtype, DType::Bf16 | DType::F32),
                     _ => matches!(local.dtype, DType::F32 | DType::Bf16),
                 };
@@ -276,7 +279,10 @@ impl MatrixView<'_> {
             DecodeOrder::CodeThenScale => (code * local) * global,
             DecodeOrder::ExactLocalThenGlobal if self.format == WeightFormat::Nvfp4 => code * local,
             DecodeOrder::ExactScaledOperand
-                if matches!(self.format, WeightFormat::Mxfp8 | WeightFormat::Mxfp4) =>
+                if matches!(
+                    self.format,
+                    WeightFormat::Fp8Block32x32 | WeightFormat::Mxfp8 | WeightFormat::Mxfp4
+                ) =>
             {
                 code * local
             }
@@ -345,7 +351,10 @@ impl MatrixView<'_> {
             DecodeOrder::ExactLocalThenGlobal | DecodeOrder::ExactWeightToBf16
         ) && self.format != WeightFormat::Nvfp4)
             || (order == DecodeOrder::ExactScaledOperand
-                && !matches!(self.format, WeightFormat::Mxfp8 | WeightFormat::Mxfp4))
+                && !matches!(
+                    self.format,
+                    WeightFormat::Fp8Block32x32 | WeightFormat::Mxfp8 | WeightFormat::Mxfp4
+                ))
         {
             return Err(self.error(
                 "decode order",
@@ -384,7 +393,10 @@ impl MatrixView<'_> {
                 !value.is_finite()
                     || !bf16_to_f32(f32_to_bf16(value)).is_finite()
                     || (order == DecodeOrder::ExactScaledOperand
-                        && self.format == WeightFormat::Mxfp8
+                        && matches!(
+                            self.format,
+                            WeightFormat::Fp8Block32x32 | WeightFormat::Mxfp8
+                        )
                         && scale < 2_f32.powi(-124)),
             );
         }
@@ -456,7 +468,10 @@ impl MatrixView<'_> {
             .ok_or_else(|| self.error("repacking", "scale byte size overflow"))?;
         let mut codes = vec![0; bytes];
         let mut scales = vec![
-            if matches!(self.format, WeightFormat::Mxfp8 | WeightFormat::Mxfp4) {
+            if matches!(
+                self.format,
+                WeightFormat::Fp8Block32x32 | WeightFormat::Mxfp8 | WeightFormat::Mxfp4
+            ) {
                 127
             } else {
                 0

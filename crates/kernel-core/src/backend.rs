@@ -607,6 +607,39 @@ pub trait Backend: Send + Sync {
 
     // Projections.
 
+    /// Dense or uniform grouped MXFP8 with independent group inputs and
+    /// 128-K F32 folds. Launches read `Counts::rows` and the device live count.
+    fn mxfp8_fold_gemm(
+        &self,
+        op: &crate::mxfp8_gemm::Mxfp8FoldGemmQuery,
+        need: Need,
+    ) -> Result<Prepared<crate::mxfp8_gemm::Mxfp8FoldGemmBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
+    /// Round inputs to BF16, then quantize each row independently. The
+    /// fake-quant form stores the exact decoded values in BF16.
+    fn block_quantize(
+        &self,
+        op: &crate::precision::quantizer::BlockQuantizeQuery,
+        need: Need,
+    ) -> Result<Prepared<crate::precision::quantizer::BlockQuantizeBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
+    /// Clamp and evaluate SwiGLU in F32, round once to BF16, then quantize
+    /// E4M3/32 with a ceil UE8M0 scale. Each live row is independent.
+    fn silu_mul_quantize(
+        &self,
+        op: &crate::gated_mlp::quantized::SiluMulQuantizeQuery,
+        need: Need,
+    ) -> Result<Prepared<crate::gated_mlp::quantized::SiluMulQuantizeBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
     /// A projection at one use, with the implementation identity its
     /// precision document authenticates. `need.capacity`, from one row to
     /// the use's capacity, is the most rows a launch takes: a model that
@@ -1809,6 +1842,27 @@ mod tests {
             &sinkhorn(),
             0,
             Need::rows(4),
+        );
+        mxfp8_fold_gemm: Empty.mxfp8_fold_gemm(
+            &crate::mxfp8_gemm::Mxfp8FoldGemmQuery {
+                m_capacity: 4, n: 64, k: 160, groups: 2,
+                activation_row_stride: 320, activation_group_stride: 160,
+                output: DType::F32,
+                execution: crate::precision::execution::BlockScaledExecution::ExactDecodedBf16Mma,
+            }, Need::rows(4),
+        );
+        block_quantize: Empty.block_quantize(
+            &crate::precision::quantizer::BlockQuantizeQuery {
+                width: 64, input: DType::Bf16,
+                format: crate::precision::quantizer::BlockQuantization::E4M3_CEIL32,
+                output: crate::precision::quantizer::QuantizeOutput::Codes,
+            }, Need::rows(4),
+        );
+        silu_mul_quantize: Empty.silu_mul_quantize(
+            &crate::gated_mlp::quantized::SiluMulQuantizeQuery {
+                width: 64, clamp: crate::gated_mlp::SwigluClamp::symmetric(10.0),
+                amax_floor_bits: 1e-4_f32.to_bits(),
+            }, Need::rows(4),
         );
         projection: Empty.projection(&spec(), decode(4), Need::rows(4));
         attention: Empty.attention(&crate::attention::tests::decode(), Need::rows(4));

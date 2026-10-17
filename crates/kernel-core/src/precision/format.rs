@@ -1,6 +1,7 @@
 //! Format-owned arithmetic, companion bindings, physical layouts and lossless slices.
 //! Kernel availability remains the capability provider's responsibility.
 
+use super::execution::BlockScaledExecution;
 use super::packed::{MatrixSlice, MatrixView, PackedMatrix};
 use super::{DecodeOrder, NibbleOrder, PrecisionError, ScaleScope, WeightLayout, WeightSpec};
 use crate::contract::{ActivationFormat, DType, WeightFormat};
@@ -22,6 +23,7 @@ pub enum FormatId {
     Mxfp4,
     Nvfp4,
     Nvfp4WeightOnly,
+    Fp8Block32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -127,6 +129,7 @@ pub trait FormatPlugin: Sync {
             FormatId::Fp8PerChannel => (1, 0),
             FormatId::Fp8Block128 => (128, 128),
             FormatId::Fp8Rows64 => (64, 128),
+            FormatId::Fp8Block32 => (32, 32),
             FormatId::Mxfp8 | FormatId::Mxfp4 => (1, 32),
             FormatId::Nvfp4 | FormatId::Nvfp4WeightOnly => (1, 16),
         }
@@ -139,6 +142,68 @@ pub trait FormatPlugin: Sync {
         activation: ActivationFormat,
         recipe: A16Recipe,
     ) -> Result<DecodeOrder, PrecisionError>;
+
+    /// Select an explicit instruction path for MX operands. Legacy callers
+    /// keep `decode_order`; new bindings declare and check this choice.
+    fn decode_order_for_execution(
+        &self,
+        family: KernelFamily,
+        activation: ActivationFormat,
+        execution: BlockScaledExecution,
+    ) -> Result<DecodeOrder, PrecisionError> {
+        if !matches!(
+            self.id(),
+            FormatId::Fp8Block32 | FormatId::Mxfp8 | FormatId::Mxfp4
+        ) || !matches!(family, KernelFamily::Dense | KernelFamily::GroupedExpert)
+            || activation != ActivationFormat::Mxfp8
+        {
+            return Err(error(
+                "execution claim",
+                "explicit block-scaled MMA requires MX weights and MXFP8 activations",
+            ));
+        }
+        Ok(execution.decode_order())
+    }
+
+    /// Repeat each 32x32 block scale on its rows, preserving every code and
+    /// source K origin. No quantization or scaled-weight rounding takes place.
+    fn repack_mxfp8_rows(&self, matrix: MatrixView<'_>) -> Result<PackedMatrix, PrecisionError> {
+        if self.id() != FormatId::Fp8Block32 || matrix.format != WeightFormat::Fp8Block32x32 {
+            return Err(error(
+                "repack",
+                "row scale expansion requires E4M3/UE8M0 32x32 blocks",
+            ));
+        }
+        matrix.validate()?;
+        let (_, columns) = matrix.scale_shape()?;
+        let count = matrix
+            .rows
+            .checked_mul(columns)
+            .filter(|&n| n as u64 <= super::MAX_TENSOR_BYTES)
+            .ok_or_else(|| error("repack", "expanded scale grid exceeds the supported bound"))?;
+        let source = matrix
+            .local
+            .ok_or_else(|| error("repack", "missing block scales"))?;
+        let mut scales = Vec::with_capacity(count);
+        for row in 0..matrix.rows {
+            let start = matrix.scale_index(row, 0)?;
+            scales.extend_from_slice(&source.bytes[start..start + columns]);
+        }
+        Ok(PackedMatrix {
+            format: WeightFormat::Mxfp8,
+            rows: matrix.rows,
+            k: matrix.k,
+            row_origin: matrix.row_origin,
+            k_origin: matrix.k_origin,
+            logical_rows: matrix.rows,
+            logical_k: matrix.k,
+            nibble_order: matrix.nibble_order,
+            codes: matrix.codes.to_vec(),
+            scale_dtype: DType::Ue8M0,
+            scales,
+            global: None,
+        })
+    }
     fn layout(
         &self,
         family: KernelFamily,
@@ -301,6 +366,7 @@ impl FormatPlugin for Plugin {
                 | (FormatId::Fp8PerChannel, WeightFormat::Fp8PerChannel)
                 | (FormatId::Fp8Block128, WeightFormat::Fp8Block128x128(_))
                 | (FormatId::Fp8Rows64, WeightFormat::Fp8Rows64x128(_))
+                | (FormatId::Fp8Block32, WeightFormat::Fp8Block32x32)
                 | (FormatId::Mxfp8, WeightFormat::Mxfp8)
                 | (FormatId::Mxfp4, WeightFormat::Mxfp4)
                 | (
@@ -330,7 +396,7 @@ impl FormatPlugin for Plugin {
         let compatible = match activation {
             ActivationFormat::Bf16 => true,
             ActivationFormat::Fp8Group128(_) => matches!(self.0, Fp8Block128 | Fp8Rows64),
-            ActivationFormat::Mxfp8 => matches!(self.0, Mxfp8 | Mxfp4),
+            ActivationFormat::Mxfp8 => matches!(self.0, Fp8Block32 | Mxfp8 | Mxfp4),
             ActivationFormat::Nvfp4 => self.0 == Nvfp4,
         };
         if !compatible {
@@ -344,7 +410,7 @@ impl FormatPlugin for Plugin {
             ActivationFormat::Bf16 => match self.0 {
                 Nvfp4 | Nvfp4WeightOnly if family == KernelFamily::Lookup => ExactWeightToBf16,
                 Nvfp4 | Nvfp4WeightOnly => ExactLocalThenGlobal,
-                Mxfp8 | Mxfp4 => ExactScaledOperand,
+                Fp8Block32 | Mxfp8 | Mxfp4 => ExactScaledOperand,
                 Fp8Block128 | Fp8Rows64 if recipe == A16Recipe::ScaleAfterBlockMma => {
                     BlockScaleAfterMma
                 }
@@ -396,6 +462,11 @@ impl FormatPlugin for Plugin {
                 "row-major",
                 "fp8_e4m3_row_major_v1",
                 Some("f32_row_major_v1"),
+            ),
+            Fp8Block32 => (
+                "row-major",
+                "fp8_e4m3_row_major_v1",
+                Some("fp8_ue8m0_block_scale_32x32_v1"),
             ),
             Mxfp8 => (
                 if grouped {
@@ -473,7 +544,7 @@ impl FormatPlugin for Plugin {
 pub mod registry {
     use super::*;
 
-    pub static PLUGINS: [Plugin; 9] = [
+    pub static PLUGINS: [Plugin; 10] = [
         Plugin(FormatId::Bf16),
         Plugin(FormatId::Fp8PerTensor),
         Plugin(FormatId::Fp8PerChannel),
@@ -483,6 +554,7 @@ pub mod registry {
         Plugin(FormatId::Mxfp4),
         Plugin(FormatId::Nvfp4),
         Plugin(FormatId::Nvfp4WeightOnly),
+        Plugin(FormatId::Fp8Block32),
     ];
 
     fn require_plugin(

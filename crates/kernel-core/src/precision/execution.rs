@@ -4,11 +4,62 @@ use super::{
     ActivationSpec, ArithmeticSpec, DecodeOrder, OperationKind, OperationSpec, OperationUse,
     PrecisionError, WeightLayout,
 };
-use crate::contract::WeightFormat;
+use crate::contract::{DType, WeightFormat};
 use std::{fmt, str::FromStr};
 
 pub const ACTIVATION_POLICY_ENV: &str = "CHOPINFER_ACTIVATION_POLICY";
 pub const MAX_PRECISION_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
+
+/// A block-scaled binding's instruction contract. The existing arithmetic
+/// fields carry this claim in precision documents, so legacy documents keep
+/// their bytes. The compiled provider must report its actual instruction path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum BlockScaledExecution {
+    NativeBlockScaledMma,
+    ExactDecodedBf16Mma,
+}
+
+impl BlockScaledExecution {
+    pub const fn decode_order(self) -> DecodeOrder {
+        match self {
+            Self::NativeBlockScaledMma => DecodeOrder::NativeBlockScaledMma,
+            Self::ExactDecodedBf16Mma => DecodeOrder::ExactScaledOperand,
+        }
+    }
+
+    pub const fn weight_operand(self, weight: WeightFormat) -> DType {
+        match self {
+            Self::ExactDecodedBf16Mma => DType::Bf16,
+            Self::NativeBlockScaledMma => match weight {
+                WeightFormat::Mxfp4 => DType::Fp4E2M1,
+                _ => DType::Fp8E4M3,
+            },
+        }
+    }
+
+    /// Check the actual provider path against the arithmetic requested by a
+    /// binding. Decoded BF16 cannot claim native block-scaled MMA.
+    pub fn require(
+        self,
+        weight: WeightFormat,
+        arithmetic: &ArithmeticSpec,
+    ) -> Result<(), PrecisionError> {
+        if !matches!(
+            weight,
+            WeightFormat::Fp8Block32x32 | WeightFormat::Mxfp8 | WeightFormat::Mxfp4
+        ) || arithmetic.decode_order != self.decode_order()
+            || arithmetic.weight_operand != self.weight_operand(weight)
+            || arithmetic.accumulator != DType::F32
+        {
+            return Err(PrecisionError::new(
+                "block-scaled binding",
+                "execution claim",
+                "declared arithmetic disagrees with native block-scaled or exact-decoded BF16 MMA execution",
+            ));
+        }
+        Ok(())
+    }
+}
 
 pub struct Binding<H> {
     pub identity: ImplementationIdentity,
@@ -139,7 +190,7 @@ impl WeightReuse {
         };
         match source.weights[0].format {
             WeightFormat::Nvfp4 => orders.insert(0, DecodeOrder::ExactLocalThenGlobal),
-            WeightFormat::Mxfp8 | WeightFormat::Mxfp4 => {
+            WeightFormat::Fp8Block32x32 | WeightFormat::Mxfp8 | WeightFormat::Mxfp4 => {
                 orders.insert(0, DecodeOrder::ExactScaledOperand);
             }
             _ => {}
@@ -161,7 +212,9 @@ impl WeightReuse {
             | WeightFormat::Fp8PerChannel
             | WeightFormat::Fp8Block128x128(_)
             | WeightFormat::Fp8Rows64x128(_) => Some(Self::PlainFp8Bf16V1),
-            WeightFormat::Mxfp8 | WeightFormat::Mxfp4 => Some(Self::PlainMxBf16V1),
+            WeightFormat::Fp8Block32x32 | WeightFormat::Mxfp8 | WeightFormat::Mxfp4 => {
+                Some(Self::PlainMxBf16V1)
+            }
             WeightFormat::Nvfp4 => Some(Self::PlainNvfp4Bf16V1),
             WeightFormat::Bf16 => None,
         }

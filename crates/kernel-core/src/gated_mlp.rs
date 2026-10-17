@@ -10,6 +10,8 @@
 //! is `MoeQuery::LocalRoutes`. A projection that needs neither a clamp nor a
 //! declared route weight point stays a plain `GemmQuery`.
 
+pub mod quantized;
+
 use crate::contract::{
     GemmQuery, NumericalContract, NumericalContractId, Refusal, RoutedCapacity, Validate,
 };

@@ -28,6 +28,7 @@ pub mod moe_experts;
 pub mod moe_oracle;
 pub mod multimodal;
 pub mod multimodal_oracle;
+pub mod mxfp8_gemm;
 pub mod ngram_oracle;
 pub mod occupancy;
 pub mod oracle;

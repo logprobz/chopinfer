@@ -200,7 +200,10 @@ impl PackedOperand {
         let (scale_rows, scale_columns) = plan.scale_shape();
         let mut codes = vec![0_u8; (plan.total_rows() * plan.code_bytes()) as usize];
         let mut scales = vec![
-            if matches!(plan.format, WeightFormat::Mxfp4 | WeightFormat::Mxfp8) {
+            if matches!(
+                plan.format,
+                WeightFormat::Fp8Block32x32 | WeightFormat::Mxfp4 | WeightFormat::Mxfp8
+            ) {
                 127
             } else {
                 0

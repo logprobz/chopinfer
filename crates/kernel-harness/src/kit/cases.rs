@@ -227,6 +227,9 @@ fn quantized_weight(
         WeightFormat::Mxfp8 => quantize::mxfp8(&values, n, k),
         WeightFormat::Mxfp4 => quantize::mxfp4(&values, n, k),
         WeightFormat::Nvfp4 => quantize::nvfp4(&values, n, k),
+        WeightFormat::Fp8Block32x32 => Err(Refusal(
+            "32x32 UE8M0 fixtures require explicit codes and scales",
+        )),
         WeightFormat::Bf16 => Err(Refusal("BF16 weights are not quantized")),
     }
     .map_err(|e| e.0.to_string())

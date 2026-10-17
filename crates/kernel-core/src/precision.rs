@@ -9,6 +9,7 @@ pub mod execution;
 pub mod format;
 pub mod layout;
 pub mod packed;
+pub mod quantizer;
 
 use crate::contract::{ActivationFormat, DType, Epilogues, ScaleMode, Target, WeightFormat};
 use std::fmt;
@@ -391,12 +392,15 @@ impl WeightSpec {
             WeightFormat::Fp8PerChannel => (1, 0),
             WeightFormat::Fp8Block128x128(_) => (128, 128),
             WeightFormat::Fp8Rows64x128(_) => (64, 128),
+            WeightFormat::Fp8Block32x32 => (32, 32),
             WeightFormat::Mxfp8 | WeightFormat::Mxfp4 => (1, 32),
             WeightFormat::Nvfp4 => (1, 16),
         };
         let expected_dtype = match self.format {
             WeightFormat::Nvfp4 => matches!(local.tensor.dtype, DType::Fp8E4M3 | DType::Ue4M3),
-            WeightFormat::Mxfp8 | WeightFormat::Mxfp4 => local.tensor.dtype == DType::Ue8M0,
+            WeightFormat::Fp8Block32x32 | WeightFormat::Mxfp8 | WeightFormat::Mxfp4 => {
+                local.tensor.dtype == DType::Ue8M0
+            }
             WeightFormat::Fp8PerTensor => matches!(local.tensor.dtype, DType::F32 | DType::Bf16),
             // BF16 export scales widen exactly during preparation. Their
             // source encoding stays distinct from the kernel's F32 buffer.
@@ -492,10 +496,39 @@ pub enum Clipping {
     feature = "precision-serde",
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(feature = "precision-serde", serde(deny_unknown_fields))]
 pub enum DynamicScale {
     GroupAmax(ScaleMode),
+    /// OCP MX floor rule. This is distinct from the ceiling rule below.
     MxPowerOfTwo,
     Nvfp4TensorAmax,
+    /// Round inputs to BF16 before amax. Use the exponent-bit ceiling of
+    /// RN32(max(amax, floor) * RN32(1 / code_max)), stored as UE8M0.
+    CeilPowerOfTwo {
+        amax_floor_bits: u32,
+    },
+}
+
+impl DynamicScale {
+    pub const MXFP8_CEIL: Self = Self::CeilPowerOfTwo {
+        amax_floor_bits: 1e-4_f32.to_bits(),
+    };
+
+    pub fn validate(self) -> Result<(), PrecisionError> {
+        if let Self::CeilPowerOfTwo { amax_floor_bits } = self {
+            let floor = f32::from_bits(amax_floor_bits);
+            // The exponent-bit rule operates on normal positive ratios.
+            // E4M3 has the largest code range among these MX formats.
+            if !floor.is_finite() || floor * (1.0 / 448.0) < f32::MIN_POSITIVE {
+                return Err(PrecisionError::new(
+                    "quantizer",
+                    "amax floor",
+                    "ceil scale requires a finite positive floor with a normal F32 ratio",
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -538,6 +571,26 @@ pub struct ActivationSpec {
 }
 
 impl ActivationSpec {
+    /// Trained E4M3/32 quantization with BF16 input rounding and a ceil scale.
+    pub fn mxfp8_ceil(amax_floor_bits: u32) -> Self {
+        Self {
+            format: ActivationFormat::Mxfp8,
+            storage: DType::Bf16,
+            compute: DType::Fp8E4M3,
+            quantizer: Some(QuantizerSpec {
+                calibration: Calibration::Dynamic(DynamicScale::CeilPowerOfTwo { amax_floor_bits }),
+                groups: vec![GroupAxis {
+                    axis: 1,
+                    size: 32,
+                    origin: 0,
+                }],
+                rounding: Rounding::NearestEven,
+                clipping: Clipping::FiniteSaturate,
+            }),
+            transforms: Vec::new(),
+        }
+    }
+
     pub fn bf16() -> Self {
         Self {
             format: ActivationFormat::Bf16,
@@ -573,6 +626,9 @@ impl ActivationSpec {
             ));
         }
         if let Some(quantizer) = &self.quantizer {
+            if let Calibration::Dynamic(rule) = quantizer.calibration {
+                rule.validate()?;
+            }
             if let Calibration::Static(scale) = &quantizer.calibration {
                 scale.validate(shape)?;
             }
@@ -600,7 +656,9 @@ impl ActivationSpec {
                     Calibration::Dynamic(DynamicScale::GroupAmax(_))
                 ) | (
                     ActivationFormat::Mxfp8,
-                    Calibration::Dynamic(DynamicScale::MxPowerOfTwo)
+                    Calibration::Dynamic(
+                        DynamicScale::MxPowerOfTwo | DynamicScale::CeilPowerOfTwo { .. }
+                    )
                 ) | (
                     ActivationFormat::Nvfp4,
                     Calibration::Dynamic(DynamicScale::Nvfp4TensorAmax)

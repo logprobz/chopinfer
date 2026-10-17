@@ -25,6 +25,7 @@ fn fixture(id: FormatId) -> (WeightSpec, Vec<Vec<u8>>) {
             (64, 128),
         ),
         FormatId::Mxfp8 => (WeightFormat::Mxfp8, Some(DType::Ue8M0), (1, 32)),
+        FormatId::Fp8Block32 => (WeightFormat::Fp8Block32x32, Some(DType::Ue8M0), (32, 32)),
         FormatId::Mxfp4 => (WeightFormat::Mxfp4, Some(DType::Ue8M0), (1, 32)),
         FormatId::Nvfp4 | FormatId::Nvfp4WeightOnly => {
             (WeightFormat::Nvfp4, Some(DType::Ue4M3), (1, 16))

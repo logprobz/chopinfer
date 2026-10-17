@@ -7,6 +7,7 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+kernel-core.workspace = true
 model-compiler-sdk.workspace = true
 model-deepseek41-contract.workspace = true
 projection-spec.workspace = true

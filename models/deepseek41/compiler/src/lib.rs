@@ -5,6 +5,7 @@
 pub mod checkpoint;
 pub mod frontend;
 pub mod kv;
+pub mod synthetic;
 pub mod tokenizer;
 
 pub use model_deepseek41_contract::BUNDLE_ID;

@@ -779,7 +779,7 @@ TP4, FP8 KV and its speculation (none for AR, at least one draft for MTP).
 media_preprocessing scores the served `image.zero-padded-token-budget.v1`
 recipe against `tools/refrun/preprocessing.py images` over HF's
 Glm5NextImageProcessor, adopted as `media_preprocessing_reference`
-(`$CHOPINFER_DATA/glm5next/refrun/preprocessing`). The checkpoint has no
+(under `$CHOPINFER_DATA`, at the path qual.json declares). The checkpoint has no
 preprocessor_config.json, which that producer binds, so it runs on the view
 `preprocessing_view.py` writes: the checkpoint's files plus that name
 holding processor_config.json's `image_processor` member (SHA-256

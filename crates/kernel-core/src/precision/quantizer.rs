@@ -54,6 +54,8 @@ impl BlockQuantization {
 
     /// The exact code/scale rule. F32 inputs round to BF16 before amax and
     /// element quantization. NaNs, infinities and BF16 overflow are refused.
+    /// E2M1 with E4M3 scales also refuses a group whose BF16 amax exceeds
+    /// 6 * 448, so its required scale stays within the finite E4M3 range.
     pub fn apply(self, values: &[f32], rows: usize, width: usize) -> Result<Quantized, Refusal> {
         if !width.is_multiple_of(self.group_size() as usize) {
             return Err(Refusal("block quantization requires complete row groups"));
@@ -65,6 +67,11 @@ impl BlockQuantization {
             .iter()
             .map(|&v| bf16_to_f32(f32_to_bf16(v)))
             .collect();
+        if self == Self::E2M1E4M3Scale16 && rounded.iter().any(|v| v.abs() > 6.0 * 448.0) {
+            return Err(Refusal(
+                "E2M1/E4M3 group scale exceeds the finite E4M3 range",
+            ));
+        }
         quantize(&rounded, rows, width, self.quantizer()?)
     }
 

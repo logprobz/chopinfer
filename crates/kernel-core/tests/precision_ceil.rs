@@ -167,6 +167,34 @@ fn trained_quantizers_preserve_signed_zero_and_subnormal_codes_and_refuse_nan() 
 }
 
 #[test]
+fn fp4_e4m3_scale_overflow_is_refused_instead_of_becoming_zero() {
+    use kernel_core::contract::Refusal;
+
+    let format = BlockQuantization::E2M1E4M3Scale16;
+    let refusal = Refusal("E2M1/E4M3 group scale exceeds the finite E4M3 range");
+    for value in [2_f32.powi(80), -2_f32.powi(80)] {
+        assert_eq!(format.fake_quant(&[value; 16], 1, 16), Err(refusal));
+        assert_eq!(format.apply(&[value; 16], 1, 16), Err(refusal));
+    }
+    let limit = 6.0_f32 * 448.0;
+    let q = format.apply(&[limit; 16], 1, 16).unwrap();
+    assert_eq!(q.scales, Scales::Ue4M3(vec![0x7e]));
+    assert_eq!(q.decoded(), vec![f64::from(limit); 16]);
+    let beyond = f32::from_bits(limit.to_bits() + 0x10000);
+    assert_eq!(format.fake_quant(&[beyond; 16], 1, 16), Err(refusal));
+    // Admission uses the same first BF16 rounding as the quantizer.
+    let adjacent = f32::from_bits(limit.to_bits() + 1);
+    assert_eq!(format.apply(&[adjacent; 16], 1, 16).unwrap(), q);
+    let wide = 2_f32.powi(80);
+    assert_eq!(
+        BlockQuantization::E2M1Ceil32
+            .fake_quant(&[wide; 32], 1, 32)
+            .unwrap(),
+        vec![f32_to_bf16(wide); 32]
+    );
+}
+
+#[test]
 fn ceil_declarations_require_their_floor_and_keep_distinct_ids() {
     let valid = ActivationSpec::mxfp8_ceil(1e-4_f32.to_bits());
     valid.validate("x", &[3, 64]).unwrap();

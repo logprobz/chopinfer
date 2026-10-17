@@ -122,7 +122,7 @@ fn plans(planes: &[Plane], ranks: u32) -> Vec<WeightPlanV1> {
         views.push(PlannedViewV1 {
             id: plane.tensor.clone(),
             alignment: ALIGNMENT,
-            placement: ViewPlacementV1::Mapped,
+            placement: ViewPlacementV1::Mapped { prewarm: false },
             offset: at,
             byte_length: plane.bytes(),
         });

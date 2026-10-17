@@ -174,8 +174,12 @@ pub enum ViewPlacementV1 {
     /// gathers to the device, cut out of the arena the same way
     /// (`HOST_MAPPED_GATHER_CAPABILITY_V1`). Exactly
     /// one record covers the view: a plain copy of one tensor, whole or one
-    /// range of its leading axis, stored unchanged.
-    Mapped,
+    /// range of its leading axis, stored unchanged. With `prewarm` the host
+    /// reads the mapped bytes into the page cache at startup, before it
+    /// reports ready, so the first gathers do not fault from the file.
+    Mapped {
+        prewarm: bool,
+    },
 }
 
 impl ViewPlacementV1 {
@@ -183,7 +187,8 @@ impl ViewPlacementV1 {
         match self {
             Self::Device => 0,
             Self::Host => 1,
-            Self::Mapped => 2,
+            Self::Mapped { prewarm: false } => 2,
+            Self::Mapped { prewarm: true } => 3,
         }
     }
 }
@@ -594,7 +599,8 @@ impl WeightPlanV1 {
                 placement: match reader.u32()? {
                     0 => ViewPlacementV1::Device,
                     1 => ViewPlacementV1::Host,
-                    2 => ViewPlacementV1::Mapped,
+                    2 => ViewPlacementV1::Mapped { prewarm: false },
+                    3 => ViewPlacementV1::Mapped { prewarm: true },
                     other => return fail(format!("unknown view placement {other}")),
                 },
                 offset: reader.u64()?,
@@ -776,23 +782,27 @@ mod tests {
         assert_eq!(WeightPlanV1::decode(&plan.encode()).unwrap(), plan);
     }
 
-    /// A mapped view round-trips as placement 2, and a placement this build
-    /// does not know is refused by name rather than read as another.
+    /// A mapped view round-trips as placement 2, or 3 when it asks to be
+    /// prewarmed, and a placement this build does not know is refused by
+    /// name rather than read as another.
     #[test]
     fn mapped_views_round_trip_and_unknown_placements_are_refused() {
         let mut mapped = plan();
-        mapped.views[0].placement = ViewPlacementV1::Mapped;
-        let bytes = mapped.encode();
-        assert_eq!(WeightPlanV1::decode(&bytes).unwrap(), mapped);
         // The placement follows the id ("ngram", 8-byte length) and the
         // alignment, after the header, ranks, role, alignment, arena bytes
         // and view count.
         let at = 8 + 4 + 4 + 4 + (8 + mapped.image_role.len()) + 8 + 8 + 4 + (8 + 5) + 8;
-        assert_eq!(bytes[at..at + 4], 2_u32.to_le_bytes());
+        let mut bytes = Vec::new();
+        for (prewarm, code) in [(false, 2_u32), (true, 3)] {
+            mapped.views[0].placement = ViewPlacementV1::Mapped { prewarm };
+            bytes = mapped.encode();
+            assert_eq!(WeightPlanV1::decode(&bytes).unwrap(), mapped);
+            assert_eq!(bytes[at..at + 4], code.to_le_bytes());
+        }
         let mut unknown = bytes;
-        unknown[at..at + 4].copy_from_slice(&3_u32.to_le_bytes());
+        unknown[at..at + 4].copy_from_slice(&4_u32.to_le_bytes());
         let error = WeightPlanV1::decode(&unknown).unwrap_err().to_string();
-        assert!(error.contains("unknown view placement 3"), "{error}");
+        assert!(error.contains("unknown view placement 4"), "{error}");
     }
 
     #[test]

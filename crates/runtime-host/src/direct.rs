@@ -855,7 +855,7 @@ impl PlannedImageV1 {
             for view in plan
                 .views
                 .iter()
-                .filter(|view| view.placement == ViewPlacementV1::Mapped)
+                .filter(|view| matches!(view.placement, ViewPlacementV1::Mapped { .. }))
             {
                 let source = mapped_source_v1(&checkpoint, plan, view)?;
                 unproduced[plan.rank as usize].insert(source.record);
@@ -1001,7 +1001,7 @@ impl PlannedImageV1 {
                     let view = match placement {
                         ViewPlacementV1::Device => view,
                         ViewPlacementV1::Host => view.on_host(),
-                        ViewPlacementV1::Mapped => view.mapped(),
+                        ViewPlacementV1::Mapped { .. } => view.mapped(),
                     };
                     (id, view)
                 })

@@ -117,8 +117,18 @@ fn plan(ranks: u32, rank: u32) -> WeightPlanV1 {
         views: vec![
             view("dense", ViewPlacementV1::Device, 0, 256),
             view("half", ViewPlacementV1::Host, 4096, 128),
-            view("codes", ViewPlacementV1::Mapped, 8192, ROWS * 8),
-            view("scales", ViewPlacementV1::Mapped, 16384, share),
+            view(
+                "codes",
+                ViewPlacementV1::Mapped { prewarm: false },
+                8192,
+                ROWS * 8,
+            ),
+            view(
+                "scales",
+                ViewPlacementV1::Mapped { prewarm: false },
+                16384,
+                share,
+            ),
         ],
         components: vec![],
         records: vec![
@@ -381,7 +391,12 @@ fn mapped_views_that_are_not_plain_tensor_rows_are_refused() {
         image_role: ROLE.into(),
         alignment: 64,
         arena_bytes: 16384,
-        views: vec![view("rows", ViewPlacementV1::Mapped, 0, byte_length)],
+        views: vec![view(
+            "rows",
+            ViewPlacementV1::Mapped { prewarm: false },
+            0,
+            byte_length,
+        )],
         components: vec![],
         records: vec![record],
     };

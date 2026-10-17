@@ -1334,7 +1334,8 @@ typedef struct chop_bundle_api_with_request_retirement_v1 {
 #define CHOP_HOST_RESIDENT_VIEWS_CAPABILITY_V1 "chop.host-resident-views.v1"
 
 /*
- * Host-mapped weight-plan views. A planned view with placement 2 ("mapped") is
+ * Host-mapped weight-plan views. A planned view with placement 2 ("mapped"), or
+ * 3 ("mapped, prewarmed"), is
  * one checkpoint tensor, or one contiguous run of its leading-axis rows, stored
  * unchanged by exactly one plain-copy record. The host maps those bytes
  * read-only from the checkpoint file it opened without following links and
@@ -1342,7 +1343,9 @@ typedef struct chop_bundle_api_with_request_retirement_v1 {
  * bytes, and cuts the span out of the rank arena as it does a host-resident
  * view. Neither the device nor a page-locked budget holds them, and no bundle
  * sees their address: gather_mapped_rows_v1 copies chosen rows to a device
- * buffer. The checkpoint must not change while it is served: a file truncated
+ * buffer. A prewarmed view's bytes are read into the page cache at startup,
+ * before the host reports ready. The checkpoint must not change while it is
+ * served: a file truncated
  * while mapped makes the host's reads of the lost pages fault. A package
  * declaring mapped views must require this capability.
  */
@@ -1508,7 +1511,8 @@ const chop_bundle_api_v1 *chop_bundle_get_api_v1(void);
  *
  *   plan "CHOPWPLN": u32 ranks, u32 rank, str image_role, u64 alignment,
  *     u64 arena_bytes; list views {str id, u64 alignment, u32 placement
- *     (0 device, 1 host, 2 mapped), u64 offset, u64 byte_length}; list
+ *     (0 device, 1 host, 2 mapped, 3 mapped and prewarmed), u64 offset,
+ *     u64 byte_length}; list
  *     components {str role, bytes}; list records {u64 arena_offset, u64 byte_length,
  *     u32 transform, bytes params, list sources {u32 file, str tensor},
  *     u32 axis (UINT32_MAX for the whole tensor), list ranges {u64 start,

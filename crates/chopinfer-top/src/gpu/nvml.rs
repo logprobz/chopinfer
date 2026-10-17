@@ -415,6 +415,13 @@ impl Nvml {
     /// What does not change about GPU `index`.
     pub fn device(&self, index: usize) -> Device {
         let handle = self.handles[index];
+        if handle.is_null() {
+            return Device {
+                index: index as u32,
+                name: "GPU".to_owned(),
+                ..Device::default()
+            };
+        }
         let mut statuses = Statuses::default();
         let name = self.api.name.and_then(|name| {
             let mut buffer = [0 as c_char; NAME_BUFFER];
@@ -634,9 +641,12 @@ impl Nvml {
 
     /// Takes GPM sample `sample` of GPU `index`.
     pub fn take(&self, index: usize, sample: &mut Sample<'_>) -> bool {
-        self.api
-            .gpm_sample
-            .is_some_and(|take| take(self.handles[index], sample.raw) == SUCCESS)
+        let handle = self.handles[index];
+        !handle.is_null()
+            && self
+                .api
+                .gpm_sample
+                .is_some_and(|take| take(handle, sample.raw) == SUCCESS)
     }
 
     /// The GPM figures between two samples of one GPU, `earlier` first.

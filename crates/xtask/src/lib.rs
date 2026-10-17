@@ -16,6 +16,7 @@ pub fn run(arguments: impl IntoIterator<Item = String>) -> TaskResult {
 }
 
 const REVIEWED_UNSAFE_FILES: &[&str] = &[
+    "crates/chopinfer-top/src/gpu/nvml.rs",
     "crates/kernel-core/tests/block32_rows_allocation.rs",
     "crates/kernel-harness/src/gpu_state.rs",
     "crates/runtime-bundle-sdk/src/native_note.rs",

@@ -11,7 +11,9 @@
 //! that pool only as a candidate, so its own key is attended only if the
 //! pool wins a top-k place.
 //!
-//! The indexer has no rotary embedding; its query is the raw projection.
+//! The pooled BF16 indexer has no rotary embedding; its query is the raw projection.
+//! The position variant uses [`PositionIndexerQuery`]: compressed positions,
+//! tail RoPE, MXFP4 operands and an optional candidate mask.
 //! A row's key list is consumed unchanged by later layers that share the
 //! selection (cross-layer reuse), and draft steps after the first reuse the
 //! draft pass's selection through `CompactSelection`. Reuse is a bundle
@@ -95,7 +97,8 @@ pub(crate) fn validate_selection_shape(
 pub enum IndexerGranularity {
     /// Complete pools of `group` tokens.
     Pool,
-    /// Every token scored on its own. Declared; refused.
+    /// Every compressed position scored on its own, with `group = 1`.
+    /// The enclosing `PositionIndexerQuery` supplies the compression ratio.
     Position,
 }
 
@@ -104,7 +107,9 @@ pub enum IndexerGranularity {
 pub enum IndexerKeyFormat {
     /// `[page_size / group][head_dim]` BF16 per page.
     Bf16,
-    /// FP4 pooled keys. Declared; refused.
+    /// MXFP4 position keys: E2M1 codes, low nibble first, and one UE8M0
+    /// scale per 32 channels. The position query defines the trained
+    /// quantizer. Pooled key writes and pool selection still refuse this.
     Fp4,
 }
 
@@ -121,6 +126,160 @@ pub enum IndexerSelectionMode {
     /// `context_parallel::ContextParallelQuery::TopKMerge` merges the ranks'
     /// lists into exactly the `Global` key list.
     PerRank { ranks: u32 },
+}
+
+/// Candidate restriction of a position selection. Visibility always applies.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum IndexerCandidates {
+    All,
+    /// A byte mask per row and compressed position: 0 excludes, 1 admits.
+    /// A missing mask is an error, never an all-candidates fallback.
+    Mask,
+}
+
+/// Position indexer preparation and selection over compressed keys.
+///
+/// Queries are BF16 projections `[rows, heads, head_dim]`. Keys are BF16
+/// projections of the unrotated compressor output. RMSNorm applies to each
+/// key, with BF16 weights, F32 accumulation and `key_norm_eps_bits`, then
+/// rounds once to BF16. No key bias or mean subtraction is used.
+///
+/// Rotate interleaved pairs in the last `tail_rope_dims` of q and k, in
+/// place, using the supplied F32 cos/sin table. q uses its token position t;
+/// compressed key j uses position `j * compression_ratio`. The unrotated
+/// prefix stays unchanged. Round rotated values to BF16 before quantization.
+/// Both operands use E2M1 RNE, clamped to [-6, 6], in 32-channel blocks:
+/// `s = 2^ceil_log2(f32(max(amax, 6*2^-126) * f32(1/6)))`, where amax sees
+/// BF16-rounded values. Keys store MXFP4 codes and UE8M0 scales; queries
+/// store the same quantized values decoded to BF16. Non-finite operands,
+/// scale byte 255 and code/scale products not finite and exact in BF16 are
+/// refused. Large scale bytes are not blanket-admitted.
+///
+/// A token query t sees precisely `j < (t + 1) / compression_ratio`. A
+/// supplied mask intersects that set. Scores and their order follow
+/// `selection()`, independent of rank count. Select over the kernel's own
+/// F32 scores exactly; bound those scores against f64 separately. Agreement
+/// with a BF16-score implementation is measured, not an exactness gate.
+/// Output lists contain compressed indices ascending, then -1 padding.
+/// An attention-source offset is applied by the consumer, after selection.
+///
+/// The model owns cross-layer reuse: a key owner republishes its cache on
+/// every step, including steps with no newly completed compression group.
+/// Reindex reads that cache and the source's candidate mask but recomputes
+/// scores with its own queries and weights. Neither operation retains an
+/// implicit pointer or mask from the previous launch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct PositionIndexerQuery {
+    pub heads: u32,
+    pub head_dim: u32,
+    pub compression_ratio: u32,
+    pub tail_rope_dims: u32,
+    pub key_norm_eps_bits: u32,
+    pub max_top_k: u32,
+    /// Compressed positions per page.
+    pub page_size: u32,
+    pub candidates: IndexerCandidates,
+    pub capacity: u32,
+}
+
+impl PositionIndexerQuery {
+    pub fn selection(&self) -> PooledIndexerQuery {
+        PooledIndexerQuery::Select {
+            heads: self.heads,
+            head_dim: self.head_dim,
+            group: 1,
+            max_top_k: self.max_top_k,
+            always_tail: false,
+            granularity: IndexerGranularity::Position,
+            key_format: IndexerKeyFormat::Fp4,
+            mode: IndexerSelectionMode::Global,
+            page_size: self.page_size,
+            capacity: self.capacity,
+        }
+    }
+
+    /// Completed compressed positions, or None for an unrepresentable count
+    /// or an invalid zero compression ratio.
+    pub fn visible_positions(&self, position: u64) -> Option<u64> {
+        position
+            .checked_add(1)?
+            .checked_div(u64::from(self.compression_ratio))
+    }
+
+    /// Packed E2M1 bytes and UE8M0 bytes per page, in separate planes.
+    pub fn page_bytes(&self) -> (u64, u64) {
+        let elements = u64::from(self.page_size) * u64::from(self.head_dim);
+        (elements / 2, elements / 32)
+    }
+}
+
+impl Validate for PositionIndexerQuery {
+    fn validate(&self) -> Result<(), Refusal> {
+        self.selection().validate()?;
+        if self.compression_ratio == 0
+            || self.tail_rope_dims == 0
+            || self.tail_rope_dims > self.head_dim
+            || !self.tail_rope_dims.is_multiple_of(2)
+            || !valid_eps(self.key_norm_eps_bits)
+        {
+            return Err(Refusal(
+                "invalid position indexer compression, RoPE or RMSNorm",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl NumericalContract for PositionIndexerQuery {
+    fn numerical_contract_id(&self) -> Result<NumericalContractId, Refusal> {
+        self.validate()?;
+        let mask = match self.candidates {
+            IndexerCandidates::All => "all",
+            IndexerCandidates::Mask => "masked",
+        };
+        Ok(NumericalContractId::new(format!(
+            "sparse.position-indexer-rmsnorm-tail-rope-mxfp4-weight-scale-f32-{mask}.v1"
+        )))
+    }
+}
+
+/// First-level candidate filter over a row's own F32 position scores.
+///
+/// Partition compressed positions into blocks of `block_size` (8). A
+/// block's score is the maximum visible position score; pad with -inf.
+/// Replace the score of `(visible - 1) / block_size` with +inf when visible
+/// is nonzero. This pins the newest block, partial or full, within the
+/// `top_k_blocks` budget (2048), never in addition to it. Select top blocks
+/// by score, ties to the lower block index, then discard scores <= -inf.
+/// Expand each kept block to a byte mask over the stored position width.
+/// This can mark invisible positions in its newest block; the second-level
+/// selection must still apply visibility. At visible = 0 the mask is zero.
+/// NaNs and input +inf are refused; +inf is reserved for pinning. Signed
+/// zero scores tie. Filtering is exact over the
+/// supplied F32 scores, with no BF16 conversion or f64-score recomputation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct CandidateBlocksQuery {
+    pub block_size: u32,
+    pub top_k_blocks: u32,
+    pub capacity: u32,
+}
+
+impl Validate for CandidateBlocksQuery {
+    fn validate(&self) -> Result<(), Refusal> {
+        if self.block_size == 0 || self.top_k_blocks == 0 || self.capacity == 0 {
+            return Err(Refusal("invalid candidate block geometry"));
+        }
+        Ok(())
+    }
+}
+
+impl NumericalContract for CandidateBlocksQuery {
+    fn numerical_contract_id(&self) -> Result<NumericalContractId, Refusal> {
+        self.validate()?;
+        Ok(NumericalContractId::new(
+            "sparse.candidate-block-max-f32-topk-lower-index-pin-newest.v1".to_owned(),
+        ))
+    }
 }
 
 /// Pooled indexer contracts.
@@ -177,6 +336,16 @@ pub enum PooledIndexerQuery {
     ///   multiply, `relu(x) = x > 0 ? x : +0`;
     /// - `w_h = f32(weight_h) * heads^-0.5` (F32 multiply);
     /// - `score_g = sum_h w_h * r_h`, F32 FMA from zero in head order.
+    ///
+    /// `Position` instead consumes RoPE'd MXFP4 queries (fake-quantized,
+    /// decoded to BF16) and keys, `group = 1`, no tail, and `Global` mode.
+    /// Its weights are BF16 projection outputs. The dot is unscaled:
+    /// `r_h = relu(f32(q_h . k_j))`, with 128-wide chains as above;
+    /// `w_h = f32(weight_h * f32(head_dim^-0.5 * heads^-0.5))` and
+    /// `score_j = sum_h w_h * r_h`, F32 FMA in head order. The scale is
+    /// applied to the weights after the dot, never to q or the dot.
+    /// Positions and lists here are compressed coordinates; the enclosing
+    /// `PositionIndexerQuery` defines token visibility and candidate masks.
     ///
     /// With the runtime `top_k` (a multiple of `group`, at most
     /// `max_top_k`; 2048 for the served indexer), `k = top_k / group`
@@ -322,7 +491,25 @@ impl Validate for PooledIndexerQuery {
                 if heads == 0 || head_dim == 0 || capacity == 0 {
                     return Err(Refusal("invalid indexer selection geometry"));
                 }
-                validate_selection_shape(group, max_top_k, always_tail)?;
+                if granularity == IndexerGranularity::Position {
+                    if key_format != IndexerKeyFormat::Fp4 {
+                        return Err(Refusal("position indexer requires MXFP4 keys"));
+                    }
+                    if group != 1 || always_tail || mode != IndexerSelectionMode::Global {
+                        return Err(Refusal(
+                            "position indexer requires group 1, no tail and global selection",
+                        ));
+                    }
+                    if !head_dim.is_multiple_of(32)
+                        || max_top_k == 0
+                        || key_list_width(group, max_top_k, false).is_none()
+                    {
+                        return Err(Refusal("invalid position indexer width or top-k"));
+                    }
+                } else {
+                    validate_selection_shape(group, max_top_k, always_tail)?;
+                    refuse_fp4(key_format)?;
+                }
                 if !valid_page(page_size, group) {
                     return Err(Refusal("invalid indexer selection geometry"));
                 }
@@ -331,12 +518,7 @@ impl Validate for PooledIndexerQuery {
                 {
                     return Err(Refusal("per-rank indexer selection needs at least 2 ranks"));
                 }
-                if granularity == IndexerGranularity::Position {
-                    return Err(Refusal(
-                        "position-granular indexer selection is declared but not supported",
-                    ));
-                }
-                refuse_fp4(key_format)
+                Ok(())
             }
             Self::HeadSumSelect {
                 heads,
@@ -392,6 +574,12 @@ impl NumericalContract for PooledIndexerQuery {
                 }
             ),
             Self::Select {
+                granularity: IndexerGranularity::Position,
+                ..
+            } => {
+                "sparse.position-indexer-mxfp4-relu-weight-scale-f32-topk-lower-index.v1".to_owned()
+            }
+            Self::Select {
                 always_tail, mode, ..
             } => {
                 let tail = if always_tail { "-tail" } else { "" };
@@ -416,6 +604,94 @@ impl NumericalContract for PooledIndexerQuery {
             Self::CompactSelection { .. } => "sparse.selection-row-gather.v1".to_owned(),
         };
         Ok(NumericalContractId::new(name))
+    }
+}
+
+crate::scratch_record! {
+    /// MXFP4 position keys with independent code and scale page strides in
+    /// bytes. Each page holds `[page_size][head_dim / 2]` code bytes and
+    /// `[page_size][head_dim / 32]` scale bytes. Page tables address compressed
+    /// positions. Page strides and their address products are 64-bit.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct PositionKeyPages {
+        pub codes: value,
+        pub scales: value,
+        pub pages: scalar(u32),
+        pub code_page_stride: scalar(u64),
+        pub scale_page_stride: scalar(u64),
+        pub page_tables: record(BlockTables),
+    }
+}
+
+crate::scratch_record! {
+    /// Key preparation: BF16 projected keys `[rows][head_dim]` and RMSNorm
+    /// weight `[head_dim]`; F32 cos/sin `[tokens][tail_rope_dims / 2][2]`;
+    /// I32 compressed key positions and item ids. Negative positions are
+    /// holes and write nothing. Only live rows write their addressed page
+    /// slots. No pooling or tail state is read here.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct PositionKeyWriteBuffers {
+        pub key: value,
+        pub norm_weight: value,
+        pub cos_sin: value,
+        pub positions: value,
+        pub row_batch: value,
+        pub live_rows: value,
+        pub keys: record(PositionKeyPages),
+    }
+}
+
+crate::scratch_record! {
+    /// Query preparation: BF16 q `[rows][heads][head_dim]`, F32 cos/sin as
+    /// in the key write, I32 token positions and device live count. Output
+    /// has q's shape and holds the MXFP4 fake-quantized values as BF16.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct PositionQueryBuffers {
+        pub q: value,
+        pub cos_sin: value,
+        pub positions: value,
+        pub live_rows: value,
+        pub output: value,
+    }
+}
+
+crate::scratch_record! {
+    /// Score/select: prepared BF16 q, BF16 head weights, MXFP4 pages,
+    /// I32 row item and token position, and device live count. Mask mode
+    /// requires `candidate_mask` bytes `[rows][position_capacity]`; All
+    /// requires no mask. `scores` is F32 with that same shape: visible,
+    /// admitted positions get their scores, excluded positions get -inf.
+    /// This output is the exact selection oracle's input. The candidate
+    /// source scores All positions, then passes these scores to the block
+    /// filter. `output` is I32 `[rows][max_top_k]`, ascending with -1 padding.
+    /// No buffers above the live rows are read or written.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct PositionSelectBuffers {
+        pub q: value,
+        pub head_weights: value,
+        pub keys: record(PositionKeyPages),
+        pub positions: value,
+        pub row_batch: value,
+        pub live_rows: value,
+        pub candidate_mask: option,
+        pub position_capacity: scalar(u32),
+        pub scores: value,
+        pub output: value,
+    }
+}
+
+crate::scratch_record! {
+    /// Candidate filter: F32 scores `[rows][position_capacity]`, I32 visible
+    /// compressed counts `[rows]`, the device live count and the output byte
+    /// mask with the score shape. The filter writes every mask byte of each
+    /// live row, including an all-zero row when no position is visible.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct CandidateBlocksBuffers {
+        pub scores: value,
+        pub visible_positions: value,
+        pub position_capacity: scalar(u32),
+        pub live_rows: value,
+        pub output: value,
     }
 }
 
@@ -729,9 +1005,7 @@ mod tests {
         };
         assert_eq!(
             with(IndexerGranularity::Position, IndexerKeyFormat::Bf16).validate(),
-            Err(Refusal(
-                "position-granular indexer selection is declared but not supported"
-            ))
+            Err(Refusal("position indexer requires MXFP4 keys"))
         );
         assert_eq!(
             with(IndexerGranularity::Pool, IndexerKeyFormat::Fp4).validate(),

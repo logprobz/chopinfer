@@ -274,11 +274,17 @@ pub fn pool_scores(
 ) -> Result<OracleOutput, Refusal> {
     query.validate()?;
     let PooledIndexerQuery::Select {
-        heads, head_dim, ..
+        heads,
+        head_dim,
+        granularity,
+        ..
     } = query
     else {
         return Err(Refusal("expected an indexer selection"));
     };
+    if granularity == crate::pooled_indexer::IndexerGranularity::Position {
+        return crate::position_indexer_oracle::scores(query, q, weights, pooled_keys);
+    }
     let (h, d) = (heads as usize, head_dim as usize);
     if q.len() != h * d || weights.len() != h || !pooled_keys.len().is_multiple_of(d) {
         return Err(Refusal("indexer score operand shape mismatch"));

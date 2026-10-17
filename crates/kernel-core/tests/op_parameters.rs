@@ -20,6 +20,136 @@ use kernel_core::quantize::{
 };
 use kernel_core::transform::ChunkedScaleGrid;
 
+#[test]
+fn position_mxfp4_indexer_selects_individual_compressed_positions() {
+    use kernel_core::contract::Validate;
+    use kernel_core::pooled_indexer::{
+        IndexerGranularity, IndexerKeyFormat, IndexerSelectionMode, PooledIndexerQuery,
+    };
+    let query = PooledIndexerQuery::Select {
+        heads: 32,
+        head_dim: 128,
+        group: 1,
+        max_top_k: 2048,
+        always_tail: false,
+        granularity: IndexerGranularity::Position,
+        key_format: IndexerKeyFormat::Fp4,
+        mode: IndexerSelectionMode::Global,
+        page_size: 64,
+        capacity: 1,
+    };
+    query.validate().unwrap();
+    assert_eq!(query.list_width(), Some(2048));
+}
+
+#[test]
+fn f32_pool_without_position_rounds_before_post_pool_rmsnorm() {
+    use kernel_core::contract::{RecurrentPhase, Validate};
+    use kernel_core::gated_pooling::GatedPoolingQuery;
+    use kernel_core::gated_pooling_oracle::{norm_after_pool, pool_without_position};
+    let query = GatedPoolingQuery {
+        group: 2,
+        width: 512,
+        norm_eps_bits: 1e-20_f32.to_bits(),
+        phase: RecurrentPhase::Verify { max_rows: 4 },
+        capacity: 8,
+    };
+    query.validate().unwrap();
+    assert_eq!(query.tail_state_bytes(), 2 * 512 * 4);
+    assert_eq!(query.geometry().tail_slot(0), Some(0));
+    assert_eq!(query.geometry().tail_slot(1), None);
+    assert_eq!(query.geometry().tail_slot(2), Some(0));
+    assert_eq!(query.geometry().tail_slot_offsets(0), Some((0, 512)));
+    let keys = (0..1024)
+        .map(|i| {
+            if i < 512 {
+                1.003 + (i % 7) as f32
+            } else {
+                -0.499
+            }
+        })
+        .collect::<Vec<_>>();
+    let gates = vec![0.0; 1024];
+    let pooled = pool_without_position(query, &keys, &gates).unwrap();
+    for (i, &value) in pooled.values.iter().enumerate() {
+        assert_eq!(value, (f64::from(keys[i]) + f64::from(keys[i + 512])) / 2.0);
+    }
+    let pool_f32 = pooled.values.iter().map(|&v| v as f32).collect::<Vec<_>>();
+    let weights = vec![1.5; 512];
+    let norm = norm_after_pool(query, &pool_f32, &weights).unwrap();
+    let rounded = pool_f32
+        .iter()
+        .map(|&v| bf16(f64::from(v)))
+        .collect::<Vec<_>>();
+    let inverse = (rounded.iter().map(|v| v * v).sum::<f64>() / 512.0 + 1e-20_f32 as f64)
+        .sqrt()
+        .recip();
+    for (&actual, &x) in norm.values.iter().zip(&rounded) {
+        assert!((actual - x * inverse * 1.5).abs() < 1e-14);
+    }
+    let prematurely_rounded = keys
+        .iter()
+        .map(|&v| bf16(f64::from(v)) as f32)
+        .collect::<Vec<_>>();
+    assert_ne!(
+        pool_without_position(query, &prematurely_rounded, &gates)
+            .unwrap()
+            .values,
+        pooled.values
+    );
+    let before_boundary = RmsNorm::f64(1e-20_f32 as f64, NormOffset::Plain)
+        .apply(&pooled.values, &weights, 512)
+        .unwrap();
+    assert_ne!(before_boundary.values, norm.values);
+}
+
+#[test]
+fn position_keys_use_rmsnorm_tail_rope_and_trained_mxfp4_quantization() {
+    use kernel_core::pooled_indexer::{IndexerCandidates, PositionIndexerQuery};
+    use kernel_core::position_indexer_oracle::{key_norm, quantizer, rotate_tail};
+    let query = PositionIndexerQuery {
+        heads: 32,
+        head_dim: 128,
+        compression_ratio: 2,
+        tail_rope_dims: 64,
+        key_norm_eps_bits: 1e-20_f32.to_bits(),
+        max_top_k: 2048,
+        page_size: 64,
+        candidates: IndexerCandidates::All,
+        capacity: 1,
+    };
+    // A constant nonzero key remains nonzero under RMSNorm, unlike LayerNorm.
+    let normalized = key_norm(query, &[2.0; 128], &[1.5; 128]).unwrap();
+    assert_eq!(normalized.values, vec![1.5; 128]);
+    let rotated = rotate_tail(query, &normalized.values, &[[0.0, 1.0]; 32]).unwrap();
+    assert_eq!(&rotated.values[..64], &[1.5; 64]);
+    for pair in rotated.values[64..].chunks_exact(2) {
+        assert_eq!(pair, &[-1.5, 1.5]);
+    }
+    let rounded = rotated
+        .values
+        .iter()
+        .map(|&v| bf16(v) as f32)
+        .collect::<Vec<_>>();
+    let quantized = quantize(&rounded, 1, 128, quantizer()).unwrap();
+    for (i, &value) in rounded.iter().enumerate() {
+        assert_eq!(quantized.decode(0, i), f64::from(value));
+    }
+    // The amax sees BF16. This boundary takes scale 1 after BF16 rounding,
+    // while an unrounded F32 amax takes scale 2.
+    let raw = [6.015625_f32; 32];
+    let trained = raw.map(|x| bf16(f64::from(x)) as f32);
+    let rounded_quant = quantize(&trained, 1, 32, quantizer()).unwrap();
+    assert_eq!(rounded_quant.scales, Scales::Ue8M0(vec![127]));
+    assert_eq!(
+        quantize(&raw, 1, 32, quantizer()).unwrap().scales,
+        Scales::Ue8M0(vec![128])
+    );
+    let zeros = quantize(&[0.0; 32], 1, 32, quantizer()).unwrap();
+    assert_eq!(zeros.scales, Scales::Ue8M0(vec![1]));
+    assert!(zeros.codes.iter().all(|&code| code == 0));
+}
+
 fn values(len: usize, seed: u64, scale: f64) -> Vec<f64> {
     let mut state = seed;
     (0..len)

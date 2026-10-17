@@ -1,8 +1,56 @@
 //! F64 reference arithmetic for gated group pooling (`gated_pooling`).
 
 use crate::contract::{Refusal, Validate};
-use crate::gated_pooling::GatedGroupPooling;
+use crate::gated_pooling::{GatedGroupPooling, GatedPoolingQuery};
 use crate::oracle::OracleOutput;
+
+/// F64 pool over the F32 key and gate values, with no position embedding.
+/// Compare the pool stage before its BF16 boundary using this output's S
+/// and K. Check RMSNorm separately on the actual BF16 intermediate with
+/// `norm_after_pool`, so an earlier rounding boundary is not hidden in a
+/// tolerance for a fused result.
+pub fn pool_without_position(
+    query: GatedPoolingQuery,
+    keys: &[f32],
+    gates: &[f32],
+) -> Result<OracleOutput, Refusal> {
+    query.validate()?;
+    if keys.iter().chain(gates).any(|x| !x.is_finite()) {
+        return Err(Refusal("non-finite gated pooling input"));
+    }
+    pool(
+        query.geometry(),
+        &keys.iter().copied().map(f64::from).collect::<Vec<_>>(),
+        &gates.iter().copied().map(f64::from).collect::<Vec<_>>(),
+        &vec![0.0; query.group as usize * query.width as usize],
+    )
+}
+
+/// RMSNorm after the pool's BF16 boundary. The input is the pool stage's
+/// F32 output; its BF16 rounding precedes the mean square and weight.
+/// Returned values precede the final BF16 rounding.
+pub fn norm_after_pool(
+    query: GatedPoolingQuery,
+    pooled: &[f32],
+    weight: &[f64],
+) -> Result<OracleOutput, Refusal> {
+    query.validate()?;
+    if pooled.len() != query.width as usize || weight.len() != query.width as usize {
+        return Err(Refusal("gated pooling RMSNorm operand shape mismatch"));
+    }
+    let rounded = pooled
+        .iter()
+        .map(|&v| crate::oracle::bf16_round(f64::from(v)))
+        .collect::<Vec<_>>();
+    crate::oracle::rmsnorm(
+        &rounded,
+        query.width as usize,
+        weight,
+        f64::from(f32::from_bits(query.norm_eps_bits)),
+        crate::contract::RmsNormKind::Plain,
+        None,
+    )
+}
 
 /// Pools one complete group. `keys` and `gates` are `[group][width]`, the
 /// decoded BF16 values of the group's normalized keys and gate logits, and

@@ -1313,6 +1313,8 @@ selected-budget histogram comes from both and establishes neither. Pass
 `--prefill-budget` to the server explicitly for a `fixed` arm, which renders
 no policy series.
 The output names the arms (`arms`) and reports `candidate_minus_baseline`.
+Two v2 receipts (one pass per level) still compare as before, with output
+schema v1; a v2 receipt never pairs with a v3 one.
 Of two arms with different modes, the `fixed` one is the baseline in
 either order (`fixed-mbt8192` before `tbt-150ms`).
 

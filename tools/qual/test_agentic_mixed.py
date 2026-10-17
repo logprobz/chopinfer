@@ -463,6 +463,29 @@ class ReplicaTests(unittest.TestCase):
                          [receipts['tbt-150ms']['levels'][0]['output_tokens_per_second']['value']
                           - receipts['fixed-mbt8192']['levels'][0]['output_tokens_per_second']['value']])
 
+    def test_v2_pairs_still_compare_and_mixed_versions_are_refused(self):
+        """Receipts of the v2 sweep, written by its own code (fixtures/agentic,
+        dry runs with per-turn timing lists the comparison never reads
+        removed), compare as before; a v2 receipt never pairs with a v3 one."""
+        from agentic_compare import compare
+        fixtures = CORPUS.parents[2] / 'fixtures' / 'agentic'
+        old = {arm: json.loads((fixtures / f'v2-sweep-{arm}.json').read_text()) for arm in ('tbt', 'fixed')}
+        self.assertEqual({r['workload_schema'] for r in old.values()}, {'chopinfer.agentic-mixed.v2'})
+        for left, right in (('tbt', 'fixed'), ('fixed', 'tbt')):
+            compared = compare(old[left], old[right])
+            self.assertEqual(compared['schema'], 'chopinfer.agentic-mixed-comparison.v1')
+            level = compared['levels'][0]
+            self.assertEqual(level['concurrency'], 1)
+            self.assertGreater(level['trajectories']['shared_turns'], 0)
+            ttft = level['secondary_client_metrics']['ttft_p95_ms']
+            self.assertEqual((ttft['fixed'], ttft['tbt']), (old['fixed']['levels'][0]['ttft_ms']['p95'],
+                                                            old['tbt']['levels'][0]['ttft_ms']['p95']))
+        new = self.sweeps('--replicas', '1', '--levels', '1')
+        with self.assertRaisesRegex(ValueError, 'versions'):
+            compare(old['tbt'], new['fixed'])
+        with self.assertRaisesRegex(ValueError, 'versions'):
+            compare(new['tbt'], old['fixed'])
+
     def test_comparison_refuses_a_missing_replica(self):
         from agentic_compare import validate_pair
         receipts = self.sweeps('--replicas', '2')

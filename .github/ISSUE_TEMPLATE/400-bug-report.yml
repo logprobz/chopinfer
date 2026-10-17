@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a problem with chopinfer.
+description: Report a problem with chopinfer. Responses are best effort.
 title: "[Bug]: "
 body:
   - type: textarea

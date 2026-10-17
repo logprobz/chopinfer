@@ -178,9 +178,10 @@ CUDA driver boundary and native module loading.
 
 ## Pull requests
 
-Use imperative commit subjects, matching recent history, such as
-"Fix prefix restore accounting". Keep each change reviewable and explain the
-behavior and verification in the pull request.
+Check [what is accepted](../.github/CONTRIBUTING.md#what-is-accepted) before
+starting a change. Use imperative commit subjects, matching recent history,
+such as "Fix prefix restore accounting". Keep each change reviewable and
+explain the behavior and verification in the pull request.
 
 ## Contribution tiers
 

@@ -1,5 +1,5 @@
 name: Feature request
-description: Suggest a feature for chopinfer.
+description: Suggest a feature, or propose a larger pull request before writing it. Responses are best effort.
 title: "[Feature]: "
 body:
   - type: textarea

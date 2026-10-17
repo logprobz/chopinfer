@@ -15,6 +15,7 @@ pub(crate) mod selection;
 mod views;
 
 pub use adapter::{AdapterValue, ControlBinding, StageAdapter, StageExecution};
+pub use authentication::grouped_dense as grouped_dense_matrices;
 pub use operation::derive;
 pub use selection::Selection as RankSelection;
 pub use selection::select as rank_selection;

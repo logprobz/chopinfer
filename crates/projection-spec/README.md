@@ -54,8 +54,13 @@ a declaration that omits them parses, validates and digests as before.
 
 A projection has an `id`, a checkpoint `source` (a name pattern, with an
 optional `stem`), a logical `shape` of `[rows, k]` per operand, and `kind`:
-`dense`, `expert_bank` (with `experts` and `top_k`) or `lookup_table`.
-`operands` names fused operands such as gate and up; without `{operand}` or
+`dense`, `expert_bank` (with `experts` and `top_k`), `lookup_table` or
+`grouped_dense` (with `groups`). A grouped dense projection is `groups`
+independent `shape` matrices stacked along the source's rows, without routing
+or a sum across groups: group `g` reads its own K-wide input slice and writes
+its own output columns, a rank owns whole groups (`expert_owned`), and the
+derived operation maps onto the grouped fold GEMM contract
+(`kernel_core::mxfp8_gemm`) rather than a dense kernel. `operands` names fused operands such as gate and up; without `{operand}` or
 `{expert}` in the source name, one tensor stacks operands along rows and
 experts along its leading axis. `parts` are row chunks that keep their own
 scale-grid origin. `format` optionally pins a format plug-in; without it the

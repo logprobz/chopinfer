@@ -219,6 +219,10 @@ pub(crate) fn source_geometry(
             }
         }
         crate::ProjectionKind::LookupTable {} => {}
+        // The groups stack along the source's rows.
+        crate::ProjectionKind::GroupedDense { groups } => {
+            rows = multiply(rows, groups.resolve(geometry)?)?;
+        }
     }
     shape.extend([rows, k]);
     kernel_core::precision::shape_elements(&projection.id, &shape)
@@ -337,6 +341,26 @@ impl Declaration {
                             return Err(Error("lookup table requires one operand".into()));
                         }
                     }
+                    ProjectionKind::GroupedDense { groups } => {
+                        let groups = groups.resolve(geometry)?;
+                        if groups == 0 || groups > u32::MAX.into() {
+                            return Err(Error(
+                                "grouped dense needs a positive u32 group count".into(),
+                            ));
+                        }
+                        if p.operand_count() != 1
+                            || !p.parts.is_empty()
+                            || p.lookup.is_some()
+                            || !p.assembly.is_empty()
+                            || p.epilogues != Epilogues::default()
+                        {
+                            return Err(Error(
+                                "grouped dense is one stacked source operand without parts, \
+                                 assembly or epilogues"
+                                    .into(),
+                            ));
+                        }
+                    }
                 }
                 if p.lookup.is_some() {
                     if p.source.is_some() {
@@ -416,7 +440,15 @@ impl Declaration {
                         crate::segments::validate(segments, order, rows, geometry)?;
                         matches!(p.kind, ProjectionKind::Dense {})
                     }
-                    SplitClass::ExpertOwned { tile } | SplitClass::ExpertSharded { tile, .. } => {
+                    // A rank owns whole groups as it owns whole experts.
+                    SplitClass::ExpertOwned { tile } => {
+                        tile.resolve(geometry)?;
+                        matches!(
+                            p.kind,
+                            ProjectionKind::ExpertBank { .. } | ProjectionKind::GroupedDense { .. }
+                        )
+                    }
+                    SplitClass::ExpertSharded { tile, .. } => {
                         tile.resolve(geometry)?;
                         matches!(p.kind, ProjectionKind::ExpertBank { .. })
                     }

@@ -33,6 +33,9 @@ fn direct(p: &Projection, b: &BoundOperand, g: &Geometry) -> Result<Vec<SourceMa
     } else {
         1
     };
+    if let crate::ProjectionKind::GroupedDense { groups } = &p.kind {
+        return grouped_dense(b, groups.resolve(g)?, rows, k);
+    }
     let operands = if b.operand.is_some() {
         1
     } else {
@@ -117,6 +120,41 @@ fn direct(p: &Projection, b: &BoundOperand, g: &Geometry) -> Result<Vec<SourceMa
         }
     }
     Ok(result)
+}
+
+/// One source matrix per group of a grouped dense projection: group `g` is
+/// rows `g * rows..(g + 1) * rows` of the stacked source, in place.
+pub fn grouped_dense(
+    b: &BoundOperand,
+    groups: u64,
+    rows: u64,
+    k: u64,
+) -> Result<Vec<SourceMatrix>, Error> {
+    if groups
+        .checked_mul(rows)
+        .is_none_or(|stacked| b.imported.weight.logical_shape != [stacked, k])
+        || b.expert.is_some()
+        || b.operand.is_some_and(|o| o != 0)
+        || !b.imported.parts.is_empty()
+    {
+        return Err(Error(
+            "a grouped dense source is one [groups * rows, K] matrix".into(),
+        ));
+    }
+    (0..groups)
+        .map(|group| {
+            Ok(SourceMatrix {
+                weight: b.imported.weight.clone(),
+                expert: u32::try_from(group).map_err(|_| Error("group exceeds u32".into()))?,
+                operand: 0,
+                source_expert: 0,
+                source_rows: group * rows..(group + 1) * rows,
+                target_rows: 0..rows,
+                source_k: 0..k,
+                target_k: 0..k,
+            })
+        })
+        .collect()
 }
 
 pub(super) fn check(

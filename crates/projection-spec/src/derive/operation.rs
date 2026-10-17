@@ -653,6 +653,7 @@ pub(super) fn ordinary(
     let family = imported.family;
     let legal_family = match p.kind {
         ProjectionKind::Dense {} => matches!(family, KernelFamily::Dense | KernelFamily::Row),
+        ProjectionKind::GroupedDense { .. } => family == KernelFamily::Dense,
         ProjectionKind::ExpertBank { .. } => family == KernelFamily::GroupedExpert,
         ProjectionKind::LookupTable { .. } => family == KernelFamily::Lookup,
     };
@@ -913,12 +914,23 @@ pub(super) fn ordinary(
     let rows = u64::from(usage.capacity)
         .checked_mul(row_multiplier)
         .ok_or_else(|| Error("requested row multiplier overflows".into()))?;
+    // A grouped dense row holds every local group's K-wide input and output
+    // side by side, in group order.
+    let groups = match p.kind {
+        ProjectionKind::GroupedDense { .. } => u64::from(experts),
+        _ => 1,
+    };
+    let input_width = selection
+        .physical
+        .k
+        .checked_mul(groups)
+        .ok_or_else(|| Error("input width overflows".into()))?;
     for (index, activation) in operation.activations.iter().enumerate() {
         required.push(views::view(
             format!("{id}.input.{index}.{:?}.{}", usage.phase, usage.capacity),
             ViewRole::Input,
             activation.storage,
-            vec![rows, selection.physical.k],
+            vec![rows, input_width],
             "row-major".into(),
         )?);
     }
@@ -926,6 +938,7 @@ pub(super) fn ordinary(
         .physical
         .rows
         .checked_mul(p.operand_count().into())
+        .and_then(|width| width.checked_mul(groups))
         .ok_or_else(|| Error("output width overflows".into()))?;
     let output_width = if family == KernelFamily::Lookup {
         selection.physical.k
@@ -1642,6 +1655,62 @@ fn derive_sides(input: &DerivationInput<'_>, result: &mut RankDerivation) -> Res
     Ok(())
 }
 
+impl DerivedOperation {
+    /// The local group count of a grouped dense operation
+    /// (`ProjectionKind::GroupedDense`) with more than one group on this
+    /// rank; `None` for every other operation. Its packed weights are
+    /// `[groups, rows, K]`, and group `g` reads input columns
+    /// `g * K..(g + 1) * K` and writes output columns
+    /// `g * rows..(g + 1) * rows` of each row. A rank with one group runs it
+    /// as the dense matrix it is.
+    pub fn dense_groups(&self) -> Option<u32> {
+        (self.family == KernelFamily::Dense && self.packing.experts > 1)
+            .then_some(self.packing.experts)
+    }
+
+    /// The grouped fold GEMM query (`kernel_core::mxfp8_gemm`) of this
+    /// operation for `execution`: the rows of its input view, its groups, the
+    /// packed rows and K of one group, and the K-wide group slices of each
+    /// input row. A dense operation is the one-group query.
+    pub fn fold_gemm_query(
+        &self,
+        execution: kernel_core::precision::execution::BlockScaledExecution,
+    ) -> Result<kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery, Error> {
+        use kernel_core::contract::Validate;
+        if self.family != KernelFamily::Dense {
+            return Err(Error(format!(
+                "operation `{}` is not a dense or grouped dense operation",
+                self.operation.id
+            )));
+        }
+        let groups = self.dense_groups().unwrap_or(1);
+        let row_stride = self
+            .packing
+            .k
+            .checked_mul(groups)
+            .ok_or_else(|| Error("grouped activation row overflows".into()))?;
+        let query = kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery {
+            m_capacity: u32::try_from(
+                u64::from(self.requested.capacity)
+                    .checked_mul(self.row_multiplier)
+                    .ok_or_else(|| Error("fold GEMM rows overflow".into()))?,
+            )
+            .map_err(|_| Error("fold GEMM rows exceed u32".into()))?,
+            n: self.packing.rows,
+            k: self.packing.k,
+            groups,
+            activation_row_stride: row_stride,
+            activation_group_stride: self.packing.k,
+            output: self.operation.arithmetic.output,
+            execution,
+        };
+        query
+            .validate()
+            .map_err(|e| Error(format!("operation `{}`: {}", self.operation.id, e.0)))?;
+        Ok(query)
+    }
+}
+
 impl RankDerivation {
     /// Operations selected by explicit per-use fusion replacements.
     pub fn selected_operations(&self) -> impl Iterator<Item = &DerivedOperation> {
@@ -1664,9 +1733,18 @@ impl RankDerivation {
     }
 
     /// Collect equal operation recipes into their original multi-use coverage.
+    /// A grouped dense operation is refused: its spec describes one group, and
+    /// it runs on the grouped fold GEMM contract, never a dense kernel.
     pub fn operation_specs(&self) -> Result<Vec<OperationSpec>, Error> {
         let mut result: Vec<OperationSpec> = Vec::new();
         for derived in self.selected_operations() {
+            if let Some(groups) = derived.dense_groups() {
+                return Err(Error(format!(
+                    "operation `{}` is grouped dense ({groups} groups) and runs on the grouped \
+                     fold GEMM contract, not a dense kernel",
+                    derived.operation.id
+                )));
+            }
             let mut comparable = derived.operation.clone();
             comparable.uses.clear();
             if let Some(existing) = result.iter_mut().find(|s| {

@@ -203,7 +203,7 @@ pub fn imported(
         } else {
             vec![]
         };
-        imported.insert(key, projection(p, &frames, &names, admitted)?);
+        imported.insert(key, projection(p, &frames, &names, admitted, geometry)?);
     }
     for p in declaration
         .projections
@@ -317,14 +317,25 @@ fn projection(
     frames: &[&projection_spec::bind::BoundOperand],
     banks: &[String],
     admitted: &Admitted,
+    geometry: &Geometry,
 ) -> Result<ImportedProjection, Error> {
     let family = match p.kind {
-        ProjectionKind::Dense {} => KernelFamily::Dense,
+        ProjectionKind::Dense {} | ProjectionKind::GroupedDense { .. } => KernelFamily::Dense,
         ProjectionKind::ExpertBank { .. } => KernelFamily::GroupedExpert,
         ProjectionKind::LookupTable {} => KernelFamily::Lookup,
     };
     let mut matrices = vec![];
     for frame in frames {
+        // Each group of a grouped dense stack is its own matrix.
+        if let ProjectionKind::GroupedDense { groups } = &p.kind {
+            matrices.extend(projection_spec::derive::grouped_dense_matrices(
+                frame,
+                groups.resolve(geometry)?,
+                p.shape[0].resolve(geometry)?,
+                p.shape[1].resolve(geometry)?,
+            )?);
+            continue;
+        }
         if let [experts, stacked, k] = frame.imported.weight.logical_shape[..] {
             matrices.extend(stacked_matrices(p, frame, family, [experts, stacked, k])?);
             continue;

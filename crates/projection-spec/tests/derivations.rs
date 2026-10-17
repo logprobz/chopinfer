@@ -43,7 +43,13 @@ fn fixture(
         ProjectionKind::ExpertBank { experts, .. } => experts.resolve(&g).unwrap(),
         _ => 1,
     };
-    let shape = if experts == 1 {
+    let groups = match &d.projections[0].kind {
+        ProjectionKind::GroupedDense { groups } => Some(groups.resolve(&g).unwrap()),
+        _ => None,
+    };
+    let shape = if let Some(groups) = groups {
+        vec![groups * rows, k]
+    } else if experts == 1 {
         vec![rows, k]
     } else {
         vec![experts, rows, k]
@@ -58,7 +64,9 @@ fn fixture(
         .unwrap();
     let weight = bound.operands[0].imported.weight.clone();
     let family = match d.projections[0].kind {
-        ProjectionKind::Dense {} => kernel_core::precision::format::KernelFamily::Dense,
+        ProjectionKind::Dense {} | ProjectionKind::GroupedDense { .. } => {
+            kernel_core::precision::format::KernelFamily::Dense
+        }
         ProjectionKind::ExpertBank { .. } => {
             kernel_core::precision::format::KernelFamily::GroupedExpert
         }
@@ -93,18 +101,23 @@ fn fixture(
         },
         a16_recipe: A16Recipe::ScaledWeight,
         preparation: None,
-        matrices: (0..experts)
-            .map(|e| SourceMatrix {
-                weight: weight.clone(),
-                expert: e as u32,
-                operand: 0,
-                source_expert: e,
-                target_rows: 0..rows,
-                source_rows: 0..rows,
-                target_k: 0..k,
-                source_k: 0..k,
-            })
-            .collect(),
+        matrices: match groups {
+            Some(groups) => {
+                derive::grouped_dense_matrices(&bound.operands[0], groups, rows, k).unwrap()
+            }
+            None => (0..experts)
+                .map(|e| SourceMatrix {
+                    weight: weight.clone(),
+                    expert: e as u32,
+                    operand: 0,
+                    source_expert: e,
+                    target_rows: 0..rows,
+                    source_rows: 0..rows,
+                    target_k: 0..k,
+                    source_k: 0..k,
+                })
+                .collect(),
+        },
     };
     (
         d,
@@ -248,6 +261,173 @@ fn row_k_selection_expert_ownership_and_intermediate_sharding_are_distinct() {
             assert_eq!(r.operations[0].slices[0].expert, 0);
         }
     }
+}
+
+/// One output row of `op` over the stacked `[groups * rows, k]` source `w`
+/// for one row `x` of its input view, as the derivation lays them out:
+/// local group `g` reads input columns `g * K..` and writes output columns
+/// `g * rows..`, K and rows being the packed extents of one group.
+fn execute(op: &derive::DerivedOperation, w: &[f64], k: u64, x: &[f64]) -> Vec<f64> {
+    let groups = u64::from(op.dense_groups().unwrap_or(1));
+    let (n, width) = (u64::from(op.packing.rows), u64::from(op.packing.k));
+    assert_eq!(x.len() as u64, groups * width);
+    let mut y = vec![0.0; (groups * n) as usize];
+    for slice in &op.slices {
+        let group = u64::from(slice.expert);
+        let sources = slice.rows.iter().flat_map(|r| r.clone());
+        let targets = slice.target_rows.iter().flat_map(|r| r.clone());
+        for (source, target) in sources.zip(targets) {
+            let mut sum = 0.0;
+            for column in slice.k.clone() {
+                let input = group * width + slice.target_k.start + column - slice.k.start;
+                sum += w[(source * k + column) as usize] * x[input as usize];
+            }
+            y[(group * n + target) as usize] += sum;
+        }
+    }
+    y
+}
+
+#[test]
+fn grouped_dense_ranks_own_whole_groups_and_map_onto_the_fold_contract() {
+    let (d, b, g, i) = fixture(
+        SplitClass::ExpertOwned {
+            tile: Dim::Literal(1),
+        },
+        4,
+        32,
+        ProjectionKind::GroupedDense {
+            groups: Dim::Literal(4),
+        },
+    );
+    for (ranks, groups) in [(1, Some(4)), (2, Some(2)), (4, None)] {
+        for rank in 0..ranks {
+            let r = run(&d, &b, &g, &i, Topology { ranks, rank }).unwrap();
+            let op = &r.operations[0];
+            let local = groups.unwrap_or(1);
+            assert_eq!(op.dense_groups(), groups);
+            assert_eq!(op.packing.experts, local);
+            assert_eq!(op.logical_geometry, MatrixGeometry { rows: 4, k: 32 });
+            assert_eq!(op.slices.len(), local as usize);
+            for (index, slice) in op.slices.iter().enumerate() {
+                let group = rank * local + index as u32;
+                assert_eq!(slice.expert, index as u32);
+                assert_eq!(slice.source.expert, group);
+                let first = u64::from(group) * 4;
+                assert_eq!(slice.rows, vec![first..first + 4]);
+                assert_eq!(slice.target_rows, vec![0..4]);
+            }
+            let (n, width) = (u64::from(op.packing.rows), u64::from(op.packing.k));
+            for (role, shape) in [
+                (ViewRole::Input, vec![128, u64::from(local) * width]),
+                (ViewRole::Output, vec![128, u64::from(local) * n]),
+            ] {
+                assert!(
+                    op.views.iter().any(|v| v.role == role && v.shape == shape),
+                    "{role:?} {shape:?}"
+                );
+            }
+            let query = op
+                .fold_gemm_query(
+                    kernel_core::precision::execution::BlockScaledExecution::ExactDecodedBf16Mma,
+                )
+                .unwrap();
+            assert_eq!(
+                (
+                    query.groups,
+                    query.n,
+                    query.k,
+                    query.activation_row_stride,
+                    query.activation_group_stride,
+                    query.m_capacity,
+                ),
+                (
+                    local,
+                    op.packing.rows,
+                    op.packing.k,
+                    local * op.packing.k,
+                    op.packing.k,
+                    128
+                )
+            );
+            // One group is the dense matrix it is; more never lower to a
+            // dense kernel.
+            let specs = r.operation_specs();
+            if groups.is_some() {
+                let error = specs.unwrap_err().0;
+                assert!(error.contains("grouped fold GEMM"), "{error}");
+            } else {
+                assert_eq!(specs.unwrap()[0].kind, OperationKind::Dense);
+            }
+        }
+    }
+    // Groups split over ranks whole, never across a rank boundary.
+    assert!(run(&d, &b, &g, &i, Topology { ranks: 8, rank: 0 }).is_err());
+    let mut dense_split = d.clone();
+    dense_split.projections[0].split = SplitClass::Column {
+        tile: Dim::Literal(4),
+    };
+    assert!(dense_split.validate(&g, &Registry::default()).is_err());
+}
+
+#[test]
+fn distinct_inputs_per_group_need_the_grouped_form() {
+    let (groups, rows, k) = (4u64, 4u64, 32u64);
+    let w: Vec<f64> = (0..groups * rows * k)
+        .map(|i| (i % 7) as f64 - 3.0)
+        .collect();
+    // One rank of two holds groups 2 and 3, and its input row holds their
+    // two distinct K-wide slices side by side.
+    let x: Vec<f64> = (0..2 * k).map(|i| ((i * 5) % 11) as f64 - 5.0).collect();
+    let mut reference = vec![];
+    for local in 0..2 {
+        for row in 0..rows {
+            let source = (2 + local) * rows + row;
+            reference.push(
+                (0..k)
+                    .map(|c| w[(source * k + c) as usize] * x[(local * k + c) as usize])
+                    .sum::<f64>(),
+            );
+        }
+    }
+    let topology = Topology { ranks: 2, rank: 1 };
+    let (d, b, g, i) = fixture(
+        SplitClass::ExpertOwned {
+            tile: Dim::Literal(1),
+        },
+        rows,
+        k,
+        ProjectionKind::GroupedDense {
+            groups: Dim::Literal(groups),
+        },
+    );
+    let grouped = run(&d, &b, &g, &i, topology).unwrap();
+    let op = &grouped.operations[0];
+    let n = u64::from(op.packing.rows);
+    let y = execute(op, &w, k, &x);
+    let live: Vec<f64> = (0..2)
+        .flat_map(|local| y[(local * n) as usize..(local * n + rows) as usize].to_vec())
+        .collect();
+    assert_eq!(live, reference);
+
+    // The same stack as one dense matrix: the rank's rows, but every row
+    // reads the first K columns, so the second group sees the first's input.
+    let (d, b, g, i) = fixture(
+        SplitClass::Column {
+            tile: Dim::Literal(rows),
+        },
+        groups * rows,
+        k,
+        ProjectionKind::Dense {},
+    );
+    let dense = run(&d, &b, &g, &i, topology).unwrap();
+    let op = &dense.operations[0];
+    let y = execute(op, &w, k, &x[..op.packing.k as usize]);
+    assert_eq!(y[..(rows as usize)], reference[..(rows as usize)]);
+    assert_ne!(
+        y[(rows as usize)..(2 * rows as usize)],
+        reference[(rows as usize)..]
+    );
 }
 
 #[test]

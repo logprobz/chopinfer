@@ -85,8 +85,11 @@ pub fn select(p: &Projection, g: &Geometry, t: Topology, operand: u32) -> Result
     let tp = topology(t)?;
     let total_rows = p.shape[0].resolve(g)?;
     let total_k = p.shape[1].resolve(g)?;
+    // A grouped dense projection's groups select like experts: each is its
+    // own `shape` matrix, and a rank owns whole groups.
     let expert_count = match &p.kind {
-        ProjectionKind::ExpertBank { experts, .. } => u32::try_from(experts.resolve(g)?)
+        ProjectionKind::ExpertBank { experts, .. }
+        | ProjectionKind::GroupedDense { groups: experts } => u32::try_from(experts.resolve(g)?)
             .map_err(|_| Error("expert count exceeds u32".into()))?,
         _ => 1,
     };

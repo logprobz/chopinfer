@@ -525,11 +525,7 @@ fn derived_slices(
         .as_ref()
         .and_then(|c| c.numerical_contracts.get(&first.format));
     let a16 = recipe.map_or(A16Recipe::ScaledWeight, |r| r.a16_recipe);
-    let family = match p.kind {
-        ProjectionKind::LookupTable {} => KernelFamily::Lookup,
-        ProjectionKind::ExpertBank { .. } => KernelFamily::GroupedExpert,
-        ProjectionKind::Dense {} => KernelFamily::Dense,
-    };
+    let family = p.family();
     let activation = ActivationFormat::Bf16;
     let imported = ImportedProjection {
         operation_id: p.id.clone(),

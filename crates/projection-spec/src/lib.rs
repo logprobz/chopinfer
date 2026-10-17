@@ -128,8 +128,20 @@ pub struct Part {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProjectionKind {
     Dense {},
-    ExpertBank { experts: Dim, top_k: Dim },
+    ExpertBank {
+        experts: Dim,
+        top_k: Dim,
+    },
     LookupTable {},
+    /// `groups` independent dense matrices of `shape` each, without routing
+    /// or a sum across groups. The checkpoint tensor stacks the groups along
+    /// rows; group `g` reads its own K-wide activation slice `g * K..(g + 1)
+    /// * K` and writes output columns `g * rows..(g + 1) * rows`. A rank owns
+    /// whole groups. This is the grouped fold GEMM contract
+    /// (`kernel_core::mxfp8_gemm`), never one dense matrix over the stack.
+    GroupedDense {
+        groups: Dim,
+    },
 }
 
 /// Tensor-parallel ownership and the tile used when padding its split axis.
@@ -395,20 +407,22 @@ impl Projection {
     /// projection may also lower to row stages.
     pub fn family(&self) -> KernelFamily {
         match self.kind {
-            ProjectionKind::Dense {} => KernelFamily::Dense,
+            ProjectionKind::Dense {} | ProjectionKind::GroupedDense { .. } => KernelFamily::Dense,
             ProjectionKind::ExpertBank { .. } => KernelFamily::GroupedExpert,
             ProjectionKind::LookupTable {} => KernelFamily::Lookup,
         }
     }
     /// The operation kind of one rank's selection: an expert bank keeps the
-    /// selected experts and its declared top-k.
+    /// selected experts and its declared top-k. Each group of a grouped dense
+    /// projection is a dense matrix; the derived operation carries its groups
+    /// (`DerivedOperation::dense_groups`).
     pub fn operation_kind(
         &self,
         geometry: &Geometry,
         selection: &derive::RankSelection,
     ) -> Result<OperationKind, Error> {
         Ok(match &self.kind {
-            ProjectionKind::Dense {} => OperationKind::Dense,
+            ProjectionKind::Dense {} | ProjectionKind::GroupedDense { .. } => OperationKind::Dense,
             ProjectionKind::ExpertBank { top_k, .. } => OperationKind::Grouped {
                 experts: selection.experts.end - selection.experts.start,
                 top_k: u32::try_from(top_k.resolve(geometry)?)

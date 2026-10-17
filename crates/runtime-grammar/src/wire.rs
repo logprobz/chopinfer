@@ -51,16 +51,14 @@ pub const GRAMMAR_WIRE_LAYOUT_V1: u32 = 1;
 /// The bound is the reach of the local builders, so a decoded grammar
 /// admits what local building produces: the deepest grammar the schema,
 /// regex and choice builders produce has depth 511 (a 127-level object
-/// schema around a pattern of 64 nested starred groups), and grammars past
-/// 288 compile locally (that pattern inside 80 nested one-item arrays; a
-/// 289-rule reference chain).
+/// schema around a pattern of 64 nested starred groups), and it compiles
+/// locally.
 ///
-/// Measured as the smallest thread stack that compiles each shape: one level
-/// of compile depth takes about 3.5 KiB in a debug build and 0.5 KiB in an
-/// optimized one, plus about 15 KiB. At 512 the deepest decoded grammar needs
-/// about 1812 KiB in debug, a 1.13x margin on a 2 MiB stack, the same
-/// exposure locally built grammars have, and about 260 KiB optimized, a 7.9x
-/// margin.
+/// Measured as the smallest thread stack that compiles each shape at the
+/// bound (nested alternatives, a rule reference chain, nested ordered
+/// subsets and that schema): at most about 1365 KiB in a debug build, a 1.5x
+/// margin on a 2 MiB stack, the same exposure locally built grammars have,
+/// and about 160 KiB optimized, a 12.8x margin.
 pub const GRAMMAR_WIRE_NESTING_MAX_V1: usize = 512;
 
 /// Counts the depth analysis's steps, so a test can bound them; it refuses

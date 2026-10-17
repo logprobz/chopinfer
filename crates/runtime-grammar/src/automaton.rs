@@ -2,10 +2,10 @@
 //!
 //! Rules that take part in a reference cycle stay separate automata that the
 //! matcher calls with a stack. Every other rule reference is expanded in
-//! place, so a grammar without recursion becomes one automaton. Each
-//! automaton is a subset construction over its Thompson automaton, and states
-//! that cannot reach an accepting state are removed, so any live state can
-//! still finish.
+//! place, once for each state it continues to, so a grammar without recursion
+//! becomes one automaton. Each automaton is a subset construction over its
+//! Thompson automaton, and states that cannot reach an accepting state are
+//! removed, so any live state can still finish.
 
 use std::collections::HashMap;
 
@@ -298,6 +298,8 @@ impl Automaton {
             compiled_index: &compiled_index,
             states: Vec::new(),
             expanding: Vec::new(),
+            expanded: HashMap::new(),
+            optional: HashMap::new(),
         };
         let mut nfas = Vec::with_capacity(order.len());
         for &id in &order {
@@ -623,15 +625,26 @@ struct NfaState {
     calls: Vec<(u32, u32)>,
 }
 
+/// Builds Thompson automata back to front: each expression is built for the
+/// state it continues to and returns its start. Two uses of one expression
+/// that continue to the same state are one fragment, so an expanded rule, an
+/// ordered subset's item or tail, and a run of bounded repetitions are built
+/// once for each place they lead to rather than once for each use.
 struct NfaBuilder<'a> {
     grammar: &'a Grammar,
     budget: &'a Budget,
     compiled_index: &'a HashMap<RuleId, u32>,
     states: Vec<NfaState>,
     expanding: Vec<RuleId>,
+    /// The start of each expanded rule, by the rule and the state it
+    /// continues to.
+    expanded: HashMap<(RuleId, u32), u32>,
+    /// For a repeated rule, literal or class and the state its repetitions
+    /// continue to, `optional[j]` starts up to `j` more of them.
+    optional: HashMap<(&'a Expr, u32), Vec<u32>>,
 }
 
-impl NfaBuilder<'_> {
+impl<'a> NfaBuilder<'a> {
     fn add(&mut self) -> Result<u32, GrammarError> {
         if self.states.len() >= MAX_NFA_STATES {
             return Err(GrammarError::too_large("the constraint is too large"));
@@ -645,71 +658,66 @@ impl NfaBuilder<'_> {
         self.states[from as usize].epsilon.push(to);
     }
 
+    /// A rule compiled on its own: its start and its accepting state.
     fn build_rule(&mut self, id: RuleId) -> Result<(u32, u32), GrammarError> {
-        self.expanding.push(id);
-        let fragment = self.build(&self.grammar.rules[id.0 as usize]);
-        self.expanding.pop();
-        fragment
+        let end = self.add()?;
+        Ok((self.expand(id, end)?, end))
     }
 
-    fn build(&mut self, expr: &Expr) -> Result<(u32, u32), GrammarError> {
+    fn expand(&mut self, id: RuleId, next: u32) -> Result<u32, GrammarError> {
+        let grammar = self.grammar;
+        self.expanding.push(id);
+        let start = self.build(&grammar.rules[id.0 as usize], next);
+        self.expanding.pop();
+        start
+    }
+
+    fn build(&mut self, expr: &'a Expr, next: u32) -> Result<u32, GrammarError> {
         self.budget.charge(1, 0)?;
         match expr {
-            Expr::Empty => {
-                let state = self.add()?;
-                Ok((state, state))
-            }
-            Expr::Nothing => Ok((self.add()?, self.add()?)),
+            Expr::Empty => Ok(next),
+            Expr::Nothing => self.add(),
             Expr::Literal(bytes) => {
-                let start = self.add()?;
-                let mut current = start;
-                for &byte in bytes {
-                    let next = self.add()?;
-                    self.states[current as usize].bytes.push((byte, byte, next));
-                    current = next;
+                let mut current = next;
+                for &byte in bytes.iter().rev() {
+                    let state = self.add()?;
+                    self.states[state as usize]
+                        .bytes
+                        .push((byte, byte, current));
+                    current = state;
                 }
-                Ok((start, current))
+                Ok(current)
             }
             Expr::Class(class) => {
                 let start = self.add()?;
-                let end = self.add()?;
                 let mut sequences = Vec::new();
                 for &(lo, hi) in class.ranges() {
                     scalar_range_sequences(lo, hi, &mut sequences);
                 }
                 for ranges in sequences {
-                    let mut current = start;
-                    for (index, &(lo, hi)) in ranges.iter().enumerate() {
-                        let next = if index + 1 == ranges.len() {
-                            end
-                        } else {
-                            self.add()?
-                        };
-                        self.states[current as usize].bytes.push((lo, hi, next));
-                        current = next;
+                    let mut current = next;
+                    for (index, &(lo, hi)) in ranges.iter().enumerate().rev() {
+                        let state = if index == 0 { start } else { self.add()? };
+                        self.states[state as usize].bytes.push((lo, hi, current));
+                        current = state;
                     }
                 }
-                Ok((start, end))
+                Ok(start)
             }
             Expr::Seq(items) => {
-                let start = self.add()?;
-                let mut current = start;
-                for item in items {
-                    let (item_start, item_end) = self.build(item)?;
-                    self.epsilon(current, item_start);
-                    current = item_end;
+                let mut current = next;
+                for item in items.iter().rev() {
+                    current = self.build(item, current)?;
                 }
-                Ok((start, current))
+                Ok(current)
             }
             Expr::Alt(items) => {
                 let start = self.add()?;
-                let end = self.add()?;
                 for item in items {
-                    let (item_start, item_end) = self.build(item)?;
+                    let item_start = self.build(item, next)?;
                     self.epsilon(start, item_start);
-                    self.epsilon(item_end, end);
                 }
-                Ok((start, end))
+                Ok(start)
             }
             Expr::Repeat { expr, min, max } => {
                 if *min > MAX_REPEAT || max.is_some_and(|max| max > MAX_REPEAT) {
@@ -718,34 +726,26 @@ impl NfaBuilder<'_> {
                 if max.is_some_and(|max| max < *min) {
                     return Err(GrammarError::invalid("a repetition has max below min"));
                 }
-                let start = self.add()?;
-                let mut current = start;
-                for _ in 0..*min {
-                    let (item_start, item_end) = self.build(expr)?;
-                    self.epsilon(current, item_start);
-                    current = item_end;
-                }
-                match max {
+                let (mut start, required) = match max {
+                    // The last required copy, or a loop state without one,
+                    // repeats through the loop.
                     None => {
-                        let loop_state = self.add()?;
-                        self.epsilon(current, loop_state);
-                        let (item_start, item_end) = self.build(expr)?;
-                        self.epsilon(loop_state, item_start);
-                        self.epsilon(item_end, loop_state);
-                        Ok((start, loop_state))
-                    }
-                    Some(max) => {
-                        let end = self.add()?;
-                        self.epsilon(current, end);
-                        for _ in *min..*max {
-                            let (item_start, item_end) = self.build(expr)?;
-                            self.epsilon(current, item_start);
-                            self.epsilon(item_end, end);
-                            current = item_end;
+                        let repeat = self.add()?;
+                        self.epsilon(repeat, next);
+                        let item = self.build(expr, repeat)?;
+                        self.epsilon(repeat, item);
+                        if *min == 0 {
+                            (repeat, 0)
+                        } else {
+                            (item, min - 1)
                         }
-                        Ok((start, end))
                     }
+                    Some(max) => (self.optional(expr, max - min, next)?, *min),
+                };
+                for _ in 0..required {
+                    start = self.build(expr, start)?;
                 }
+                Ok(start)
             }
             Expr::Rule(id) => {
                 if id.0 as usize >= self.grammar.rules.len() {
@@ -755,65 +755,120 @@ impl NfaBuilder<'_> {
                 // and nothing refers to a root that is not recursive.
                 if let Some(&compiled) = self.compiled_index.get(id) {
                     let start = self.add()?;
-                    let end = self.add()?;
-                    self.states[start as usize].calls.push((compiled, end));
-                    return Ok((start, end));
+                    self.states[start as usize].calls.push((compiled, next));
+                    return Ok(start);
                 }
                 if self.expanding.contains(id) {
                     return Err(GrammarError::invalid("a grammar rule refers to itself"));
                 }
-                self.build_rule(*id)
+                if let Some(&start) = self.expanded.get(&(*id, next)) {
+                    return Ok(start);
+                }
+                let start = self.expand(*id, next)?;
+                self.expanded.insert((*id, next), start);
+                Ok(start)
             }
-            Expr::TextExcluding(markers) => self.marked_text(markers, None),
-            Expr::TextUntil { end, avoid } => self.marked_text(avoid, Some(end)),
+            Expr::TextExcluding(markers) => self.marked_text(markers, None, next),
+            Expr::TextUntil { end, avoid } => self.marked_text(avoid, Some(end), next),
             Expr::OrderedSubset {
                 items,
                 tail,
                 separator,
-            } => self.ordered_subset(items, tail.as_deref(), separator),
+            } => self.ordered_subset(items, tail.as_deref(), separator, next),
         }
     }
 
-    /// Two chains of states: `before[i]` has emitted nothing yet, `after[i]`
-    /// has emitted at least one entry and so needs a separator next. Each
-    /// item is built once per chain.
+    /// A state that admits up to `count` copies of `expr` and then continues
+    /// to `next`. The states for fewer copies are a suffix of the states for
+    /// more, so every run of a rule, literal or class bounded above with one
+    /// continuation shares one chain.
+    fn optional(&mut self, expr: &'a Expr, count: u32, next: u32) -> Result<u32, GrammarError> {
+        if count == 0 {
+            return Ok(next);
+        }
+        let shared = match expr {
+            Expr::Rule(_) => true,
+            Expr::Literal(bytes) => {
+                self.budget.charge(bytes.len(), 0)?;
+                true
+            }
+            Expr::Class(class) => {
+                self.budget.charge(class.ranges().len(), 0)?;
+                true
+            }
+            _ => false,
+        };
+        let mut chain = if shared {
+            self.optional.remove(&(expr, next)).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        if chain.is_empty() {
+            chain.push(next);
+        }
+        while chain.len() <= count as usize {
+            let state = self.add()?;
+            self.epsilon(state, next);
+            let item = self.build(expr, chain[chain.len() - 1])?;
+            self.epsilon(state, item);
+            chain.push(state);
+        }
+        let start = chain[count as usize];
+        if shared {
+            self.optional.insert((expr, next), chain);
+        }
+        Ok(start)
+    }
+
+    /// Two chains of states: `before[i]` has written no entry yet, and
+    /// `after[i]` has, so a separator comes first. Both enter one fragment of
+    /// each item, which continues to `after[i + 1]`, and of the tail, which
+    /// continues to the last `after`. Nothing reaches `after[0]`, so it is not
+    /// built, and with an empty separator the two chains are one.
     fn ordered_subset(
         &mut self,
-        items: &[(Expr, bool)],
-        tail: Option<&Expr>,
-        separator: &Expr,
-    ) -> Result<(u32, u32), GrammarError> {
-        let before = (0..=items.len())
-            .map(|_| self.add())
-            .collect::<Result<Vec<_>, _>>()?;
-        let after = (0..=items.len())
-            .map(|_| self.add())
-            .collect::<Result<Vec<_>, _>>()?;
-        let end = self.add()?;
-        for (index, (item, required)) in items.iter().enumerate() {
-            let (start, finish) = self.build(item)?;
-            self.epsilon(before[index], start);
-            self.epsilon(finish, after[index + 1]);
-            let (start, finish) = self.build(&Expr::seq([separator.clone(), item.clone()]))?;
-            self.epsilon(after[index], start);
-            self.epsilon(finish, after[index + 1]);
-            if !required {
-                self.epsilon(before[index], before[index + 1]);
-                self.epsilon(after[index], after[index + 1]);
+        items: &'a [(Expr, bool)],
+        tail: Option<&'a Expr>,
+        separator: &'a Expr,
+        next: u32,
+    ) -> Result<u32, GrammarError> {
+        let joined = matches!(separator, Expr::Empty);
+        let mut before = self.add()?;
+        let mut after = if joined { before } else { self.add()? };
+        self.epsilon(before, next);
+        if !joined {
+            self.epsilon(after, next);
+        }
+        if let Some(tail) = tail {
+            let start = self.build(tail, after)?;
+            self.epsilon(before, start);
+            if !joined {
+                let separated = self.build(separator, start)?;
+                self.epsilon(after, separated);
             }
         }
-        let last = items.len();
-        self.epsilon(before[last], end);
-        self.epsilon(after[last], end);
-        if let Some(tail) = tail {
-            let (start, finish) = self.build(tail)?;
-            self.epsilon(before[last], start);
-            self.epsilon(finish, after[last]);
-            let (start, finish) = self.build(&Expr::seq([separator.clone(), tail.clone()]))?;
-            self.epsilon(after[last], start);
-            self.epsilon(finish, after[last]);
+        for (index, (item, required)) in items.iter().enumerate().rev() {
+            let start = self.build(item, after)?;
+            let item_before = self.add()?;
+            self.epsilon(item_before, start);
+            if !required {
+                self.epsilon(item_before, before);
+            }
+            let item_after = if joined || index == 0 {
+                item_before
+            } else {
+                let item_after = self.add()?;
+                let separated = self.build(separator, start)?;
+                self.epsilon(item_after, separated);
+                if !required {
+                    self.epsilon(item_after, after);
+                }
+                item_after
+            };
+            before = item_before;
+            after = item_after;
         }
-        Ok((before[0], end))
+        Ok(before)
     }
 
     /// UTF-8 text that never contains one of the `avoid` markers, and, with
@@ -825,7 +880,8 @@ impl NfaBuilder<'_> {
         &mut self,
         avoid: &[Vec<u8>],
         end_marker: Option<&[u8]>,
-    ) -> Result<(u32, u32), GrammarError> {
+        next: u32,
+    ) -> Result<u32, GrammarError> {
         let markers: Vec<&[u8]> = avoid.iter().map(Vec::as_slice).chain(end_marker).collect();
         if markers.is_empty() || markers.iter().any(|marker| marker.is_empty()) || markers.len() > 4
         {
@@ -849,7 +905,7 @@ impl NfaBuilder<'_> {
                 matched = failures[index][matched - 1];
             }
         };
-        let end = self.add()?;
+        let end = next;
         let mut ids: HashMap<(Utf8State, Vec<usize>), u32> = HashMap::new();
         let first = (Utf8State::Boundary, vec![0_usize; markers.len()]);
         let start = self.add()?;
@@ -907,7 +963,7 @@ impl NfaBuilder<'_> {
                 self.states[from as usize].bytes.push((lo, hi, id));
             }
         }
-        Ok((start, end))
+        Ok(start)
     }
 }
 
@@ -1269,5 +1325,313 @@ mod tests {
         );
         let automaton = Automaton::compile(&builder.finish(nested).unwrap()).unwrap();
         assert!(automaton.has_calls());
+    }
+
+    type Words = std::collections::BTreeSet<Vec<u8>>;
+
+    const ALPHABET: &[u8] = b"abc";
+
+    /// Every word over `ALPHABET` of at most `limit` bytes.
+    fn every_word(limit: usize) -> Vec<Vec<u8>> {
+        let mut words = vec![Vec::new()];
+        let mut index = 0;
+        while index < words.len() {
+            if words[index].len() < limit {
+                for &byte in ALPHABET {
+                    words.push([words[index].as_slice(), &[byte]].concat());
+                }
+            }
+            index += 1;
+        }
+        words
+    }
+
+    fn concat(left: &Words, right: &Words, limit: usize) -> Words {
+        let mut words = Words::new();
+        for left in left {
+            for right in right
+                .iter()
+                .filter(|right| left.len() + right.len() <= limit)
+            {
+                words.insert([left.as_slice(), right].concat());
+            }
+        }
+        words
+    }
+
+    /// `start` followed by any number of `step`.
+    fn star(start: Words, step: &Words, limit: usize) -> Words {
+        let mut words = start;
+        loop {
+            let count = words.len();
+            let more = concat(&words, step, limit);
+            words.extend(more);
+            if words.len() == count {
+                return words;
+            }
+        }
+    }
+
+    fn position(word: &[u8], marker: &[u8]) -> Option<usize> {
+        word.windows(marker.len())
+            .position(|window| window == marker)
+    }
+
+    /// The words of at most `limit` bytes that `expr` matches, as its
+    /// documentation defines them.
+    fn words(expr: &Expr, rules: &[Expr], limit: usize) -> Words {
+        let empty = || Words::from([Vec::new()]);
+        match expr {
+            Expr::Empty => empty(),
+            Expr::Nothing => Words::new(),
+            Expr::Literal(bytes) => Words::from_iter((bytes.len() <= limit).then(|| bytes.clone())),
+            Expr::Class(class) => (0..=127_u8)
+                .filter(|&byte| limit > 0 && class.contains(u32::from(byte)))
+                .map(|byte| vec![byte])
+                .collect(),
+            Expr::Seq(items) => items.iter().fold(empty(), |words_so_far, item| {
+                concat(&words_so_far, &words(item, rules, limit), limit)
+            }),
+            Expr::Alt(items) => items
+                .iter()
+                .flat_map(|item| words(item, rules, limit))
+                .collect(),
+            Expr::Repeat { expr, min, max } => {
+                let one = words(expr, rules, limit);
+                let mut exact = empty();
+                for _ in 0..*min {
+                    exact = concat(&exact, &one, limit);
+                }
+                match max {
+                    None => star(exact, &one, limit),
+                    Some(max) => {
+                        let mut all = exact.clone();
+                        for _ in *min..*max {
+                            exact = concat(&exact, &one, limit);
+                            all.extend(exact.iter().cloned());
+                        }
+                        all
+                    }
+                }
+            }
+            Expr::Rule(id) => words(&rules[id.0 as usize], rules, limit),
+            Expr::TextExcluding(markers) => every_word(limit)
+                .into_iter()
+                .filter(|word| {
+                    markers
+                        .iter()
+                        .all(|marker| position(word, marker).is_none())
+                })
+                .collect(),
+            Expr::TextUntil { end, avoid } => every_word(limit)
+                .into_iter()
+                .filter(|word| {
+                    word.len() >= end.len()
+                        && position(word, end) == Some(word.len() - end.len())
+                        && avoid.iter().all(|marker| position(word, marker).is_none())
+                })
+                .collect(),
+            Expr::OrderedSubset {
+                items,
+                tail,
+                separator,
+            } => {
+                let separator = words(separator, rules, limit);
+                let mut after = match tail {
+                    None => empty(),
+                    Some(tail) => star(
+                        empty(),
+                        &concat(&separator, &words(tail, rules, limit), limit),
+                        limit,
+                    ),
+                };
+                let mut before = match tail {
+                    None => empty(),
+                    Some(tail) => {
+                        let mut words = concat(&words(tail, rules, limit), &after, limit);
+                        words.insert(Vec::new());
+                        words
+                    }
+                };
+                for (item, required) in items.iter().rev() {
+                    let item = words(item, rules, limit);
+                    let mut item_before = concat(&item, &after, limit);
+                    let mut item_after = concat(&concat(&separator, &item, limit), &after, limit);
+                    if !required {
+                        item_before.extend(before);
+                        item_after.extend(after);
+                    }
+                    before = item_before;
+                    after = item_after;
+                }
+                before
+            }
+        }
+    }
+
+    struct Random(u64);
+
+    impl Random {
+        fn below(&mut self, bound: u64) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0 % bound
+        }
+
+        fn word(&mut self, shortest: u64, longest: u64) -> Vec<u8> {
+            let length = shortest + self.below(longest - shortest + 1);
+            (0..length)
+                .map(|_| ALPHABET[self.below(ALPHABET.len() as u64) as usize])
+                .collect()
+        }
+
+        /// An expression that may refer to the rules in `rules`.
+        fn expr(&mut self, depth: u32, rules: std::ops::Range<u32>) -> Expr {
+            if depth == 0 || self.below(3) == 0 {
+                return match self.below(8) {
+                    0 => Expr::Empty,
+                    1 => Expr::Nothing,
+                    2 | 3 => Expr::Literal(self.word(0, 2)),
+                    4 => Expr::Class(CharClass::from_ranges(
+                        ALPHABET
+                            .iter()
+                            .filter(|_| self.below(2) == 0)
+                            .map(|&byte| (u32::from(byte), u32::from(byte))),
+                    )),
+                    5 if !rules.is_empty() => Expr::Rule(RuleId(
+                        rules.start + self.below(u64::from(rules.end - rules.start)) as u32,
+                    )),
+                    6 => Expr::TextExcluding(vec![self.word(1, 2)]),
+                    7 => Expr::TextUntil {
+                        end: self.word(1, 2),
+                        avoid: (0..self.below(2)).map(|_| self.word(1, 2)).collect(),
+                    },
+                    _ => Expr::Literal(self.word(1, 1)),
+                };
+            }
+            let some = |count: u64, random: &mut Self| {
+                (0..count)
+                    .map(|_| random.expr(depth - 1, rules.clone()))
+                    .collect::<Vec<_>>()
+            };
+            match self.below(6) {
+                0 => Expr::Seq(some(2 + self.below(2), self)),
+                1 => Expr::Alt(some(2 + self.below(2), self)),
+                2 => {
+                    let min = self.below(3) as u32;
+                    let max = (self.below(3) != 0).then(|| min + self.below(3) as u32);
+                    Expr::Repeat {
+                        expr: Box::new(self.expr(depth - 1, rules)),
+                        min,
+                        max,
+                    }
+                }
+                3 => {
+                    let items = some(self.below(4), self)
+                        .into_iter()
+                        .map(|item| (item, self.below(3) == 0))
+                        .collect();
+                    let tail =
+                        (self.below(2) == 0).then(|| Box::new(self.expr(depth - 1, rules.clone())));
+                    let separator = match self.below(3) {
+                        0 => Expr::Empty,
+                        1 => Expr::Literal(self.word(1, 1)),
+                        _ => self.expr(depth - 1, rules),
+                    };
+                    Expr::OrderedSubset {
+                        items,
+                        tail,
+                        separator: Box::new(separator),
+                    }
+                }
+                // Bounded runs of one leaf that continue to different
+                // states, and to the same one.
+                4 => {
+                    let leaf = self.expr(0, rules.clone());
+                    let run = |random: &mut Self| {
+                        let min = random.below(2) as u32;
+                        Expr::Repeat {
+                            expr: Box::new(leaf.clone()),
+                            min,
+                            max: Some(min + random.below(3) as u32),
+                        }
+                    };
+                    let first = run(self);
+                    let second = run(self);
+                    let between = self.expr(depth - 1, rules);
+                    if self.below(2) == 0 {
+                        Expr::Seq(vec![first, between, second])
+                    } else {
+                        Expr::Alt(vec![first, Expr::Seq(vec![between, second])])
+                    }
+                }
+                // One expression, then more of it after a separator: both
+                // copies continue to the same state.
+                _ => {
+                    let item = self.expr(depth - 1, rules.clone());
+                    let separator = self.expr(depth - 1, rules);
+                    Expr::Seq(vec![
+                        item.clone(),
+                        Expr::Repeat {
+                            expr: Box::new(Expr::Seq(vec![separator, item])),
+                            min: 0,
+                            max: None,
+                        },
+                    ])
+                }
+            }
+        }
+    }
+
+    /// Random grammars of shared rules, repetitions, ordered subsets and
+    /// marked text admit exactly the words their definitions do, so building
+    /// each use of an expression that continues to the same state once
+    /// changes no language.
+    #[test]
+    fn built_automata_match_the_definitions() {
+        const LIMIT: usize = 5;
+        let candidates = every_word(LIMIT);
+        let mut random = Random(0x9e37_79b9_7f4a_7c15);
+        let mut refused = 0;
+        for case in 0..400 {
+            let count = 1 + random.below(3) as u32;
+            let rules: Vec<Expr> = (0..count)
+                .map(|rule| random.expr(3, rule + 1..count))
+                .collect();
+            let mut builder = GrammarBuilder::new();
+            for rule in &rules {
+                builder.rule(rule.clone());
+            }
+            let grammar = builder.finish(RuleId(0)).unwrap();
+            let expected = words(&rules[0], &rules, LIMIT);
+            let automaton = match Automaton::compile(&grammar) {
+                Ok(automaton) => automaton,
+                // Some random grammars determinize past the growth budget.
+                Err(GrammarError::TooLarge(_)) => {
+                    refused += 1;
+                    continue;
+                }
+                Err(error) => {
+                    assert_eq!(
+                        error,
+                        GrammarError::invalid("the constraint matches no output"),
+                        "{case}: {rules:?}"
+                    );
+                    assert!(expected.is_empty(), "{case}: {rules:?}");
+                    continue;
+                }
+            };
+            assert!(!automaton.has_calls());
+            for word in &candidates {
+                assert_eq!(
+                    matches(&automaton, word),
+                    expected.contains(word),
+                    "{case}: {:?} in {rules:?}",
+                    String::from_utf8_lossy(word)
+                );
+            }
+        }
+        assert!(refused < 20, "{refused} of 400 grammars too large");
     }
 }

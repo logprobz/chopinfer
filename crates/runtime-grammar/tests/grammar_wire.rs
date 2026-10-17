@@ -322,19 +322,10 @@ fn decoded_grammars_compile_to_identical_masks() {
 }
 
 /// Grammars the schema compiler builds around a pattern of nested starred
-/// groups, as deep as they compile, also decode.
+/// groups, as deep as its nesting bound admits, decode, and the deepest of
+/// each shape compiles on a 2 MiB stack.
 #[test]
 fn the_depth_bound_admits_every_local_grammar_that_compiles() {
-    let vocabulary = Arc::new(
-        TokenVocabulary::new(
-            1,
-            vec![VocabularyToken {
-                bytes: b"x".to_vec(),
-                special: false,
-            }],
-        )
-        .unwrap(),
-    );
     let starred =
         json!({"type": "string", "pattern": format!("{}x{}", "(a".repeat(64), ")*".repeat(64))});
     let wraps: [fn(Value) -> Value; 3] = [
@@ -346,18 +337,26 @@ fn the_depth_bound_admits_every_local_grammar_that_compiles() {
     for wrap in wraps {
         for leaf in [json!({"type": "string"}), starred.clone()] {
             let mut schema = leaf;
+            let mut last = None;
             loop {
-                let grammar = json_schema_grammar(&schema, JsonOptions::default()).unwrap();
-                if CompiledGrammar::new(&grammar, Arc::clone(&vocabulary)).is_err() {
-                    break;
-                }
+                let grammar = match json_schema_grammar(&schema, JsonOptions::default()) {
+                    Ok(grammar) => grammar,
+                    Err(error) => {
+                        assert!(error.to_string().contains("nesting depth"), "{error}");
+                        break;
+                    }
+                };
                 assert_eq!(
                     Grammar::decode_wire(&grammar.encode_wire()).unwrap(),
                     grammar
                 );
                 deepest = deepest.max(grammar_depth(&grammar));
+                last = Some(grammar);
                 schema = wrap(schema);
             }
+            let last = last.unwrap();
+            let depth = grammar_depth(&last);
+            assert!(compiles_on_a_2_mib_stack(&last), "depth {depth}");
         }
     }
     assert!(deepest > 128, "{deepest}");

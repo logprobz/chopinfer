@@ -601,8 +601,9 @@ impl<P: FakePackage> HostServicesBackendV1 for Backend<P> {
         self.0.on_upload(stream, destination, source)
     }
     /// Gathers the rows from the package's mapped view and uploads them,
-    /// checked as the host checks them (a capturing stream is refused, since
-    /// a graph would replay rows read once) and journalled as
+    /// checked as the host checks them (refused while any stream on the
+    /// device captures, since a graph would replay rows read once) and
+    /// journalled as
     /// `gather <stream> <view> <rows> <destination> <digest>`.
     fn gather_mapped_rows(
         &self,
@@ -610,7 +611,7 @@ impl<P: FakePackage> HostServicesBackendV1 for Backend<P> {
         destination: DeviceBufferSpanV1,
         gather: MappedRowGatherV1<'_>,
     ) -> HostServiceResultV1<()> {
-        if self.0.device().capture_of(stream.slot()).is_some() {
+        if self.0.device().capturing_on_device_of(stream.slot()) {
             return Err(BundleStatusV1::InvalidState);
         }
         let table = self
@@ -625,7 +626,7 @@ impl<P: FakePackage> HostServicesBackendV1 for Backend<P> {
                 .rows
                 .iter()
                 .any(|&row| row as usize >= table.len() / row_bytes)
-            || destination.length != (gather.rows.len() * row_bytes) as u64
+            || (gather.rows.len() as u64).checked_mul(gather.row_bytes) != Some(destination.length)
         {
             return Err(BundleStatusV1::InvalidArgument);
         }
@@ -994,11 +995,17 @@ mod tests {
             host.gather_mapped_rows(stream, span, gather(0, b"rows", &[0, 1])),
             Err(BundleStatusV1::NotFound)
         );
+        // A capture on the device refuses the gather, on the capturing
+        // stream and on another stream of the device it has not joined.
+        let context = BundleContextHandleV1::from_parts(1, 1);
+        let other = host.create_stream(context, 0).unwrap();
         host.begin_graph_capture(stream).unwrap();
-        assert_eq!(
-            host.gather_mapped_rows(stream, span, gather(1, b"rows", &[3, 0])),
-            Err(BundleStatusV1::InvalidState)
-        );
+        for on in [stream, other] {
+            assert_eq!(
+                host.gather_mapped_rows(on, span, gather(1, b"rows", &[3, 0])),
+                Err(BundleStatusV1::InvalidState)
+            );
+        }
         host.device().end_capture(stream, || 99).unwrap();
         for rows in [&[4_u32, 0][..], &[0], &[]] {
             let length = rows.len() as u64 * 8;

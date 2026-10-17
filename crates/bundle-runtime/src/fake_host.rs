@@ -304,6 +304,17 @@ impl<O: JournalObserver> FakeDevice<O> {
     }
 
     /// The capture `stream` records into: its own, or the one it joined.
+    /// Whether any stream on `stream`'s device (its rank) is capturing, as
+    /// the host asks before work a graph must not hold.
+    pub fn capturing_on_device_of(&self, stream: u32) -> bool {
+        let ranks = self.stream_ranks.borrow();
+        let rank = ranks.get(&stream);
+        self.capture_starts
+            .borrow()
+            .keys()
+            .any(|capturing| *capturing == stream || ranks.get(capturing) == rank)
+    }
+
     pub fn capture_of(&self, stream: u32) -> Option<u32> {
         if self.capture_starts.borrow().contains_key(&stream) {
             return Some(stream);

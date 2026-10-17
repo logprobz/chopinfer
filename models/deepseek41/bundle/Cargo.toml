@@ -12,12 +12,21 @@ build = "src/sm120/build.rs"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
+bundle-runtime.workspace = true
 kernel-core.workspace = true
+kernels-sm120.workspace = true
 model-deepseek41-contract.workspace = true
+runtime-bundle-abi.workspace = true
+runtime-bundle-sdk.workspace = true
 
 [build-dependencies]
 kernel-build.workspace = true
+kernels-sm120.workspace = true
 model-deepseek41-contract.workspace = true
+
+[dev-dependencies]
+bundle-runtime = { workspace = true, features = ["test-support"] }
+serde_json.workspace = true
 
 [lints]
 workspace = true

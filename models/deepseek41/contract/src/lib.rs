@@ -9,6 +9,8 @@ pub mod projections;
 pub mod structure;
 
 pub mod own_ops;
+pub mod serving;
+pub mod state;
 
 /// The model's one bundle ID. Every rank count it supports is a topology of
 /// this bundle, never a bundle ID of its own.

@@ -130,9 +130,14 @@ dependencies = [
 name = "bundle-deepseek41"
 version = "0.1.0-alpha.3"
 dependencies = [
+ "bundle-runtime",
  "kernel-build",
  "kernel-core",
+ "kernels-sm120",
  "model-deepseek41-contract",
+ "runtime-bundle-abi",
+ "runtime-bundle-sdk",
+ "serde_json",
 ]
 
 [[package]]
@@ -733,6 +738,7 @@ dependencies = [
 name = "model-deepseek41-contract"
 version = "0.1.0-alpha.3"
 dependencies = [
+ "bundle-runtime",
  "kernel-core",
  "model-compiler-sdk",
  "projection-spec",

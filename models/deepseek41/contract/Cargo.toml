@@ -7,6 +7,7 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+bundle-runtime.workspace = true
 kernel-core = { workspace = true, features = ["precision-serde"] }
 model-compiler-sdk.workspace = true
 projection-spec.workspace = true

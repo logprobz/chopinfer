@@ -1,0 +1,22 @@
+# Model inventory, checked by tests/bundle-boundary.sh (tests/model_inventory.py).
+# Each role is the crate in the directory of that name. List every bin and
+# cdylib target exactly; libraries are not listed.
+schema = "chopinfer-model-inventory-v1"
+# CPU CI reads CHOPINFER_DEEPSEEK_CHECKPOINT: deepseek-ai/DeepSeek-V4.1-Flash-1017
+# at revision 1bae0e1088993b9b82de08f59de5be5a34e42170 (checkpoint-files.json).
+checkpoint_env = "DEEPSEEK"
+
+[bundle]
+package = "bundle-deepseek41"
+cdylib = ["bundle_deepseek41"]
+
+[compiler]
+package = "model-deepseek41"
+
+[contract]
+package = "model-deepseek41-contract"
+
+# Not released until it passes its full qualification through the release
+# preview.
+[release]
+enabled = false

@@ -127,6 +127,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bundle-deepseek41"
+version = "0.1.0-alpha.3"
+dependencies = [
+ "kernel-build",
+ "model-deepseek41-contract",
+]
+
+[[package]]
 name = "bundle-glm5next"
 version = "0.1.0-alpha.3"
 dependencies = [
@@ -701,6 +709,26 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "model-deepseek41"
+version = "0.1.0-alpha.3"
+dependencies = [
+ "model-deepseek41-contract",
+]
+
+[[package]]
+name = "model-deepseek41-contract"
+version = "0.1.0-alpha.3"
+
+[[package]]
+name = "model-deepseek41-lab"
+version = "0.1.0-alpha.3"
+dependencies = [
+ "kernel-core",
+ "kernel-harness",
+ "model-deepseek41-contract",
 ]
 
 [[package]]

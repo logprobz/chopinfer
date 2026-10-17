@@ -1,0 +1,28 @@
+[package]
+name = "model-deepseek41-lab"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# The model's kernel GPU correctness tests, on the model-free kernel harness
+# (`kernel_harness::{poison, conformance, encoder, kit}`), with the bundle's
+# own `kernels.lock.d` cubins. Not a default workspace member: its tests link
+# the CUDA driver. It never depends on kernel-lab. Run it explicitly
+# (`cargo test -p model-deepseek41-lab --test sm120`); GPU tests run only
+# when CHOPINFER_KERNEL_GPU or CHOPINFER_KERNEL_GPUS names idle GPUs.
+
+[dev-dependencies]
+kernel-core.workspace = true
+kernel-harness.workspace = true
+model-deepseek41-contract.workspace = true
+
+# Tests that name SM120 items live under tests/sm120: one file per engine or
+# own op, each a module of main.rs.
+[[test]]
+name = "sm120"
+path = "tests/sm120/main.rs"
+
+[lints]
+workspace = true

@@ -1,0 +1,22 @@
+//! DeepSeek V4.1 Flash (`deepseek41`) declarations shared by the compiler,
+//! the bundle and the kernel test crate: the `deepseek41.v1` serving
+//! contract, its topologies, geometry and projection declarations.
+#![forbid(unsafe_code)]
+
+/// The model's one bundle ID. Every rank count it supports is a topology of
+/// this bundle, never a bundle ID of its own.
+pub const BUNDLE_ID: &str = "deepseek41.v1";
+
+/// The production topology: the flash geometry at four ranks.
+pub const FLASH_TP4_TOPOLOGY: &str = "deepseek41-flash-tp4";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn topologies_belong_to_the_one_bundle() {
+        assert_eq!(BUNDLE_ID, "deepseek41.v1");
+        assert!(FLASH_TP4_TOPOLOGY.starts_with("deepseek41-"));
+    }
+}

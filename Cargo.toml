@@ -19,6 +19,9 @@ members = [
     "models/*/bundle",
     "models/*/compiler",
     "models/*/contract",
+    # A model's kernel test crate links the CUDA driver through its tests:
+    # a member, so its graph is checked, but never a default member.
+    "models/*/lab",
     "crates/runtime-bundle",
     "crates/runtime-bundle-abi",
     "crates/runtime-bundle-sdk",
@@ -45,6 +48,50 @@ members = [
     "crates/chopinfer-top",
     "tools/load-proto",
 ]
+# Every member but the models' kernel test crates (tests/bundle-boundary.sh
+# checks this list against `members`).
+default-members = [
+    "crates/kernel-build",
+    "crates/kernel-core",
+    "crates/kernel-harness",
+    "crates/kernel-lab",
+    "crates/kernel-lab/families",
+    "crates/kernels-sm120",
+    "crates/bundle-tp4-fixture",
+    "crates/bundle-recurrent-fixture",
+    "crates/bundle-runtime",
+    "crates/encoder-spec",
+    "crates/projection-spec",
+    "crates/model-compiler-sdk",
+    "crates/frontend-format",
+    "models/*/bundle",
+    "models/*/compiler",
+    "models/*/contract",
+    "crates/runtime-bundle",
+    "crates/runtime-bundle-abi",
+    "crates/runtime-bundle-sdk",
+    "crates/runtime-cuda",
+    "crates/runtime-engine",
+    "crates/runtime-eval",
+    "crates/runtime-frontend-contract",
+    "crates/runtime-frontend",
+    "crates/runtime-grammar",
+    "crates/runtime-host",
+    "crates/runtime-kernel-contract",
+    "crates/runtime-kernels",
+    "crates/runtime-kv",
+    "crates/runtime-media",
+    "crates/runtime-model-api",
+    "crates/runtime-sampling",
+    "crates/runtime-scheduler",
+    "crates/runtime-server",
+    "crates/runtime-tokenizer",
+    "crates/runtime-conformance",
+    "crates/runtime-weights",
+    "crates/xtask",
+    "crates/chopinfer-top",
+    "tools/load-proto",
+]
 resolver = "3"
 
 [workspace.package]
@@ -66,6 +113,7 @@ projection-spec = { path = "crates/projection-spec" }
 model-compiler-sdk = { path = "crates/model-compiler-sdk" }
 model-qwen38-contract = { path = "models/qwen38/contract" }
 model-glm5next-contract = { path = "models/glm5next/contract" }
+model-deepseek41-contract = { path = "models/deepseek41/contract" }
 model-mimo26-contract = { path = "models/mimo26/contract" }
 model-mimo26 = { path = "models/mimo26/compiler" }
 kernel-build = { path = "crates/kernel-build" }

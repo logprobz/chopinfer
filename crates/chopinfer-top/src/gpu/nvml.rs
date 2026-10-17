@@ -11,8 +11,11 @@ use super::{Activity, Device, Reading, Reasons};
 const LIBRARY: &CStr = c"libnvidia-ml.so.1";
 
 const SUCCESS: c_int = 0;
+const ERROR_NO_PERMISSION: c_int = 4;
+const ERROR_NOT_FOUND: c_int = 6;
 const ERROR_INSUFFICIENT_SIZE: c_int = 7;
 const ERROR_GPU_IS_LOST: c_int = 15;
+const ERROR_GPU_NOT_FOUND: c_int = 28;
 /// `NVML_VALUE_NOT_AVAILABLE` as an unsigned long long.
 const NOT_AVAILABLE: c_ulonglong = c_ulonglong::MAX;
 
@@ -340,10 +343,31 @@ fn text(buffer: &[c_char]) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
-/// NVML, initialized, with a handle for each GPU.
+/// What a failed handle lookup says about a GPU.
+fn problem(code: c_int) -> String {
+    match code {
+        ERROR_NO_PERMISSION => "no permission".to_owned(),
+        ERROR_GPU_IS_LOST => "lost or off the bus".to_owned(),
+        ERROR_NOT_FOUND | ERROR_GPU_NOT_FOUND => "not found".to_owned(),
+        code => format!("NVML status {code}"),
+    }
+}
+
+/// The reading of a GPU whose handle did not open with status `code`: lost
+/// only when NVML says so, and otherwise unread, which changes nothing.
+fn unopened(at: f64, code: c_int) -> Reading {
+    Reading {
+        at,
+        lost: code == ERROR_GPU_IS_LOST,
+        ..Reading::default()
+    }
+}
+
+/// NVML, initialized, with a handle for each GPU, or the status its lookup
+/// failed with: a GPU this user may not open is counted all the same.
 pub struct Nvml {
     api: Api,
-    handles: Vec<Handle>,
+    handles: Vec<Result<Handle, c_int>>,
     // Dropped after `Drop::drop` shuts NVML down.
     _library: Library,
 }
@@ -366,11 +390,12 @@ impl Nvml {
         let mut handles = Vec::new();
         for index in 0..count {
             let mut handle = std::ptr::null_mut();
-            if (api.by_index)(index, &mut handle) == SUCCESS {
-                handles.push(handle);
+            let code = (api.by_index)(index, &mut handle);
+            handles.push(if code == SUCCESS && !handle.is_null() {
+                Ok(handle)
             } else {
-                handles.push(std::ptr::null_mut());
-            }
+                Err(code)
+            });
         }
         Ok(Self {
             api,
@@ -417,14 +442,17 @@ impl Nvml {
 
     /// What does not change about GPU `index`.
     pub fn device(&self, index: usize) -> Device {
-        let handle = self.handles[index];
-        if handle.is_null() {
-            return Device {
-                index: index as u32,
-                name: "GPU".to_owned(),
-                ..Device::default()
-            };
-        }
+        let handle = match self.handles[index] {
+            Ok(handle) => handle,
+            Err(code) => {
+                return Device {
+                    index: index as u32,
+                    name: "GPU".to_owned(),
+                    unreadable: Some(problem(code)),
+                    ..Device::default()
+                };
+            }
+        };
         let mut statuses = Statuses::default();
         let name = self.api.name.and_then(|name| {
             let mut buffer = [0 as c_char; NAME_BUFFER];
@@ -472,6 +500,7 @@ impl Nvml {
             temperature_limit,
             ecc,
             gpm,
+            unreadable: None,
         }
     }
 
@@ -558,15 +587,11 @@ impl Nvml {
     /// errors (and the thermal margin of a GPU without a threshold), are
     /// made only when `slow`; the poller does so every few polls.
     pub fn read(&self, index: usize, device: &Device, at: f64, slow: bool) -> Reading {
-        let handle = self.handles[index];
+        let handle = match self.handles[index] {
+            Ok(handle) => handle,
+            Err(code) => return unopened(at, code),
+        };
         let mut statuses = Statuses::default();
-        if handle.is_null() {
-            return Reading {
-                at,
-                lost: true,
-                ..Reading::default()
-            };
-        }
         let temperature = self.temperature(handle, &mut statuses);
         let headroom = match (device.temperature_limit, temperature) {
             (Some(limit), Some(temperature)) => Some(limit - temperature),
@@ -646,12 +671,12 @@ impl Nvml {
 
     /// Takes GPM sample `sample` of GPU `index`.
     pub fn take(&self, index: usize, sample: &mut Sample<'_>) -> bool {
-        let handle = self.handles[index];
-        !handle.is_null()
-            && self
-                .api
-                .gpm_sample
-                .is_some_and(|take| take(handle, sample.raw) == SUCCESS)
+        let Ok(handle) = self.handles[index] else {
+            return false;
+        };
+        self.api
+            .gpm_sample
+            .is_some_and(|take| take(handle, sample.raw) == SUCCESS)
     }
 
     /// The GPM figures between two samples of one GPU, `earlier` first.
@@ -740,6 +765,18 @@ mod tests {
             .err()
             .unwrap();
         assert!(error.contains("could not be loaded"), "{error}");
+    }
+
+    #[test]
+    fn only_a_lost_gpu_reads_as_lost_when_its_handle_does_not_open() {
+        let denied = unopened(1.0, ERROR_NO_PERMISSION);
+        assert!(!denied.lost && !denied.answered);
+        assert_eq!(problem(ERROR_NO_PERMISSION), "no permission");
+        let lost = unopened(1.0, ERROR_GPU_IS_LOST);
+        assert!(lost.lost && !lost.answered);
+        assert_eq!(problem(ERROR_GPU_IS_LOST), "lost or off the bus");
+        assert_eq!(problem(ERROR_GPU_NOT_FOUND), "not found");
+        assert_eq!(problem(999), "NVML status 999");
     }
 
     #[test]

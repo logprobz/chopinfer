@@ -330,7 +330,9 @@ Each change is one event in the log: GPUs found or not read, a thermal or
 hardware slowdown starting or ending, headroom under 5 C (again only once it
 has been back to 10 C), uncorrected ECC errors rising, a GPU no longer
 answering NVML, and a process that is no instance holding memory on a GPU
-beside one, once per pid.
+beside one, once per pid. A GPU stays lost until a query of it answers again; a poll
+where every query fails changes nothing. A GPU that NVML lists but will not
+open for this user shows why (such as no permission) and is not lost.
 
 GPM counters (Hopper and newer) are sampled only while the GPU view is open;
 `--no-gpu-counters` stops them, and `--no-gpus` stops GPU reading. Their

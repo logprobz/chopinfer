@@ -302,7 +302,8 @@ fn gpu_document(registry: &Registry, gpus: &Gpus) -> Value {
                 "ecc": device.ecc,
                 "ecc_uncorrected": reading.and_then(|r| r.ecc_uncorrected),
                 "gpm": device.gpm,
-                "lost": reading.is_some_and(|r| r.lost),
+                "lost": gpus.lost(index),
+                "unreadable": device.unreadable,
                 "processes": processes,
             })
         })
@@ -470,6 +471,7 @@ mod tests {
                     temperature_limit: Some(92),
                     ecc: Some(false),
                     gpm: true,
+                    unreadable: None,
                 }],
             },
             &mut registry,

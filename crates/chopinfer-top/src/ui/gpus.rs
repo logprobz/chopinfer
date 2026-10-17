@@ -206,7 +206,9 @@ fn crumbs(app: &App, width: u16) -> Vec<(String, Style)> {
             Style::fg(Color::Yellow).bold(),
         ));
     }
-    let lost = latest.iter().filter(|reading| reading.lost).count();
+    let lost = (0..gpus.devices.len())
+        .filter(|index| gpus.lost(*index))
+        .count();
     if lost > 0 {
         crumbs.push(piece(
             format!("  {lost} lost"),
@@ -385,11 +387,13 @@ fn row(buffer: &mut Buffer, app: &App, index: usize, y: u16, (shown, spark): (&[
     }
     let plain = Style::PLAIN;
     let latest = history.latest();
+    // A lost GPU's averages would still show the polls before it was lost.
+    let lost = gpus.lost(index);
+    let recent = |field: Field| history.recent(field).filter(|_| !lost);
     let number = |value: Option<String>, style: Style| {
         value.map_or_else(|| piece("-", dim()), |text| (text, style))
     };
-    let shares =
-        |field: Field| number(history.recent(field).map(|value| share(Some(value))), plain);
+    let shares = |field: Field| number(recent(field).map(|value| share(Some(value))), plain);
     let processes = gpus.processes(index, &app.registry.instances);
     let instance = match instance_on(app, index) {
         Some(instance) => {
@@ -402,9 +406,12 @@ fn row(buffer: &mut Buffer, app: &App, index: usize, y: u16, (shown, spark): (&[
             };
             (text, Style::fg(Color::White).bold())
         }
-        None if latest.is_some_and(|reading| reading.lost) => {
-            piece("lost: no NVML answer", Style::fg(Color::Red))
-        }
+        None if lost => piece("lost: no answer", Style::fg(Color::Red)),
+        // Why NVML gave no handle: no permission, not found.
+        None if device.unreadable.is_some() => piece(
+            device.unreadable.as_deref().unwrap_or_default(),
+            Style::fg(Color::Yellow),
+        ),
         None if !processes.is_empty() => piece(
             format!(
                 "{} process{}",
@@ -431,7 +438,7 @@ fn row(buffer: &mut Buffer, app: &App, index: usize, y: u16, (shown, spark): (&[
             plain,
         ),
         number(
-            history.recent(|reading| reading.power).map(|watts| {
+            recent(|reading| reading.power).map(|watts| {
                 match latest.and_then(|reading| reading.power_limit) {
                     Some(limit) => format!("{watts:.0}/{limit:.0}W"),
                     None => format!("{watts:.0}W"),

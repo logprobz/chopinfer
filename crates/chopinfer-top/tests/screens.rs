@@ -279,6 +279,7 @@ fn with_gpus(app: &mut App, counters: bool) {
         temperature_limit: Some(92),
         ecc: Some(false),
         gpm: true,
+        unreadable: None,
     };
     gpus.apply(
         Report::Opened {
@@ -522,6 +523,82 @@ fn an_instance_names_its_gpus_and_they_lead_back_to_it() {
     assert_eq!((app.view, app.gpu), (View::Gpus, 0));
     press(&mut app, KeyCode::Char('g'));
     assert_eq!(app.view, View::Detail);
+}
+
+#[test]
+fn a_lost_gpu_stays_lost_on_screen_and_in_json_until_it_answers() {
+    use chopinfer_top::listing;
+    let mut app = fleet();
+    with_gpus(&mut app, true);
+    app.view = View::Gpus;
+    let answered = (0..4)
+        .map(|index| app.gpus.latest(index).unwrap().clone())
+        .collect::<Vec<_>>();
+    let with_gpu_one = |reading: Reading| {
+        let mut readings = answered.clone();
+        readings[1] = reading;
+        Report::Polled(readings)
+    };
+    let lost = Reading {
+        lost: true,
+        ..Reading::default()
+    };
+    // Every query failed, none as lost.
+    let silent = Reading::default();
+    for (at, report, still_lost) in [
+        (NOW + 1.0, with_gpu_one(lost), true),
+        (NOW + 2.0, with_gpu_one(silent), true),
+        (NOW + 3.0, with_gpu_one(answered[1].clone()), false),
+    ] {
+        app.gpus.apply(report, &mut app.registry, at);
+        let screen = ui::draw(&app, 132, 38, at).text();
+        assert_eq!(
+            screen.lines().next().unwrap().contains("1 lost"),
+            still_lost,
+            "{screen}"
+        );
+        assert_eq!(screen.contains("lost: no answer"), still_lost, "{screen}");
+        let document = listing::document(&app.registry, &app.gpus, at);
+        assert_eq!(
+            document["gpus"]["devices"][1]["lost"], still_lost,
+            "at {at}"
+        );
+    }
+    // A GPU this user may not open is unread, not lost.
+    let mut gpus = Gpus::new(Status::Opening, true, 1.0);
+    gpus.apply(
+        Report::Opened {
+            driver: None,
+            devices: vec![Device {
+                unreadable: Some("no permission".to_owned()),
+                ..Device::default()
+            }],
+        },
+        &mut app.registry,
+        NOW,
+    );
+    gpus.apply(
+        Report::Polled(vec![Reading::default()]),
+        &mut app.registry,
+        NOW,
+    );
+    app.gpus = gpus;
+    app.gpu = 0;
+    let screen = ui::draw(&app, 132, 38, NOW).text();
+    // Neither the header nor its row says lost; the event log still
+    // holds GPU 1's from above.
+    let row = screen
+        .lines()
+        .find(|line| line.contains("no permission"))
+        .unwrap_or_else(|| panic!("{screen}"));
+    assert!(!row.contains("lost"), "{screen}");
+    assert!(!screen.lines().next().unwrap().contains("lost"), "{screen}");
+    let document = listing::document(&app.registry, &app.gpus, NOW);
+    assert_eq!(document["gpus"]["devices"][0]["lost"], false);
+    assert_eq!(
+        document["gpus"]["devices"][0]["unreadable"],
+        "no permission"
+    );
 }
 
 #[test]

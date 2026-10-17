@@ -35,6 +35,9 @@ pub struct Device {
     pub ecc: Option<bool>,
     /// Whether GPM counters can be read: Hopper and newer.
     pub gpm: bool,
+    /// Why NVML gave no handle for it, such as no permission; `None` when
+    /// it opened.
+    pub unreadable: Option<String>,
 }
 
 impl Device {
@@ -526,6 +529,12 @@ impl Gpus {
         self.histories.get(index).and_then(History::latest)
     }
 
+    /// Whether GPU `index` is lost: it said so and has not answered since.
+    /// A poll where every query failed leaves this as it was.
+    pub fn lost(&self, index: usize) -> bool {
+        self.watches.get(index).is_some_and(|watch| watch.lost)
+    }
+
     /// Whether any GPU can give GPM figures.
     pub fn gpm(&self) -> bool {
         self.devices.iter().any(|device| device.gpm)
@@ -887,13 +896,14 @@ mod tests {
             answered,
             ..Reading::default()
         };
-        for (at, reading) in [
-            (1.0, reading(true, false)),
-            // Every query failed, but not as lost: no news.
-            (2.0, reading(false, false)),
-            (3.0, reading(false, true)),
+        for (at, reading, lost) in [
+            (1.0, reading(true, false), true),
+            // Every query failed, but not as lost: no news, still lost.
+            (2.0, reading(false, false), true),
+            (3.0, reading(false, true), false),
         ] {
             gpus.apply(Report::Polled(vec![reading]), &mut registry, at);
+            assert_eq!(gpus.lost(0), lost, "at {at}");
         }
         let events = registry
             .events
@@ -908,6 +918,27 @@ mod tests {
                 (3.0, "answering NVML again"),
             ]
         );
+    }
+
+    #[test]
+    fn a_gpu_this_user_may_not_open_is_not_lost() {
+        let mut registry = Registry::new(1.0);
+        let mut gpus = Gpus::new(Status::Opening, true, 1.0);
+        gpus.apply(
+            Report::Opened {
+                driver: None,
+                devices: vec![Device {
+                    unreadable: Some("no permission".into()),
+                    ..Device::default()
+                }],
+            },
+            &mut registry,
+            0.0,
+        );
+        // What the poller reads for it: no handle, nothing answered.
+        gpus.apply(Report::Polled(vec![Reading::default()]), &mut registry, 1.0);
+        assert!(!gpus.lost(0));
+        assert_eq!(registry.events.len(), 1, "{:?}", registry.events);
     }
 
     #[test]

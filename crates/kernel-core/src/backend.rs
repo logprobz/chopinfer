@@ -73,7 +73,9 @@ use crate::recurrent::{ConvBuffers, DeltaRuleBuffers, GatedNormBuffers};
 use crate::rmsnorm::{RmsNormBuffers, RmsNormRequirement};
 use crate::rope_kv::{RingWriteBuffers, RingWriteOp, RopeBuffers, RopeKvBuffers, RopeKvOp, RopeOp};
 use crate::router::{RowBiasRouteBuffers, RowBiasRouterBuffers, RowBiasRouterQuery};
-use crate::row_copy::{ColumnSlice, RowCopyBuffers, StreamBroadcast};
+use crate::row_copy::{
+    ColumnSlice, GatherByIndex, GatherByIndexBuffers, RowCopyBuffers, StreamBroadcast,
+};
 use crate::rows::{
     ArgmaxFinalBuffers, ArgmaxPartialBuffers, BottleneckBuffers, EmbeddingBuffers,
     GroupedNormBuffers, InjectBuffers, LogitsBuffers, MixBuffers, NgramBuffers, PleGateBuffers,
@@ -1782,8 +1784,9 @@ pub trait Backend: Send + Sync {
         Err(Refused::Unsupported)
     }
 
-    // Row copies: the stream broadcast and the column slice
-    // (`crate::row_copy`), which move element bytes and compute nothing.
+    // Row copies: the stream broadcast, the column slice and the gather by
+    // index (`crate::row_copy`), which move element bytes and compute
+    // nothing.
 
     /// Each live row copied into every stream.
     ///
@@ -1809,6 +1812,22 @@ pub trait Backend: Send + Sync {
         op: &ColumnSlice,
         need: Need,
     ) -> Result<Prepared<RowCopyBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
+    /// The source row each row index names, for the first `count` rows.
+    ///
+    /// Launches gather at most `Counts::rows` rows and grid
+    /// `Counts::padded_rows` rows when it is nonzero (a step that pads its
+    /// grid to a row bucket), else `Counts::rows`; the host keeps the device
+    /// count at most `Counts::rows`, every index of a gathered row below the
+    /// source's rows, and binds every view at the op's `alignment_bytes`.
+    fn gather_by_index(
+        &self,
+        op: &GatherByIndex,
+        need: Need,
+    ) -> Result<Prepared<GatherByIndexBuffers<View>>, Refused> {
         let _ = (op, need);
         Err(Refused::Unsupported)
     }
@@ -2437,6 +2456,14 @@ mod tests {
                 width: 288,
                 stride: 320,
                 offset: 0,
+                alignment_bytes: 16,
+            },
+            Need::rows(4),
+        );
+        gather_by_index: Empty.gather_by_index(
+            &GatherByIndex {
+                dtype: DType::Bf16,
+                width: 256,
                 alignment_bytes: 16,
             },
             Need::rows(4),

@@ -2,7 +2,9 @@
 //! nothing. The stream broadcast ([`StreamBroadcast`]) copies each row into
 //! every stream of a `[rows, streams, width]` destination; the column slice
 //! ([`ColumnSlice`]) copies `width` columns from `offset` of each source
-//! row of `stride` elements into a dense `[rows, width]` destination.
+//! row of `stride` elements into a dense `[rows, width]` destination; the
+//! gather by index ([`GatherByIndex`]) copies the source row each U32 row
+//! index names into a dense `[rows, width]` destination.
 //!
 //! Every field of the contracts is math: the element type, whose bytes are
 //! copied without numeric interpretation (a NaN or a negative zero keeps
@@ -11,11 +13,13 @@
 //! grids, the word size it copies in) is its own choice, and every choice
 //! writes the same bytes.
 //!
-//! Both ops read `live_rows`, the device count of live rows: they write the
-//! destination elements of the live rows and leave every other destination
-//! byte as it was, so rows past the live count and, for a slice, nothing
-//! past each row's `width` columns change. Source and destination do not
-//! overlap. The oracles are [`broadcast_streams`] and [`column_slice`].
+//! The broadcast and the slice read `live_rows`, the device count of live
+//! rows, and the gather `count`, the device count of rows it gathers: each
+//! writes the destination elements of those rows and leaves every other
+//! destination byte as it was, so rows past the count and, for a slice,
+//! nothing past each row's `width` columns change. Source and destination
+//! do not overlap. The oracles are [`broadcast_streams`], [`column_slice`]
+//! and [`gather_by_index`].
 //!
 //! Each contract states `alignment_bytes`, a power of two, which the host
 //! guarantees: it binds the source and destination views at multiples of
@@ -227,6 +231,82 @@ pub fn column_slice(
     Ok(())
 }
 
+/// Source row `row_indices[r]` of `width` elements copied into destination
+/// row `r` (`[source rows, width]` into `[rows, width]`). The host keeps
+/// every index of a gathered row below the source's rows; the source's row
+/// count is the host's, not the contract's.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct GatherByIndex {
+    pub dtype: DType,
+    pub width: u32,
+    /// The alignment of every view the host binds, in bytes.
+    pub alignment_bytes: u32,
+}
+
+impl GatherByIndex {
+    /// The bytes of one source or destination row.
+    pub fn row_bytes(&self) -> Result<u64, Refusal> {
+        row_bytes(self.dtype, self.width, 1)
+    }
+
+    /// The bytes `rows` gathered rows write over.
+    pub fn destination_bytes(&self, rows: u32) -> Result<u64, Refusal> {
+        rows_bytes(self.row_bytes(), rows)
+    }
+}
+
+impl Validate for GatherByIndex {
+    fn validate(&self) -> Result<(), Refusal> {
+        if self.width == 0 {
+            return Err(Refusal("a gather by index needs columns"));
+        }
+        check_alignment(self.alignment_bytes)?;
+        self.row_bytes().map(|_| ())
+    }
+}
+
+crate::scratch_record! {
+    /// A gather by index's buffers: the `source` rows, the U32
+    /// `row_indices` (one per gathered row), `count`, the device U32 count
+    /// of rows it gathers, which the host keeps at most the launch's rows,
+    /// and the dense `destination` rows it writes.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct GatherByIndexBuffers {
+        pub source: value,
+        pub row_indices: value,
+        pub count: value,
+        pub destination: value,
+    }
+}
+
+/// The gather of `op` over `count` rows of `source` by `row_indices` into
+/// `destination`, whose other bytes it leaves. An index past `source`'s
+/// rows is refused: the host never binds one.
+pub fn gather_by_index(
+    op: &GatherByIndex,
+    source: &[u8],
+    row_indices: &[u32],
+    count: u32,
+    destination: &mut [u8],
+) -> Result<(), Refusal> {
+    op.validate()?;
+    let row = op.row_bytes()? as usize;
+    let indices = row_indices
+        .get(..count as usize)
+        .ok_or(Refusal("a gather by index has fewer row indices than rows"))?;
+    if (destination.len() as u64) < op.destination_bytes(count)? {
+        return Err(Refusal("row copy buffers do not hold the live rows"));
+    }
+    for (r, &index) in indices.iter().enumerate() {
+        let from = (index as usize)
+            .checked_mul(row)
+            .and_then(|at| source.get(at..at + row))
+            .ok_or(Refusal("a gather index is past its source rows"))?;
+        destination[r * row..(r + 1) * row].copy_from_slice(from);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -383,5 +463,58 @@ mod tests {
         assert_eq!(&again[..], &destination[..8]);
         assert!(column_slice(&op, &short[..19], &mut again, 2).is_err());
         assert!(column_slice(&op, &source, &mut [0; 7], 2).is_err());
+    }
+
+    #[test]
+    fn the_gather_checks_its_math_only() {
+        let op = GatherByIndex {
+            dtype: DType::Bf16,
+            width: 3,
+            alignment_bytes: 2,
+        };
+        assert_eq!(op.validate(), Ok(()));
+        assert_eq!(op.destination_bytes(4), Ok(24));
+        for wrong in [
+            GatherByIndex { width: 0, ..op },
+            GatherByIndex {
+                dtype: DType::Fp4E2M1,
+                ..op
+            },
+            GatherByIndex {
+                alignment_bytes: 6,
+                ..op
+            },
+        ] {
+            assert!(wrong.validate().is_err(), "{wrong:?}");
+        }
+        let huge = GatherByIndex {
+            dtype: DType::I64,
+            width: u32::MAX,
+            alignment_bytes: 16,
+        };
+        assert_eq!(huge.validate(), Ok(()));
+        assert!(huge.destination_bytes(u32::MAX).is_err());
+    }
+
+    #[test]
+    fn the_gather_oracle_copies_the_indexed_rows_in_order() {
+        let op = GatherByIndex {
+            dtype: DType::Bf16,
+            width: 2,
+            alignment_bytes: 2,
+        };
+        let source = pattern(3 * 4);
+        let mut destination = vec![POISON; 4 * 4];
+        gather_by_index(&op, &source, &[2, 0, 2, 1], 3, &mut destination).unwrap();
+        assert_eq!(&destination[..4], &source[8..12]);
+        assert_eq!(&destination[4..8], &source[..4]);
+        assert_eq!(&destination[8..12], &source[8..12]);
+        assert!(destination[12..].iter().all(|&b| b == POISON));
+        let mut untouched = vec![POISON; 16];
+        gather_by_index(&op, &source, &[], 0, &mut untouched).unwrap();
+        assert!(untouched.iter().all(|&b| b == POISON));
+        assert!(gather_by_index(&op, &source, &[3], 1, &mut destination).is_err());
+        assert!(gather_by_index(&op, &source, &[0], 2, &mut destination).is_err());
+        assert!(gather_by_index(&op, &source, &[0, 1], 2, &mut [0; 7]).is_err());
     }
 }

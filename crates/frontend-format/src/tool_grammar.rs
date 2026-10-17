@@ -62,8 +62,10 @@ pub fn tool_constraint_v1(
     for tool in offered {
         rests.push(call_after_open(&mut builder, descriptor, format, tool)?);
     }
-    // Everything a call writes after its open marker.
-    let rest = Expr::alt(rests);
+    // Everything a call writes after its open marker. The first call and the
+    // calls after it continue to the same state, so as one rule they compile
+    // to one copy.
+    let rest = Expr::Rule(builder.rule(Expr::alt(rests)));
     let open = || Expr::literal(&format.tool_call_open);
     let call = Expr::seq([open(), rest.clone()]);
     let more_calls = Expr::seq([Expr::literal(&format.tool_call_separator), call.clone()]).star();

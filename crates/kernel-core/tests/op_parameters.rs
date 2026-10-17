@@ -8,6 +8,7 @@ use kernel_core::contract::{
     Validate,
 };
 use kernel_core::hyper_connection_oracle::grouped_norm;
+use kernel_core::latent_visibility::WindowBlockVisibility;
 use kernel_core::moe_oracle::{
     ExpertMlp, ExpertMlpRounding, ExpertWeights, LocalRoutes, RouteWeightAt, expert_mlp,
 };
@@ -2332,4 +2333,196 @@ fn lagged_sinkhorn_hyper_connections_match_the_vendor_stack() {
         "lagged stack off by {lagged} of the head's scale"
     );
     assert!(own > 0.05, "per-sublayer collapse off by only {own}");
+}
+
+#[test]
+fn window_block_visibility_pins_full_key_lists() {
+    let visibility = WindowBlockVisibility {
+        window_size: 8,
+        block_size: 5,
+    };
+    // The newest projected main row is included. Uninitialized ring slots
+    // are skipped without moving the block's base from the full capacity.
+    for (main_rows, expected) in [
+        (1, vec![0, 8, 9, 10, 11, 12]),
+        (2, vec![0, 1, 8, 9, 10, 11, 12]),
+        (7, vec![0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12]),
+        (8, (0..13).collect()),
+        (9, (0..13).collect()),
+        (16, (0..13).collect()),
+        (17, (0..13).collect()),
+        (u64::MAX, (0..13).collect()),
+    ] {
+        for query in 0..5 {
+            assert_eq!(
+                visibility
+                    .key_indices(main_rows, query)
+                    .unwrap()
+                    .collect::<Vec<_>>(),
+                expected,
+                "main_rows={main_rows}, query={query}"
+            );
+        }
+    }
+    // Pin the 128-row window and five-position block at both boundaries.
+    let visibility = WindowBlockVisibility {
+        window_size: 128,
+        ..visibility
+    };
+    for (start_pos, main_end) in [(1, 2), (126, 127), (127, 128), (128, 128), (256, 128)] {
+        let mut expected = (0..main_end).collect::<Vec<_>>();
+        expected.extend([128, 129, 130, 131, 132]);
+        for query in 0..5 {
+            assert_eq!(
+                visibility
+                    .key_indices(start_pos + 1, query)
+                    .unwrap()
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        }
+    }
+}
+
+#[test]
+fn window_block_visibility_tracks_committed_rows_through_wrap() {
+    // Simulate writes independently of the index generator. Logical token
+    // sets stay the last window plus the block, while physical order stays
+    // slot order. Different block widths keep the contract model-neutral.
+    for window_size in [1, 3, 8, 128] {
+        for block_size in [1, 2, 5, 7] {
+            let visibility = WindowBlockVisibility {
+                window_size,
+                block_size,
+            };
+            let mut ring = vec![None; window_size as usize];
+            for position in 0..3 * u64::from(window_size) + 6 {
+                ring[(position % u64::from(window_size)) as usize] = Some(position);
+                let main_rows = position + 1;
+                for query in 0..block_size {
+                    let indices = visibility
+                        .key_indices(main_rows, query)
+                        .unwrap()
+                        .collect::<Vec<_>>();
+                    let mut actual = indices
+                        .iter()
+                        .map(|&index| {
+                            if index < window_size as i32 {
+                                ring[index as usize].expect("uninitialized main row is invisible")
+                            } else {
+                                main_rows + (index as u64 - u64::from(window_size))
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    let mut physical_order = ring.iter().flatten().copied().collect::<Vec<_>>();
+                    physical_order.extend(main_rows..main_rows + u64::from(block_size));
+                    assert_eq!(actual, physical_order);
+                    actual.sort_unstable();
+                    let first = main_rows.saturating_sub(u64::from(window_size));
+                    assert_eq!(
+                        actual,
+                        (first..main_rows + u64::from(block_size)).collect::<Vec<_>>()
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn window_block_visibility_rejects_causal_and_truncated_block_controls() {
+    use kernel_core::attend::{Attend, AttendValues, KvRows, attend, window};
+
+    let visibility = WindowBlockVisibility {
+        window_size: 8,
+        block_size: 5,
+    };
+    let lists = (0..5)
+        .map(|query| {
+            visibility
+                .key_indices(3, query)
+                .unwrap()
+                .map(i64::from)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    // Zero queries give every visible key equal weight. Poisoned ring gaps
+    // catch a block incorrectly placed after the initialized main prefix.
+    let data = [
+        0.0,
+        0.0,
+        0.0,
+        f64::NAN,
+        f64::NAN,
+        f64::NAN,
+        f64::NAN,
+        f64::NAN,
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        16.0,
+    ];
+    let segments = [&data[..]];
+    let keys = KvRows {
+        segments: &segments,
+        heads: 1,
+        dim: 1,
+    };
+    let evaluate = |lists: &[Vec<i64>]| {
+        attend(
+            &vec![0.0; lists.len()],
+            keys,
+            AttendValues::SharedKeys,
+            lists,
+            &Attend::f64(1.0),
+        )
+        .unwrap()
+        .values
+        .iter()
+        .map(|value| value.to_bits())
+        .collect::<Vec<_>>()
+    };
+    let full = evaluate(&lists);
+    assert_eq!(full, vec![3.25_f64.to_bits(); 5]);
+
+    let causal = (0..5)
+        .map(|query| {
+            (0..3)
+                .chain(window(query, 0..5, true, None, None).map(|key| 8 + key as i64))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let causal_output = evaluate(&causal);
+    for query in 0..4 {
+        assert_ne!(lists[query], causal[query]);
+        assert_ne!(full[query], causal_output[query]);
+    }
+    assert_eq!(full[4], causal_output[4]);
+
+    // A scheduler budget slices emitted outputs, never the computed block.
+    // Evaluating only the first K queries with all five keys is bitwise
+    // equal; shrinking the block's key set changes every retained output.
+    for budget in 1..5 {
+        assert_eq!(evaluate(&lists[..budget]), full[..budget]);
+        let shortened = WindowBlockVisibility {
+            block_size: budget as u32,
+            ..visibility
+        };
+        let truncated = (0..budget as u32)
+            .map(|query| {
+                shortened
+                    .key_indices(3, query)
+                    .unwrap()
+                    .map(i64::from)
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            evaluate(&truncated)
+                .iter()
+                .zip(&full)
+                .all(|(short, full)| short != full)
+        );
+    }
 }

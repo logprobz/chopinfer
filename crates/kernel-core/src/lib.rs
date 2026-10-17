@@ -23,6 +23,7 @@ pub mod hyper_connection_oracle;
 pub mod kv_fp8;
 pub mod latent_attention;
 pub mod latent_attention_oracle;
+pub mod latent_visibility;
 pub mod moe;
 pub mod moe_chained;
 pub mod moe_chained_oracle;

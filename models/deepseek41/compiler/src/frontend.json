@@ -138,7 +138,13 @@
       "ascii_alphanumeric": true,
       "extra": "_-"
     },
-    "arguments": "json-object"
+    "arguments": "json-object",
+    "choice": {
+      "none_omits_tools": true,
+      "named_renders_its_tool_only": true,
+      "forced_prefill": "\n\n<｜DSML｜ calls>\n",
+      "forced_refused_in_thinking": true
+    }
   },
   "vocabulary": {
     "size": 129280,

@@ -505,3 +505,48 @@ fn the_served_format_reads_tool_objects_and_arguments_as_the_encoder_does() {
         );
     }
 }
+
+/// The declared tool choice policy, as deepseek-recipe maps a choice: none
+/// renders no tools, a named choice only its tool, and a forced choice
+/// ends the prompt with the calls block's opening, refused in thinking.
+#[test]
+fn a_tool_choice_changes_the_render_as_the_recipe_maps_it() {
+    let frontend = PairedFrontendV1::chat_format::<DeepSeekV41Format>(descriptor()).unwrap();
+    let tool = |name: &str| FrontendToolV1 {
+        name: name.into(),
+        description: None,
+        parameters: FrontendJsonV1::Null,
+        parameters_present: false,
+        strict: None,
+    };
+    let chosen = |choice: FrontendToolChoiceV1, thinking: bool| {
+        frontend.render_chat(FrontendChatRequestV1 {
+            tools: vec![tool("f"), tool("g")],
+            tool_choice: choice,
+            thinking: Some(thinking),
+            ..request(vec![message(FrontendRoleV1::User, "q")])
+        })
+    };
+    let auto = chosen(FrontendToolChoiceV1::Auto, false).unwrap().prompt;
+    assert!(auto.contains(r#"{"name": "f""#) && auto.contains(r#"{"name": "g""#));
+    let none = chosen(FrontendToolChoiceV1::None, false).unwrap().prompt;
+    assert!(!none.contains("## Tools"), "{none}");
+    let prefill = "\n\n<｜DSML｜ calls>\n";
+    let required = chosen(FrontendToolChoiceV1::Required, false)
+        .unwrap()
+        .prompt;
+    assert_eq!(required, format!("{auto}{prefill}"));
+    let named = chosen(FrontendToolChoiceV1::Named("g".into()), false)
+        .unwrap()
+        .prompt;
+    assert!(named.ends_with(prefill));
+    assert!(!named.contains(r#"{"name": "f""#) && named.contains(r#"{"name": "g""#));
+    for choice in [
+        FrontendToolChoiceV1::Required,
+        FrontendToolChoiceV1::Named("g".into()),
+    ] {
+        let error = chosen(choice, true).unwrap_err();
+        assert_eq!(error.parameter.as_deref(), Some("tool_choice"));
+        assert!(error.message.contains("thinking mode"), "{}", error.message);
+    }
+}

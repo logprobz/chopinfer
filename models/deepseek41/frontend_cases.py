@@ -30,8 +30,14 @@ TRANSPORT = {
     "extra_roles": [],
 }
 
-# The request fields the encoder renders beyond the HF input.
-INPUT_FIELDS = ("response_format",)
+# The request fields the encoder renders beyond the HF input, as request
+# mapping reads them.
+INPUT_FIELDS = ("response_format", "tool_choice")
+
+# What a forced tool choice's prompt ends with (the declaration's
+# tools.choice forced_prefill): the opening of the calls block, as
+# deepseek-recipe prefills it (v4/mod.rs lines 261-266).
+FORCED_PREFILL = "\n\n<｜DSML｜ calls>\n"
 
 # Tool-call arguments reach the encoder as the text sent: it reads them
 # itself, up to twice (lines 533-544).
@@ -104,7 +110,7 @@ def empty_system(message):
 
 
 def encoder_render(namespace, messages, tools, add_generation_prompt, continue_final_message, keywords,
-                   response_format=None):
+                   response_format=None, tool_choice=None):
     """The prompt `encode_messages` (lines 810-844) writes for one HF input,
     with the request mapped into messages as deepseek-recipe maps it (plan
     V4; `mapping` in frontend-divergences.json) and the served format
@@ -119,6 +125,10 @@ def encoder_render(namespace, messages, tools, add_generation_prompt, continue_f
       message, an empty one when the request has none (README: tools are
       defined on the system message), and any `response_format` renders as
       the encoder renders it (V7);
+    - a tool choice of none renders without the offered tools, a named one
+      with only its tool, and a required or named one ends the prompt with
+      the calls block's opening and is refused in thinking mode, as the
+      recipe maps it (convert.rs lines 155-215, v4/mod.rs lines 261-266);
     - a continued final assistant turn renders without its end token
       (`wo_eos`); the encoder writes the generation header itself, so
       `add_generation_prompt` changes nothing."""
@@ -127,6 +137,14 @@ def encoder_render(namespace, messages, tools, add_generation_prompt, continue_f
     effort = EFFORT_ALIASES.get(effort, effort) if isinstance(effort, str) else effort
     messages = [encoder_message(message) for message in messages if not empty_system(message)]
     tools = [recipe_tool(tool) for tool in tools or []]
+    named = tool_choice.get("function", {}).get("name") if isinstance(tool_choice, dict) else None
+    forced = tool_choice == "required" or named is not None
+    if tool_choice == "none":
+        tools = []
+    elif named is not None:
+        tools = [tool for tool in tools if tool["function"]["name"] == named]
+    if forced and mode == "thinking":
+        raise ValueError("thinking mode does not support a required or named tool_choice")
     if continue_final_message:
         if not messages or messages[-1].get("role") != "assistant":
             raise ValueError("continue_final_message requires a final assistant message")
@@ -139,9 +157,10 @@ def encoder_render(namespace, messages, tools, add_generation_prompt, continue_f
                 raise ValueError("tools are offered both by the request and by its system message")
             messages[0]["tools"] = tools
         messages[0]["response_format"] = response_format
-    return namespace["encode_messages"](
+    prompt = namespace["encode_messages"](
         messages, thinking_mode=mode, drop_thinking=not keywords.get("preserve_thinking", False),
         reasoning_effort=effort)
+    return prompt + FORCED_PREFILL if forced else prompt
 
 
 def turn_arguments(text):
@@ -359,6 +378,22 @@ def cases(declaration):
     yield "empty-system-message-with-tools", {"messages": [{"role": "system", "content": ""}, user("q")],
                                               "tools": [WEATHER]}, {
         "fixed:empty-system-message-with-tools", "system:empty", "tools:wrapped"}
+    # R6: a tool choice of none renders no tools; required and a named
+    # choice end the prompt with the calls block's opening (a named one
+    # renders only its tool), and are refused in thinking mode.
+    chat = {"chat_template_kwargs": {"thinking": False}}
+    second = {"type": "function", "function": {"name": "get_time", "parameters": {"type": "object"}}}
+    yield "tool-choice-none", {"messages": [user("q")], "tools": [WEATHER], "tool_choice": "none"}, {
+        "fixed:tool-choice-none", "tools:wrapped"}
+    yield "tool-choice-required", {"messages": [user("Weather in Oslo?")], "tools": [WEATHER, second],
+                                   "tool_choice": "required", **chat}, {
+        "fixed:tool-choice-required", "tools:wrapped"}
+    yield "tool-choice-named", {"messages": [user("Weather in Oslo?")], "tools": [WEATHER, second],
+                                "tool_choice": {"type": "function", "function": {"name": "get_weather"}}, **chat}, {
+        "fixed:tool-choice-named", "tools:wrapped"}
+    yield "tool-choice-required-thinking", {"messages": [user("Weather in Oslo?")], "tools": [WEATHER],
+                                            "tool_choice": "required"}, {
+        "fixed:tool-choice-required-thinking", "tools:wrapped"}
     # A namespace on a function object, which the encoder writes as
     # namespace::name and this format refuses until namespaces are served.
     yield "namespaced-function-object", {"messages": [user("q")], "tools": [

@@ -416,6 +416,18 @@
       ]
     },
     {
+      "id": "R6-tool-choice",
+      "follows": "recipe",
+      "rule": "the declared tools.choice policy, which the host applies around the render: none renders without the offered tools; a named choice renders only its tool; required and a named choice end the prompt with the calls block's opening, which the completion's parser and the forced constraint read as its start, and are refused in thinking mode",
+      "source": "plan V4 (request mapping follows the recipe); deepseek-recipe 8cadfede7 deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 155-215, deepseek-recipe-encoding/src/v4/mod.rs lines 215-218, 261-266",
+      "cases": [
+        "tool-choice-none",
+        "tool-choice-required",
+        "tool-choice-named",
+        "tool-choice-required-thinking"
+      ]
+    },
+    {
       "id": "effort-aliases",
       "follows": "recipe",
       "rule": "the protocol efforts the encoder does not name read as the recipe maps them: minimal as low (50), medium and xhigh as high (75)",

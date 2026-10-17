@@ -3313,6 +3313,12 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             if image.mapped_bytes() > 0 {
                 line["mapped_bytes"] = image.mapped_bytes().into();
             }
+            // Stated only for images whose mapped views asked to be warmed.
+            if let Some(prewarm) = image.prewarm() {
+                line["prewarm_bytes"] = prewarm.bytes.into();
+                line["prewarm_seconds"] = prewarm.seconds.into();
+                line["prewarm_resident_bytes"] = prewarm.resident_bytes.into();
+            }
             eprintln!("startup direct_load: {line}");
         }
         let planned: u64 = prepared.iter().map(PreparedRankUploadV1::byte_length).sum();

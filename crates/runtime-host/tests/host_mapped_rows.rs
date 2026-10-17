@@ -180,6 +180,8 @@ fn mapped_views_map_the_checkpoint_bytes_and_leave_the_arena() {
         ));
     }
     assert!(image.mapped_view(0, b"half").is_none());
+    // No view asked to be prewarmed.
+    assert_eq!(image.prewarm(), None);
     assert_eq!(image.mapped_bytes(), ROWS * 8 + ROWS);
     let config =
         HostInstanceConfigV1::new(HostTopologyV1::new((0..RANKS as i32).collect()).unwrap())
@@ -376,6 +378,48 @@ fn mapped_views_map_the_checkpoint_bytes_and_leave_the_arena() {
     assert_eq!(backend.live_resource_count(), 0);
     // A released stream's staging goes with it.
     assert_eq!(backend.host_memory_v1(), HostMemoryV1::default());
+}
+
+/// A mapped view that asks to be prewarmed is read into the page cache and
+/// mapped while the image loads, each shared mapping once; the ranks agree
+/// on the placement, prewarm included.
+#[test]
+fn prewarmed_views_are_resident_after_load() {
+    let root = temp("prewarm");
+    write_checkpoint(&root.0);
+    let prewarmed = |ranks: u32, rank: u32, prewarm: bool| {
+        let mut plan = plan(ranks, rank);
+        for view in &mut plan.views {
+            if view.id == "codes" {
+                view.placement = ViewPlacementV1::Mapped { prewarm };
+            }
+        }
+        plan
+    };
+    let image = planned(
+        &root.0,
+        (0..2).map(|rank| prewarmed(2, rank, true)).collect(),
+    )
+    .unwrap();
+    let prewarm = image.prewarm().unwrap();
+    // The codes table alone, once for both ranks.
+    assert_eq!(prewarm.bytes, ROWS * 8);
+    let (resident, pages) = image
+        .mapped_view(1, b"codes")
+        .unwrap()
+        .resident_pages()
+        .unwrap();
+    assert_eq!(resident, pages);
+    assert!(prewarm.resident_bytes >= prewarm.bytes);
+    assert_eq!(
+        prewarm.margin_bytes,
+        runtime_host::direct::PREWARM_MARGIN_BYTES_DEFAULT
+    );
+    assert!(prewarm.available_bytes.is_some_and(|bytes| bytes > 0));
+    let refused = planned(&root.0, vec![prewarmed(2, 0, true), prewarmed(2, 1, false)])
+        .err()
+        .unwrap();
+    assert!(refused.contains("view codes differs between ranks"), "{refused}");
 }
 
 /// A mapped view takes exactly one plain copy of tensor bytes, whole or one

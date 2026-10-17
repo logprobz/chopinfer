@@ -122,6 +122,55 @@ impl MappedRowsV1 {
         Ok(())
     }
 
+    /// The pages of one window of the mapping: its start within the mapping
+    /// and length, page-aligned, the last window ending with the mapping.
+    #[must_use]
+    pub fn windows(&self, window: usize) -> Vec<(usize, usize)> {
+        let page = page_bytes_v1();
+        let window = window.max(page).next_multiple_of(page);
+        (0..self.mapped_length)
+            .step_by(window)
+            .map(|start| (start, window.min(self.mapped_length - start)))
+            .collect()
+    }
+
+    /// Reads one window ([`Self::windows`]) into the page cache and maps it:
+    /// asks the kernel to read it ahead (`MADV_WILLNEED`), then touches each
+    /// of its pages, so a later read neither waits for the file nor faults.
+    pub fn prewarm_window(&self, start: usize, length: usize) -> io::Result<()> {
+        let page = page_bytes_v1();
+        if !start.is_multiple_of(page)
+            || start
+                .checked_add(length)
+                .is_none_or(|end| end > self.mapped_length)
+        {
+            return Err(io::Error::other("prewarm window lies outside the mapping"));
+        }
+        // SAFETY-REVIEWED: the page-aligned range lies within the mapping this
+        // value owns.
+        if unsafe {
+            libc::madvise(
+                self.base.cast::<u8>().add(start).cast(),
+                length,
+                libc::MADV_WILLNEED,
+            )
+        } != 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let bytes = self.bytes();
+        let mut sum = 0_u8;
+        for page_start in (start..start + length).step_by(page) {
+            // The page's first byte the requested range holds, if any.
+            let index = page_start.max(self.lead) - self.lead;
+            if let Some(byte) = bytes.get(index) {
+                sum = sum.wrapping_add(*byte);
+            }
+        }
+        std::hint::black_box(sum);
+        Ok(())
+    }
+
     /// How many of the mapping's pages are resident now (`mincore`): the
     /// pages a read would not fault from the file.
     pub fn resident_pages(&self) -> io::Result<(u64, u64)> {
@@ -150,7 +199,9 @@ impl Drop for MappedRowsV1 {
     }
 }
 
-fn page_bytes_v1() -> usize {
+/// The host's page size.
+#[must_use]
+pub fn page_bytes_v1() -> usize {
     // SAFETY-REVIEWED: sysconf reads one configuration value.
     let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
     usize::try_from(page)
@@ -284,6 +335,16 @@ mod tests {
         ] {
             first.advise(advice).unwrap();
         }
+        // Prewarming reads and maps every page, window by window.
+        // The mapping starts at the page holding offset 100.
+        let windows = first.windows(1);
+        assert_eq!(windows, [(0, 100 % page_bytes_v1() + 900)]);
+        for (start, length) in windows {
+            first.prewarm_window(start, length).unwrap();
+        }
+        let (resident, pages) = first.resident_pages().unwrap();
+        assert_eq!(resident, pages);
+        assert!(first.prewarm_window(1, 4096).is_err());
         // Once dropped, the same bytes map afresh.
         drop((first, second, again));
         let fresh = map_rows_v1(&file, 100, 900).unwrap();

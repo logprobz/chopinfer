@@ -727,6 +727,111 @@ pub struct DirectLoadStatsV1 {
     pub retained_peak_bytes: u64,
 }
 
+/// What warming the prewarmed mapped views at load did.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PrewarmV1 {
+    /// Bytes the prewarmed mappings map, each counted once.
+    pub bytes: u64,
+    pub seconds: f64,
+    /// Their resident bytes afterwards, in whole pages.
+    pub resident_bytes: u64,
+    /// `MemAvailable` before warming, when the host reports it.
+    pub available_bytes: Option<u64>,
+    /// The memory the host wants left beyond the prewarmed bytes.
+    pub margin_bytes: u64,
+}
+
+/// Threads that prewarm mapped views, at most.
+const PREWARM_THREADS: usize = 8;
+
+/// Bytes one prewarm step reads ahead and touches.
+const PREWARM_WINDOW_BYTES: usize = 64 << 20;
+
+/// The memory the host wants left beyond the prewarmed bytes, by default:
+/// room for the rest of the process and the system while the page cache
+/// holds the tables. `CHOPINFER_PREWARM_MARGIN_BYTES` overrides it.
+pub const PREWARM_MARGIN_BYTES_DEFAULT: u64 = 16 << 30;
+
+/// `MemAvailable` in bytes, from `/proc/meminfo`.
+fn available_memory_v1() -> Option<u64> {
+    let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let line = meminfo
+        .lines()
+        .find(|line| line.starts_with("MemAvailable:"))?;
+    let kib: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+    kib.checked_mul(1024)
+}
+
+/// Reads `mappings` into the page cache and maps them, window by window on
+/// up to [`PREWARM_THREADS`] threads, after checking that the host has room
+/// for them: when `MemAvailable` falls short of their bytes plus the margin,
+/// it warns by name and warms anyway, since gathers stay correct when pages
+/// are evicted, only slower.
+fn prewarm_v1(mappings: &[Arc<MappedRowsV1>]) -> Result<PrewarmV1, String> {
+    let bytes: u64 = mappings.iter().map(|rows| rows.len()).sum();
+    let margin_bytes = std::env::var("CHOPINFER_PREWARM_MARGIN_BYTES")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(PREWARM_MARGIN_BYTES_DEFAULT);
+    let available_bytes = available_memory_v1();
+    if let Some(available) = available_bytes
+        && available < bytes.saturating_add(margin_bytes)
+    {
+        eprintln!(
+            "startup prewarm: warning host-ram-short: {available} bytes available, below the \
+             {bytes} prewarmed bytes plus a {margin_bytes}-byte margin; gathers read evicted \
+             rows from the file"
+        );
+    }
+    let started = Instant::now();
+    let windows: Vec<(&MappedRowsV1, usize, usize)> = mappings
+        .iter()
+        .flat_map(|rows| {
+            rows.windows(PREWARM_WINDOW_BYTES)
+                .into_iter()
+                .map(move |(start, length)| (rows.as_ref(), start, length))
+        })
+        .collect();
+    let next = AtomicUsize::new(0);
+    let threads = std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .min(PREWARM_THREADS)
+        .min(windows.len());
+    std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                scope.spawn(|| -> std::io::Result<()> {
+                    while let Some(&(rows, start, length)) =
+                        windows.get(next.fetch_add(1, Ordering::Relaxed))
+                    {
+                        rows.prewarm_window(start, length)?;
+                    }
+                    Ok(())
+                })
+            })
+            .collect();
+        workers.into_iter().try_for_each(|worker| {
+            worker
+                .join()
+                .map_err(|_| "a prewarm thread panicked".to_owned())?
+                .map_err(|e| format!("prewarm mapped views: {e}"))
+        })
+    })?;
+    let page = crate::host_rows::page_bytes_v1() as u64;
+    let resident_bytes = mappings
+        .iter()
+        .map(|rows| rows.resident_pages().map(|(resident, _)| resident * page))
+        .sum::<std::io::Result<u64>>()
+        .map_err(|e| format!("prewarm residency: {e}"))?;
+    Ok(PrewarmV1 {
+        bytes,
+        seconds: started.elapsed().as_secs_f64(),
+        resident_bytes,
+        available_bytes,
+        margin_bytes,
+    })
+}
+
 /// A compiled image produced from the checkpoint by the bundle's plans.
 pub struct PlannedImageV1 {
     inner: Arc<InnerV1>,
@@ -738,6 +843,8 @@ pub struct PlannedImageV1 {
     /// The mapped views' bytes, by rank and view identifier; ranks naming the
     /// same bytes share one mapping.
     mapped: BTreeMap<(u32, Vec<u8>), Arc<MappedRowsV1>>,
+    /// What prewarming the mapped views that ask for it did, if any do.
+    prewarm: Option<PrewarmV1>,
     /// Each rank's read-ahead queue: the arena offsets to advise up to.
     read_ahead: Vec<SyncSender<u64>>,
     /// The read-ahead threads, stopped on drop so a dropped image no longer
@@ -859,7 +966,8 @@ impl PlannedImageV1 {
             {
                 let source = mapped_source_v1(&checkpoint, plan, view)?;
                 unproduced[plan.rank as usize].insert(source.record);
-                mapped_sources.push((plan.rank, view.id.clone().into_bytes(), source));
+                let prewarm = view.placement == ViewPlacementV1::Mapped { prewarm: true };
+                mapped_sources.push((plan.rank, view.id.clone().into_bytes(), source, prewarm));
             }
         }
         let mut shared_keys: BTreeMap<String, usize> = BTreeMap::new();
@@ -1009,7 +1117,8 @@ impl PlannedImageV1 {
         );
         // Each mapping reads the file as its header was when it was opened.
         let mut mapped = BTreeMap::new();
-        for (rank, view, source) in mapped_sources {
+        let mut prewarmed: Vec<Arc<MappedRowsV1>> = Vec::new();
+        for (rank, view, source, prewarm) in mapped_sources {
             let shard = &checkpoint.shards[source.shard];
             shard.verify_unchanged()?;
             let rows =
@@ -1021,8 +1130,14 @@ impl PlannedImageV1 {
                             String::from_utf8_lossy(&view)
                         )
                     })?;
+            if prewarm && !prewarmed.iter().any(|known| Arc::ptr_eq(known, &rows)) {
+                prewarmed.push(Arc::clone(&rows));
+            }
             mapped.insert((rank, view), rows);
         }
+        let prewarm = (!prewarmed.is_empty())
+            .then(|| prewarm_v1(&prewarmed))
+            .transpose()?;
         let inner = Arc::new(InnerV1 {
             checkpoint,
             ranks,
@@ -1077,6 +1192,7 @@ impl PlannedImageV1 {
             components,
             identities,
             mapped,
+            prewarm,
             read_ahead,
             read_ahead_threads,
             read_ahead_exits: Mutex::new(read_ahead_exits),
@@ -1116,6 +1232,13 @@ impl PlannedImageV1 {
     #[must_use]
     pub fn mapped_view(&self, rank: u32, view: &[u8]) -> Option<&Arc<MappedRowsV1>> {
         self.mapped.get(&(rank, view.to_vec()))
+    }
+
+    /// What prewarming the mapped views that ask for it did at load, if any
+    /// do.
+    #[must_use]
+    pub const fn prewarm(&self) -> Option<PrewarmV1> {
+        self.prewarm
     }
 
     /// Bytes the mapped views map, each mapping counted once however many

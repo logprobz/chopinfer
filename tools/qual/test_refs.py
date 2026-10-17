@@ -498,6 +498,109 @@ class AdoptionKeepsTheLockTests(unittest.TestCase):
                 self.assertIn(f"in {field}", errors)
                 self.assertEqual(self.lock.read_bytes(), before)
 
+    def preprocessing_reference(self, environment):
+        """A preprocessing reference of one case under `pre/case`, its record
+        binding `environment`; the config declaring it; its tensors' digests."""
+        from tools.model_sdk.diagnostic import canonical
+        from tools.refrun import keys, preprocessing
+        case = self.root / "pre/case"
+        case.mkdir(parents=True, exist_ok=True)
+        source = preprocessing.write_tensor(case, "source.bin", b"\x01", "u8", (1,))
+        rows = preprocessing.write_tensor(case, "rows.bin", preprocessing.packed([1.0], "f32"), "f32", (1,))
+        record = {"schema": preprocessing.SCHEMA,
+                  "binding": {"code": keys.repo_files(preprocessing.CODE), "requirements": {},
+                              "environment": environment},
+                  "cases": [{"name": "sample", "kind": "audio", "source": source,
+                             "stages": {"patches": {"f32": rows}}}]}
+        record["sha256"] = keys.sha256(canonical(record))
+        (case / "reference.json").write_text(json.dumps(record, indent=2) + "\n")
+        config = {**self.config, "inputs": {**self.config["inputs"], "media_preprocessing_reference": "pre"}}
+        return config, record, (source["sha256"], rows["sha256"])
+
+    def adopt_preprocessing(self):
+        """A lock holding the preprocessing reference recorded under one
+        environment, its tensors' records with fields of their own; then the
+        same tensors recorded under another (the record alone changes)."""
+        self.config, first, tensors = self.preprocessing_reference({"torch": "1"})
+        previous = json.loads(json.dumps(refs.adoption(self.config, self.previous, self.root)))
+        for sha in tensors:
+            self.assertEqual(previous["objects"][sha]["production"],
+                             {"producer": "runner-preprocessing-binding", "reference_sha256": first["sha256"]})
+            previous["objects"][sha]["reason"] = "kept"
+            previous["objects"][sha]["production"]["adoption_date"] = "2026-10-01"
+        self.lock.write_bytes(refs.encoded(previous, self.previous))
+        self.previous = previous
+        _, second, same = self.preprocessing_reference({"torch": "2"})
+        self.assertEqual(same, tensors)
+        self.assertNotEqual(second["sha256"], first["sha256"])
+        return tensors, second
+
+    def test_a_fresh_proof_of_the_same_bytes_renews_their_record(self):
+        # Before the fix a changed preprocessing record over unchanged
+        # tensors was refused (reference_sha256 differs), so the entry and
+        # its objects had to be dropped from the lock by hand.
+        tensors, second = self.adopt_preprocessing()
+        previous = self.previous
+        manifest = previous["entries"]["media_preprocessing_reference"]["members"]["case/reference.json"]
+        code, errors, _ = self.adopt("--replace-sha256", refs.digest(self.lock))
+        self.assertEqual(code, 0, errors)
+        self.assertIn("media_preprocessing_reference/case/rows.bin: producer metadata changed", errors)
+        # The new record replaces the old one, and each tensor's production
+        # names it; everything else stays.
+        path = self.root / "pre/case/reference.json"
+        expected = copy.deepcopy(previous)
+        expected["entries"]["media_preprocessing_reference"]["members"]["case/reference.json"] = refs.digest(path)
+        del expected["objects"][manifest]
+        expected["objects"][refs.digest(path)] = {"schema": refs.schema(path), "production": {
+            "producer": "runner-preprocessing-binding", "reference_sha256": second["sha256"]}}
+        for sha in tensors:
+            expected["objects"][sha]["production"]["reference_sha256"] = second["sha256"]
+        value = json.loads(self.lock.read_text())
+        self.assertEqual(value, expected)
+        self.assertEqual(value["objects"][tensors[0]],
+                         {"schema": "legacy-bin", "reason": "kept",
+                          "production": {"producer": "runner-preprocessing-binding",
+                                         "reference_sha256": second["sha256"], "adoption_date": "2026-10-01"}})
+        refs.validate_lock(value, self.config, self.root)
+        # Adopting again leaves the renewed lock as it is.
+        before = self.lock.read_bytes()
+        self.assertEqual(self.adopt()[:2], (0, ""))
+        self.assertEqual(self.lock.read_bytes(), before)
+        # Only the proof's own fields change: another producer is refused.
+        conflicting = copy.deepcopy(previous)
+        conflicting["objects"][tensors[1]]["production"]["producer"] = "legacy-unknown"
+        with self.assertRaisesRegex(ValueError, f"object {tensors[1]}: the lock's record differs from what "
+                                                f"adoption proved in producer"):
+            refs.adoption(self.config, conflicting, self.root)
+
+    def test_a_fresh_proof_does_not_renew_bytes_a_kept_configuration_pins(self):
+        tensors, _ = self.adopt_preprocessing()
+        previous = copy.deepcopy(self.previous)
+        # The configuration shares one tensor; the other alone would renew.
+        previous["configurations"]["demo"]["entries"]["media_preprocessing_reference"] = {
+            "path": "pre", "directory": True, "members": {"case/rows.bin": tensors[1]}, "scope": ["case/rows.bin"]}
+        self.lock.write_bytes(refs.encoded(previous, self.previous))
+        before = self.lock.read_bytes()
+        with self.assertRaisesRegex(ValueError, f"object {tensors[1]}: the lock's record differs from what "
+                                                f"adoption proved in reference_sha256"):
+            refs.adoption(self.config, previous, self.root)
+        code, errors, _ = self.adopt("--replace-sha256", refs.digest(self.lock))
+        self.assertEqual(code, 2)
+        self.assertIn("in reference_sha256", errors)
+        self.assertEqual(self.lock.read_bytes(), before)
+
+    def test_a_fresh_proof_of_other_bytes_is_refused(self):
+        tensors, _ = self.adopt_preprocessing()
+        before = self.lock.read_bytes()
+        from tools.refrun import preprocessing
+        (self.root / "pre/case/rows.bin").write_bytes(preprocessing.packed([2.0], "f32"))
+        with self.assertRaisesRegex(ValueError, "preprocessing tensor digest mismatch"):
+            refs.adoption(self.config, self.previous, self.root)
+        code, errors, _ = self.adopt("--replace-sha256", refs.digest(self.lock))
+        self.assertEqual(code, 2)
+        self.assertIn("preprocessing tensor digest mismatch", errors)
+        self.assertEqual(self.lock.read_bytes(), before)
+
     def test_a_configuration_of_the_model_lock_is_not_adopted_as_its_own_lock(self):
         config = {**self.config, "variant": "demo"}
         errors = io.StringIO()

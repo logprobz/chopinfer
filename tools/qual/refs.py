@@ -324,11 +324,12 @@ def adoption(config, previous=None, root=None):
     configurations section, operator records, every other object (those a
     configuration's entries pin, and records nothing pins any more) and an
     entry's own fields beside its pin (its role, producer policy, reason)
-    stay. A previous lock adopt cannot keep whole (another schema or model,
-    an unknown section, a configuration with more than entries or whose
-    object is missing, an entry with its own fields whose path changed, an
-    object whose record contradicts what adoption proved of its bytes) is
-    refused."""
+    stay. An object only the replaced entries pinned takes a fresh proof of
+    the same bytes (`kept_record`). A previous lock adopt cannot keep whole
+    (another schema or model, an unknown section, a configuration with more
+    than entries or whose object is missing, an entry with its own fields
+    whose path changed, an object a kept entry or configuration pins whose
+    record contradicts what adoption proved of its bytes) is refused."""
     value = snapshot(config, root, previous=previous)
     if previous is None:
         return value
@@ -362,28 +363,37 @@ def adoption(config, previous=None, root=None):
             value[section] = copy.deepcopy(previous[section])
     value["entries"].update({key: copy.deepcopy(entry) for key, entry in previous["entries"].items()
                              if key.startswith("operator:")})
+    # The objects an entry or configuration adopt keeps pins: their records
+    # stand for those pins too, so a fresh proof cannot rewrite them.
+    pinned |= {sha for key, entry in previous["entries"].items() if key.startswith("operator:")
+               and isinstance(entry.get("members"), dict) for sha in entry["members"].values()}
     replaced = {sha for key, entry in previous["entries"].items() if not key.startswith("operator:")
                 for sha in entry.get("members", {}).values()} - pinned
     for sha, record in previous["objects"].items():
         if sha in value["objects"]:
-            value["objects"][sha] = kept_record(sha, value["objects"][sha], record)
+            value["objects"][sha] = kept_record(sha, value["objects"][sha], record, renew=sha not in pinned)
         elif sha not in replaced:
             value["objects"][sha] = copy.deepcopy(record)
     return value
 
 
-def kept_record(sha, proved, record):
+def kept_record(sha, proved, record, renew=False):
     """The record of object `sha` after adoption: the lock's `record` with
     what `snapshot` `proved` of the bytes, its schema and production. Fields
     the proof does not name stay; a record whose schema, producer or a
-    production field differs from the proof is refused."""
+    production field differs from the proof is refused. With `renew` (no
+    kept entry or configuration pins the bytes) the proof's other production
+    fields replace the record's: the same bytes proved again by the same
+    producer, as when a pin bump changes the requirements a preprocessing
+    reference binds."""
     for field in ("schema", "production"):
         if field in proved and field in record and not isinstance(proved[field], dict) \
                 and proved[field] != record[field]:
             raise ValueError(f"lock object {sha}: the lock's record differs from what adoption proved in {field}")
     proof, before = proved.get("production"), record.get("production")
     if isinstance(proof, dict) and isinstance(before, dict):
-        clash = sorted(field for field in proof if field in before and before[field] != proof[field])
+        clash = sorted(field for field in proof if field in before and before[field] != proof[field]
+                       and (not renew or field == "producer"))
         if clash:
             raise ValueError(f"lock object {sha}: the lock's record differs from what adoption proved in "
                              f"{', '.join(clash)}")

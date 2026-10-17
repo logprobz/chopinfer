@@ -8,6 +8,7 @@ use super::widgets::{
 };
 use super::{Figures, LATENCIES, footer, header, shown_name, tone_color};
 use crate::app::App;
+use crate::gpu::ranges;
 use crate::instances::{Instance, Source, State};
 use crate::stats::{HistogramOf, Snapshot};
 
@@ -69,17 +70,19 @@ pub fn draw(buffer: &mut Buffer, app: &App, now: f64) {
     footer(
         buffer,
         &[
-            ("Esc", "back"),
-            ("← → Tab", "instance"),
-            ("w", "window"),
-            ("r", "rescan"),
-            ("p", "pause"),
-            ("?", "help"),
-            ("q", "quit"),
+            ("Esc", "back", 0),
+            ("← → Tab", "instance", 0),
+            ("g", "gpus", 0),
+            ("w", "window", 2),
+            ("r", "rescan", 3),
+            ("p", "pause", 1),
+            ("?", "help", 0),
+            ("q", "quit", 0),
         ],
     );
     let (width, height) = (buffer.width, buffer.height);
     let figures = Figures::new(row, app.window);
+    let gpus = app.gpus.of_instance(&app.registry.instances, row.id);
     if !figures.live() {
         boxed(
             buffer,
@@ -88,7 +91,12 @@ pub fn draw(buffer: &mut Buffer, app: &App, now: f64) {
             true,
         );
         status_lines(buffer, row, &state, (2, 3), now);
-        identity(buffer, row, (0, 9, width, height.saturating_sub(10).min(6)));
+        identity(
+            buffer,
+            row,
+            &gpus,
+            (0, 9, width, height.saturating_sub(10).min(6)),
+        );
         return;
     }
     let mut y = 1;
@@ -105,7 +113,7 @@ pub fn draw(buffer: &mut Buffer, app: &App, now: f64) {
                 Panel::Prefix => prefix(buffer, row, &figures, area),
                 Panel::Speculation => speculation(buffer, row, &figures, area),
                 Panel::Steps => steps(buffer, row, &figures, area),
-                Panel::Identity => identity(buffer, row, area),
+                Panel::Identity => identity(buffer, row, &gpus, area),
             }
             x += panel_width;
         }
@@ -893,7 +901,8 @@ fn steps(buffer: &mut Buffer, row: &Instance, figures: &Figures, area: (u16, u16
     }
 }
 
-fn identity(buffer: &mut Buffer, row: &Instance, area: (u16, u16, u16, u16)) {
+/// The instance's identity; `gpus` are the GPUs of this host it holds.
+fn identity(buffer: &mut Buffer, row: &Instance, gpus: &[u32], area: (u16, u16, u16, u16)) {
     let (x, y, width, height) = area;
     if height < 3 {
         return;
@@ -976,6 +985,9 @@ fn identity(buffer: &mut Buffer, row: &Instance, area: (u16, u16, u16, u16)) {
         Source::Container { name, .. } => format!("docker container {}{at}", sanitize(name)),
     };
     let mut via = vec![("found via".to_owned(), found)];
+    if !gpus.is_empty() {
+        via.push(("on GPUs".to_owned(), ranges(gpus)));
+    }
     if !row.aliases.is_empty() {
         via.push(("also seen as".to_owned(), sanitize(&row.aliases.join(", "))));
     }

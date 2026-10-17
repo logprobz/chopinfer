@@ -1,0 +1,38 @@
+ chopinfer-top  >  GPUs   4 on this host  1 slowing down   driver 615.71.09   GPM on                window 60s  poll 1s  rescan 15s
+
+┌─ GPUs  rates and shares over the last 3 polls ───────────────────────────────────────────────────────────────────────────────────┐
+│ GPU  NAME                TEMP  FAN    POWER SM MHZ MEM MHZ       VRAM UTIL TENSOR DRAM  INSTANCE            UTIL 5m              │
+│▌0    RTX PRO 6000 Max-Q   68C  54% 244/250W  2,520  14,001 87.4/95.6G  89%    38%  82%  MiMo-V2.6-Flash +1  ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇ │
+│ 1    RTX PRO 6000 Max-Q   69C  56% 244/250W  2,520  14,001 87.3/95.6G  89%    38%  82%  MiMo-V2.6-Flash     ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇ │
+│ 2    RTX PRO 6000 Max-Q   90C 100% 214/250W  1,650  14,001 87.3/95.6G  95%    30%  66%  MiMo-V2.6-Flash     ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇████ │
+│ 3    RTX PRO 6000 ┌─ Help ───────────────────────────────────────────────────────────────────────────────────┐▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇ │
+└───────────────────│ Keys                                                                                     │───────────────────┘
+┌─ GPU 0  RTX PRO 60│   ↑ ↓  j k      select a GPU                                                             │───────────────────┐
+│ ACTIVITY  now  89%│   Enter         open the details of the instance on the GPU                              │█████████████───── │
+│                   │   Esc  h  g     back to where g was pressed                                              │11%  all processes │
+│ ▁▁▁▁▁          ▁▁▁│   w             latency and ratio window: 60s, 5m, since start                           │MiMo-V2.6-Flash    │
+│ █████████▇▇███████│   r             rescan for processes and containers now                                  │                   │
+│ ██████████████████│   p             pause the screen; polls keep their latest result                         │━━━━━────────  79% │
+│ ██████████████████│   q  Ctrl-C     quit                                                                     │─────────────  31% │
+│ ██████████████████│                                                                                          │─────────────  38% │
+│ ██████████████████│ GPU time                                                                                 │━━━━━━━──────  82% │
+│ -33s ▔▔▔▔▔▔▔▔▔▔▔▔▔│   kernels       share of time a kernel ran on the GPU, from any process                  │iB/s               │
+│ VRAM         ━━━━━│   no kernel     the rest: waiting for the host or for work                               │                   │
+│ temperature  68C  │   SM busy       share of SMs with work (GPM)                                             │                   │
+│ clocks       SM 2,│   occupancy     active warps against the most the SMs hold (GPM)                         │                   │
+│ limited by   power│   tensor        share of time the tensor pipes ran (GPM)                                 │                   │
+│ PCIe         gen 5│   DRAM          share of peak memory bandwidth in use (GPM)                              │                   │
+└───────────────────│                                                                                          │───────────────────┘
+┌─ Processes  on GPU│ NVML is read once a poll, GPM counters only while this view is                           │───────────────────┐
+│ PID     TYPE      │ open. GPU numbers are nvidia-smi's, not CUDA ordinals.                                   │                   │
+│ 48211   C     86.9│                                                                                          │                   │
+│ 2210    G      0.1│ Press any key to close.                                                                  │                   │
+│                   └──────────────────────────────────────────────────────────────────────────────────────────┘                   │
+│                                                         ││                                                                       │
+│                                                         ││                                                                       │
+│                                                         ││                                                                       │
+│                                                         ││                                                                       │
+│                                                         ││                                                                       │
+│                                                         ││                                                                       │
+└─────────────────────────────────────────────────────────┘└───────────────────────────────────────────────────────────────────────┘
+ Esc back   ↑↓ jk select   Enter instance   w window   r rescan   p pause   ? help   q quit

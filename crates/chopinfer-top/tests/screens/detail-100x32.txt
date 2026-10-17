@@ -29,4 +29,4 @@
 │ served as MiMo-V2.6-Flash   version 0.1.0-alpha.2   source 4c1e9a2b...   checkpoint 3fa91c07...  │
 │ found via serve process 48211 of this user, at 127.0.0.1:8311                                    │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
- Esc back   ← → Tab instance   w window   r rescan   p pause   ? help   q quit
+ Esc back   ← → Tab instance   g gpus   w window   r rescan   p pause   ? help   q quit

@@ -1,0 +1,24 @@
+ chopinfer-top  >  GPUs   4 on this host  1 slowing down
+
+┌─ GPUs  rates and shares over the last 3 polls ───────────────────────────────┐
+│ GPU  TEMP    POWER SM MHZ       VRAM UTIL TENSOR DRAM  INSTANCE              │
+│ 0     68C 244/250W  2,520 87.4/95.6G  89%    38%  82%  MiMo-V2.6-Flash +1    │
+│ 1     69C 244/250W  2,520 87.3/95.6G  89%    38%  82%  MiMo-V2.6-Flash       │
+│ 2     90C 214/250W  1,650 87.3/95.6G  95%    30%  66%  MiMo-V2.6-Flash       │
+│▌3     71C 244/250W  2,520 88.7/95.6G  89%    38%  82%  MiMo-V2.6-Flash +1    │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌─ Time  GPU 3, last 3 polls ──────────────────────────────────────────────────┐
+│ wall time      ██████████████████████████████████████████████████████─────── │
+│                kernels 89%  no kernel 11%  all processes                     │
+│ instance load  24 running  2 waiting  MiMo-V2.6-Flash                        │
+│                                                                              │
+│ SM busy        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────  79% │
+│ SM occupancy   ━━━━━━━━━━━━━━━━━───────────────────────────────────────  31% │
+│ tensor pipes   ━━━━━━━━━━━━━━━━━━━━━───────────────────────────────────  38% │
+│ DRAM bandwidth ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━──────────  82% │
+│ PCIe           rx 5.8 GiB/s   tx 5.6 GiB/s                                   │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+ Esc back   ↑↓ jk select   Enter instance   w window   p pause   ? help   q quit

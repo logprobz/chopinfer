@@ -11,8 +11,10 @@ pub mod poll;
 
 use std::collections::VecDeque;
 
+use crate::instances::Instance;
 use crate::stats::{HISTORY_SECONDS, RATE_POLLS};
 pub use owners::Owner;
+use poll::Report;
 
 /// What does not change about one GPU while chopinfer-top runs.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -290,6 +292,128 @@ impl History {
     }
 }
 
+/// Whether the GPUs can be read.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Status {
+    /// `--no-gpus`.
+    Off,
+    /// NVML is being opened.
+    Opening,
+    /// NVML could not be opened, and why.
+    Unavailable(String),
+    Open,
+}
+
+/// What the interface knows about the GPUs.
+#[derive(Clone, Debug)]
+pub struct Gpus {
+    pub status: Status,
+    pub driver: Option<String>,
+    pub devices: Vec<Device>,
+    /// One per device, in device order.
+    pub histories: Vec<History>,
+    /// Whether GPM counters may be read: not `--no-gpu-counters`.
+    pub counters: bool,
+    interval: f64,
+}
+
+impl Gpus {
+    pub fn new(status: Status, counters: bool, interval: f64) -> Self {
+        Self {
+            status,
+            driver: None,
+            devices: Vec::new(),
+            histories: Vec::new(),
+            counters,
+            interval,
+        }
+    }
+
+    /// For a chopinfer-top that does not read GPUs.
+    pub fn off() -> Self {
+        Self::new(Status::Off, false, 1.0)
+    }
+
+    pub fn apply(&mut self, report: Report) {
+        match report {
+            Report::Opened { driver, devices } => {
+                self.status = Status::Open;
+                self.driver = driver;
+                self.histories = devices
+                    .iter()
+                    .map(|_| History::new(self.interval))
+                    .collect();
+                self.devices = devices;
+            }
+            Report::Unavailable(reason) => self.status = Status::Unavailable(reason),
+            Report::Polled(readings) => {
+                for (history, reading) in self.histories.iter_mut().zip(readings) {
+                    history.push(reading);
+                }
+            }
+        }
+    }
+
+    pub fn latest(&self, index: usize) -> Option<&Reading> {
+        self.histories.get(index).and_then(History::latest)
+    }
+
+    /// Whether any GPU can give GPM figures.
+    pub fn gpm(&self) -> bool {
+        self.devices.iter().any(|device| device.gpm)
+    }
+
+    /// The processes of GPU `index` with the visible row each one is.
+    pub fn processes<'a>(
+        &'a self,
+        index: usize,
+        instances: &[Instance],
+    ) -> Vec<(&'a Process, Option<u64>)> {
+        self.latest(index).map_or_else(Vec::new, |reading| {
+            reading
+                .processes
+                .iter()
+                .map(|process| (process, owners::row(instances, process)))
+                .collect()
+        })
+    }
+
+    /// The GPUs that a process of visible row `id` holds.
+    pub fn of_instance(&self, instances: &[Instance], id: u64) -> Vec<u32> {
+        self.devices
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| {
+                self.processes(*index, instances)
+                    .iter()
+                    .any(|(_, row)| *row == Some(id))
+            })
+            .map(|(_, device)| device.index)
+            .collect()
+    }
+}
+
+/// GPU indices as runs: `0-3`, `0,2`, `0-1,4`.
+pub fn ranges(indices: &[u32]) -> String {
+    let mut runs: Vec<(u32, u32)> = Vec::new();
+    for index in indices {
+        match runs.last_mut() {
+            Some((_, end)) if *end + 1 == *index => *end = *index,
+            _ => runs.push((*index, *index)),
+        }
+    }
+    runs.iter()
+        .map(|(start, end)| {
+            if start == end {
+                start.to_string()
+            } else {
+                format!("{start}-{end}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,6 +487,52 @@ mod tests {
         // GPM without the graphics metric falls back to NVML.
         reading.activity = Some(Activity::default());
         assert_eq!(reading.kernels(), Some(0.97));
+    }
+
+    #[test]
+    fn indices_print_as_runs() {
+        assert_eq!(ranges(&[0, 1, 2, 3]), "0-3");
+        assert_eq!(ranges(&[0, 2]), "0,2");
+        assert_eq!(ranges(&[0, 1, 4]), "0-1,4");
+        assert_eq!(ranges(&[]), "");
+    }
+
+    #[test]
+    fn reports_open_poll_and_find_an_instances_gpus() {
+        use crate::targets::Target;
+        let mut registry = crate::instances::Registry::new(1.0);
+        let row = registry.add_target(Target::parse(":8311").unwrap(), 0.0);
+        let mut gpus = Gpus::new(Status::Opening, true, 1.0);
+        let device = |index| Device {
+            index,
+            name: "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition".into(),
+            ..Device::default()
+        };
+        gpus.apply(Report::Opened {
+            driver: Some("615.71.09".into()),
+            devices: vec![device(0), device(1), device(2)],
+        });
+        assert_eq!(gpus.status, Status::Open);
+        let serving = |pid| Reading {
+            processes: vec![Process {
+                pid,
+                owner: Owner {
+                    listen: Some("0.0.0.0:8311".into()),
+                    ..Owner::default()
+                },
+                ..Process::default()
+            }],
+            ..Reading::default()
+        };
+        gpus.apply(Report::Polled(vec![
+            serving(7),
+            Reading::default(),
+            serving(7),
+        ]));
+        assert_eq!(gpus.of_instance(&registry.instances, row), [0, 2]);
+        assert_eq!(gpus.processes(1, &registry.instances), []);
+        gpus.apply(Report::Unavailable("gone".into()));
+        assert_eq!(gpus.status, Status::Unavailable("gone".into()));
     }
 
     #[test]

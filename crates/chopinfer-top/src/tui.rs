@@ -16,8 +16,10 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 
-use crate::app::{Action, App};
+use crate::app::{Action, App, View};
 use crate::discover::{self, Command, Discovery, Report, Schedule};
+use crate::gpu::poll::{self as gpu_poll, GpuPoller};
+use crate::gpu::{Gpus, Status};
 use crate::instances::{EVENT_LIMIT, Followup, Registry, Source, Tone};
 use crate::poll::{Poll, Poller};
 use crate::targets::Target;
@@ -39,6 +41,10 @@ pub struct Setup {
     pub rescan: f64,
     pub bearer: Option<String>,
     pub sources: Vec<&'static str>,
+    /// Whether to read this host's GPUs, and whether GPM counters may be
+    /// sampled while the GPU view is open.
+    pub gpus: bool,
+    pub gpu_counters: bool,
 }
 
 /// Restores the terminal when dropped, including while a panic unwinds.
@@ -181,6 +187,15 @@ fn hold(held: &mut Vec<Report>, report: Report) {
     });
 }
 
+/// Holds a GPU report while paused: the latest reading replaces the ones
+/// held before it.
+fn hold_gpu(held: &mut Vec<gpu_poll::Report>, report: gpu_poll::Report) {
+    if matches!(report, gpu_poll::Report::Polled(_)) {
+        held.retain(|earlier| !matches!(earlier, gpu_poll::Report::Polled(_)));
+    }
+    held.push(report);
+}
+
 fn take_report(registry: &mut Registry, report: Report, now: f64) -> Vec<Followup> {
     match report {
         Report::Scan { found, events } => {
@@ -238,6 +253,13 @@ pub fn run(setup: Setup) -> io::Result<()> {
     };
     workers.follow(&mut registry, followups, now());
     let mut app = App::new(registry, setup.interval, setup.rescan, setup.sources);
+    // GPM counters are sampled only while the GPU view is open.
+    let counters = Arc::new(AtomicBool::new(false));
+    let (gpu_results, gpu_reports) = mpsc::channel();
+    let _gpu_poller = setup.gpus.then(|| {
+        app.gpus = Gpus::new(Status::Opening, setup.gpu_counters, setup.interval);
+        GpuPoller::spawn(setup.interval, origin, Arc::clone(&counters), gpu_results)
+    });
 
     let stop = Arc::new(AtomicBool::new(false));
     for signal in [
@@ -257,9 +279,8 @@ pub fn run(setup: Setup) -> io::Result<()> {
     let result = run_loop(
         &mut app,
         &mut workers,
-        &reports,
-        &poll_results,
-        &stop,
+        (&reports, &poll_results, &gpu_reports),
+        (&stop, &counters),
         color,
         now,
     );
@@ -287,9 +308,12 @@ fn read_input() -> Receiver<Event> {
 fn run_loop(
     app: &mut App,
     workers: &mut Workers,
-    reports: &Receiver<Report>,
-    poll_results: &Receiver<(u64, Poll)>,
-    stop: &AtomicBool,
+    (reports, poll_results, gpu_reports): (
+        &Receiver<Report>,
+        &Receiver<(u64, Poll)>,
+        &Receiver<gpu_poll::Report>,
+    ),
+    (stop, counters): (&AtomicBool, &AtomicBool),
     color: bool,
     now: impl Fn() -> f64,
 ) -> io::Result<()> {
@@ -300,6 +324,7 @@ fn run_loop(
     // here, so the screen holds still and nothing is lost.
     let mut held_polls: HashMap<u64, Poll> = HashMap::new();
     let mut held_reports: Vec<Report> = Vec::new();
+    let mut held_gpus: Vec<gpu_poll::Report> = Vec::new();
     let input = read_input();
     'running: while !stop.load(Ordering::Relaxed) {
         let mut dirty = false;
@@ -334,6 +359,19 @@ fn run_loop(
             hold(&mut held_reports, report);
         }
         held_polls.extend(poll_results.try_iter());
+        for report in gpu_reports.try_iter() {
+            hold_gpu(&mut held_gpus, report);
+        }
+        counters.store(
+            app.view == View::Gpus && app.gpus.counters,
+            Ordering::Relaxed,
+        );
+        if !app.paused && !held_gpus.is_empty() {
+            for report in held_gpus.drain(..) {
+                app.gpus.apply(report);
+            }
+            dirty = true;
+        }
         if !app.paused && (!held_reports.is_empty() || !held_polls.is_empty()) {
             let at = now();
             let mut followups = Vec::new();
@@ -393,6 +431,26 @@ mod tests {
         registry.instances[0].alias_of = Some(second);
         workers.follow(&mut registry, vec![Followup::Stop(first)], 1.0);
         assert_eq!(workers.pollers.keys().collect::<Vec<_>>(), [&second]);
+    }
+
+    #[test]
+    fn a_paused_gpu_reading_replaces_the_ones_held_before_it() {
+        use crate::gpu::Reading;
+        let mut held = Vec::new();
+        let opened = gpu_poll::Report::Opened {
+            driver: None,
+            devices: Vec::new(),
+        };
+        let polled = |at| {
+            gpu_poll::Report::Polled(vec![Reading {
+                at,
+                ..Reading::default()
+            }])
+        };
+        hold_gpu(&mut held, opened.clone());
+        hold_gpu(&mut held, polled(1.0));
+        hold_gpu(&mut held, polled(2.0));
+        assert_eq!(held, [opened, polled(2.0)]);
     }
 
     #[test]

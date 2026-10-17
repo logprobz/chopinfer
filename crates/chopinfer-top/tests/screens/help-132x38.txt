@@ -12,22 +12,22 @@
 │ DECODE   now  1,79│   Enter         open its details                                                         │tok/s              │
 │                   │   Esc  h        back to the list                                                         │      50,000 tok/s │
 │ ▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃│   ← →  Tab      previous or next instance (details)                                      │                   │
-│ ██████████████████│   w             latency and ratio window: 60s, 5m, since start                           │   ▂          ▂    │
+│ ██████████████████│   g             this host's GPUs: heat, clocks, memory and activity                      │   ▂          ▂    │
+│ ██████████████████│   w             latency and ratio window: 60s, 5m, since start                           │   █          █    │
 │ ██████████████████│   r             rescan for processes and containers now                                  │   █          █    │
 │ ██████████████████│   p             pause the screen; polls keep their latest result                         │   █          █    │
-│ ██████████████████│   q  Ctrl-C     quit                                                                     │   █          █    │
-│ ██████████████████│                                                                                          │▅▅▅█▅▅▅▅▅▅▅▅▅▅█▅▅▅ │
-│ -1m03s ▔▔▔▔▔▔▔▔▔▔▔│ Sources                                                                                  │▔▔▔▔▔▔▔▔▔▔▔▔▔▔ now │
-│ sequences   ━━━━━━│   proc          chopinfer serve processes of this user in this network namespace         │────────  64% used │
-│ waiting     2     │   docker        running containers whose process list shows chopinfer serve              │of lookups hit     │
-│ latency     TTFT p│   target        --target, --targets-file and CHOPINFER_TOP_TARGETS                       │ts accepted        │
-└───────────────────│                                                                                          │───────────────────┘
-┌─ Events ──────────│ Reads only /health and /metrics. Rates come from counter deltas                          │───────────────────┐
-│  5m00s ago  proc 4│ between polls; a new startup nonce re-baselines them.                                    │                   │
-│  5m00s ago  proc 5│                                                                                          │                   │
-│  5m00s ago  docker│ Press any key to close.                                                                  │                   │
-│  4m59s ago  target└──────────────────────────────────────────────────────────────────────────────────────────┘                   │
-│  5m00s ago  proc 48211                answering at 127.0.0.1:8311                                                                │
+│ ██████████████████│   q  Ctrl-C     quit                                                                     │▅▅▅█▅▅▅▅▅▅▅▅▅▅█▅▅▅ │
+│ -1m03s ▔▔▔▔▔▔▔▔▔▔▔│                                                                                          │▔▔▔▔▔▔▔▔▔▔▔▔▔▔ now │
+│ sequences   ━━━━━━│ Sources                                                                                  │────────  64% used │
+│ waiting     2     │   proc          chopinfer serve processes of this user in this network namespace         │of lookups hit     │
+│ latency     TTFT p│   docker        running containers whose process list shows chopinfer serve              │ts accepted        │
+└───────────────────│   target        --target, --targets-file and CHOPINFER_TOP_TARGETS                       │───────────────────┘
+┌─ Events ──────────│                                                                                          │───────────────────┐
+│  5m00s ago  proc 4│ Reads only /health and /metrics. Rates come from counter deltas                          │                   │
+│  5m00s ago  proc 5│ between polls; a new startup nonce re-baselines them.                                    │                   │
+│  5m00s ago  docker│                                                                                          │                   │
+│  4m59s ago  target│ Press any key to close.                                                                  │                   │
+│  5m00s ago  proc 4└──────────────────────────────────────────────────────────────────────────────────────────┘                   │
 │  5m00s ago  target 127.0.0.1:8431     answering at 127.0.0.1:8431                                                                │
 │  5m00s ago  docker glm-tp4            answering at 127.0.0.1:8600                                                                │
 │    30s ago  target 127.0.0.1:8431     restarted: new startup nonce; counters re-baselined                                        │
@@ -35,4 +35,4 @@
 │                                                                                                                                  │
 │                                                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- ↑↓ jk select   Enter details   w window   r rescan   p pause   ? help   q quit
+ ↑↓ jk select   Enter details   g gpus   w window   r rescan   p pause   ? help   q quit

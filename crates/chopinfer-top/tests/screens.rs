@@ -1,5 +1,5 @@
-//! The list and detail views, rendered from a fixed fleet and compared
-//! with golden screens in `tests/screens/`.
+//! The list, detail and GPU views, rendered from a fixed fleet and fixed
+//! GPU readings and compared with golden screens in `tests/screens/`.
 
 use std::path::{Path, PathBuf};
 
@@ -7,6 +7,8 @@ use chopinfer_top::app::{App, View};
 use chopinfer_top::discover::Found;
 use chopinfer_top::discover::docker::ServeContainer;
 use chopinfer_top::discover::proc::ServeProcess;
+use chopinfer_top::gpu::poll::Report;
+use chopinfer_top::gpu::{Activity, Device, Gpus, Kind, Owner, Process, Reading, Reasons, Status};
 use chopinfer_top::health::Health;
 use chopinfer_top::instances::Registry;
 use chopinfer_top::poll::{Answer, Poll};
@@ -260,6 +262,100 @@ fn fleet() -> App {
     app
 }
 
+const MIB: u64 = 1 << 20;
+
+/// This host's GPUs for the fleet: four RTX PRO 6000 serving MiMo (process
+/// 48211, TP4), a stray python3 beside it on GPU 3, a graphics process on
+/// GPU 0, and GPU 2 in a thermal slowdown for the last minute. GPM figures
+/// when `counters`.
+fn with_gpus(app: &mut App, counters: bool) {
+    let mut gpus = Gpus::new(Status::Opening, counters, 1.0);
+    let device = |index| Device {
+        index,
+        name: "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition".to_owned(),
+        memory_total: Some(97_887 * MIB),
+        sm_max_mhz: Some(3090),
+        pcie_max: Some((5, 16)),
+        temperature_limit: Some(92),
+        ecc: Some(false),
+        gpm: true,
+    };
+    gpus.apply(Report::Opened {
+        driver: Some("615.71.09".to_owned()),
+        devices: (0..4).map(device).collect(),
+    });
+    let process = |pid, memory, kind, ticks, name: &str| Process {
+        pid,
+        memory: Some(memory),
+        kind,
+        owner: Owner {
+            start_ticks: Some(ticks),
+            name: Some(name.to_owned()),
+            container: None,
+            listen: None,
+        },
+    };
+    for second in 0..=NOW as u32 {
+        let t = f64::from(second);
+        let wobble = ((t % 37.0) - 18.5).abs() / 18.5;
+        let reading = |index: u32| {
+            let hot = index == 2 && t >= 240.0;
+            let mut processes = vec![process(
+                48211,
+                89_012 * MIB,
+                Kind::Compute,
+                48211,
+                "chopinfer",
+            )];
+            if index == 3 {
+                processes.push(process(51877, 1_434 * MIB, Kind::Compute, 7, "python3"));
+            }
+            if index == 0 {
+                processes.push(process(2210, 96 * MIB, Kind::Graphics, 3, "Xorg"));
+            }
+            let used = processes
+                .iter()
+                .filter_map(|process| process.memory)
+                .sum::<u64>()
+                + 380 * MIB;
+            let kernels = if hot { 0.95 } else { 0.82 + 0.08 * wobble };
+            Reading {
+                at: t,
+                temperature: Some(if hot { 90 } else { 68 + index as i32 }),
+                headroom: Some(if hot { 2 } else { 24 - index as i32 }),
+                fan: Some(if hot { 100 } else { 54 + 2 * index }),
+                power: Some(if hot { 214.0 } else { 236.0 + 10.0 * wobble }),
+                power_limit: Some(250.0),
+                sm_mhz: Some(if hot { 1650 } else { 2520 }),
+                memory_mhz: Some(14_001),
+                pstate: Some(1),
+                reasons: Some(Reasons(if hot {
+                    Reasons::SOFTWARE_THERMAL | Reasons::HARDWARE_THERMAL
+                } else {
+                    Reasons::POWER_CAP
+                })),
+                memory_used: Some(used),
+                utilization: Some((0.97, 0.71)),
+                pcie: Some((5, 16)),
+                ecc_uncorrected: None,
+                processes,
+                activity: counters.then_some(Activity {
+                    kernels: Some(kernels),
+                    sm: Some(0.79),
+                    occupancy: Some(0.31),
+                    tensor: Some(if hot { 0.30 } else { 0.38 }),
+                    dram: Some(if hot { 0.66 } else { 0.82 }),
+                    pcie_rx: Some(6.2e9),
+                    pcie_tx: Some(6.0e9),
+                }),
+                lost: false,
+            }
+        };
+        gpus.apply(Report::Polled((0..4).map(reading).collect()));
+    }
+    app.gpus = gpus;
+}
+
 /// An idle MiMo target with one short burst 55 s before `NOW`: a 76 tok/s
 /// decode poll and prefill polls of 1,900 and 4,755 tok/s.
 fn burst() -> App {
@@ -359,9 +455,72 @@ fn help_overlay() {
 }
 
 #[test]
+fn gpu_view() {
+    let mut app = fleet();
+    with_gpus(&mut app, true);
+    app.view = View::Gpus;
+    check("gpus-132x38", &app, 132, 38);
+    // The GPU in a thermal slowdown.
+    app.gpu = 2;
+    check("gpus-100x30", &app, 100, 30);
+    app.gpu = 3;
+    check("gpus-80x24", &app, 80, 24);
+    app.gpu = 0;
+    app.help = true;
+    check("help-gpus-132x38", &app, 132, 38);
+}
+
+#[test]
+fn the_gpu_view_without_gpm_or_without_a_driver() {
+    let mut app = fleet();
+    with_gpus(&mut app, false);
+    app.view = View::Gpus;
+    check("gpus-nogpm-132x38", &app, 132, 38);
+    app.gpus = Gpus::new(
+        Status::Unavailable("libnvidia-ml.so.1 could not be loaded".to_owned()),
+        true,
+        1.0,
+    );
+    check("gpus-unavailable-100x30", &app, 100, 30);
+}
+
+#[test]
+fn an_instance_names_its_gpus_and_they_lead_back_to_it() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE));
+    let mut app = fleet();
+    with_gpus(&mut app, true);
+    app.view = View::Detail;
+    let detail = ui::draw(&app, 132, 38, NOW).text();
+    assert!(detail.contains("on GPUs 0-3"), "{detail}");
+    app.view = View::List;
+    press(&mut app, KeyCode::Char('g'));
+    assert_eq!(app.view, View::Gpus);
+    for _ in 0..3 {
+        press(&mut app, KeyCode::Char('j'));
+    }
+    assert_eq!(app.gpu, 3);
+    app.selected = None;
+    press(&mut app, KeyCode::Enter);
+    assert_eq!((app.view, app.current().unwrap().id), (View::Detail, 3));
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.view, View::Gpus);
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.view, View::List);
+    // From an instance's details, g selects its first GPU.
+    app.gpu = 3;
+    app.view = View::Detail;
+    press(&mut app, KeyCode::Char('g'));
+    assert_eq!((app.view, app.gpu), (View::Gpus, 0));
+    press(&mut app, KeyCode::Char('g'));
+    assert_eq!(app.view, View::Detail);
+}
+
+#[test]
 fn every_size_draws_without_panicking() {
     let mut app = fleet();
-    for view in [View::List, View::Detail] {
+    with_gpus(&mut app, true);
+    for view in [View::List, View::Detail, View::Gpus] {
         app.view = view;
         for help in [false, true] {
             app.help = help;
@@ -435,7 +594,8 @@ fn a_very_long_model_name_is_cut_at_the_edge() {
         NOW,
     );
     app.selected = Some(glm);
-    for view in [View::List, View::Detail] {
+    with_gpus(&mut app, true);
+    for view in [View::List, View::Detail, View::Gpus] {
         app.view = view;
         for (width, height) in [(132, 32), (1024, 32), (100, 32)] {
             let frame = ui::draw(&app, width, height, NOW);

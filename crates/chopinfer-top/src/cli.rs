@@ -5,10 +5,11 @@ use std::path::PathBuf;
 pub const USAGE: &str = "\
 usage: chopinfer-top [--target HOST:PORT]... [--targets-file FILE]
                      [--no-discover] [--no-docker] [--interval SECONDS]
-                     [--rescan SECONDS] [--api-key KEY] [--list [--json]]
+                     [--rescan SECONDS] [--api-key KEY] [--no-gpus]
+                     [--no-gpu-counters] [--list [--json]]
 
-A live view of running chopinfer serve instances. It reads only /health and
-/metrics.
+A live view of running chopinfer serve instances and this host's GPUs. It
+reads only /health and /metrics from servers, and the GPUs through NVML.
 
   --target HOST:PORT   Watch this server; repeatable. Also http://HOST:PORT,
                        or :PORT for 127.0.0.1. CHOPINFER_TOP_TARGETS adds a
@@ -21,13 +22,16 @@ A live view of running chopinfer serve instances. It reads only /health and
   --rescan SECONDS     Seconds between discovery scans, 2 to 300 (default 15).
   --api-key KEY        Bearer token for explicit targets behind an
                        authenticating proxy (default CHOPINFER_API_KEY).
+  --no-gpus            Do not read this host's GPUs.
+  --no-gpu-counters    Do not sample GPM counters (SM, tensor, DRAM) in the
+                       GPU view.
   --list               Print the instances once and exit; with --json, as a
                        chopinfer.top.list.v1 document.
   -h, --help           Print this help.
   --version            Print the version.
 
-Keys: arrows or j/k select, Enter opens, Esc returns, Tab switches, w changes
-the window, r rescans, p pauses, ? shows help, q quits.
+Keys: arrows or j/k select, Enter opens, Esc returns, Tab switches, g shows
+the GPUs, w changes the window, r rescans, p pauses, ? shows help, q quits.
 ";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -39,6 +43,8 @@ pub struct Options {
     pub interval: f64,
     pub rescan: f64,
     pub api_key: Option<String>,
+    pub gpus: bool,
+    pub gpu_counters: bool,
     pub list: bool,
     pub json: bool,
     pub help: bool,
@@ -55,6 +61,8 @@ impl Default for Options {
             interval: 1.0,
             rescan: 15.0,
             api_key: None,
+            gpus: true,
+            gpu_counters: true,
             list: false,
             json: false,
             help: false,
@@ -103,6 +111,8 @@ pub fn parse(arguments: impl IntoIterator<Item = String>) -> Result<Options, Str
             }
             "--rescan" => options.rescan = seconds("--rescan", value("--rescan")?, (2.0, 300.0))?,
             "--api-key" => options.api_key = Some(value("--api-key")?),
+            "--no-gpus" => options.gpus = false,
+            "--no-gpu-counters" => options.gpu_counters = false,
             "--list" => options.list = true,
             "--json" => options.json = true,
             "-h" | "--help" => options.help = true,
@@ -128,12 +138,13 @@ mod tests {
     fn reads_every_option() {
         let options = parsed(
             "--target :8311 --target=gpu:8310 --targets-file t.txt --no-discover --no-docker \
-             --interval 0.5 --rescan=30 --api-key k --list --json",
+             --interval 0.5 --rescan=30 --api-key k --no-gpus --no-gpu-counters --list --json",
         )
         .unwrap();
         assert_eq!(options.targets, [":8311", "gpu:8310"]);
         assert_eq!(options.targets_file, Some(PathBuf::from("t.txt")));
         assert!(!options.discover && !options.docker && options.list && options.json);
+        assert!(!options.gpus && !options.gpu_counters);
         assert_eq!((options.interval, options.rescan), (0.5, 30.0));
         assert_eq!(options.api_key.as_deref(), Some("k"));
         assert_eq!(parsed("").unwrap(), Options::default());

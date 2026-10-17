@@ -293,6 +293,28 @@ pub fn gauge(
     buffer.put(column + 1, y, label, Style::PLAIN);
 }
 
+/// Draws whole groups of styled pieces from `x` on line `y` while each
+/// ends by column `end`, so none is cut. Returns the column after the last.
+pub fn groups(
+    buffer: &mut Buffer,
+    x: u16,
+    y: u16,
+    groups: &[Vec<(String, Style)>],
+    end: u16,
+) -> u16 {
+    let mut column = x;
+    for group in groups {
+        let length: usize = group.iter().map(|(text, _)| text.chars().count()).sum();
+        if usize::from(column) + length > usize::from(end) {
+            break;
+        }
+        for (text, style) in group {
+            column = buffer.put(column, y, text, *style);
+        }
+    }
+    column
+}
+
 /// A horizontal bar `width` cells long at full scale, in eighths.
 pub fn bar(ratio: f64, width: usize) -> String {
     const PARTS: [char; 8] = [' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉'];

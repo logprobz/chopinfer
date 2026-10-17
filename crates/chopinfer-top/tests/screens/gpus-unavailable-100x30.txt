@@ -1,0 +1,30 @@
+ chopinfer-top  >  GPUs                                             window 60s  poll 1s  rescan 15s
+
+┌─ GPUs ───────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                  │
+│ No GPU telemetry: libnvidia-ml.so.1 could not be loaded.                                         │
+│ chopinfer-top shows the GPUs of the host it runs on, through the NVIDIA driver.                  │
+│ In a container, the utility driver capability provides it; the image sets it.                    │
+│ Instances on other hosts are still watched; their GPUs are not shown.                            │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ Esc back   ↑↓ jk select   Enter instance   w window   r rescan   p pause   ? help   q quit

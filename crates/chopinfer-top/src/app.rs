@@ -1,8 +1,9 @@
-//! The interface state: which view, which instance, which window, and
-//! what each key does.
+//! The interface state: which view, which instance or GPU, which window,
+//! and what each key does.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
+use crate::gpu::Gpus;
 use crate::instances::{Instance, Registry};
 use crate::stats::Window;
 use crate::ui::list::{TABLE_TOP, first_row, table_rows};
@@ -14,6 +15,7 @@ const DOUBLE_CLICK_SECONDS: f64 = 0.5;
 pub enum View {
     List,
     Detail,
+    Gpus,
 }
 
 /// What the main loop should do after an input.
@@ -42,10 +44,20 @@ pub struct App {
     /// The first list row shown, kept so the list scrolls only when the
     /// selection leaves it.
     pub scroll: usize,
+    /// This host's GPUs.
+    pub gpus: Gpus,
+    /// The selected GPU's position.
+    pub gpu: usize,
+    /// The first GPU row shown.
+    pub gpu_scroll: usize,
+    /// The views Esc returns through, the latest last.
+    trail: Vec<View>,
     /// The terminal height at the last [`App::settle`], which clicks are
     /// mapped with.
     height: u16,
-    last_click: Option<(u64, f64)>,
+    /// The row clicked last, and when: an instance id in the list, a GPU
+    /// position in the GPU view.
+    last_click: Option<(View, u64, f64)>,
 }
 
 impl App {
@@ -61,9 +73,78 @@ impl App {
             rescan,
             sources,
             scroll: 0,
+            gpus: Gpus::off(),
+            gpu: 0,
+            gpu_scroll: 0,
+            trail: Vec::new(),
             height: 0,
             last_click: None,
         }
+    }
+
+    /// Shows `view`, which Esc leaves for the view shown now. A view already
+    /// on the way back is returned to instead, so the trail stays short.
+    fn open(&mut self, view: View) {
+        match self.trail.iter().position(|seen| *seen == view) {
+            Some(position) => self.trail.truncate(position),
+            None => self.trail.push(self.view),
+        }
+        self.view = view;
+    }
+
+    /// Goes back to the view before this one, the list at the start.
+    fn back(&mut self) {
+        self.view = self.trail.pop().unwrap_or(View::List);
+    }
+
+    /// Opens the GPU view, or leaves it. From an instance's details, its
+    /// first GPU is selected.
+    fn toggle_gpus(&mut self) {
+        if self.view == View::Gpus {
+            self.back();
+            return;
+        }
+        if self.view == View::Detail
+            && let Some(row) = self.current()
+            && let Some(first) = self
+                .gpus
+                .of_instance(&self.registry.instances, row.id)
+                .first()
+            && let Some(position) = self
+                .gpus
+                .devices
+                .iter()
+                .position(|device| device.index == *first)
+        {
+            self.gpu = position;
+        }
+        self.open(View::Gpus);
+    }
+
+    /// Opens the details of the instance on the selected GPU, if any.
+    fn open_gpu_instance(&mut self) -> bool {
+        let row = self
+            .gpus
+            .processes(self.gpu, &self.registry.instances)
+            .into_iter()
+            .find_map(|(_, row)| row);
+        match row {
+            Some(row) => {
+                self.selected = Some(row);
+                self.open(View::Detail);
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn step_gpu(&mut self, forward: bool) {
+        let count = self.gpus.devices.len();
+        self.gpu = if forward {
+            (self.gpu + 1).min(count.saturating_sub(1))
+        } else {
+            self.gpu.saturating_sub(1)
+        };
     }
 
     /// Scrolls the list so the selected row is shown on a terminal `height`
@@ -72,6 +153,9 @@ impl App {
         self.height = height;
         let room = table_rows(self.rows().len(), height);
         self.scroll = first_row(self.scroll, self.selected_index(), room);
+        let count = self.gpus.devices.len();
+        self.gpu = self.gpu.min(count.saturating_sub(1));
+        self.gpu_scroll = first_row(self.gpu_scroll, self.gpu, table_rows(count, height));
     }
 
     /// The rows shown, in order.
@@ -125,16 +209,24 @@ impl App {
             (_, KeyCode::Char('p')) => self.paused = !self.paused,
             (_, KeyCode::Char('w')) => self.window = self.window.next(),
             (_, KeyCode::Char('r')) => return Action::Rescan,
+            (_, KeyCode::Char('g')) => self.toggle_gpus(),
             (View::List, KeyCode::Down | KeyCode::Char('j')) => self.step(true, false),
             (View::List, KeyCode::Up | KeyCode::Char('k')) => self.step(false, false),
             (View::List, KeyCode::Enter) => {
                 if self.current().is_some() {
                     self.select(self.selected_index());
-                    self.view = View::Detail;
+                    self.open(View::Detail);
                 }
             }
-            (View::Detail, KeyCode::Esc | KeyCode::Backspace | KeyCode::Char('h')) => {
-                self.view = View::List;
+            (View::Detail | View::Gpus, KeyCode::Esc | KeyCode::Backspace | KeyCode::Char('h')) => {
+                self.back()
+            }
+            (View::Gpus, KeyCode::Down | KeyCode::Char('j')) => self.step_gpu(true),
+            (View::Gpus, KeyCode::Up | KeyCode::Char('k')) => self.step_gpu(false),
+            (View::Gpus, KeyCode::Enter) => {
+                if !self.open_gpu_instance() {
+                    return Action::Nothing;
+                }
             }
             (View::Detail, KeyCode::Right | KeyCode::Tab | KeyCode::Char('l')) => {
                 self.step(true, true);
@@ -145,10 +237,10 @@ impl App {
         Action::Redraw
     }
 
-    /// A click selects a row of the list; a second click on it within half
-    /// a second opens it.
+    /// A click selects a row of the list or a GPU; a second click on it
+    /// within half a second opens it, or the GPU's instance.
     pub fn mouse(&mut self, event: MouseEvent, now: f64) -> Action {
-        if self.view != View::List
+        if self.view == View::Detail
             || self.help
             || event.kind != MouseEventKind::Down(MouseButton::Left)
         {
@@ -157,24 +249,40 @@ impl App {
         let Some(line) = event.row.checked_sub(TABLE_TOP + 2).map(usize::from) else {
             return Action::Nothing;
         };
-        let rows = self.rows();
-        let room = table_rows(rows.len(), self.height);
-        if line >= room {
+        let (count, selected, scroll) = match self.view {
+            View::Gpus => (self.gpus.devices.len(), self.gpu, self.gpu_scroll),
+            _ => (self.rows().len(), self.selected_index(), self.scroll),
+        };
+        let room = table_rows(count, self.height);
+        let first = first_row(scroll, selected, room);
+        if line >= room || first + line >= count {
             return Action::Nothing;
         }
-        let first = first_row(self.scroll, self.selected_index(), room);
-        let Some(id) = rows.get(first + line).map(|row| row.id) else {
-            return Action::Nothing;
+        let clicked = match self.view {
+            View::Gpus => {
+                self.gpu = first + line;
+                self.gpu as u64
+            }
+            _ => {
+                let id = self.rows()[first + line].id;
+                self.selected = Some(id);
+                id
+            }
         };
-        let double = self
-            .last_click
-            .is_some_and(|(clicked, at)| clicked == id && now - at <= DOUBLE_CLICK_SECONDS);
-        self.selected = Some(id);
+        let view = self.view;
+        let double = self.last_click.is_some_and(|(seen, id, at)| {
+            seen == view && id == clicked && now - at <= DOUBLE_CLICK_SECONDS
+        });
         if double {
-            self.view = View::Detail;
             self.last_click = None;
+            match view {
+                View::Gpus => {
+                    self.open_gpu_instance();
+                }
+                _ => self.open(View::Detail),
+            }
         } else {
-            self.last_click = Some((id, now));
+            self.last_click = Some((view, clicked, now));
         }
         Action::Redraw
     }
@@ -278,6 +386,53 @@ mod tests {
             ..click
         };
         assert_eq!(app.mouse(below, 5.0), Action::Nothing);
+    }
+
+    #[test]
+    fn the_gpu_view_opens_selects_and_returns() {
+        use crate::gpu::{Device, Status, poll::Report};
+        let mut app = app(2);
+        let mut gpus = Gpus::new(Status::Opening, true, 1.0);
+        gpus.apply(Report::Opened {
+            driver: None,
+            devices: (0..3)
+                .map(|index| Device {
+                    index,
+                    ..Device::default()
+                })
+                .collect(),
+        });
+        app.gpus = gpus;
+        app.settle(24);
+        press(&mut app, KeyCode::Char('g'));
+        assert_eq!(app.view, View::Gpus);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.gpu, 2);
+        press(&mut app, KeyCode::Char('k'));
+        assert_eq!(app.gpu, 1);
+        // No process on the GPU is an instance, so Enter does nothing.
+        assert_eq!(press(&mut app, KeyCode::Enter), Action::Nothing);
+        let click = |row| MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 10,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert_eq!(app.mouse(click(TABLE_TOP + 2), 1.0), Action::Redraw);
+        assert_eq!(app.gpu, 0);
+        assert_eq!(app.mouse(click(TABLE_TOP + 5), 1.1), Action::Nothing);
+        assert_eq!(app.view, View::Gpus);
+        press(&mut app, KeyCode::Char('g'));
+        assert_eq!(app.view, View::List);
+        // Through the details and back.
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('g'));
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.view, View::Detail);
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.view, View::List);
     }
 
     #[test]

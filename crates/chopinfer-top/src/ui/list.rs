@@ -16,12 +16,12 @@ pub const TABLE_TOP: u16 = 2;
 /// A table column: its title, width, alignment, the gap after it, and the
 /// order in which it is dropped when the terminal is narrow (higher first;
 /// zero is never dropped).
-struct Column {
-    title: &'static str,
-    width: usize,
-    right: bool,
-    gap: usize,
-    drop: u8,
+pub(super) struct Column {
+    pub(super) title: &'static str,
+    pub(super) width: usize,
+    pub(super) right: bool,
+    pub(super) gap: usize,
+    pub(super) drop: u8,
 }
 
 const COLUMNS: [Column; 11] = [
@@ -127,18 +127,18 @@ pub fn first_row(scroll: usize, selected: usize, room: usize) -> usize {
         .max((selected + 1).saturating_sub(room.max(1)))
 }
 
-/// Which columns fit `room` cells, and the sparkline width left over.
-fn layout(room: usize) -> (Vec<usize>, usize) {
-    let mut shown = (0..COLUMNS.len()).collect::<Vec<_>>();
+/// Which of `columns` fit `room` cells, and the sparkline width left over.
+pub(super) fn layout(columns: &[Column], room: usize) -> (Vec<usize>, usize) {
+    let mut shown = (0..columns.len()).collect::<Vec<_>>();
     let used = |shown: &[usize]| {
         shown
             .iter()
-            .map(|index| COLUMNS[*index].width + COLUMNS[*index].gap)
+            .map(|index| columns[*index].width + columns[*index].gap)
             .sum::<usize>()
     };
-    let mut level = COLUMNS.iter().map(|column| column.drop).max().unwrap_or(0);
+    let mut level = columns.iter().map(|column| column.drop).max().unwrap_or(0);
     while used(&shown) > room && level > 0 {
-        shown.retain(|index| COLUMNS[*index].drop != level);
+        shown.retain(|index| columns[*index].drop != level);
         level -= 1;
     }
     let spark = room.saturating_sub(used(&shown));
@@ -180,7 +180,7 @@ pub fn draw(buffer: &mut Buffer, app: &App, now: f64) {
     let selected = app.selected_index();
     let first = first_row(app.scroll, selected, visible);
     let room = usize::from(width) - 4;
-    let (shown, spark) = layout(room);
+    let (shown, spark) = layout(&COLUMNS, room);
     let position = if rows.len() > visible {
         format!(
             "  rows {}-{} of {}",
@@ -275,13 +275,14 @@ pub fn draw(buffer: &mut Buffer, app: &App, now: f64) {
     footer(
         buffer,
         &[
-            ("↑↓ jk", "select"),
-            ("Enter", "details"),
-            ("w", "window"),
-            ("r", "rescan"),
-            ("p", "pause"),
-            ("?", "help"),
-            ("q", "quit"),
+            ("↑↓ jk", "select", 0),
+            ("Enter", "details", 0),
+            ("g", "gpus", 0),
+            ("w", "window", 2),
+            ("r", "rescan", 3),
+            ("p", "pause", 1),
+            ("?", "help", 0),
+            ("q", "quit", 0),
         ],
     );
 }
@@ -780,7 +781,7 @@ mod tests {
 
     #[test]
     fn narrow_terminals_drop_columns_from_the_right() {
-        let (all, spark) = layout(128);
+        let (all, spark) = layout(&COLUMNS, 128);
         assert_eq!(all.len(), COLUMNS.len());
         assert!(spark >= SPARK_MINIMUM, "{spark}");
         let titles = |shown: Vec<usize>| {
@@ -790,17 +791,17 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         // An 80-column terminal keeps decode throughput.
-        let (shown, spark) = layout(76);
+        let (shown, spark) = layout(&COLUMNS, 76);
         assert_eq!(spark, 0);
         assert_eq!(
             titles(shown),
             ["SOURCE", "ADDRESS", "MODEL", "STATE", "DECODE"]
         );
-        let (shown, _) = layout(70);
+        let (shown, _) = layout(&COLUMNS, 70);
         assert_eq!(titles(shown), ["SOURCE", "ADDRESS", "MODEL", "STATE"]);
-        let (shown, spark) = layout(1020);
+        let (shown, spark) = layout(&COLUMNS, 1020);
         assert_eq!((shown.len(), spark), (COLUMNS.len(), 1020 - 114));
-        let (shown, spark) = layout(100);
+        let (shown, spark) = layout(&COLUMNS, 100);
         assert_eq!(spark, 0);
         assert_eq!(
             titles(shown),

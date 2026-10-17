@@ -2,6 +2,7 @@
 
 pub mod buffer;
 pub mod detail;
+pub mod gpus;
 pub mod list;
 pub mod widgets;
 
@@ -33,9 +34,10 @@ pub fn draw(app: &App, width: u16, height: u16, now: f64) -> Buffer {
     match app.view {
         View::List => list::draw(&mut buffer, app, now),
         View::Detail => detail::draw(&mut buffer, app, now),
+        View::Gpus => gpus::draw(&mut buffer, app, now),
     }
     if app.help {
-        help(&mut buffer);
+        help(&mut buffer, app.view);
     }
     buffer
 }
@@ -62,15 +64,7 @@ pub fn header(buffer: &mut Buffer, app: &App, crumbs: &[(String, Style)]) {
     for (text, style) in crumbs {
         column = buffer.put(column, 0, text, bar(*style));
     }
-    let right = format!(
-        "{}window {}  poll {}s  rescan {}s ",
-        if app.paused { "PAUSED  " } else { "" },
-        app.window.label(),
-        widgets::rate(app.interval)
-            .trim_end_matches('0')
-            .trim_end_matches('.'),
-        app.rescan
-    );
+    let right = header_right(app);
     let start = width.saturating_sub(right.chars().count() as u16);
     if start > column.saturating_add(1) {
         let style = if app.paused {
@@ -82,13 +76,46 @@ pub fn header(buffer: &mut Buffer, app: &App, crumbs: &[(String, Style)]) {
     }
 }
 
-/// The footer bar of `(key, meaning)` pairs.
-pub fn footer(buffer: &mut Buffer, keys: &[(&str, &str)]) {
+/// The right of the header bar: pause, window, poll and rescan.
+pub fn header_right(app: &App) -> String {
+    format!(
+        "{}window {}  poll {}s  rescan {}s ",
+        if app.paused { "PAUSED  " } else { "" },
+        app.window.label(),
+        widgets::rate(app.interval)
+            .trim_end_matches('0')
+            .trim_end_matches('.'),
+        app.rescan
+    )
+}
+
+/// The footer bar of `(key, meaning, rank)` triples. Only whole pairs are
+/// drawn: when they do not all fit, the pairs of the highest rank are left
+/// out first, and those of rank 0 never are.
+pub fn footer(buffer: &mut Buffer, keys: &[(&str, &str, u8)]) {
     let y = buffer.height - 1;
     let width = buffer.width;
     buffer.background(0, y, width, Color::Bar);
+    let length = |keys: &[&(&str, &str, u8)]| {
+        keys.iter()
+            .map(|(key, meaning, _)| key.chars().count() + meaning.chars().count() + 4)
+            .sum::<usize>()
+            .saturating_sub(2)
+    };
+    let mut shown = keys.iter().collect::<Vec<_>>();
+    while length(&shown) > usize::from(width) {
+        let Some(rank) = shown
+            .iter()
+            .map(|(_, _, rank)| *rank)
+            .max()
+            .filter(|rank| *rank > 0)
+        else {
+            break;
+        };
+        shown.retain(|(_, _, seen)| *seen != rank);
+    }
     let mut column = 1;
-    for (key, meaning) in keys {
+    for (key, meaning, _) in shown {
         column = buffer.put(
             column,
             y,
@@ -110,13 +137,14 @@ pub fn footer(buffer: &mut Buffer, keys: &[(&str, &str)]) {
     }
 }
 
-fn help(buffer: &mut Buffer) {
-    let lines: &[(&str, &str)] = &[
+fn help(buffer: &mut Buffer, view: View) {
+    const INSTANCES: &[(&str, &str)] = &[
         ("Keys", ""),
         ("  ↑ ↓  j k", "select an instance (list)"),
         ("  Enter", "open its details"),
         ("  Esc  h", "back to the list"),
         ("  ← →  Tab", "previous or next instance (details)"),
+        ("  g", "this host's GPUs: heat, clocks, memory and activity"),
         ("  w", "latency and ratio window: 60s, 5m, since start"),
         ("  r", "rescan for processes and containers now"),
         ("  p", "pause the screen; polls keep their latest result"),
@@ -144,6 +172,39 @@ fn help(buffer: &mut Buffer) {
         ("", ""),
         ("", "Press any key to close."),
     ];
+    const GPUS: &[(&str, &str)] = &[
+        ("Keys", ""),
+        ("  ↑ ↓  j k", "select a GPU"),
+        ("  Enter", "open the details of the instance on the GPU"),
+        ("  Esc  h  g", "back to where g was pressed"),
+        ("  w", "latency and ratio window: 60s, 5m, since start"),
+        ("  r", "rescan for processes and containers now"),
+        ("  p", "pause the screen; polls keep their latest result"),
+        ("  q  Ctrl-C", "quit"),
+        ("", ""),
+        ("GPU time", ""),
+        (
+            "  kernels",
+            "share of time a kernel ran on the GPU, from any process",
+        ),
+        ("  no kernel", "the rest: waiting for the host or for work"),
+        ("  SM busy", "share of SMs with work (GPM)"),
+        (
+            "  occupancy",
+            "active warps against the most the SMs hold (GPM)",
+        ),
+        ("  tensor", "share of time the tensor pipes ran (GPM)"),
+        ("  DRAM", "share of peak memory bandwidth in use (GPM)"),
+        ("", ""),
+        (
+            "",
+            "NVML is read once a poll, GPM counters only while this view is",
+        ),
+        ("", "open. GPU numbers are nvidia-smi's, not CUDA ordinals."),
+        ("", ""),
+        ("", "Press any key to close."),
+    ];
+    let lines = if view == View::Gpus { GPUS } else { INSTANCES };
     let width = 92.min(buffer.width - 2);
     let height = (lines.len() as u16 + 2).min(buffer.height - 2);
     let x = (buffer.width - width) / 2;
@@ -301,3 +362,41 @@ pub const LATENCIES: [(&str, HistogramOf); 6] = [
 
 pub const TTFT: HistogramOf = |s| s.histograms.ttft.as_ref();
 pub const INTER_TOKEN: HistogramOf = |s| s.histograms.inter_token.as_ref();
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_footer_drops_whole_pairs_by_rank() {
+        let keys = [
+            ("Esc", "back", 0),
+            ("g", "gpus", 0),
+            ("w", "window", 2),
+            ("r", "rescan", 3),
+            ("p", "pause", 1),
+            ("q", "quit", 0),
+        ];
+        let line = |width| {
+            let mut buffer = Buffer::new(width, 2);
+            footer(&mut buffer, &keys);
+            buffer
+                .text()
+                .lines()
+                .nth(1)
+                .unwrap_or_default()
+                .trim_end()
+                .to_owned()
+        };
+        assert_eq!(
+            line(80),
+            " Esc back   g gpus   w window   r rescan   p pause   q quit"
+        );
+        // Everything takes 59 columns.
+        assert_eq!(line(59), line(80));
+        assert_eq!(line(58), " Esc back   g gpus   w window   p pause   q quit");
+        assert_eq!(line(36), " Esc back   g gpus   q quit");
+        // Rank 0 is never dropped, so a tiny footer is cut instead.
+        assert_eq!(line(10), " Esc back");
+    }
+}

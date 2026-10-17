@@ -1,0 +1,30 @@
+ chopinfer-top  >  GPUs   4 on this host  1 slowing down   GPM on   window 60s  poll 1s  rescan 15s
+
+┌─ GPUs  rates and shares over the last 3 polls ───────────────────────────────────────────────────┐
+│ GPU  TEMP  FAN    POWER SM MHZ       VRAM UTIL TENSOR DRAM  INSTANCE            UTIL 5m          │
+│ 0     68C  54% 244/250W  2,520 87.4/95.6G  89%    38%  82%  MiMo-V2.6-Flash +1  ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇ │
+│ 1     69C  56% 244/250W  2,520 87.3/95.6G  89%    38%  82%  MiMo-V2.6-Flash     ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇ │
+│▌2     90C 100% 214/250W  1,650 87.3/95.6G  95%    30%  66%  MiMo-V2.6-Flash     ▇▇▇▇▇▇▇▇▇▇▇▇▇███ │
+│ 3     71C  60% 244/250W  2,520 88.7/95.6G  89%    38%  82%  MiMo-V2.6-Flash +1  ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ GPU 2  RTX PRO 6000 Max-Q  MiMo-V2.6-Flash ────────┐┌─ Time  GPU 2, last 3 polls ───────────────┐
+│ ACTIVITY  now  95%        POWER  now  214           ││ wall time      █████████████████████████─ │
+│                     100%                     250 W  ││                kernels 95%  no kernel 5%  │
+│ ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇  ▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅  ││ instance load  24 running  2 waiting      │
+│ ████████████████████████  ████████████████████████  ││                                           │
+│ ████████████████████████  ████████████████████████  ││ SM busy        ━━━━━━━━━━━━━━━━━────  79% │
+│ -24s ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ now  -24s ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ now  ││ SM occupancy   ━━━━━━━──────────────  31% │
+│ VRAM         ━━━━━━━━━━━━━━━━━━━━━━── 87.3/95.6 GiB ││ tensor pipes   ━━━━━━───────────────  30% │
+│ temperature  90C  2C under the limit   fan 100%     ││ DRAM bandwidth ━━━━━━━━━━━━━━───────  66% │
+│ clocks       SM 1,650 of 3,090 MHz                  ││ PCIe           rx 5.8 GiB/s               │
+│ limited by   hardware thermal slowdown              ││                                           │
+│ PCIe         gen 5 x16   ECC off                    ││                                           │
+└─────────────────────────────────────────────────────┘└───────────────────────────────────────────┘
+┌─ Processes  on GPU 2 ─────────────────────┐┌─ GPU events ────────────────────────────────────────┐
+│ PID     TYPE      VRAM  PROCESS           ││ none                                                │
+│ 48211   C     86.9 GiB  MiMo-V2.6-Flash   ││                                                     │
+│                                           ││                                                     │
+│                                           ││                                                     │
+│                                           ││                                                     │
+└───────────────────────────────────────────┘└─────────────────────────────────────────────────────┘
+ Esc back   ↑↓ jk select   Enter instance   w window   r rescan   p pause   ? help   q quit

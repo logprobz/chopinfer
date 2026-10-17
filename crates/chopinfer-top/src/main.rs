@@ -91,6 +91,8 @@ fn main() -> ExitCode {
         rescan: options.rescan,
         bearer,
         sources,
+        gpus: options.gpus,
+        gpu_counters: options.gpu_counters,
     };
     match tui::run(setup) {
         Ok(()) => ExitCode::SUCCESS,

@@ -20,9 +20,9 @@ from urllib.parse import urlsplit
 import common
 import declaration
 import model_modules
-from agentic_metrics import (INVALID_SESSION, RAW_CALLS_AGREE, RAW_MALFORMED_CALL, RAW_REASONING_ONLY, burst_metrics,
-                             distribution, histogram_reports, level_verdict, metrics_delta, prefill_evidence, ratio,
-                             summarize)
+from agentic_metrics import (INVALID_SESSION, RAW_CALLS_AGREE, RAW_MALFORMED_CALL, RAW_REASONING_ONLY, TAIL_SAMPLES,
+                             burst_metrics, distribution, histogram_reports, level_verdict, metrics_delta,
+                             prefill_evidence, ratio, summarize)
 from agentic_server import observe_startup, mode_evidence, verify_arm
 from agentic_workload import CORPUS, Workspace, decode_context, load_corpus, max_tool_result_bytes, task_for, valid_session
 
@@ -1193,23 +1193,31 @@ def level_passed(level):
 def markdown(result):
     lines = ['# Agentic mixed workload', '', f"Revision: `{REVISION}`. Fake server: {result['dry_run']}.",
              f"Receipt: {result['receipt_kind']}. Aborted: {result.get('aborted') or 'no'}.", '',
-             '| C | Mode | Valid/completed | Errors/timeouts | Output tok/s | Server step evidence | Client burst p50/p95/p99/max ms | Client stalls/1000 gaps |',
-             '| --- | --- | --- | --- | --- | --- | --- | --- |']
+             '| C | Mode | Valid/completed | Errors/timeouts | Output tok/s | Prefill tok/step | TTFT p50/p95 ms | Server step evidence | Client burst p50/p95/p99/max ms | Client stalls/1000 gaps |',
+             '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |']
     def number(value):
         return 'unavailable' if value is None else f'{value:.3f}'
+    def quantiles(values, names, samples):
+        # A star marks a tail with fewer samples than it needs (TAIL_SAMPLES).
+        return '/'.join(number(values[k]) + ('*' if samples < TAIL_SAMPLES.get(k, 0) else '') for k in names)
+    def percentiles(values, names, samples):
+        return quantiles(values, names, samples) + f' (n={samples})'
     for level in result['levels']:
         gaps = level['step_gap_ms']
         histograms = level['server_metrics']['histograms']
         primary = [h for h in histograms if h['name'] == 'vllm:inter_token_latency_seconds']
         if not primary:
             primary = [h for h in histograms if h['name'].endswith('step_execution_seconds')]
-        evidence = '; '.join(f"{h['name']} {h['labels']}: p95 upper {number(h['quantile_upper_ms']['p95'])} ms, "
-                             f"stalls/1000 [{number(h['stall_per_1000_lower'])}, {number(h['stall_per_1000_upper'])}]" for h in primary) or 'unavailable'
+        evidence = '; '.join(f"{h['name']} {h['labels']}: p95 upper {quantiles(h['quantile_upper_ms'], ['p95'], int(h['count'] or 0))} ms "
+                             f"(n={int(h['count'] or 0)}), stalls/1000 [{number(h['stall_per_1000_lower'])}, "
+                             f"{number(h['stall_per_1000_upper'])}]" for h in primary) or 'unavailable'
+        prefill = level['prefill']['server_prefill_tokens_per_step']
         lines.append(f"| {level['concurrency']} | {level['prefill_budget']['mode'] or 'unknown'} | "
                      f"{level['valid_sessions']}/{level['measured_completed']} | {level['errors']}/{level['timeouts']} | "
-                     f"{number(level['output_tokens_per_second']['value'])} | {evidence} | "
-                     f"{'/'.join(number(gaps[k]) for k in ('p50', 'p95', 'p99', 'max'))} | "
-                     f"{number(level['client_stalls']['per_1000_gaps'])} |")
+                     f"{number(level['output_tokens_per_second']['value'])} | {number(prefill['value'])} (n={prefill['samples']}) | "
+                     f"{percentiles(level['ttft_ms'], ('p50', 'p95'), level['ttft_ms']['samples'])} | {evidence} | "
+                     f"{percentiles(gaps, ('p50', 'p95', 'p99', 'max'), gaps['samples'])} | "
+                     f"{number(level['client_stalls']['per_1000_gaps'])} (n={level['client_stalls']['eligible_gaps']}) |")
         for warning in level['arm_verification'].get('warnings', []):
             lines.append('Arm activity: ' + warning)
         if not level['arm_verification']['passed']:
@@ -1222,7 +1230,9 @@ def markdown(result):
             lines.append(f"C{level['concurrency']} failed: " + '; '.join(verdict['problems']))
     if result.get('decode'):
         lines += ['', f"Separate C1 decode tok/s: {number(result['decode'].get('decode_tokens_per_second'))}."]
-    lines += ['', 'Server step histograms are primary stall evidence. Client bursts are a secondary proxy affected by transport and frontend holdback.',
+    lines += ['', 'n is the sample count of each figure: prefill steps, turns, histogram observations or client gaps. '
+              'A star marks a percentile with fewer samples than it needs (20 for p95, 100 for p99).',
+              'Server step histograms are primary stall evidence. Client bursts are a secondary proxy affected by transport and frontend holdback.',
               'Kind/tool transitions are marked as possible holdback; within-run gaps can still contain undetectable holdback or client jitter.',
               'Measured and drain counters are separate. Validity checks tool flow, not semantic correctness.', '']
     return '\n'.join(lines)

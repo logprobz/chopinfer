@@ -9,6 +9,17 @@ def distribution(values):
                                      for name, q in [('p50', .5), ('p95', .95), ('p99', .99), ('max', 1)]}}
 
 
+# Samples a nearest-rank percentile needs before one sample is expected above
+# it, 1 / (1 - q): with fewer it is the maximum or next to it, not a tail.
+TAIL_SAMPLES = {'p50': 2, 'p95': 20, 'p99': 100}
+
+
+def tail(dist, name):
+    """Percentile NAME of a `distribution`, with its sample count and
+    whether the count supports it (TAIL_SAMPLES)."""
+    return dict(value=dist[name], samples=dist['samples'], supported=dist['samples'] >= TAIL_SAMPLES[name])
+
+
 def metric(value=None, samples=0, missing=0, unavailable=None):
     return dict(value=value, samples=samples, missing=missing, unavailable=unavailable)
 
@@ -370,7 +381,7 @@ def value_histogram(delta, name):
     for label, q in [('p50', .5), ('p95', .95), ('p99', .99)]:
         bound = next((le for le, n in sorted(buckets.items()) if good and n >= max(1, int(count * q))), None)
         upper[label] = bound if bound is not None and math.isfinite(bound) else None
-    return dict(name=name, count=count or 0, mean=total / count if good else None, quantile_upper=upper)
+    return dict(name=name, count=int(count or 0), mean=total / count if good else None, quantile_upper=upper)
 
 
 def prefill_evidence(delta, summary):

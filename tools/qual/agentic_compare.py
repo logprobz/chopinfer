@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from agentic_metrics import tail
 from agentic_mixed import REVISION
 from agentic_server import mode_evidence, verify_arm
 from common import compared_timing
@@ -66,13 +67,21 @@ def compare(left, right):
                     if 'request_sha256' in t}
         a, b = trajectories(fixed), trajectories(tbt)
         shared = a.keys() & b.keys()
+        # Every figure carries its sample count in each arm; a percentile also
+        # whether that count supports it (agentic_metrics.TAIL_SAMPLES).
+        figures = {
+            'output_tokens_per_second': lambda level: dict(value=level['output_tokens_per_second']['value'],
+                                                           samples=level['output_tokens_per_second']['samples']),
+            'ttft_p95_ms': lambda level: tail(level['ttft_ms'], 'p95'),
+            'client_step_gap_p95_ms': lambda level: tail(level['step_gap_ms'], 'p95'),
+            'client_stalls_per_1000_gaps': lambda level: dict(value=level['client_stalls']['per_1000_gaps'],
+                                                              samples=level['client_stalls']['eligible_gaps']),
+        }
         comparisons = {}
-        for name, path in [('output_tokens_per_second', ('output_tokens_per_second', 'value')),
-                           ('ttft_p95_ms', ('ttft_ms', 'p95')),
-                           ('client_step_gap_p95_ms', ('step_gap_ms', 'p95')),
-                           ('client_stalls_per_1000_gaps', ('client_stalls', 'per_1000_gaps'))]:
-            av, bv = fixed[path[0]][path[1]], tbt[path[0]][path[1]]
-            comparisons[name] = dict(fixed=av, tbt=bv, tbt_minus_fixed=bv-av if av is not None and bv is not None else None)
+        for name, figure in figures.items():
+            x, y = figure(fixed), figure(tbt)
+            comparisons[name] = dict(fixed=x, tbt=y, tbt_minus_fixed=y['value'] - x['value']
+                                     if x['value'] is not None and y['value'] is not None else None)
         # Server timing histograms are primary and kept per metric/label set.
         server = {}
         for arm, level in [('fixed', fixed), ('tbt', tbt)]:
@@ -82,6 +91,7 @@ def compare(left, right):
                     server.setdefault(key, {})[arm] = hist
         for pair in server.values():
             if 'fixed' in pair and 'tbt' in pair:
+                pair['samples'] = {arm: pair[arm]['count'] for arm in ('fixed', 'tbt')}
                 pair['tbt_minus_fixed'] = {field: pair['tbt'][field] - pair['fixed'][field]
                                            if pair['tbt'][field] is not None and pair['fixed'][field] is not None else None
                                            for field in ('mean_ms',)}

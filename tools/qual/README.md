@@ -1282,6 +1282,12 @@ never binds on its small files. A staged corpus sets 16 KiB, so its 4 and
 and `truncated_tool_results`, and each level totals them per limit
 (`tool_results`).
 
+Every percentile comes with its sample count. The JSON distributions carry
+`samples`; the summary prints n beside each figure and stars a percentile
+with fewer samples than it needs (20 for p95, 100 for p99,
+`agentic_metrics.TAIL_SAMPLES`); `agentic_compare.py` gives each figure's
+samples in both arms, and `supported` for a percentile.
+
 The raw re-parse reads the served model's frontend declaration: `--frontend`,
 else the `frontend` input of `CHOPINFER_QUAL_CONFIG`, else the inventoried
 model whose frontend declares the served model ID. It is independent of the

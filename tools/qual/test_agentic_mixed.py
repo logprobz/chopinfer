@@ -5,6 +5,7 @@ from contextlib import contextmanager, redirect_stdout
 from functools import partial
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -197,6 +198,17 @@ class MathTests(unittest.TestCase):
         missing = ratio([{'a': 1, 'b': 2}, {}], 'a', 'b')
         self.assertEqual((missing['samples'], missing['missing'], missing['value']), (1, 1, None))
 
+    def test_tails_carry_sample_counts(self):
+        """A tail percentile is reported with its sample count, and is
+        supported only when at least one sample is expected above it."""
+        from agentic_metrics import TAIL_SAMPLES, tail
+        self.assertEqual(TAIL_SAMPLES, {'p50': 2, 'p95': 20, 'p99': 100})
+        few = distribution(range(19))
+        self.assertEqual(tail(few, 'p95'), dict(value=few['p95'], samples=19, supported=False))
+        self.assertTrue(tail(distribution(range(20)), 'p95')['supported'])
+        self.assertFalse(tail(distribution(range(99)), 'p99')['supported'])
+        self.assertEqual(tail(distribution([]), 'p50'), dict(value=None, samples=0, supported=False))
+
     def test_window_turns_from_draining_sessions(self):
         def turn(a, b):
             return dict(started=a, ended=b, elapsed_seconds=b-a, output_deltas=2, output_tokens=10,
@@ -245,7 +257,14 @@ class FakeIntegrationTests(unittest.TestCase):
                 for arm in ['tbt', 'fixed']:
                     self.assertEqual(main(['--dry-run', '--levels', '1', '--seconds', '.5', '--warmup-waves', '0',
                                            '--no-decode', '--arm', arm, '--fake-prefill-budget', arm, '--label', 'comparison']), 0)
-                    self.assertIn('Server step evidence', (Path(name) / (arm + '-sweep.md')).read_text())
+                    summary = (Path(name) / (arm + '-sweep.md')).read_text()
+                    self.assertIn('Server step evidence', summary)
+                    # Every percentile in the summary carries its sample count.
+                    for line in summary.splitlines():
+                        if line.startswith('| 1 |'):
+                            cells = line.split(' | ')
+                            self.assertRegex(line, r'p95 upper [0-9.]+\*? ms \(n=\d+\)')
+                            self.assertEqual(sum(bool(re.search(r'\(n=\d+\)', cell)) for cell in cells), 5, line)
         results = [r for r in results if r['receipt_kind'] == 'sweep']
         self.assertEqual(results[0]['profile_digest'], results[1]['profile_digest'])
         self.assertEqual(results[0]['workload_digest'], results[1]['workload_digest'])

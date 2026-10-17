@@ -317,6 +317,15 @@ class DurabilityAndComparisonTests(unittest.TestCase):
             self.assertEqual(compared['host_load']['timing'],
                              'evidence' if a['host_load']['idle'] and b['host_load']['idle'] else 'informational')
             self.assertTrue(compared['levels'][0]['primary_server_step_evidence'])
+            # Each compared figure states its samples in both arms.
+            for figure in compared['levels'][0]['secondary_client_metrics'].values():
+                for arm in ('fixed', 'tbt'):
+                    self.assertIsInstance(figure[arm]['samples'], int)
+            for name in ('ttft_p95_ms', 'client_step_gap_p95_ms'):
+                figure = compared['levels'][0]['secondary_client_metrics'][name]
+                self.assertEqual(set(figure['fixed']), {'value', 'samples', 'supported'})
+            for pair in compared['levels'][0]['primary_server_step_evidence']:
+                self.assertEqual(pair['samples'], {'fixed': pair['fixed']['count'], 'tbt': pair['tbt']['count']})
             trajectory = compared['levels'][0]['trajectories']
             self.assertGreater(trajectory['shared_turns'], 0)
             self.assertEqual(trajectory['equal_requests'], trajectory['shared_turns'])

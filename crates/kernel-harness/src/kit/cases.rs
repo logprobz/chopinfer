@@ -8,6 +8,7 @@
 
 pub mod argmax;
 pub mod attention;
+pub mod block_quantize;
 pub mod collectives;
 pub mod context_parallel;
 pub mod gated_sparse;

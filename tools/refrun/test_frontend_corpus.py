@@ -636,6 +636,20 @@ class GateTests(Harness):
         errors = self.check(model, committed, table)
         self.assertIn("case low: is tagged tool-field:no-description, which its request does not carry", errors)
 
+    def test_mapping_entries_name_their_fields_and_committed_cases(self):
+        model = ToyModel(self.directory, cases=WITHOUT_LEGACY)
+        table = self.table([LEGACY], [UNDECLARED])
+        committed = self.committed(model, table, {case["id"] for case in WITHOUT_LEGACY})
+        document = json.loads(table.read_text())
+        rule = {"id": "rule", "follows": "a", "rule": "r", "source": "s", "cases": ["low", "absent-case"]}
+        table.write_text(json.dumps({**document, "mapping": [rule]}))
+        errors = self.check(model, committed, table)
+        self.assertEqual([error for error in errors if "mapping" in error],
+                         ["mapping entry rule names case absent-case, which the corpus does not hold"])
+        table.write_text(json.dumps({**document, "mapping": [dict(rule, source="")]}))
+        with self.assertRaisesRegex(corpus.CorpusError, "mapping entry rule needs source"):
+            corpus.read_divergences(table)
+
     def test_a_case_that_differs_without_an_entry_fails(self):
         model = ToyModel(self.directory, cases=WITHOUT_LEGACY)
         table = self.table([LEGACY], [UNDECLARED])
@@ -645,6 +659,25 @@ class GateTests(Harness):
         corpus.write_json(committed / "corpus.json", vectors)
         errors = self.check(model, committed, table)
         self.assertTrue(any("case low: differs from the reference" in error for error in errors), errors)
+
+
+class EndingRefusalTests(unittest.TestCase):
+    def test_only_ending_refusals_keep_a_round_trip(self):
+        ending = {"id": "e", "kind": "refused", "when": ["ends:assistant"], "ending_only": True}
+        media = {"id": "m", "kind": "refused", "when": ["media:x"]}
+        table = {"inputs": [ending, media]}
+        self.assertFalse(corpus.yields_no_round_trip(table, ["ends:assistant"], True))
+        self.assertTrue(corpus.yields_no_round_trip(table, ["ends:assistant", "media:x"], True))
+        self.assertTrue(corpus.yields_no_round_trip(table, ["media:x"], False))
+        self.assertTrue(corpus.yields_no_round_trip(table, [], True))
+        self.assertFalse(corpus.yields_no_round_trip(table, [], False))
+
+    def test_ending_only_belongs_to_a_refusal(self):
+        path = Path(tempfile.mkdtemp()) / "divergences.json"
+        path.write_text(json.dumps({"schema": corpus.DIVERGENCES_SCHEMA, "inputs": [
+            {"id": "n", "kind": "no-round-trip", "when": ["x"], "ending_only": True}]}))
+        with self.assertRaisesRegex(corpus.CorpusError, "sets ending_only but refuses nothing"):
+            corpus.read_divergences(path)
 
 
 class EnvironmentTests(Harness):

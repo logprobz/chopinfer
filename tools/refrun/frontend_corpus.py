@@ -61,6 +61,10 @@ from tools.refrun.template_coverage import PythonSourceCoverage, TemplateCoverag
 ROOT = Path(__file__).resolve().parents[2]
 COVERAGE_SCHEMA = "chop-frontend-corpus-coverage-v1"
 DIVERGENCES_SCHEMA = "chop-frontend-divergences-v1"
+# A mapping entry records how a request maps into what the reference renders
+# where a model has a second authority for that mapping: the rule, the
+# authority it follows, its source, and the committed cases that show it.
+MAPPING_KEYS = ("id", "follows", "rule", "source", "cases")
 # The request fields a render vector may carry besides `messages`
 # (crates/runtime-host/src/frontend_check.rs REQUEST_FIELDS_V1).
 REQUEST_FIELDS = ("tools", "tool_choice", "chat_template_kwargs", "reasoning_effort", "response_format",
@@ -184,7 +188,7 @@ def load_module(path):
 def read_divergences(path):
     """A divergence table, or an empty one when the model has none yet."""
     if path is None or not Path(path).exists():
-        return {"schema": DIVERGENCES_SCHEMA, "lines": [], "inputs": []}
+        return {"schema": DIVERGENCES_SCHEMA, "lines": [], "inputs": [], "mapping": []}
     table = json.loads(Path(path).read_text())
     if table.get("schema") != DIVERGENCES_SCHEMA:
         raise CorpusError(f"{path}: schema must be {DIVERGENCES_SCHEMA}")
@@ -193,8 +197,15 @@ def read_divergences(path):
             raise CorpusError(f"{path}: inputs entry {entry.get('id')} has an unknown kind")
         if not entry.get("when"):
             raise CorpusError(f"{path}: inputs entry {entry.get('id')} needs a when list")
+        if entry.get("ending_only") and entry["kind"] != "refused":
+            raise CorpusError(f"{path}: inputs entry {entry.get('id')} sets ending_only but refuses nothing")
+    for entry in table.get("mapping", []):
+        missing = [key for key in MAPPING_KEYS if not entry.get(key)]
+        if missing:
+            raise CorpusError(f"{path}: mapping entry {entry.get('id')} needs {', '.join(missing)}")
     table.setdefault("lines", [])
     table.setdefault("inputs", [])
+    table.setdefault("mapping", [])
     return table
 
 
@@ -202,6 +213,18 @@ def matching_entries(table, features, kinds=("refused", "normalized")):
     """The inputs entries of `kinds` whose every `when` tag the case carries."""
     tags = set(features)
     return [entry for entry in table["inputs"] if entry["kind"] in kinds and set(entry["when"]) <= tags]
+
+
+def yields_no_round_trip(table, features, refused):
+    """Whether a case yields no round trip: it is refused (`refused`, by its
+    vector or the reference) or matches a refused inputs entry, unless every
+    refused entry it matches sets `ending_only`, a refusal of the
+    conversation's final turn alone, which a round trip's prefix does not
+    hold."""
+    entries = matching_entries(table, features, ("refused",))
+    if entries:
+        return not all(entry.get("ending_only") for entry in entries)
+    return refused
 
 
 def case_divergence(table, features, failure=None):
@@ -889,7 +912,7 @@ def build_corpus(model, reference, cases, table, refusals=None):
                                       "reference": "refusal" if "refusal" in outcome else "render",
                                       "divergence": divergence}
         outcomes[case["id"]] = {key: value for key, value in outcome.items() if key != "lines"}
-        if "refusal" in vector or matching_entries(table, case["features"], ("refused",)):
+        if yields_no_round_trip(table, case["features"], "refusal" in vector):
             continue
         found, infos, failure, reason = round_vectors(model, reference, case)
         rounds += found
@@ -1156,6 +1179,8 @@ def check(model, fixtures=None, divergences=None, reference=None, template=None)
         elif all(matched_reference[identifier] for identifier in cases):
             errors.append(f"inputs entry {entry['id']} is stale: its cases now match the reference")
     errors += check_lines(table, lines_with_code, covered, coverage, reference)
+    errors += [f"mapping entry {entry['id']} names case {case}, which the corpus does not hold"
+               for entry in table["mapping"] for case in entry["cases"] if case not in outcomes]
     round_errors, failing = check_rounds(model, reference, vectors, rounds, coverage, table,
                                          model.full_cases(coverage["seed"]))
     errors += round_errors
@@ -1231,7 +1256,7 @@ def check_rounds(model, reference, vectors, rounds, coverage, table, full_cases)
     by_id = {vector["id"]: vector for vector in vectors}
     for vector in vectors:
         features = coverage["cases"].get(vector["id"], {}).get("features", [])
-        if "refusal" in vector or matching_entries(table, features, ("refused",)):
+        if yields_no_round_trip(table, features, "refusal" in vector):
             continue
         found, info, failure, _ = round_vectors(model, reference, {"id": vector["id"], "request": request_of(vector),
                                                                    "features": features})
@@ -1271,7 +1296,7 @@ def check_rounds(model, reference, vectors, rounds, coverage, table, full_cases)
         errors.append("corpus-rounds.json and corpus-coverage.json name different round trips")
     required = set()
     for case in full_cases:
-        if expected_refusal(model, reference, case, table):
+        if yields_no_round_trip(table, case["features"], expected_refusal(model, reference, case, table)):
             continue
         _, info, failure, _ = round_vectors(model, reference, case)
         required |= {(value["shape"], value["ending"]) for value in info.values()}
@@ -1393,7 +1418,7 @@ def recompute_rounds(model, corpus, divergences=None, template=None, reference=N
     rounds, infos, report = [], {}, {}
     for vector in vectors:
         features = coverage["cases"][vector["id"]]["features"]
-        if "refusal" in vector or matching_entries(table, features, ("refused",)):
+        if yields_no_round_trip(table, features, "refusal" in vector):
             continue
         found, info, failure, reason = round_vectors(model, reference, {"id": vector["id"],
                                                                        "request": request_of(vector),

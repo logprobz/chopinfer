@@ -64,7 +64,9 @@ template, the encoder's `source` and `source_sha256` with `encoder_render`,
 the mapping of the HF input onto its functions, and `INPUT_FIELDS`, the
 request fields it renders beyond the HF input; the transport translation, generation endings, how a history
 turn reads back, and the model's own axes and cases) and its divergence
-table `models/<model>/frontend-divergences.json`. `generate` writes the full
+table `models/<model>/frontend-divergences.json` (its optional `mapping`
+section records each request-mapping rule a second authority governs, with
+its source and the committed cases that show it). `generate` writes the full
 corpus under `$CHOPINFER_DATA/frontend-corpus/<model>/`; `minimize` writes
 the subset a model commits as `fixtures/<model>/frontend/corpus*.json`, and
 `check` enforces the gate on it. `frontend_corpus.corpus_test_case(model)`
@@ -98,6 +100,10 @@ excuses only the bytes the normalizer rewrites: the case still yields a
 round trip with the completion's ids that expects the normalized turn, and
 the harness refuses it unless the normalized turn renders as the
 normalized completion with the same ids.
+A refused case yields no round trip, unless every refused entry it matches
+sets `ending_only`: a format that refuses only the conversation's final
+turn (a turn it would render closed, say) still reads that turn back after
+the prefix it serves.
 
 The model adapters are `models/mimo26/reference.py` and
 `models/qwen38/reference.py`, with tiny CPU tests in

@@ -434,7 +434,9 @@ reads the model-neutral sections and passes `format` to the bundle unread.
   the model's own feature axes and cases) and its divergence table
   (`frontend-divergences.json`: template lines no accepted request reaches,
   and requests whose outcome differs from HF's on purpose, each with its
-  reason). A checkpoint that ships a Python encoder instead of a chat template pins
+  reason; where a second authority governs how a request maps into the
+  reference's input, its `mapping` section names each rule, the authority it
+  follows, its source and the committed cases that show it). A checkpoint that ships a Python encoder instead of a chat template pins
   the encoder (`PIN["source"]` and `source_sha256`) and maps the HF input
   onto it (`encoder_render`), and the corpus traces the encoder's function
   lines as it would a template's. Then run `python3 -m tools.refrun.frontend_corpus generate --model

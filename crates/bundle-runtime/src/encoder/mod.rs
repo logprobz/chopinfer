@@ -463,7 +463,10 @@ impl Encoder {
             let geometry = declaration
                 .geometry(recipe.tag(), media)
                 .map_err(|error| error.0)?;
-            let output = geometry.rows[declaration.stages.len() - 1].rows;
+            // The rows the span places, after the output layout: the
+            // encoder's own rows under `layout.tokens.v1`, with the learned
+            // delimiter rows under `layout.learned-delimiters.v1`.
+            let output = geometry.rows[declaration.stages.len()].rows;
             let payload = item.rows
                 * u64::from(declaration.input.columns)
                 * declaration.input.payload.bytes();

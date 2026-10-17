@@ -569,6 +569,19 @@ pub enum FrontendPositionRuleV1 {
     Grid3AxisV1,
 }
 
+/// How a media item's span holds its encoder rows, when it holds more than
+/// them. The encoder writes every row of the span into the arena, so the
+/// host splices one pad run of [`FrontendMediaModalityV1::span_rows`] rows.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum FrontendMediaLayoutV1 {
+    /// The encoder declaration's `layout.learned-delimiters.v1`: per
+    /// temporal grid of `h x w` merged cells, a learned start row, each grid
+    /// row's `w` cells followed by a learned newline row, and a learned end
+    /// row, `h * (w + 1) + 2` rows. Images only, at sequential positions.
+    #[serde(rename = "learned-delimiters.v1")]
+    LearnedDelimitersV1,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FrontendMediaModalityV1 {
@@ -583,6 +596,25 @@ pub struct FrontendMediaModalityV1 {
     /// Absent: media rows take consecutive 1D positions like text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub positions: Option<FrontendPositionRuleV1>,
+    /// Absent: an item's span is its encoder rows, one per merged cell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<FrontendMediaLayoutV1>,
+}
+
+impl FrontendMediaModalityV1 {
+    /// The rows an item's span takes in the prompt, from its merged grid
+    /// `[t, h, w]` (cells after the encoder's merge): `t * h * w`, or under
+    /// [`FrontendMediaLayoutV1::LearnedDelimitersV1`] `t * (h * (w + 1) + 2)`.
+    /// None on overflow.
+    pub fn span_rows(&self, merged: [u64; 3]) -> Option<u64> {
+        let [t, h, w] = merged;
+        match self.layout {
+            None => t.checked_mul(h)?.checked_mul(w),
+            Some(FrontendMediaLayoutV1::LearnedDelimitersV1) => {
+                t.checked_mul(h.checked_mul(w.checked_add(1)?)?.checked_add(2)?)
+            }
+        }
+    }
 }
 
 /// Everything one served model tells the transport about itself.
@@ -894,6 +926,13 @@ impl FrontendDescriptorV1 {
             {
                 return Err(invalid(
                     "grid-3axis.v1 positions need an image modality with a positive merge",
+                ));
+            }
+            if modality.layout == Some(FrontendMediaLayoutV1::LearnedDelimitersV1)
+                && (modality.kind != FrontendMediaKindV1::Image || modality.positions.is_some())
+            {
+                return Err(invalid(
+                    "learned-delimiters.v1 spans need an image modality at sequential positions",
                 ));
             }
         }

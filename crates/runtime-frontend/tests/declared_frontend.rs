@@ -163,8 +163,8 @@ fn frontend(declaration: &str) -> BundleFrontendV1 {
 fn declared_media_renders_segments_and_refuses_client_pad_text() {
     use runtime_frontend::{
         FrontendMediaArenaV1, FrontendMediaElementV1, FrontendMediaEncoderV1, FrontendMediaKindV1,
-        FrontendMediaModalityV1, FrontendMediaRecipeV1, FrontendMediaRenderV1,
-        FrontendMultimodalV1, FrontendPositionRuleV1,
+        FrontendMediaLayoutV1, FrontendMediaModalityV1, FrontendMediaRecipeV1,
+        FrontendMediaRenderV1, FrontendMultimodalV1, FrontendPositionRuleV1,
     };
     use runtime_server::{
         FrontendChatRequestV1, FrontendContentPartV1, FrontendMediaPartKindV1, FrontendMediaPartV1,
@@ -201,6 +201,7 @@ fn declared_media_renders_segments_and_refuses_client_pad_text() {
                 grid: None,
             },
             positions: None,
+            layout: None,
         }],
     });
     // A grid position rule needs an image modality whose recipe merges.
@@ -231,6 +232,50 @@ fn declared_media_renders_segments_and_refuses_client_pad_text() {
     assert_eq!(
         serde_json::from_value::<runtime_frontend::FrontendDescriptorV1>(json).unwrap(),
         positioned
+    );
+    // A learned-delimiter span: images at sequential positions only, written
+    // as `layout`; an absent layout is not written at all.
+    assert!(
+        serde_json::to_value(&descriptor).unwrap()["multimodal"]["modalities"][0]
+            .get("layout")
+            .is_none()
+    );
+    let mut delimited = descriptor.clone();
+    let modality = &mut delimited.multimodal.as_mut().unwrap().modalities[0];
+    modality.layout = Some(FrontendMediaLayoutV1::LearnedDelimitersV1);
+    assert_eq!(modality.span_rows([1, 2, 3]), Some(2 * 4 + 2));
+    assert_eq!(modality.span_rows([2, 2, 3]), Some(2 * 10));
+    assert_eq!(modality.span_rows([1, u64::MAX, 1]), None);
+    delimited
+        .validate()
+        .expect("an image span with learned delimiters validates");
+    let json = serde_json::to_value(&delimited).unwrap();
+    assert_eq!(
+        json["multimodal"]["modalities"][0]["layout"],
+        "learned-delimiters.v1"
+    );
+    assert_eq!(
+        serde_json::from_value::<runtime_frontend::FrontendDescriptorV1>(json).unwrap(),
+        delimited
+    );
+    assert_eq!(
+        descriptor.multimodal.as_ref().unwrap().modalities[0].span_rows([1, 2, 3]),
+        Some(6)
+    );
+    let mut gridded = with_positions(serde_json::json!(2), FrontendMediaKindV1::Image);
+    gridded.multimodal.as_mut().unwrap().modalities[0].layout =
+        Some(FrontendMediaLayoutV1::LearnedDelimitersV1);
+    assert!(
+        gridded.validate().is_err(),
+        "learned delimiters take sequential positions"
+    );
+    let mut audio = with_positions(serde_json::json!(2), FrontendMediaKindV1::Audio);
+    let modality = &mut audio.multimodal.as_mut().unwrap().modalities[0];
+    modality.positions = None;
+    modality.layout = Some(FrontendMediaLayoutV1::LearnedDelimitersV1);
+    assert!(
+        audio.validate().is_err(),
+        "learned delimiters are an image layout"
     );
     // An image modality may declare either image recipe, and no other.
     for (tag, valid) in [

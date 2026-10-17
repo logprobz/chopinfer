@@ -175,6 +175,7 @@ fn a_reference_carrying_a_media_placeholder_is_refused() {
                 grid: None,
             },
             positions: None,
+            layout: None,
         }],
     });
     let frontend = frontend_of::<true>(descriptor);

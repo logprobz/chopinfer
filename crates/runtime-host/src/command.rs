@@ -7135,6 +7135,7 @@ mod tests {
                     grid: None,
                 },
                 positions: None,
+                layout: None,
             }],
         };
         for capability in [false, true] {

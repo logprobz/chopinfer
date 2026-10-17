@@ -204,6 +204,7 @@ fn descriptor() -> Arc<FrontendDescriptorV1> {
                 grid: None,
             },
             positions: None,
+            layout: None,
         }],
     });
     Arc::new(descriptor)

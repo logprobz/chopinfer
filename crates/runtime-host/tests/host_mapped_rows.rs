@@ -1,8 +1,6 @@
-//! Host-mapped rows (`chop.host-mapped-rows.v1`): a planned view placed
-//! `Mapped` is the checkpoint's own bytes, mapped read-only once per process
-//! and lent to the CPU; staging buffers are page-locked memory the bundle
-//! writes and copies to the device. Neither kind of byte reaches the device
-//! arena, and mapped bytes count against no page-locked budget.
+//! Host-mapped views: a planned view placed `Mapped` is the checkpoint's own
+//! bytes, mapped read-only once per process. Its bytes reach neither the
+//! device arena nor any page-locked budget.
 #![allow(clippy::single_range_in_vec_init)]
 
 use std::path::{Path, PathBuf};
@@ -19,7 +17,7 @@ use runtime_bundle_abi::{
 use runtime_host::direct::{
     DirectCheckpointV1, DirectLoadOptionsV1, PlannedImageV1, implementation_v1,
 };
-use runtime_host::fake::{FakeHostDeviceV1, FakeRefusalV1};
+use runtime_host::fake::FakeHostDeviceV1;
 use runtime_host::{HostInstanceConfigV1, HostMemoryV1, HostServicesV1Backend, HostTopologyV1};
 
 const ROLE: &str = "fixture.rank-images.v1";
@@ -155,7 +153,7 @@ fn planned(root: &Path, plans: Vec<WeightPlanV1>) -> Result<PlannedImageV1, Stri
 }
 
 #[test]
-fn mapped_views_lend_the_checkpoint_bytes_and_leave_the_arena() {
+fn mapped_views_map_the_checkpoint_bytes_and_leave_the_arena() {
     let root = temp("serve");
     write_checkpoint(&root.0);
     const RANKS: u32 = 4;
@@ -232,189 +230,16 @@ fn mapped_views_lend_the_checkpoint_bytes_and_leave_the_arena() {
                 Err(BundleAbiError::Status(BundleStatusV1::NotFound))
             );
         }
-        let codes_address = host
-            .with_mapped_view(compiled, rank_u32, b"codes", |bytes| {
-                assert_eq!(bytes, codes());
-                bytes.as_ptr() as usize
-            })
-            .unwrap();
-        let rows = share as usize * rank;
-        host.with_mapped_view(compiled, rank_u32, b"scales", |bytes| {
-            assert_eq!(bytes, &scales()[rows..rows + share as usize]);
-        })
-        .unwrap();
-        // Ranks share the one mapping of the codes table.
-        let rank_zero = host
-            .with_mapped_view(compiled, 0, b"codes", |bytes| bytes.as_ptr() as usize)
-            .unwrap();
-        assert_eq!(codes_address, rank_zero);
-        for id in [&b"half"[..], b"dense", b"absent"] {
-            assert_eq!(
-                host.with_mapped_view(compiled, rank_u32, id, |_| ()),
-                Err(BundleAbiError::Status(BundleStatusV1::NotFound))
-            );
-        }
     }
-    assert_eq!(
-        host.with_mapped_view(compiled, RANKS, b"codes", |_| ()),
-        Err(BundleAbiError::Status(BundleStatusV1::InvalidArgument))
-    );
     // Page-locked memory holds the host views only; the mapped views' bytes
     // are the page cache's.
-    let held = |staging_bytes| HostMemoryV1 {
-        pinned_bytes: u64::from(RANKS) * 128 + staging_bytes,
-        staging_bytes,
-        mapped_view_bytes: u64::from(RANKS) * (ROWS * 8 + share),
-    };
-    assert_eq!(backend.host_memory_v1(), held(0));
-
-    // Gather rank 1's rows through a staging buffer into a device buffer:
-    // the CPU reads the mapped rows, writes the staging bytes, and the device
-    // copies them on the rank's stream.
-    let (_, pool, stream) = ranks[1];
-    let picked = [3_usize, 900, 3, 17];
-    let staging = host.allocate_staging_buffer(pool, stream, 64, 64).unwrap();
-    assert_eq!(backend.host_memory_v1(), held(64));
-    host.with_staging_buffer(staging, |bytes| {
-        assert_eq!(bytes, [0; 64]);
-        host.with_mapped_view(compiled, 1, b"codes", |table| {
-            for (slot, row) in picked.iter().enumerate() {
-                bytes[slot * 8..slot * 8 + 8].copy_from_slice(&table[row * 8..row * 8 + 8]);
-            }
-        })
-        .unwrap();
-    })
-    .unwrap();
-    let device = host.allocate_device_buffer(pool, stream, 32, 64).unwrap();
-    host.copy_device_to_device(
-        stream,
-        DeviceBufferSpanV1::new(device, 0, 32),
-        DeviceBufferSpanV1::new(staging, 0, 32),
-    )
-    .unwrap();
-    let mut gathered = vec![0; 32];
-    host.copy_device_to_host(
-        stream,
-        &mut gathered,
-        DeviceBufferSpanV1::new(device, 0, 32),
-    )
-    .unwrap();
-    let expected: Vec<u8> = picked
-        .iter()
-        .flat_map(|row| codes()[row * 8..row * 8 + 8].to_vec())
-        .collect();
-    assert_eq!(gathered, expected);
-    // The host keeps every loan, whichever caller asks: a second table over
-    // the same host can neither lend the buffer again nor release it, and no
-    // device work may name it while it is lent.
-    let other_table = HostServicesTableV1::new(Rc::clone(&backend));
-    let other = other_table.caller();
-    let refused = Err(BundleAbiError::Status(BundleStatusV1::InvalidState));
-    let staging_span = DeviceBufferSpanV1::new(staging, 0, 32);
-    let device_span = DeviceBufferSpanV1::new(device, 0, 32);
-    host.with_staging_buffer(staging, |_| {
-        assert_eq!(
-            other.with_staging_buffer(staging, |_| unreachable!()),
-            refused
-        );
-        assert_eq!(other.release_device_buffer(staging), refused);
-        assert_eq!(
-            host.copy_device_to_device(stream, device_span, staging_span),
-            refused
-        );
-        assert_eq!(
-            host.copy_device_to_device(stream, staging_span, device_span),
-            refused
-        );
-        assert_eq!(
-            host.copy_host_to_device(stream, staging_span, &[0; 32]),
-            refused
-        );
-        assert_eq!(
-            host.copy_device_to_host(stream, &mut [0; 32], staging_span),
-            refused
-        );
-        assert_eq!(host.zero_device_buffer(stream, staging_span), refused);
-    })
-    .unwrap();
-    // A loan first waits for the device work that named the buffer since the
-    // last one, through an event it records and releases; with no such work
-    // it waits for nothing.
-    host.copy_device_to_device(stream, device_span, staging_span)
-        .unwrap();
-    backend.with_device_mut(|device| device.refuse(FakeRefusalV1::ReleaseEvent));
     assert_eq!(
-        host.with_staging_buffer(staging, |_| unreachable!()),
-        Err(BundleAbiError::Status(BundleStatusV1::HostError))
+        backend.host_memory_v1(),
+        HostMemoryV1 {
+            pinned_bytes: u64::from(RANKS) * 128,
+            mapped_view_bytes: u64::from(RANKS) * (ROWS * 8 + share),
+        }
     );
-    backend.with_device_mut(|device| device.allow(FakeRefusalV1::ReleaseEvent));
-    host.with_staging_buffer(staging, |_| ()).unwrap();
-    backend.with_device_mut(|device| device.refuse(FakeRefusalV1::ReleaseEvent));
-    host.with_staging_buffer(staging, |_| ()).unwrap();
-    backend.with_device_mut(|device| device.allow(FakeRefusalV1::ReleaseEvent));
-    // A stored address could reach the buffer where no loan waits for it.
-    assert_eq!(
-        host.write_device_pointer_table(
-            stream,
-            DeviceBufferSpanV1::new(device, 0, 8),
-            &[Some(staging_span)]
-        ),
-        Err(BundleAbiError::Status(BundleStatusV1::InvalidArgument))
-    );
-    // A graph could replay work on the buffer that no loan waits for, so a
-    // capture may not name it.
-    let module = host.load_cuda_module(ranks[1].0, b"module").unwrap();
-    let symbol = host.resolve_cuda_symbol(module, b"gather").unwrap();
-    let config = runtime_bundle_abi::LaunchConfigV1 {
-        flags: 0,
-        grid_x: 1,
-        grid_y: 1,
-        grid_z: 1,
-        block_x: 32,
-        block_y: 1,
-        block_z: 1,
-        shared_memory_bytes: 0,
-        cluster: runtime_bundle_abi::LaunchClusterV1 { x: 1, y: 1, z: 1 },
-    };
-    host.begin_graph_capture(stream).unwrap();
-    assert_eq!(
-        host.launch_cuda_symbol(
-            stream,
-            symbol,
-            config,
-            &[runtime_bundle_abi::KernelArgumentV1::DeviceBuffer(
-                staging_span
-            )]
-        ),
-        refused
-    );
-    let graph = host.end_graph_capture(stream).unwrap();
-    host.release_graph(graph).unwrap();
-    host.release_cuda_symbol(symbol).unwrap();
-    host.release_cuda_module(module).unwrap();
-    // An image with a mapped-view loan outstanding is not released.
-    host.with_mapped_view(compiled, 0, b"codes", |_| {
-        assert_eq!(other.release_compiled_image(compiled), refused);
-    })
-    .unwrap();
-    drop(other_table);
-    // Only a staging buffer is lent, and only on its own context's stream is
-    // one allocated.
-    assert_eq!(
-        host.with_staging_buffer(device, |_| ()),
-        Err(BundleAbiError::Status(BundleStatusV1::InvalidArgument))
-    );
-    assert_eq!(
-        host.allocate_staging_buffer(pool, ranks[2].2, 64, 64),
-        Err(BundleAbiError::Status(BundleStatusV1::InvalidArgument))
-    );
-    assert_eq!(
-        host.allocate_staging_buffer(pool, stream, 0, 64),
-        Err(BundleAbiError::Status(BundleStatusV1::InvalidArgument))
-    );
-    host.release_device_buffer(device).unwrap();
-    host.release_device_buffer(staging).unwrap();
-    assert_eq!(backend.host_memory_v1(), held(0));
     for arena in arenas.into_iter().rev() {
         host.release_rank_arena(arena).unwrap();
     }

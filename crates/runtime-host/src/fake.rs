@@ -1064,23 +1064,6 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
         Ok(buffer)
     }
 
-    fn mapped_host_address(&mut self, buffer: DeviceObjectV1) -> HostDeviceResultV1<usize> {
-        if !self.mapped_host.contains_key(&buffer.get()) {
-            return Err(BundleStatusV1::InvalidArgument);
-        }
-        let object = self
-            .objects
-            .get_mut(&buffer.get())
-            .ok_or(BundleStatusV1::StaleHandle)?;
-        // A sparse probe allocation holds no bytes to lend.
-        if object.bytes.is_empty() {
-            return Err(BundleStatusV1::Unsupported);
-        }
-        // Copies write these bytes in place and never reallocate them, so the
-        // address holds until the object is destroyed.
-        Ok(object.bytes.as_mut_ptr() as usize)
-    }
-
     fn release_device_buffer(&mut self, buffer: DeviceObjectV1) -> HostDeviceResultV1<()> {
         self.check(FakeRefusalV1::ReleaseDeviceBuffer)?;
         if self.mapped_host.contains_key(&buffer.get()) {

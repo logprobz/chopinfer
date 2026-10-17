@@ -331,14 +331,6 @@ pub trait HostDeviceBackendV1 {
         Err(BundleStatusV1::Unsupported)
     }
 
-    /// Where the host bytes of one mapped host allocation start, valid until
-    /// the allocation is released: the CPU side of what the device reads
-    /// through its address. A backend without mapped host memory keeps the
-    /// default.
-    fn mapped_host_address(&mut self, _buffer: DeviceObjectV1) -> HostDeviceResultV1<usize> {
-        Err(BundleStatusV1::Unsupported)
-    }
-
     /// Free bytes in this rank's context after bundle allocations are resident.
     fn free_device_memory(&self, _context: DeviceObjectV1) -> HostDeviceResultV1<u64> {
         Err(runtime_bundle_abi::BundleStatusV1::Unsupported)

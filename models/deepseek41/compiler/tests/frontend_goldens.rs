@@ -9,7 +9,7 @@
 use model_deepseek41::frontend::descriptor;
 use model_deepseek41_contract::frontend::DeepSeekV41Format;
 use model_deepseek41_contract::frontend::encoding::{
-    Block, IMAGE_PLACEHOLDER, Message, ReasoningEffort, Role, ThinkingMode, ToolCall,
+    Block, EOS, IMAGE_PLACEHOLDER, Message, ReasoningEffort, Role, ThinkingMode, ToolCall,
     encode_messages,
 };
 use runtime_frontend::test_support::documents::PairedFrontendV1;
@@ -309,12 +309,27 @@ fn served_request(number: usize) -> FrontendChatRequestV1 {
 fn the_served_format_renders_the_pairs_it_serves() {
     let frontend = PairedFrontendV1::chat_format::<DeepSeekV41Format>(descriptor()).unwrap();
     // Pairs 3 and 4 hold the encoder's latest_reminder role (and pair 4 a
-    // task), which the transport does not carry.
+    // task), which the transport does not carry. Pairs 1 and 2 end on an
+    // assistant turn, which renders closed with nothing to answer after it:
+    // served, it is refused, and continued it renders open.
     for number in [1, 2] {
+        let error = frontend.render_chat(served_request(number)).unwrap_err();
+        assert!(
+            error
+                .message
+                .contains("a final assistant message is served only with continue_final_message"),
+            "pair {number}: {}",
+            error.message
+        );
         let rendered = frontend
-            .render_chat(served_request(number))
+            .render_chat(FrontendChatRequestV1 {
+                continue_final_message: true,
+                add_generation_prompt: false,
+                ..served_request(number)
+            })
             .unwrap_or_else(|error| panic!("pair {number}: {}", error.message));
         let expected = String::from_utf8(read(&format!("test_output_{number}.txt"))).unwrap();
+        let expected = expected.strip_suffix(EOS).unwrap();
         assert_eq!(rendered.prompt, expected, "pair {number}");
     }
     // Pair 5's images need a declaration that serves images.
@@ -430,14 +445,15 @@ fn the_served_format_reads_tool_objects_and_arguments_as_the_encoder_does() {
             .map_err(|error| error.message)
     };
     let plain = serde_json::json!({"name": "f"});
-    // A function object holding a `function` key is still wrapped.
+    // A tool is the recipe's function object: name, description or "" and
+    // parameters or {}, every other key of the client's object dropped.
     let prompt = render(
-        serde_json::json!({"name": "f", "function": {"name": "g"}}),
+        serde_json::json!({"name": "f", "function": {"name": "g"}, "strict": true}),
         "{}",
     )
     .unwrap();
     assert!(
-        prompt.contains(r#"{"name": "f", "function": {"name": "g"}}"#),
+        prompt.contains(r#"{"name": "f", "description": "", "parameters": {}}"#),
         "{prompt}"
     );
     // Argument text the encoder reads itself: spacing kept in a value it
@@ -452,8 +468,8 @@ fn the_served_format_reads_tool_objects_and_arguments_as_the_encoder_does() {
         ),
         "{prompt}"
     );
-    // A namespace on a function object or a system message's tool object
-    // is refused by name.
+    // A namespace on a function object, and a message's own tools, are
+    // refused by name.
     let refused = render(
         serde_json::json!({"name": "f", "namespace": {"name": "ns", "description": "N"}}),
         "{}",
@@ -471,8 +487,21 @@ fn the_served_format_reads_tool_objects_and_arguments_as_the_encoder_does() {
         .render_chat(request(vec![system, message(FrontendRoleV1::User, "q")]))
         .unwrap_err();
     assert!(
-        refused.message.contains("tool namespaces are not served"),
+        refused.message.contains("message tools are not served"),
         "{}",
         refused.message
     );
+    // System messages alone leave no turn to answer, once an empty one is
+    // dropped as the recipe drops it.
+    for only in [
+        vec![message(FrontendRoleV1::System, "s")],
+        vec![message(FrontendRoleV1::System, "")],
+    ] {
+        let refused = frontend.render_chat(request(only)).unwrap_err();
+        assert!(
+            refused.message.contains("has no turn to answer"),
+            "{}",
+            refused.message
+        );
+    }
 }

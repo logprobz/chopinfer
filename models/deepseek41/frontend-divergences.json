@@ -162,13 +162,17 @@
     {
       "id": "namespaces",
       "lines": [
+        90,
+        94,
+        95,
         105,
         106,
         108,
         111,
+        119,
         134
       ],
-      "blocked_by": "tool and call names admit no '::', a tool namespace is refused (tool-namespaces) and calls carry no namespace",
+      "blocked_by": "request mapping drops a namespace key (the recipe's function definition has none), the format refuses one (tool-namespaces), tool and call names admit no '::' and calls carry no namespace",
       "reason": "a namespace on a tool or call, a qualified name and their conflicts need namespace transport, which this declaration does not serve yet"
     },
     {
@@ -244,10 +248,23 @@
         "message-tools:present"
       ],
       "outcome": {
-        "message": "invalid conversation field: message tools are declared only on system messages",
+        "message": "invalid conversation field: message tools are not served",
         "parameter": "messages"
       },
-      "reason": "the encoder renders a message's tools only on a system message (lines 626-627); on another role it reads them only to keep earlier reasoning (line 787), so the format refuses them there"
+      "reason": "the recipe's request messages carry no tools (deepseek-recipe 8cadfede7, deepseek-recipe/src/protocol/openai/chat_completion/request/schema.rs lines 52-71, unknown fields ignored), so request mapping never passes a message's own tools to the encoder; the format refuses them by name rather than drop the client's tools silently, so every request the recipe accepts renders the same"
+    },
+    {
+      "id": "final-assistant-turn",
+      "kind": "refused",
+      "when": [
+        "ends:assistant"
+      ],
+      "outcome": {
+        "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+        "parameter": "messages"
+      },
+      "reason": "mapping R4: the encoder ends a final assistant turn with the end-of-sentence token and writes no generation header after it (encoding.py lines 60, 695-706, 710-739), so the prompt leaves nothing to answer; the format refuses it rather than add the recipe's header; the refusal concerns the final turn alone, so the conversation's round trip still runs",
+      "ending_only": true
     },
     {
       "id": "tool-namespaces",
@@ -259,7 +276,7 @@
         "message": "invalid conversation field: tool namespaces are not served",
         "parameter": "messages"
       },
-      "reason": "the encoder writes a tool whose tool or function object names a namespace as namespace::name (lines 86-121), a name neither the offered tools nor the declared parser know; the format refuses the namespace key until namespaces are served"
+      "reason": "the recipe's function definition has no namespace (deepseek-recipe/src/protocol/openai/chat_completion/request/schema.rs lines 168-176) and the encoder writes a namespaced tool as namespace::name (encoding.py lines 86-121); the format refuses the namespace key by name until namespace transport is served"
     },
     {
       "id": "missing-call-id",
@@ -335,6 +352,70 @@
         "round-trip:read-back"
       ],
       "reason": "a turn with tool calls reads back only through a parser of DSML, whose parameters carry string=\"true|false\" (lines 524-555); the declared parser section reads string parameters only until that parser family exists"
+    }
+  ],
+  "mapping": [
+    {
+      "id": "R1-earlier-reasoning",
+      "follows": "encoding.py",
+      "rule": "reasoning before the last user turn drops, and such a turn writes </think> alone, unless preserve_thinking or a declared tool keeps it; the recipe keeps every turn's reasoning and writes <think></think> for a turn without any",
+      "source": "plan V4 (rendering follows encoding.py); encoding.py lines 690-694, 749-790; deepseek-recipe 8cadfede7 deepseek-recipe-encoding/src/v4/mod.rs lines 183-196",
+      "cases": [
+        "earlier-reasoning-dropped",
+        "later-system-message",
+        "preserved-reasoning-at-max"
+      ]
+    },
+    {
+      "id": "R2-tool-schemas",
+      "follows": "recipe",
+      "rule": "each offered tool is the function object {name, description or \"\", parameters or {}}, a null field read as absent, every other field (strict, defer_loading, any other key) dropped; the encoder renders that object",
+      "source": "plan V4 (request mapping follows the recipe); deepseek-recipe 8cadfede7 deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 178-192, deepseek-recipe-encoding/src/v4/mod.rs lines 284-293",
+      "cases": [
+        "recipe-tool-schema",
+        "joined-user-turns"
+      ]
+    },
+    {
+      "id": "R3-response-format",
+      "follows": "encoding.py",
+      "rule": "every response_format object renders on the leading system message as the encoder renders it; a constraint applies only when one is requested. The recipe renders only json_object, refuses it without the word json in a message, and renders nothing for json_schema and text",
+      "source": "plan V7 (render as the encoder does, constrain only on request); encoding.py lines 64-66, 628-629; deepseek-recipe 8cadfede7 deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 463-482, deepseek-recipe-encoding/src/v4/mod.rs lines 219-243",
+      "cases": [
+        "response-format-with-tools",
+        "response-format-text",
+        "response-format-json-object"
+      ]
+    },
+    {
+      "id": "R4-final-assistant-turn",
+      "follows": "encoding.py",
+      "rule": "no generation header follows a final assistant turn, which ends with the end-of-sentence token, so such a request is refused (final-assistant-turn) unless continue_final_message renders the turn open; the recipe appends a header after every request",
+      "source": "plan V4; encoding.py lines 60, 695-706, 710-739; deepseek-recipe 8cadfede7 deepseek-recipe-encoding/src/v4/mod.rs lines 255-260",
+      "cases": [
+        "final-assistant-turn",
+        "continued-final-assistant-turn"
+      ]
+    },
+    {
+      "id": "R5-empty-system-message",
+      "follows": "recipe",
+      "rule": "a system message whose text (parts joined) is empty is dropped wherever it stands; an empty leading system message is still inserted to carry the offered tools or a response_format",
+      "source": "plan V4; deepseek-recipe 8cadfede7 deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 343-347, deepseek-recipe-encoding/src/v4/mod.rs lines 225-233",
+      "cases": [
+        "empty-system-messages-dropped",
+        "empty-system-message-with-tools"
+      ]
+    },
+    {
+      "id": "effort-aliases",
+      "follows": "recipe",
+      "rule": "the protocol efforts the encoder does not name read as the recipe maps them: minimal as low (50), medium and xhigh as high (75)",
+      "source": "plan V6; deepseek-recipe 8cadfede7 deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 217-227",
+      "cases": [
+        "medium-effort",
+        "nested-xhigh-effort"
+      ]
     }
   ]
 }

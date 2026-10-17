@@ -8,36 +8,42 @@
 //! the messages the encoder reads and returns the encoder's prompt. No Jinja
 //! and no Python runs at serving time.
 //!
-//! The request reaches the encoder as follows (the corpus reference in
-//! `models/deepseek41/frontend_cases.py` maps its HF input the same way):
+//! The request reaches the encoder as deepseek-recipe (commit 8cadfede)
+//! maps an OpenAI request into messages, and the encoder renders those
+//! messages (plan V4 and V7; each rule, its source and its corpus cases are
+//! in `models/deepseek41/frontend-divergences.json`, section `mapping`). The
+//! corpus reference in `models/deepseek41/frontend_cases.py` maps its HF
+//! input the same way:
 //! - Thinking mode and the effort come from the declared reasoning controls
 //!   (`select_mode_v1`). The effort is passed in thinking mode only, where
-//!   the encoder writes it; a chat prompt never reads it. The protocol
-//!   efforts the encoder does not name read as deepseek-recipe maps them:
-//!   minimal as low, medium and xhigh as high.
-//! - The request's tools and `response_format` belong to the leading system
+//!   the encoder writes it. The protocol efforts the encoder does not name
+//!   read as the recipe maps them: minimal as low, medium and xhigh as high.
+//! - Each offered tool becomes the recipe's function object: its name, its
+//!   description or "", and its parameters or `{}`.
+//! - An empty system message is dropped, as the recipe drops it.
+//! - The offered tools and `response_format` belong to the leading system
 //!   message, where the encoder renders them (vendor README, "Tools are
 //!   defined on the `system` message"). A request without one gets an empty
-//!   leading system message to carry them. Each offered function object is
-//!   wrapped as a tool object whatever keys it holds; a system message's
-//!   own tools arrive as the tool objects the client sent.
+//!   leading system message to carry them, as the recipe inserts one. Every
+//!   `response_format` renders as the encoder renders it (V7).
 //! - Tool-call arguments reach the encoder as the text sent, which it reads
 //!   as Python's `json.loads` does: a repeated key takes its last value.
 //! - `continue_final_message` renders the final assistant turn without its
 //!   end-of-sentence token (`wo_eos`). The encoder writes the generation
 //!   header itself after a final user or later system message, so
-//!   `add_generation_prompt` changes nothing.
+//!   `add_generation_prompt` changes nothing. A final assistant turn not
+//!   continued is refused: the encoder ends it with the end-of-sentence
+//!   token and no header follows.
 //! - `preserve_thinking` turns off `drop_thinking`, which the encoder also
 //!   turns off whenever tools are declared.
 //! - A user's media parts are image blocks; images are served only when the
 //!   declaration declares them, with the encoder's placeholder as the pad.
 //!
 //! The roles the encoder reads that the transport carries are system, user,
-//! assistant and tool. A developer message, a message's own tools on a role
-//! other than system, and media outside a user message are refused (see
-//! `models/deepseek41/frontend-divergences.json`), as is a tool or function
-//! object that names a namespace. The encoder's `latest_reminder` role and
-//! `task` flag are not served.
+//! assistant and tool. A developer message, a message's own tools, media
+//! outside a user message and a function object that names a namespace are
+//! refused (see `models/deepseek41/frontend-divergences.json`). The
+//! encoder's `latest_reminder` role and `task` flag are not served.
 
 pub mod encoding;
 
@@ -323,6 +329,15 @@ impl DeepSeekV41Format {
             .iter()
             .map(|message| self.message(message, media))
             .collect::<Result<Vec<_>, _>>()?;
+        // The recipe drops an empty system message (convert.rs lines
+        // 343-347); one carrying the offered tools is inserted below.
+        messages.retain(|message| {
+            message.role != Role::System
+                || message
+                    .content
+                    .as_deref()
+                    .is_some_and(|text| !text.is_empty())
+        });
         if request.continue_final_message {
             match messages.last_mut() {
                 Some(last) if last.role == Role::Assistant => last.wo_eos = true,
@@ -332,6 +347,18 @@ impl DeepSeekV41Format {
                     ));
                 }
             }
+        } else if messages
+            .last()
+            .is_some_and(|last| last.role == Role::Assistant)
+        {
+            // The encoder ends a final assistant turn with the end-of-sentence
+            // token and writes no generation header after it (lines 60,
+            // 695-706, 710-739), so nothing follows that a model could answer.
+            return Err(field_v1(FINAL_ASSISTANT_UNSERVED));
+        } else if messages.len() <= 1 && messages.iter().all(|only| only.role == Role::System) {
+            // Nor after a leading system message (lines 731-739), or when
+            // only empty system messages were sent.
+            return Err(field_v1(SYSTEM_ONLY_UNSERVED));
         }
         let tools = tool_objects(request.tools, &request.tool_objects)?;
         if !tools.is_empty() || request.response_format.is_some() {
@@ -369,10 +396,10 @@ impl DeepSeekV41Format {
                 return Err(field_v1("developer role is not declared"));
             }
         };
-        if !message.tools.is_empty() && role != Role::System {
-            return Err(field_v1(
-                "message tools are declared only on system messages",
-            ));
+        if !message.tools.is_empty() {
+            // The recipe's request messages carry no tools (schema.rs lines
+            // 52-71), so a message's own tools never reach its encoder.
+            return Err(field_v1(MESSAGE_TOOLS_UNSERVED));
         }
         let mut result = Message::new(role, message.content.clone());
         if let Some(parts) = &message.parts {
@@ -431,51 +458,39 @@ impl DeepSeekV41Format {
                 arguments: call.arguments.clone(),
             });
         }
-        // A message's own tools arrive as the tool objects the client sent.
-        let function = |tool: &FrontendJsonV1| match tool {
-            FrontendJsonV1::Object(entries) => entries
-                .iter()
-                .find(|(key, _)| key == "function")
-                .is_some_and(|(_, function)| namespaced(function)),
-            _ => false,
-        };
-        if message
-            .tools
-            .iter()
-            .any(|tool| namespaced(tool) || function(tool))
-        {
-            return Err(field_v1(NAMESPACES_UNSERVED));
-        }
-        result.tools.clone_from(&message.tools);
         Ok(result)
     }
 }
 
-/// The offered tools as OpenAI tool objects around each function object
-/// the client sent, or around the declared fields when the request carries
-/// no objects (a request not read through the transport).
+/// The offered tools as the recipe maps them (convert.rs lines 178-192,
+/// v4/mod.rs lines 284-293): each a tool object around its name, its
+/// description or "", and its parameters or `{}`; every other field of the
+/// client's function object is dropped. A function object that names a
+/// namespace is refused until namespaces are served.
 fn tool_objects(
     tools: &[FrontendToolV1],
     objects: &[FrontendJsonV1],
 ) -> Result<Vec<FrontendJsonV1>, String> {
-    if objects.is_empty() {
-        return Ok(tools
-            .iter()
-            .map(|tool| wrap_function(FrontendJsonV1::Object(declared_function(tool))))
-            .collect());
+    if objects.iter().any(namespaced) {
+        return Err(field_v1(NAMESPACES_UNSERVED));
     }
-    if objects.len() != tools.len() {
-        return Err(field_v1("every offered tool needs its function object"));
-    }
-    objects
+    Ok(tools
         .iter()
-        .map(|object| match object {
-            FrontendJsonV1::Object(_) if namespaced(object) => Err(field_v1(NAMESPACES_UNSERVED)),
-            FrontendJsonV1::Object(_) => Ok(wrap_function(object.clone())),
-            _ => Err(field_v1("a tool's function must be an object")),
-        })
-        .collect()
+        .map(|tool| wrap_function(FrontendJsonV1::Object(declared_function(tool))))
+        .collect())
 }
+
+/// The refusal of a message's own tools, which the recipe's request
+/// messages do not carry.
+const MESSAGE_TOOLS_UNSERVED: &str = "message tools are not served";
+
+/// The refusal of a request ending on an assistant turn it does not
+/// continue.
+const FINAL_ASSISTANT_UNSERVED: &str =
+    "a final assistant message is served only with continue_final_message";
+
+/// The refusal of a request of system messages alone.
+const SYSTEM_ONLY_UNSERVED: &str = "a request of system messages alone has no turn to answer";
 
 /// The refusal of a tool object or function object that names a namespace.
 /// The encoder writes such a tool as `namespace::name` (lines 86-121), a
@@ -487,8 +502,7 @@ fn namespaced(object: &FrontendJsonV1) -> bool {
     matches!(object, FrontendJsonV1::Object(entries) if entries.iter().any(|(key, _)| key == "namespace"))
 }
 
-/// A function object as the OpenAI tool object the encoder reads, whatever
-/// keys the function object holds.
+/// A function object as the OpenAI tool object the encoder reads.
 fn wrap_function(function: FrontendJsonV1) -> FrontendJsonV1 {
     FrontendJsonV1::Object(vec![
         ("type".to_owned(), FrontendJsonV1::String("function".into())),
@@ -496,20 +510,23 @@ fn wrap_function(function: FrontendJsonV1) -> FrontendJsonV1 {
     ])
 }
 
-/// A tool's function object from its declared fields: the name, and the
-/// description and parameters it has.
+/// A tool's function object as the recipe writes it: the name, the
+/// description or "", and the parameters or `{}`, a null field read as an
+/// absent one.
 fn declared_function(tool: &FrontendToolV1) -> Vec<(String, FrontendJsonV1)> {
-    let mut function = vec![("name".to_owned(), FrontendJsonV1::String(tool.name.clone()))];
-    if let Some(description) = &tool.description {
-        function.push((
+    let parameters = if tool.parameters_present {
+        tool.parameters.clone()
+    } else {
+        FrontendJsonV1::Object(Vec::new())
+    };
+    vec![
+        ("name".to_owned(), FrontendJsonV1::String(tool.name.clone())),
+        (
             "description".to_owned(),
-            FrontendJsonV1::String(description.clone()),
-        ));
-    }
-    if tool.parameters_present {
-        function.push(("parameters".to_owned(), tool.parameters.clone()));
-    }
-    function
+            FrontendJsonV1::String(tool.description.clone().unwrap_or_default()),
+        ),
+        ("parameters".to_owned(), parameters),
+    ]
 }
 
 #[cfg(test)]

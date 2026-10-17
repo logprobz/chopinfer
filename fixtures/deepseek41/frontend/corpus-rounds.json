@@ -344,5 +344,26 @@
    "finish_reason": "stop"
   },
   "separator": ""
+ },
+ {
+  "id": "final-assistant-turn-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "q"
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   67,
+   1
+  ],
+  "expect": {
+   "content": "a",
+   "finish_reason": "stop"
+  },
+  "separator": ""
  }
 ]

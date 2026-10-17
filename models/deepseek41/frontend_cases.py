@@ -80,24 +80,53 @@ def encoder_message(message):
     return message
 
 
+def recipe_tool(tool):
+    """An offered tool as deepseek-recipe maps it (convert.rs lines 178-192,
+    v4/mod.rs lines 284-293): its name, its description or "", and its
+    parameters or `{}`, every other field dropped."""
+    function = tool.get("function") or {}
+    parameters = function.get("parameters")
+    return {"type": "function", "function": {
+        "name": function.get("name"), "description": function.get("description") or "",
+        "parameters": {} if parameters is None else parameters}}
+
+
+def empty_system(message):
+    """Whether a message is a system message deepseek-recipe drops: its
+    text, parts joined, is empty (convert.rs lines 343-347)."""
+    if message.get("role") != "system":
+        return False
+    content = message.get("content")
+    if isinstance(content, list):
+        content = "\n\n".join(part.get("text", "") for part in content
+                               if isinstance(part, dict) and part.get("type") == "text")
+    return not content
+
+
 def encoder_render(namespace, messages, tools, add_generation_prompt, continue_final_message, keywords,
                    response_format=None):
     """The prompt `encode_messages` (lines 810-844) writes for one HF input,
-    mapped as the served format maps a request:
+    with the request mapped into messages as deepseek-recipe maps it (plan
+    V4; `mapping` in frontend-divergences.json) and the served format
+    serves it:
     - the mode from the thinking keywords, and the effort (the keyword
       `reasoning_effort`, which a top-level effort sets, with a protocol
       alias read as the effort it names) in thinking mode only;
     - `preserve_thinking` turns off `drop_thinking`;
+    - each offered tool is the recipe's function object, and an empty
+      system message is dropped;
     - the offered tools and `response_format` go to the leading system
       message, an empty one when the request has none (README: tools are
-      defined on the system message);
+      defined on the system message), and any `response_format` renders as
+      the encoder renders it (V7);
     - a continued final assistant turn renders without its end token
       (`wo_eos`); the encoder writes the generation header itself, so
       `add_generation_prompt` changes nothing."""
     mode = "thinking" if thinking(keywords) else "chat"
     effort = keywords.get("reasoning_effort") if mode == "thinking" else None
     effort = EFFORT_ALIASES.get(effort, effort) if isinstance(effort, str) else effort
-    messages = [encoder_message(message) for message in messages]
+    messages = [encoder_message(message) for message in messages if not empty_system(message)]
+    tools = [recipe_tool(tool) for tool in tools or []]
     if continue_final_message:
         if not messages or messages[-1].get("role") != "assistant":
             raise ValueError("continue_final_message requires a final assistant message")
@@ -275,18 +304,52 @@ def cases(declaration):
         {"role": "tool", "tool_call_id": "call_r", "content": "ok"},
     ], "tools": [{"type": "function", "function": {"name": "f", "parameters": {"type": "object"}}}]}, {
         "fixed:raw-argument-text", "tools:wrapped"}
-    # A function object holding a `function` key is still wrapped whole.
-    yield "function-key-in-function", {"messages": [user("q")], "tools": [
-        {"type": "function", "function": {"name": "f", "function": {"name": "g"}}}]}, {
-        "fixed:function-key-in-function", "tools:wrapped"}
-    # A namespace on a function object or a system message's tool object,
-    # which the encoder writes as namespace::name and this format refuses.
+    # Mapping rules (`mapping` in frontend-divergences.json). R1: reasoning
+    # before the last user turn drops, and a turn without any writes
+    # </think> alone, as the encoder renders it.
+    yield "earlier-reasoning-dropped", {"messages": [
+        user("q1"), {"role": "assistant", "content": "a1", "reasoning_content": "r1"},
+        user("q2"), {"role": "assistant", "content": "a2"}, user("q3"),
+    ]}, {"fixed:earlier-reasoning-dropped"}
+    # R2: each offered tool is the recipe's function object: name,
+    # description or "", parameters or {}, every other field dropped.
+    yield "recipe-tool-schema", {"messages": [user("q")], "tools": [
+        {"type": "function", "function": {"parameters": {"type": "object"}, "strict": True, "name": "a",
+                                          "defer_loading": True, "description": "A."}},
+        {"type": "function", "function": {"name": "b", "description": None, "parameters": None}},
+        {"type": "function", "function": {"name": "c"}},
+        {"type": "function", "function": {"name": "d", "function": {"name": "g"}}}]}, {
+        "fixed:recipe-tool-schema", "tools:wrapped"}
+    # R3: every response format renders as the encoder renders it (V7).
+    yield "response-format-text", {"messages": [user("q")], "response_format": RESPONSE_FORMATS["text"]}, {
+        "fixed:response-format-text", "response-format:text"}
+    yield "response-format-json-object", {"messages": [user("Answer in JSON.")],
+                                          "response_format": RESPONSE_FORMATS["json-object"]}, {
+        "fixed:response-format-json-object", "response-format:json-object"}
+    # R4: a final assistant turn ends with the end-of-sentence token and no
+    # header follows, so it is refused unless continued.
+    yield "final-assistant-turn", {"messages": [user("q"), {"role": "assistant", "content": "a"}]}, {
+        "fixed:final-assistant-turn", "ends:assistant"}
+    yield "continued-final-assistant-turn", {"messages": [user("q"), {"role": "assistant", "content": "a"}],
+                                             "continue_final_message": True, "add_generation_prompt": False}, {
+        "fixed:continued-final-assistant-turn", "ends:continue"}
+    # R5: an empty system message is dropped, leading, later or as empty
+    # parts; the one carrying the offered tools is still inserted.
+    yield "empty-system-messages-dropped", {"messages": [
+        {"role": "system", "content": ""}, user("q1"), {"role": "assistant", "content": "a1"},
+        {"role": "system", "content": [{"type": "text", "text": ""}]}, user("q2"),
+    ]}, {"fixed:empty-system-messages-dropped", "system:empty"}
+    yield "empty-system-message-with-tools", {"messages": [{"role": "system", "content": ""}, user("q")],
+                                              "tools": [WEATHER]}, {
+        "fixed:empty-system-message-with-tools", "system:empty", "tools:wrapped"}
+    # A namespace on a function object, which the encoder writes as
+    # namespace::name and this format refuses until namespaces are served.
     yield "namespaced-function-object", {"messages": [user("q")], "tools": [
         {"type": "function", "function": {"name": "f", "namespace": {"name": "ns", "description": "Tools of ns."},
                                           "description": "F.", "parameters": {"type": "object"}}}]}, {
         "fixed:namespaced-function-object", "tool-namespace:present"}
-    yield "namespaced-system-tool", {"messages": [
-        {"role": "system", "content": "s", "tools": [
-            {"type": "function", "namespace": "ns", "function": {"name": "f", "parameters": {"type": "object"}}}]},
-        user("q"),
-    ]}, {"fixed:namespaced-system-tool", "tool-namespace:present"}
+    # A system message's own tools, which the recipe's request messages do
+    # not carry and this format refuses.
+    yield "system-message-tools", {"messages": [
+        {"role": "system", "content": "s", "tools": [WEATHER]}, user("q"),
+    ]}, {"fixed:system-message-tools", "message-tools:present"}

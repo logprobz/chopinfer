@@ -6,7 +6,7 @@
 
 use std::ffi::{CStr, c_char, c_int, c_uint, c_ulonglong, c_void};
 
-use super::{Activity, Device, Reading, Reasons};
+use super::{Activity, Device, Process, Reading, Reasons};
 
 const LIBRARY: &CStr = c"libnvidia-ml.so.1";
 
@@ -353,6 +353,23 @@ fn problem(code: c_int) -> String {
     }
 }
 
+/// A process list: each pid and the bytes it holds, when the driver says.
+type List = Vec<(u32, Option<u64>)>;
+
+/// The processes on a GPU from its compute and graphics lists, each `None`
+/// where NVML lacks the query and `Some(None)` where it failed. They are
+/// known only when every list NVML has was read: a failed one would read as
+/// its processes gone.
+fn listed(compute: Option<Option<List>>, graphics: Option<Option<List>>) -> Option<Vec<Process>> {
+    match (compute, graphics) {
+        (None, None) | (Some(None), _) | (_, Some(None)) => None,
+        (compute, graphics) => Some(super::merge(
+            &compute.flatten().unwrap_or_default(),
+            &graphics.flatten().unwrap_or_default(),
+        )),
+    }
+}
+
 /// The reading of a GPU whose handle did not open with status `code`: lost
 /// only when NVML says so, and otherwise unread, which changes nothing.
 fn unopened(at: f64, code: c_int) -> Reading {
@@ -550,15 +567,15 @@ impl Nvml {
             .then_some(value.margin)
     }
 
+    /// One process list: `None` where NVML lacks the query, `Some(None)`
+    /// where it failed.
     fn processes(
         &self,
         call: Option<Processes>,
         handle: Handle,
         statuses: &mut Statuses,
-    ) -> Vec<(u32, Option<u64>)> {
-        let Some(call) = call else {
-            return Vec::new();
-        };
+    ) -> Option<Option<List>> {
+        let call = call?;
         let mut infos = vec![ProcessInfo::default(); 32];
         for _ in 0..3 {
             let mut count = infos.len() as c_uint;
@@ -568,18 +585,20 @@ impl Nvml {
                 continue;
             }
             if !statuses.check(code) {
-                return Vec::new();
+                return Some(None);
             }
-            return infos[..(count as usize).min(infos.len())]
-                .iter()
-                .map(|info| {
-                    let memory =
-                        (info.used_gpu_memory != NOT_AVAILABLE).then_some(info.used_gpu_memory);
-                    (info.pid, memory)
-                })
-                .collect();
+            return Some(Some(
+                infos[..(count as usize).min(infos.len())]
+                    .iter()
+                    .map(|info| {
+                        let memory =
+                            (info.used_gpu_memory != NOT_AVAILABLE).then_some(info.used_gpu_memory);
+                        (info.pid, memory)
+                    })
+                    .collect(),
+            ));
         }
-        Vec::new()
+        Some(None)
     }
 
     /// One reading of GPU `index`, described by `device`, at `at` seconds,
@@ -650,7 +669,7 @@ impl Nvml {
             utilization,
             pcie: link,
             ecc_uncorrected,
-            processes: super::merge(&compute, &graphics),
+            processes: listed(compute, graphics),
             activity: None,
             lost: false,
             answered: false,
@@ -777,6 +796,22 @@ mod tests {
         assert_eq!(problem(ERROR_GPU_IS_LOST), "lost or off the bus");
         assert_eq!(problem(ERROR_GPU_NOT_FOUND), "not found");
         assert_eq!(problem(999), "NVML status 999");
+        assert_eq!(denied.processes, None);
+    }
+
+    #[test]
+    fn processes_are_known_only_when_every_list_there_is_was_read() {
+        let pids = |processes: Option<Vec<Process>>| {
+            processes.map(|processes| processes.iter().map(|p| p.pid).collect::<Vec<_>>())
+        };
+        let list = |pid| Some(Some(vec![(pid, None)]));
+        assert_eq!(pids(listed(list(7), list(9))), Some(vec![7, 9]));
+        assert_eq!(pids(listed(list(7), None)), Some(vec![7]));
+        assert_eq!(pids(listed(None, Some(Some(Vec::new())))), Some(vec![]));
+        // A failed list is not an empty one, and no list at all says nothing.
+        assert_eq!(pids(listed(list(7), Some(None))), None);
+        assert_eq!(pids(listed(Some(None), list(9))), None);
+        assert_eq!(pids(listed(None, None)), None);
     }
 
     #[test]

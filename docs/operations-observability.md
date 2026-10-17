@@ -333,8 +333,11 @@ hardware slowdown starting or ending, headroom under 5 C (again only once it
 has been back to 10 C), uncorrected ECC errors rising, a GPU no longer
 answering NVML, and a process that is no instance holding memory on a GPU
 beside one, once per pid. A GPU stays lost until a query of it answers again; a poll
-where every query fails changes nothing. A GPU that NVML lists but will not
-open for this user shows why (such as no permission) and is not lost.
+where every query fails changes nothing. A poll whose process lists fail keeps
+the list from before, for up to the five minutes of history, and the
+Processes panel gives its age; no process is reported again or forgotten. A
+GPU that NVML lists but will not open for this user shows why (such as no
+permission) and is not lost.
 
 GPM counters (Hopper and newer) are sampled only while the GPU view is open;
 `--no-gpu-counters` stops them, and `--no-gpus` stops GPU reading. Their
@@ -371,7 +374,9 @@ or container or target, address, state and detail, model, uptime, the
 `/health` identity, rates, gauges, ratios and counter totals), a `gpus`
 object (`status` of `read`, `off` or `unavailable` with its `detail`, the
 `driver`, and `devices` with each GPU's readings and processes, each with its
-`C` or `G` type and instance) and the `events` log. Its ratios use the 60 s
+`C` or `G` type and instance, and `processes_age_seconds`, the age of that
+list, which is from an earlier poll when the latest one's process lists
+failed; both are null when the processes were not read) and the `events` log. Its ratios use the 60 s
 window, which for a server older than a minute covers only the interval
 between the two polls.
 

@@ -342,7 +342,7 @@ fn with_gpus(app: &mut App, counters: bool) {
                 utilization: Some((0.97, 0.71)),
                 pcie: Some((5, 16)),
                 ecc_uncorrected: None,
-                processes,
+                processes: Some(processes),
                 activity: counters.then_some(Activity {
                     kernels: Some(kernels),
                     sm: Some(0.79),
@@ -599,6 +599,39 @@ fn a_lost_gpu_stays_lost_on_screen_and_in_json_until_it_answers() {
         document["gpus"]["devices"][0]["unreadable"],
         "no permission"
     );
+    // Its processes were never read, which is not none at all.
+    assert!(screen.contains("processes not read"), "{screen}");
+    assert!(!screen.contains("no processes"), "{screen}");
+}
+
+#[test]
+fn a_failed_process_query_shows_the_list_before_it() {
+    let mut app = fleet();
+    with_gpus(&mut app, true);
+    app.view = View::Gpus;
+    let mut readings = (0..4)
+        .map(|index| app.gpus.latest(index).unwrap().clone())
+        .collect::<Vec<_>>();
+    for reading in &mut readings {
+        reading.at = NOW + 2.0;
+    }
+    // GPU 0 answered, but not its process lists.
+    readings[0].processes = None;
+    app.gpus
+        .apply(Report::Polled(readings), &mut app.registry, NOW + 2.0);
+    let screen = ui::draw(&app, 132, 38, NOW + 2.0).text();
+    assert!(
+        screen.contains("Processes  on GPU 0  as read 2s ago"),
+        "{screen}"
+    );
+    assert!(screen.contains("2210    G"), "{screen}");
+    assert!(!screen.contains("no processes"), "{screen}");
+    // The GPU still names its instance.
+    let row = screen
+        .lines()
+        .find(|line| line.contains("│▌0 "))
+        .unwrap_or_else(|| panic!("{screen}"));
+    assert!(row.contains("MiMo-V2.6-Flash +1"), "{screen}");
 }
 
 #[test]

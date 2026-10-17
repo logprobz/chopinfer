@@ -214,7 +214,9 @@ pub struct Reading {
     pub pcie: Option<(u32, u32)>,
     /// Uncorrected ECC errors since the driver loaded, while ECC is on.
     pub ecc_uncorrected: Option<u64>,
-    pub processes: Vec<Process>,
+    /// `None` when the process lists were not read: a failed query is not
+    /// an empty GPU.
+    pub processes: Option<Vec<Process>>,
     /// GPM figures since the previous poll, while they are read.
     pub activity: Option<Activity>,
     /// The GPU stopped answering: it fell off the bus or is otherwise lost.
@@ -275,6 +277,14 @@ impl History {
 
     pub fn latest(&self) -> Option<&Reading> {
         self.ring.back()
+    }
+
+    /// The latest reading whose process lists were read.
+    pub fn listed(&self) -> Option<&Reading> {
+        self.ring
+            .iter()
+            .rev()
+            .find(|reading| reading.processes.is_some())
     }
 
     /// The average of `field` over the last three polls that have it, as
@@ -483,8 +493,12 @@ impl Gpus {
                 );
             }
         }
-        let rows = reading
-            .processes
+        // Without process lists nothing is known about the processes: none
+        // is new, and none has gone.
+        let Some(processes) = &reading.processes else {
+            return;
+        };
+        let rows = processes
             .iter()
             .map(|process| owners::row(&registry.instances, process))
             .collect::<Vec<_>>();
@@ -499,7 +513,7 @@ impl Gpus {
                     .map_or_else(|| instance.label(), str::to_owned)
             });
         if let Some(beside) = beside {
-            for (process, row) in reading.processes.iter().zip(&rows) {
+            for (process, row) in processes.iter().zip(&rows) {
                 if row.is_some() || watch.strangers.contains(&process.pid) {
                     continue;
                 }
@@ -522,7 +536,7 @@ impl Gpus {
         }
         watch
             .strangers
-            .retain(|pid| reading.processes.iter().any(|process| process.pid == *pid));
+            .retain(|pid| processes.iter().any(|process| process.pid == *pid));
     }
 
     pub fn latest(&self, index: usize) -> Option<&Reading> {
@@ -540,19 +554,33 @@ impl Gpus {
         self.devices.iter().any(|device| device.gpm)
     }
 
-    /// The processes of GPU `index` with the visible row each one is.
+    /// The processes of GPU `index` with the visible row each one is, as
+    /// last read: a poll whose process lists failed keeps the list before
+    /// it, for as long as the history holds it.
     pub fn processes<'a>(
         &'a self,
         index: usize,
         instances: &[Instance],
     ) -> Vec<(&'a Process, Option<u64>)> {
-        self.latest(index).map_or_else(Vec::new, |reading| {
-            reading
-                .processes
-                .iter()
-                .map(|process| (process, owners::row(instances, process)))
-                .collect()
-        })
+        self.histories
+            .get(index)
+            .and_then(History::listed)
+            .and_then(|reading| reading.processes.as_ref())
+            .map_or_else(Vec::new, |processes| {
+                processes
+                    .iter()
+                    .map(|process| (process, owners::row(instances, process)))
+                    .collect()
+            })
+    }
+
+    /// When the processes of GPU `index` were last read; `None` when they
+    /// have not been within the history.
+    pub fn processes_read(&self, index: usize) -> Option<f64> {
+        self.histories
+            .get(index)
+            .and_then(History::listed)
+            .map(|reading| reading.at)
     }
 
     /// The GPUs that a process of visible row `id` holds.
@@ -695,14 +723,14 @@ mod tests {
         );
         assert_eq!(gpus.status, Status::Open);
         let serving = |pid| Reading {
-            processes: vec![Process {
+            processes: Some(vec![Process {
                 pid,
                 owner: Owner {
                     listen: Some("0.0.0.0:8311".into()),
                     ..Owner::default()
                 },
                 ..Process::default()
-            }],
+            }]),
             ..Reading::default()
         };
         gpus.apply(
@@ -756,7 +784,7 @@ mod tests {
                 sm_mhz: Some(1650),
                 reasons: Some(Reasons(reasons)),
                 ecc_uncorrected: Some(ecc),
-                processes,
+                processes: Some(processes),
                 lost,
                 answered: !lost,
                 ..Reading::default()
@@ -921,6 +949,63 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_process_query_keeps_the_list_and_its_strangers() {
+        use crate::targets::Target;
+        let mut registry = Registry::new(1.0);
+        registry.add_target(Target::parse(":8311").unwrap(), 0.0);
+        let mut gpus = Gpus::new(Status::Opening, true, 1.0);
+        gpus.apply(
+            Report::Opened {
+                driver: None,
+                devices: vec![Device::default()],
+            },
+            &mut registry,
+            0.0,
+        );
+        let process = |pid, listen: Option<&str>| Process {
+            pid,
+            owner: Owner {
+                name: Some("python3".into()),
+                listen: listen.map(str::to_owned),
+                ..Owner::default()
+            },
+            ..Process::default()
+        };
+        let read = |at| Reading {
+            at,
+            processes: Some(vec![process(7, Some("0.0.0.0:8311")), process(9, None)]),
+            answered: true,
+            ..Reading::default()
+        };
+        // The other queries answered; the process lists did not.
+        let failed = Reading {
+            at: 2.0,
+            answered: true,
+            ..Reading::default()
+        };
+        for (at, reading, listed) in [
+            (1.0, read(1.0), 1.0),
+            (2.0, failed, 1.0),
+            (3.0, read(3.0), 3.0),
+        ] {
+            gpus.apply(Report::Polled(vec![reading]), &mut registry, at);
+            let pids = gpus
+                .processes(0, &registry.instances)
+                .iter()
+                .map(|(process, _)| process.pid)
+                .collect::<Vec<_>>();
+            assert_eq!(pids, [7, 9], "at {at}");
+            assert_eq!(gpus.processes_read(0), Some(listed), "at {at}");
+        }
+        let strangers = registry
+            .events
+            .iter()
+            .filter(|event| event.what.starts_with("pid 9"))
+            .count();
+        assert_eq!(strangers, 1, "{:?}", registry.events);
+    }
+
+    #[test]
     fn a_gpu_this_user_may_not_open_is_not_lost() {
         let mut registry = Registry::new(1.0);
         let mut gpus = Gpus::new(Status::Opening, true, 1.0);
@@ -938,6 +1023,7 @@ mod tests {
         // What the poller reads for it: no handle, nothing answered.
         gpus.apply(Report::Polled(vec![Reading::default()]), &mut registry, 1.0);
         assert!(!gpus.lost(0));
+        assert_eq!(gpus.processes_read(0), None);
         assert_eq!(registry.events.len(), 1, "{:?}", registry.events);
     }
 

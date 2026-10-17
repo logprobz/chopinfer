@@ -86,14 +86,15 @@ impl<'a> Sampler<'a> {
             } else {
                 self.gpm[index] = None;
             }
-            for process in &mut reading.processes {
+            for process in reading.processes.iter_mut().flatten() {
                 process.owner = self.owners.resolve(process.pid);
             }
             readings.push(reading);
         }
         let pids = readings
             .iter()
-            .flat_map(|reading| reading.processes.iter().map(|process| process.pid))
+            .flat_map(|reading| reading.processes.iter().flatten())
+            .map(|process| process.pid)
             .collect::<Vec<_>>();
         self.owners.keep(&pids);
         readings

@@ -235,7 +235,7 @@ pub fn document(registry: &Registry, gpus: &Gpus, now: f64) -> Value {
     json!({
         "schema": SCHEMA,
         "instances": registry.visible().into_iter().map(|instance| row(instance, now)).collect::<Vec<_>>(),
-        "gpus": gpu_document(registry, gpus),
+        "gpus": gpu_document(registry, gpus, now),
         "events": registry
             .events
             .iter()
@@ -244,9 +244,9 @@ pub fn document(registry: &Registry, gpus: &Gpus, now: f64) -> Value {
     })
 }
 
-/// This host's GPUs: whether they were read, the driver, and each GPU's
-/// latest reading with its processes and the instance each one is.
-fn gpu_document(registry: &Registry, gpus: &Gpus) -> Value {
+/// This host's GPUs at `now`: whether they were read, the driver, and each
+/// GPU's latest reading with its processes and the instance each one is.
+fn gpu_document(registry: &Registry, gpus: &Gpus, now: f64) -> Value {
     let (status, detail) = match &gpus.status {
         Status::Off => ("off", None),
         Status::Opening => ("opening", None),
@@ -304,7 +304,10 @@ fn gpu_document(registry: &Registry, gpus: &Gpus) -> Value {
                 "gpm": device.gpm,
                 "lost": gpus.lost(index),
                 "unreadable": device.unreadable,
-                "processes": processes,
+                // Null when not read; from an earlier poll when the latest
+                // one's process lists failed.
+                "processes": gpus.processes_read(index).map(|_| processes),
+                "processes_age_seconds": gpus.processes_read(index).map(|at| (now - at).max(0.0)),
             })
         })
         .collect::<Vec<_>>();
@@ -499,10 +502,11 @@ mod tests {
                 memory_used: Some(88 << 30),
                 utilization: Some((0.97, 0.71)),
                 pcie: Some((5, 16)),
-                processes: vec![
+                at: 1.0,
+                processes: Some(vec![
                     process(7, Some("0.0.0.0:8311"), Kind::Compute),
                     process(9, None, Kind::Graphics),
-                ],
+                ]),
                 answered: true,
                 ..Reading::default()
             }]),
@@ -528,5 +532,36 @@ mod tests {
         assert_eq!(gpu["processes"][0]["instance"], "target 127.0.0.1:8311");
         assert_eq!(gpu["processes"][1]["type"], "G");
         assert_eq!(gpu["processes"][1]["instance"], serde_json::Value::Null);
+        assert_eq!(gpu["processes_age_seconds"], 0.0);
+        // A poll whose process lists failed keeps the list before it, and
+        // says how old it is; a GPU never listed has none.
+        gpus.apply(
+            Report::Polled(vec![Reading {
+                at: 2.0,
+                answered: true,
+                ..Reading::default()
+            }]),
+            &mut registry,
+            2.0,
+        );
+        let document = super::document(&registry, &gpus, 2.5);
+        let gpu = &document["gpus"]["devices"][0];
+        assert_eq!(gpu["processes"][0]["instance"], "target 127.0.0.1:8311");
+        assert_eq!(gpu["processes_age_seconds"], 1.5);
+        let mut unread = Gpus::new(Status::Opening, true, 1.0);
+        unread.apply(
+            Report::Opened {
+                driver: None,
+                devices: vec![Device::default()],
+            },
+            &mut registry,
+            0.0,
+        );
+        unread.apply(Report::Polled(vec![Reading::default()]), &mut registry, 1.0);
+        let document = super::document(&registry, &unread, 1.0);
+        assert_eq!(
+            document["gpus"]["devices"][0]["processes"],
+            serde_json::Value::Null
+        );
     }
 }

@@ -170,10 +170,10 @@ pub fn draw(buffer: &mut Buffer, app: &App, now: f64) {
         let area = (0, top + upper, width, lower);
         if width >= 100 {
             let split = (u32::from(width) * 45 / 100) as u16;
-            processes(buffer, app, index, (0, top + upper, split, lower));
+            processes(buffer, app, index, (0, top + upper, split, lower), now);
             events(buffer, app, (split, top + upper, width - split, lower), now);
         } else {
-            processes(buffer, app, index, area);
+            processes(buffer, app, index, area, now);
         }
     }
 }
@@ -395,7 +395,9 @@ fn row(buffer: &mut Buffer, app: &App, index: usize, y: u16, (shown, spark): (&[
     };
     let shares = |field: Field| number(recent(field).map(|value| share(Some(value))), plain);
     let processes = gpus.processes(index, &app.registry.instances);
+    // A lost GPU's processes are those it had before.
     let instance = match instance_on(app, index) {
+        _ if lost => piece("lost: no answer", Style::fg(Color::Red)),
         Some(instance) => {
             let others = processes.len().saturating_sub(1);
             let name = instance_name(instance);
@@ -406,7 +408,6 @@ fn row(buffer: &mut Buffer, app: &App, index: usize, y: u16, (shown, spark): (&[
             };
             (text, Style::fg(Color::White).bold())
         }
-        None if lost => piece("lost: no answer", Style::fg(Color::Red)),
         // Why NVML gave no handle: no permission, not found.
         None if device.unreadable.is_some() => piece(
             device.unreadable.as_deref().unwrap_or_default(),
@@ -1062,19 +1063,29 @@ fn load(buffer: &mut Buffer, app: &App, index: usize, (x, y): (u16, u16), end: u
     );
 }
 
-/// The processes on GPU `index` and the instance each one is.
-fn processes(buffer: &mut Buffer, app: &App, index: usize, area: Area) {
+/// The processes on GPU `index` and the instance each one is, from an
+/// earlier poll, and marked so, when this one's process lists failed.
+fn processes(buffer: &mut Buffer, app: &App, index: usize, area: Area, now: f64) {
     let (x, y, width, height) = area;
     if height < 4 {
         return;
     }
     let device = &app.gpus.devices[index];
+    let read = app.gpus.processes_read(index);
+    let earlier = read
+        .filter(|at| {
+            app.gpus
+                .latest(index)
+                .is_some_and(|reading| reading.at > *at)
+        })
+        .map_or_else(String::new, |at| format!("  as read {} ago", age(now - at)));
     boxed(
         buffer,
         area,
         &[
             ("Processes", title()),
             (&format!("  on GPU {}", device.index), dim()),
+            (&earlier, Style::fg(Color::Yellow)),
         ],
         false,
     );
@@ -1095,7 +1106,12 @@ fn processes(buffer: &mut Buffer, app: &App, index: usize, area: Area) {
     );
     let processes = app.gpus.processes(index, &app.registry.instances);
     if processes.is_empty() {
-        buffer.put(x + 2, y + 2, "no processes", dim());
+        let what = if read.is_some() {
+            "no processes"
+        } else {
+            "processes not read"
+        };
+        buffer.put(x + 2, y + 2, what, dim());
         return;
     }
     let serving = processes.iter().any(|(_, row)| row.is_some());

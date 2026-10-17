@@ -131,3 +131,76 @@ pub fn tool_references_are_refused(frontend: &impl ServerFrontendV1) {
         assert_eq!(error.parameter.as_deref(), Some("messages"), "{key}");
     }
 }
+
+/// A forced call to `f`, whose one array property `x` holds an item that
+/// chooses among a chain of cached schema references (each definition
+/// refers to the one before it), builds a grammar that crosses the bundle
+/// boundary and admits `call`, which writes `f({"x":[0]})`. The chains reach
+/// the deepest a grammar document may compile to: 501 and 502 references
+/// under a required choice, 503 and 504 under a named one. A frontend that
+/// answers through its export's documents has the host decode the grammar
+/// document, which refuses one deeper than the wire admits.
+///
+/// # Panics
+///
+/// When a grammar is refused, does not cross the boundary, or does not admit
+/// `call`.
+pub fn deep_reference_schemas_cross_the_wire(frontend: &impl ServerFrontendV1, call: &str) {
+    use std::sync::Arc;
+
+    use runtime_grammar::{CompiledGrammar, GrammarMatcher, TokenVocabulary, VocabularyToken};
+
+    let tokens = (0..=255_u8)
+        .map(|byte| VocabularyToken {
+            bytes: vec![byte],
+            special: false,
+        })
+        .collect();
+    let vocabulary = Arc::new(TokenVocabulary::new(256, tokens).expect("a byte vocabulary"));
+    for (choice, count) in [
+        (FrontendToolChoiceV1::Required, 501),
+        (FrontendToolChoiceV1::Required, 502),
+        (FrontendToolChoiceV1::Named("f".to_owned()), 503),
+        (FrontendToolChoiceV1::Named("f".to_owned()), 504),
+    ] {
+        let mut definitions = serde_json::Map::new();
+        let mut branches = Vec::new();
+        for index in 0..count {
+            let name = format!("d{index:03}");
+            definitions.insert(
+                name.clone(),
+                if index == 0 {
+                    serde_json::json!({"type": "integer", "const": 0})
+                } else {
+                    serde_json::json!({"$ref": format!("#/$defs/d{:03}", index - 1)})
+                },
+            );
+            branches.push(serde_json::json!({"$ref": format!("#/$defs/{name}")}));
+        }
+        let parameters = serde_json::json!({
+            "type": "object",
+            "properties": {"x": {"type": "array", "maxItems": 1, "items": {"anyOf": branches}}},
+            "$defs": definitions,
+            "additionalProperties": false,
+        });
+        let tool = FrontendToolV1 {
+            name: "f".to_owned(),
+            description: None,
+            parameters: serde_json::from_value(parameters).expect("a schema"),
+            parameters_present: true,
+            strict: None,
+        };
+        let label = format!("{count} references, {choice:?}");
+        let grammar = frontend
+            .tool_constraint(&[tool], &choice)
+            .unwrap_or_else(|error| panic!("{label}: {error}"))
+            .expect("a forced choice constrains");
+        let compiled = CompiledGrammar::new(&grammar, Arc::clone(&vocabulary))
+            .unwrap_or_else(|error| panic!("{label}: {error}"));
+        let mut matcher = GrammarMatcher::new(Arc::new(compiled));
+        assert!(
+            matcher.accept_bytes(call.as_bytes()).is_ok() && matcher.is_complete(),
+            "{label}: {call:?}"
+        );
+    }
+}

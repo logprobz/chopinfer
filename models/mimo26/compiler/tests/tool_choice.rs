@@ -41,3 +41,15 @@ fn long_property_names_compile() {
     .unwrap();
     frontend_format::test_support::forced_literals::assert_long_property_names_compile(&descriptor);
 }
+
+/// A forced call's grammar crosses the bundle boundary even when its
+/// schema's references nest it as deep as a grammar document may compile.
+#[test]
+fn deep_reference_schemas_cross_the_wire() {
+    let descriptor = frontend_format::FormatDescriptorV1::from_component_bytes(
+        model_mimo26::frontend::COMPONENT,
+    )
+    .unwrap();
+    let call = frontend_format::test_support::forced_literals::forced_call(&descriptor, "[0]");
+    tool_choice::deep_reference_schemas_cross_the_wire(&frontend(), &call);
+}

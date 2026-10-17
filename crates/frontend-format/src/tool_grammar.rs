@@ -15,7 +15,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use runtime_grammar::{
-    CharClass, Expr, Grammar, GrammarBuilder, GrammarError, JsonOptions, SchemaCompiler,
+    CharClass, Expr, GRAMMAR_WIRE_NESTING_MAX_V1, Grammar, GrammarBuilder, GrammarError,
+    JsonOptions, SchemaCompiler,
 };
 use serde_json::Value;
 
@@ -59,15 +60,59 @@ pub fn tool_constraint_v1(
             "The tool specified in `tool_choice` does not match any of the specified `tools`",
         ));
     }
+    // With more than one call, the call body is one rule: the first call and
+    // the calls after it continue to the same state, so they compile to one
+    // copy. A rule nests its body a level deeper, and where that takes the
+    // grammar past the depth the wire admits, the body is written out in
+    // both places, as one call writes it.
+    let shared = !matches!(forced, FrontendToolChoiceV1::Named(_));
+    let mut grammar = calls_v1(descriptor, &offered, forced, shared)?;
+    if shared && grammar.compile_depth() > GRAMMAR_WIRE_NESTING_MAX_V1 {
+        grammar = calls_v1(descriptor, &offered, forced, false)?;
+    }
+    // A marker, or the marker without its layout whitespace, may be a single
+    // special token; the grammar admits such tokens where their bytes fit.
+    let markers = [
+        &format.tool_call_open,
+        &format.tool_call_close,
+        &format.function_open,
+        &format.function_close,
+        &format.parameter_open,
+        &format.parameter_value_open,
+        &format.parameter_close,
+    ];
+    Ok(Some(
+        grammar.with_special_tokens(
+            markers
+                .into_iter()
+                .flat_map(|marker| [marker.as_str(), marker.trim()])
+                .filter(|marker| !marker.is_empty())
+                .map(|marker| marker.as_bytes().to_vec()),
+        ),
+    ))
+}
+
+/// The calls `forced` admits to the `offered` tools, with the call body as
+/// one rule when `shared`.
+fn calls_v1(
+    descriptor: &FormatDescriptorV1,
+    offered: &[&FrontendToolV1],
+    forced: &FrontendToolChoiceV1,
+    shared: bool,
+) -> Result<Grammar, FrontendErrorV1> {
+    let format = &descriptor.parser;
     let mut builder = GrammarBuilder::new();
     let mut rests = Vec::with_capacity(offered.len());
     for tool in offered {
         rests.push(call_after_open(&mut builder, descriptor, format, tool)?);
     }
-    // Everything a call writes after its open marker. The first call and the
-    // calls after it continue to the same state, so as one rule they compile
-    // to one copy.
-    let rest = Expr::Rule(builder.rule(Expr::alt(rests)));
+    // Everything a call writes after its open marker.
+    let rest = Expr::alt(rests);
+    let rest = if shared {
+        Expr::Rule(builder.rule(rest))
+    } else {
+        rest
+    };
     let open = || Expr::literal(&format.tool_call_open);
     let call = Expr::seq([open(), rest.clone()]);
     let more_calls = Expr::seq([Expr::literal(&format.tool_call_separator), call.clone()]).star();
@@ -97,29 +142,7 @@ pub fn tool_constraint_v1(
         }
     };
     let root = builder.rule(body);
-    let grammar = builder
-        .finish(root)
-        .map_err(|error| grammar_error(&error))?;
-    // A marker, or the marker without its layout whitespace, may be a single
-    // special token; the grammar admits such tokens where their bytes fit.
-    let markers = [
-        &format.tool_call_open,
-        &format.tool_call_close,
-        &format.function_open,
-        &format.function_close,
-        &format.parameter_open,
-        &format.parameter_value_open,
-        &format.parameter_close,
-    ];
-    Ok(Some(
-        grammar.with_special_tokens(
-            markers
-                .into_iter()
-                .flat_map(|marker| [marker.as_str(), marker.trim()])
-                .filter(|marker| !marker.is_empty())
-                .map(|marker| marker.as_bytes().to_vec()),
-        ),
-    ))
+    builder.finish(root).map_err(|error| grammar_error(&error))
 }
 
 fn call_after_open(

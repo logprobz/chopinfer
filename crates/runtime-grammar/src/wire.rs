@@ -151,6 +151,13 @@ impl Grammar {
         }
         Ok(grammar)
     }
+
+    /// How deep compiling this grammar recurses, as decoding measures it: a
+    /// wire document deeper than [`GRAMMAR_WIRE_NESTING_MAX_V1`] is refused.
+    #[must_use]
+    pub fn compile_depth(&self) -> usize {
+        compile_depth(self, &WorkV1::default())
+    }
 }
 
 /// How deep compiling `grammar` recurses, in sequence levels: the deepest

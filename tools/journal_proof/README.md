@@ -455,18 +455,22 @@ from `layout.py` gives each mutation's expected outcome from the journal:
 
 - refused: a zero, upload, copy or peer copy into the replaced buffer, or a
   launch naming it, before a collective reads it; an executed launch on a
-  plan-only device whose plan records name it; an earlier site launch that
-  also names it in another argument; the declared zero deleted, moved after
+  plan-only device whose plan records name it; a site launch that also
+  names it in another argument; a site replacing another region of it; a
+  graph captured and replayed on an executing device; a write on another
+  stream after an executed site; the declared zero deleted, moved after
   the first use or onto another stream;
-- proven: reads and copies out of it, writes of unrelated buffers, any write
-  after its last collective, plan records on a plan-only device, the
-  declared zero moved right after its allocation.
+- proven: reads and copies out of it, writes of unrelated buffers, writes
+  after its last collective on that collective's stream or after the host
+  waits for it, plan records on a plan-only device, the declared zero moved
+  right after its allocation.
 
 Writes of a replaced buffer on a device that runs the instance create are
 outside these rules and only reported. A mutation refused where the oracle
 expects a proof is a false refusal; one proven where it expects a refusal is
 an escape. `--weaken CLASS` runs with that class's rule deliberately weakened
-(`WEAKENED`), and the harness must then report escapes of it.
+(`WEAKENED`); the run then passes only when it exercised that class and the
+class escaped.
 
 ```sh
 python3 -B tools/journal_proof/mutations.py pair --repo "$REPOSITORY" --model MODEL \
@@ -482,10 +486,13 @@ python3 -B tools/journal_proof/mutations.py overlay --repo "$REPOSITORY" --model
 needs no layout change: it turns each device of one capture into a plan-only
 device (its allocations, then each executed launch as a plan record) and
 declares a zeroed added buffer per rank replacing one collective's peer
-array, once for buffers nothing else names and once for buffers other
-records name too. Exit 0 means every baseline proved with no escape and no
-false refusal. Mutations change history lines only, in memory: nothing is
-sealed or written beside the report.
+array, once for buffers no other launch names and once for buffers other
+launches name too; and into an executing device without instance create (the
+launches kept, on streams past every issued ID) with the first. Exit 0 means
+at least one case, every baseline proven and no escape or false refusal
+(with `--weaken`, as above). Mutations change history lines only, in memory:
+nothing is sealed or written beside the report. Forked workers exit with the
+run.
 
 ## Producing a capture
 

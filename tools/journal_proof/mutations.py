@@ -77,6 +77,10 @@ PLAN_RECORD = 'plan-record'
 # A site launch (an earlier one, or the site itself) that also names the
 # replaced buffer in another argument.
 SITE_ARGUMENT = 'site-argument'
+# One added buffer standing for two base regions; a graph captured and
+# replayed on an executing device; a write on another stream after an
+# executed site, before the host waits for it.
+REGION, GRAPH_REPLAY, LATER_WRITE = 'region', 'graph-replay', 'later-write'
 # Head-only changes of an added buffer's declared zero.
 ZEROS = ('zero-deleted', 'zero-after-use', 'zero-other-stream', 'zero-earliest')
 
@@ -105,6 +109,16 @@ def reads(line, raw):
     return False
 
 
+STREAM = re.compile(r'(?:launch|upload|copy|peer copy|download|readback|zero|synchronize|record|wait|capture|captured|replay) (\d+)\b')
+GRAPH = re.compile(r'(?:capture|captured|replay) \d+.*')
+SPAN_OF = re.compile(r'DeviceBufferSpanV1 \{ buffer: BundleDeviceBufferHandleV1 \{ raw: (\d+) \}, offset: (\d+), length: (\d+) \}')
+
+
+def stream(line):
+    m = STREAM.match(line)
+    return int(m[1]) if m else None
+
+
 def oracle(notes_a, notes_b, pairs, sites, buffers):
     """('refuse', why) or ('prove', None) for a base and head history of a
     device without instance create. `sites` lists (added head handle, base
@@ -117,21 +131,48 @@ def oracle(notes_a, notes_b, pairs, sites, buffers):
     unless it only reads it (`reads`), it is a plan record on a device where
     both revisions hold only allocations and plan records, or it is an earlier
     site where the same added buffer replaces every argument that names it
-    (the head then makes that write to the added buffer). What the site's own
-    launch does with its arguments is the declared collective's semantics,
-    which the declaration states and no journal shows."""
+    (the head then makes that write to the added buffer). The journal cannot
+    tell, and so the proof must refuse:
+    - a site launch that also names the base buffer in an argument the head
+      does not replace with the same added buffer (which argument the launch
+      writes first);
+    - an added buffer standing for more than one base region (buffer, offset,
+      length) across its sites;
+    - on an executing device, any graph capture or replay (a captured site
+      runs at its replays);
+    - on an executing device, a write of the base buffer on another stream
+      after an executed site, before the host synchronizes the site's
+      stream (which runs first)."""
     plan = plan_device(notes_a) and plan_device(notes_b)
     own = collections.defaultdict(set)
     for h, b, i in sites:
         own[(h, b)].add(i)
 
-    def replaced_only(k, h, b):
+    def replaced(k, h, b):
         base, head = parse_launch(notes_a[k]), parse_launch(notes_b[pairs[k]])
         if base is None or head is None or len(base['args']) != len(head['args']):
-            return False
-        return all(h in named(y) and buffers.get(b) not in named(y) for x, y in zip(base['args'], head['args']) if b in named(x))
+            return None
+        return [(x, y) for x, y in zip(base['args'], head['args']) if b in named(x)]
 
+    def replaced_only(k, h, b):
+        args = replaced(k, h, b)
+        return args is not None and all(h in named(y) and buffers.get(b) not in named(y) for _, y in args)
+
+    regions = collections.defaultdict(set)
+    for h, b, i in sites:
+        for x, y in replaced(i, h, b) or []:
+            if h in named(y):
+                regions[h] |= {(b, int(m[2]), int(m[3])) for m in SPAN_OF.finditer(x) if int(m[1]) == b}
+    for h, found in sorted(regions.items()):
+        if len(found) > 1:
+            return 'refuse', f'{h} stands for base regions {sorted(found)}'
+    if not plan and sites:
+        k = next((k for k, line in enumerate(notes_a) if GRAPH.fullmatch(line)), None)
+        if k is not None:
+            return 'refuse', f'base note {k + 1} captures or replays a graph on an executing device'
     for h, b, i in sorted(sites, key=lambda s: s[2]):
+        if not replaced_only(i, h, b):
+            return 'refuse', f'the collective at base note {i + 1} names {b} in an argument the head does not replace with {h}'
         for k in range(i):
             line = notes_a[k]
             if b not in named(line) or reads(line, b) or (plan and PLAN.fullmatch(line)):
@@ -139,6 +180,14 @@ def oracle(notes_a, notes_b, pairs, sites, buffers):
             if k in own[(h, b)] and replaced_only(k, h, b):
                 continue
             return 'refuse', f'base note {k + 1} may write {b} before the collective at base note {i + 1} reads it'
+        site = None if plan else stream(notes_a[i])
+        for k in range(i + 1, len(notes_a) if site is not None else i + 1):
+            line = notes_a[k]
+            if line == f'synchronize {site}':
+                break
+            if (b in named(line) and not reads(line, b) and stream(line) not in (None, site)
+                    and not (k in own[(h, b)] and replaced_only(k, h, b))):
+                return 'refuse', f'base note {k + 1} may write {b} on another stream before the collective at base note {i + 1} reads it'
     return 'prove', None
 
 
@@ -193,6 +242,7 @@ class Facts:
         self.buffers, self.streams = buffers, streams
         self.sizes = {row[1]: row[3] for row in ai['allocations'].values()}
         self.issued = set(ai['issued']) | set(bi['issued'])
+        self.top = (max(ai['issued'], default=0), max(bi['issued'], default=0))
         self.resized = {w['base_raw'] for w in witness.resized.values()}
         decl = case.layout[0]
         self.added = {bi['allocations'][slot][1]: name for slot, name in witness.added.items()}
@@ -222,10 +272,11 @@ class Facts:
 
 def edit_notes(notes, edits):
     """`notes` after `edits` ((kind, original index, line)): `insert` before
-    the original note, `delete` and `replace` it. Returns the new list and the
-    new index of every kept original note."""
+    the original note, `delete` and `replace` it (an `id` edit issues an ID
+    there and adds no note). Returns the new list and the new index of every
+    kept original note."""
     tagged = [(k, line) for k, line in enumerate(notes)] + [(len(notes), None)]
-    for kind, n, *line in sorted(edits, key=lambda e: e[1], reverse=True):
+    for kind, n, *line in sorted((e for e in edits if e[0] != 'id'), key=lambda e: e[1], reverse=True):
         at = next(p for p, (k, _) in enumerate(tagged) if k == n)
         if kind == 'insert':
             tagged.insert(at, (None, line[0]))
@@ -249,6 +300,8 @@ def edit_side(aux, bodies, host, edits):
         at = next((p for p, (k, _) in enumerate(tagged) if k == target), len(tagged))
         if kind == 'insert':
             tagged.insert(at, (None, ['note', line[0]]))
+        elif kind == 'id':
+            tagged.insert(at, (None, ['id', line[0]]))
         elif kind == 'delete':
             del tagged[at]
         else:
@@ -326,6 +379,23 @@ def with_argument(line, b, length):
     return render(item)
 
 
+def narrow(line_a, line_b, b, h):
+    """Base launch `line_a` with the span of `b` it replaces with `h` (in its
+    head launch `line_b`) halved, or None."""
+    base, head = parse_launch(line_a), parse_launch(line_b)
+    if base is None or head is None or len(base['args']) != len(head['args']):
+        return None
+    args = list(base['args'])
+    for k, (x, y) in enumerate(zip(base['args'], head['args'])):
+        if b in named(x) and h in named(y):
+            m = next((m for m in SPAN_OF.finditer(x) if int(m[1]) == b and int(m[3]) > 1), None)
+            if m is None:
+                return None
+            args[k] = x[:m.start()] + span(b, int(m[3]) // 2, int(m[2])) + x[m.end():]
+            return render(dict(base, args=args))
+    return None
+
+
 class Mutation:
     def __init__(self, label, cls, op, context, base, head, expected=None):
         self.label, self.cls, self.op, self.context = label, cls, op, context
@@ -377,7 +447,8 @@ def mutations(facts, per_resource=1, positions=('before', 'start', 'after')):
         for h, b in chosen:
             own = sorted(i for hh, bb, i in by_resource[resource] if (hh, bb) == (h, b))
             first, final = own[0], own[-1]
-            if prefix:
+            executed = history.stream_of(notes_a[first])
+            if prefix and executed is None:
                 stream = stream_b = fixed
             else:
                 stream = history.stream_of(notes_a[first])
@@ -398,8 +469,8 @@ def mutations(facts, per_resource=1, positions=('before', 'start', 'after')):
             if prefix:
                 contexts = {'as recorded': ((), ())}
                 if plan_device(notes_a) and plan_device(notes_b):
-                    executed = (records(EXECUTED, stream, b, x, length_b, length_x), records(EXECUTED, stream_b, h_b, h_x, length_b, length_x))
-                    contexts['executing'] = ((('insert', start, executed[0]),), (('insert', facts.pairs[start], executed[1]),))
+                    launched = (records(EXECUTED, stream, b, x, length_b, length_x), records(EXECUTED, stream_b, h_b, h_x, length_b, length_x))
+                    contexts['executing'] = ((('insert', start, launched[0]),), (('insert', facts.pairs[start], launched[1]),))
                 for context, extra in contexts.items():
                     classes = [*WRITES, EXECUTED, *CONTROLS] + ([PLAN_RECORD] if context == 'as recorded' else [])
                     if context == 'executing':
@@ -428,6 +499,34 @@ def mutations(facts, per_resource=1, positions=('before', 'start', 'after')):
                         base = [*extra[0], ('delete', earlier)]
                         head = [*extra[1], ('delete', facts.pairs[earlier])]
                         out.append(Mutation(f'{tag}: record before its first site deleted', 'delete', 'delete', context, base, head))
+                    # The first site replaces another region of the buffer
+                    # than the others: half of it, the head still whole.
+                    narrowed = narrow(notes_a[first], notes_b[facts.pairs[first]], b, h)
+                    if len(own) > 1 and narrowed is not None:
+                        out.append(Mutation(f'{tag}: the first site replaces another region of it', REGION, 'replace', context,
+                                            [*extra[0], ('replace', first, narrowed)], list(extra[1])))
+                    # An unrelated graph captured and replayed at the start.
+                    graph = fixed + 1
+                    lines = [None, None]
+                    for side, top, at, xx in ((0, facts.top[0], start, x), (1, facts.top[1], facts.pairs[start], h_x)):
+                        gid = top + 1
+                        body = [f'capture {graph}', records(EXECUTED, graph, b, xx, length_b, length_x), f'captured {graph} {gid} 1',
+                                f'replay {graph} {gid}']
+                        lines[side] = [*extra[side], ('id', at, gid), *(('insert', at, line) for line in body)]
+                    out.append(Mutation(f'{tag}: a graph captured and replayed', GRAPH_REPLAY, 'insert', context, lines[0], lines[1]))
+                    # Writes on another stream after an executed site, with
+                    # and without the host waiting for the site's stream.
+                    if executed is not None and 'after' in places:
+                        at = places['after']
+                        for cls in WRITES:
+                            other_a, other_b = records(cls, fixed, b, x, length_b, length_x), records(cls, fixed, h_b, h_x, length_b, length_x)
+                            out.append(Mutation(f'{tag}: {cls} on another stream after its last site', LATER_WRITE, 'insert', context,
+                                                [*extra[0], ('insert', at, other_a)], [*extra[1], ('insert', facts.pairs[at], other_b)]))
+                            waits = sorted({history.stream_of(notes_a[i]) for i in own})
+                            out.append(Mutation(f'{tag}: {cls} on another stream after the host waits for its sites', LATER_WRITE, 'insert',
+                                                context, [*extra[0], *(('insert', at, f'synchronize {w}') for w in waits), ('insert', at, other_a)],
+                                                [*extra[1], *(('insert', facts.pairs[at], f'synchronize {facts.streams.get(w, w)}') for w in waits),
+                                                 ('insert', facts.pairs[at], other_b)]))
                 continue
             # A device that runs the instance create: the base-side controls,
             # the base-side writes (outside the rules) and the declared zero.
@@ -468,12 +567,16 @@ def weaken_reads(predicate):
 
     def weak(line, raw):
         return real(line, raw) or predicate(line)
-    return 'reads_only', weak
+    return [('reads_only', weak)]
 
 
 def weak_plan_only(notes):
     """plan_only that takes an executed launch for a plan record."""
     return all((history.form(line) or ('',))[0] in ('allocate', 'launch') for line in notes)
+
+
+def accept(*_):
+    return None
 
 
 WEAKENED = {
@@ -482,10 +585,15 @@ WEAKENED = {
     'copy-into': lambda: weaken_reads(lambda line: line.startswith('copy ')),
     'peer-copy-into': lambda: weaken_reads(lambda line: line.startswith('peer copy ')),
     'launch-argument': lambda: weaken_reads(lambda line: line.startswith('launch ')),
-    'executed-launch': lambda: ('plan_only', weak_plan_only),
-    # Every earlier replacement site of the buffer, of any added buffer and
-    # whatever else its launch names, leaves it unwritten.
-    SITE_ARGUMENT: lambda: ('unwritten_site', lambda k, base, raw, sites, shared: any((base, k) in own for own in sites.values())),
+    'executed-launch': lambda: [('plan_only', weak_plan_only)],
+    # A site launch's other arguments are never checked, and every earlier
+    # replacement site of the buffer, of any added buffer, leaves it
+    # unwritten.
+    SITE_ARGUMENT: lambda: [('check_site_alias', accept),
+                            ('unwritten_site', lambda k, base, raw, sites, shared: any((base, k) in own for own in sites.values()))],
+    REGION: lambda: [('check_regions', accept)],
+    GRAPH_REPLAY: lambda: [('check_graphs', accept)],
+    LATER_WRITE: lambda: [('check_later_writes', accept)],
 }
 
 
@@ -495,13 +603,15 @@ def weakened(cls):
     if cls is None:
         yield
         return
-    name, weak = WEAKENED[cls]()
-    real = getattr(layout, name)
-    setattr(layout, name, weak)
+    patches = WEAKENED[cls]()
+    real = [(name, getattr(layout, name)) for name, _ in patches]
+    for name, weak in patches:
+        setattr(layout, name, weak)
     try:
         yield
     finally:
-        setattr(layout, name, real)
+        for name, fn in real:
+            setattr(layout, name, fn)
 
 
 # The cases and mutations a run proves, read by forked workers (run, jobs).
@@ -588,6 +698,7 @@ def summary(report, weaken=None):
     return dict(weakened=weaken, cases=len(report['cases']), refused_baselines=[c['case'] for c in report['cases'] if c['baseline'] != 'PROVEN'],
                 mutations=len(rows), escapes=len(escapes), false_refusals=len(false),
                 escaped_classes=sorted({r['cls'] for r in escapes}), refused_unsafe_classes=sorted(refused),
+                exercised_classes=sorted({r['cls'] for r in rows if r['expected'] == 'refuse'}),
                 counts={f'{c} {e} {o}': n for (c, e, o), n in sorted(by.items())})
 
 
@@ -613,12 +724,14 @@ def pair_cases(repo, model, base_rev, head_rev, spec, base_index, head_index, de
     return cases
 
 
-def plan_view(events, records, journal, test, host, max_launches=None):
+def plan_view(events, records, journal, test, host, max_launches=None, executed=False):
     """A plan-only device from an executing device's first `records` events,
     in the form lowering tests journal: every allocation (with its `allocate`
     note, rank and stream) and every other issued ID as a bare ID, then each
     executed launch as a plan record `launch rRANK Plan ...` of its stream's
-    rank. Returns (ID and allocation events, plan note events, allocation
+    rank. With `executed`, the launches stay executed, each on a stream
+    numbered past every issued ID (no stream is created, so the device is
+    an executing one without an instance create). Returns (ID and allocation events, plan note events, allocation
     count), or None for a device without launches."""
     prefix = events[:records]
     ranks = {e[1]: e[2] for e in prefix if e[0] == 'stream'}
@@ -629,19 +742,21 @@ def plan_view(events, records, journal, test, host, max_launches=None):
         elif e[0] == 'allocation':
             allocations[e[1] & 0xffffffff] = (note, list(e))
     plans = []
+    top = max(e[1] for e in prefix if e[0] == 'id')
     for e in prefix:
         if e[0] != 'note':
             continue
         found = history.form(e[1])
         if found and found[0] == 'launch' and not PLAN.fullmatch(e[1]):
-            rank = ranks.get(int(found[1][1]))
-            plans.append(f'launch r{rank or 0} Plan {e[1].split(" ", 2)[2]}')
+            stream = int(found[1][1])
+            label = f'{top + 1000 + stream}' if executed else f'r{ranks.get(stream) or 0} Plan'
+            plans.append(f'launch {label} {e[1].split(" ", 2)[2]}')
     if max_launches:
         plans = plans[:max_launches]
     if not plans or not allocations:
         return None
     out = []
-    for k in range(1, max(e[1] for e in prefix if e[0] == 'id') + 1):
+    for k in range(1, top + 1):
         out.append(['id', k])
         if k in allocations:
             out += [['note', allocations[k][0]], allocations[k][1]]
@@ -651,8 +766,9 @@ def plan_view(events, records, journal, test, host, max_launches=None):
 def collective_candidates(allocs, plans):
     """(symbol, argument index, ranks, (bytes, alignment), exclusive) of every
     launch symbol whose launches all hold, at that argument, a peer array over
-    distinct ranks' allocations of one size. `exclusive` when nothing else
-    names those allocations."""
+    distinct ranks' allocations of one size, each always the same span, that
+    no other argument of those launches names. `exclusive` when no other
+    launch names those allocations."""
     rows = {row[1]: row for row in allocs.values()}
     by_symbol = collections.defaultdict(list)
     items = [parse_launch(line) for line in plans]
@@ -662,7 +778,7 @@ def collective_candidates(allocs, plans):
     for symbol, launches in sorted(by_symbol.items()):
         width = len(items[launches[0]]['args'])
         for a in range(width):
-            entries, ok = set(), True
+            entries, spans, ok = set(), collections.defaultdict(set), True
             for k in launches:
                 args = items[k]['args']
                 m = PEERS.fullmatch(args[a]) if a < len(args) else None
@@ -673,27 +789,30 @@ def collective_candidates(allocs, plans):
                     ok = False
                     break
                 entries |= set(raws)
-            if not ok:
+                for m in SPAN_OF.finditer(args[a]):
+                    spans[int(m[1])].add((int(m[2]), int(m[3])))
+            # One region per buffer (an added buffer stands for one region),
+            # and no other argument of the collective names its buffers.
+            if (not ok or any(len(v) != 1 for v in spans.values())
+                    or any(named(arg) & entries for k in launches for i, arg in enumerate(items[k]['args']) if i != a)):
                 continue
             shapes = {(rows[r][3], rows[r][4]) for r in entries}
             counts = {len(PEERS.fullmatch(items[k]['args'][a])[1].split('Some(')) - 1 for k in launches}
             if len(shapes) != 1 or len(counts) != 1:
                 continue
-            exclusive = all(not (named(line) & entries) or (items[k]['symbol'] == symbol and
-                            all(not (named(arg) & entries) for i, arg in enumerate(items[k]['args']) if i != a))
-                            for k, line in enumerate(plans))
+            exclusive = all(not (named(line) & entries) or items[k]['symbol'] == symbol for k, line in enumerate(plans))
             out.append((symbol, a, counts.pop(), shapes.pop(), exclusive))
     return out
 
 
-def overlay(events, records, journal, test, host, label, choice='exclusive', max_launches=None, changes=None):
+def overlay(events, records, journal, test, host, label, choice='exclusive', max_launches=None, changes=None, executed=False):
     """A declared collective change synthesized on a plan view of a captured
     device: for each (symbol, argument, resource) of `changes`, a zeroed added
     buffer per rank (resource `resource`) replaces the base buffers of that
     collective's peer array. Without `changes`, one collective is chosen:
     `exclusive` picks buffers nothing else names, `shared` buffers that other
     records or arguments name too. Returns a Case or None."""
-    view = plan_view(events, records, journal, test, host, max_launches)
+    view = plan_view(events, records, journal, test, host, max_launches, executed)
     if view is None:
         return None
     base_ids, plan_notes, count = view
@@ -772,9 +891,10 @@ def capture_overlays(repo, model, revision, index, max_launches=None, limit=None
     for host, items in sorted(hosts.items()):
         records = max(b['records'] for _, b in items)
         journal = 'plan-view-' + sorted(n for n, _ in items)[0]
-        for choice in ('exclusive', 'shared'):
-            case = overlay(aux['hosts'][host]['events'], records, journal, items[0][1]['test'], 'plan-view/' + host, f'{host} ({choice})',
-                           choice, max_launches)
+        for choice, executed in (('exclusive', False), ('shared', False), ('exclusive', True)):
+            kind = 'executed' if executed else 'plan'
+            case = overlay(aux['hosts'][host]['events'], records, journal, items[0][1]['test'], f'{kind}-view/' + host,
+                           f'{host} ({choice}, {kind} view)', choice, max_launches, executed=executed)
             if case is not None:
                 cases.append(case)
         if limit and len(cases) >= limit:
@@ -820,11 +940,26 @@ def main(argv=None):
         return 2
     if args.match:
         cases = [c for c in cases if any(t in c.label for t in args.match)]
+    if not cases:
+        print('no case to mutate: the capture holds no matching device fixture', file=sys.stderr)
+        return 1
     report = run(cases, args.weaken, args.per_resource, tuple(args.positions.split(',')), log=sys.stdout, jobs=args.jobs)
     args.report.write_text(json.dumps(report, indent=1) + '\n')
     s = report['summary']
     print(json.dumps({k: v for k, v in s.items() if k != 'counts'}, indent=1))
-    return 0 if not s['escapes'] and not s['false_refusals'] and not s['refused_baselines'] else 1
+    return 0 if passed(s) else 1
+
+
+def passed(s):
+    """A run passes with every baseline proven, at least one mutation and no
+    false refusal; without a weakened rule, with no escape; with one, when it
+    exercised its class (a mutation of it the oracle refuses) and that class
+    escaped."""
+    if s['refused_baselines'] or not s['mutations'] or s['false_refusals']:
+        return False
+    if s['weakened'] is None:
+        return not s['escapes']
+    return s['weakened'] in s['exercised_classes'] and s['weakened'] in s['escaped_classes']
 
 
 if __name__ == '__main__':

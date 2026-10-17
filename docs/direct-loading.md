@@ -84,6 +84,19 @@ on an event recorded after the gather, keeps a wrapped ring from waiting
 behind that work. Each rank gathers its own copy; ranks naming the same rows
 read the same mapping.
 
+A gather of rows the page cache does not hold waits for the file, one page
+fault per row: over a 203 GB table pair on 2026-10-17, a 512-token step of
+24 rows per token and table took 3.3 s cold and 1 ms warm. A view placed
+`Mapped { prewarm: true }` (placement 3) is therefore read into the page
+cache and mapped while the image loads, before the host reports ready: 64
+MiB windows advised `MADV_WILLNEED` and touched page by page on up to eight
+threads, each shared mapping once. `startup direct_load` states
+`prewarm_bytes`, `prewarm_seconds` and `prewarm_resident_bytes`. Before
+warming, the host compares `MemAvailable` with the prewarmed bytes plus a
+16 GiB margin (`CHOPINFER_PREWARM_MARGIN_BYTES` overrides it) and warns
+`host-ram-short` when it falls short; it serves anyway, since a gather of
+evicted rows is correct, only slower.
+
 The checkpoint must not change while it is served. A mapping reads what the
 file holds, and a file truncated while mapped makes the host's reads of the
 lost pages fault (`SIGBUS`), which the host does not handle.

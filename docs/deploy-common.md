@@ -214,7 +214,9 @@ loading weights. A model with host-mapped views also pins a 64 MiB gather
 ring per stream that gathers rows; the mapped checkpoint bytes themselves are
 not pinned and live in the page cache
 ([host-mapped views](direct-loading.md#host-mapped-views)), so count them
-toward the host RAM a warm cache needs rather than toward memlock.
+toward the host RAM a warm cache needs rather than toward memlock. A host
+whose `MemAvailable` cannot hold prewarmed views plus their margin logs
+`host-ram-short` at startup.
 
 - Keep `LimitMEMLOCK=infinity` (systemd units) and `--ulimit memlock=-1:-1`
   (Docker examples). Where a finite limit is required, size it for the pinned

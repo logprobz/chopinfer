@@ -295,8 +295,7 @@ fn with_gpus(app: &mut App, counters: bool) {
         owner: Owner {
             start_ticks: Some(ticks),
             name: Some(name.to_owned()),
-            container: None,
-            listen: None,
+            ..Owner::default()
         },
     };
     for second in 0..=NOW as u32 {

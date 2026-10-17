@@ -1,19 +1,19 @@
 //! Which instance a process on a GPU is, from `/proc`.
 //!
 //! Each new pid is read once: its start time, so that a reused pid is read
-//! again; the Docker container named in its cgroup; and serve's listen
-//! address when its command line runs serve. Nothing is taken from
-//! Docker's process lists, which are read again only when a container's
-//! row asks, so a serve that restarts inside a container is found again
-//! under its new pid.
+//! again; the Docker container named in its cgroup; whether it shares
+//! chopinfer-top's network namespace; and serve's listen address when it is
+//! chopinfer running serve. Nothing is taken from Docker's process lists,
+//! which are read again only when a container's row asks, so a serve that
+//! restarts inside a container is found again under its new pid.
 
 use std::collections::HashMap;
 use std::fs;
 use std::net::{IpAddr, SocketAddr};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::Process;
-use crate::discover::proc::{read_cmdline, start_ticks};
+use crate::discover::proc::{executable, is_chopinfer, read_cmdline, start_ticks};
 use crate::discover::{is_serve, listen_address};
 use crate::instances::{Instance, Source};
 use crate::targets::Target;
@@ -28,22 +28,40 @@ pub struct Owner {
     pub name: Option<String>,
     /// The Docker container its cgroup names.
     pub container: Option<String>,
-    /// serve's `--listen`, when it runs serve.
+    /// Whether it shares chopinfer-top's network namespace; `None` when
+    /// that cannot be read, as for another user's process.
+    pub host_network: Option<bool>,
+    /// serve's `--listen`, when it is chopinfer running serve.
     pub listen: Option<String>,
+}
+
+impl Owner {
+    /// Whether its listener is reached on this host's addresses: it shares
+    /// chopinfer-top's network namespace, or, where that cannot be read, it
+    /// is in no container, as a systemd unit of another user is not.
+    fn on_host_network(&self) -> bool {
+        self.host_network
+            .unwrap_or_else(|| self.container.is_none())
+    }
 }
 
 /// The owners read so far, by pid.
 #[derive(Debug)]
 pub struct Owners {
     root: PathBuf,
+    /// chopinfer-top's network namespace.
+    namespace: Option<PathBuf>,
     known: HashMap<u32, Owner>,
 }
 
 impl Owners {
     /// Reads processes under `root`, normally `/proc`.
     pub fn new(root: impl Into<PathBuf>) -> Self {
+        let root = root.into();
+        let namespace = fs::read_link(root.join("self/ns/net")).ok();
         Self {
-            root: root.into(),
+            root,
+            namespace,
             known: HashMap::new(),
         }
     }
@@ -58,6 +76,7 @@ impl Owners {
             return owner.clone();
         }
         let arguments = read_cmdline(&directory.join("cmdline")).unwrap_or_default();
+        let serve = runs_chopinfer(&directory, &arguments) && is_serve(&arguments);
         let owner = Owner {
             start_ticks: ticks,
             name: fs::read_to_string(directory.join("comm"))
@@ -66,7 +85,12 @@ impl Owners {
             container: fs::read_to_string(directory.join("cgroup"))
                 .ok()
                 .and_then(|cgroup| container_id(&cgroup)),
-            listen: is_serve(&arguments).then(|| listen_address(&arguments)),
+            host_network: self.namespace.as_ref().and_then(|namespace| {
+                fs::read_link(directory.join("ns/net"))
+                    .ok()
+                    .map(|seen| seen == *namespace)
+            }),
+            listen: serve.then(|| listen_address(&arguments)),
         };
         self.known.insert(pid, owner.clone());
         owner
@@ -76,6 +100,18 @@ impl Owners {
     pub fn keep(&mut self, pids: &[u32]) {
         self.known.retain(|pid, _| pids.contains(pid));
     }
+}
+
+/// Whether the process in `directory` is chopinfer: its executable, else,
+/// for another user's process whose executable cannot be read, its first
+/// argument. Other programs have a `serve` command too.
+fn runs_chopinfer(directory: &Path, arguments: &[String]) -> bool {
+    executable(directory)
+        .or_else(|| {
+            let first = Path::new(arguments.first()?);
+            Some(first.file_name()?.to_str()?.to_owned())
+        })
+        .is_some_and(|name| is_chopinfer(&name))
 }
 
 /// The 64-digit container id in a `/proc/PID/cgroup`, as Docker's cgroup
@@ -107,20 +143,28 @@ fn serves(target: &Target, listen: &str) -> bool {
         || named == Some(address.ip())
 }
 
-/// The visible row `process` is: a process row by pid and start time, a
-/// container row by container id, or an explicit target on this host by
-/// serve's listen port. A row shown as another resolves to that one.
+/// The visible row `process` is: a process row by pid and start time or a
+/// container row by container id, else, for a process on this host's
+/// network, an explicit target on this host by serve's listen port. A
+/// container's own port is not the host's, so it never matches a target.
+/// A row shown as another resolves to that one.
 pub fn row(instances: &[Instance], process: &Process) -> Option<u64> {
     let owner = &process.owner;
-    let found = instances.iter().find(|instance| match &instance.source {
+    let exact = instances.iter().find(|instance| match &instance.source {
         Source::Process { pid, start_ticks } => {
             *pid == process.pid && owner.start_ticks == Some(*start_ticks)
         }
         Source::Container { id, .. } => owner.container.as_deref() == Some(id.as_str()),
-        Source::Target(target) => owner
+        Source::Target(_) => false,
+    });
+    let found = exact.or_else(|| {
+        let listen = owner
             .listen
             .as_deref()
-            .is_some_and(|listen| serves(target, listen)),
+            .filter(|_| owner.on_host_network())?;
+        instances.iter().find(
+            |instance| matches!(&instance.source, Source::Target(target) if serves(target, listen)),
+        )
     })?;
     Some(found.alias_of.unwrap_or(found.id))
 }
@@ -253,7 +297,7 @@ mod tests {
             start_ticks: ticks,
             container: container.map(str::to_owned),
             listen: listen.map(str::to_owned),
-            name: None,
+            ..Owner::default()
         };
         assert_eq!(
             row(instances, &gpu_process(48211, owner(Some(100), None, None))),
@@ -314,5 +358,84 @@ mod tests {
         );
         let after = gpu_process(612, owners.resolve(612));
         assert_eq!(row(&registry.instances, &after), Some(target));
+    }
+
+    #[test]
+    fn another_program_with_a_serve_command_is_not_chopinfer() {
+        let root = scratch("program");
+        process(&root, 30, &["ollama", "serve"], 1, "0::/\n");
+        std::os::unix::fs::symlink("/usr/bin/ollama", root.join("30/exe")).unwrap();
+        // Its executable cannot be read and its first argument is a path.
+        process(&root, 31, &["/opt/ollama/bin/ollama", "serve"], 1, "0::/\n");
+        process(
+            &root,
+            32,
+            &["/usr/local/bin/chopinfer", "serve"],
+            1,
+            "0::/\n",
+        );
+        // An executable replaced on disk is still chopinfer.
+        process(&root, 33, &["chopinfer", "serve"], 1, "0::/\n");
+        std::os::unix::fs::symlink("/usr/bin/chopinfer (deleted)", root.join("33/exe")).unwrap();
+        let mut owners = Owners::new(&root);
+        assert_eq!(owners.resolve(30).listen, None);
+        assert_eq!(owners.resolve(31).listen, None);
+        assert_eq!(owners.resolve(32).listen.as_deref(), Some("127.0.0.1:8310"));
+        assert_eq!(owners.resolve(33).listen.as_deref(), Some("127.0.0.1:8310"));
+        // So it never takes the GPUs of a target on serve's default port.
+        let mut registry = Registry::new(1.0);
+        registry.add_target(Target::parse(":8310").unwrap(), 0.0);
+        let ollama = gpu_process(30, owners.resolve(30));
+        assert_eq!(row(&registry.instances, &ollama), None);
+    }
+
+    #[test]
+    fn the_network_namespace_is_read_against_chopinfer_tops_own() {
+        let root = scratch("namespace");
+        fs::create_dir_all(root.join("self/ns")).unwrap();
+        std::os::unix::fs::symlink("net:[1]", root.join("self/ns/net")).unwrap();
+        for (pid, namespace) in [(40, Some("net:[1]")), (41, Some("net:[2]")), (42, None)] {
+            process(&root, pid, &["chopinfer", "serve"], 1, "0::/\n");
+            if let Some(namespace) = namespace {
+                fs::create_dir_all(root.join(format!("{pid}/ns"))).unwrap();
+                std::os::unix::fs::symlink(namespace, root.join(format!("{pid}/ns/net"))).unwrap();
+            }
+        }
+        let mut owners = Owners::new(&root);
+        assert_eq!(owners.resolve(40).host_network, Some(true));
+        assert_eq!(owners.resolve(41).host_network, Some(false));
+        assert_eq!(owners.resolve(42).host_network, None);
+    }
+
+    #[test]
+    fn containers_sharing_a_port_with_a_target_keep_their_own_rows() {
+        const OTHER: &str = "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d";
+        let mut registry = Registry::new(1.0);
+        // Targets come before discovered rows.
+        let target = registry.add_target(Target::parse(":8310").unwrap(), 0.0);
+        registry.reconcile(vec![found_container(ID)], 0.0);
+        let container = registry
+            .instances
+            .iter()
+            .find(|instance| instance.source.kind() == "docker")
+            .unwrap()
+            .id;
+        let instances = &registry.instances;
+        let owner = |container: Option<&str>, host_network| Owner {
+            container: container.map(str::to_owned),
+            host_network,
+            listen: Some("0.0.0.0:8310".to_owned()),
+            ..Owner::default()
+        };
+        let row_of = |owner| row(instances, &gpu_process(5, owner));
+        // Inside its container, published elsewhere: its own row.
+        assert_eq!(row_of(owner(Some(ID), Some(false))), Some(container));
+        // Another container listening on 8310 inside is not the target...
+        assert_eq!(row_of(owner(Some(OTHER), Some(false))), None);
+        assert_eq!(row_of(owner(Some(OTHER), None)), None);
+        // ...unless it shares the host's network.
+        assert_eq!(row_of(owner(Some(OTHER), Some(true))), Some(target));
+        // Another user's systemd unit: no namespace to read, no container.
+        assert_eq!(row_of(owner(None, None)), Some(target));
     }
 }

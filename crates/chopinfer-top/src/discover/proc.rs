@@ -94,10 +94,8 @@ impl ProcScanner {
         if self.uid.is_some_and(|uid| uid != owner) {
             return None;
         }
-        let executable = fs::read_link(directory.join("exe")).ok()?;
-        let executable = executable.file_name()?.to_str()?;
-        let executable = executable.strip_suffix(" (deleted)").unwrap_or(executable);
-        if !matches!(executable, "chopinfer" | "chopinfer-host") {
+        let executable = executable(&directory)?;
+        if !is_chopinfer(&executable) {
             return None;
         }
         let arguments = read_cmdline(&directory.join("cmdline"))?;
@@ -113,7 +111,7 @@ impl ProcScanner {
         Some(ServeProcess {
             pid,
             start_ticks,
-            executable: executable.to_owned(),
+            executable,
             model_hint: model_hint(&arguments),
             arguments,
             age: uptime.map(|uptime| (uptime - start_ticks as f64 / USER_HZ).max(0.0)),
@@ -164,6 +162,25 @@ impl ProcScanner {
         }
         Some(addresses)
     }
+}
+
+/// The name of the executable that `directory` (`/proc/PID`) runs, without
+/// the suffix of one replaced on disk; `None` when unreadable, as another
+/// user's is.
+pub(crate) fn executable(directory: &Path) -> Option<String> {
+    let executable = fs::read_link(directory.join("exe")).ok()?;
+    let executable = executable.file_name()?.to_str()?;
+    Some(
+        executable
+            .strip_suffix(" (deleted)")
+            .unwrap_or(executable)
+            .to_owned(),
+    )
+}
+
+/// Whether `name` is an executable that runs serve.
+pub(crate) fn is_chopinfer(name: &str) -> bool {
+    matches!(name, "chopinfer" | "chopinfer-host")
 }
 
 pub(crate) fn read_cmdline(path: &Path) -> Option<Vec<String>> {

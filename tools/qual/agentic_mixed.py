@@ -918,6 +918,9 @@ def run_level(client, model, profile, manifest, files, concurrency, on_partial=N
     after = {'text': None, 'error': 'drain scrape not completed'}
     startup_before = startup_after = None
     offsets = dict(start=None, end=None)
+    # Host load samples at the measured window's start and end: the warm-up,
+    # the drain and other levels are not this window's timed work.
+    load = []
     cap_reached = False
     aborted = None
 
@@ -962,6 +965,7 @@ def run_level(client, model, profile, manifest, files, concurrency, on_partial=N
         summary.update(replica=profile.get('replica', 0), seed=profile['seed'], aborted=aborted, target_window_end=end,
                        burst_window_ms=profile['burst_window_ms'], stall_threshold_ms=profile['stall_threshold_ms'], sessions=saved,
                        realtime_offset_ns=dict(offsets),
+                       host_load=common.host_load(list(load)) if load else common.unbounded_host_load(),
                        drain_seconds=max(0, max((r['ended'] for r in saved), default=measured_end) - measured_end))
         summary['insufficient'] = (aborted or ('session cap reached before measured interval ended' if cap_reached else
                                    f"too few completed measured sessions: {summary['measured_completed']} of {profile['min_samples']}"
@@ -991,11 +995,13 @@ def run_level(client, model, profile, manifest, files, concurrency, on_partial=N
         before = client.scrape()
         start = time.monotonic()
         offsets['start'] = realtime_offset_ns()
+        load.append(common.host_load_sample())
         end = start + profile['seconds']
         futures = [pool.submit(worker, slot) for slot in range(concurrency)]
         wait(futures, timeout=max(0, end - time.monotonic()))
         # A safety cap does not shorten the stated window or its denominator.
         stop.wait(max(0, end - time.monotonic()))
+        load.append(common.host_load_sample())
         boundary = client.scrape()
         startup_after = observe_startup(client.url) if hasattr(client, 'url') else None
         for future in futures:
@@ -1330,7 +1336,10 @@ def main(argv=None):
         snapshot['passed'] = (kind != 'partial' and not snapshot['aborted'] and bool(snapshot['levels'])
                               and all(level_passed(level) for level in snapshot['levels'])
                               and (not snapshot['decode'] or not snapshot['decode']['failure']))
-        path = common.receipt('agentic-mixed', identity, snapshot, args.dry_run)
+        # Each level's measured window is judged alone (common.host_load_windows).
+        path = common.receipt('agentic-mixed', identity, snapshot, args.dry_run,
+                              load_windows=[level['host_load']['samples'] for level in snapshot['levels']
+                                            if level.get('host_load', {}).get('samples')])
         with path.with_suffix('.md').open('x') as summary:
             summary.write(markdown(snapshot))
         return path, snapshot['passed']

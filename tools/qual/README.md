@@ -1030,7 +1030,12 @@ receipt. A `common.receipt` caller passes `load_samples` taken around its
 timed work, the first at its start and the last at its end: `soak.py` (its
 start, each memory sample, and after the last request in flight),
 `bench.py` (the decode passes and the timed prefill), `prefix_cache.py
-record` and `spec_verify.py record` (their requests). A receipt without
+record` and `spec_verify.py record` (their requests). A caller with several
+separate timed windows passes `load_windows`, one list of samples per
+window, judged one by one (`common.host_load_windows`, scope
+`check_host_windows`): `agentic_mixed.py` samples at the start and end of
+each level's measured window, so its warm-up, drain and other levels are
+never judged, and each level also records its own `host_load`. A receipt without
 them has `timing` `informational` ("no host load samples bound the timed
 work"), since a window from the check's start would average warm-up into
 the timed work. The host is idle when, over every interval between

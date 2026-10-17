@@ -14,6 +14,8 @@ import unittest
 from unittest.mock import patch
 
 import agentic_fake
+import agentic_mixed
+import common
 from agentic_fake import EVENT_SECONDS, FakeClock, Reads, fake_server
 from agentic_metrics import distribution, metrics_delta, parse_metrics, ratio, summarize
 from agentic_mixed import Transport, main, markdown, parser, run_decode, run_level, session, sse_events, stream_request
@@ -245,7 +247,7 @@ class FakeIntegrationTests(unittest.TestCase):
     def test_arm_identity_does_not_change_comparison_digest(self):
         results = []
         with tempfile.TemporaryDirectory() as name:
-            def receipt(check, identity, result, mechanics_only):
+            def receipt(check, identity, result, mechanics_only, load_windows=None):
                 self.assertEqual(check, 'agentic-mixed')
                 self.assertTrue(mechanics_only)
                 self.assertEqual(identity['model'], 'fake-agentic')
@@ -333,6 +335,53 @@ class FakeIntegrationTests(unittest.TestCase):
             self.assertLess(abs(value - before), 10**9)
             self.assertLess(abs(value - after), 10**9)
 
+    def test_a_busy_measured_window_after_a_quiet_warmup_is_informational(self):
+        """Host load is judged over each measured window alone, from samples
+        at its start and end: a window at 80% CPU idle reads informational
+        although the long quiet warm-up before it would lift a window sampled
+        from the start of the run above 0.9. Each level is its own window."""
+        clock = FakeClock()
+        busy = {}
+        calls = []
+        def sample():
+            now = clock.monotonic()
+            calls.append(now)
+            return counters_at(now, busy.get('since', now))
+        offset = agentic_mixed.realtime_offset_ns
+        def window_starts():
+            busy.setdefault('since', clock.monotonic())
+            return offset()
+        results = []
+        with tempfile.TemporaryDirectory() as name:
+            def receipt(check, identity, result, mechanics_only, load_windows=None):
+                results.append((result, common.host_load_windows(load_windows or [])))
+                return Path(name) / f'{len(results)}.json'
+            with patch('agentic_mixed.common.startup'), patch('agentic_mixed.common.receipt', side_effect=receipt), \
+                    patch('agentic_mixed.common.host_load_sample', side_effect=sample), \
+                    patch('agentic_mixed.realtime_offset_ns', side_effect=window_starts), \
+                    fake_time(clock), redirect_stdout(io.StringIO()):
+                main(['--dry-run', '--levels', '1,2', '--seconds', '.05', '--warmup-waves', '3', '--replicas', '1',
+                      '--min-samples', '1', '--no-decode'])
+        result, load = results[-1]
+        self.assertEqual(result['receipt_kind'], 'sweep')
+        levels = result['levels']
+        # Samples only at each measured window's start and end, after a warm-up.
+        self.assertEqual(len(calls), 4)
+        self.assertEqual(calls[0::2], [level['window_start'] for level in levels])
+        # On the fake clock the end sample comes when run_level's real-time
+        # wait ends: after its window's start, before the next level's warm-up.
+        self.assertTrue(all(start < at < later for start, at, later
+                            in zip(calls[0::2], calls[1::2], calls[2::2] + [float('inf')])), calls)
+        self.assertGreater(levels[0]['window_start'], 3 * .05)
+        self.assertEqual(len(load['windows']), 2)
+        self.assertEqual(load['timing'], 'informational')
+        self.assertTrue(all(reason.startswith(('window 1: CPU idle fell to 0.8', 'window 2: CPU idle fell to 0.8'))
+                            for reason in load['reasons']), load['reasons'])
+        self.assertEqual([level['host_load']['timing'] for level in levels], ['informational'] * 2)
+        # Sampled from the start of the run, the quiet warm-up would hide it.
+        diluted = common.host_load([counters_at(0, busy['since']), load['windows'][0]['samples'][-1]])
+        self.assertTrue(diluted['idle'], diluted['reasons'])
+
     def test_unconfirmed_reads(self):
         """A named stream whose reads are not confirmed in time ends in a
         stream error, and a client that confirms nothing keeps the real
@@ -382,7 +431,7 @@ class ReplicaTests(unittest.TestCase):
         """Fake sweeps of each (arm label, fake server mode) in ARMS, by label."""
         receipts = {}
         with tempfile.TemporaryDirectory() as name:
-            def receipt(check, identity, result, mechanics_only):
+            def receipt(check, identity, result, mechanics_only, load_windows=None):
                 if result['receipt_kind'] == 'sweep':
                     receipts[result['arm']] = json.loads(json.dumps({**result, 'server': identity}))
                 return Path(name) / f"{result['arm']}-{result['receipt_kind']}-{len(result['level_receipts'])}.json"
@@ -535,6 +584,14 @@ class ReplicaTests(unittest.TestCase):
             validate_pair(receipts['tbt'], broken)
 
 
+def counters_at(now, since):
+    """The synthetic host sample of the busy-window test at fake time NOW:
+    1000 idle ticks of 1000 per fake second before SINCE, then 800."""
+    idle = 1000 * min(now, since) + 800 * max(0, now - since)
+    return dict(at=now, uptime_seconds=1000 + now, load_average=[0.0, 0.0, 0.0], cpu_idle_ticks=int(idle * 1000),
+                cpu_ticks=int(1000 * now * 1000) + 1, cpus=48, pressure_some_us={'cpu': 0, 'io': 0})
+
+
 def source_repository(directory, files):
     """A git repository at DIRECTORY with one commit of FILES {path: text}: (path, commit)."""
     for path, text in files.items():
@@ -654,7 +711,7 @@ class PressureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as name:
             _, commit, out, manifest = self.staged(Path(name))
             receipts = []
-            def receipt(check, identity, result, mechanics_only):
+            def receipt(check, identity, result, mechanics_only, load_windows=None):
                 receipts.append(json.dumps({k: v for k, v in result.items() if k != 'level_receipts'}))
                 return Path(name) / f'{len(receipts)}.json'
             with patch('agentic_mixed.common.startup'), patch('agentic_mixed.common.receipt', side_effect=receipt), \

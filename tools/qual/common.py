@@ -782,6 +782,18 @@ def unbounded_host_load():
     return {**host_load([]), "reasons": [UNBOUNDED_TIMING]}
 
 
+def host_load_windows(windows):
+    """Separate timed windows, each a list of host load samples (oldest
+    first) that bound it, judged one by one: idle only when every window is.
+    The gaps between windows, such as a warm-up, are never judged."""
+    judged = [host_load(samples) for samples in windows]
+    if not judged:
+        return unbounded_host_load()
+    reasons = [f"window {index}: {reason}" for index, load in enumerate(judged, 1) for reason in load["reasons"]]
+    return {"rule": HOST_LOAD_RULE, "scope": "check_host_windows", "windows": judged, "idle": not reasons,
+            "reasons": reasons, "timing": "informational" if reasons else "evidence"}
+
+
 def compared_timing(loads):
     """The label of throughput or latency compared across runs, from each
     run's recorded host load ({name: host_load or None}): evidence only when
@@ -791,12 +803,14 @@ def compared_timing(loads):
     return {"rule": HOST_LOAD_RULE, "timing": "informational" if reasons else "evidence", "reasons": reasons}
 
 
-def receipt(check, identity, result, mechanics_only=False, load_samples=None):
+def receipt(check, identity, result, mechanics_only=False, load_samples=None, load_windows=None):
     """Writes a receipt with the host load of `load_samples`, the host load
     samples that bound the check's timed work (oldest first, the first at
-    its start and the last at its end). Without them the receipt's timing is
-    informational (`unbounded_host_load`)."""
-    load = host_load(load_samples) if load_samples else unbounded_host_load()
+    its start and the last at its end), or of `load_windows`, one such list
+    per separate timed window (`host_load_windows`). Without them the
+    receipt's timing is informational (`unbounded_host_load`)."""
+    load = (host_load_windows(load_windows) if load_windows else
+            host_load(load_samples) if load_samples else unbounded_host_load())
     directory = receipt_root()
     directory.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")

@@ -25,6 +25,11 @@ pub struct Device {
     pub sm_max_mhz: Option<u32>,
     /// The fastest PCIe link, as `(generation, width)`.
     pub pcie_max: Option<(u32, u32)>,
+    /// The temperature headroom counts down to: the maximum operating
+    /// temperature, else the slowdown threshold.
+    pub temperature_limit: Option<i32>,
+    /// Whether ECC is on.
+    pub ecc: Option<bool>,
     /// Whether GPM counters can be read: Hopper and newer.
     pub gpm: bool,
 }
@@ -180,15 +185,13 @@ pub struct Reading {
     pub at: f64,
     /// Celsius.
     pub temperature: Option<i32>,
-    /// Degrees under the nearest slowdown threshold.
+    /// Degrees under [`Device::temperature_limit`].
     pub headroom: Option<i32>,
     /// Percent of the fan's top speed.
     pub fan: Option<u32>,
-    /// Watts: the average over the poll where the energy counter allows,
-    /// else the instant draw.
+    /// Watts, as NVML reports power: averaged over a second on Ampere and
+    /// newer.
     pub power: Option<f64>,
-    /// The energy counter in millijoules.
-    pub energy: Option<u64>,
     /// The enforced power limit in watts.
     pub power_limit: Option<f64>,
     pub sm_mhz: Option<u32>,
@@ -203,9 +206,7 @@ pub struct Reading {
     pub utilization: Option<(f64, f64)>,
     /// The current PCIe link, as `(generation, width)`.
     pub pcie: Option<(u32, u32)>,
-    /// Whether ECC is on.
-    pub ecc: Option<bool>,
-    /// Uncorrected ECC errors since the driver loaded.
+    /// Uncorrected ECC errors since the driver loaded, while ECC is on.
     pub ecc_uncorrected: Option<u64>,
     pub processes: Vec<Process>,
     /// GPM figures since the previous poll, while they are read.

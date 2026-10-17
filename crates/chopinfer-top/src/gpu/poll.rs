@@ -1,9 +1,11 @@
 //! Reading every GPU once a poll, on a thread of its own.
 //!
-//! Each poll is a few dozen NVML queries per GPU, which read driver state.
-//! GPM counters are sampled only while asked for, which the interface does
-//! while the GPU view is open; between two samples NVML works out how busy
-//! the SMs, tensor pipes and DRAM were.
+//! Each poll is about twenty NVML queries per GPU, which read driver state
+//! in about 0.2 ms. The fan and ECC errors, at a millisecond each, are read
+//! every [`SLOW_POLLS`] polls and carried between. GPM counters are sampled
+//! only while asked for, which the interface does while the GPU view is
+//! open; between two samples NVML works out how busy the SMs, tensor pipes
+//! and DRAM were.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,6 +17,9 @@ use std::time::{Duration, Instant};
 use super::nvml::{Nvml, Sample};
 use super::owners::Owners;
 use super::{Activity, Device, Reading};
+
+/// Polls between readings of the slow queries.
+pub const SLOW_POLLS: u64 = 5;
 
 /// What the GPU poller reports.
 #[derive(Clone, Debug, PartialEq)]
@@ -30,13 +35,14 @@ pub enum Report {
     Polled(Vec<Reading>),
 }
 
-/// Takes readings of every GPU: power averaged from the energy counter,
-/// GPM figures between consecutive samples, and the owner of each process.
+/// Takes readings of every GPU: the slow queries every few polls, GPM
+/// figures between consecutive samples, and the owner of each process.
 pub struct Sampler<'a> {
     nvml: &'a Nvml,
     devices: Vec<Device>,
-    /// The energy counter and when it was read, per GPU.
-    energy: Vec<Option<(u64, f64)>>,
+    polls: u64,
+    /// The last slow reading of each GPU, carried to the polls between.
+    slow: Vec<Reading>,
     /// Two GPM sample buffers per GPU while counters are read, and whether
     /// the first holds the previous poll's sample.
     gpm: Vec<Option<(Sample<'a>, Sample<'a>, bool)>>,
@@ -49,7 +55,8 @@ impl<'a> Sampler<'a> {
         Self {
             nvml,
             devices,
-            energy: vec![None; count],
+            polls: 0,
+            slow: vec![Reading::default(); count],
             gpm: (0..count).map(|_| None).collect(),
             owners: Owners::new(proc_root),
         }
@@ -59,15 +66,21 @@ impl<'a> Sampler<'a> {
     /// `counters` asks for them. Turning counters off frees the samples.
     pub fn poll(&mut self, at: f64, counters: bool) -> Vec<Reading> {
         let mut readings = Vec::with_capacity(self.devices.len());
+        let slow = self.polls % SLOW_POLLS == 0;
+        self.polls += 1;
         for index in 0..self.devices.len() {
-            let mut reading = self.nvml.read(index, at);
-            if let (Some(energy), Some((before, then))) = (reading.energy, self.energy[index])
-                && at > then
-                && energy >= before
-            {
-                reading.power = Some((energy - before) as f64 / 1000.0 / (at - then));
+            let device = &self.devices[index];
+            let mut reading = self.nvml.read(index, device, at, slow);
+            if slow {
+                self.slow[index] = reading.clone();
+            } else {
+                let last = &self.slow[index];
+                reading.fan = last.fan;
+                reading.ecc_uncorrected = last.ecc_uncorrected;
+                if device.temperature_limit.is_none() {
+                    reading.headroom = last.headroom;
+                }
             }
-            self.energy[index] = reading.energy.map(|energy| (energy, at));
             if counters && self.devices[index].gpm && !reading.lost {
                 reading.activity = self.activity(index);
             } else {

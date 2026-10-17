@@ -18,6 +18,7 @@ const NOT_AVAILABLE: c_ulonglong = c_ulonglong::MAX;
 
 const TEMPERATURE_GPU: c_uint = 0;
 const THRESHOLD_SLOWDOWN: c_uint = 1;
+const THRESHOLD_GPU_MAX: c_uint = 3;
 const CLOCK_SM: c_uint = 1;
 const CLOCK_MEMORY: c_uint = 2;
 const PSTATE_UNKNOWN: c_uint = 32;
@@ -189,7 +190,6 @@ struct Api {
     margin: Option<DeviceStruct<MarginTemperature>>,
     threshold: Option<DeviceKindU32>,
     fan: Option<DeviceU32>,
-    energy: Option<DeviceU64>,
     power: Option<DeviceU32>,
     power_limit: Option<DeviceU32>,
     clock: Option<DeviceKindU32>,
@@ -252,7 +252,6 @@ impl Api {
             ),
             threshold: function!(library, c"nvmlDeviceGetTemperatureThreshold", DeviceKindU32),
             fan: function!(library, c"nvmlDeviceGetFanSpeed", DeviceU32),
-            energy: function!(library, c"nvmlDeviceGetTotalEnergyConsumption", DeviceU64),
             power: function!(library, c"nvmlDeviceGetPowerUsage", DeviceU32),
             power_limit: function!(library, c"nvmlDeviceGetEnforcedPowerLimit", DeviceU32),
             clock: function!(library, c"nvmlDeviceGetClockInfo", DeviceKindU32),
@@ -424,6 +423,26 @@ impl Nvml {
         });
         let generation = self.u32(self.api.max_link_generation, handle, &mut statuses);
         let width = self.u32(self.api.max_link_width, handle, &mut statuses);
+        // The maximum operating temperature, which nvidia-smi's T.Limit and
+        // NVML's margin count down to, else the slowdown threshold. Read
+        // once: the margin query takes about a millisecond.
+        let temperature_limit = self
+            .kind_u32(self.api.threshold, handle, THRESHOLD_GPU_MAX, &mut statuses)
+            .or_else(|| {
+                self.kind_u32(
+                    self.api.threshold,
+                    handle,
+                    THRESHOLD_SLOWDOWN,
+                    &mut statuses,
+                )
+            })
+            .map(|celsius| celsius as i32);
+        let ecc = self.api.ecc_mode.and_then(|mode| {
+            let (mut current, mut pending) = (0, 0);
+            statuses
+                .check(mode(handle, &mut current, &mut pending))
+                .then_some(current == FEATURE_ENABLED)
+        });
         let gpm = self.api.gpm_support.is_some_and(|support| {
             let mut value = GpmSupport {
                 version: GPM_SUPPORT_VERSION,
@@ -440,6 +459,8 @@ impl Nvml {
             memory_total: self.memory(handle, &mut statuses).map(|(total, _)| total),
             sm_max_mhz: self.kind_u32(self.api.max_clock, handle, CLOCK_SM, &mut statuses),
             pcie_max: generation.zip(width),
+            temperature_limit,
+            ecc,
             gpm,
         }
     }
@@ -478,24 +499,16 @@ impl Nvml {
             .map(|value| value as i32)
     }
 
-    /// Degrees under the nearest slowdown threshold.
-    fn headroom(
-        &self,
-        handle: Handle,
-        temperature: Option<i32>,
-        statuses: &mut Statuses,
-    ) -> Option<i32> {
-        if let Some(margin) = self.api.margin {
-            let mut value = MarginTemperature {
-                version: struct_version::<MarginTemperature>(1),
-                margin: 0,
-            };
-            if statuses.check(margin(handle, &mut value)) {
-                return Some(value.margin);
-            }
-        }
-        let slowdown = self.kind_u32(self.api.threshold, handle, THRESHOLD_SLOWDOWN, statuses)?;
-        Some(slowdown as i32 - temperature?)
+    /// NVML's thermal margin, for a GPU without a temperature threshold.
+    fn margin(&self, handle: Handle, statuses: &mut Statuses) -> Option<i32> {
+        let margin = self.api.margin?;
+        let mut value = MarginTemperature {
+            version: struct_version::<MarginTemperature>(1),
+            margin: 0,
+        };
+        statuses
+            .check(margin(handle, &mut value))
+            .then_some(value.margin)
     }
 
     fn processes(
@@ -530,10 +543,11 @@ impl Nvml {
         Vec::new()
     }
 
-    /// One reading of GPU `index` at `at` seconds, without GPM figures.
-    /// `power` is the instant draw; the poller replaces it with the average
-    /// over the poll from `energy`.
-    pub fn read(&self, index: usize, at: f64) -> Reading {
+    /// One reading of GPU `index`, described by `device`, at `at` seconds,
+    /// without GPM figures. Queries of a millisecond each, the fan and ECC
+    /// errors (and the thermal margin of a GPU without a threshold), are
+    /// made only when `slow`; the poller does so every few polls.
+    pub fn read(&self, index: usize, device: &Device, at: f64, slow: bool) -> Reading {
         let handle = self.handles[index];
         let mut statuses = Statuses::default();
         if handle.is_null() {
@@ -544,7 +558,11 @@ impl Nvml {
             };
         }
         let temperature = self.temperature(handle, &mut statuses);
-        let headroom = self.headroom(handle, temperature, &mut statuses);
+        let headroom = match (device.temperature_limit, temperature) {
+            (Some(limit), Some(temperature)) => Some(limit - temperature),
+            (None, _) if slow => self.margin(handle, &mut statuses),
+            _ => None,
+        };
         let memory = self.memory(handle, &mut statuses);
         let utilization = self.api.utilization.and_then(|utilization| {
             let mut value = Utilization::default();
@@ -555,13 +573,7 @@ impl Nvml {
                 )
             })
         });
-        let ecc = self.api.ecc_mode.and_then(|mode| {
-            let (mut current, mut pending) = (0, 0);
-            statuses
-                .check(mode(handle, &mut current, &mut pending))
-                .then_some(current == FEATURE_ENABLED)
-        });
-        let ecc_uncorrected = if ecc == Some(true) {
+        let ecc_uncorrected = if slow && device.ecc == Some(true) {
             self.api.ecc_errors.and_then(|errors| {
                 let mut value = 0;
                 statuses
@@ -580,11 +592,14 @@ impl Nvml {
             at,
             temperature,
             headroom,
-            fan: self.u32(self.api.fan, handle, &mut statuses),
+            fan: if slow {
+                self.u32(self.api.fan, handle, &mut statuses)
+            } else {
+                None
+            },
             power: self
                 .u32(self.api.power, handle, &mut statuses)
                 .map(|milliwatts| f64::from(milliwatts) / 1000.0),
-            energy: self.u64(self.api.energy, handle, &mut statuses),
             power_limit: self
                 .u32(self.api.power_limit, handle, &mut statuses)
                 .map(|milliwatts| f64::from(milliwatts) / 1000.0),
@@ -599,7 +614,6 @@ impl Nvml {
             memory_used: memory.map(|(_, used)| used),
             utilization,
             pcie: link,
-            ecc,
             ecc_uncorrected,
             processes: super::merge(&compute, &graphics),
             activity: None,

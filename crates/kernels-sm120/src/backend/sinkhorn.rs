@@ -79,6 +79,7 @@ fn capacity(query: Query) -> u32 {
         Query::MixCollapse { capacity, .. }
         | Query::MixCollapseNorm { capacity, .. }
         | Query::Expand { capacity, .. }
+        | Query::ExpandF32 { capacity, .. }
         | Query::Head { capacity, .. }
         | Query::AllReduceExpandMixNorm { capacity, .. } => capacity,
     }
@@ -99,6 +100,11 @@ fn uncapped(query: Query) -> Query {
             capacity: 0,
         },
         Query::Expand { streams, width, .. } => Query::Expand {
+            streams,
+            width,
+            capacity: 0,
+        },
+        Query::ExpandF32 { streams, width, .. } => Query::ExpandF32 {
             streams,
             width,
             capacity: 0,

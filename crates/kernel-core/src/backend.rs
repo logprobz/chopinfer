@@ -71,8 +71,9 @@ use crate::rows::{
     GroupedNormBuffers, InjectBuffers, LogitsBuffers, MixBuffers, NgramBuffers, PleGateBuffers,
 };
 use crate::sinkhorn_hyper_connection::{
-    MixCollapseBuffers, MixCollapseNormBuffers, ReduceExpandMixNormBuffers,
-    SinkhornHyperConnectionQuery, StreamExpandBuffers, StreamHeadBuffers,
+    LaggedMixCollapseBuffers, MixCollapseBuffers, MixCollapseNormBuffers,
+    ReduceExpandMixNormBuffers, SinkhornHyperConnectionQuery, StreamExpandBuffers,
+    StreamHeadBuffers, WeightedStreamHeadBuffers,
 };
 
 /// What a model needs of a prepared op beyond its contract.
@@ -541,7 +542,8 @@ pub trait Backend: Send + Sync {
 
     // Sinkhorn hyper-connection.
 
-    /// A mixer's mix-collapse before a sublayer (`MixCollapse`).
+    /// A mixer's mix-collapse before a sublayer (`MixCollapse` with the
+    /// per-sublayer placement).
     ///
     /// Launches read `Counts::rows` alone.
     fn sinkhorn_mix_collapse(
@@ -549,6 +551,20 @@ pub trait Backend: Send + Sync {
         op: &SinkhornHyperConnectionQuery,
         need: Need,
     ) -> Result<Prepared<MixCollapseBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
+    /// A mixer's lagged mix-collapse before a sublayer (`MixCollapse` with
+    /// the lagged single-pass placement), which collapses with the previous
+    /// sublayer's `pre` and stores its own.
+    ///
+    /// Launches read `Counts::rows` alone.
+    fn sinkhorn_lagged_mix_collapse(
+        &self,
+        op: &SinkhornHyperConnectionQuery,
+        need: Need,
+    ) -> Result<Prepared<LaggedMixCollapseBuffers<View>>, Refused> {
         let _ = (op, need);
         Err(Refused::Unsupported)
     }
@@ -566,7 +582,8 @@ pub trait Backend: Send + Sync {
         Err(Refused::Unsupported)
     }
 
-    /// The expand of a sublayer's output into the streams (`Expand`).
+    /// The expand of a sublayer's output into the streams (`Expand` or
+    /// `ExpandF32`).
     ///
     /// Launches read `Counts::rows` alone.
     fn sinkhorn_expand(
@@ -578,7 +595,8 @@ pub trait Backend: Send + Sync {
         Err(Refused::Unsupported)
     }
 
-    /// The stream collapse before the final norm (`Head`).
+    /// The stream collapse before the final norm (`Head` with
+    /// `MeanOfStreams`).
     ///
     /// Launches read `Counts::rows` alone.
     fn sinkhorn_head(
@@ -586,6 +604,19 @@ pub trait Backend: Send + Sync {
         op: &SinkhornHyperConnectionQuery,
         need: Need,
     ) -> Result<Prepared<StreamHeadBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
+    /// The weighted stream collapse before the final norm (`Head` with
+    /// `SigmoidWeighted`), by the last lagged mix-collapse's `pre`.
+    ///
+    /// Launches read `Counts::rows` alone.
+    fn sinkhorn_weighted_head(
+        &self,
+        op: &SinkhornHyperConnectionQuery,
+        need: Need,
+    ) -> Result<Prepared<WeightedStreamHeadBuffers<View>>, Refused> {
         let _ = (op, need);
         Err(Refused::Unsupported)
     }
@@ -1835,9 +1866,11 @@ mod tests {
         ngram_hash_gather: Empty.ngram_hash_gather(&ngram(), 2, 0, Need::rows(4));
         ple_gate: Empty.ple_gate(&ngram(), Need::rows(4));
         sinkhorn_mix_collapse: Empty.sinkhorn_mix_collapse(&sinkhorn(), Need::rows(4));
+        sinkhorn_lagged_mix_collapse: Empty.sinkhorn_lagged_mix_collapse(&sinkhorn(), Need::rows(4));
         sinkhorn_mix_collapse_norm: Empty.sinkhorn_mix_collapse_norm(&sinkhorn(), Need::rows(4));
         sinkhorn_expand: Empty.sinkhorn_expand(&sinkhorn(), Need::rows(4));
         sinkhorn_head: Empty.sinkhorn_head(&sinkhorn(), Need::rows(4));
+        sinkhorn_weighted_head: Empty.sinkhorn_weighted_head(&sinkhorn(), Need::rows(4));
         sinkhorn_reduce_expand_mix_norm: Empty.sinkhorn_reduce_expand_mix_norm(
             &sinkhorn(),
             0,

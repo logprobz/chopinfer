@@ -14,6 +14,14 @@
 //! those cells bit for bit.
 //! `Expand` and `Head` are exact functions of their BF16 operands, so their
 //! references are the contract's F32 arithmetic, compared bit for bit.
+//!
+//! The lagged placement's mix-collapse ([`lagged_mix_collapse`]) bounds the
+//! same `pre`, `post` and `comb` stored in F32, and its collapsed row is an
+//! exact function of the given `pre_in` ([`collapse`]). `ExpandF32` and the
+//! sigmoid-weighted head are exact functions of their BF16 and F32 operands
+//! ([`expand_f32`], [`weighted_head`]); [`expand_f32_reference`] and
+//! [`weighted_head_reference`] are their f64 forms, which the exact forms
+//! lie within.
 //! `MixCollapseNorm`'s mix-collapse outputs are `MixCollapse`'s, and its
 //! normed row is an exact function of the stored collapsed row
 //! ([`input_norm`]), as is `AllReduceExpandMixNorm`'s in the order its
@@ -24,7 +32,8 @@ use crate::contract::{Refusal, Validate};
 use crate::oracle::{OracleOutput, bf16_round, compensated_sum, compensated_sum_with_magnitude};
 use crate::rmsnorm::RmsNormReduction;
 use crate::sinkhorn_hyper_connection::{
-    SinkhornHyperConnectionQuery, SinkhornMix, SinkhornOrder, StreamHeadMode,
+    HyperConnectionPlacement, SinkhornHyperConnectionQuery, SinkhornMix, SinkhornOrder,
+    StreamHeadMode,
 };
 use std::ops::{Add, Div};
 
@@ -60,6 +69,29 @@ pub struct MixCollapseOutput {
     pub comb: OracleOutput,
 }
 
+/// The per-token outputs of a lagged `MixCollapse`: `collapsed` unrounded
+/// (the gate adds half a BF16 ulp for its rounding), and this mixer's `pre`
+/// `[rows, N]`, `post` `[rows, N]` and `comb` `[rows, N, N]`, which the
+/// kernel stores in F32, with bounds that enclose every F32 kernel result
+/// (check them as F32 outputs).
+#[derive(Clone, Debug, PartialEq)]
+pub struct LaggedMixCollapseOutput {
+    pub collapsed: OracleOutput,
+    pub pre: OracleOutput,
+    pub post: OracleOutput,
+    pub comb: OracleOutput,
+}
+
+/// [`lagged_mix_stage_from_kernel_logits`]: `pre` and `post` as in
+/// [`LaggedMixCollapseOutput`], and the F32 Sinkhorn input `cells`
+/// `[rows, N, N]`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LaggedMixStageOutput {
+    pub pre: OracleOutput,
+    pub post: OracleOutput,
+    pub cells: OracleOutput,
+}
+
 /// [`mix_stage_from_kernel_logits`]: `collapsed` and `post` as in
 /// [`MixCollapseOutput`], and the F32 Sinkhorn input `cells` `[rows, N, N]`.
 #[derive(Clone, Debug, PartialEq)]
@@ -80,6 +112,25 @@ fn mix_of(query: SinkhornHyperConnectionQuery) -> Result<(SinkhornMix, u32), Ref
         }
         _ => Err(Refusal("expected a Sinkhorn mix-collapse query")),
     }
+}
+
+/// [`mix_of`] for a mixer of `placement`.
+fn placed_mix_of(
+    query: SinkhornHyperConnectionQuery,
+    placement: HyperConnectionPlacement,
+) -> Result<(SinkhornMix, u32), Refusal> {
+    let (mix, capacity) = mix_of(query)?;
+    if mix.placement != placement {
+        return Err(Refusal(match placement {
+            HyperConnectionPlacement::PerSublayer => {
+                "expected a per-sublayer Sinkhorn mix-collapse query"
+            }
+            HyperConnectionPlacement::LaggedSinglePass => {
+                "expected a lagged Sinkhorn mix-collapse query"
+            }
+        }));
+    }
+    Ok((mix, capacity))
 }
 
 fn rows_of(len: usize, width: usize, capacity: u32) -> Result<usize, Refusal> {
@@ -255,6 +306,82 @@ fn sigmoid_range((v, lo, hi): (f64, f64, f64)) -> (f64, f64, f64) {
     )
 }
 
+/// The bound of an F32-stored output whose value lies in `[lo, hi]`,
+/// against the reference `value`: the farther endpoint (the gate adds no
+/// rounding for F32 outputs).
+fn f32_bound(value: f64, lo: f64, hi: f64) -> f64 {
+    (value - lo).max(hi - value).max(0.0) + TINY
+}
+
+/// One token's mixer outputs from its logits `l` within errors `e`, each
+/// as (reference, low, high) enclosing the kernel's F32 value: `pre` (with
+/// `+ eps` and its rounding), `post`, and the f64 Sinkhorn of the comb.
+struct RowStage {
+    pre: Vec<(f64, f64, f64)>,
+    post: Vec<(f64, f64, f64)>,
+    comb: Vec<f64>,
+}
+
+fn row_stage(mix: SinkhornMix, l: &[f64], e: &[f64], base: &[f64], scale: &[f64]) -> RowStage {
+    let n = mix.streams as usize;
+    let eps = f64::from(f32::from_bits(mix.eps_bits));
+    let range = |m: usize, s: f64| affine(l[m], e[m], s, base[m]);
+    let mut pre = Vec::with_capacity(n);
+    let mut post = Vec::with_capacity(n);
+    for i in 0..n {
+        let (s, lo, hi) = sigmoid_range(range(i, scale[0]));
+        pre.push((s + eps, (lo + eps) * (1.0 - U), (hi + eps) * (1.0 + U)));
+        let (p, lo, hi) = sigmoid_range(range(n + i, scale[1]));
+        post.push((2.0 * p, 2.0 * lo, 2.0 * hi));
+    }
+    let c = (0..n * n)
+        .map(|k| range(2 * n + k, scale[2]).0)
+        .collect::<Vec<_>>();
+    let comb = sinkhorn(mix.order, &c, n, mix.iterations, eps);
+    RowStage { pre, post, comb }
+}
+
+/// Column `col` of `sum_i w_i * X_i` over one token's streams `[N, H]`,
+/// for weights given as (reference, low, high): the reference value and
+/// the distance `far` that encloses an F32 FMA chain from zero in stream
+/// order for any weights in their ranges (the weight spread plus `N`
+/// roundings of the sum of absolute terms).
+fn weighted_column(
+    weights: &[(f64, f64, f64)],
+    streams: &[f64],
+    h: usize,
+    col: usize,
+) -> (f64, f64) {
+    let (mut value, mut spread, mut absolute) = (0.0, 0.0, 0.0);
+    for (i, &(p, lo, hi)) in weights.iter().enumerate() {
+        let xi = streams[i * h + col];
+        value += p * xi;
+        spread += (p - lo).max(hi - p) * xi.abs();
+        absolute += lo.abs().max(hi.abs()) * xi.abs();
+    }
+    (value, spread + 1.01 * weights.len() as f64 * U * absolute)
+}
+
+/// Checks the logits, their errors and the affine parameters of `rows`.
+fn check_logits(
+    mix: SinkhornMix,
+    rows: usize,
+    logits: &[f64],
+    logit_errors: &[f64],
+    base: &[f64],
+    scale: &[f64],
+) -> Result<(), Refusal> {
+    let mixes = mix.mixes() as usize;
+    if logits.len() != rows * mixes
+        || logit_errors.len() != logits.len()
+        || base.len() != mixes
+        || scale.len() != 3
+    {
+        return Err(Refusal("Sinkhorn mixer logit shape mismatch"));
+    }
+    Ok(())
+}
+
 /// `MixCollapse` from given logits `[rows, (2 + N) * N]` (already scaled by
 /// rstd) with per-logit error bounds `logit_errors` of the same shape.
 /// `x` is `[rows, N, H]`. Each output's bound (K = 1, S = bound / 2^-22)
@@ -274,6 +401,9 @@ fn sigmoid_range((v, lo, hi): (f64, f64, f64)) -> (f64, f64, f64) {
 /// kernel's comb by its parts instead: its softmax cells against
 /// [`mix_stage_from_kernel_logits`] and its normalizations bit for bit
 /// against [`sinkhorn_f32`].
+///
+/// The mixer's placement is `PerSublayer`; a lagged mixer's outputs are
+/// [`lagged_mix_collapse_from_logits`]'s.
 pub fn mix_collapse_from_logits(
     query: SinkhornHyperConnectionQuery,
     x: &[f64],
@@ -282,18 +412,11 @@ pub fn mix_collapse_from_logits(
     base: &[f64],
     scale: &[f64],
 ) -> Result<MixCollapseOutput, Refusal> {
-    let (mix, capacity) = mix_of(query)?;
+    let (mix, capacity) = placed_mix_of(query, HyperConnectionPlacement::PerSublayer)?;
     let (n, h) = (mix.streams as usize, mix.width as usize);
     let mixes = mix.mixes() as usize;
     let rows = rows_of(x.len(), n * h, capacity)?;
-    if logits.len() != rows * mixes
-        || logit_errors.len() != logits.len()
-        || base.len() != mixes
-        || scale.len() != 3
-    {
-        return Err(Refusal("Sinkhorn mixer logit shape mismatch"));
-    }
-    let eps = f64::from(f32::from_bits(mix.eps_bits));
+    check_logits(mix, rows, logits, logit_errors, base, scale)?;
     let nn = n * n;
     let mut collapsed = (Vec::with_capacity(rows * h), Vec::with_capacity(rows * h));
     let mut post = (Vec::with_capacity(rows * n), Vec::with_capacity(rows * n));
@@ -301,34 +424,18 @@ pub fn mix_collapse_from_logits(
     for row in 0..rows {
         let l = &logits[row * mixes..][..mixes];
         let e = &logit_errors[row * mixes..][..mixes];
-        let range = |m: usize, s: f64| affine(l[m], e[m], s, base[m]);
-        // pre: reference, low and high.
-        let mut pre = Vec::with_capacity(n);
-        for i in 0..n {
-            let (s, lo, hi) = sigmoid_range(range(i, scale[0]));
-            pre.push((s + eps, (lo + eps) * (1.0 - U), (hi + eps) * (1.0 + U)));
-            let (p, lo, hi) = sigmoid_range(range(n + i, scale[1]));
-            post.0.push(2.0 * p);
-            post.1
-                .push(stored_bound(2.0 * p, 2.0 * lo, 2.0 * hi) / GATE);
+        let stage = row_stage(mix, l, e, base, scale);
+        for &(p, lo, hi) in &stage.post {
+            post.0.push(p);
+            post.1.push(stored_bound(p, lo, hi) / GATE);
         }
-        let c = (0..nn)
-            .map(|k| range(2 * n + k, scale[2]).0)
-            .collect::<Vec<_>>();
-        for value in sinkhorn(mix.order, &c, n, mix.iterations, eps) {
+        for value in stage.comb {
             comb.0.push(value);
             comb.1.push(stored_bound(value, 0.0, 1.0) / GATE);
         }
         let streams = &x[row * n * h..][..n * h];
         for col in 0..h {
-            let (mut value, mut spread, mut absolute) = (0.0, 0.0, 0.0);
-            for (i, &(p, lo, hi)) in pre.iter().enumerate() {
-                let xi = streams[i * h + col];
-                value += p * xi;
-                spread += (p - lo).max(hi - p) * xi.abs();
-                absolute += hi * xi.abs();
-            }
-            let far = spread + 1.01 * n as f64 * U * absolute;
+            let (value, far) = weighted_column(&stage.pre, streams, h, col);
             collapsed.0.push(value);
             collapsed
                 .1
@@ -340,6 +447,91 @@ pub fn mix_collapse_from_logits(
         post: OracleOutput::new(post.0, post.1, 1)?,
         comb: OracleOutput::new(comb.0, comb.1, 1)?,
     })
+}
+
+/// A lagged `MixCollapse` from given logits and errors, as
+/// [`mix_collapse_from_logits`] bounds them, and the F32 collapse weights
+/// `pre_in` `[rows, N]` the launch reads (the previous sublayer's stored
+/// `pre`, or [`one_hot_pre`] before the first sublayer). `pre`, `post` and
+/// `comb` are stored in F32, so their bounds hold the ranges alone (`comb`
+/// its range `[0, 1]`, checked by its parts as in the per-sublayer case,
+/// through [`lagged_mix_stage_from_kernel_logits`] and [`sinkhorn_f32`]).
+/// `collapsed` is `sum_i pre_in_i * X_i` within `N` roundings of its sum of
+/// absolute terms plus its BF16 rounding; it is also an exact function of
+/// `pre_in` ([`collapse`]).
+pub fn lagged_mix_collapse_from_logits(
+    query: SinkhornHyperConnectionQuery,
+    x: &[f64],
+    pre_in: &[f32],
+    logits: &[f64],
+    logit_errors: &[f64],
+    base: &[f64],
+    scale: &[f64],
+) -> Result<LaggedMixCollapseOutput, Refusal> {
+    let (mix, capacity) = placed_mix_of(query, HyperConnectionPlacement::LaggedSinglePass)?;
+    let (n, h) = (mix.streams as usize, mix.width as usize);
+    let mixes = mix.mixes() as usize;
+    let rows = rows_of(x.len(), n * h, capacity)?;
+    check_logits(mix, rows, logits, logit_errors, base, scale)?;
+    if pre_in.len() != rows * n {
+        return Err(Refusal("Sinkhorn collapse weight shape mismatch"));
+    }
+    let nn = n * n;
+    let mut collapsed = (Vec::with_capacity(rows * h), Vec::with_capacity(rows * h));
+    let mut pre = (Vec::with_capacity(rows * n), Vec::with_capacity(rows * n));
+    let mut post = (Vec::with_capacity(rows * n), Vec::with_capacity(rows * n));
+    let mut comb = (Vec::with_capacity(rows * nn), Vec::with_capacity(rows * nn));
+    for row in 0..rows {
+        let l = &logits[row * mixes..][..mixes];
+        let e = &logit_errors[row * mixes..][..mixes];
+        let stage = row_stage(mix, l, e, base, scale);
+        for (values, out) in [(&stage.pre, &mut pre), (&stage.post, &mut post)] {
+            for &(p, lo, hi) in values {
+                out.0.push(p);
+                out.1.push(f32_bound(p, lo, hi) / GATE);
+            }
+        }
+        for value in stage.comb {
+            comb.0.push(value);
+            comb.1.push(f32_bound(value, 0.0, 1.0) / GATE);
+        }
+        let given = given_weights(&pre_in[row * n..][..n]);
+        let streams = &x[row * n * h..][..n * h];
+        for col in 0..h {
+            let (value, far) = weighted_column(&given, streams, h, col);
+            collapsed.0.push(value);
+            collapsed
+                .1
+                .push(stored_bound(value, value - far, value + far) / GATE);
+        }
+    }
+    Ok(LaggedMixCollapseOutput {
+        collapsed: OracleOutput::new(collapsed.0, collapsed.1, 1)?,
+        pre: OracleOutput::new(pre.0, pre.1, 1)?,
+        post: OracleOutput::new(post.0, post.1, 1)?,
+        comb: OracleOutput::new(comb.0, comb.1, 1)?,
+    })
+}
+
+/// Exact F32 weights as (reference, low, high).
+fn given_weights(weights: &[f32]) -> Vec<(f64, f64, f64)> {
+    weights
+        .iter()
+        .map(|&w| {
+            let w = f64::from(w);
+            (w, w, w)
+        })
+        .collect()
+}
+
+/// The collapse weights before the first sublayer of a lagged stack: the
+/// one-hot `(1, 0, ..., 0)` per row, `[rows, N]` F32.
+pub fn one_hot_pre(rows: usize, streams: usize) -> Vec<f32> {
+    let mut pre = vec![0.0; rows * streams];
+    for row in pre.chunks_exact_mut(streams.max(1)) {
+        row[0] = 1.0;
+    }
+    pre
 }
 
 /// The nonlinear stage of `MixCollapse` from a kernel's own F32 logits
@@ -358,15 +550,81 @@ pub fn mix_stage_from_kernel_logits(
     base: &[f32],
     scale: &[f32],
 ) -> Result<MixStageOutput, Refusal> {
-    let (mix, _) = mix_of(query)?;
-    let (n, mixes) = (mix.streams as usize, mix.mixes() as usize);
-    if base.len() != mixes || scale.len() != 3 || !logits.len().is_multiple_of(mixes) {
-        return Err(Refusal("Sinkhorn mixer logit shape mismatch"));
-    }
-    let widen = |v: &[f32]| v.iter().map(|&v| f64::from(v)).collect::<Vec<_>>();
+    let (mix, _) = placed_mix_of(query, HyperConnectionPlacement::PerSublayer)?;
+    check_kernel_logits(mix, logits, base, scale)?;
     let zero = vec![0.0; logits.len()];
     let stage =
         mix_collapse_from_logits(query, x, &widen(logits), &zero, &widen(base), &widen(scale))?;
+    Ok(MixStageOutput {
+        collapsed: stage.collapsed,
+        post: stage.post,
+        cells: kernel_cells(mix, logits, base, scale)?,
+    })
+}
+
+/// The nonlinear stage of a lagged `MixCollapse` from a kernel's own F32
+/// logits, as [`mix_stage_from_kernel_logits`] emulates it: `pre` and
+/// `post` as [`lagged_mix_collapse_from_logits`] with zero logit error, and
+/// the Sinkhorn input `cells`. The collapsed row does not depend on the
+/// logits ([`collapse`]).
+pub fn lagged_mix_stage_from_kernel_logits(
+    query: SinkhornHyperConnectionQuery,
+    logits: &[f32],
+    base: &[f32],
+    scale: &[f32],
+) -> Result<LaggedMixStageOutput, Refusal> {
+    let (mix, capacity) = placed_mix_of(query, HyperConnectionPlacement::LaggedSinglePass)?;
+    check_kernel_logits(mix, logits, base, scale)?;
+    let mixes = mix.mixes() as usize;
+    rows_of(logits.len(), mixes, capacity)?;
+    let (base64, scale64) = (widen(base), widen(scale));
+    let zero = vec![0.0; mixes];
+    let (mut pre, mut post) = ((Vec::new(), Vec::new()), (Vec::new(), Vec::new()));
+    for l in logits.chunks_exact(mixes) {
+        let stage = row_stage(mix, &widen(l), &zero, &base64, &scale64);
+        for (values, out) in [(&stage.pre, &mut pre), (&stage.post, &mut post)] {
+            for &(p, lo, hi) in values {
+                out.0.push(p);
+                out.1.push(f32_bound(p, lo, hi) / GATE);
+            }
+        }
+    }
+    Ok(LaggedMixStageOutput {
+        pre: OracleOutput::new(pre.0, pre.1, 1)?,
+        post: OracleOutput::new(post.0, post.1, 1)?,
+        cells: kernel_cells(mix, logits, base, scale)?,
+    })
+}
+
+fn widen(values: &[f32]) -> Vec<f64> {
+    values.iter().map(|&v| f64::from(v)).collect()
+}
+
+fn check_kernel_logits(
+    mix: SinkhornMix,
+    logits: &[f32],
+    base: &[f32],
+    scale: &[f32],
+) -> Result<(), Refusal> {
+    let mixes = mix.mixes() as usize;
+    if base.len() != mixes || scale.len() != 3 || !logits.len().is_multiple_of(mixes) {
+        return Err(Refusal("Sinkhorn mixer logit shape mismatch"));
+    }
+    Ok(())
+}
+
+/// The Sinkhorn input cells `exp(d) / sum + eps` `[rows, N, N]` from a
+/// kernel's own F32 logits, F32 outputs: the affine FMAs, the row maximum
+/// and the subtraction emulated exactly, each `expf` within 2 ulp, the
+/// index-order sum from zero within `N - 1` roundings, then one rounding
+/// each for the division and `+ eps`.
+fn kernel_cells(
+    mix: SinkhornMix,
+    logits: &[f32],
+    base: &[f32],
+    scale: &[f32],
+) -> Result<OracleOutput, Refusal> {
+    let (n, mixes) = (mix.streams as usize, mix.mixes() as usize);
     let eps = f32::from_bits(mix.eps_bits);
     let relative = 1.01 * (n as f64 + 9.0) * U;
     let (mut values, mut bounds) = (Vec::new(), Vec::new());
@@ -391,11 +649,7 @@ pub fn mix_stage_from_kernel_logits(
             }
         }
     }
-    Ok(MixStageOutput {
-        collapsed: stage.collapsed,
-        post: stage.post,
-        cells: OracleOutput::new(values, bounds, 1)?,
-    })
+    OracleOutput::new(values, bounds, 1)
 }
 
 /// The whole `MixCollapse` from the streams: the projection and rstd, the
@@ -406,6 +660,37 @@ pub fn mix_collapse(
     x: &[f64],
     weights: MixWeights<'_>,
 ) -> Result<MixCollapseOutput, Refusal> {
+    let (logits, errors) = bounded_logits(query, x, weights)?;
+    mix_collapse_from_logits(query, x, &logits, &errors, weights.base, weights.scale)
+}
+
+/// The whole lagged `MixCollapse` from the streams and the F32 collapse
+/// weights `pre_in` `[rows, N]`: [`mix_collapse`]'s logits and errors, then
+/// [`lagged_mix_collapse_from_logits`].
+pub fn lagged_mix_collapse(
+    query: SinkhornHyperConnectionQuery,
+    x: &[f64],
+    pre_in: &[f32],
+    weights: MixWeights<'_>,
+) -> Result<LaggedMixCollapseOutput, Refusal> {
+    let (logits, errors) = bounded_logits(query, x, weights)?;
+    lagged_mix_collapse_from_logits(
+        query,
+        x,
+        pre_in,
+        &logits,
+        &errors,
+        weights.base,
+        weights.scale,
+    )
+}
+
+/// The logits `rstd * projection` and their error bounds.
+fn bounded_logits(
+    query: SinkhornHyperConnectionQuery,
+    x: &[f64],
+    weights: MixWeights<'_>,
+) -> Result<(Vec<f64>, Vec<f64>), Refusal> {
     let projected = projection(query, x, weights)?;
     let scales = rstd(query, x)?;
     let mixes = weights.base.len();
@@ -424,7 +709,7 @@ pub fn mix_collapse(
         logits.push(r * p);
         errors.push(r * GATE * k * s + er * (p.abs() + GATE * k * s) + U * (r * p).abs());
     }
-    mix_collapse_from_logits(query, x, &logits, &errors, weights.base, weights.scale)
+    Ok((logits, errors))
 }
 
 /// The BF16 `post` and `comb` a kernel stores, rounded once from F32.
@@ -506,12 +791,171 @@ pub fn head(query: SinkhornHyperConnectionQuery, x: &[u16]) -> Result<Vec<u16>, 
     Ok(out)
 }
 
+/// `ExpandF32` exactly: `X'_j = bf16(fl(post_j * y) + s_j)` per element in
+/// F32, with `s_j = sum_i comb[i][j] * X_i` an FMA chain from zero in stream
+/// order. `x` is `[rows, N, H]` and `y` `[rows, H]` BF16 bits, `post`
+/// `[rows, N]` and `comb` `[rows, N, N]` F32; the result is `[rows, N, H]`.
+pub fn expand_f32(
+    query: SinkhornHyperConnectionQuery,
+    x: &[u16],
+    y: &[u16],
+    post: &[f32],
+    comb: &[f32],
+) -> Result<Vec<u16>, Refusal> {
+    let (n, h, rows) = expand_f32_shape(query, x.len(), y.len(), post.len(), comb.len())?;
+    let f = bf16_to_f32;
+    let mut out = vec![0; rows * n * h];
+    for row in 0..rows {
+        for j in 0..n {
+            let p = post[row * n + j];
+            for col in 0..h {
+                let placed = p * f(y[row * h + col]);
+                let mut mixed = 0.0_f32;
+                for i in 0..n {
+                    let weight = comb[(row * n + i) * n + j];
+                    mixed = weight.mul_add(f(x[(row * n + i) * h + col]), mixed);
+                }
+                out[(row * n + j) * h + col] = f32_to_bf16(placed + mixed);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// `ExpandF32` in f64 from the operands' values (`x`, `y` BF16, `post`,
+/// `comb` F32, shaped as in [`expand_f32`]): `post_j * y + sum_i comb[i][j]
+/// * X_i`, with a bound of `N + 2` roundings of the sum of absolute terms
+/// plus the BF16 rounding (K = 1). [`expand_f32`] lies within it.
+pub fn expand_f32_reference(
+    query: SinkhornHyperConnectionQuery,
+    x: &[f64],
+    y: &[f64],
+    post: &[f64],
+    comb: &[f64],
+) -> Result<OracleOutput, Refusal> {
+    let (n, h, rows) = expand_f32_shape(query, x.len(), y.len(), post.len(), comb.len())?;
+    let mut values = Vec::with_capacity(rows * n * h);
+    let mut bounds = Vec::with_capacity(rows * n * h);
+    for row in 0..rows {
+        for j in 0..n {
+            for col in 0..h {
+                let placed = post[row * n + j] * y[row * h + col];
+                let (mut value, mut absolute) = (placed, placed.abs());
+                for i in 0..n {
+                    let term = comb[(row * n + i) * n + j] * x[(row * n + i) * h + col];
+                    value += term;
+                    absolute += term.abs();
+                }
+                let far = 1.01 * (n as f64 + 2.0) * U * absolute;
+                values.push(value);
+                bounds.push(stored_bound(value, value - far, value + far) / GATE);
+            }
+        }
+    }
+    OracleOutput::new(values, bounds, 1)
+}
+
+fn expand_f32_shape(
+    query: SinkhornHyperConnectionQuery,
+    x: usize,
+    y: usize,
+    post: usize,
+    comb: usize,
+) -> Result<(usize, usize, usize), Refusal> {
+    query.validate()?;
+    let SinkhornHyperConnectionQuery::ExpandF32 {
+        streams,
+        width,
+        capacity,
+    } = query
+    else {
+        return Err(Refusal("expected a Sinkhorn F32 expand query"));
+    };
+    let (n, h) = (streams as usize, width as usize);
+    let rows = rows_of(x, n * h, capacity)?;
+    if y != rows * h || post != rows * n || comb != rows * n * n {
+        return Err(Refusal("Sinkhorn expand operand shape mismatch"));
+    }
+    Ok((n, h, rows))
+}
+
+/// The sigmoid-weighted `Head` exactly: `bf16(sum_i pre_i * f32(X_i))`, an
+/// FMA chain from zero in stream order, with `pre` `[rows, N]` the F32
+/// weights the last lagged mix-collapse stored. `x` is `[rows, N, H]` BF16
+/// bits; the result is `[rows, H]`.
+pub fn weighted_head(
+    query: SinkhornHyperConnectionQuery,
+    x: &[u16],
+    pre: &[f32],
+) -> Result<Vec<u16>, Refusal> {
+    let (n, h, rows) = weighted_head_shape(query, x.len(), pre.len())?;
+    let mut out = vec![0; rows * h];
+    for row in 0..rows {
+        for col in 0..h {
+            let mut sum = 0.0_f32;
+            for i in 0..n {
+                sum = pre[row * n + i].mul_add(bf16_to_f32(x[(row * n + i) * h + col]), sum);
+            }
+            out[row * h + col] = f32_to_bf16(sum);
+        }
+    }
+    Ok(out)
+}
+
+/// The sigmoid-weighted `Head` in f64 from the streams' values and the F32
+/// weights `pre`: `sum_i pre_i * X_i` within `N` roundings of its sum of
+/// absolute terms plus the BF16 rounding (K = 1). [`weighted_head`] lies
+/// within it.
+pub fn weighted_head_reference(
+    query: SinkhornHyperConnectionQuery,
+    x: &[f64],
+    pre: &[f32],
+) -> Result<OracleOutput, Refusal> {
+    let (n, h, rows) = weighted_head_shape(query, x.len(), pre.len())?;
+    let mut values = Vec::with_capacity(rows * h);
+    let mut bounds = Vec::with_capacity(rows * h);
+    for row in 0..rows {
+        let given = given_weights(&pre[row * n..][..n]);
+        let streams = &x[row * n * h..][..n * h];
+        for col in 0..h {
+            let (value, far) = weighted_column(&given, streams, h, col);
+            values.push(value);
+            bounds.push(stored_bound(value, value - far, value + far) / GATE);
+        }
+    }
+    OracleOutput::new(values, bounds, 1)
+}
+
+fn weighted_head_shape(
+    query: SinkhornHyperConnectionQuery,
+    x: usize,
+    pre: usize,
+) -> Result<(usize, usize, usize), Refusal> {
+    query.validate()?;
+    let SinkhornHyperConnectionQuery::Head {
+        streams,
+        width,
+        mode: StreamHeadMode::SigmoidWeighted,
+        capacity,
+    } = query
+    else {
+        return Err(Refusal("expected a sigmoid-weighted head query"));
+    };
+    let (n, h) = (streams as usize, width as usize);
+    let rows = rows_of(x, n * h, capacity)?;
+    if pre != rows * n {
+        return Err(Refusal("Sinkhorn head weight shape mismatch"));
+    }
+    Ok((n, h, rows))
+}
+
 /// Step 5 of `MixCollapse` exactly, from given F32 collapse weights `pre`
 /// `[rows, N]`: `bf16(sum_i pre_i * f32(X_i))`, an FMA chain from zero in
 /// stream order. `x` is `[rows, N, H]` BF16 bits; the result is `[rows, H]`.
-/// A kernel's collapsed rows equal it bit for bit whenever its `pre` equals
-/// the given one, such as where the sigmoid saturates (`pre` = `1 + eps`
-/// or `eps`).
+/// A per-sublayer kernel's collapsed rows equal it bit for bit whenever its
+/// `pre` equals the given one, such as where the sigmoid saturates (`pre` =
+/// `1 + eps` or `eps`). A lagged kernel's collapsed rows always equal it
+/// for the `pre_in` the kernel read.
 pub fn collapse(
     query: SinkhornHyperConnectionQuery,
     x: &[u16],
@@ -1287,5 +1731,301 @@ mod tests {
         );
         // Only the fused query has an epilogue norm.
         assert!(epilogue_norm(norm_query(mix(4, 4096, 20, 1e-6)), &big, &weight).is_err());
+    }
+
+    fn lagged(m: SinkhornMix) -> SinkhornHyperConnectionQuery {
+        query(SinkhornMix {
+            placement: HyperConnectionPlacement::LaggedSinglePass,
+            ..m
+        })
+    }
+
+    fn values_of(bits: &[u16]) -> Vec<f64> {
+        bits.iter().map(|&b| f64::from(bf16_to_f32(b))).collect()
+    }
+
+    #[test]
+    fn a_lagged_mix_collapse_collapses_with_the_given_pre_and_keeps_its_own() {
+        let m = SinkhornMix {
+            fn_dtype: DType::F32,
+            norm_eps_bits: 1e-20_f32.to_bits(),
+            ..mix(4, 128, 20, 1e-6)
+        };
+        let (rows, n, h) = (2, 4, 128);
+        let x = grid(rows * n * h, 21);
+        let projection = grid(24 * n * h, 22)
+            .into_iter()
+            .map(|v| v / 64.0)
+            .collect::<Vec<_>>();
+        // Saturated own weights (1 + eps, eps, 1 + eps, eps), so a collapse
+        // with them is far from the one-hot collapse.
+        let mut base = grid(24, 23);
+        for (i, b) in base.iter_mut().take(n).enumerate() {
+            *b = if i % 2 == 0 { 64.0 } else { -200.0 };
+        }
+        let weights = MixWeights {
+            projection: &projection,
+            base: &base,
+            scale: &[0.0, 0.5, 1.0],
+        };
+        let pre_in = one_hot_pre(rows, n);
+        assert_eq!(&pre_in[..8], &[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]);
+        let out = lagged_mix_collapse(lagged(m), &x, &pre_in, weights).unwrap();
+        let own = mix_collapse(query(m), &x, weights).unwrap();
+        // The mixer's math is the placement's twin; only storage and the
+        // collapse weights differ.
+        assert_eq!(out.post.values, own.post.values);
+        assert_eq!(out.comb.values, own.comb.values);
+        let eps = f64::from(1e-6_f32);
+        for (i, &value) in out.pre.values.iter().enumerate() {
+            let expected = if i % 2 == 0 { 1.0 + eps } else { eps };
+            close(value, expected, 1e-15);
+        }
+        // The one-hot collapse is stream 0, exactly, and the kernel's exact
+        // collapse lies within the f64 bound.
+        let bits = bits(&x);
+        let exact = collapse(lagged(m), &bits, &pre_in).unwrap();
+        for row in 0..rows {
+            assert_eq!(
+                &exact[row * h..][..h],
+                &bits[row * n * h..][..h],
+                "row {row}"
+            );
+        }
+        check_numeric(&values_of(&exact), &out.collapsed, DType::Bf16).unwrap();
+        assert!(check_numeric(&values_of(&exact), &own.collapsed, DType::Bf16).is_err());
+        // The stored F32 values of a kernel lie within the F32 bounds.
+        let as_f32 = |v: &[f64]| v.iter().map(|&v| f64::from(v as f32)).collect::<Vec<_>>();
+        check_numeric(&as_f32(&out.pre.values), &out.pre, DType::F32).unwrap();
+        check_numeric(&as_f32(&out.post.values), &out.post, DType::F32).unwrap();
+        check_numeric(&as_f32(&out.comb.values), &out.comb, DType::F32).unwrap();
+    }
+
+    #[test]
+    fn lagged_f32_bounds_enclose_logits_anywhere_in_their_interval() {
+        let m = mix(4, 128, 20, 1e-6);
+        let q = lagged(m);
+        let x = grid(2 * 512, 31);
+        let projection = grid(24 * 512, 32)
+            .iter()
+            .map(|v| v / 16.0)
+            .collect::<Vec<_>>();
+        let base = grid(24, 33);
+        let scale = [0.5, 0.75, 2.0];
+        let weights = MixWeights {
+            projection: &projection,
+            base: &base,
+            scale: &scale,
+        };
+        let pre_in = grid(8, 34).iter().map(|&v| v as f32).collect::<Vec<_>>();
+        let out = lagged_mix_collapse(q, &x, &pre_in, weights).unwrap();
+        let projected = projection_values(q, &x, weights);
+        let scales = rstd(q, &x).unwrap().values;
+        for sign in [-1.0, 1.0] {
+            let moved = projected
+                .values
+                .iter()
+                .zip(&projected.sum_abs_products)
+                .enumerate()
+                .map(|(i, (p, s))| scales[i / 24] * (p + sign * GATE * 512.0 * s))
+                .collect::<Vec<_>>();
+            let zero = vec![0.0; moved.len()];
+            let moved =
+                lagged_mix_collapse_from_logits(q, &x, &pre_in, &moved, &zero, &base, &scale)
+                    .unwrap();
+            let stored = |v: &[f64]| v.iter().map(|&v| f64::from(v as f32)).collect::<Vec<_>>();
+            check_numeric(&stored(&moved.pre.values), &out.pre, DType::F32).unwrap();
+            check_numeric(&stored(&moved.post.values), &out.post, DType::F32).unwrap();
+            check_numeric(&stored(&moved.comb.values), &out.comb, DType::F32).unwrap();
+            // The collapse does not depend on the logits.
+            assert_eq!(moved.collapsed, out.collapsed);
+        }
+        // A BF16-rounded post (the per-sublayer storage) is outside the F32
+        // bound somewhere.
+        let rounded_post = rounded(&out.post.values)
+            .iter()
+            .map(|&b| f64::from(bf16_to_f32(b)))
+            .collect::<Vec<_>>();
+        assert!(check_numeric(&rounded_post, &out.post, DType::F32).is_err());
+    }
+
+    #[test]
+    fn the_lagged_kernel_stage_matches_the_per_sublayer_cells() {
+        let m = mix(4, 128, 20, 1e-6);
+        let x = grid(512, 41);
+        let logits = grid(24, 42)
+            .iter()
+            .map(|&v| 4.0 * v as f32)
+            .collect::<Vec<_>>();
+        let base = grid(24, 43).iter().map(|&v| v as f32).collect::<Vec<_>>();
+        let scale = [0.5_f32, 0.75, 2.0];
+        let own = mix_stage_from_kernel_logits(query(m), &x, &logits, &base, &scale).unwrap();
+        let stage = lagged_mix_stage_from_kernel_logits(lagged(m), &logits, &base, &scale).unwrap();
+        assert_eq!(stage.cells, own.cells);
+        assert_eq!(stage.post.values, own.post.values);
+        // pre is sigmoid(fma(l, s, b)) + eps of the kernel's own logits.
+        for i in 0..4 {
+            let v = f64::from(logits[i].mul_add(scale[0], base[i]));
+            close(stage.pre.values[i], sigmoid(v) + f64::from(1e-6_f32), 1e-15);
+        }
+        // Each placement's functions refuse the other's queries.
+        assert!(lagged_mix_stage_from_kernel_logits(query(m), &logits, &base, &scale).is_err());
+        assert!(mix_stage_from_kernel_logits(lagged(m), &x, &logits, &base, &scale).is_err());
+        let weights = MixWeights {
+            projection: &[0.0; 24 * 512],
+            base: &[0.0; 24],
+            scale: &[0.0; 3],
+        };
+        assert!(mix_collapse(lagged(m), &x, weights).is_err());
+        assert!(lagged_mix_collapse(query(m), &x, &[0.0; 4], weights).is_err());
+        assert!(lagged_mix_collapse(lagged(m), &x, &[0.0; 3], weights).is_err());
+        // Projection and rstd do not depend on the placement.
+        assert_eq!(
+            projection(lagged(m), &x, weights).unwrap(),
+            projection(query(m), &x, weights).unwrap()
+        );
+        assert_eq!(rstd(lagged(m), &x).unwrap(), rstd(query(m), &x).unwrap());
+    }
+
+    #[test]
+    fn the_f32_expand_rounds_once_from_unrounded_post_and_comb() {
+        let q = SinkhornHyperConnectionQuery::ExpandF32 {
+            streams: 2,
+            width: 1,
+            capacity: 1,
+        };
+        // The BF16 expand's case: post * y = 1 + 2^-6 + 2^-14 plus 2^-8 is
+        // rounded once, to 1 + 3 * 2^-7 (0x3f83), not to the BF16 expand's
+        // tie 0x3f82.
+        let post = [1.0078125_f32, 0.0];
+        let comb = [1.0_f32, 0.0, 0.0, 1.0];
+        let (x, y) = ([0x3b80, 0x4000], [0x3f81]);
+        assert_eq!(
+            expand_f32(q, &x, &y, &post, &comb).unwrap(),
+            vec![0x3f83, 0x4000]
+        );
+        let bf16_query = SinkhornHyperConnectionQuery::Expand {
+            streams: 2,
+            width: 1,
+            capacity: 1,
+        };
+        assert_eq!(
+            expand(bf16_query, &x, &y, &[0x3f81, 0], &[0x3f80, 0, 0, 0x3f80]).unwrap(),
+            vec![0x3f82, 0x4000]
+        );
+        // post and comb are not rounded to BF16. post = 1 + 2^-10 times
+        // y = 1 + 2^-7, plus x_0 = 2^-8 through comb 1 - 2^-12, lies above
+        // the tie 1 + 3 * 2^-8 and rounds up to 0x3f82; with post rounded
+        // to BF16 (1) the sum lies below the tie and rounds to 0x3f81.
+        let post = [1.0 + 2_f32.powi(-10), 0.0];
+        let comb = [1.0 - 2_f32.powi(-12), 0.0, 0.0, 1.0];
+        let out = expand_f32(q, &x, &y, &post, &comb).unwrap();
+        let exact = 1.0009765625_f64 * 1.0078125 + (1.0 - 2_f64.powi(-12)) * 2_f64.powi(-8);
+        assert_eq!(out[0], f32_to_bf16(exact as f32));
+        assert_eq!(out[0], 0x3f82);
+        let rounded_post = [bf16_to_f32(f32_to_bf16(post[0])), 0.0];
+        assert_eq!(rounded_post[0], 1.0);
+        assert_eq!(
+            expand_f32(q, &x, &y, &rounded_post, &comb).unwrap()[0],
+            0x3f81
+        );
+        // The product is rounded in F32 before the add, and the stream sum
+        // is an FMA chain from zero, as for the BF16 expand.
+        let three = SinkhornHyperConnectionQuery::ExpandF32 {
+            streams: 3,
+            width: 1,
+            capacity: 1,
+        };
+        let out = expand_f32(three, &[0x3f80, 0x3b80, 0x3b80], &[0], &[0.0; 3], &[1.0; 9]).unwrap();
+        assert_eq!(out, vec![0x3f81; 3]);
+        let signed = expand_f32(three, &[0x8000; 3], &[0x8000], &[1.0; 3], &[1.0; 9]).unwrap();
+        assert_eq!(signed, vec![0x0000; 3]);
+        // Shapes and the variant are checked.
+        assert!(expand_f32(bf16_query, &x, &y, &post, &comb).is_err());
+        assert!(expand_f32(q, &x, &y, &post, &comb[..3]).is_err());
+        assert!(expand(q, &x, &y, &[0; 2], &[0; 4]).is_err());
+    }
+
+    #[test]
+    fn the_exact_f32_expand_lies_within_its_f64_reference() {
+        let (rows, n, h) = (3, 4, 96);
+        let q = SinkhornHyperConnectionQuery::ExpandF32 {
+            streams: 4,
+            width: 96,
+            capacity: 4,
+        };
+        let x = bits(&grid(rows * n * h, 51));
+        let y = bits(
+            &grid(rows * h, 52)
+                .iter()
+                .map(|v| 8.0 * v)
+                .collect::<Vec<_>>(),
+        );
+        let post = grid(rows * n, 53)
+            .iter()
+            .map(|&v| (1.0 + v) as f32 + 2_f32.powi(-20))
+            .collect::<Vec<_>>();
+        let comb = grid(rows * n * n, 54)
+            .iter()
+            .map(|&v| (0.25 + v / 8.0) as f32 + 2_f32.powi(-21))
+            .collect::<Vec<_>>();
+        let exact = expand_f32(q, &x, &y, &post, &comb).unwrap();
+        let reference = expand_f32_reference(
+            q,
+            &values_of(&x),
+            &values_of(&y),
+            &widen(&post),
+            &widen(&comb),
+        )
+        .unwrap();
+        check_numeric(&values_of(&exact), &reference, DType::Bf16).unwrap();
+        // The BF16 expand of the rounded post and comb is a different op.
+        let bf16_query = SinkhornHyperConnectionQuery::Expand {
+            streams: 4,
+            width: 96,
+            capacity: 4,
+        };
+        let round = |v: &[f32]| v.iter().map(|&v| f32_to_bf16(v)).collect::<Vec<_>>();
+        assert_ne!(
+            expand(bf16_query, &x, &y, &round(&post), &round(&comb)).unwrap(),
+            exact
+        );
+    }
+
+    #[test]
+    fn the_weighted_head_collapses_with_the_last_pre() {
+        let (rows, n, h) = (2, 4, 64);
+        let q = SinkhornHyperConnectionQuery::Head {
+            streams: 4,
+            width: 64,
+            mode: StreamHeadMode::SigmoidWeighted,
+            capacity: 2,
+        };
+        let x = bits(&grid(rows * n * h, 61));
+        let pre = grid(rows * n, 62)
+            .iter()
+            .map(|&v| (0.5 + v / 2.0) as f32 + 1e-6)
+            .collect::<Vec<_>>();
+        let out = weighted_head(q, &x, &pre).unwrap();
+        // It is the mix-collapse's step 5 with the same weights.
+        let collapse_query = lagged(mix(4, 64, 20, 1e-6));
+        assert_eq!(out, collapse(collapse_query, &x, &pre).unwrap());
+        let reference = weighted_head_reference(q, &values_of(&x), &pre).unwrap();
+        check_numeric(&values_of(&out), &reference, DType::Bf16).unwrap();
+        // The mean of streams is a different head.
+        let mean = SinkhornHyperConnectionQuery::Head {
+            streams: 4,
+            width: 64,
+            mode: StreamHeadMode::MeanOfStreams,
+            capacity: 2,
+        };
+        assert_ne!(head(mean, &x).unwrap(), out);
+        assert!(weighted_head(mean, &x, &pre).is_err());
+        assert!(weighted_head(q, &x, &pre[..7]).is_err());
+        // A one-hot pre selects stream 0.
+        let one_hot = weighted_head(q, &x, &one_hot_pre(rows, n)).unwrap();
+        for row in 0..rows {
+            assert_eq!(&one_hot[row * h..][..h], &x[row * n * h..][..h]);
+        }
     }
 }

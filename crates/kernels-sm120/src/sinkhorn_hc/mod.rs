@@ -86,13 +86,21 @@ pub const MAX_ITERATIONS: u32 = 64;
 /// math (the static assertions of `sinkhorn_hc.cuh`): 2 to [`MAX_STREAMS`]
 /// streams; a mixer's width a multiple of [`CHAIN`] up to [`MAX_WIDTH`]
 /// with 1 to [`MAX_ITERATIONS`] iterations; and a fused epilogue's ranks
-/// within the comm pointer arrays' `MAX_COMM_RANKS` slots.
+/// within the comm pointer arrays' `MAX_COMM_RANKS` slots. The kernels
+/// implement the per-sublayer placement's BF16 mixing: the lagged
+/// placement's mix-collapse, the F32 expand and the sigmoid-weighted head
+/// are refused by name.
 pub fn limits(query: Query) -> Result<(), Refusal> {
     query.validate()?;
     let streams = match query {
         Query::MixCollapse { mix, .. }
         | Query::MixCollapseNorm { mix, .. }
         | Query::AllReduceExpandMixNorm { mix, .. } => {
+            if mix.placement != HyperConnectionPlacement::PerSublayer {
+                return Err(Refusal(
+                    "SM120 Sinkhorn mixers implement the per-sublayer placement",
+                ));
+            }
             if !mix.width.is_multiple_of(CHAIN)
                 || mix.width > MAX_WIDTH
                 || mix.iterations > MAX_ITERATIONS
@@ -102,6 +110,19 @@ pub fn limits(query: Query) -> Result<(), Refusal> {
                 ));
             }
             mix.streams
+        }
+        Query::ExpandF32 { .. } => {
+            return Err(Refusal(
+                "SM120 Sinkhorn kernels do not implement the F32 expand",
+            ));
+        }
+        Query::Head {
+            mode: StreamHeadMode::SigmoidWeighted,
+            ..
+        } => {
+            return Err(Refusal(
+                "SM120 Sinkhorn kernels do not implement the sigmoid-weighted head",
+            ));
         }
         Query::Expand { streams, .. } | Query::Head { streams, .. } => streams,
     };
@@ -225,7 +246,9 @@ impl Entry {
             Query::Expand { width, .. } | Query::Head { width, .. } => {
                 [width.div_ceil(COLUMNS), rows, 1]
             }
-            Query::AllReduceExpandMixNorm { .. } => unreachable!("refused by check"),
+            Query::AllReduceExpandMixNorm { .. } | Query::ExpandF32 { .. } => {
+                unreachable!("refused by check")
+            }
         };
         let plan = LaunchPlan {
             grid,
@@ -680,15 +703,44 @@ mod tests {
             placement: HyperConnectionPlacement::LaggedSinglePass,
             ..SERVED.mix
         };
-        assert!(
+        assert_eq!(
             check(
                 Query::MixCollapse {
                     mix: lagged,
                     capacity: 1
                 },
                 Op::MixCollapse { probe: false }
-            )
-            .is_err()
+            ),
+            Err(Refusal(
+                "SM120 Sinkhorn mixers implement the per-sublayer placement"
+            ))
+        );
+        assert_eq!(
+            check(
+                Query::ExpandF32 {
+                    streams: 4,
+                    width: 4096,
+                    capacity: 1
+                },
+                Op::Expand
+            ),
+            Err(Refusal(
+                "SM120 Sinkhorn kernels do not implement the F32 expand"
+            ))
+        );
+        assert_eq!(
+            check(
+                Query::Head {
+                    streams: 4,
+                    width: 4096,
+                    mode: StreamHeadMode::SigmoidWeighted,
+                    capacity: 1
+                },
+                Op::Head
+            ),
+            Err(Refusal(
+                "SM120 Sinkhorn kernels do not implement the sigmoid-weighted head"
+            ))
         );
     }
 }

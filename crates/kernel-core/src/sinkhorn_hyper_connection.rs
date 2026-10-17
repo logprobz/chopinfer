@@ -10,6 +10,12 @@
 //! Per sublayer the parameters are `fn` `[(2 + N) * N, N * H]` (BF16 or
 //! F32), `base` `[(2 + N) * N]` F32 and `scale` `[3]` F32.
 //!
+//! Under the lagged single-pass placement each sublayer instead collapses
+//! with the F32 `pre` the previous sublayer's mixer computed and retained
+//! (the first sublayer with a one-hot `pre` on stream 0), its own `pre` is
+//! kept for the next sublayer and for the head, and `post`, `comb` and the
+//! expand stay F32 until the expanded streams round once to BF16.
+//!
 //! Every field of [`SinkhornMix`] is math the model states. A query's
 //! `capacity` bounds the rows of one launch and is not math. The order of
 //! the mix projection's F32 sums is the backend's choice, judged by the
@@ -36,10 +42,16 @@ pub enum SinkhornOrder {
 /// Where the mixer runs relative to the sublayers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum HyperConnectionPlacement {
-    /// A mixer around every sublayer (attention and MLP each).
+    /// A mixer around every sublayer (attention and MLP each), whose `pre`
+    /// collapses the streams of the same sublayer.
     PerSublayer,
-    /// One mixer per layer computed a sublayer late in a single pass.
-    /// Declared; refused.
+    /// A mixer around every sublayer whose `pre` collapses the next
+    /// sublayer's streams: each sublayer collapses with the F32 `pre` the
+    /// previous sublayer's mixer stored, the first with the one-hot `pre`
+    /// `(1, 0, ..., 0)`, and the last sublayer's `pre` weights the head
+    /// ([`StreamHeadMode::SigmoidWeighted`]). Its mix-collapse stores `pre`,
+    /// `post` and `comb` in F32 and pairs with
+    /// [`SinkhornHyperConnectionQuery::ExpandF32`].
     LaggedSinglePass,
 }
 
@@ -48,12 +60,16 @@ pub enum HyperConnectionPlacement {
 pub enum StreamHeadMode {
     /// `bf16(sum_i f32(X_i) / N)`, the sum in stream order.
     MeanOfStreams,
-    /// A learned sigmoid-weighted collapse. Declared; refused.
+    /// `bf16(sum_i pre_i * f32(X_i))`, an FMA chain from zero in stream
+    /// order, with `pre` the F32 collapse weights (sigmoid plus eps) the
+    /// last sublayer's lagged mixer stored.
     SigmoidWeighted,
 }
 
 /// The mixer's parameters (4 streams, width 4096, 20 iterations, eps 1e-6,
-/// norm eps 1e-5 for the served model).
+/// norm eps 1e-5 and per-sublayer placement for one served model; 4
+/// streams, width 5120, 20 iterations, eps 1e-6, norm eps 1e-20, F32 `fn`
+/// and the lagged placement for another).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct SinkhornMix {
     pub streams: u32,
@@ -105,11 +121,6 @@ impl Validate for SinkhornMix {
                 "invalid Sinkhorn mixer streams, width, iterations, eps or fn dtype",
             ));
         }
-        if self.placement == HyperConnectionPlacement::LaggedSinglePass {
-            return Err(Refusal(
-                "lagged single-pass hyper-connection placement is declared but not supported",
-            ));
-        }
         Ok(())
     }
 }
@@ -133,12 +144,23 @@ pub enum SinkhornHyperConnectionQuery {
     ///    sum_j C[i][j] + eps`, a column normalization `C[i][j] /= sum_i
     ///    C[i][j] + eps`, sums in index order; the softmax subtracts the
     ///    row maximum.
-    /// 5. `collapsed = bf16(sum_i pre_i * f32(X_i))`, FMA from zero in
-    ///    stream order.
+    /// 5. `collapsed = bf16(sum_i w_i * f32(X_i))`, FMA from zero in
+    ///    stream order, where the collapse weights `w` are the placement's:
+    ///    - `PerSublayer`: this mixer's `pre`.
+    ///    - `LaggedSinglePass`: the F32 `pre_in` `[rows, N]` the launch
+    ///      reads, which the previous sublayer's mix-collapse stored (the
+    ///      one-hot `(1, 0, ..., 0)` before the first sublayer). It is an
+    ///      input like X, not a special case.
     ///
-    /// Outputs: collapsed `[rows, H]` BF16, `post` `[rows, N]` and `comb`
-    /// `[rows, N, N]` (`comb[i][j]` at `i * N + j`), each rounded once to
-    /// BF16 as the reference rounds them before use. `pre` is not stored.
+    /// Outputs, by placement:
+    /// - `PerSublayer`: collapsed `[rows, H]` BF16, `post` `[rows, N]` and
+    ///   `comb` `[rows, N, N]` (`comb[i][j]` at `i * N + j`), each rounded
+    ///   once to BF16 as the reference rounds them before use. `pre` is not
+    ///   stored ([`MixCollapseBuffers`]).
+    /// - `LaggedSinglePass`: collapsed `[rows, H]` BF16, and this mixer's
+    ///   `pre` `[rows, N]`, `post` `[rows, N]` and `comb` `[rows, N, N]`
+    ///   stored as the F32 values of steps 3 and 4, unrounded
+    ///   ([`LaggedMixCollapseBuffers`]). `pre_in` and `pre` do not overlap.
     MixCollapse { mix: SinkhornMix, capacity: u32 },
     /// `MixCollapse`, then the sublayer's input RMSNorm of the collapsed row
     /// x (`RmsNormKind::HfBf16Intermediate` with a BF16 weight w, the
@@ -156,7 +178,8 @@ pub enum SinkhornHyperConnectionQuery {
     ///    F32, and `normed_k = bf16(bf16(x_k * inv) * w_k)`.
     ///
     /// Writes `MixCollapse`'s outputs and the normed row `[rows, H]` BF16.
-    /// The normed row is an exact function of the collapsed row and w.
+    /// The normed row is an exact function of the collapsed row and w. The
+    /// mixer's placement is `PerSublayer`.
     MixCollapseNorm {
         mix: SinkhornMix,
         rmsnorm_eps_bits: u32,
@@ -172,7 +195,23 @@ pub enum SinkhornHyperConnectionQuery {
         width: u32,
         capacity: u32,
     },
-    /// The collapse before the final norm and model head, `[rows, H]` BF16.
+    /// `X'_j = bf16(fl(post_j * f32(y)) + sum_i comb[i][j] * f32(X_i))` per
+    /// element, with y the sublayer output `[rows, H]` BF16 and `post`
+    /// `[rows, N]` and `comb` `[rows, N, N]` the F32 values a lagged
+    /// `MixCollapse` stored. The product is rounded once in F32, the stream
+    /// sum is an F32 FMA chain from zero in stream order, their F32 sum is
+    /// rounded once, and that sum alone rounds to BF16. Buffers:
+    /// [`StreamExpandBuffers`] with F32 `post` and `comb`.
+    ExpandF32 {
+        streams: u32,
+        width: u32,
+        capacity: u32,
+    },
+    /// The collapse before the final norm and model head, `[rows, H]` BF16,
+    /// as `mode` states it. `MeanOfStreams` reads the streams
+    /// ([`StreamHeadBuffers`]); `SigmoidWeighted` also reads the F32 `pre`
+    /// `[rows, N]` the last lagged mix-collapse stored
+    /// ([`WeightedStreamHeadBuffers`]).
     Head {
         streams: u32,
         width: u32,
@@ -203,6 +242,7 @@ pub enum SinkhornHyperConnectionQuery {
     /// Writes y, X', the next `post` and `comb`, the collapsed row and the
     /// normed row, bit-identical to the unfused sequence (whose norm sums
     /// in `norm`'s order). The widths a backend fuses are its own limit.
+    /// The mixer's placement is `PerSublayer`.
     AllReduceExpandMixNorm {
         ranks: u32,
         dtype: DType,
@@ -228,6 +268,7 @@ impl Validate for SinkhornHyperConnectionQuery {
                 capacity,
             } => {
                 mix.validate()?;
+                per_sublayer(mix)?;
                 if !valid_eps(rmsnorm_eps_bits) || capacity == 0 {
                     return Err(Refusal(
                         "invalid hyper-connection mix and norm eps or capacity",
@@ -235,6 +276,11 @@ impl Validate for SinkhornHyperConnectionQuery {
                 }
             }
             Self::Expand {
+                streams,
+                width,
+                capacity,
+            }
+            | Self::ExpandF32 {
                 streams,
                 width,
                 capacity,
@@ -246,16 +292,11 @@ impl Validate for SinkhornHyperConnectionQuery {
             Self::Head {
                 streams,
                 width,
-                mode,
                 capacity,
+                ..
             } => {
                 if streams == 0 || width == 0 || capacity == 0 {
                     return Err(Refusal("invalid hyper-connection head geometry"));
-                }
-                if mode == StreamHeadMode::SigmoidWeighted {
-                    return Err(Refusal(
-                        "a sigmoid-weighted stream head is declared but not supported",
-                    ));
                 }
             }
             Self::AllReduceExpandMixNorm {
@@ -267,6 +308,7 @@ impl Validate for SinkhornHyperConnectionQuery {
                 capacity,
             } => {
                 mix.validate()?;
+                per_sublayer(mix)?;
                 if ranks == 0
                     || !matches!(dtype, DType::Bf16 | DType::F32)
                     || !valid_eps(rmsnorm_eps_bits)
@@ -290,14 +332,38 @@ impl Validate for SinkhornHyperConnectionQuery {
     }
 }
 
+/// The fused mix-collapse queries state the per-sublayer placement's BF16
+/// outputs and store no `pre`.
+fn per_sublayer(mix: SinkhornMix) -> Result<(), Refusal> {
+    if mix.placement != HyperConnectionPlacement::PerSublayer {
+        return Err(Refusal(
+            "the fused Sinkhorn mix-collapse queries take the per-sublayer placement",
+        ));
+    }
+    Ok(())
+}
+
 impl NumericalContract for SinkhornHyperConnectionQuery {
     fn numerical_contract_id(&self) -> Result<NumericalContractId, Refusal> {
         self.validate()?;
         let name = match self {
-            Self::MixCollapse { .. } => "row.hc-sinkhorn-mix-collapse.v1",
+            Self::MixCollapse { mix, .. } => match mix.placement {
+                HyperConnectionPlacement::PerSublayer => "row.hc-sinkhorn-mix-collapse.v1",
+                HyperConnectionPlacement::LaggedSinglePass => {
+                    "row.hc-sinkhorn-lagged-mix-collapse-f32.v1"
+                }
+            },
             Self::MixCollapseNorm { .. } => "row.hc-sinkhorn-mix-collapse-rmsnorm-tree256.v1",
             Self::Expand { .. } => "row.hc-sinkhorn-expand-bf16.v1",
-            Self::Head { .. } => "row.hc-stream-mean.v1",
+            Self::ExpandF32 { .. } => "row.hc-sinkhorn-expand-f32.v1",
+            Self::Head {
+                mode: StreamHeadMode::MeanOfStreams,
+                ..
+            } => "row.hc-stream-mean.v1",
+            Self::Head {
+                mode: StreamHeadMode::SigmoidWeighted,
+                ..
+            } => "row.hc-stream-weighted-collapse.v1",
             Self::AllReduceExpandMixNorm {
                 norm: RmsNormReduction::Ordered,
                 ..
@@ -353,6 +419,28 @@ crate::scratch_record! {
 }
 
 crate::scratch_record! {
+    /// A lagged mix-collapse's buffers (`SinkhornHyperConnectionQuery::
+    /// MixCollapse` with `HyperConnectionPlacement::LaggedSinglePass`): the
+    /// BF16 streams `x` `[rows, N * H]`, the sublayer's `mixer` weights and
+    /// the F32 collapse weights `pre_in` `[rows, N]` it reads, and the BF16
+    /// `collapsed` `[rows, H]` and F32 `pre` `[rows, N]`, `post` `[rows, N]`
+    /// and `comb` `[rows, N * N]` it writes. `pre_in` and `pre` do not
+    /// overlap: the host alternates two buffers between sublayers.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct LaggedMixCollapseBuffers {
+        pub x: value,
+        pub mixer: record(MixerWeights),
+        pub pre_in: value,
+        pub collapsed: value,
+        pub pre: value,
+        pub post: value,
+        pub comb: value,
+        pub scratch: record(MixScratch),
+        pub live_rows: value,
+    }
+}
+
+crate::scratch_record! {
     /// A mix-collapse and input norm's buffers
     /// (`SinkhornHyperConnectionQuery::MixCollapseNorm`): a mix-collapse's
     /// buffers, the BF16 input norm weight (`norm_weight`, `[H]`) it reads
@@ -372,9 +460,10 @@ crate::scratch_record! {
 }
 
 crate::scratch_record! {
-    /// An expand's buffers (`SinkhornHyperConnectionQuery::Expand`): it
-    /// reads the BF16 streams `x` `[rows, N * H]`, the BF16 sublayer output
-    /// `y` `[rows, H]` and the `post` and `comb` the mix-collapse wrote, and
+    /// An expand's buffers (`SinkhornHyperConnectionQuery::Expand` and
+    /// `ExpandF32`): it reads the BF16 streams `x` `[rows, N * H]`, the BF16
+    /// sublayer output `y` `[rows, H]` and the `post` and `comb` the
+    /// mix-collapse wrote (BF16 for `Expand`, F32 for `ExpandF32`), and
     /// writes the BF16 expanded streams `output` of `x`'s shape.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct StreamExpandBuffers {
@@ -388,12 +477,27 @@ crate::scratch_record! {
 }
 
 crate::scratch_record! {
-    /// A stream head's buffers (`SinkhornHyperConnectionQuery::Head`): the
+    /// A stream head's buffers (`SinkhornHyperConnectionQuery::Head` with
+    /// `StreamHeadMode::MeanOfStreams`): the
     /// BF16 streams `x` `[rows, N * H]` and the BF16 collapsed `output`
     /// `[rows, H]`.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct StreamHeadBuffers {
         pub x: value,
+        pub output: value,
+        pub live_rows: value,
+    }
+}
+
+crate::scratch_record! {
+    /// A weighted stream head's buffers (`SinkhornHyperConnectionQuery::Head`
+    /// with `StreamHeadMode::SigmoidWeighted`): the BF16 streams `x`
+    /// `[rows, N * H]` and the F32 collapse weights `pre` `[rows, N]` it
+    /// reads, and the BF16 collapsed `output` `[rows, H]` it writes.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct WeightedStreamHeadBuffers {
+        pub x: value,
+        pub pre: value,
         pub output: value,
         pub live_rows: value,
     }
@@ -669,33 +773,120 @@ mod tests {
     }
 
     #[test]
-    fn declared_variants_refuse_by_name() {
+    fn the_lagged_placement_has_its_own_contracts() {
+        let lagged = SinkhornMix {
+            placement: HyperConnectionPlacement::LaggedSinglePass,
+            fn_dtype: DType::F32,
+            norm_eps_bits: 1e-20_f32.to_bits(),
+            ..mix(5120, 1e-6)
+        };
+        lagged.validate().unwrap();
+        let id = |query: SinkhornHyperConnectionQuery| query.numerical_contract_id().unwrap();
+        let name = |name: &str| NumericalContractId::new(name.to_owned());
+        assert_eq!(
+            id(SinkhornHyperConnectionQuery::MixCollapse {
+                mix: lagged,
+                capacity: 8192,
+            }),
+            name("row.hc-sinkhorn-lagged-mix-collapse-f32.v1")
+        );
+        // The per-sublayer mixer of the same math keeps its contract.
+        assert_eq!(
+            id(SinkhornHyperConnectionQuery::MixCollapse {
+                mix: SinkhornMix {
+                    placement: HyperConnectionPlacement::PerSublayer,
+                    ..lagged
+                },
+                capacity: 8192,
+            }),
+            name("row.hc-sinkhorn-mix-collapse.v1")
+        );
+        assert_eq!(
+            id(SinkhornHyperConnectionQuery::ExpandF32 {
+                streams: 4,
+                width: 5120,
+                capacity: 8192,
+            }),
+            name("row.hc-sinkhorn-expand-f32.v1")
+        );
+        assert_eq!(
+            id(SinkhornHyperConnectionQuery::Expand {
+                streams: 4,
+                width: 5120,
+                capacity: 8192,
+            }),
+            name("row.hc-sinkhorn-expand-bf16.v1")
+        );
+        let head = |mode| SinkhornHyperConnectionQuery::Head {
+            streams: 4,
+            width: 5120,
+            mode,
+            capacity: 8192,
+        };
+        assert_eq!(
+            id(head(StreamHeadMode::SigmoidWeighted)),
+            name("row.hc-stream-weighted-collapse.v1")
+        );
+        assert_eq!(
+            id(head(StreamHeadMode::MeanOfStreams)),
+            name("row.hc-stream-mean.v1")
+        );
+        for (streams, width) in [(0, 5120), (4, 0)] {
+            assert!(
+                SinkhornHyperConnectionQuery::ExpandF32 {
+                    streams,
+                    width,
+                    capacity: 1,
+                }
+                .validate()
+                .is_err()
+            );
+        }
+        assert!(
+            SinkhornHyperConnectionQuery::ExpandF32 {
+                streams: 4,
+                width: 5120,
+                capacity: 0,
+            }
+            .validate()
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn the_fused_queries_refuse_the_lagged_placement_by_name() {
         let lagged = SinkhornMix {
             placement: HyperConnectionPlacement::LaggedSinglePass,
             ..mix(4096, 1e-6)
         };
+        let refusal = Err(Refusal(
+            "the fused Sinkhorn mix-collapse queries take the per-sublayer placement",
+        ));
         assert_eq!(
-            lagged.validate(),
-            Err(Refusal(
-                "lagged single-pass hyper-connection placement is declared but not supported"
-            ))
-        );
-        assert_eq!(
-            SinkhornHyperConnectionQuery::Head {
-                streams: 4,
-                width: 4096,
-                mode: StreamHeadMode::SigmoidWeighted,
-                capacity: 1,
+            SinkhornHyperConnectionQuery::MixCollapseNorm {
+                mix: lagged,
+                rmsnorm_eps_bits: 1e-5_f32.to_bits(),
+                capacity: 8,
             }
             .validate(),
-            Err(Refusal(
-                "a sigmoid-weighted stream head is declared but not supported"
-            ))
+            refusal
+        );
+        assert_eq!(
+            SinkhornHyperConnectionQuery::AllReduceExpandMixNorm {
+                ranks: 4,
+                dtype: DType::F32,
+                mix: lagged,
+                rmsnorm_eps_bits: 1e-5_f32.to_bits(),
+                norm: RmsNormReduction::Ordered,
+                capacity: 8,
+            }
+            .validate(),
+            refusal
         );
         assert!(
             SinkhornMix {
                 iterations: 0,
-                ..mix(4096, 1e-6)
+                ..lagged
             }
             .validate()
             .is_err()

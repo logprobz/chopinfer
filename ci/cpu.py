@@ -141,6 +141,7 @@ def steps(target, work, jobs, test_threads, exhaustive=False):
         step("heavy-launcher", PY + ["tests/test_heavy.py"]),
         step("validation-report", PY + ["tests/test_validation.py"], readers, **scoring),
         step("leak-guard", PY + ["tests/leak_guard.py"]),
+        step("leak-guard-push", PY + ["tests/test_leak_guard.py"]),
         step("portable-policy", PY + ["-m", "unittest", "tests/test_portable_runtime_policy.py"]),
         step("quickstart", PY + ["tests/test_quickstart.py"]),
         step("checkpoint-environment", PY + ["tests/test_cpu_environment.py"]),

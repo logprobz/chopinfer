@@ -15,6 +15,7 @@
 //! touched invalid, which the ledger retires.
 
 mod execute;
+mod prefix;
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -87,6 +88,8 @@ pub struct Instance {
     mirrors: [BlockTableMirror<DeepSeek>; 3],
     ops: Ops,
     state: RequestState,
+    /// What the state buffers are sized for.
+    extent: Extent,
     /// Run the lowered stages alone (`PARTIAL`).
     partial: bool,
     /// Each rank's decode and verify graphs by bucket.
@@ -142,7 +145,7 @@ impl Instance {
         let _ = self.services.log(format!("{NAME}: {message}").as_bytes());
     }
 
-    fn acquire(&mut self, verify_rows: u32) -> Result<(), BundleAbiError> {
+    fn acquire(&mut self) -> Result<(), BundleAbiError> {
         let services = &self.services;
         let held = &mut self.held;
         let log = Log {
@@ -217,11 +220,7 @@ impl Instance {
             &ranks,
             held,
         )?;
-        let extent = Extent {
-            served: items.get(),
-            bucket: items.capacity(),
-            verify_rows,
-        };
+        let extent = self.extent;
         for &(context, _, _) in &ranks {
             let mut resolved = BTreeMap::new();
             for cubin in crate::CUBINS {
@@ -329,9 +328,14 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         ],
         ops,
         state,
+        extent: Extent {
+            served: items.get(),
+            bucket: items.capacity(),
+            verify_rows,
+        },
         partial,
     };
-    if let Err(error) = instance.acquire(verify_rows) {
+    if let Err(error) = instance.acquire() {
         instance.log(&format!("create failed: {error}"));
         let result = status(error);
         return Err(Failed::releasing(instance, result));

@@ -32,12 +32,9 @@ pub const RING_HEADROOM: u64 = 8;
 /// many: the group's first `ratio - 1` rows and a verify item's rows.
 pub const TAIL_ROWS: u64 = 8;
 /// The snapshot header: the shared layout
-/// (`bundle_runtime::prefix::HeaderLayout::V1`), then the Engram history.
-pub const HEADER_BYTES: u64 =
-    bundle_runtime::prefix::HeaderLayout::V1.bytes() + ENGRAM_HEADER_BYTES;
-/// The Engram n-gram history the host hashes from (the last
-/// `max_ngram - 1` token ids and their count), padded to 16-byte vectors.
-pub const ENGRAM_HEADER_BYTES: u64 = 16;
+/// (`bundle_runtime::prefix::HeaderLayout::V1`). The Engram n-gram history
+/// needs no room: a restore names every prefix token.
+pub const HEADER_BYTES: u64 = bundle_runtime::prefix::HeaderLayout::V1.bytes();
 
 /// How the KV pages and rings store their values. Both hold the same
 /// values: every stored value is the reference's fake-quantized one, which

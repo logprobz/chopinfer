@@ -16,7 +16,7 @@ use runtime_bundle_abi::*;
 use crate::config::{KV_LAYOUTS, KvLayout};
 use crate::shape::Shape;
 
-const KV_PAGES: u64 = 64;
+const KV_PAGES: u64 = 256;
 const IMAGE_SLOT: u32 = 1_000_000;
 const KV_SLOT: u32 = 2_000_000;
 const STATE_SLOT: u32 = 3_000_000;
@@ -34,6 +34,9 @@ pub(crate) struct FakeHost {
     speculation: Cell<Option<(u32, u32)>>,
     /// The per-item state bytes create asked for.
     state_bytes: Cell<u64>,
+    /// Every upload's bytes by its destination, which a download of the
+    /// same span reads back (a snapshot's header).
+    uploads: RefCell<std::collections::BTreeMap<(u64, u64), Vec<u8>>>,
 }
 
 pub(crate) type Host = Backend<FakeHost>;
@@ -91,6 +94,7 @@ impl FakeHost {
             kv,
             speculation: Cell::new(None),
             state_bytes: Cell::new(0),
+            uploads: RefCell::new(std::collections::BTreeMap::new()),
         }))
     }
 
@@ -118,9 +122,28 @@ impl FakePackage for FakeHost {
     fn read_back(
         &self,
         destination: &mut [u8],
-        _source: DeviceBufferSpanV1,
+        source: DeviceBufferSpanV1,
     ) -> HostServiceResultV1<()> {
-        destination.fill(0);
+        match self
+            .uploads
+            .borrow()
+            .get(&(source.buffer.raw, source.offset))
+        {
+            Some(bytes) if bytes.len() == destination.len() => destination.copy_from_slice(bytes),
+            _ => destination.fill(0),
+        }
+        Ok(())
+    }
+    fn on_upload(
+        &self,
+        _stream: BundleStreamHandleV1,
+        destination: DeviceBufferSpanV1,
+        source: &[u8],
+    ) -> HostServiceResultV1<()> {
+        self.uploads.borrow_mut().insert(
+            (destination.buffer.raw, destination.offset),
+            source.to_vec(),
+        );
         Ok(())
     }
     fn open_compiled_image(&self, role: &[u8]) -> HostServiceResultV1<BundleCompiledImageHandleV1> {
@@ -238,7 +261,7 @@ impl FakePackage for FakeHost {
 }
 
 pub(crate) fn api() -> BundleApiV1 {
-    BundleApiV1::new_with_request_retirement(crate::BUNDLE_DEEPSEEK41_EXTENDED_API_V1)
+    BundleApiV1::new_with_prefix_state_slot(crate::BUNDLE_DEEPSEEK41_EXTENDED_API_V1)
         .expect("bundle API")
 }
 
@@ -387,5 +410,43 @@ fn create_refuses_kernels_that_miss_a_family() {
         "{:?}",
         host.logs.borrow()
     );
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
+/// A request's rings and tails reach snapshot pages after a prompt and
+/// come back into another slot under a new request, which then decodes; a
+/// restore that names other tokens is refused and leaves the slot free.
+#[test]
+fn prefix_snapshots_round_trip_through_the_pages() {
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+    let mut instance = create(&host, 4);
+    let mut views = Views::default();
+    instance
+        .execute(&prompt(7, 0, 0, 70, true), &mut views)
+        .unwrap();
+    instance.commit().unwrap();
+    let count = instance.describe_prefix_state().unwrap();
+    // 40 rings of 128 cells and three tails' open rows.
+    assert!(count > 0);
+    let pages = (0..count).map(|page| 32 + page).collect::<Vec<_>>();
+    instance.capture_prefix_state(7, 70, &pages).unwrap();
+    instance.retire_request(7).unwrap();
+    let tokens = (0..70).collect::<Vec<u32>>();
+    assert!(
+        instance
+            .restore_prefix_state_in_slot(9, &tokens[..69], &pages, 1)
+            .is_err()
+    );
+    instance
+        .restore_prefix_state_in_slot(9, &tokens, &pages, 1)
+        .unwrap();
+    instance
+        .execute(&decode(&[(9, 1, 70, 5)]), &mut views)
+        .unwrap();
+    instance.commit().unwrap();
+    assert_eq!(views.rows(), 2);
+    instance.retire_request(9).unwrap();
+    instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
 }

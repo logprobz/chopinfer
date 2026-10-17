@@ -70,8 +70,9 @@ use kernel_core::rows::{
     GroupedNormBuffers, InjectBuffers, LogitsBuffers, MixBuffers, NgramBuffers, PleGateBuffers,
 };
 use kernel_core::sinkhorn_hyper_connection::{
-    MixCollapseBuffers, MixCollapseNormBuffers, ReduceExpandMixNormBuffers,
-    SinkhornHyperConnectionQuery, StreamExpandBuffers, StreamHeadBuffers,
+    LaggedMixCollapseBuffers, MixCollapseBuffers, MixCollapseNormBuffers,
+    ReduceExpandMixNormBuffers, SinkhornHyperConnectionQuery, StreamExpandBuffers,
+    StreamHeadBuffers, WeightedStreamHeadBuffers,
 };
 
 use crate::linear::{self, channel_decay};
@@ -99,6 +100,7 @@ mod row_copies;
 mod rows;
 mod select;
 mod sinkhorn;
+mod sinkhorn_lagged;
 
 pub use attention::AttentionEntries;
 pub use bf16_all_reduce::{
@@ -439,6 +441,17 @@ impl Sm120 {
         entry: crate::sinkhorn_hc::mix_norm_tree::Entry,
     ) -> Self {
         self.sinkhorn.mix_norm.push(entry);
+        self
+    }
+
+    /// The model's lagged Sinkhorn entries (`sinkhorn_hc::lagged::entries`):
+    /// the lagged mix-collapse, the F32 expand and the sigmoid-weighted
+    /// head. Probe entries serve no op.
+    pub fn with_sinkhorn_lagged(
+        mut self,
+        entries: impl IntoIterator<Item = crate::sinkhorn_hc::lagged::Entry>,
+    ) -> Self {
+        self.sinkhorn.lagged.extend(entries);
         self
     }
 
@@ -896,12 +909,25 @@ impl Backend for Sm120 {
         sinkhorn::mix_collapse_norm(&self.sinkhorn, op, need)
     }
 
+    fn sinkhorn_lagged_mix_collapse(
+        &self,
+        op: &SinkhornHyperConnectionQuery,
+        need: Need,
+    ) -> Result<Prepared<LaggedMixCollapseBuffers<View>>, Refused> {
+        sinkhorn_lagged::mix_collapse(&self.sinkhorn, op, need)
+    }
+
     fn sinkhorn_expand(
         &self,
         op: &SinkhornHyperConnectionQuery,
         need: Need,
     ) -> Result<Prepared<StreamExpandBuffers<View>>, Refused> {
-        sinkhorn::expand(&self.sinkhorn, op, need)
+        match op {
+            SinkhornHyperConnectionQuery::ExpandF32 { .. } => {
+                sinkhorn_lagged::expand(&self.sinkhorn, op, need)
+            }
+            _ => sinkhorn::expand(&self.sinkhorn, op, need),
+        }
     }
 
     fn sinkhorn_head(
@@ -910,6 +936,14 @@ impl Backend for Sm120 {
         need: Need,
     ) -> Result<Prepared<StreamHeadBuffers<View>>, Refused> {
         sinkhorn::head(&self.sinkhorn, op, need)
+    }
+
+    fn sinkhorn_weighted_head(
+        &self,
+        op: &SinkhornHyperConnectionQuery,
+        need: Need,
+    ) -> Result<Prepared<WeightedStreamHeadBuffers<View>>, Refused> {
+        sinkhorn_lagged::head(&self.sinkhorn, op, need)
     }
 
     fn sinkhorn_reduce_expand_mix_norm(

@@ -64,6 +64,9 @@ pub(super) struct Selection {
     pub(super) mix_norm: Vec<mix_norm_tree::Entry>,
     /// Comm epilogues over the all-reduce's F32 sums.
     pub(super) epilogues: Vec<sinkhorn_split::Entry>,
+    /// The lagged engine's mix-collapse, F32 expand and weighted head
+    /// entries (`super::sinkhorn_lagged`).
+    pub(super) lagged: Vec<sinkhorn_hc::lagged::Entry>,
 }
 
 /// The mix-collapse's numerics, whichever entry runs it.
@@ -87,7 +90,7 @@ fn capacity(query: Query) -> u32 {
 
 /// `query` with no row bound: an entry serves the queries equal to its own
 /// but for a capacity within its own.
-fn uncapped(query: Query) -> Query {
+pub(super) fn uncapped(query: Query) -> Query {
     match query {
         Query::MixCollapse { mix, .. } => Query::MixCollapse { mix, capacity: 0 },
         Query::MixCollapseNorm {
@@ -146,7 +149,7 @@ fn unserved(refusal: Option<Refused>, op: &str) -> Refused {
 }
 
 /// Refuses launches past `op`'s row bound, before any entry is chosen.
-fn check_need(op: Query, need: Need) -> Result<(), Refused> {
+pub(super) fn check_need(op: Query, need: Need) -> Result<(), Refused> {
     let bound = capacity(op);
     if need.capacity == 0 || need.capacity > bound {
         return Err(Refused::Rule(format!(
@@ -160,7 +163,7 @@ fn check_need(op: Query, need: Need) -> Result<(), Refused> {
 /// builder accepts it at, or the builder's refusal; its symbol; and what it
 /// launches (its symbol and the instantiation and argument shape it
 /// launches with, without its profile).
-struct Candidate<E> {
+pub(super) struct Candidate<E> {
     entry: E,
     capacity: Result<u32, Refusal>,
     symbol: String,
@@ -170,7 +173,12 @@ struct Candidate<E> {
 }
 
 impl<E> Candidate<E> {
-    fn new(entry: E, symbol: &str, launches: String, capacity: Result<u32, Refusal>) -> Self {
+    pub(super) fn new(
+        entry: E,
+        symbol: &str,
+        launches: String,
+        capacity: Result<u32, Refusal>,
+    ) -> Self {
         Candidate {
             entry,
             capacity,
@@ -181,13 +189,13 @@ impl<E> Candidate<E> {
     }
 
     /// The candidate declaring `guarantees`.
-    fn claims(self, guarantees: Invariance) -> Self {
+    pub(super) fn claims(self, guarantees: Invariance) -> Self {
         Candidate { guarantees, ..self }
     }
 }
 
 /// What [`fitting`] found among one kind of entry.
-enum Fitting<E> {
+pub(super) enum Fitting<E> {
     Chosen(E),
     /// No entry serves the op: none runs its geometry (`None`), or each
     /// that does is refused by its builder or holds too few rows.
@@ -203,7 +211,7 @@ enum Fitting<E> {
 /// differently, so they are refused by name in sorted order. A need with
 /// claims the entries' declarations do not keep is refused as inexact
 /// before any tie.
-fn fitting<E: Clone + std::fmt::Debug>(
+pub(super) fn fitting<E: Clone + std::fmt::Debug>(
     mut candidates: Vec<Candidate<E>>,
     need: Need,
     op: &str,
@@ -243,7 +251,7 @@ fn fitting<E: Clone + std::fmt::Debug>(
 }
 
 /// The chosen entry, or why none serves the op.
-fn chosen<E>(fitting: Fitting<E>, op: &str) -> Result<E, Refused> {
+pub(super) fn chosen<E>(fitting: Fitting<E>, op: &str) -> Result<E, Refused> {
     match fitting {
         Fitting::Chosen(entry) => Ok(entry),
         Fitting::Unserved(refusal) => Err(unserved(refusal, op)),
@@ -252,7 +260,7 @@ fn chosen<E>(fitting: Fitting<E>, op: &str) -> Result<E, Refused> {
 
 /// The plan of each row count from one to `capacity`, checked against
 /// SM120 when the op is prepared.
-fn plans(
+pub(super) fn plans(
     capacity: u32,
     plan: impl Fn(u32) -> Result<LaunchPlan, Refusal>,
 ) -> Result<Vec<LaunchPlan>, Refusal> {
@@ -266,7 +274,7 @@ fn plans(
 }
 
 /// The prepared plan of `counts.rows`.
-fn planned(plans: &[LaunchPlan], counts: Counts) -> Result<LaunchPlan, Refusal> {
+pub(super) fn planned(plans: &[LaunchPlan], counts: Counts) -> Result<LaunchPlan, Refusal> {
     counts
         .rows
         .checked_sub(1)
@@ -275,19 +283,19 @@ fn planned(plans: &[LaunchPlan], counts: Counts) -> Result<LaunchPlan, Refusal> 
         .ok_or(Refusal("Sinkhorn rows outside the prepared capacity"))
 }
 
-fn dense(rows: u32, elements: u64, bytes: u64) -> Result<u64, Refusal> {
+pub(super) fn dense(rows: u32, elements: u64, bytes: u64) -> Result<u64, Refusal> {
     u64::from(rows)
         .checked_mul(elements)
         .and_then(|n| n.checked_mul(bytes))
         .ok_or(Refusal("Sinkhorn buffer bytes overflow"))
 }
 
-fn buffer(view: View) -> Argument {
+pub(super) fn buffer(view: View) -> Argument {
     Argument::DeviceBuffer(view.handle)
 }
 
 /// Checks a mixer's weights.
-fn check_mixer(mix: SinkhornMix, weights: &MixerWeights<View>) -> Result<(), Refusal> {
+pub(super) fn check_mixer(mix: SinkhornMix, weights: &MixerWeights<View>) -> Result<(), Refusal> {
     let fn_bytes = if mix.fn_dtype == DType::F32 { 4 } else { 2 };
     let mixes = u64::from(mix.mixes());
     weights

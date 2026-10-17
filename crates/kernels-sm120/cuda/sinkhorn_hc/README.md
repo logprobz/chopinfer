@@ -358,3 +358,58 @@ served tile (the butterfly levels after the halvings in reverse order; the
 live count read before the dependency wait). Its timing test runs the
 one-CTA entry, the split and every tile at prefill row counts from 64 to
 8192, around the schedule's edges and the 4-row tile's one-round limit.
+
+## Lagged placement
+
+`lagged.cuh` holds the unfused arms of the lagged single-pass placement
+(`HyperConnectionPlacement::LaggedSinglePass`): `mix_collapse_lagged`, the
+F32 expand `expand_f32` (`ExpandF32`) and the sigmoid-weighted head
+`weighted_head`. It includes `sinkhorn_hc.cuh` unchanged, so the
+per-sublayer cubins keep their source closure. The planner is
+`src/sinkhorn_hc/lagged.rs`; the lab profile `sinkhorn-hc-lagged-4x5120`
+(tag `hcl4x5120`) holds 4 streams of 5120 (the row's streams fill the 40 KiB
+shared-memory row exactly), 20 iterations, eps 1e-6, norm eps 1e-20 and F32
+`fn`, at a capacity of 8192 rows.
+
+| Entry | Grid | Parameters |
+| --- | --- | --- |
+| `lagged_mix_collapse` | `(rows)` | `x [rows, N, H]` BF16, `fn`, `base`, `scale`, `pre_in [rows, N]` F32, `collapsed [rows, H]` BF16, `pre [rows, N]` F32, `post [rows, N]` F32, `comb [rows, N, N]` F32, `live_rows` |
+| `lagged_mix_collapse_probe` (lab only) | `(rows)` | as above, then `projected`, `rstd` and `cells` as `mix_collapse_probe`, before `live_rows` |
+| `expand_f32` | `(ceil(H/512), rows)` | `x`, `y` BF16, `post [rows, N]` and `comb [rows, N, N]` F32, `out` BF16 (must not alias `x`), `live_rows` |
+| `weighted_head` | `(ceil(H/512), rows)` | `x` BF16, `pre [rows, N]` F32, `out [rows, H]` BF16, `live_rows` |
+
+`pre_in` and `pre` must not overlap; the host alternates two buffers between
+sublayers and writes the one-hot `(1, 0, ..., 0)` before the first.
+
+The lagged mix-collapse is `mix_collapse` statement for statement in its
+staging, sum of squares, rstd, projection chains, pre, post and Sinkhorn.
+It differs in three places: it reads the row's collapse weights from
+`pre_in` (published by the staging barrier) instead of using its own `pre`;
+it stores `pre`, `post` and `comb` as the F32 values, unrounded; and the
+collapse is the same FMA chain from zero in stream order over the given
+weights. `expand_f32` computes
+`X'_j = bf16(fl(post_j * y) + sum_i comb[i][j] X_i)` with the stream sum an
+FMA chain from zero in stream order and one rounding to BF16;
+`weighted_head` computes `bf16(sum_i pre_i X_i)` as an FMA chain from zero
+in stream order. Both are exact functions of their operands.
+
+`tests/sinkhorn_hc_lagged_compile.rs` builds and audits the cubins.
+`crates/kernel-lab/tests/sinkhorn_hc_lagged.rs` holds the GPU tests, at 1,
+32, 192 and 8192 rows and on the extreme common-offset input:
+
+- the probe's projection within 2^-22 K S at K = 20,480 and rstd within its
+  bound;
+- the collapsed row bitwise equal to the exact collapse with `pre_in`;
+  `pre` and `post` within their F32 bounds from the streams and from the
+  kernel's own logits; the comb by its parts (cells within their bound, the
+  F32 comb bitwise equal to `sinkhorn_f32` of the cells);
+- the per-sublayer twin probe (the same mixer, per-sublayer placement) on
+  the same streams: projection, rstd and cells bitwise equal, its BF16 post
+  and comb the lagged F32 values rounded once, its collapsed row the exact
+  collapse with the lagged entry's stored `pre`;
+- the served entry bitwise equal to the probe in poisoned buffers;
+- both F32 expands and the head bitwise against the exact forms;
+- poisoned eager, relaunch, graph and PDL replays at the live counts of
+  `poison::live_counts`.
+
+The conformance kit's case is `kit::cases::sinkhorn_lagged`.

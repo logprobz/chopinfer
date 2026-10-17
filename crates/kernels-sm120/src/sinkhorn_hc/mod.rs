@@ -22,6 +22,7 @@
 //! entries write them at every row count). The lab's probes declare
 //! nothing: they serve no op.
 
+pub mod lagged;
 pub mod mix_norm;
 pub mod mix_norm_batched;
 pub mod mix_norm_exact;
@@ -82,25 +83,52 @@ pub const MAX_WIDTH: u32 = 16_384;
 /// Most Sinkhorn iterations.
 pub const MAX_ITERATIONS: u32 = 64;
 
+/// The limits of the per-sublayer kernels (this module's entries and the
+/// split, tiled and fused ones): [`shape_limits`], and the per-sublayer
+/// placement's BF16 mixing. The lagged placement's mix-collapse, the F32
+/// expand and the sigmoid-weighted head are the lagged engine's
+/// ([`lagged`]) and are refused here by name.
+pub fn limits(query: Query) -> Result<(), Refusal> {
+    query.validate()?;
+    match query {
+        Query::MixCollapse { mix, .. }
+        | Query::MixCollapseNorm { mix, .. }
+        | Query::AllReduceExpandMixNorm { mix, .. }
+            if mix.placement != HyperConnectionPlacement::PerSublayer =>
+        {
+            return Err(Refusal(
+                "SM120's per-sublayer Sinkhorn kernels take the per-sublayer placement; the lagged engine serves the lagged one",
+            ));
+        }
+        Query::ExpandF32 { .. } => {
+            return Err(Refusal(
+                "SM120's per-sublayer Sinkhorn kernels serve the BF16 expand; the lagged engine serves the F32 one",
+            ));
+        }
+        Query::Head {
+            mode: StreamHeadMode::SigmoidWeighted,
+            ..
+        } => {
+            return Err(Refusal(
+                "SM120's per-sublayer Sinkhorn kernels serve the mean-of-streams head; the lagged engine serves the sigmoid-weighted one",
+            ));
+        }
+        _ => {}
+    }
+    shape_limits(query)
+}
+
 /// The limits every SM120 Sinkhorn kernel shares, on top of the contract's
 /// math (the static assertions of `sinkhorn_hc.cuh`): 2 to [`MAX_STREAMS`]
 /// streams; a mixer's width a multiple of [`CHAIN`] up to [`MAX_WIDTH`]
 /// with 1 to [`MAX_ITERATIONS`] iterations; and a fused epilogue's ranks
-/// within the comm pointer arrays' `MAX_COMM_RANKS` slots. The kernels
-/// implement the per-sublayer placement's BF16 mixing: the lagged
-/// placement's mix-collapse, the F32 expand and the sigmoid-weighted head
-/// are refused by name.
-pub fn limits(query: Query) -> Result<(), Refusal> {
+/// within the comm pointer arrays' `MAX_COMM_RANKS` slots.
+pub fn shape_limits(query: Query) -> Result<(), Refusal> {
     query.validate()?;
     let streams = match query {
         Query::MixCollapse { mix, .. }
         | Query::MixCollapseNorm { mix, .. }
         | Query::AllReduceExpandMixNorm { mix, .. } => {
-            if mix.placement != HyperConnectionPlacement::PerSublayer {
-                return Err(Refusal(
-                    "SM120 Sinkhorn mixers implement the per-sublayer placement",
-                ));
-            }
             if !mix.width.is_multiple_of(CHAIN)
                 || mix.width > MAX_WIDTH
                 || mix.iterations > MAX_ITERATIONS
@@ -111,20 +139,9 @@ pub fn limits(query: Query) -> Result<(), Refusal> {
             }
             mix.streams
         }
-        Query::ExpandF32 { .. } => {
-            return Err(Refusal(
-                "SM120 Sinkhorn kernels do not implement the F32 expand",
-            ));
-        }
-        Query::Head {
-            mode: StreamHeadMode::SigmoidWeighted,
-            ..
-        } => {
-            return Err(Refusal(
-                "SM120 Sinkhorn kernels do not implement the sigmoid-weighted head",
-            ));
-        }
-        Query::Expand { streams, .. } | Query::Head { streams, .. } => streams,
+        Query::Expand { streams, .. }
+        | Query::ExpandF32 { streams, .. }
+        | Query::Head { streams, .. } => streams,
     };
     if !(2..=MAX_STREAMS).contains(&streams) {
         return Err(Refusal("SM120 Sinkhorn kernels take 2 to 8 streams"));
@@ -712,7 +729,7 @@ mod tests {
                 Op::MixCollapse { probe: false }
             ),
             Err(Refusal(
-                "SM120 Sinkhorn mixers implement the per-sublayer placement"
+                "SM120's per-sublayer Sinkhorn kernels take the per-sublayer placement; the lagged engine serves the lagged one"
             ))
         );
         assert_eq!(
@@ -725,7 +742,7 @@ mod tests {
                 Op::Expand
             ),
             Err(Refusal(
-                "SM120 Sinkhorn kernels do not implement the F32 expand"
+                "SM120's per-sublayer Sinkhorn kernels serve the BF16 expand; the lagged engine serves the F32 one"
             ))
         );
         assert_eq!(
@@ -739,7 +756,7 @@ mod tests {
                 Op::Head
             ),
             Err(Refusal(
-                "SM120 Sinkhorn kernels do not implement the sigmoid-weighted head"
+                "SM120's per-sublayer Sinkhorn kernels serve the mean-of-streams head; the lagged engine serves the sigmoid-weighted one"
             ))
         );
     }

@@ -14,7 +14,7 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::os::windows::fs::OpenOptionsExt;
 use std::path::{Component, Path};
 
-use fancy_regex::Regex;
+use fancy_regex::{Expr, Regex};
 use json::Value;
 use runtime_weights::sha256_bytes;
 use unicode_normalization::UnicodeNormalization;
@@ -403,12 +403,146 @@ struct TrieNode {
     terminal: Option<(u32, String)>,
 }
 
-/// These byte-level patterns differ only in whether marks join letters.
-/// Scan their whitespace branch without lookahead, then restore its exact end.
+/// The alternatives that end the byte-level split patterns. Together they
+/// split a whitespace run through its last line break; without one, before
+/// its last character when text follows; otherwise whole. The lookahead
+/// backtracks once per character, so a long run exceeds the regex stack.
+const WHITESPACE_TAIL: [&str; 3] = [r"\s*[\r\n]+", r"\s+(?!\S)", r"\s+"];
+
+/// A pattern whose top-level alternation ends with `WHITESPACE_TAIL` runs
+/// with that tail replaced by one capturing `\s+`, and a run that group
+/// matched is cut where the tail would have ended it.
 #[derive(Debug)]
 struct PretokenizerPattern {
     regex: Regex,
-    whitespace_lookahead: bool,
+    whitespace_group: Option<usize>,
+}
+
+impl PretokenizerPattern {
+    fn new(pattern: &str) -> Result<Self> {
+        let compile = |pattern: &str| {
+            Regex::new(pattern).map_err(|error| {
+                TokenizerError::new(format!("invalid pretokenizer regex: {error}"))
+            })
+        };
+        if let Some(rewritten) = whitespace_tail_rewrite(pattern) {
+            let regex = compile(&rewritten)?;
+            let whitespace_group = regex.captures_len() - 1;
+            return Ok(Self {
+                regex,
+                whitespace_group: Some(whitespace_group),
+            });
+        }
+        Ok(Self {
+            regex: compile(pattern)?,
+            whitespace_group: None,
+        })
+    }
+
+    /// Appends the pieces of `piece` an `Isolated` split gives: the matches
+    /// and the text between them.
+    fn split<'a>(&self, piece: &'a str, split: &mut Vec<&'a str>) -> Result<()> {
+        let failed = |error| TokenizerError::new(format!("pretokenizer regex failed: {error}"));
+        let mut end = 0;
+        let Some(group) = self.whitespace_group else {
+            for matched in self.regex.find_iter(piece) {
+                let matched = matched.map_err(failed)?;
+                if matched.start() > end {
+                    split.push(&piece[end..matched.start()]);
+                }
+                if matched.end() > matched.start() {
+                    split.push(matched.as_str());
+                }
+                end = matched.end();
+            }
+            if end < piece.len() {
+                split.push(&piece[end..]);
+            }
+            return Ok(());
+        };
+        // As `find_iter`, but each search resumes where the cut match ends.
+        let mut search = 0;
+        let mut last_match = None;
+        while search <= piece.len() {
+            let Some(matched) = self.regex.find_from_pos(piece, search).map_err(failed)? else {
+                break;
+            };
+            let start = matched.start();
+            let mut stop = matched.end();
+            if start == stop {
+                search = piece[stop..]
+                    .chars()
+                    .next()
+                    .map_or(piece.len() + 1, |next| stop + next.len_utf8());
+                if last_match == Some(stop) {
+                    continue;
+                }
+            } else {
+                let text = matched.as_str();
+                if text.chars().all(char::is_whitespace)
+                    && self
+                        .regex
+                        .captures_from_pos(piece, start)
+                        .map_err(failed)?
+                        .is_some_and(|captures| captures.get(group).is_some())
+                {
+                    if let Some(line_break) = text.rfind(['\r', '\n']) {
+                        stop = start + line_break + 1;
+                    } else if stop < piece.len() {
+                        let last = text.chars().next_back().expect("nonempty match");
+                        if text.len() > last.len_utf8() {
+                            stop -= last.len_utf8();
+                        }
+                    }
+                }
+                search = stop;
+            }
+            last_match = Some(stop);
+            if start > end {
+                split.push(&piece[end..start]);
+            }
+            if stop > start {
+                split.push(&piece[start..stop]);
+            }
+            end = stop;
+        }
+        if end < piece.len() {
+            split.push(&piece[end..]);
+        }
+        Ok(())
+    }
+}
+
+/// `pattern` with its trailing `WHITESPACE_TAIL` alternatives replaced by
+/// `(\s+)`, when its parsed top-level alternation ends with them, however
+/// they are spelled (a class may hold literal line breaks), and the rewrite
+/// parses to the same earlier alternatives.
+fn whitespace_tail_rewrite(pattern: &str) -> Option<String> {
+    let alternatives = |pattern: &str| match Expr::parse_tree(pattern).ok()?.expr {
+        Expr::Alt(alternatives) => Some(alternatives),
+        _ => None,
+    };
+    let original = alternatives(pattern)?;
+    let kept = original.len().checked_sub(WHITESPACE_TAIL.len())?;
+    if kept == 0 {
+        return None;
+    }
+    for (alternative, expected) in original[kept..].iter().zip(WHITESPACE_TAIL) {
+        if *alternative != Expr::parse_tree(expected).ok()?.expr {
+            return None;
+        }
+    }
+    let group = Expr::parse_tree(r"(\s+)").ok()?.expr;
+    pattern
+        .rmatch_indices('|')
+        .map(|(index, _)| format!(r"{}|(\s+)", &pattern[..index]))
+        .find(|rewritten| {
+            alternatives(rewritten).is_some_and(|parsed| {
+                parsed.len() == kept + 1
+                    && parsed[..kept] == original[..kept]
+                    && parsed[kept] == group
+            })
+        })
 }
 
 #[derive(Debug)]
@@ -628,48 +762,7 @@ impl Tokenizer {
                 split
                     .try_reserve(piece.len())
                     .map_err(|_| TokenizerError::new("pretokenizer allocation failed"))?;
-                let mut end = 0;
-                let mut matches = pattern.regex.find_iter(piece);
-                loop {
-                    let matched = if pattern.whitespace_lookahead {
-                        pattern.regex.find_from_pos(piece, end)
-                    } else {
-                        matches.next().transpose()
-                    };
-                    let Some(matched) = matched.map_err(|error| {
-                        TokenizerError::new(format!("pretokenizer regex failed: {error}"))
-                    })?
-                    else {
-                        break;
-                    };
-                    let mut matched_end = matched.end();
-                    if pattern.whitespace_lookahead
-                        && matched.as_str().chars().all(char::is_whitespace)
-                    {
-                        if let Some(newline) = matched.as_str().rfind(['\r', '\n']) {
-                            matched_end = matched.start() + newline + 1;
-                        } else if matched_end < piece.len() {
-                            let last = matched
-                                .as_str()
-                                .chars()
-                                .next_back()
-                                .expect("nonempty match");
-                            if matched.as_str().len() > last.len_utf8() {
-                                matched_end -= last.len_utf8();
-                            }
-                        }
-                    }
-                    if matched.start() > end {
-                        split.push(&piece[end..matched.start()]);
-                    }
-                    if matched.end() > matched.start() {
-                        split.push(&piece[matched.start()..matched_end]);
-                    }
-                    end = matched_end;
-                }
-                if end < piece.len() {
-                    split.push(&piece[end..]);
-                }
+                pattern.split(piece, &mut split)?;
             }
             pieces = split;
         }
@@ -1539,23 +1632,7 @@ fn validate_pretokenizer(
         expect_bool(split, "invert", false)?;
         let pattern = required(split, "pattern")?.object("split pattern")?;
         expect_string(pattern, "Regex", expected)?;
-        let whitespace_lookahead = [
-            r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+",
-            r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+|\p{N}| ?[^\s\p{L}\p{M}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+",
-        ].contains(&expected.as_str());
-        let regular;
-        let execution_pattern = if whitespace_lookahead {
-            regular = expected.replace(r"|\s*[\r\n]+|\s+(?!\S)|\s+", r"|\s+");
-            regular.as_str()
-        } else {
-            expected.as_str()
-        };
-        patterns.push(PretokenizerPattern {
-            regex: Regex::new(execution_pattern).map_err(|error| {
-                TokenizerError::new(format!("invalid pretokenizer regex: {error}"))
-            })?,
-            whitespace_lookahead,
-        });
+        patterns.push(PretokenizerPattern::new(expected)?);
     }
     validate_byte_level(
         &values[values.len() - 1],
@@ -2855,6 +2932,285 @@ mod tests {
         let contract =
             fixture_contract_counts_with_pattern(&definition, &configuration, 265, 265, 6, "[,]");
         (definition, configuration, contract)
+    }
+
+    /// Byte-level split patterns that end with `WHITESPACE_TAIL`: three
+    /// published spellings with escaped line breaks, the last split of the
+    /// whitespace-tail fixture with literal ones, and alternatives that test
+    /// the rewrite (an earlier whitespace match, capture groups, an empty
+    /// match, a lookbehind).
+    const TAIL_PATTERNS: [&str; 8] = [
+        r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+",
+        r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+|\p{N}| ?[^\s\p{L}\p{M}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+",
+        r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+",
+        "[!\"#$%&'()*+,\\-./:;<=>?@\\[\\\\\\]^_`{|}~][A-Za-z]+|[^\r\n\\p{L}\\p{P}\\p{S}]?[\\p{L}\\p{M}]+| ?[\\p{P}\\p{S}]+[\r\n]*|\\s*[\r\n]+|\\s+(?!\\S)|\\s+",
+        r"[ \t]{2}|x+|\s*[\r\n]+|\s+(?!\S)|\s+",
+        r"(a)(b)?|\s*[\r\n]+|\s+(?!\S)|\s+",
+        r"\d*|\s*[\r\n]+|\s+(?!\S)|\s+",
+        r"(?<=x)\s|\p{L}+|\s*[\r\n]+|\s+(?!\S)|\s+",
+    ];
+
+    /// The pattern as written, without the rewrite.
+    fn lookahead_pattern(pattern: &str) -> PretokenizerPattern {
+        PretokenizerPattern {
+            regex: Regex::new(pattern).unwrap(),
+            whitespace_group: None,
+        }
+    }
+
+    fn tail_pattern(pattern: &str) -> PretokenizerPattern {
+        let pattern = PretokenizerPattern::new(pattern).unwrap();
+        assert!(pattern.whitespace_group.is_some());
+        pattern
+    }
+
+    fn split_text(pattern: &PretokenizerPattern, text: &str) -> Result<Vec<String>> {
+        let mut split = Vec::new();
+        pattern.split(text, &mut split)?;
+        Ok(split.into_iter().map(str::to_owned).collect())
+    }
+
+    #[test]
+    fn whitespace_tail_rewrite_requires_the_top_level_alternatives() {
+        for pattern in TAIL_PATTERNS {
+            let rewritten = whitespace_tail_rewrite(pattern).unwrap();
+            let prefix = rewritten.strip_suffix(r"|(\s+)").unwrap();
+            assert!(pattern.starts_with(prefix), "{pattern}");
+            assert_eq!(
+                pattern[prefix.len()..]
+                    .chars()
+                    .filter(|c| *c == '|')
+                    .count(),
+                3
+            );
+        }
+        assert_eq!(
+            PretokenizerPattern::new(TAIL_PATTERNS[5])
+                .unwrap()
+                .whitespace_group,
+            Some(3)
+        );
+        for pattern in [
+            r"\s*[\r\n]+|\s+(?!\S)|\s+",
+            r"(?:x|\s*[\r\n]+|\s+(?!\S)|\s+)",
+            r"x\|\s*[\r\n]+|\s+(?!\S)|\s+",
+            r"x|\s*[\r\n]+|\s+(?!\S)|\s+x",
+            r"x|\s*[\r\n]+|\s+(?!\s)|\s+",
+            r"x|\s*[\n]+|\s+(?!\S)|\s+",
+            r"x|\s+|\s*[\r\n]+|\s+(?!\S)",
+            r"(?x)x#|\s*[\r\n]+|\s+(?!\S)|\s+",
+            r"[x|\s*[\r\n]+|\s+(?!\S)|\s+]",
+            r".+",
+        ] {
+            assert_eq!(whitespace_tail_rewrite(pattern), None, "{pattern}");
+            let parsed = PretokenizerPattern::new(pattern);
+            assert!(parsed.is_err() || parsed.unwrap().whitespace_group.is_none());
+        }
+    }
+
+    #[test]
+    fn whitespace_tail_split_matches_the_lookahead_pattern() {
+        let mut alphabet: Vec<&str> = vec![
+            " ",
+            " ",
+            " ",
+            "\t",
+            "\n",
+            "\n",
+            "\r",
+            "\r\n",
+            "\x0b",
+            "\x0c",
+            "\u{85}",
+            "\u{a0}",
+            "\u{2028}",
+            "\u{3000}",
+            "x",
+            "x",
+            "a",
+            "b",
+            "Z",
+            "é",
+            "\u{301}",
+            "1",
+            "2",
+            ".",
+            "!",
+            "-",
+            "'s",
+            "'S",
+            "_",
+            "一",
+            "あ",
+            "\u{1f600}",
+            "\u{200d}",
+        ];
+        alphabet.sort_unstable();
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut next = |bound: usize| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % bound as u64) as usize
+        };
+        let mut texts = Vec::new();
+        for _ in 0..20_000 {
+            let length = 1 + next(24);
+            texts.push(
+                (0..length)
+                    .map(|_| alphabet[next(alphabet.len())])
+                    .collect::<String>(),
+            );
+        }
+        for source in TAIL_PATTERNS {
+            let (pattern, lookahead) = (tail_pattern(source), lookahead_pattern(source));
+            for text in &texts {
+                assert_eq!(
+                    split_text(&pattern, text).unwrap(),
+                    split_text(&lookahead, text).unwrap(),
+                    "{source} {text:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn whitespace_tail_split_handles_runs_beyond_the_regex_stack() {
+        let count = 1 << 20;
+        for source in &TAIL_PATTERNS[..4] {
+            let pattern = tail_pattern(source);
+            for (text, expected) in [
+                (" ".repeat(count), vec![" ".repeat(count)]),
+                (
+                    format!("{}x", " ".repeat(count - 1)),
+                    vec![" ".repeat(count - 2), " x".to_owned()],
+                ),
+                (
+                    format!("{} \nx", "\t".repeat(count - 2)),
+                    vec![format!("{} \n", "\t".repeat(count - 2)), "x".to_owned()],
+                ),
+                (
+                    format!("{}\r\n  x", "\u{3000}".repeat(count / 3)),
+                    vec![
+                        format!("{}\r\n", "\u{3000}".repeat(count / 3)),
+                        " ".to_owned(),
+                        " x".to_owned(),
+                    ],
+                ),
+            ] {
+                assert_eq!(split_text(&pattern, &text).unwrap(), expected, "{source}");
+            }
+        }
+        // The pattern as written runs out of backtracking stack on such a run.
+        let text = format!("{}x", " ".repeat(count));
+        assert!(split_text(&lookahead_pattern(TAIL_PATTERNS[3]), &text).is_err());
+    }
+
+    #[test]
+    fn whitespace_tail_tokenizer_matches_hf() {
+        let definition =
+            include_bytes!("../tests/fixtures/whitespace-tail/tokenizer.json").as_slice();
+        let configuration =
+            include_bytes!("../tests/fixtures/whitespace-tail/tokenizer_config.json").as_slice();
+        let cases = json::parse(include_bytes!(
+            "../tests/fixtures/whitespace-tail/cases.json"
+        ))
+        .unwrap();
+        let parsed = json::parse(definition).unwrap();
+        let splits = required(parsed.object("").unwrap(), "pre_tokenizer")
+            .unwrap()
+            .object("")
+            .unwrap();
+        let patterns: Vec<&str> = required(splits, "pretokenizers")
+            .unwrap()
+            .array("")
+            .unwrap()
+            .iter()
+            .filter_map(|split| split.object("").unwrap().get("pattern"))
+            .map(|pattern| {
+                required(pattern.object("").unwrap(), "Regex")
+                    .unwrap()
+                    .string("")
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(patterns.len(), 3);
+        let contract = TokenizerContract::new_with_dialect(
+            "test/model",
+            "0123456789abcdef0123456789abcdef01234567",
+            FileIdentity::new(
+                "tokenizer.json",
+                definition.len() as u64,
+                &sha256_bytes(definition),
+            )
+            .unwrap(),
+            FileIdentity::new(
+                "tokenizer_config.json",
+                configuration.len() as u64,
+                &sha256_bytes(configuration),
+            )
+            .unwrap(),
+            279,
+            279,
+            20,
+            3,
+            1 << 20,
+            Some(FIXTURE_BOS),
+            FIXTURE_EOS,
+            FIXTURE_EOS,
+            &patterns,
+            &[FIXTURE_BOS],
+            literal_prefix_policy(259, 3),
+        )
+        .unwrap();
+        let tokenizer =
+            Tokenizer::from_verified_bytes(definition, configuration, &contract).unwrap();
+        assert!(tokenizer.patterns[2].whitespace_group.is_some());
+        let cases = cases.object("cases").unwrap();
+        let short = required(cases, "cases").unwrap().array("cases").unwrap();
+        assert!(short.len() > 1000);
+        for case in short {
+            let [text, ids] = case.array("case").unwrap() else {
+                panic!("case is a pair")
+            };
+            let text = text.string("text").unwrap();
+            let expected: Vec<u32> = ids
+                .string("ids")
+                .unwrap()
+                .split_whitespace()
+                .map(|id| id.parse().unwrap())
+                .collect();
+            assert_eq!(tokenizer.encode(text, &[]).unwrap(), expected, "{text:?}");
+        }
+        let long = required(cases, "long").unwrap().array("long").unwrap();
+        assert!(!long.is_empty());
+        for case in long {
+            let case = case.object("long case").unwrap();
+            let field = |key| required(case, key).unwrap();
+            let mut text = field("repeat")
+                .string("repeat")
+                .unwrap()
+                .repeat(field("count").number("count").unwrap() as usize);
+            text.push_str(field("suffix").string("suffix").unwrap());
+            let mut expected = Vec::new();
+            for run in field("runs").array("runs").unwrap() {
+                let [id, count] = run.array("run").unwrap() else {
+                    panic!("run is a pair")
+                };
+                expected.extend(std::iter::repeat_n(
+                    id.number("id").unwrap() as u32,
+                    count.number("count").unwrap() as usize,
+                ));
+            }
+            assert!(text.chars().count() >= 349_525);
+            assert_eq!(
+                tokenizer.encode(&text, &[]).unwrap(),
+                expected,
+                "{:?} x {}",
+                field("repeat"),
+                text.len()
+            );
+        }
     }
 
     fn pair_array_fixture() -> (Vec<u8>, Vec<u8>, TokenizerDialect) {

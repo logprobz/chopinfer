@@ -12,6 +12,7 @@ use crate::geometry::ModelLimits;
 use crate::inputs::PhaseInputs;
 
 mod exchange;
+pub mod shards;
 pub use exchange::{ExchangeRowsBuffers, ExchangeRowsState, exchange_rows};
 
 /// Rows the host samples in one call.

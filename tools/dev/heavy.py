@@ -453,8 +453,11 @@ def admit(settings, ticket, info, sets):
     The pause check is here too, so no admission follows a --pause that
     returned, and a gate takes queue.lock once it holds gate.lock. A free
     slot whose CPUs a holder already runs on is not taken, so callers whose
-    layouts differ never share a CPU. The admitted slot's record, with its
-    CPUs, is written here, before any other check can see the slot held."""
+    layouts differ never share a CPU. Only the earliest live ticket is
+    admitted: a waiter behind it waits even when a slot it could use is free,
+    so no later waiter takes the slot an earlier one is waiting for, whatever
+    their layouts. The admitted slot's record, with its CPUs, is written here,
+    before any other check can see the slot held."""
     slots = sorted(sets)
     if settings.path("paused").exists():
         return None
@@ -471,7 +474,7 @@ def admit(settings, ticket, info, sets):
     limit = settings.during_gate if held(settings.path("gate.lock")) else settings.slots
     free = [slot for slot in slots if not held(settings.path(f"slot.{slot}.lock"))]
     room = limit - (len(slots) - len(free))
-    if ticket not in waiting or waiting.index(ticket) >= room:
+    if waiting[:1] != [ticket] or room <= 0:
         return None
     busy = busy_cpus(settings, sets)
     for slot in free:

@@ -149,6 +149,7 @@ class Queue(unittest.TestCase):
     def hold(self, name, slot, cpus, pid=0):
         """Starts a HOLDER of `slot`; returns once it holds the lock."""
         release = self.dir / (name + ".release")
+        (self.dir / "state").mkdir(exist_ok=True)
         process = subprocess.Popen([sys.executable, "-c", HOLDER, str(self.dir / "state"), str(slot), json.dumps(cpus),
                                     str(pid), str(release)])
         self.releases.append(release)
@@ -337,6 +338,45 @@ class Queue(unittest.TestCase):
         (self.dir / "older.release").write_text("")
         older.wait(timeout=20)
         self.assertEqual(self.started("new")["cpus"], sets[1])
+
+    def test_a_later_waiter_never_takes_a_slot_before_an_earlier_one(self):
+        # One CPU per slot, three slots. "older" holds slot 1 on CPU b. With
+        # CPUs a, b, c, "first" and the earlier waiter "early" have slots on
+        # a, b, c; with b, c, d the later waiter "late" has b, c, d. When
+        # "first" leaves CPU c, both waiters could use a slot: "early" its
+        # slot 3, "late" its slot 2 (c) or 3 (d).
+        a, b, c, d = sorted(os.sched_getaffinity(0))[:4]
+        env = {"CHOPINFER_HEAVY_SLOTS": "3", "CHOPINFER_HEAVY_THREADS": "1"}
+        self.hold("older", 1, [b])
+        self.start("first", env=env, affinity=[a, b, c])
+        self.assertEqual(self.started("first")["cpus"], [c])
+        # "early" parks in its sleep between polls once the freeze file
+        # exists, until the go file does, so "late" polls while it is parked.
+        freeze, parked, go = (self.dir / name for name in ("early.freeze", "early.parked", "early.go"))
+        self.releases.append(go)
+        patch = (f"real = heavy.time.sleep\n"
+                 f"def sleep(seconds):\n"
+                 f"    if pathlib.Path({str(freeze)!r}).exists() and not pathlib.Path({str(go)!r}).exists():\n"
+                 f"        pathlib.Path({str(parked)!r}).write_text('')\n"
+                 f"        while not pathlib.Path({str(go)!r}).exists():\n"
+                 f"            real(0.02)\n"
+                 f"    real(seconds)\n"
+                 f"heavy.time.sleep = sleep")
+        self.start("early", env=env, affinity=[a, b, c], launcher=self.patched(patch))
+        self.assertTrue(self.queued(1))
+        freeze.write_text("")
+        deadline = time.monotonic() + 20
+        while not parked.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertTrue(parked.exists())
+        self.start("late", env=env, affinity=[b, c, d])
+        self.assertTrue(self.queued(2))
+        self.release("first")
+        self.assertTrue(self.stays_waiting("late"), "the later waiter took a slot first")
+        go.write_text("")
+        self.assertEqual(self.started("early")["cpus"], [c])
+        self.release("early")
+        self.assertIsNotNone(self.started("late"))
 
     def test_held_slots_without_a_live_record_count_both_layouts(self):
         settings = LAUNCHER.Settings({**self.env, "CHOPINFER_HEAVY_THREADS": "1"})

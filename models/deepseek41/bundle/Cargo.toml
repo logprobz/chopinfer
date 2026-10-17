@@ -12,6 +12,7 @@ build = "src/sm120/build.rs"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
+kernel-core.workspace = true
 model-deepseek41-contract.workspace = true
 
 [build-dependencies]

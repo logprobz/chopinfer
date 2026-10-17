@@ -131,6 +131,7 @@ name = "bundle-deepseek41"
 version = "0.1.0-alpha.3"
 dependencies = [
  "kernel-build",
+ "kernel-core",
  "model-deepseek41-contract",
 ]
 

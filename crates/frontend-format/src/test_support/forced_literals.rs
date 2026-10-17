@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use runtime_grammar::{CompiledGrammar, GrammarMatcher, TokenVocabulary, VocabularyToken};
+use runtime_grammar::{CompiledGrammar, Grammar, GrammarMatcher, TokenVocabulary, VocabularyToken};
 use serde_json::{Map, Value, json};
 
 use crate::chat::PromptModeV1;
@@ -366,6 +366,64 @@ pub fn assert_admitted_names_read_back(descriptor: &FormatDescriptorV1) {
             "{parameters}: the grammar does not write {needed:?}"
         );
         assert!(admitted > 1, "{parameters}: admits {admitted} calls");
+    }
+}
+
+/// Checks that a forced call to tools of 100 optional integer properties
+/// and string additional properties builds a grammar that compiles within
+/// its budgets and crosses the wire, over a vocabulary of one token per byte:
+/// one tool whose property names are short (`p000` to `p099`) or as long as
+/// the declaration permits and share all but their last three bytes, three
+/// such tools, and two tools whose long names differ in their first three
+/// bytes. The additional-property names exclude every property name, which
+/// must not cost a bounded run of name bytes per excluded prefix, and each
+/// tool's arguments must compile once, not once per place a call may stand.
+///
+/// # Panics
+///
+/// When a grammar is refused, exceeds a compilation budget or fails to
+/// cross the wire.
+pub fn assert_long_property_names_compile(descriptor: &FormatDescriptorV1) {
+    let longest = descriptor.limits.maximum_name_bytes;
+    let pad = "a".repeat(longest - 3);
+    // Each case's tool count and the bytes of its names around their index.
+    let cases = [
+        ("one tool, names p000 to p099", 1, "p", ""),
+        ("one tool, long names sharing a prefix", 1, &pad, ""),
+        ("three tools, long names sharing a prefix", 3, &pad, ""),
+        ("two tools, long names from distinct prefixes", 2, "", &pad),
+    ];
+    let tokens = (0..=255_u8)
+        .map(|byte| VocabularyToken {
+            bytes: vec![byte],
+            special: false,
+        })
+        .collect();
+    let vocabulary = Arc::new(TokenVocabulary::new(256, tokens).expect("a byte vocabulary"));
+    for (label, count, before, after) in cases {
+        let properties: Map<String, Value> = (0..100)
+            .map(|index| {
+                let name = format!("{before}{index:03}{after}");
+                (name, json!({"type": "integer"}))
+            })
+            .collect();
+        let parameters = json!({"type": "object", "properties": properties,
+                                "additionalProperties": {"type": "string"}});
+        let tools: Vec<FrontendToolV1> = (0..count)
+            .map(|index| FrontendToolV1 {
+                name: format!("f{index}"),
+                ..tool(parameters.clone())
+            })
+            .collect();
+        let grammar = tool_constraint_v1(descriptor, &tools, &FrontendToolChoiceV1::Required)
+            .unwrap_or_else(|error| panic!("{label}: {error:?}"))
+            .expect("a required tool choice constrains");
+        if let Err(error) = CompiledGrammar::new(&grammar, Arc::clone(&vocabulary)) {
+            panic!("{label}: {error}");
+        }
+        if let Err(error) = Grammar::decode_wire(&grammar.encode_wire()) {
+            panic!("{label}: the grammar does not cross the wire: {error}");
+        }
     }
 }
 

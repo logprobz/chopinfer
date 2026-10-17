@@ -671,3 +671,12 @@ fn forced_literal_values_read_back() {
     let descriptor = frontend_format::FormatDescriptorV1::from_component_bytes(COMPONENT).unwrap();
     frontend_format::test_support::forced_literals::assert_forced_literals_read_back(&descriptor);
 }
+
+/// A forced call's additional-property names exclude its property names
+/// without outgrowing the grammar budgets, even for two or three tools of
+/// 100 properties named as long as this model's declaration permits.
+#[test]
+fn long_property_names_compile() {
+    let descriptor = frontend_format::FormatDescriptorV1::from_component_bytes(COMPONENT).unwrap();
+    frontend_format::test_support::forced_literals::assert_long_property_names_compile(&descriptor);
+}

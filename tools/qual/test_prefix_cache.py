@@ -98,10 +98,15 @@ class PrefixCacheTests(unittest.TestCase):
         """The compared TTFT is timing evidence only when both arms ran on an
         idle host; the label never changes `passed` or the TTFT rows."""
         import common
-        idle = common.host_load([{"load_average": [1, 1, 1], "cpu_idle_ticks": 0, "cpu_ticks": 0},
-                                 {"load_average": [1, 1, 1], "cpu_idle_ticks": 990, "cpu_ticks": 1000}], cpus=48)
-        busy = common.host_load([{"load_average": [70, 70, 70], "cpu_idle_ticks": 0, "cpu_ticks": 0},
-                                 {"load_average": [70, 70, 70], "cpu_idle_ticks": 80, "cpu_ticks": 1000}], cpus=48)
+        stall = {"cpu": 0, "io": 0}
+        idle = common.host_load([{"at": 0, "load_average": [1, 1, 1], "cpu_idle_ticks": 0, "cpu_ticks": 0,
+                                  "pressure_some_us": stall},
+                                 {"at": 1, "load_average": [1, 1, 1], "cpu_idle_ticks": 990, "cpu_ticks": 1000,
+                                  "pressure_some_us": stall}], cpus=48)
+        busy = common.host_load([{"at": 0, "load_average": [70, 70, 70], "cpu_idle_ticks": 0, "cpu_ticks": 0,
+                                  "pressure_some_us": stall},
+                                 {"at": 1, "load_average": [70, 70, 70], "cpu_idle_ticks": 80, "cpu_ticks": 1000,
+                                  "pressure_some_us": stall}], cpus=48)
         baseline = record()
         candidate = copy.deepcopy(baseline)
         for row in candidate["requests"]:

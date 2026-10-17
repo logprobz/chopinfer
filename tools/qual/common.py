@@ -606,27 +606,65 @@ def confirm_live(client, server):
 
 
 # Host load labels a receipt's throughput and latency figures; it never
-# changes a verdict. The host is idle for timing evidence when, at every
-# sample, the 1-minute load average is at most IDLE_LOAD_PER_CPU per online
-# CPU and, over every interval between samples, the CPU idle fraction (idle
-# plus iowait over all CPU time, so niced work counts as busy) is at least
-# IDLE_CPU_FRACTION. The measuring client and the server's own host threads
-# take a few cores (the 2026-10-13 speculative C32 soak ran at load 1.2 and
-# 97% idle on 48 CPUs); more is other work competing for cores and memory
-# bandwidth. Otherwise, or without two samples, the figures are
-# informational.
-IDLE_LOAD_PER_CPU = 0.1
+# changes a verdict. The host is idle for timing evidence when, over every
+# interval between samples, the CPU idle fraction (idle plus iowait over all
+# CPU time, so niced work counts as busy) is at least IDLE_CPU_FRACTION and
+# the shares of wall time in which some task stalled waiting for a CPU and
+# for I/O (the kernel's pressure stall information: the "some" totals of
+# /proc/pressure/cpu and /proc/pressure/io) are each at most
+# IDLE_PRESSURE_SHARE. Otherwise, or without two samples or pressure stall
+# information, the figures are informational.
+#
+# Every judged quantity is a cumulative counter differenced between samples,
+# so only what ran in the measured window counts. The 1-minute load average
+# is recorded but not judged: it is an exponential average with a 60 s time
+# constant, so it carries minutes of work from before the window. On
+# 2026-10-17 a 1 s sampler classed every thread of the 48-CPU host through a
+# Qwen3.8 spec soak with the shared CPU launcher paused. When the check
+# started the load average was 10.35, nearly all of it the server's own
+# startup (17 threads blocked on weight reads; I/O pressure 0.57 over its
+# 45 s). During the soak no server thread was in uninterruptible sleep, the
+# server kept one CPU busy, the load average decayed to 1.05, and the
+# pressure shares were 0.0007 (CPU) and 0.0010 (I/O).
+#
+# The limits say what an idle host leaves to others. The run takes a few
+# cores (one in that soak), so at least 90% idle leaves under a tenth of the
+# CPUs to other work competing for cores and memory bandwidth. With idle
+# CPUs the run's threads do not wait for one, and after startup its work
+# does not wait on storage; incidental reads and log writes stall for
+# milliseconds. A stall in a tenth of the window is therefore other work
+# keeping CPUs or storage busy. iowait counts as idle CPU because the I/O
+# pressure judges I/O.
 IDLE_CPU_FRACTION = 0.9
+IDLE_PRESSURE_SHARE = 0.1
 # crates/runtime-eval/src/capture/host_load.rs applies the same rule to the
 # receipts its captures write.
-HOST_LOAD_RULE = ("idle when every 1-minute load average is at most 0.1 per online CPU and every interval's "
-                  "CPU idle fraction is at least 0.9; otherwise throughput and latency are informational")
+HOST_LOAD_RULE = ("idle when, over every interval between samples, the CPU idle fraction is at least 0.9 and "
+                  "the CPU and I/O pressure stall shares are at most 0.1; otherwise throughput and latency are "
+                  "informational")
+PRESSURE_KINDS = (("cpu", "CPU"), ("io", "I/O"))
+
+
+def pressure_some_us():
+    """The cumulative microseconds in which some task stalled waiting for a
+    CPU and for I/O ({"cpu", "io"}), or None without /proc/pressure."""
+    value = {}
+    try:
+        for kind, _ in PRESSURE_KINDS:
+            fields = Path(f"/proc/pressure/{kind}").read_text().splitlines()[0].split()
+            if fields[0] != "some":
+                return None
+            value[kind] = int(dict(field.split("=", 1) for field in fields[1:])["total"])
+    except (OSError, ValueError, IndexError, KeyError):
+        return None
+    return value
 
 
 def host_load_sample():
     """The 1-minute, 5-minute and 15-minute load averages, the cumulative
-    idle and total CPU ticks and the online CPUs of this host, or None
-    without /proc."""
+    idle and total CPU ticks, the online CPUs and the cumulative pressure
+    stall microseconds (`pressure_some_us`, None without them) of this host,
+    or None without /proc."""
     try:
         load = [float(field) for field in Path("/proc/loadavg").read_text().split()[:3]]
         lines = Path("/proc/stat").read_text().splitlines()
@@ -637,7 +675,8 @@ def host_load_sample():
     if len(load) != 3 or len(ticks) != 8:
         return None
     return {"at": time.time(), "load_average": load, "cpu_idle_ticks": ticks[3] + ticks[4],
-            "cpu_ticks": sum(ticks), "cpus": sum(bool(re.match(r"cpu\d", line)) for line in lines)}
+            "cpu_ticks": sum(ticks), "cpus": sum(bool(re.match(r"cpu\d", line)) for line in lines),
+            "pressure_some_us": pressure_some_us()}
 
 
 # The check's start: the process imports this module before its work.
@@ -645,29 +684,41 @@ HOST_LOAD_START = host_load_sample()
 
 
 def host_load(samples, cpus=None):
-    """`samples` (oldest first) judged by HOST_LOAD_RULE, on `cpus` online
-    CPUs (default: the latest sample's count)."""
+    """`samples` (oldest first) judged by HOST_LOAD_RULE, recording `cpus`
+    online CPUs (default: the latest sample's count)."""
     cpus = cpus or next((row["cpus"] for row in reversed(samples) if row and row.get("cpus")), None) or os.cpu_count()
     result = {"rule": HOST_LOAD_RULE, "scope": "check_host", "cpus": cpus, "samples": samples,
-              "max_load_average_1m": None, "cpu_idle_fraction": None, "min_cpu_idle_fraction": None}
+              "max_load_average_1m": None, "cpu_idle_fraction": None, "min_cpu_idle_fraction": None,
+              "max_cpu_pressure_share": None, "max_io_pressure_share": None}
     reasons = []
     if len(samples) < 2 or any(row is None for row in samples):
         reasons.append("fewer than two host load samples")
     else:
-        result["max_load_average_1m"] = peak = max(row["load_average"][0] for row in samples)
-        if peak > IDLE_LOAD_PER_CPU * cpus:
-            reasons.append(f"1-minute load average reached {peak:.2f} on {cpus} CPUs")
-        idle = [(b["cpu_idle_ticks"] - a["cpu_idle_ticks"]) / (b["cpu_ticks"] - a["cpu_ticks"])
-                for a, b in zip(samples, samples[1:]) if b["cpu_ticks"] > a["cpu_ticks"]]
-        if not idle:
+        # Recorded, not judged (see above).
+        result["max_load_average_1m"] = max(row["load_average"][0] for row in samples)
+        intervals = [(a, b) for a, b in zip(samples, samples[1:])
+                     if b["cpu_ticks"] > a["cpu_ticks"] and b["at"] > a["at"]]
+        if not intervals:
             reasons.append("no CPU time between host load samples")
         else:
             first, last = samples[0], samples[-1]
             result["cpu_idle_fraction"] = ((last["cpu_idle_ticks"] - first["cpu_idle_ticks"])
                                            / (last["cpu_ticks"] - first["cpu_ticks"]))
-            result["min_cpu_idle_fraction"] = low = min(idle)
+            result["min_cpu_idle_fraction"] = low = min(
+                (b["cpu_idle_ticks"] - a["cpu_idle_ticks"]) / (b["cpu_ticks"] - a["cpu_ticks"]) for a, b in intervals)
             if low < IDLE_CPU_FRACTION:
                 reasons.append(f"CPU idle fell to {low:.3f}")
+            if not all(isinstance(row.get("pressure_some_us"), dict)
+                       and all(type(row["pressure_some_us"].get(kind)) in (int, float) for kind, _ in PRESSURE_KINDS)
+                       for row in samples):
+                reasons.append("no pressure stall information")
+            else:
+                for kind, name in PRESSURE_KINDS:
+                    result[f"max_{kind}_pressure_share"] = high = max(
+                        (b["pressure_some_us"][kind] - a["pressure_some_us"][kind]) / 1e6 / (b["at"] - a["at"])
+                        for a, b in intervals)
+                    if high > IDLE_PRESSURE_SHARE:
+                        reasons.append(f"{name} pressure stall share reached {high:.3f}")
     return {**result, "idle": not reasons, "reasons": reasons,
             "timing": "informational" if reasons else "evidence"}
 

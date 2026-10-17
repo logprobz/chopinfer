@@ -1021,15 +1021,22 @@ records) and their total; truncation still counts in
 capability.
 
 Every receipt `common.receipt` or a `chopinfer eval` capture writes records
-`host_load`: the host's load averages and cumulative CPU ticks when the check
-started and when it wrote the receipt (the soak also samples them with each
-memory sample), and its
-verdict under `common.HOST_LOAD_RULE`. The host is idle when every 1-minute
-load average is at most 0.1 per online CPU and the CPU idle fraction (idle
-plus iowait; niced work is busy) over every interval between samples is at
-least 0.9. Otherwise, or with fewer than two samples, `host_load.timing` is
+`host_load`: the host's load averages, cumulative CPU ticks and cumulative
+pressure stall microseconds (the "some" totals of `/proc/pressure/cpu` and
+`/proc/pressure/io`) when the check started and when it wrote the
+receipt (the soak also samples them with each memory sample), and its
+verdict under
+`common.HOST_LOAD_RULE`. The host is idle when, over every interval between
+samples, the CPU idle fraction (idle plus iowait; niced work is busy) is at
+least 0.9 and the shares of wall time in which some task stalled waiting
+for a CPU and for I/O are each at most 0.1. The 1-minute load average is
+recorded but not judged: it carries minutes of work from before the window,
+such as a server's startup reads. Otherwise, or with fewer than two samples
+or without pressure stall information, `host_load.timing` is
 `informational`: the receipt's throughput and latency figures are not
 performance evidence. The label never changes whether a check passes.
+`common.py` gives the rule's reasoning and the 2026-10-17 measurement it
+rests on.
 `step_overlap_ab.py compare`, `agentic_compare.py`, `prefix_cache.py
 compare` (its follow-up TTFT) and `spec_verify.py compare` (its
 `ms_per_token`) label a comparison the same way, as evidence only when

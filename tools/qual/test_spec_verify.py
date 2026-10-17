@@ -40,12 +40,15 @@ class ComparisonTests(unittest.TestCase):
                 self.assertEqual(result['passed'], passed)
 
     def test_ms_per_token_carries_both_records_host_load_label(self):
-        idle = common.host_load([{"at": 0, "load_average": [1, 1, 1], "cpu_idle_ticks": 0, "cpu_ticks": 0},
-                                 {"at": 1, "load_average": [1, 1, 1], "cpu_idle_ticks": 990, "cpu_ticks": 1000}],
-                                cpus=48)
-        busy = common.host_load([{"at": 0, "load_average": [70, 70, 70], "cpu_idle_ticks": 0, "cpu_ticks": 0},
-                                 {"at": 1, "load_average": [70, 70, 70], "cpu_idle_ticks": 80, "cpu_ticks": 1000}],
-                                cpus=48)
+        stall = {"cpu": 0, "io": 0}
+        idle = common.host_load([{"at": 0, "load_average": [1, 1, 1], "cpu_idle_ticks": 0, "cpu_ticks": 0,
+                                  "pressure_some_us": stall},
+                                 {"at": 1, "load_average": [1, 1, 1], "cpu_idle_ticks": 990, "cpu_ticks": 1000,
+                                  "pressure_some_us": stall}], cpus=48)
+        busy = common.host_load([{"at": 0, "load_average": [70, 70, 70], "cpu_idle_ticks": 0, "cpu_ticks": 0,
+                                  "pressure_some_us": stall},
+                                 {"at": 1, "load_average": [70, 70, 70], "cpu_idle_ticks": 80, "cpu_ticks": 1000,
+                                  "pressure_some_us": stall}], cpus=48)
         spec, ar = copy_records([(["a", "b"], ["a", "b"])])
         for record in (spec, ar):
             record["sets"]["copy"]["ms_per_token"] = 20.0

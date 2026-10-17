@@ -4,6 +4,7 @@
 //! declarations.
 #![forbid(unsafe_code)]
 pub mod admission;
+pub mod frontend;
 pub mod geometry;
 pub mod projections;
 pub mod structure;

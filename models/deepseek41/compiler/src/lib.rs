@@ -3,6 +3,7 @@
 //! it with the packager.
 #![forbid(unsafe_code)]
 pub mod checkpoint;
+pub mod frontend;
 pub mod tokenizer;
 
 pub use model_deepseek41_contract::BUNDLE_ID;

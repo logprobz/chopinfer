@@ -17,7 +17,10 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+frontend-format.workspace = true
 kernel-core.workspace = true
+runtime-frontend = { workspace = true, features = ["test-support"] }
+runtime-server.workspace = true
 sha2.workspace = true
 
 [lints]

@@ -1274,7 +1274,7 @@ mean a performance target was met. `--dry-run` runs against an owned
 loopback fake server on CPU.
 
 The pinned corpus has three small files and nine tasks, so with shared
-prefixes the prefix cache absorbs almost all prefill: earlier Qwen receipts
+prefixes the prefix cache absorbs almost all prefill: earlier receipts
 (2026-09-30 to 10-02, C4 and C8) show 95-99% reuse and under 200 prefill
 tokens per prefill step, too few for the budget modes to differ. Two changes
 add pressure:

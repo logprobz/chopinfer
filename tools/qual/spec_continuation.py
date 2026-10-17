@@ -194,6 +194,8 @@ def record(args):
                           "generated_tokens": engine_after["chop_generation_tokens_total"]
                           - engine_before["chop_generation_tokens_total"]}
     confirm_live(client, server)
+    # Its per-request seconds are diagnostics of an accuracy check, not timing evidence, so no host load
+    # samples bound them and the receipt's timing reads informational.
     receipt(f"spec-continuation-{args.arm}", server, {
         "passed": True, "arm": args.arm, "run_id": args.run_id, "serving": serving,
         "sets_sha256": sets_digest(sets), "sets": recorded}, False)

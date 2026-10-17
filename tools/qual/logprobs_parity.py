@@ -76,6 +76,7 @@ def capture(args):
         results.append(row)
     if not args.mechanics_only:
         confirm_live(client, identity)
+    # No timed work, so no host load samples: the receipt's timing reads informational.
     receipt(f"logprobs-parity-{args.arm}", identity,
             {"arm": args.arm, "cases": results, "passed": not errors, "errors": errors,
              "responders": sorted(client.responders, key=str)}, args.mechanics_only)

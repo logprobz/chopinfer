@@ -163,6 +163,8 @@ def main():
         errors.append({"name": "metrics_compatibility", "error": str(error)})
         rows.append({"name": "metrics_compatibility", "passed": False})
     passed = not errors
+    # Its per-request seconds are diagnostics of an accuracy check, not timing evidence, so no host load
+    # samples bound them and the receipt's timing reads informational.
     receipt("api", server, {"passed": passed, "skipped": ["model reasoning and tool round trip (fixture context is 128 tokens)"],
                            "errors": errors, "rows": rows,
                            "stream_text": response_text(stream, chat=True) if stream else None}, True)

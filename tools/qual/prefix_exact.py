@@ -828,6 +828,8 @@ def record_split(args, client, server, model, exact):
     reuse = reuse_tokens(server)
     summary = summarize_split(rows, reuse)
     confirm_live(client, server)
+    # Its per-request seconds are diagnostics of an accuracy check, not timing evidence, so no host load
+    # samples bound them and the receipt's timing reads informational.
     receipt("prefix-exact-split", server, {
         "run_id": args.run_id, "chunk": args.split, "reuse_tokens": reuse,
         "prefill_concurrency": args.concurrency, "continuation_concurrency": 1,
@@ -1034,6 +1036,8 @@ def record(args):
     if unpinned(path):
         skipped.append("pinned exact reference")
     confirm_live(client, server)
+    # Its per-request seconds are diagnostics of an accuracy check, not timing evidence, so no host load
+    # samples bound them and the receipt's timing reads informational.
     receipt("prefix-exact", server, {**recorded, **result,
                                      "passed": result["passed"] and not skipped,
                                      "skipped": skipped})

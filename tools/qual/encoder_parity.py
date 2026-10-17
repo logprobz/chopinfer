@@ -421,6 +421,7 @@ def parity(args):
     passed = not errors
     for line in errors:
         print(f"encoder_parity: {line}", file=sys.stderr)
+    # No timed work, so no host load samples: the receipt's timing reads informational.
     receipt("encoder-parity", identity, {
         "passed": passed, "errors": errors, "rows": sum(row["rows"] for row in rows.values()),
         "taps": rows, "codes": codes, "unqualified": unqualified,

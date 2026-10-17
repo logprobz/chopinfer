@@ -261,6 +261,7 @@ def record(args):
     after = snapshot()
     failed = any("error" in row for rows in (c1, warm, (filled or {}).get("rows", []), c16, repeat)
                  for row in rows)
+    # No timed work, so no host load samples: the receipt's timing reads informational.
     receipt(f"kv-offload-{args.scenario}-{args.arm}", server, {
         "passed": not failed, "arm": args.arm, "scenario": args.scenario,
         "output_tokens": args.output_tokens, "concurrency": args.concurrency,
@@ -276,6 +277,7 @@ def report(args):
     speculative = config["preview"]["speculation"]["tokens"] > 0
     policy = {"facts": config["kv_offload"], "speculative": speculative}
     value = limits.one("kv_offload", off=off, swap=swap, **policy)
+    # Judges saved records. No timed work, so no host load samples: the receipt's timing reads informational.
     receipt(f"kv-offload-{off['scenario']}", swap.get("server"),
             {**value, "records": {"off": off, "swap": swap}, "policy": policy})
     return 0 if value["passed"] else 1

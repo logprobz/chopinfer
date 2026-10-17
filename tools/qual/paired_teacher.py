@@ -314,6 +314,7 @@ def main():
                  "accepted_capture_sha256": digest(arms["accepted"]), "accepted_path": str(args.accepted)}
         result = compare(value, reference, check)
         common.confirm_live(client, qualified_server)
+        # No timed work, so no host load samples: the receipt's timing reads informational.
         common.receipt(args.check_id, value["arms"]["candidate"].get("server", {}), {**value, **result}, False)
         print(json.dumps(result, indent=1))
     except (ValueError, KeyError, TypeError, OSError, RuntimeError) as error:

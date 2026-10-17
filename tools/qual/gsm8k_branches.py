@@ -237,6 +237,7 @@ def main():
     except (ValueError, KeyError) as error:
         result["pair"] = {"passed": False, "reason": str(error)}
     # The probe passes when it measured; the pair's verdict belongs to the caller.
+    # No timed work, so no host load samples: the receipt's timing reads informational.
     receipt(CHECK, server, {"passed": True, "errors": [], "skipped": [], **result})
 
 

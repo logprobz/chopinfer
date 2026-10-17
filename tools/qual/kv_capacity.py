@@ -158,6 +158,7 @@ def main():
             log = handle.read()
     record, errors = measure(metrics_text(client), server.get("health"), log, args.planned, args.page_tokens)
     record["label"] = args.label
+    # No timed work, so no host load samples: the receipt's timing reads informational.
     receipt("kv-capacity", server, {"passed": not errors, "errors": errors, **record}, args.mechanics_only)
     raise SystemExit(0 if not errors else 1)
 

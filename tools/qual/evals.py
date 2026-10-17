@@ -511,6 +511,8 @@ def run(args):
             entry["length"] += row["finish_reason"] == "length"
     for entry in suites.values():
         entry["accuracy"] = entry["correct"] / entry["count"]
+    # Per-item latencies stay in the results file, whose answers can come from an earlier run, so no host load
+    # samples could bound them: the receipt's timing reads informational.
     receipt(f"evals-{args.arm}", server, {
         "passed": not errors, "skipped": ["model quality"] if args.mechanics_only else [],
         "run_id": args.run_id, "arm": args.arm, "suites": suites, "errors": errors[:50],
@@ -744,6 +746,8 @@ def compare(args):
                                  ("concurrency", "long_concurrency", "top_logprobs", "limit", "at")}
                            for arm in args.arms},
               **report}
+    # Compares saved receipts. No timed work, so no host load samples: the receipt's timing reads
+    # informational.
     path = receipt("evals-compare", identity, result)
     path.with_suffix(".md").write_text(markdown(result))
     raise SystemExit(0 if result["passed"] else 1)

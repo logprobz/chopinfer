@@ -174,6 +174,7 @@ def main():
         receipt("grounding", server, {"passed": False, "not_applicable": [reason]})
         raise SystemExit(0)
     result = run(Probe(client, server["model"]), args.photo)
+    # No timed work, so no host load samples: the receipt's timing reads informational.
     receipt("grounding", server, result)
     raise SystemExit(0 if result["passed"] else 1)
 

@@ -131,6 +131,8 @@ def main():
         except Exception as error:
             rows.append({"context": length, "passed": False, "error": str(error)})
     passed = all(row["passed"] for row in rows)
+    # Its per-request seconds are diagnostics of an accuracy check, not timing evidence, so no host load
+    # samples bound them and the receipt's timing reads informational.
     receipt("needle", server, {"passed": passed, "skipped": ["needle answer"] if args.mechanics_only else [],
                               "rule": declared["match"],
                               "errors": [row for row in rows if not row["passed"]], "rows": rows}, args.mechanics_only)

@@ -104,6 +104,7 @@ def record(args):
     after = snapshot(metrics_text(client), "chopinfer", identity["model"])
     counters = difference(before, after)
     check_speculation(counters, args.k)
+    # No timed work, so no host load samples: the receipt's timing reads informational.
     receipt(f"seeded-equality-{args.arm}", identity, {
         "arm": args.arm, "k": args.k, "concurrency": args.concurrency,
         "diagnostic": args.concurrency > 1,

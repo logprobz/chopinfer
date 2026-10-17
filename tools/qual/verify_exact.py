@@ -403,6 +403,8 @@ def record(args):
     if capacity is not None:
         result["row_capacity_coverage"] = capacity
     confirm_live(client, server)
+    # Its per-request seconds are diagnostics of an accuracy check, not timing evidence, so no host load
+    # samples bound them and the receipt's timing reads informational.
     receipt(f"verify-exact-{args.arm}", server, result)
     raise SystemExit(0 if result["passed"] else 1)
 

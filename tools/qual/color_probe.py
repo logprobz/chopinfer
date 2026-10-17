@@ -342,6 +342,7 @@ def main():
     client = Client(args.url, args.timeout)
     server = client.identity(args.model)
     result = run(client, server["model"])
+    # No timed work, so no host load samples: the receipt's timing reads informational.
     receipt("color-probe", server, result)
     raise SystemExit(0 if result["passed"] else 1)
 

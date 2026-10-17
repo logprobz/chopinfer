@@ -253,6 +253,8 @@ def record(args):
     confirm_live(client, server)
     value["cold_repeat"] = dict(COLD_REPEAT, **repeat_difference(value))
     value["prefix_hit"] = dict(value["prefix_hit"], **hit_difference(value))
+    # Its per-request seconds are diagnostics of an accuracy check, not timing evidence, so no host load
+    # samples bound them and the receipt's timing reads informational.
     receipt(f"determinism-{args.arm}", server, value, False)
 
 

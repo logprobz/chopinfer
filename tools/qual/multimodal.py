@@ -732,6 +732,8 @@ def main():
         raise SystemExit(f"refused: {error}")
     confirm_live(client, server)
     result["reference_binding"] = binding
+    # Its per-request seconds are diagnostics of an accuracy check, not timing evidence, so no host load
+    # samples bound them and the receipt's timing reads informational.
     receipt(policy["receipt"], server, result)
     raise SystemExit(exit_status(result))
 

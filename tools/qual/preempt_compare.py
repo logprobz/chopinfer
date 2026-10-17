@@ -137,6 +137,8 @@ def record(args):
     jobs = prompts()
     rows, observed = cohort(client, server["model"], jobs, args.concurrency, args.output_tokens)
     errors = [row["name"] for row in rows if "error" in row]
+    # The cohort and request seconds come from admission and forced-preemption runs judged for accuracy, not
+    # timing evidence, so no host load samples bound them and the receipt's timing reads informational.
     receipt(f"preempt-{args.arm}-c{args.concurrency}", server, {
         "passed": not errors, "errors": errors, "arm": args.arm, "concurrency": args.concurrency,
         "output_tokens": args.output_tokens,
@@ -264,6 +266,8 @@ def burst(args):
                        "completion_tokens": len(row["tokens"])} for row in rows if "usage" in row]
     if args.require_preemptions and not observed["preemptions"]:
         failures.append("the server did not preempt during the burst")
+    # The burst checks completion and preemption, not timing, so no host load samples bound its seconds and
+    # the receipt's timing reads informational.
     receipt(f"preempt-burst-{args.arm}", server, {
         "passed": not failures, "errors": failures, "arm": args.arm,
         "concurrency": args.concurrency, "requests": len(rows), "output_tokens": args.output_tokens,

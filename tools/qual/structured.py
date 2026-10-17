@@ -345,6 +345,8 @@ def main():
     print(json.dumps({"summary": summary}))
     errors = [{"name": row["name"], "error": row.get("error", "")} for row in rows if row["status"] == "failed"]
     passed = not errors
+    # Latency and tokens per second over 8-token mechanics outputs are not timing evidence, so no host load
+    # samples bound them and the receipt's timing reads informational.
     receipt("structured", server, {
         "passed": passed, "skipped": ["output validity (8-token outputs)"],
         "errors": errors, "summary": summary, "rows": rows,

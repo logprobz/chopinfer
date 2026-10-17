@@ -183,6 +183,8 @@ def main():
             servers[name] = json.loads(Path(path).read_text()).get("server")
         except (OSError, ValueError):
             servers[name] = None
+    # Compares saved receipts. No timed work, so no host load samples: the receipt's timing reads
+    # informational.
     receipt("teacher-arms", {"arms": servers}, result)
     print(json.dumps({key: result.get(key) for key in ("passed", "errors", "mean_abs_dlogprob_difference")}))
     raise SystemExit(0 if result["passed"] else 1)

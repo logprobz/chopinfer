@@ -210,6 +210,8 @@ def main():
     correct = sum(row["correct"] for row in rows)
     confirm_live(client, server)
     passed = screen_passed(rows, errors, args.mechanics_only, floor)
+    # Its per-request seconds are diagnostics of an accuracy check, not timing evidence, so no host load
+    # samples bound them and the receipt's timing reads informational.
     receipt("gsm8k", server, {"passed": passed, "serving": serving, "skipped": ["model quality"] if args.mechanics_only else [],
                               "correct": correct, "floor": floor,
                               "floor_source": "declared" if args.floor is None else "explicit",

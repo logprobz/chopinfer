@@ -1142,6 +1142,36 @@ class LayoutTests(unittest.TestCase):
                 layout.unzeroed_uses(['allocate 128 256', write, collective], [use], {raw: 'comm.f32_inbox'}, {raw: {base}},
                                      {raw: {(base, 2)}})
 
+    # An earlier declared argument replacing the same buffer leaves it
+    # unwritten only where the head makes that site's write to the same added
+    # buffer: the site launch names the buffer in no other argument, and the
+    # same added buffer replaces it there (found by the mutation harness).
+
+    def test_an_earlier_site_naming_the_buffer_in_another_argument_writes_it(self):
+        # Rank 0's MoE reduce also takes its old inbox as a plain buffer, which
+        # stays the old inbox in the head; rank 1's reduce then reads an inbox
+        # the base wrote and the F32 inbox did not see written.
+        self.without_instance_create(self.base, self.head)
+        self.zero_after_the_first_launch(self.base, [(8, 64)])
+        self.zero_after_the_first_launch(self.head, [(10, 64)])
+        for world, inbox in ((self.base, 9), (self.head, 11)):
+            k = next(k for k, line in enumerate(world['step']) if line.startswith(f'launch r0 Reduce {BF16 if world is self.base else F32}'))
+            world['step'][k] = world['step'][k][:-1] + f', {span(GEN + inbox, 0, 128)}]'
+        report = self.run_without_instance_create(1, False)
+        self.assertIn(f'writes {GEN + 9}, which it replaces, before the collective', report['journals'][STEP]['reasons'][0])
+
+    def test_an_earlier_site_of_another_added_buffer_writes_the_replaced_buffer(self):
+        raw, other, base = GEN + 13, GEN + 14, GEN + 9
+        collective = launch(1, BF16, 4, [peers((base, 128), (GEN + 12, 128))])
+        notes_a = ['allocate 128 256', collective, collective]
+        sites = {other: {(base, 1)}, raw: {(base, 2)}}
+        zeroed = {raw: 'comm.f32_inbox', other: 'comm.other_inbox'}
+        with self.assertRaisesRegex(Unproven, f'added comm.f32_inbox {raw}: .* base note 2 writes {base}'):
+            layout.unzeroed_uses(notes_a, [launch(1, F32, 4, [span(raw)])], zeroed, {raw: {base}, other: {base}}, sites)
+        # The same added buffer replacing it at both sites leaves it unwritten.
+        layout.unzeroed_uses(notes_a, [launch(1, F32, 4, [span(raw)])], {raw: 'comm.f32_inbox'}, {raw: {base}},
+                             {raw: {(base, 1), (base, 2)}})
+
     def test_plan_records_are_writes_unless_the_device_is_plan_only(self):
         raw, base = GEN + 13, GEN + 9
         use = launch('r0 Reduce', F32, 4, [span(raw)])

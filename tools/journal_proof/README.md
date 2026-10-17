@@ -342,10 +342,13 @@ The rules:
   unzeroed only where it keeps the base's initialization. Every record naming
   it must come from a declared collective argument, and no base record before
   that argument may write the base buffer it replaces there. Only a download,
-  a readback, the source of a copy or peer copy, and another declared
-  argument replacing the same buffer leave it unwritten; any other record
-  naming it (a zero, an upload, a copy into it, a launch, an annotation)
-  counts as a write. A use that no declared argument explains, or that
+  a readback, the source of a copy or peer copy, and an earlier declared
+  argument where the same added buffer replaces every argument of that
+  launch naming the buffer leave it unwritten (the head makes that write to
+  the added buffer). Any other record naming it counts as a write: a zero,
+  an upload, a copy into it, a launch, an annotation, or an earlier declared
+  argument of another added buffer or of a launch that also names the
+  buffer elsewhere. A use that no declared argument explains, or that
   replaces a buffer the base writes first, fails. The one exception is a
   plan-only device: when every note on it in both revisions is an `allocate`
   or a `launch rN` plan record (which lowering tests write with

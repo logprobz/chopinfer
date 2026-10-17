@@ -603,7 +603,18 @@ def plan_only(notes):
     return True
 
 
-def unzeroed_uses(notes_a, notes_b, zeroed, replaced, sites, plan=False):
+def unwritten_site(k, base, raw, sites, shared):
+    """Whether base note k is an earlier declared argument at which added
+    buffer `raw` replaces `base` in every argument that names it: the head
+    then makes that record's write to `raw` instead, so it leaves the
+    replacement unwritten. A site where another added buffer replaces `base`,
+    or whose launch also names `base` in an argument `raw` does not replace
+    (`shared` holds those (added, base, note) triples), writes `base`
+    without `raw` seeing the write."""
+    return (base, k) in sites.get(raw, ()) and (raw, base, k) not in shared
+
+
+def unzeroed_uses(notes_a, notes_b, zeroed, replaced, sites, plan=False, shared=frozenset()):
     """A device whose create is only its allocation prefix never runs the
     instance create that zeroes a declared `init: zero` buffer. The head may
     then use such a buffer unzeroed only where it keeps the base's
@@ -612,15 +623,12 @@ def unzeroed_uses(notes_a, notes_b, zeroed, replaced, sites, plan=False):
     buffers it replaces there), and at each such argument (`sites` maps the
     added handle to (base buffer, base note index) pairs) no earlier base
     record may write the replaced buffer. Only reads_only records and the
-    other replacement sites of that buffer, which the head runs on the added
-    buffer instead, leave it unwritten; any other record naming it counts as
+    earlier sites where the same added buffer replaces every argument naming
+    that buffer (unwritten_site), which the head runs on the added buffer
+    instead, leave it unwritten; any other record naming it counts as
     initializing it. With `plan` (both revisions' devices are plan_only)
     plan records do not count as writes, because nothing executes. `zeroed`
     maps added head handles to resources."""
-    replaced_at = collections.defaultdict(set)
-    for added in sites.values():
-        for base, i in added:
-            replaced_at[base].add(i)
     for j, line in enumerate(notes_b):
         for raw in {int(r) for r in HANDLE.findall(line)} & set(zeroed):
             name = zeroed[raw]
@@ -629,7 +637,7 @@ def unzeroed_uses(notes_a, notes_b, zeroed, replaced, sites, plan=False):
     for raw, name in zeroed.items():
         for base, i in sorted(sites.get(raw, ())):
             for k in range(i):
-                if k in replaced_at[base] or base not in {int(r) for r in HANDLE.findall(notes_a[k])}:
+                if base not in {int(r) for r in HANDLE.findall(notes_a[k])} or unwritten_site(k, base, raw, sites, shared):
                     continue
                 if plan and PLAN_RECORD.fullmatch(notes_a[k]):
                     continue
@@ -698,6 +706,10 @@ class Device:
         # Added head handle -> (base buffer, base note index) of each
         # replacement, and the base note being transformed.
         self.sites = collections.defaultdict(set)
+        # (added head handle, base buffer, base note index) of a replacement
+        # whose launch also names the base buffer in an argument that added
+        # buffer does not replace (unwritten_site).
+        self.shared = set()
         self.note_index = None
         self.resized = {w['base_raw']: w for w in witness.resized.values()}
         resized_notes = {alloc_a[slot][0]: (slot, w) for slot, w in witness.resized.items()}
@@ -772,7 +784,7 @@ class Device:
             require(found[raw] == expected,
                     f'added {name} {raw}: {found[raw]} whole zeros in the create range ({head_create["kind"]}), the declaration {expected}')
         if not expected:
-            unzeroed_uses(notes_a, notes_b, zeroed, self.replaced, self.sites, plan_only(notes_a) and plan_only(notes_b))
+            unzeroed_uses(notes_a, notes_b, zeroed, self.replaced, self.sites, plan_only(notes_a) and plan_only(notes_b), self.shared)
         # The zero is not compared (it is a declared addition), so its place
         # relative to the buffer's uses is checked here.
         initialization_order(notes_b, {raw: (name, alloc_b[raw & 0xffffffff][0], at[raw], streams[raw])
@@ -836,6 +848,8 @@ class Device:
             new['args'][i] = new['args'][i].replace(f'length: {m[3]} }}', f'length: {edit["length"]} }}')
             tags['host_span_lengths'] += 1
         if change['collective']:
+            # Argument index -> {base buffer: added head handle} it replaces.
+            swaps = collections.defaultdict(dict)
             for key, resource in change.get('peers', {}).items():
                 i = int(key)
                 require(i < len(new['args']), f'{change["name"]}: argument {i} is out of range')
@@ -848,15 +862,20 @@ class Device:
                 require(None not in keys and len(set(keys)) == len(keys),
                         f'{change["name"]}: argument {i} does not name {change["ranks"]} distinct ranks')
                 new['args'][i] = 'DevicePointerArray([' + ', '.join(
-                    f'Some({self.peer(raw, resource, change)})' for raw, _, _ in entries) + '])'
+                    f'Some({self.peer(raw, resource, change, swaps[i])})' for raw, _, _ in entries) + '])'
                 tags['collective_peer_arrays'] += 1
             for key, resource in change.get('buffers', {}).items():
                 i = int(key)
                 require(i < len(new['args']), f'{change["name"]}: argument {i} is out of range')
                 m = re.fullmatch(r'DeviceBuffer\(' + SPAN.pattern + r'\)', new['args'][i])
                 require(m is not None, f'{change["name"]}: argument {i} is not a buffer span')
-                new['args'][i] = f'DeviceBuffer({self.peer(int(m[1]), resource, change)})'
+                new['args'][i] = f'DeviceBuffer({self.peer(int(m[1]), resource, change, swaps[i])})'
                 tags['collective_buffers'] += 1
+            for swap in swaps.values():
+                for raw, head in swap.items():
+                    if any(raw in {int(r) for r in HANDLE.findall(arg)} and swaps.get(a, {}).get(raw) != head
+                           for a, arg in enumerate(item['args'])):
+                        self.shared.add((head, raw, self.note_index))
             tags['collective_launches'] += 1
         else:
             tags['family_launches'] += 1
@@ -875,14 +894,16 @@ class Device:
         require(int(m[1]) not in self.base_sizes, f'{change["name"]}: argument {i} is a device allocation; declare a resized resource')
         return m
 
-    def peer(self, raw, resource, change):
-        """The same rank's added `resource`, whole, for a base buffer."""
+    def peer(self, raw, resource, change, swap):
+        """The same rank's added `resource`, whole, for a base buffer,
+        recorded in `swap` (base buffer -> added head handle)."""
         row = self.base_sizes.get(raw)
         require(row is not None, f'{change["name"]}: a replaced buffer {raw} is not a base allocation')
         head = self.w.by_rank.get((resource, rank_key(row)), [])
         require(len(head) == 1, f'{change["name"]}: {rank_label(rank_key(row))} holds {len(head)} added {resource}, a collective takes one')
         self.replaced[head[0]].add(raw)
         self.sites[head[0]].add((raw, self.note_index))
+        swap[raw] = head[0]
         return placeholder_span(head[0], self.decl['resources'][resource]['bytes'])
 
     def spans(self, line, tags):

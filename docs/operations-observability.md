@@ -376,13 +376,17 @@ with drops is incomplete. Startup, error and fatal messages are never dropped.
 Step and request logs are not replay inputs; they omit token contents.
 
 ```json
-{"schema":"chopinfer.step.v1","batch":812,"prefill_tokens":2048,"prefill_items":1,"decode_rows":31,"verify_items":0,"verify_rows":0,"live_rows":31,"row_capacity":null,"prefill_cap":2048,"execution_us":176210,"predicted_us":175300,"decode_estimate_us":16400,"trained":true,"host":{"outside_us":61,"schedule_us":38,"execute_us":176020,"commit_us":152,"gap_us":270,"period_us":176390,"boundary_us":431,"device_wait_us":175640,"upload_us":24,"launch_us":95,"sampling_us":180,"deferred_us":0}}
+{"schema":"chopinfer.step.v1","batch":812,"prefill_tokens":2048,"prefill_items":1,"decode_rows":31,"verify_items":0,"verify_rows":0,"live_rows":31,"row_capacity":null,"prefill_cap":2048,"execution_us":176210,"completed_unix_ns":1792224301138000123,"predicted_us":175300,"decode_estimate_us":16400,"trained":true,"host":{"outside_us":61,"schedule_us":38,"execute_us":176020,"commit_us":152,"gap_us":270,"period_us":176390,"boundary_us":431,"device_wait_us":175640,"upload_us":24,"launch_us":95,"sampling_us":180,"deferred_us":0}}
 ```
 
 - `prefill_tokens`, `prefill_items`, `decode_rows`, `verify_items`,
   `verify_rows`, `live_rows`, `row_capacity`: the step's composition, with
   the row definitions above; capacity is null for prefill-bearing steps.
 - `execution_us`: the wall time `chop_step_execution_seconds` records.
+- `completed_unix_ns`: when the step completed, read on the engine thread
+  (nanoseconds since the Unix epoch). Lines reach stderr through the queue,
+  so align steps with client timings by this field, not by when a line is
+  read.
 - `prefill_cap`, `predicted_us`, `decode_estimate_us`, `trained`: the
   [mixed scheduling](mixed-scheduling.md) cap and estimates; null under the
   fixed budget or before an estimate exists.

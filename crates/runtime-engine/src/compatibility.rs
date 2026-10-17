@@ -720,6 +720,10 @@ pub(crate) struct StepTrace {
     pub(crate) row_capacity: Option<usize>,
     pub(crate) prefill_cap: Option<usize>,
     pub(crate) execution_micros: u64,
+    /// When the step completed, in nanoseconds since the Unix epoch, read on
+    /// the engine thread: diagnostics reach stderr through a queue, so the
+    /// time a line is read can be later than the step.
+    pub(crate) completed_unix_ns: Option<u64>,
     /// What the decode-aware estimates, or the TBT model for a mixed step,
     /// assumed before this step trained them.
     pub(crate) predicted_micros: Option<u64>,
@@ -747,6 +751,7 @@ impl StepTrace {
             "row_capacity": self.row_capacity,
             "prefill_cap": self.prefill_cap,
             "execution_us": self.execution_micros,
+            "completed_unix_ns": self.completed_unix_ns,
             "predicted_us": self.predicted_micros,
             "decode_estimate_us": self.decode_estimate_micros,
             "trained": self.trained,
@@ -946,6 +951,7 @@ mod tests {
             row_capacity: None,
             prefill_cap: Some(2048),
             execution_micros: 175_300,
+            completed_unix_ns: Some(1_792_224_301_138_000_123),
             predicted_micros: Some(175_328),
             decode_estimate_micros: Some(16_400),
             trained: true,
@@ -970,6 +976,7 @@ mod tests {
         assert_eq!(parsed["schema"], "chopinfer.step.v1");
         assert_eq!(parsed["prefill_cap"], 2048);
         assert_eq!(parsed["execution_us"], 175_300);
+        assert_eq!(parsed["completed_unix_ns"], 1_792_224_301_138_000_123_u64);
         assert_eq!(parsed["predicted_us"], 175_328);
         assert_eq!(parsed["decode_estimate_us"], 16_400);
         assert_eq!(parsed["host"]["boundary_us"], 150);
@@ -989,7 +996,7 @@ mod tests {
         assert_eq!(parsed["live_rows"], 31);
         assert_eq!(parsed["verify_rows"], 0);
         assert!(parsed["row_capacity"].is_null());
-        assert_eq!(parsed.as_object().unwrap().len(), 17);
+        assert_eq!(parsed.as_object().unwrap().len(), 18);
         let fixed = StepTrace {
             prefill_cap: None,
             predicted_micros: None,

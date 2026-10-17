@@ -2452,6 +2452,13 @@ impl<E: ModelExecutor> Engine<E> {
             }
         };
         let completed_at = self.clock.now_micros();
+        let completed_unix_ns = self.step_trace.then(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since| {
+                    u64::try_from(since.as_nanos()).unwrap_or(u64::MAX)
+                })
+        });
         let execution_micros = completed_at.saturating_sub(execution_started_micros);
         let rows = step_rows::StepRows::from_items(&items, row_capacity);
         let step_rows::StepRows {
@@ -2539,6 +2546,7 @@ impl<E: ModelExecutor> Engine<E> {
                 row_capacity: rows.row_capacity,
                 prefill_cap: batch.prefill_cap(),
                 execution_micros,
+                completed_unix_ns,
                 predicted_micros: batch.predicted_micros().or_else(|| {
                     assumed.and_then(|estimates| {
                         estimates.predicted_micros(prefill_tokens, decode_rows)

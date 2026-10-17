@@ -14,8 +14,9 @@
 //! queued), page faults, resident pages, distinct rows and the time until
 //! every copy is done. Rank 0's first pass faults the pages the other ranks
 //! then find resident, so the later ranks' times are what a per-step dedupe
-//! across ranks would save. Every rank's device bytes are checked against
-//! the mapped rows.
+//! across ranks would save. After each pass, outside its timing, every
+//! rank's device bytes (zeroed before the pass) are checked against the
+//! mapped rows.
 //!
 //! Opt-in, for one GPU job that has the host to itself:
 //! - `CHOPINFER_HOST_ROWS_COST`: a new directory for `result.json`;
@@ -381,7 +382,15 @@ fn measure<D: HostDeviceBackendV1 + 'static>(
         } else {
             "partly-warm"
         };
+        // What every rank's device bytes must be: the mapped rows. Built
+        // after the first pass, so it warms nothing that pass measures.
+        let mut expected: Option<Vec<u8>> = None;
         for pass in [first, "warm"] {
+            // A pass is checked on its own bytes, not on an earlier pass's.
+            for (rank, &(_, _, stream, _)) in handles.iter().enumerate() {
+                host.zero_device_buffer(stream, DeviceBufferSpanV1::new(device[rank], 0, bytes))
+                    .unwrap();
+            }
             let (minor, major) = faults();
             let begun = Instant::now();
             let mut rank_seconds = Vec::new();
@@ -416,25 +425,27 @@ fn measure<D: HostDeviceBackendV1 + 'static>(
                 "minor_faults": minor_after - minor, "major_faults": major_after - major,
                 "resident_after": resident(&mappings),
             }));
-        }
-        // Every rank's device bytes are the mapped rows.
-        let mut expected = Vec::with_capacity(bytes as usize);
-        for &(plane, ids, _, _) in &regions {
-            let table = image.mapped_view(0, plane.tensor.as_bytes()).unwrap();
-            expected.extend(expected_rows(table.bytes(), plane.row_bytes as usize, ids));
-        }
-        for (rank, &(_, _, stream, _)) in handles.iter().enumerate() {
-            let mut read = vec![0_u8; bytes as usize];
-            host.copy_device_to_host(
-                stream,
-                &mut read,
-                DeviceBufferSpanV1::new(device[rank], 0, bytes),
-            )
-            .unwrap();
-            assert!(
-                read == expected,
-                "rank {rank} device rows differ at {tokens} tokens"
-            );
+            let expected = expected.get_or_insert_with(|| {
+                let mut expected = Vec::with_capacity(bytes as usize);
+                for &(plane, ids, _, _) in &regions {
+                    let table = image.mapped_view(0, plane.tensor.as_bytes()).unwrap();
+                    expected.extend(expected_rows(table.bytes(), plane.row_bytes as usize, ids));
+                }
+                expected
+            });
+            for (rank, &(_, _, stream, _)) in handles.iter().enumerate() {
+                let mut read = vec![0_u8; bytes as usize];
+                host.copy_device_to_host(
+                    stream,
+                    &mut read,
+                    DeviceBufferSpanV1::new(device[rank], 0, bytes),
+                )
+                .unwrap();
+                assert!(
+                    read == *expected,
+                    "rank {rank} device rows differ after the {pass} pass at {tokens} tokens"
+                );
+            }
         }
         // The host releases in reverse acquisition order.
         for buffer in device.into_iter().rev() {

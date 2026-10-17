@@ -200,6 +200,14 @@ fn probability_rounding_s(abs_products: f64, abs_values: f64, k: usize) -> f64 {
 /// the mandatory rounding boundary rather than rotating an unrounded sum.
 /// Values use ideal f64 probabilities; S includes their BF16 storage error
 /// before PV as well as the F32 accumulation and score reduction bounds.
+/// For partials, let `g_j = scale * sum |q_i k_ji|` and let `g_m` be the
+/// maximum score's magnitude bound. With `u = 2^-22`, score and maximum
+/// allowances are `u * d * g_j` and `u * d * g_m`. Since
+/// `dw_j = w_j * (ds_j - dm)` for `w_j = exp(s_j - m)`, both terms reach
+/// every weight. In the `u * n * S` gate this gives
+/// `S = sum |w_j v_j| * (1 + d/n * (g_j + g_m))`, plus the PV rounding
+/// term. The denominator uses the same expression with `v_j = 1` and no
+/// BF16 term. Normalized outputs cancel the maximum through centering.
 pub fn latent_attention_with_sources(
     query: LatentAttentionQuery,
     input: LatentSourcesInput<'_>,
@@ -380,7 +388,7 @@ pub fn latent_attention_with_sources(
             let (mut l, mut lb) = (NeumaierSum::default(), NeumaierSum::default());
             for (&w, &g) in softmax.weights.iter().zip(&softmax.magnitudes) {
                 l.add(w);
-                lb.add(w * (1.0 + spread * g));
+                lb.add(w * (1.0 + spread * (g + softmax.maximum_bound)));
             }
             push(
                 &mut partial.maximum,
@@ -398,7 +406,9 @@ pub fn latent_attention_with_sources(
                 );
                 for ((&w, key), &g) in softmax.weights.iter().zip(&keys).zip(&softmax.magnitudes) {
                     num.add(w * key[column]);
-                    bound.add((w * key[column]).abs() * (1.0 + spread * g));
+                    bound.add(
+                        (w * key[column]).abs() * (1.0 + spread * (g + softmax.maximum_bound)),
+                    );
                     abs.add((w * key[column]).abs());
                     abs_values.add(key[column].abs());
                 }

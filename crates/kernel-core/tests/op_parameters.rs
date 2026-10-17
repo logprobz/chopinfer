@@ -2015,6 +2015,60 @@ mod latent_parameters {
     }
 
     #[test]
+    fn latent_partial_bound_propagates_the_maximum_score_error() {
+        use kernel_core::oracle::{OracleOutput, check_numeric, numeric_bound};
+        let mut source = Sources::new();
+        source.q.fill(0.0);
+        let a = 2_f32.powi(24);
+        source.q[0] = f64::from(a);
+        source.q[128] = 1.0;
+        source.q[256] = -f64::from(a);
+        source.window.fill(0);
+        source.window[128 * D..].fill(127);
+        for at in [0, 128, 256, D + 1] {
+            source.window[at] = 0x38;
+        }
+        let mut query = query(Output::Partial);
+        if let Query::Attention {
+            second_fp4_keys, ..
+        } = &mut query
+        {
+            *second_fp4_keys = false;
+        }
+        let mut input = source.input(&[0, 1], &[]);
+        input.compressed = None;
+        let ResultRows::Partial(partial) = latent_attention_with_sources(query, input).unwrap()
+        else {
+            panic!("partial result")
+        };
+        let scale = f64::from((D as f32).powf(-0.5));
+        assert_eq!(partial.maximum.values[0], scale);
+        assert_eq!(partial.numerator.values[1], (-scale).exp());
+        // Each 128-channel block is exact. The ordered F32 block fold
+        // loses the middle one, so both device scores and their max are 0.
+        let device_score = ((a + 1.0) - a) * scale as f32;
+        assert_eq!(device_score, 0.0);
+        for (values, at, actual) in [
+            (&partial.maximum, 0, f64::from(device_score)),
+            (&partial.denominator, 0, 2.0),
+            (&partial.numerator, 1, 1.0),
+        ] {
+            let reference = OracleOutput::new(
+                vec![values.values[at]],
+                vec![values.sum_abs_products[at]],
+                values.reduction_lengths[at],
+            )
+            .unwrap();
+            check_numeric(&[actual], &reference, DType::F32).unwrap();
+            let limit = numeric_bound(&reference, 0, DType::F32);
+            assert!(
+                check_numeric(&[reference.values[0] + 2.0 * limit], &reference, DType::F32)
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
     fn latent_probability_rounding_bound_covers_cancellation() {
         use kernel_core::latent_attention_oracle::latent_online_softmax;
         use kernel_core::oracle::{OracleOutput, check_numeric};

@@ -1029,14 +1029,16 @@ microseconds, the "some" totals of `/proc/pressure/cpu` and
 receipt. A `common.receipt` caller passes `load_samples` taken around its
 timed work, the first at its start and the last at its end: `soak.py` (its
 start, each memory sample, and after the last request in flight),
-`bench.py` (the decode passes and the timed prefill), `spec_bench.py`
-(each cohort's window), `prefix_cache.py record` and `spec_verify.py
-record` (their requests). A caller with several separate timed windows
-passes `load_windows`, one list of samples per window, judged one by one
-(`common.host_load_windows`, scope `check_host_windows`):
-`agentic_mixed.py` samples at the start and end of each level's measured
-window, so its warm-up, drain and other levels are never judged, and each
-level also records its own `host_load`. A receipt without them has
+`bench.py` (the decode passes and the timed prefill), `prefix_cache.py
+record` and `spec_verify.py record` (their requests). A caller with several
+separate timed windows passes `load_windows`, one list of samples per
+window, judged one by one (`common.host_load_windows`, scope
+`check_host_windows`), so the work between windows is never judged and any
+window that is not idle makes the receipt's timing informational:
+`spec_bench.py` samples at the start and end of each cohort, and
+`agentic_mixed.py` of each level's measured window, leaving out its
+warm-up, drain and other levels; each level also records its own
+`host_load`. A receipt without them has
 `timing` `informational` ("no host load samples bound the timed work"),
 since a window from the check's start would average warm-up into the timed
 work. The other `common.receipt` writers take none: they time nothing, or

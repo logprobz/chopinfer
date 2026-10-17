@@ -112,9 +112,11 @@ class FakeHost:
         self.lock = threading.Lock()
         self.uptime, self.idle, self.total = 0.0, 0, 0
 
-    def advance(self, seconds, idle_fraction):
+    def advance(self, seconds, idle_fraction, ticks=None):
+        """`ticks` CPU ticks (default 100 per second) over `seconds` of
+        uptime, which can be 0: /proc/uptime moves in 10 ms steps."""
         with self.lock:
-            ticks = round(seconds * 100)
+            ticks = round(seconds * 100) if ticks is None else ticks
             self.uptime += seconds
             self.idle += round(ticks * idle_fraction)
             self.total += ticks
@@ -127,15 +129,18 @@ class FakeHost:
 
 
 class HostLoadTests(unittest.TestCase):
-    """The receipt's host load is judged over the cohorts' windows only."""
+    """The receipt's host load judges each cohort's window alone."""
 
-    def run_benchmark(self, request_idle, events=None):
-        """A two-cohort run (C1 and C4 per category) after 1,200 s of quiet
-        start-up, each request taking 1 s at `request_idle` CPU idle;
+    def run_benchmark(self, request_idle, events=None, scrape=(0.1, 1.0, None)):
+        """A four-cohort run (C1 and C4 per category) after 1,200 s of quiet
+        start-up, each request taking 1 s at `request_idle` CPU idle (a
+        number, or a list with one per cohort) and each metrics scrape
+        advancing the host by `scrape` (seconds, idle fraction, ticks);
         returns the written receipt and the host's first sample."""
         host = FakeHost()
         first = host.sample()
         events = [] if events is None else events
+        idle = request_idle if isinstance(request_idle, list) else [request_idle] * 4
 
         def identity(model):
             host.advance(1200, 0.99)
@@ -143,12 +148,12 @@ class HostLoadTests(unittest.TestCase):
 
         def request(path, body, stream):
             events.append("request")
-            host.advance(1, request_idle)
+            host.advance(1, idle[events.count("sample") // 2])
             return [], 1.0
 
         def metrics(client):
             events.append("metrics")
-            host.advance(0.1, 1.0)
+            host.advance(*scrape)
             return ""
 
         def sample():
@@ -182,18 +187,36 @@ class HostLoadTests(unittest.TestCase):
         cohort = lambda width: ["metrics", "sample", *["request"] * width, "sample", "metrics"]
         self.assertEqual(events, cohort(1) + cohort(4) + cohort(1) + cohort(4))
         load = value["host_load"]
-        self.assertEqual(len(load["samples"]), 8)
+        self.assertEqual(load["scope"], "check_host_windows")
+        self.assertEqual([len(window["samples"]) for window in load["windows"]], [2] * 4)
+        self.assertEqual([window["samples"][1]["at"] - window["samples"][0]["at"] for window in load["windows"]],
+                         [1, 4, 1, 4])
         self.assertEqual((load["timing"], load["reasons"]), ("evidence", []))
 
     def test_busy_cohorts_after_a_quiet_start_read_informational(self):
         value, first = self.run_benchmark(0.7)
         load = value["host_load"]
         self.assertEqual((load["idle"], load["timing"]), (False, "informational"))
-        self.assertEqual(load["reasons"], ["CPU idle fell to 0.700"])
+        self.assertEqual(load["reasons"], [f"window {index}: CPU idle fell to 0.700" for index in range(1, 5)])
         # A window from the start would have averaged the quiet start-up in.
-        self.assertTrue(common.host_load([first, load["samples"][-1]])["idle"])
+        self.assertTrue(common.host_load([first, load["windows"][-1]["samples"][-1]])["idle"])
         self.assertTrue(value["passed"])
 
+    def test_one_busy_cohort_makes_the_run_informational(self):
+        value, _ = self.run_benchmark([0.99, 0.99, 0.5, 0.99])
+        load = value["host_load"]
+        self.assertEqual((load["timing"], load["reasons"]), ("informational", ["window 3: CPU idle fell to 0.500"]))
+        self.assertEqual([window["timing"] for window in load["windows"]],
+                         ["evidence", "evidence", "informational", "evidence"])
+
+    def test_busy_scrapes_between_quiet_cohorts_are_not_judged(self):
+        value, _ = self.run_benchmark(0.99, scrape=(0.1, 0.1, None))
+        self.assertEqual((value["host_load"]["timing"], value["host_load"]["reasons"]), ("evidence", []))
+
+    def test_scrapes_within_one_uptime_step_are_not_judged(self):
+        # CPU ticks advance between cohorts while /proc/uptime reads the same.
+        value, _ = self.run_benchmark(0.99, scrape=(0, 1.0, 10))
+        self.assertEqual((value["host_load"]["timing"], value["host_load"]["reasons"]), ("evidence", []))
 
 if __name__ == "__main__":
     unittest.main()

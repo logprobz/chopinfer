@@ -126,9 +126,10 @@ def main():
     cohorts = []
     errors = []
     fingerprints = []
-    # The timed work: each cohort's window, sampled at its start and end, so
-    # the setup and the scrapes before the first cohort stay out of it.
-    load = []
+    # The timed work: each completed cohort's window, sampled at its start
+    # and end and judged alone (common.host_load_windows), so the setup and
+    # the scrapes between cohorts are never judged.
+    windows = []
     for category, texts in prompts.items():
         for concurrency in args.concurrencies:
             bodies = [workload(server["model"], args.run_id, category, concurrency, index,
@@ -153,12 +154,12 @@ def main():
                             "finish_reason": finish, "latency_seconds": latency,
                             "ttft_seconds": first - started}
 
-                load.append(host_load_sample())
+                window = [host_load_sample()]
                 window_start = time.monotonic()
                 with ThreadPoolExecutor(max_workers=concurrency) as pool:
                     requests = list(pool.map(one, range(concurrency)))
                 window_end = time.monotonic()
-                load.append(host_load_sample())
+                windows.append([*window, host_load_sample()])
                 after = snapshot(metrics_text(client), metric_arm, server["model"])
                 counters = difference(before, after)
                 adaptive = args.arm == "chopinfer-spec" and args.speculation == "adaptive"
@@ -192,7 +193,7 @@ def main():
         "concurrencies": args.concurrencies,
         "max_sequences": args.max_sequences,
         "speculation_mode": args.speculation if args.arm == "chopinfer-spec" else None,
-        "errors": errors, "cohorts": cohorts}, False, load_samples=load)
+        "errors": errors, "cohorts": cohorts}, False, load_windows=windows)
     raise SystemExit(0 if passed else 1)
 
 

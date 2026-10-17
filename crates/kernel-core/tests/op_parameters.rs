@@ -2209,9 +2209,10 @@ struct HcMixer {
     scale: [f64; 3],
 }
 
-/// DeepSeek's mHC parameters: 4 streams, 20 iterations, Sinkhorn eps 1e-6
-/// (`hc_eps`), norm eps 1e-20 (`norm_eps`), F32 `fn`, the lagged placement.
-fn deepseek_hc_mix(width: u32) -> kernel_core::sinkhorn_hyper_connection::SinkhornMix {
+/// The pinned config's mHC parameters: 4 streams, 20 iterations, Sinkhorn
+/// eps 1e-6 (`hc_eps`), norm eps 1e-20 (`norm_eps`, the mixer's rsqrt), F32
+/// `fn`, the lagged placement.
+fn lagged_hc_mix(width: u32) -> kernel_core::sinkhorn_hyper_connection::SinkhornMix {
     use kernel_core::sinkhorn_hyper_connection::{
         HyperConnectionPlacement, SinkhornMix, SinkhornOrder,
     };
@@ -2232,7 +2233,8 @@ fn deepseek_hc_mix(width: u32) -> kernel_core::sinkhorn_hyper_connection::Sinkho
 /// streams `[N * H]`: the RMS scale over the flat streams after the
 /// projection, `pre = sigmoid(m * s0 + b) + eps`, `post = 2 sigmoid(m * s1 +
 /// b)`, the comb's row softmax plus eps, one column normalization, then 19
-/// (row, column) rounds.
+/// (row, column) rounds. The values are unrounded; the vendor stores them
+/// in F32 (`kernel.py:417-419`), as [`f32_stored`] does.
 fn vendor_hc_mixes(x: &[f64], mixer: &HcMixer, n: usize) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
     let eps = f64::from(1e-6_f32);
     let norm_eps = f64::from(1e-20_f32);
@@ -2276,6 +2278,42 @@ fn vendor_hc_mixes(x: &[f64], mixer: &HcMixer, n: usize) -> (Vec<f64>, Vec<f64>,
     (pre, post, comb)
 }
 
+/// Mixer coefficients as the vendor stores them, in F32.
+fn f32_stored(values: &[f64]) -> Vec<f32> {
+    values.iter().map(|&v| v as f32).collect()
+}
+
+/// `Block.hc_pre` (`model.py:959-962`) in f64 over F32 weights: one token's
+/// streams `[N * H]` collapsed by `weights` `[N]`, rounded to BF16.
+fn vendor_hc_pre(x: &[f64], weights: &[f32]) -> Vec<f64> {
+    let (n, h) = (weights.len(), x.len() / weights.len());
+    (0..h)
+        .map(|col| {
+            bf16(
+                (0..n)
+                    .map(|i| f64::from(weights[i]) * x[i * h + col])
+                    .sum::<f64>(),
+            )
+        })
+        .collect()
+}
+
+/// `Block.hc_post` (`model.py:964-968`) in f64 over F32 `post` `[N]` and
+/// `comb` `[N, N]`: one token's streams `[N * H]` and sublayer output `y`
+/// `[H]`, each expanded stream rounded once to BF16.
+fn vendor_hc_post(x: &[f64], y: &[f64], post: &[f32], comb: &[f32]) -> Vec<f64> {
+    let (n, h) = (post.len(), y.len());
+    (0..n * h)
+        .map(|e| {
+            let (j, col) = (e / h, e % h);
+            let mixed = (0..n)
+                .map(|i| f64::from(comb[i * n + j]) * x[i * h + col])
+                .sum::<f64>();
+            bf16(f64::from(post[j]) * y[col] + mixed)
+        })
+        .collect()
+}
+
 /// A sublayer stand-in: `bf16(collapsed_k * g_k)` with a fixed `g`.
 fn hc_sublayer(collapsed: &[f64], g: &[f64]) -> Vec<f64> {
     collapsed
@@ -2285,60 +2323,27 @@ fn hc_sublayer(collapsed: &[f64], g: &[f64]) -> Vec<f64> {
         .collect()
 }
 
-/// The lagged stack of the vendor code (`Block.forward`, `model.py:972-997`;
+/// The lagged stack (`Block.forward`, `model.py:972-997`;
 /// `make_identity_pre_mix`, `:1162-1166`; the head collapse, `:1263-1271`)
-/// in f64 with the vendor's BF16 roundings: every sublayer collapses with
-/// the previous mixer's `pre` (one-hot first), `hc_post` mixes in F32 and
-/// rounds once, and the head collapses with the last FFN's `pre`. `x` is
-/// `[rows, N * H]` BF16 values; returns the head rows `[rows, H]`.
-fn vendor_lagged_stack(x: &[f64], mixers: &[HcMixer], gates: &[Vec<f64>], n: usize) -> Vec<f64> {
-    let k = mixers[0].projection.len() / ((2 + n) * n);
-    let h = k / n;
-    let mut head = Vec::new();
-    for streams in x.chunks_exact(k) {
-        let mut x = streams.to_vec();
-        let mut pre_mix = vec![0.0; n];
-        pre_mix[0] = 1.0;
-        for (mixer, g) in mixers.iter().zip(gates) {
-            let (pre, post, comb) = vendor_hc_mixes(&x, mixer, n);
-            let collapsed = (0..h)
-                .map(|col| bf16((0..n).map(|i| pre_mix[i] * x[i * h + col]).sum::<f64>()))
-                .collect::<Vec<_>>();
-            let y = hc_sublayer(&collapsed, g);
-            x = (0..n * h)
-                .map(|e| {
-                    let (j, col) = (e / h, e % h);
-                    bf16(
-                        post[j] * y[col]
-                            + (0..n)
-                                .map(|i| comb[i * n + j] * x[i * h + col])
-                                .sum::<f64>(),
-                    )
-                })
-                .collect();
-            pre_mix = pre;
-        }
-        head.extend(
-            (0..h).map(|col| bf16((0..n).map(|i| pre_mix[i] * x[i * h + col]).sum::<f64>())),
-        );
-    }
-    head
-}
-
+/// through the contract's ops, each stage checked with matched inputs: the
+/// vendor's stage of the same streams, weights and sublayer output, in f64
+/// over its F32 coefficients, lies within that stage's f64 bound, and so do
+/// the contract's exact forms. Every sublayer collapses with the previous
+/// mixer's `pre` (one-hot first) and the head with the last FFN's.
 #[test]
-fn lagged_sinkhorn_hyper_connections_match_the_vendor_stack() {
-    use kernel_core::oracle::check_numeric;
+fn lagged_sinkhorn_hyper_connections_match_the_vendor_stages() {
+    use kernel_core::oracle::{OracleOutput, check_numeric};
     use kernel_core::sinkhorn_hyper_connection::{SinkhornHyperConnectionQuery, StreamHeadMode};
     use kernel_core::sinkhorn_hyper_connection_oracle::{
-        MixWeights, collapse, expand_f32, expand_f32_reference, lagged_mix_collapse, one_hot_pre,
-        weighted_head, weighted_head_reference,
+        MixWeights, collapse, expand, expand_f32, expand_f32_reference, lagged_mix_collapse,
+        one_hot_pre, weighted_head, weighted_head_reference,
     };
-    // DeepSeek's width, two layers (attention and FFN mixers each), two
+    // The pinned width, two layers (attention and FFN mixers each), two
     // token rows. Collapse-weight bases spread over [-3, 3] make each
     // sublayer's pre differ from the previous one's.
     let (n, h, rows, sublayers) = (4_usize, 5120_usize, 2_usize, 4_usize);
     let k = n * h;
-    let mix = deepseek_hc_mix(h as u32);
+    let mix = lagged_hc_mix(h as u32);
     let mixers = (0..sublayers as u64)
         .map(|s| {
             let mut base = values((2 + n) * n, 100 + s, 1.0);
@@ -2356,14 +2361,17 @@ fn lagged_sinkhorn_hyper_connections_match_the_vendor_stack() {
     let gates = (0..sublayers as u64)
         .map(|s| values(h, 400 + s, 1.5))
         .collect::<Vec<_>>();
-    let x0 = bf16_exact(&values(rows * k, 7, 2.0));
-    let vendor = vendor_lagged_stack(&x0, &mixers, &gates, n);
 
     let collapse_query = SinkhornHyperConnectionQuery::MixCollapse {
         mix,
         capacity: rows as u32,
     };
     let expand_query = SinkhornHyperConnectionQuery::ExpandF32 {
+        streams: n as u32,
+        width: h as u32,
+        capacity: rows as u32,
+    };
+    let bf16_expand_query = SinkhornHyperConnectionQuery::Expand {
         streams: n as u32,
         width: h as u32,
         capacity: rows as u32,
@@ -2380,78 +2388,142 @@ fn lagged_sinkhorn_hyper_connections_match_the_vendor_stack() {
             .map(|&b| f64::from(bf16_to_f32(b)))
             .collect::<Vec<_>>()
     };
-    let as_f32 = |v: &[f64]| v.iter().map(|&v| v as f32).collect::<Vec<_>>();
     let widen = |v: &[f32]| v.iter().map(|&v| f64::from(v)).collect::<Vec<_>>();
+    let within = |actual: &[f64], bound: &OracleOutput, dtype: DType, what: &str| {
+        if let Err(failure) = check_numeric(actual, bound, dtype) {
+            panic!("{what}: {failure:?}");
+        }
+    };
+    let outside = |actual: &[f64], bound: &OracleOutput, dtype: DType, what: &str| {
+        assert!(
+            check_numeric(actual, bound, dtype).is_err(),
+            "{what} passed its bound"
+        );
+    };
     let close = |a: &[f64], b: &[f64], what: &str| {
         for (index, (a, b)) in a.iter().zip(b).enumerate() {
             assert!((a - b).abs() <= 1e-12, "{what} {index}: {a} vs {b}");
         }
     };
 
-    // The contract's stack: each lagged mix-collapse collapses with the
-    // pre the previous one stored, F32 post and comb feed the F32 expand,
-    // and the head collapses with the last pre. With `lagged` false the
-    // same run collapses each sublayer with its own pre instead.
-    let run = |lagged: bool| {
-        let mut x = to_bits(&x0);
-        let mut pre_in = one_hot_pre(rows, n);
-        for (mixer, g) in mixers.iter().zip(&gates) {
-            let weights = MixWeights {
-                projection: &mixer.projection,
-                base: &mixer.base,
-                scale: &mixer.scale,
-            };
-            let out = lagged_mix_collapse(collapse_query, &of_bits(&x), &pre_in, weights).unwrap();
-            // The mixer's outputs are the vendor formulas'.
-            for (row, streams) in of_bits(&x).chunks_exact(k).enumerate() {
-                let (pre, post, comb) = vendor_hc_mixes(streams, mixer, n);
-                close(&out.pre.values[row * n..][..n], &pre, "pre");
-                close(&out.post.values[row * n..][..n], &post, "post");
-                close(&out.comb.values[row * n * n..][..n * n], &comb, "comb");
-            }
-            let pre = as_f32(&out.pre.values);
-            let weights_now = if lagged { &pre_in } else { &pre };
-            let collapsed = collapse(collapse_query, &x, weights_now).unwrap();
-            if lagged {
-                check_numeric(&of_bits(&collapsed), &out.collapsed, DType::Bf16).unwrap();
-            }
-            let y = to_bits(&hc_sublayer(&of_bits(&collapsed), g));
-            let (post, comb) = (as_f32(&out.post.values), as_f32(&out.comb.values));
-            let expanded = expand_f32(expand_query, &x, &y, &post, &comb).unwrap();
-            let reference = expand_f32_reference(
-                expand_query,
-                &of_bits(&x),
-                &of_bits(&y),
-                &widen(&post),
-                &widen(&comb),
-            )
-            .unwrap();
-            check_numeric(&of_bits(&expanded), &reference, DType::Bf16).unwrap();
-            x = expanded;
-            pre_in = pre;
+    let mut x = to_bits(&bf16_exact(&values(rows * k, 7, 2.0)));
+    let mut pre_in = one_hot_pre(rows, n);
+    let mut previous_pre = pre_in.clone();
+    for (mixer, g) in mixers.iter().zip(&gates) {
+        let streams = of_bits(&x);
+        let weights = MixWeights {
+            projection: &mixer.projection,
+            base: &mixer.base,
+            scale: &mixer.scale,
+        };
+        let out = lagged_mix_collapse(collapse_query, &streams, &pre_in, weights).unwrap();
+
+        // The mixer: the vendor's coefficients of the same streams agree with
+        // the oracle's in f64, and stored in F32 lie within its F32 bounds.
+        let (mut pre, mut post, mut comb) = (Vec::new(), Vec::new(), Vec::new());
+        for row in streams.chunks_exact(k) {
+            let (p, q, c) = vendor_hc_mixes(row, mixer, n);
+            pre.extend(p);
+            post.extend(q);
+            comb.extend(c);
         }
-        let head = weighted_head(head_query, &x, &pre_in).unwrap();
-        let reference = weighted_head_reference(head_query, &of_bits(&x), &pre_in).unwrap();
-        check_numeric(&of_bits(&head), &reference, DType::Bf16).unwrap();
-        of_bits(&head)
-    };
-    let scale = vendor.iter().fold(0.0_f64, |m, v| m.max(v.abs()));
-    let worst = |head: &[f64]| {
-        head.iter()
-            .zip(&vendor)
-            .fold(0.0_f64, |m, (a, b)| m.max((a - b).abs()))
-            / scale
-    };
-    // The contract's stack follows the vendor's to BF16 roundings, which the
-    // F32 collapse and expand can flip; collapsing each sublayer with its
-    // own pre is far off.
-    let lagged = worst(&run(true));
-    let own = worst(&run(false));
-    assert!(
-        lagged <= 2f64.powi(-7),
-        "lagged stack off by {lagged} of the head's scale"
-    );
-    assert!(own > 0.05, "per-sublayer collapse off by only {own}");
+        close(&out.pre.values, &pre, "pre");
+        close(&out.post.values, &post, "post");
+        close(&out.comb.values, &comb, "comb");
+        within(
+            &widen(&f32_stored(&pre)),
+            &out.pre,
+            DType::F32,
+            "vendor pre",
+        );
+        within(
+            &widen(&f32_stored(&post)),
+            &out.post,
+            DType::F32,
+            "vendor post",
+        );
+        within(
+            &widen(&f32_stored(&comb)),
+            &out.comb,
+            DType::F32,
+            "vendor comb",
+        );
+
+        // The collapse with the previous sublayer's stored pre.
+        let vendor = streams
+            .chunks_exact(k)
+            .zip(pre_in.chunks_exact(n))
+            .flat_map(|(row, w)| vendor_hc_pre(row, w))
+            .collect::<Vec<_>>();
+        within(&vendor, &out.collapsed, DType::Bf16, "vendor collapse");
+        let collapsed = collapse(collapse_query, &x, &pre_in).unwrap();
+        within(
+            &of_bits(&collapsed),
+            &out.collapsed,
+            DType::Bf16,
+            "collapse",
+        );
+        // Negative control: this mixer's own pre (the per-sublayer
+        // placement) is outside the lagged collapse's bound.
+        let own = collapse(collapse_query, &x, &f32_stored(&out.pre.values)).unwrap();
+        outside(
+            &of_bits(&own),
+            &out.collapsed,
+            DType::Bf16,
+            "own-pre collapse",
+        );
+
+        // The expand of the same streams and sublayer output with the
+        // stored F32 post and comb.
+        let y = to_bits(&hc_sublayer(&of_bits(&collapsed), g));
+        let (post, comb) = (f32_stored(&out.post.values), f32_stored(&out.comb.values));
+        let bound = expand_f32_reference(
+            expand_query,
+            &streams,
+            &of_bits(&y),
+            &widen(&post),
+            &widen(&comb),
+        )
+        .unwrap();
+        let vendor = (0..rows)
+            .flat_map(|r| {
+                vendor_hc_post(
+                    &streams[r * k..][..k],
+                    &of_bits(&y[r * h..][..h]),
+                    &post[r * n..][..n],
+                    &comb[r * n * n..][..n * n],
+                )
+            })
+            .collect::<Vec<_>>();
+        within(&vendor, &bound, DType::Bf16, "vendor expand");
+        let expanded = expand_f32(expand_query, &x, &y, &post, &comb).unwrap();
+        within(&of_bits(&expanded), &bound, DType::Bf16, "expand");
+        // Negative control: BF16 post and comb with the BF16 expand's three
+        // roundings are outside the F32 expand's bound.
+        let rounded = |v: &[f32]| v.iter().map(|&v| f32_to_bf16(v)).collect::<Vec<_>>();
+        let bf16_mixed =
+            expand(bf16_expand_query, &x, &y, &rounded(&post), &rounded(&comb)).unwrap();
+        outside(&of_bits(&bf16_mixed), &bound, DType::Bf16, "BF16 expand");
+
+        x = expanded;
+        previous_pre = pre_in;
+        pre_in = f32_stored(&out.pre.values);
+    }
+
+    // The head collapses with the last FFN's stored pre.
+    let streams = of_bits(&x);
+    let bound = weighted_head_reference(head_query, &streams, &pre_in).unwrap();
+    let vendor = streams
+        .chunks_exact(k)
+        .zip(pre_in.chunks_exact(n))
+        .flat_map(|(row, w)| vendor_hc_pre(row, w))
+        .collect::<Vec<_>>();
+    within(&vendor, &bound, DType::Bf16, "vendor head");
+    let head = weighted_head(head_query, &x, &pre_in).unwrap();
+    within(&of_bits(&head), &bound, DType::Bf16, "head");
+    // Negative control: the attention mixer's pre, one sublayer early.
+    let early = weighted_head(head_query, &x, &previous_pre).unwrap();
+    outside(&of_bits(&early), &bound, DType::Bf16, "early-pre head");
 }
 
 #[test]

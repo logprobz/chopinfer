@@ -194,6 +194,18 @@ impl OpCase<'_> {
         Ok(results)
     }
 
+    /// Check a unit launch's outputs against this case's numerical or exact
+    /// oracle. Use with [`Self::launch`], which checks writes and poison,
+    /// when a test supplies new images or consumes an observed intermediate.
+    pub fn judge_outputs(
+        &self,
+        images: &Images,
+        rows: u32,
+        outputs: &BTreeMap<String, Vec<u8>>,
+    ) -> LabResult<serde_json::Value> {
+        self.case.judge_outputs(images, rows, outputs)
+    }
+
     /// The byte ranges of in-place state `name` a launch of `rows` rows
     /// over `images` writes or may rewrite.
     pub fn state_ranges(

@@ -105,6 +105,29 @@ impl Entry {
     pub fn merge_symbol(&self) -> String {
         format!("chop_latent_sources_{}_merge_v1", self.name)
     }
+
+    /// Lab-only negative control: add the sink once per split instead of
+    /// once per query. Serving registrations never include this entry.
+    pub fn sink_per_split_entry_spec(&self) -> Result<EntrySpec, Refusal> {
+        self.contract()?;
+        let s = shape(self.query)?;
+        if s.partial || !s.sink || self.splits < 2 {
+            return Err(Refusal(
+                "per-split sink control requires a normalized sink and multiple splits",
+            ));
+        }
+        let traits = self.traits()?;
+        let rope = if s.tail == 0 { "nullptr" } else { "cos_sin" };
+        Ok(EntrySpec::new(
+            format!("chop_latent_sources_{}_sink_per_split_merge_v1", self.name),
+            self.merge_params()?,
+            format!(
+                "chop::latent::sources::merge<{traits},true>(workspace,live_rows,sinks,{rope},out,nullptr,nullptr,nullptr);"
+            ),
+            MERGE_THREADS,
+            1,
+        ))
+    }
     pub fn capacity(&self) -> u32 {
         shape(self.query).map_or(0, |s| s.capacity)
     }

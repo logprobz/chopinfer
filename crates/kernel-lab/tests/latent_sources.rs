@@ -6,6 +6,13 @@ use kernel_lab::families::latent_sources as family;
 use kernel_lab::kit::{self, LabModules, OpResult, Outcome, cases};
 use kernels_sm120::backend::Sm120;
 
+#[path = "latent_sources/address.rs"]
+mod address;
+#[path = "latent_sources/controls.rs"]
+mod controls;
+#[path = "latent_sources/merge.rs"]
+mod merge;
+
 fn backend() -> Sm120 {
     family::catalog()
         .into_iter()

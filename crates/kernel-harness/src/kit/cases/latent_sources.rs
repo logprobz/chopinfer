@@ -64,6 +64,37 @@ fn maximum_expected(reference: OracleOutput, live_elements: usize) -> Expected {
     }))
 }
 
+/// Gate inverse rotation against the BF16 attention values a device run
+/// actually stored. The prefix must stay bit-identical; the tail uses the
+/// f64 rotation oracle and the same BF16 rounding interval as conformance.
+pub fn check_inverse_tail(
+    before: &[u16],
+    after: &[u16],
+    width: usize,
+    heads: usize,
+    tail: usize,
+    cos_sin: &[f32],
+) -> LabResult<()> {
+    if before.len() != after.len() {
+        return Err("inverse rotation output shape mismatch".into());
+    }
+    let values = before
+        .iter()
+        .map(|&b| f64::from(bf16_to_f32(b)))
+        .collect::<Vec<_>>();
+    let reference = kernel_core::latent_attention_oracle::latent_tail_rope(
+        &values, width, heads, tail, cos_sin, true,
+    )
+    .map_err(|e| e.to_string())?;
+    for (a, b) in before.chunks_exact(width).zip(after.chunks_exact(width)) {
+        if a[..width - tail] != b[..width - tail] {
+            return Err("inverse rotation changed the latent prefix".into());
+        }
+    }
+    let actual = after.iter().map(|&b| bf16_to_f32(b)).collect::<Vec<_>>();
+    crate::conformance::rounding_admissible(DType::Bf16, &actual, &reference)
+}
+
 /// Raw trained-format values with independent code and scale variation.
 /// Positive and negative codes exercise cancellation, nibble order and
 /// nonuniform scale blocks. No payload quantizer runs in this fixture.
@@ -341,8 +372,17 @@ fn with_queries<'a>(
         Ok(match result {
             LatentAttentionResult::Normalized(mut out) => {
                 if tail_rope_dims != 0 {
+                    let frequencies = images.f32s("cos_sin")?;
                     for vector in 0..batch.len() * heads {
                         for pair in 0..tail_rope_dims as usize / 2 {
+                            let frequency = (vector / heads) * tail_rope_dims as usize + 2 * pair;
+                            let (c, s) = (frequencies[frequency], frequencies[frequency + 1]);
+                            if c == 1.0 && s == 0.0 {
+                                continue;
+                            }
+                            if c != 0.0 || s != 1.0 {
+                                return Err("use the observed BF16 boundary to gate an arbitrary inverse rotation".into());
+                            }
                             let at = vector * width + width - tail_rope_dims as usize + pair * 2;
                             out.values.swap(at, at + 1);
                             out.values[at + 1] = if out.values[at + 1] == 0.0 {
@@ -444,6 +484,25 @@ mod tests {
     use kernels_sm120::{Profile, ProfileNames};
 
     #[test]
+    fn inverse_tail_gate_requires_the_stored_bf16_boundary() {
+        let (width, tail) = (128, 64);
+        let mut before = vec![0; width];
+        before[width - tail] = f32_to_bf16(1.0 / 3.0);
+        before[width - tail + 1] = f32_to_bf16(1.0);
+        let mut table = [1.0, 0.0].repeat(tail / 2);
+        table[..2].copy_from_slice(&[0.6, 0.8]);
+        let mut correct = before.clone();
+        correct[width - tail] = f32_to_bf16(1.0);
+        correct[width - tail + 1] = f32_to_bf16(0.33203125);
+        check_inverse_tail(&before, &correct, width, 1, tail, &table).unwrap();
+        let mut skipped = correct.clone();
+        skipped[width - tail + 1] = f32_to_bf16(1.0 / 3.0);
+        assert!(check_inverse_tail(&before, &skipped, width, 1, tail, &table).is_err());
+        correct[0] = f32_to_bf16(1.0);
+        assert!(check_inverse_tail(&before, &correct, width, 1, tail, &table).is_err());
+    }
+
+    #[test]
     fn native_partial_oracle_accepts_empty_sentinels_and_rejects_corruption() {
         let query = LatentAttentionQuery::Attention {
             heads: 4,
@@ -471,7 +530,8 @@ mod tests {
             .latent_attention_sources(&query, Need::rows(CAPACITY))
             .unwrap();
         let workspace = prepared.info().bytes_of("workspace").unwrap() as usize;
-        let case = numerical_case(query, CAPACITY, prepared).unwrap().case;
+        let op_case = numerical_case(query, CAPACITY, prepared).unwrap();
+        let case = &op_case.case;
         let images = case
             .images()
             .with("q", vec![0; CAPACITY as usize * 4 * 128 * 2]);
@@ -499,10 +559,14 @@ mod tests {
             )
         };
         judge(&result).unwrap();
+        let mut outputs = result.clone();
+        outputs.remove("workspace");
+        op_case.judge_outputs(&images, CAPACITY, &outputs).unwrap();
         for value in [0.0_f32, f32::INFINITY, f32::NAN] {
             let mut bad = result.clone();
             bad.get_mut("partial.max").unwrap()[16..20].copy_from_slice(&value.to_le_bytes());
             assert!(judge(&bad).is_err());
+            assert!(op_case.judge_outputs(&images, CAPACITY, &bad).is_err());
         }
         let mut bad = result;
         bad.get_mut("partial.max").unwrap()[0..4].copy_from_slice(&0.25_f32.to_le_bytes());

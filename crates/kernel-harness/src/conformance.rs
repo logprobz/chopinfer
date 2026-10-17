@@ -1202,6 +1202,25 @@ impl<'a> Case<'a> {
         Ok(json!(receipt))
     }
 
+    /// Check just the output and state values of a unit launch. The unit
+    /// runner has already checked its written regions and inactive bytes;
+    /// it returns no scratch image to judge.
+    pub(crate) fn judge_outputs(
+        &self,
+        images: &Images,
+        live: u32,
+        results: &Results,
+    ) -> LabResult<Value> {
+        let mut receipt = BTreeMap::new();
+        for (name, expected) in self.expected(images, live)? {
+            let actual = results
+                .get(&name)
+                .ok_or_else(|| format!("the launch gave no {name}"))?;
+            self.check_expected(&name, expected, actual, images, live, &mut receipt)?;
+        }
+        Ok(json!(receipt))
+    }
+
     /// `images` with the elements every state's write map names at `live`
     /// poisoned, so a launch that leaves one unwritten shows
     /// ([`Case::check_unit_writes`]).

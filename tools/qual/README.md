@@ -1054,8 +1054,9 @@ throughput and latency figures are not performance evidence. The label
 never changes whether a check passes. `common.py` gives the rule's
 reasoning and the 2026-10-17 measurement it rests on.
 `step_overlap_ab.py compare`, `agentic_compare.py`, `prefix_cache.py
-compare` (its follow-up TTFT) and `spec_verify.py compare` (its
-`ms_per_token`) label a comparison the same way, as evidence only when
+compare` (its follow-up TTFT), `spec_verify.py compare` (its
+`ms_per_token`) and `dev/spec_summary.py` (its throughput and latency rows)
+label a comparison the same way, as evidence only when
 every arm ran on an idle host; an arm record without `host_load` counts as
 informational. The
 scope is the host that runs the check (`check_host`): with `--remote-only`

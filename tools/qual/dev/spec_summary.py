@@ -10,7 +10,7 @@ import argparse
 from datetime import datetime, timezone
 import json
 
-from common import receipt_root, startup
+from common import compared_timing, receipt_root, startup
 
 
 ARMS = ("chopinfer-ar", "chopinfer-spec")
@@ -62,9 +62,14 @@ def compare(receipts, output):
                    for group in row["cohorts"] for request in group["requests"])
            for row in data.values()):
         raise ValueError("a request missed its exact output length")
+    # Throughput and latency count as evidence only when both arms' cohorts
+    # ran on an idle host (common.HOST_LOAD_RULE).
+    timing = compared_timing({arm: data[arm].get("host_load") for arm in ARMS})
+    reasons = f" ({'; '.join(timing['reasons'])})" if timing["reasons"] else ""
     lines = [f"# Speculation comparison ({data['chopinfer-ar']['label']}, {data['chopinfer-ar']['run_id']})",
              "", f"Workload SHA-256: `{data['chopinfer-ar']['workload_sha256']}`. "
              "Every request used greedy decoding and reached the fixed output length.", "",
+             f"Throughput and latency timing: {timing['timing']}{reasons}.", "",
              "| Workload | C | Metric | Chopinfer AR | Chopinfer spec |",
              "|---|---:|---|---:|---:|"]
     for category in ("gsm8k", "chat"):

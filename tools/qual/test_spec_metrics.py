@@ -6,6 +6,7 @@ from qual_test_config import setUpModule
 import tempfile
 import unittest
 
+import common
 from spec_bench import chat_events, workload
 from spec_metrics import difference, snapshot, within_output
 from dev.spec_summary import ARMS, compare
@@ -127,9 +128,35 @@ chop_step_rows_total{{model_name="other",decode_rows="0",verify_rows="48",row_ca
             text = output.read_text()
             self.assertIn("| gsm8k | 16 | accepted / drafted |", text)
             self.assertIn("| 1 | 1.000 |", text)
+            self.assertIn("timing: informational (chopinfer-ar: no host load recorded; "
+                          "chopinfer-spec: no host load recorded).", text)
             receipts["chopinfer-spec"][1]["workload_sha256"] = "different"
             with self.assertRaisesRegex(ValueError, "workloads differ"):
                 compare(receipts, output)
+
+    def test_comparison_labels_timing_by_both_arms_host_load(self):
+        stall = {"cpu": 0, "io": 0}
+        rows = lambda idle: [{"at": 0, "uptime_seconds": 0, "load_average": [1, 1, 1], "cpu_idle_ticks": 0,
+                              "cpu_ticks": 0, "pressure_some_us": stall},
+                             {"at": 1, "uptime_seconds": 1, "load_average": [1, 1, 1], "cpu_idle_ticks": idle,
+                              "cpu_ticks": 1000, "pressure_some_us": stall}]
+        idle, busy = common.host_load(rows(990), cpus=48), common.host_load(rows(80), cpus=48)
+
+        def make(arm, load):
+            groups = [{"category": category, "concurrency": 1, "aggregate_tokens_per_second": 100.0,
+                       "mean_ms_per_token": 10.0, "requests": [{"completion_tokens": 64, "finish_reason": "length"}],
+                       "speculation": {"available": True, "drafted_positions": {}, "accepted_positions": {}}}
+                      for category in ("gsm8k", "chat")]
+            return {"passed": True, "arm": arm, "label": "exclusive", "run_id": "run-1", "workload_sha256": "abc",
+                    "output_tokens": 64, "concurrencies": [1], "server": {"url": "http://localhost"},
+                    "cohorts": groups, "host_load": load}
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "table.md"
+            compare({arm: (Path(f"{arm}.json"), make(arm, idle)) for arm in ARMS}, output)
+            self.assertIn("Throughput and latency timing: evidence.", output.read_text())
+            compare({"chopinfer-ar": (Path("ar.json"), make("chopinfer-ar", idle)),
+                     "chopinfer-spec": (Path("spec.json"), make("chopinfer-spec", busy))}, output)
+            self.assertIn("timing: informational (chopinfer-spec: CPU idle fell to 0.080).", output.read_text())
 
 
 if __name__ == "__main__":

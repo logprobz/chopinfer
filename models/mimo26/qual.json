@@ -1867,7 +1867,7 @@
     "tokenizer_goldens": "fixtures/mimo26/frontend/tokenizer-golden.json",
     "media_preprocessing_reference": {
       "env": "CHOPINFER_DATA",
-      "path": "refrun/preprocessing-2026-10-17/mimo26"
+      "path": "refrun/preprocessing-2026-10-17-hash-pins/mimo26"
     },
     "media_preprocessing_frontend": "models/mimo26/compiler/src/frontend.json",
     "media_preprocessing_integer_fixture": "fixtures/mimo26/image-processor.json",

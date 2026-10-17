@@ -238,11 +238,11 @@
         "images/image-4500x4000.f64": "6d1daf61220c070dcf69ce4fb31c9e669175ce4bdff2d2e320d785c4254beeb0",
         "images/image-4500x4000.integer": "d94baa156fb9412de740b6ceb202f49b4f6beed1dd39cf2958866bcf1da4ae91",
         "images/image-4500x4000.rgb": "f243d2bc8ee7fa311094504e0d1dd5b0273140db718f01d26e4d20d20ba42bf0",
-        "images/reference.json": "5960d5455e6863f010a050a58035782d16cd99d2afe7fc9256c31d00880d84a1"
+        "images/reference.json": "bf362cf29450377c480c27301d6a0cbd6af29a8e3dc768427ef809ecee9ca587"
       },
       "path": {
         "env": "CHOPINFER_DATA",
-        "path": "refrun/preprocessing-2026-10-17/mimo26"
+        "path": "refrun/preprocessing-2026-10-17-hash-pins/mimo26"
       }
     },
     "needle": {
@@ -373,7 +373,7 @@
     "0a60dea915e55001f2423584f050bc6b3f2f54f3d62c35405d62f97b2356f26a": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "legacy-integer"
     },
@@ -423,14 +423,14 @@
     "1c8cf77d7d39d98e1baaf3672d2657e375e7678bb086805e120c774bae2586b0": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "legacy-f32"
     },
     "1ecb5c58684989cd6d478c66046b28cf9a24ee3ccfd343ac657cc98ca8c858be": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "legacy-f32"
     },
@@ -501,7 +501,7 @@
     "3b7d0a94505eb6bf2646e064e8780cc09cc721d8430e35a89e437164db8491e1": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "legacy-integer"
     },
@@ -516,7 +516,7 @@
     "3d2c30894aed6d59548a13105e505bea9e29c6c70981fd91dd41becb62d5ede7": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "legacy-rgb"
     },
@@ -537,14 +537,14 @@
     "49bdc70605b68439076e5c96ee7a7728735d90d287b182d3a65a409b3cba3f2d": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "legacy-rgb"
     },
     "4a598d6022d52597ed5618044ea9b3274a29c57d9d138a56217e233c00d76b26": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "legacy-f64"
     },
@@ -573,7 +573,7 @@
     "5b72deef2c6d15a3ef9d36f8e1ee74049b494599a424a7167b4ef5e4c30e3f78": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "legacy-rgb"
     },
@@ -595,7 +595,7 @@
     "64250d89d097a4d4f9c749e94651bf266f220d8798101902cbd9da94f42cca69": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "legacy-integer"
     },
@@ -610,7 +610,7 @@
     "6d1daf61220c070dcf69ce4fb31c9e669175ce4bdff2d2e320d785c4254beeb0": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "legacy-f64"
     },
@@ -643,7 +643,7 @@
     "7b8a48271cff1589408fe1e2c55ac477cf3a8afe238815e092932d465b063b0a": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "legacy-integer"
     },
@@ -686,7 +686,7 @@
     "8c6a9aafa91c3b540ee0e530376798bbded770db3f20602c0fa74c42f363055c": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "legacy-f64"
     },
@@ -700,7 +700,7 @@
     "900538358c119b4020115c8356aea59b1d125dd0899e07de35dc930f28ab3623": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "legacy-rgb"
     },
@@ -722,7 +722,7 @@
     "a67552dee09013f060a61dfb2877f458424b82983c89d17cbb7bff1e5784a3ad": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "legacy-f32"
     },
@@ -744,7 +744,7 @@
     "b2d64d223ac9a5c273b7124f1854d5a60ee6f60d5871fe9399d08e7cdde2f52b": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "legacy-f64"
     },
@@ -759,7 +759,7 @@
     "bc6850dc98cf328cf070416cb9d29f082acbde6e97bc4d246a3a8c77525b4411": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "legacy-f32"
     },
@@ -780,14 +780,14 @@
     "cf8984d9415957c0f5da767feb6fd2cacd78ee6a4d73055105a5c4e29c92b2fe": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "legacy-f64"
     },
     "d10acea2a991b1d08bb082e3f94ffbd780caa320f7b710b210778956c75df7e8": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "legacy-f32"
     },
@@ -801,14 +801,14 @@
     "d7940c384f7823e4bc34ea4c5612acf968170dbb0013b2d680739856f31d1c3d": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "legacy-f64"
     },
     "d94baa156fb9412de740b6ceb202f49b4f6beed1dd39cf2958866bcf1da4ae91": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "legacy-integer"
     },
@@ -845,14 +845,14 @@
     "e8d95bb0371f6edefdfc4079f5f93a8eb8d7baf37bfb138eaa247425ba340351": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "legacy-integer"
     },
     "e977b584e5e81365f188fd2b22ae7bfe9d30ac7cefe9b20cff2c9ad7ec51f507": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "legacy-rgb"
     },
@@ -874,14 +874,14 @@
     "f01f7d298f2fe2e7d386262235f2b08a1e5ceacc450cffe26ed7709957c7a273": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "legacy-f32"
     },
     "f243d2bc8ee7fa311094504e0d1dd5b0273140db718f01d26e4d20d20ba42bf0": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "legacy-rgb"
     },
@@ -949,10 +949,10 @@
       },
       "schema": "chopinfer.refrun.preprocessing.v1"
     },
-    "5960d5455e6863f010a050a58035782d16cd99d2afe7fc9256c31d00880d84a1": {
+    "bf362cf29450377c480c27301d6a0cbd6af29a8e3dc768427ef809ecee9ca587": {
       "production": {
         "producer": "runner-preprocessing-binding",
-        "reference_sha256": "2d9fd6b898dce20e4a7b9b5d5a9f814e9e32c22f65533d1ff2706bc79d795a34"
+        "reference_sha256": "4ceebf214b34b513de4cdf6ee0a0ef443ebe0987b91de5acf0f277ed4e2f24c2"
       },
       "schema": "chopinfer.refrun.preprocessing.v1"
     }

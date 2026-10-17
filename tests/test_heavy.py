@@ -417,7 +417,9 @@ class Queue(unittest.TestCase):
         env = {"CHOPINFER_HEAVY_THREADS": "2", "CARGO_BUILD_JOBS": "64", "RUST_TEST_THREADS": "1"}
         self.start("a", env=env)
         facts = self.started("a")
-        self.assertEqual(facts["cpus"], sorted(os.sched_getaffinity(0))[:2])
+        settings = LAUNCHER.Settings({**self.env, **env})
+        sets = LAUNCHER.cpu_sets(settings)
+        self.assertEqual(facts["cpus"], sets[1])
         self.assertEqual(facts["nice"], 19)
         self.assertEqual(facts["env"]["CARGO_BUILD_JOBS"], "2")
         self.assertEqual(facts["env"]["RUST_TEST_THREADS"], "1", "a lower value the caller set is kept")
@@ -425,7 +427,7 @@ class Queue(unittest.TestCase):
             self.assertEqual(facts["env"][name], "2")
         self.assertTrue(facts["env"]["CHOPINFER_HEAVY_ADMITTED"].startswith("1:"))
         self.start("b", env=env)
-        self.assertEqual(self.started("b")["cpus"], sorted(os.sched_getaffinity(0))[2:4])
+        self.assertEqual(self.started("b")["cpus"], sets[2])
 
     def test_each_worktree_gets_its_own_target(self):
         root = self.dir / "targets"
@@ -484,6 +486,85 @@ class Queue(unittest.TestCase):
         refused = subprocess.run([str(HEAVY), "true"], env=wide, capture_output=True, text=True)
         self.assertEqual(refused.returncode, 2)
         self.assertIn("CPUs", refused.stderr)
+
+
+def write_topology(root, cores, caches):
+    """A sysfs CPU tree: `cores` lists each physical core's CPUs, `caches`
+    each L3 cache's CPUs (empty for none)."""
+    for core in cores:
+        for cpu in core:
+            (root / f"cpu{cpu}/topology").mkdir(parents=True)
+            (root / f"cpu{cpu}/topology/thread_siblings_list").write_text(",".join(map(str, core)) + "\n")
+            for index, level in enumerate((1, 2)):
+                (root / f"cpu{cpu}/cache/index{index}").mkdir(parents=True)
+                (root / f"cpu{cpu}/cache/index{index}/level").write_text(f"{level}\n")
+                (root / f"cpu{cpu}/cache/index{index}/shared_cpu_list").write_text(",".join(map(str, core)) + "\n")
+    for cache in caches:
+        for cpu in cache:
+            (root / f"cpu{cpu}/cache/index3").mkdir(parents=True)
+            (root / f"cpu{cpu}/cache/index3/level").write_text("3\n")
+            (root / f"cpu{cpu}/cache/index3/shared_cpu_list").write_text(f"{min(cache)}-{max(cache)}\n")
+
+
+class CpuSets(unittest.TestCase):
+    """Slot CPU sets on synthetic topologies."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.dir = Path(self.temporary.name)
+        self.addCleanup(self.temporary.cleanup)
+
+    def sets(self, slots, threads, cores, caches=(), allowed=None):
+        root = self.dir / f"sys-{len(list(self.dir.iterdir()))}"
+        root.mkdir()
+        write_topology(root, cores, caches)
+        settings = LAUNCHER.Settings({"CHOPINFER_HEAVY_DIR": str(self.dir / "state"),
+                                      "CHOPINFER_HEAVY_SLOTS": str(slots), "CHOPINFER_HEAVY_THREADS": str(threads)})
+        cpus = allowed if allowed is not None else [cpu for core in cores for cpu in core]
+        return LAUNCHER.cpu_sets(settings, allowed=cpus, topology=root)
+
+    def test_a_threadripper_gets_whole_cores_inside_each_cache(self):
+        # 24 cores, SMT siblings n and n + 24, four L3 caches of six cores.
+        cores = [[n, n + 24] for n in range(24)]
+        caches = [list(range(6 * c, 6 * c + 6)) + list(range(24 + 6 * c, 30 + 6 * c)) for c in range(4)]
+        sets = self.sets(5, 8, cores, caches)
+        self.assertEqual(sets, {1: [0, 1, 2, 3, 24, 25, 26, 27], 2: [6, 7, 8, 9, 30, 31, 32, 33],
+                                3: [12, 13, 14, 15, 36, 37, 38, 39], 4: [18, 19, 20, 21, 42, 43, 44, 45],
+                                5: [4, 5, 10, 11, 28, 29, 34, 35]})
+        used = [cpu for cpus in sets.values() for cpu in cpus]
+        self.assertEqual(len(used), len(set(used)), "no CPU is in two slots")
+        self.assertEqual(sorted(set(range(48)) - set(used)), [16, 17, 22, 23, 40, 41, 46, 47])
+        self.assertEqual(sorted(cpu for cpus in self.sets(6, 8, cores, caches).values() for cpu in cpus),
+                         list(range(48)))
+
+    def test_slots_that_fit_no_cache_take_the_largest_remainders_first(self):
+        # Caches of 5, 1 and 3 cores: slot 2 takes the 3-core remainder and one
+        # more core, two caches, rather than CPUs 4-7 across three.
+        sets = self.sets(2, 4, [[n] for n in range(9)], [list(range(5)), [5], list(range(6, 9))])
+        self.assertEqual(sets, {1: [0, 1, 2, 3], 2: [4, 6, 7, 8]})
+        sets = self.sets(3, 4, [[n] for n in range(12)], [list(range(6)), list(range(6, 9)), list(range(9, 12))])
+        self.assertEqual(sets, {1: [0, 1, 2, 3], 2: [6, 7, 8, 9], 3: [4, 5, 10, 11]})
+
+    def test_siblings_stay_together_without_cache_information(self):
+        self.assertEqual(self.sets(2, 4, [[n, n + 4] for n in range(4)]), {1: [0, 1, 4, 5], 2: [2, 3, 6, 7]})
+
+    def test_an_affinity_without_siblings_uses_one_cpu_per_core(self):
+        cores = [[n, n + 8] for n in range(8)]
+        caches = [[0, 1, 2, 3, 8, 9, 10, 11], [4, 5, 6, 7, 12, 13, 14, 15]]
+        self.assertEqual(self.sets(2, 4, cores, caches, allowed=list(range(8))), {1: [0, 1, 2, 3], 2: [4, 5, 6, 7]})
+
+    def test_consecutive_cpus_when_whole_cores_cannot_make_a_slot(self):
+        cores = [[n, n + 4] for n in range(4)]
+        self.assertEqual(self.sets(2, 3, cores), {1: [0, 1, 2], 2: [3, 4, 5]}, "3 CPUs is no whole number of cores")
+        self.assertEqual(self.sets(2, 2, cores, allowed=[0, 1, 2, 3, 4]), {1: [0, 1], 2: [2, 3]},
+                         "one sibling of the affinity is missing, so cores differ in size")
+        settings = LAUNCHER.Settings({"CHOPINFER_HEAVY_DIR": str(self.dir / "state"), "CHOPINFER_HEAVY_SLOTS": "2",
+                                      "CHOPINFER_HEAVY_THREADS": "2"})
+        self.assertEqual(LAUNCHER.cpu_sets(settings, allowed=[0, 1, 2, 3], topology=self.dir / "missing"),
+                         {1: [0, 1], 2: [2, 3]}, "no topology")
+
+    def test_cpu_lists(self):
+        self.assertEqual(LAUNCHER.cpu_list("0-2,24-25,40\n"), {0, 1, 2, 24, 25, 40})
 
 
 if __name__ == "__main__":

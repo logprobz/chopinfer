@@ -18,7 +18,8 @@ for another gate. Every caller of one state directory must use the same
 slot and thread settings (set them in the host's shared local.env).
 
 An admitted lane command runs pinned to its slot's own set of
-`CHOPINFER_HEAVY_THREADS` (default 8) CPUs, under `nice -n 19 ionice -c3`,
+`CHOPINFER_HEAVY_THREADS` (default 8) CPUs, whole physical cores with their
+SMT siblings where the topology allows, under `nice -n 19 ionice -c3`,
 with the Cargo, test and native thread-pool variables capped at that count,
 so the worker pools it starts (nvcc workers, nextest groups, BLAS and OpenMP
 pools) stay inside it. It runs in the launcher's own process group, so a
@@ -58,6 +59,7 @@ THREAD_VARIABLES = ("CARGO_BUILD_JOBS", "RUST_TEST_THREADS", "NEXTEST_TEST_THREA
                     "CHOPINFER_CI_TEST_THREADS", "CHOPINFER_KERNEL_BUILD_JOBS", "CHOPINFER_GEOMETRY_JOBS",
                     "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "RAYON_NUM_THREADS")
 SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+CPU_TOPOLOGY = pathlib.Path("/sys/devices/system/cpu")
 # siginfo si_code of a signal the kernel sent, as a terminal's Ctrl-C is.
 SI_KERNEL = 0x80
 # State is shared by the host's users: files group-writable, directories setgid.
@@ -284,12 +286,75 @@ def lane_environment(settings, env, slot, pid, start):
     return env
 
 
-def cpu_sets(settings):
-    allowed = sorted(os.sched_getaffinity(0))
+def cpu_list(text):
+    """The CPUs of a sysfs CPU list such as `0-5,24-29`."""
+    cpus = set()
+    for part in text.strip().split(","):
+        if part:
+            first, _, last = part.partition("-")
+            cpus.update(range(int(first), int(last or first) + 1))
+    return cpus
+
+
+def shared_l3(directory):
+    """The CPUs that share this CPU's level 3 cache, or None when sysfs does not say."""
+    for index in sorted(directory.glob("cache/index*")):
+        try:
+            if (index / "level").read_text().strip() == "3":
+                return cpu_list((index / "shared_cpu_list").read_text())
+        except (OSError, ValueError):
+            return None
+    return None
+
+
+def physical_cores(allowed, topology):
+    """The allowed CPUs as physical cores, each the sorted list of its allowed
+    SMT siblings, grouped by shared L3 cache in CPU order. None when the
+    sibling lists are unreadable."""
+    groups, seen = {}, set()
+    for cpu in allowed:
+        if cpu in seen:
+            continue
+        try:
+            core = sorted(cpu_list((topology / f"cpu{cpu}/topology/thread_siblings_list").read_text())
+                          & set(allowed))
+        except (OSError, ValueError):
+            return None
+        if cpu not in core:
+            return None
+        seen.update(core)
+        cache = shared_l3(topology / f"cpu{cpu}")
+        groups.setdefault(min(cache) if cache else None, []).append(core)
+    return list(groups.values())
+
+
+def cpu_sets(settings, allowed=None, topology=CPU_TOPOLOGY):
+    """Each slot's CPUs. A slot gets whole physical cores, SMT siblings
+    together, so no two slots share a core; it takes them from one L3 cache
+    where they fit, and the slots that fit in no single cache take the largest
+    remainders first. Without readable sibling lists, or when the slot size is
+    not a whole number of cores, slots take consecutive CPU numbers."""
+    allowed = sorted(os.sched_getaffinity(0) if allowed is None else allowed)
     if settings.slots * settings.threads > len(allowed):
         raise Refused(f"{settings.slots} slots of {settings.threads} CPUs need more than the {len(allowed)} "
                       "CPUs this process may use; lower CHOPINFER_HEAVY_SLOTS or CHOPINFER_HEAVY_THREADS")
-    return {slot: allowed[(slot - 1) * settings.threads:slot * settings.threads] for slot in range(1, settings.slots + 1)}
+    groups = physical_cores(allowed, topology)
+    sizes = {len(core) for group in groups or () for core in group}
+    if len(sizes) != 1 or settings.threads % min(sizes):
+        return {slot: allowed[(slot - 1) * settings.threads:slot * settings.threads]
+                for slot in range(1, settings.slots + 1)}
+    per_slot = settings.threads // min(sizes)
+    slots, remainders = [], []
+    for group in groups:
+        while len(group) >= per_slot and len(slots) < settings.slots:
+            slots.append(group[:per_slot])
+            group = group[per_slot:]
+        remainders.append(group)
+    rest = [core for group in sorted(remainders, key=len, reverse=True) for core in group]
+    while len(slots) < settings.slots:
+        slots.append(rest[:per_slot])
+        rest = rest[per_slot:]
+    return {slot: sorted(cpu for core in cores for cpu in core) for slot, cores in enumerate(slots, 1)}
 
 
 def record(settings, entry):

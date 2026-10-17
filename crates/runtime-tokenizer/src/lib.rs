@@ -439,6 +439,35 @@ impl PretokenizerPattern {
         })
     }
 
+    /// Whether the whitespace group matched `matched`, which the search from
+    /// `search` found. The probe repeats that search: from another position
+    /// an anchor such as `\G` or a reset such as `\K` could select another
+    /// alternative.
+    fn whitespace_group_matched(
+        &self,
+        piece: &str,
+        search: usize,
+        matched: &fancy_regex::Match<'_>,
+        group: usize,
+    ) -> Result<bool> {
+        let captures = self
+            .regex
+            .captures_from_pos(piece, search)
+            .map_err(|error| TokenizerError::new(format!("pretokenizer regex failed: {error}")))?;
+        match captures {
+            Some(captures)
+                if captures.get(0).is_some_and(|whole| {
+                    (whole.start(), whole.end()) == (matched.start(), matched.end())
+                }) =>
+            {
+                Ok(captures.get(group).is_some())
+            }
+            _ => Err(TokenizerError::new(
+                "pretokenizer regex found another match when probed",
+            )),
+        }
+    }
+
     /// Appends the pieces of `piece` an `Isolated` split gives: the matches
     /// and the text between them.
     fn split<'a>(&self, piece: &'a str, split: &mut Vec<&'a str>) -> Result<()> {
@@ -480,11 +509,7 @@ impl PretokenizerPattern {
             } else {
                 let text = matched.as_str();
                 if text.chars().all(char::is_whitespace)
-                    && self
-                        .regex
-                        .captures_from_pos(piece, start)
-                        .map_err(failed)?
-                        .is_some_and(|captures| captures.get(group).is_some())
+                    && self.whitespace_group_matched(piece, search, &matched, group)?
                 {
                     if let Some(line_break) = text.rfind(['\r', '\n']) {
                         stop = start + line_break + 1;
@@ -2938,8 +2963,9 @@ mod tests {
     /// published spellings with escaped line breaks, the last split of the
     /// whitespace-tail fixture with literal ones, and alternatives that test
     /// the rewrite (an earlier whitespace match, capture groups, an empty
-    /// match, a lookbehind).
-    const TAIL_PATTERNS: [&str; 8] = [
+    /// match, a lookbehind, and a search anchor and a match-start reset,
+    /// which the group probe must read from the search's own position).
+    const TAIL_PATTERNS: [&str; 10] = [
         r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+",
         r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+|\p{N}| ?[^\s\p{L}\p{M}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+",
         r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+",
@@ -2948,6 +2974,8 @@ mod tests {
         r"(a)(b)?|\s*[\r\n]+|\s+(?!\S)|\s+",
         r"\d*|\s*[\r\n]+|\s+(?!\S)|\s+",
         r"(?<=x)\s|\p{L}+|\s*[\r\n]+|\s+(?!\S)|\s+",
+        r"\G\s+|\s*[\r\n]+|\s+(?!\S)|\s+",
+        r"a\K\s+|\s*[\r\n]+|\s+(?!\S)|\s+",
     ];
 
     /// The pattern as written, without the rewrite.
@@ -3071,6 +3099,31 @@ mod tests {
                     "{source} {text:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn whitespace_tail_split_reads_anchors_from_the_search_position() {
+        // HF tokenizers 0.23.2 `Split(Regex(pattern), "isolated")`.
+        for (pattern, text, expected) in [
+            (TAIL_PATTERNS[8], "a  b", &["a", " ", " ", "b"][..]),
+            (TAIL_PATTERNS[8], "  b", &["  ", "b"]),
+            (TAIL_PATTERNS[8], "a \n b", &["a", " \n", " ", "b"]),
+            (
+                TAIL_PATTERNS[8],
+                "a\t\t\tb ",
+                &["a", "\t\t", "\t", "b", " "],
+            ),
+            (TAIL_PATTERNS[9], "a  b", &["a", "  ", "b"]),
+            (TAIL_PATTERNS[9], "  b", &[" ", " ", "b"]),
+            (TAIL_PATTERNS[9], "a \n b", &["a", " \n ", "b"]),
+            (TAIL_PATTERNS[9], "a\t\t\tb ", &["a", "\t\t\t", "b", " "]),
+        ] {
+            assert_eq!(
+                split_text(&tail_pattern(pattern), text).unwrap(),
+                expected,
+                "{pattern} {text:?}"
+            );
         }
     }
 

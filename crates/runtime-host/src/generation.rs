@@ -689,11 +689,14 @@ impl EngineGenerationBackend {
         let (geometry, output_rows, values, columns) = match part.kind {
             FrontendMediaPartKindV1::Image => {
                 let recipe = declared_image_recipe_v1(&modality.recipe)?;
+                if modality.layout.is_some() {
+                    check_image_span_v1(&source, modality, recipe, limits)?;
+                }
                 let grid;
                 (grid, reserved) = prepare_image_v1(&source, recipe, limits, memory)?;
                 let span = match modality.layout {
                     None => grid.tokens,
-                    Some(_) => image_span_rows_v1(modality, recipe, grid.grid)
+                    Some(_) => image_span_rows_v1(modality, recipe_merge_v1(recipe), grid.grid)
                         .ok_or(AdmissionError::InvalidPrompt)?,
                 };
                 (
@@ -2411,9 +2414,12 @@ fn modality_emits_v1(
                 && rest == 0
                 && temporal_patch as usize <= limits.maximum_frames
                 && emits
-                && modality
-                    .span_rows([1, u64::from(h / merge), u64::from(w / merge)])
-                    .is_some_and(tokens_fit)
+                && match modality.layout {
+                    None => tokens_fit(u64::from(h / merge) * u64::from(w / merge)),
+                    Some(_) => {
+                        image_span_rows_v1(modality, merge, [1, h, w]).is_some_and(tokens_fit)
+                    }
+                }
         }
         FrontendMediaKindV1::Video => {
             let (Some(image), Ok(total)) = (
@@ -2983,23 +2989,83 @@ impl From<runtime_media::recipe::ImageRecipe> for ImageRecipeV1 {
 
 /// The rows an image part's span takes, from its patch grid `[t, h, w]`:
 /// the merged cells under the modality's layout
-/// ([`runtime_frontend::FrontendMediaModalityV1::span_rows`]). The encoder
-/// writes each of them, delimiters included, so the span stays one pad run.
+/// ([`runtime_frontend::FrontendMediaModalityV1::span_rows`]). A partial
+/// merge block is a cell, as the encoder pads it. The encoder writes every
+/// row of the span, delimiters included, so the span stays one pad run.
 fn image_span_rows_v1(
     modality: &runtime_frontend::FrontendMediaModalityV1,
-    recipe: ImageRecipeV1,
+    merge: u32,
     grid: [u32; 3],
 ) -> Option<u64> {
-    let merge = match recipe {
-        ImageRecipeV1::PatchGrid(recipe) => recipe.merge,
-        ImageRecipeV1::TokenBudget(recipe, _) => recipe.merge,
-    };
     let [t, h, w] = grid;
+    if merge == 0 {
+        return None;
+    }
     modality.span_rows([
         u64::from(t),
-        u64::from(h.checked_div(merge)?),
-        u64::from(w.checked_div(merge)?),
+        u64::from(h.div_ceil(merge)),
+        u64::from(w.div_ceil(merge)),
     ])
+}
+
+fn recipe_merge_v1(recipe: ImageRecipeV1) -> u32 {
+    match recipe {
+        ImageRecipeV1::PatchGrid(recipe) => recipe.merge,
+        ImageRecipeV1::TokenBudget(recipe, _) => recipe.merge,
+    }
+}
+
+/// The patch grid an image of `width x height` takes under `recipe`, as its
+/// preparation will make it, planned from the size alone.
+fn planned_image_grid_v1(
+    width: u32,
+    height: u32,
+    recipe: ImageRecipeV1,
+    limits: runtime_media::MediaLimits,
+) -> runtime_media::MediaResult<[u32; 3]> {
+    let (h, w, patch) = match recipe {
+        ImageRecipeV1::PatchGrid(recipe) => {
+            let (h, w) = runtime_media::recipe::smart_resize(height, width, recipe, limits)?;
+            (h, w, recipe.patch)
+        }
+        ImageRecipeV1::TokenBudget(recipe, _) => {
+            let size = runtime_media::recipe::padded_size(height, width, recipe, limits)?;
+            (size.canvas.0, size.canvas.1, recipe.patch)
+        }
+    };
+    Ok([1, h / patch, w / patch])
+}
+
+/// Refuses, before the image decodes, a part whose span under the
+/// modality's layout (its cells and the layout's own rows) would exceed the
+/// modality's token limit.
+fn check_image_span_v1(
+    source: &runtime_media::MediaSource,
+    modality: &runtime_frontend::FrontendMediaModalityV1,
+    recipe: ImageRecipeV1,
+    limits: runtime_media::MediaLimits,
+) -> Result<(), AdmissionError> {
+    let rejected = |error: runtime_media::MediaError| AdmissionError::Rejected(error.to_string());
+    let (width, height) = match runtime_media::probe(&source.bytes, limits).map_err(rejected)? {
+        runtime_media::Probe::Png { width, height }
+        | runtime_media::Probe::Jpeg { width, height } => (width, height),
+        runtime_media::Probe::Wav { .. } => return Err(AdmissionError::InvalidPrompt),
+    };
+    let grid = planned_image_grid_v1(width, height, recipe, limits).map_err(rejected)?;
+    let merge = recipe_merge_v1(recipe);
+    let span = image_span_rows_v1(modality, merge, grid).ok_or(AdmissionError::InvalidPrompt)?;
+    if span > u64::from(modality.maximum_tokens) {
+        let cells = u64::from(grid[0])
+            * u64::from(grid[1].div_ceil(merge))
+            * u64::from(grid[2].div_ceil(merge));
+        return Err(AdmissionError::Rejected(format!(
+            "a {width} x {height} image spans {span} rows ({cells} cells and {} learned delimiter rows), \
+             above the modality's {} tokens",
+            span - cells,
+            modality.maximum_tokens
+        )));
+    }
+    Ok(())
 }
 
 fn declared_image_recipe_v1(
@@ -4833,17 +4899,37 @@ mod tests {
         // newline after each of the 8 cell rows, and a start and an end row:
         // 98 rows, which the token limit counts.
         let recipe = declared_image_recipe_v1(&modality.recipe).unwrap();
+        let merge = recipe_merge_v1(recipe);
+        assert_eq!(merge, 2);
         assert_eq!(
-            image_span_rows_v1(modality, recipe, grid.grid),
+            image_span_rows_v1(modality, merge, grid.grid),
             Some(grid.tokens)
+        );
+        assert_eq!(
+            planned_image_grid_v1(301, 199, recipe, limits).unwrap(),
+            grid.grid
         );
         let mut delimited = modality.clone();
         delimited.layout = Some(runtime_frontend::FrontendMediaLayoutV1::LearnedDelimitersV1);
-        assert_eq!(image_span_rows_v1(&delimited, recipe, grid.grid), Some(98));
+        assert_eq!(image_span_rows_v1(&delimited, merge, grid.grid), Some(98));
+        // A partial merge block is a cell: 40 x 40 patches merged by 3 are
+        // 14 x 14 cells, 14 * 15 + 2 rows.
+        assert_eq!(image_span_rows_v1(&delimited, 3, [1, 40, 40]), Some(212));
         delimited.maximum_tokens = 98;
         assert!(modality_emits_v1(&delimited, [1, 16, 22, 0]));
+        check_image_span_v1(&source, &delimited, recipe, limits).unwrap();
         delimited.maximum_tokens = 97;
         assert!(!modality_emits_v1(&delimited, [1, 16, 22, 0]));
+        // refused by name before the image decodes, counting the delimiters
+        let Err(AdmissionError::Rejected(message)) =
+            check_image_span_v1(&source, &delimited, recipe, limits)
+        else {
+            panic!("an over-long span is refused by name");
+        };
+        assert!(
+            message.contains("spans 98 rows (88 cells and 10 learned delimiter rows), above the modality's 97 tokens"),
+            "{message}"
+        );
         // Unaligned, below 16 or above 8,000 tokens, two grids, or a
         // nonzero unused field.
         for geometry in [

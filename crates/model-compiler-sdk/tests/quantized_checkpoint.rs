@@ -1417,3 +1417,146 @@ fn lookup_kind_imports_native_nvfp4_weights_without_activation_calibration() {
             .contains("input_scale")
     );
 }
+
+#[test]
+fn block32_fp8_dialect_reads_ue8m0_blocks_ceil_activations_and_fp4_experts() {
+    const DOCUMENT: &str = r#"{"quant_method":"fp8","activation_scheme":"dynamic",
+      "weight_block_size":[32,32],"scale_fmt":"ue8m0","expert_dtype":"fp4"}"#;
+    let mut metadata = ExportMetadata::default();
+    metadata
+        .add_document("config", DOCUMENT.as_bytes())
+        .unwrap();
+    let block = EncodingRecipe {
+        weight: WeightFormat::Fp8Block32x32,
+        activation: Some(ActivationRecipe::Mxfp8CeilDynamic),
+    };
+    assert_eq!(metadata.default, Some(block));
+    assert_eq!(metadata.expert_storage, Some(WeightFormat::Mxfp4));
+    let expert = vec![
+        "layers.0.experts.3.up".to_owned(),
+        ROUTED_EXPERT_ROLE.to_owned(),
+    ];
+    assert_eq!(
+        metadata.recipe(&expert, None).unwrap(),
+        EncodingRecipe {
+            weight: WeightFormat::Mxfp4,
+            ..block
+        }
+    );
+
+    // A dense operand: E4M3 codes with one UE8M0 byte per 32x32 block, and
+    // E4M3-per-32 activations whose scale is the ceil power of two.
+    let dense = OperandRole {
+        operation: "layers.0.attn".into(),
+        weight: "layers.0.attn.query.weight".into(),
+        targets: vec!["layers.0.attn.query".into()],
+        logical_shape: vec![64, 96],
+        lookup: false,
+        shared_scale_stem: None,
+        declared: None,
+    };
+    let tensors: BTreeMap<_, _> = [
+        tensor(&dense.weight, DType::Fp8E4M3, &[64, 96]),
+        tensor("layers.0.attn.query.weight_scale", DType::Ue8M0, &[2, 3]),
+    ]
+    .into_iter()
+    .map(|t| (t.tensor.clone(), t))
+    .collect();
+    let imported = import_operand(&metadata, &dense, &tensors).unwrap();
+    assert_eq!(imported.weight.format, WeightFormat::Fp8Block32x32);
+    assert_eq!(imported.weight.encoding, CodeEncoding::E4M3);
+    let scale = imported.weight.local_scale.as_ref().unwrap();
+    assert_eq!(scale.tensor.dtype, DType::Ue8M0);
+    assert_eq!(
+        scale
+            .groups
+            .iter()
+            .map(|g| (g.axis, g.size))
+            .collect::<Vec<_>>(),
+        [(0, 32), (1, 32)]
+    );
+    let activation = imported.activation.unwrap();
+    assert_eq!(activation.format, ActivationFormat::Mxfp8);
+    let quantizer = activation.quantizer.unwrap();
+    assert_eq!(
+        quantizer.calibration,
+        kernel_core::precision::Calibration::Dynamic(
+            kernel_core::precision::DynamicScale::MXFP8_CEIL
+        )
+    );
+    assert_eq!(quantizer.groups[0].size, 32);
+    // A scale grid of the wrong extent is refused.
+    let mut short = tensors.clone();
+    short.insert(
+        "layers.0.attn.query.weight_scale".into(),
+        tensor("layers.0.attn.query.weight_scale", DType::Ue8M0, &[2, 2]),
+    );
+    assert!(import_operand(&metadata, &dense, &short).is_err());
+
+    // A routed expert: E2M1 pairs with a UE8M0 scale per 32.
+    let routed = OperandRole {
+        operation: "layers.0.experts".into(),
+        weight: "layers.0.experts.3.up.weight".into(),
+        targets: expert,
+        logical_shape: vec![4, 64],
+        lookup: false,
+        shared_scale_stem: None,
+        declared: None,
+    };
+    let tensors: BTreeMap<_, _> = [
+        tensor(&routed.weight, DType::U8, &[4, 32]),
+        tensor("layers.0.experts.3.up.weight_scale", DType::Ue8M0, &[4, 2]),
+    ]
+    .into_iter()
+    .map(|t| (t.tensor.clone(), t))
+    .collect();
+    let imported = import_operand(&metadata, &routed, &tensors).unwrap();
+    assert_eq!(imported.weight.format, WeightFormat::Mxfp4);
+    assert_eq!(
+        imported.weight.encoding,
+        CodeEncoding::E2M1(NibbleOrder::EvenLow)
+    );
+    assert_eq!(imported.activation.unwrap().format, ActivationFormat::Mxfp8);
+
+    // Every other spelling is refused without partial rules, and the
+    // block-128 dialect keeps refusing the block-32 fields.
+    for (field, value) in [
+        (r#""scale_fmt":"ue8m0""#, r#""scale_fmt":"e8m0""#),
+        (r#","scale_fmt":"ue8m0""#, ""),
+        (r#""expert_dtype":"fp4""#, r#""expert_dtype":"mxfp4""#),
+        (
+            r#""activation_scheme":"dynamic""#,
+            r#""activation_scheme":"static""#,
+        ),
+        (
+            r#""expert_dtype":"fp4""#,
+            r#""expert_dtype":"fp4","store_dtype":"mxfp4","mxfp4_block_size":32"#,
+        ),
+        (
+            r#""weight_block_size":[32,32]"#,
+            r#""weight_block_size":[128,128]"#,
+        ),
+        (
+            r#""weight_block_size":[32,32]"#,
+            r#""weight_block_size":[32,64]"#,
+        ),
+    ] {
+        let mut refused = ExportMetadata::default();
+        assert!(
+            refused
+                .add_document("config", DOCUMENT.replace(field, value).as_bytes())
+                .is_err(),
+            "{value}"
+        );
+        assert_eq!(refused, ExportMetadata::default());
+    }
+    let mut nested = ExportMetadata::default();
+    assert!(
+        nested
+            .add_document(
+                "hf",
+                br#"{"quantization":{"quant_algo":"MXFP8","group_size":32},"scale_fmt":"ue8m0"}"#
+            )
+            .is_err()
+    );
+}

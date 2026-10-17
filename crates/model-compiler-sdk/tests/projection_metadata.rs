@@ -709,3 +709,70 @@ fn header_templates_render_all_binding_indices() {
             .contains("unresolved")
     );
 }
+
+#[test]
+fn block32_headers_bind_aliased_scales_and_i8_packed_expert_codes() {
+    use model_compiler_sdk::quantization::projection::metadata::{CompanionNames, HeaderRole};
+    let d = parse(&serde_json::json!({"schema": "chopinfer.projection.v1", "namespace": "synthetic", "layer_stems": [], "projections": [{
+        "id": "matrix", "source": {"tensor": "matrix.weight"}, "shape": [64, 96],
+        "kind": {"kind": "dense"}, "split": {"class": "replicate"}, "format": "fp8_block32",
+        "epilogues": kernel_core::contract::Epilogues::default(), "numerical_contract": "test-v1", "uses": [{"phase": "Decode", "capacity": 1, "graph": false}]
+    }, {
+        "id": "bank", "source": {"tensor": "experts.{expert}.up.weight"}, "shape": [4, 64],
+        "kind": {"kind": "expert_bank", "experts": 2, "top_k": 1}, "split": {"class": "replicate"}, "format": "mxfp4",
+        "epilogues": kernel_core::contract::Epilogues::default(), "numerical_contract": "test-v1", "uses": [{"phase": "Decode", "capacity": 1, "graph": false}]
+    }], "fusion_groups": [], "side_tensors": []}).to_string(), &Geometry::new(), &Registry::default()).unwrap();
+    let mut m = CheckpointMetadata {
+        tensors: BTreeMap::from([
+            ("matrix.weight".into(), info(&[64, 96], "F8_E4M3")),
+            ("matrix.scale".into(), info(&[2, 3], "F8_E8M0")),
+            ("experts.0.up.weight".into(), info(&[4, 32], "I8")),
+            ("experts.0.up.scale".into(), info(&[4, 2], "F8_E8M0")),
+            ("experts.1.up.weight".into(), info(&[4, 32], "I8")),
+            ("experts.1.up.scale".into(), info(&[4, 2], "F8_E8M0")),
+        ]),
+        quantization_config: serde_json::json!({"quant_method":"fp8","activation_scheme":"dynamic",
+            "weight_block_size":[32,32],"scale_fmt":"ue8m0","expert_dtype":"fp4"}),
+        ..Default::default()
+    };
+    let mut rules = HeaderCompanionRules::new(&m, None).unwrap();
+    // The exporter names each weight's scale `{stem}.scale`.
+    for id in ["matrix", "bank"] {
+        rules.roles.insert(
+            id.into(),
+            HeaderRole {
+                companions: CompanionNames {
+                    local: Some("{stem}.scale".into()),
+                    global: None,
+                },
+                ..Default::default()
+            },
+        );
+    }
+    let bound = d
+        .bind(&Geometry::new(), &Registry::default(), &m, &rules)
+        .unwrap();
+    assert_eq!(bound.operands.len(), 3);
+    assert_eq!(
+        bound.operands[0].imported.weight.format,
+        WeightFormat::Fp8Block32x32
+    );
+    let expert = &bound.operands[1].imported.weight;
+    assert_eq!(expert.format, WeightFormat::Mxfp4);
+    assert_eq!(expert.codes.dtype, DType::U8);
+    assert_eq!(
+        expert.local_scale.as_ref().unwrap().tensor.tensor,
+        "experts.0.up.scale"
+    );
+    // Only packed 4-bit codes read I8 bytes: an I8 block-32 weight is refused.
+    m.tensors.get_mut("matrix.weight").unwrap().dtype = "I8".into();
+    let rules = {
+        let mut fresh = HeaderCompanionRules::new(&m, None).unwrap();
+        fresh.roles = rules.roles.clone();
+        fresh
+    };
+    assert!(
+        d.bind(&Geometry::new(), &Registry::default(), &m, &rules)
+            .is_err()
+    );
+}

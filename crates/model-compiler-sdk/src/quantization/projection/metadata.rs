@@ -66,10 +66,22 @@ fn error(e: impl std::fmt::Display) -> Error {
 }
 
 fn span(name: &str, m: &CheckpointMetadata) -> Result<TensorSpan, Error> {
+    span_with(name, m, false)
+}
+
+/// A tensor's span. With `packed_codes`, an I8 tensor is read as the U8
+/// bytes of packed 4-bit codes: an exporter that stores E2M1 pairs in
+/// signed bytes keeps the same bytes.
+fn span_with(name: &str, m: &CheckpointMetadata, packed_codes: bool) -> Result<TensorSpan, Error> {
     let t = m
         .tensors
         .get(name)
         .ok_or_else(|| error(format!("missing tensor `{name}`")))?;
+    let stored = if packed_codes && t.dtype == "I8" {
+        "U8"
+    } else {
+        t.dtype.as_str()
+    };
     let dtype = [
         DType::Bf16,
         DType::F16,
@@ -82,7 +94,7 @@ fn span(name: &str, m: &CheckpointMetadata) -> Result<TensorSpan, Error> {
         DType::Ue8M0,
     ]
     .into_iter()
-    .find(|d| d.checkpoint_dtype() == Some(t.dtype.as_str()))
+    .find(|d| d.checkpoint_dtype() == Some(stored))
     .ok_or_else(|| {
         error(format!(
             "tensor `{name}` has unsupported source dtype {}",
@@ -207,11 +219,15 @@ impl CompanionRules for HeaderCompanionRules {
             return Err(error("declared format disagrees with export weight recipe"));
         }
         let prefix = format!("{stem}.");
+        let packed_codes = matches!(
+            recipe.weight,
+            kernel_core::contract::WeightFormat::Mxfp4 | kernel_core::contract::WeightFormat::Nvfp4
+        );
         let mut tensors = m
             .tensors
             .range(prefix.clone()..)
             .take_while(|(n, _)| n.starts_with(&prefix))
-            .map(|(n, _)| Ok((n.clone(), span(n, m)?)))
+            .map(|(n, _)| Ok((n.clone(), span_with(n, m, packed_codes && n == r.tensor)?)))
             .collect::<Result<BTreeMap<_, _>, Error>>()?;
         let names = hints
             .format_companions

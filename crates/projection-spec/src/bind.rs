@@ -511,8 +511,12 @@ fn span_requirement(
         .tensors
         .get(&span.tensor)
         .ok_or_else(|| Error(format!("checkpoint has no tensor `{}`", span.tensor)))?;
-    let expected = if span.dtype == DType::Ue8M0 && found.dtype == "U8" {
-        "U8"
+    // Stored bytes the span reads under another name: UE8M0 scale codes
+    // serialized as U8, and packed 4-bit code pairs stored as I8.
+    let expected = if (span.dtype == DType::Ue8M0 && found.dtype == "U8")
+        || (span.dtype == DType::U8 && found.dtype == "I8")
+    {
+        found.dtype.as_str()
     } else {
         span.dtype.checkpoint_dtype().ok_or_else(|| {
             Error(format!(

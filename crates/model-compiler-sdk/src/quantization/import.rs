@@ -68,6 +68,10 @@ pub enum ActivationRecipe {
     Mxfp8Dynamic,
     Nvfp4Static,
     Nvfp4Dynamic,
+    /// E4M3 per 32 with a UE8M0 scale rounded up from the BF16-rounded amax
+    /// (floor 1e-4), as the block-32 FP8 dialect's exporter trains and
+    /// serves its activations (`DynamicScale::MXFP8_CEIL`).
+    Mxfp8CeilDynamic,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -156,6 +160,12 @@ struct Document {
     /// The HF FP8 dialect's routed expert weight storage.
     store_dtype: Option<String>,
     mxfp4_block_size: Option<u32>,
+    /// The block-32 FP8 dialect's scale encoding: `ue8m0` (power-of-two
+    /// scales, one byte each).
+    scale_fmt: Option<String>,
+    /// The block-32 FP8 dialect's routed expert weight storage: `fp4` is
+    /// E2M1 codes with a UE8M0 scale per 32.
+    expert_dtype: Option<String>,
 }
 
 fn present<'de, D>(deserializer: D) -> Result<Option<serde_json::Value>, D::Error>
@@ -409,6 +419,56 @@ impl ExportMetadata {
         Ok(())
     }
 
+    /// The block-32 FP8 dialect: FP8 E4M3 weights with a UE8M0 scale per
+    /// 32x32 block (`weight_block_size` [32, 32], `scale_fmt` `ue8m0`),
+    /// dynamic E4M3-per-32 activations with ceil UE8M0 scales, and, with
+    /// `expert_dtype` `fp4`, routed experts stored as E2M1 codes with a
+    /// UE8M0 scale per 32 (MXFP4). Every other field of the HF FP8 dialect
+    /// is refused here.
+    fn add_block32(&mut self, context: &str, document: &Document) -> Result<(), CompilerError> {
+        if document.activation_scheme.as_deref() != Some("dynamic")
+            || document.scale_fmt.as_deref() != Some("ue8m0")
+            || document.weight_per_tensor == Some(true)
+            || document.act_per_tensor == Some(true)
+            || document.fmt.as_deref().is_some_and(|fmt| fmt != "e4m3")
+            || document.quant_algo.is_some()
+            || document.group_size.is_some()
+            || !document.config_groups.is_empty()
+            || !document.quantized_layers.is_empty()
+            || document.store_dtype.is_some()
+            || document.mxfp4_block_size.is_some()
+        {
+            return Err(error(
+                context,
+                "block-32 FP8 requires E4M3 weights with ue8m0 scales and dynamic activations",
+            ));
+        }
+        let storage = match document.expert_dtype.as_deref() {
+            None => None,
+            Some("fp4") => Some(WeightFormat::Mxfp4),
+            Some(other) => {
+                return Err(error(
+                    context,
+                    format!("unsupported expert_dtype {other}; expected fp4"),
+                ));
+            }
+        };
+        self.set_default(
+            EncodingRecipe {
+                weight: WeightFormat::Fp8Block32x32,
+                activation: Some(ActivationRecipe::Mxfp8CeilDynamic),
+            },
+            context,
+        )?;
+        if let Some(storage) = storage {
+            if self.expert_storage.is_some_and(|old| old != storage) {
+                return Err(error(context, "conflicting expert storage declarations"));
+            }
+            self.expert_storage = Some(storage);
+        }
+        Ok(())
+    }
+
     fn add_parsed(
         &mut self,
         context: &str,
@@ -440,6 +500,8 @@ impl ExportMetadata {
                 || !document.ignored_layers.is_empty()
                 || document.store_dtype.is_some()
                 || document.mxfp4_block_size.is_some()
+                || document.scale_fmt.is_some()
+                || document.expert_dtype.is_some()
             {
                 return Err(error(
                     context,
@@ -456,7 +518,11 @@ impl ExportMetadata {
             document.kv_cache_scheme.as_ref(),
             options,
         )?;
-        if document.quant_method.as_deref() == Some("fp8") {
+        if document.quant_method.as_deref() == Some("fp8")
+            && document.weight_block_size == Some([32, 32])
+        {
+            self.add_block32(context, &document)?;
+        } else if document.quant_method.as_deref() == Some("fp8") {
             // Per-tensor flags and the code format are optional in this
             // dialect; when present they must restate the block recipe.
             if document.activation_scheme.as_deref() != Some("dynamic")
@@ -468,6 +534,8 @@ impl ExportMetadata {
                 || document.group_size.is_some()
                 || !document.config_groups.is_empty()
                 || !document.quantized_layers.is_empty()
+                || document.scale_fmt.is_some()
+                || document.expert_dtype.is_some()
             {
                 return Err(error(
                     context,
@@ -511,6 +579,8 @@ impl ExportMetadata {
                 || !document.ignored_layers.is_empty()
                 || document.store_dtype.is_some()
                 || document.mxfp4_block_size.is_some()
+                || document.scale_fmt.is_some()
+                || document.expert_dtype.is_some()
             {
                 return Err(error(context, "unsupported exporter fields"));
             }
@@ -976,7 +1046,7 @@ pub fn companion_names(
             ],
             global: None,
         },
-        WeightFormat::Mxfp8 | WeightFormat::Mxfp4 => CompanionNames {
+        WeightFormat::Fp8Block32x32 | WeightFormat::Mxfp8 | WeightFormat::Mxfp4 => CompanionNames {
             local: vec![format!("{stem}.weight_scale")],
             global: None,
         },
@@ -1061,6 +1131,7 @@ pub(crate) fn import_operand_with_origins(
                 WeightFormat::Nvfp4 => (1, 16),
                 WeightFormat::Mxfp8 | WeightFormat::Mxfp4 => (1, 32),
                 WeightFormat::Fp8Block128x128(_) => (128, 128),
+                WeightFormat::Fp8Block32x32 => (32, 32),
                 _ => return Err(error(&context, "unsupported source weight layout")),
             };
             let present: Vec<_> = names
@@ -1077,8 +1148,10 @@ pub(crate) fn import_operand_with_origins(
                 .unwrap_or(names.local.last().unwrap());
             let mut tensor = read(name)?;
             // ModelOpt serializes UE8M0 scale codes as UINT8 safetensors bytes.
-            if matches!(format, WeightFormat::Mxfp8 | WeightFormat::Mxfp4)
-                && tensor.dtype == DType::U8
+            if matches!(
+                format,
+                WeightFormat::Fp8Block32x32 | WeightFormat::Mxfp8 | WeightFormat::Mxfp4
+            ) && tensor.dtype == DType::U8
             {
                 tensor.dtype = DType::Ue8M0;
             }
@@ -1167,6 +1240,12 @@ pub(crate) fn import_operand_with_origins(
                     DType::Fp8E4M3,
                     32,
                     Calibration::Dynamic(DynamicScale::MxPowerOfTwo),
+                ),
+                ActivationRecipe::Mxfp8CeilDynamic => (
+                    ActivationFormat::Mxfp8,
+                    DType::Fp8E4M3,
+                    32,
+                    Calibration::Dynamic(DynamicScale::MXFP8_CEIL),
                 ),
                 ActivationRecipe::Nvfp4Dynamic => (
                     ActivationFormat::Nvfp4,

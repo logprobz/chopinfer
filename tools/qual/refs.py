@@ -371,7 +371,7 @@ def adoption(config, previous=None, root=None):
                 for sha in entry.get("members", {}).values()} - pinned
     for sha, record in previous["objects"].items():
         if sha in value["objects"]:
-            value["objects"][sha] = kept_record(sha, value["objects"][sha], record, renew=sha not in pinned)
+            value["objects"][sha] = kept_record(sha, value["objects"][sha], record, renew=sha in replaced)
         elif sha not in replaced:
             value["objects"][sha] = copy.deepcopy(record)
     return value
@@ -381,11 +381,11 @@ def kept_record(sha, proved, record, renew=False):
     """The record of object `sha` after adoption: the lock's `record` with
     what `snapshot` `proved` of the bytes, its schema and production. Fields
     the proof does not name stay; a record whose schema, producer or a
-    production field differs from the proof is refused. With `renew` (no
-    kept entry or configuration pins the bytes) the proof's other production
-    fields replace the record's: the same bytes proved again by the same
-    producer, as when a pin bump changes the requirements a preprocessing
-    reference binds."""
+    production field differs from the proof is refused. With `renew` (only
+    entries this adoption replaces pinned the bytes) the proof's other
+    production fields replace the record's: the same bytes proved again by
+    the same producer, as when a pin bump changes the requirements a
+    preprocessing reference binds."""
     for field in ("schema", "production"):
         if field in proved and field in record and not isinstance(proved[field], dict) \
                 and proved[field] != record[field]:

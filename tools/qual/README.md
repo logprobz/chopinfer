@@ -525,14 +525,15 @@ changed). A configuration's entries are edited in the model lock;
 `adopt --model MODEL.CONFIG` is refused.
 
 A fresh proof of bytes the lock already holds updates their object's
-record only when every entry that pins them is replaced in the same
-adoption. Then the proof's production fields replace the old ones, while
-the schema, the producer and the record's other fields stay: after a pin
-bump changes the requirements digest a preprocessing reference binds, its
-unchanged tensors name the new record. An object a configuration or a kept
-entry also pins keeps its record, and a proof that contradicts the record
-is refused. A tensor whose bytes differ from its record is refused before
-anything is pinned.
+record only when entries of the lock pin them and every one of those is
+replaced in the same adoption. Then the proof's production fields replace
+the old ones, while the schema, the producer and the record's other fields
+stay: after a pin bump changes the requirements digest a preprocessing
+reference binds, its unchanged tensors name the new record. An object a
+configuration or a kept entry also pins, or that no entry pins any more,
+keeps its record, and a proof that contradicts the record is refused. A
+tensor whose bytes differ from its record is refused before anything is
+pinned.
 
 A lock entry pins a file's SHA-256, or each member of a directory. A
 directory entry's `scope` selects only the files gates read

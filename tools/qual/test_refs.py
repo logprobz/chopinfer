@@ -589,6 +589,25 @@ class AdoptionKeepsTheLockTests(unittest.TestCase):
         self.assertIn("in reference_sha256", errors)
         self.assertEqual(self.lock.read_bytes(), before)
 
+    def test_a_fresh_proof_does_not_renew_a_record_no_entry_pins(self):
+        # Regression: renewal rewrote a record the lock kept after its input
+        # was removed, when the input came back with the same bytes.
+        tensors, _ = self.adopt_preprocessing()
+        previous = copy.deepcopy(self.previous)
+        del previous["entries"]["media_preprocessing_reference"]
+        removed = {**self.config, "inputs": {key: value for key, value in self.config["inputs"].items()
+                                             if key != "media_preprocessing_reference"}}
+        refs.validate_lock(previous, removed, self.root)
+        self.lock.write_bytes(refs.encoded(previous, self.previous))
+        before = self.lock.read_bytes()
+        with self.assertRaisesRegex(ValueError, f"object ({tensors[0]}|{tensors[1]}): the lock's record differs "
+                                                f"from what adoption proved in reference_sha256"):
+            refs.adoption(self.config, previous, self.root)
+        code, errors, _ = self.adopt("--replace-sha256", refs.digest(self.lock))
+        self.assertEqual(code, 2)
+        self.assertIn("in reference_sha256", errors)
+        self.assertEqual(self.lock.read_bytes(), before)
+
     def test_a_fresh_proof_of_other_bytes_is_refused(self):
         tensors, _ = self.adopt_preprocessing()
         before = self.lock.read_bytes()

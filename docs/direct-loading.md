@@ -50,6 +50,35 @@ rank's plan must agree on each view's alignment and placement. Qwen's TP2
 plan keeps the n-gram table in host memory; see
 [pinned host memory](deploy-common.md#pinned-host-memory) for the host limits.
 
+## Host-mapped views
+
+A plan may instead map a view from the checkpoint
+(`ViewPlacementV1::Mapped`, capability `chop.host-mapped-rows.v1`): a table
+read a few rows at a time, too large to keep in device or page-locked
+memory. Exactly one record covers such a view, a plain copy of one tensor,
+whole or one contiguous range of its leading axis, stored unchanged; the
+host refuses any other record by name. It rechecks the file against the
+header it opened, then maps that byte range read-only from the inode it
+opened without following links. Every rank and image of the process that
+names the same bytes shares one mapping. The span is cut out of the rank
+arena as a host view is, and no upload reads it; the page cache holds the
+bytes, and neither the device nor any page-locked budget counts them.
+`startup direct_load` states their total as `mapped_bytes`.
+
+A bundle reads a mapped view on the CPU (`with_mapped_view`) and gathers the
+rows a step needs into a staging buffer: page-locked, device-mapped host
+memory it allocates and writes in place (`allocate_staging_buffer`,
+`with_staging_buffer`), one per rank, which device copies and kernels take
+like any buffer. A step launches the work that does not need the rows,
+gathers them on the CPU meanwhile, copies them on its own stream, and has
+the consuming work wait on an event recorded after the copy; before it
+writes the staging buffer again it synchronizes the event of the last copy
+that read it.
+
+A mapping reads what the file holds, so serve from a checkpoint nobody
+rewrites while the server runs: a file truncated while mapped makes reads of
+the lost pages fault.
+
 ## Streaming a plan
 
 Each rank uploads through two alternating pinned 64 MiB chunks (512 MiB

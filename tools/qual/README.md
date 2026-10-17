@@ -1023,9 +1023,9 @@ capability.
 Every receipt `common.receipt` or a `chopinfer eval` capture writes records
 `host_load`: the host's load averages, cumulative CPU ticks and cumulative
 pressure stall microseconds (the "some" totals of `/proc/pressure/cpu` and
-`/proc/pressure/io`) when the check started and when it wrote the
-receipt (the soak also samples them with each memory sample), and its
-verdict under
+`/proc/pressure/io`) over the check's timed work, from when the check
+started (the soak: when its timed load started, then with each memory
+sample) to when it wrote the receipt, and its verdict under
 `common.HOST_LOAD_RULE`. The host is idle when, over every interval between
 samples, the CPU idle fraction (idle plus iowait; niced work is busy) is at
 least 0.9 and the shares of wall time in which some task stalled waiting

@@ -153,10 +153,16 @@ class ReceiptHostLoadTests(unittest.TestCase):
         self.assertEqual(len(load["samples"]), 2)
         self.assertEqual((load["idle"], load["timing"]), (True, "evidence"))
 
-    def test_samples_taken_during_the_check_are_judged_too(self):
+    def test_samples_taken_during_the_check_start_its_window(self):
+        # A busy start before the timed work is outside the window.
+        with patch.object(common, "HOST_LOAD_START", sample(0, 0, 0, io=0)):
+            value = self.write({"passed": True}, samples=[sample(100, 1000, 10, io=9000000),
+                                                          sample(1090, 2000, 20, io=9000000)],
+                               end=sample(2080, 3000, 30, io=9000000))
+        self.assertEqual([row["at"] for row in value["host_load"]["samples"]], [10, 20, 30])
+        self.assertTrue(value["host_load"]["idle"])
         with patch.object(common, "HOST_LOAD_START", sample(0, 0, 0)):
-            value = self.write({"passed": True}, samples=[sample(100, 1000, 10)], end=sample(1090, 2000, 20))
-        self.assertEqual(len(value["host_load"]["samples"]), 3)
+            value = self.write({"passed": True}, samples=[sample(100, 1000, 10)], end=sample(1090, 2000, 20, io=3000000))
         self.assertFalse(value["host_load"]["idle"])
 
     def test_a_busy_host_leaves_the_verdict_alone(self):

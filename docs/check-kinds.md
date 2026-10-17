@@ -44,7 +44,7 @@ fields:
 | `passed` | bool | the kind's own verdict |
 | `errors` | list | one entry per failed item; nonempty fails the check |
 | `skipped` | list | coverage the run skipped; nonempty fails the check outside a mechanics run |
-| `host_load` | object | host load from the check's start to the receipt (tools/qual/README.md, `common.HOST_LOAD_RULE`); `timing` `informational` marks throughput and latency figures as not performance evidence and never changes the verdict |
+| `host_load` | object | host load over the check's timed work, to the receipt (tools/qual/README.md, `common.HOST_LOAD_RULE`); `timing` `informational` marks throughput and latency figures as not performance evidence and never changes the verdict |
 
 and the kind's fields below. Field order is free; JSON numbers are IEEE 754
 doubles.

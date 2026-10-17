@@ -30,7 +30,7 @@ import sys
 import time
 import urllib.request
 
-from common import HOST_LOAD_START, Client, arguments, compared_timing, host_load, host_load_sample
+from common import Client, arguments, compared_timing, host_load, host_load_sample
 
 RECORDED = ("index", "token_ids", "logprobs", "text", "finish_reason", "usage", "done",
             "error", "complete", "ttft_s")
@@ -172,7 +172,7 @@ def run(args):
                 "incomplete": sum(not row["complete"] for row in requests),
                 "requests": [{key: row[key] for key in RECORDED} for row in requests]}
 
-    load = [HOST_LOAD_START]
+    load = []
     for concurrency in args.concurrencies:
         load.append(host_load_sample())
         if concurrency == 1:

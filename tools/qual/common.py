@@ -733,9 +733,10 @@ def compared_timing(loads):
 
 
 def receipt(check, identity, result, mechanics_only=False, load_samples=None):
-    """Writes a receipt with the host load from the check's start (and any
-    `load_samples` taken during it) to now."""
-    load = host_load([HOST_LOAD_START, *(load_samples or []), host_load_sample()])
+    """Writes a receipt with the host load over the check's timed work to
+    now: from the first of the `load_samples` taken during it, or without
+    them from the check's start."""
+    load = host_load([*(load_samples or [HOST_LOAD_START]), host_load_sample()])
     directory = receipt_root()
     directory.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")

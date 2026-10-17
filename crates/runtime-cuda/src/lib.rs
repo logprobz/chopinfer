@@ -1135,16 +1135,6 @@ impl DeviceBuffer {
         self.mapped_host.is_some()
     }
 
-    /// Where a mapped host allocation's host bytes start, for a caller that
-    /// writes them while the device may also hold the allocation; they stay
-    /// allocated until the allocation is released. `None` for device memory.
-    #[must_use]
-    pub fn mapped_host_address(&self) -> Option<usize> {
-        self.mapped_host
-            .as_ref()
-            .map(|allocation| allocation.host_address())
-    }
-
     /// Lends the host bytes of a mapped host allocation no clone shares yet,
     /// so they can be filled before any kernel reads them.
     pub fn mapped_host_bytes_mut(&mut self) -> Result<&mut [u8], CudaError> {

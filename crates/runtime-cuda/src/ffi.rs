@@ -690,12 +690,6 @@ impl MappedHostAllocation {
         self.device
     }
 
-    /// Where the host bytes start; they stay allocated until `free` or drop.
-    #[must_use]
-    pub fn host_address(&self) -> usize {
-        self.pointer as usize
-    }
-
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         // SAFETY-REVIEWED: mutable access requires a unique borrow of the
         // owner, and the bytes stay allocated until `free` or drop.

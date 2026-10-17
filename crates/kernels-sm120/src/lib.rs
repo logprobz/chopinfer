@@ -19,6 +19,7 @@ pub mod owned_writes;
 pub mod paged_partials;
 pub mod pooled_indexer;
 pub mod precision;
+pub mod probes;
 pub mod row;
 pub mod sampling;
 pub mod selected_partials;

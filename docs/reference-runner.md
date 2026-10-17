@@ -64,14 +64,13 @@ variables and `CHOPINFER_REFRUN_PYTHON` set in your `local.env`
 **Environment.** `CHOPINFER_REFRUN_PYTHON` is the Python of a CUDA virtual
 environment, outside the repository, holding exactly the distributions
 pinned in [requirements-cu130.txt](../tools/refrun/requirements-cu130.txt)
-(torch 2.14.0+cu130 and transformers 5.16.1 among them). Create it with
-Python 3.12 and install the pins with the torch wheel index as an extra
-index:
+(torch 2.14.0+cu130 and transformers 5.16.1 among them). The file pins
+every distribution by hash and names the torch wheel index as an extra
+index. Create the environment with Python 3.12 and install the pins:
 
 ```sh
 python3.12 -m venv REFRUN_VENV
-REFRUN_VENV/bin/pip install --extra-index-url https://download.pytorch.org/whl/cu130 \
-  -r tools/refrun/requirements-cu130.txt
+REFRUN_VENV/bin/pip install -r tools/refrun/requirements-cu130.txt
 ```
 
 Avoid extra packages: cache hits and reproducing a bound fixture's keys

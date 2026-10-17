@@ -7,9 +7,10 @@
 
 `generate` renders every seeded case (tools/refrun/frontend_cases.py plus
 `models/M/frontend_cases.py`) with HF `apply_chat_template` at the model's
-pinned template, tokenizes it the way the frontend goldens do, and records
-reference refusals, template line coverage, feature tags and parser round-trip
-vectors. The full corpus goes to `$CHOPINFER_DATA/frontend-corpus/M/` by
+pinned template, or with the model's pinned Python encoder where it ships one
+instead (`Reference.python_encoder`), tokenizes it the way the frontend
+goldens do, and records reference refusals, template line coverage, feature
+tags and parser round-trip vectors. The full corpus goes to `$CHOPINFER_DATA/frontend-corpus/M/` by
 default. `minimize` keeps a subset that still runs every template line, every
 feature tag, every reference-refusal class, every divergence case, one
 round-trip vector per turn shape and ending, and every round trip of a fixed
@@ -55,7 +56,7 @@ import unittest
 import warnings
 
 from tools.refrun import frontend_cases
-from tools.refrun.template_coverage import TemplateCoverage
+from tools.refrun.template_coverage import PythonSourceCoverage, TemplateCoverage
 
 ROOT = Path(__file__).resolve().parents[2]
 COVERAGE_SCHEMA = "chop-frontend-corpus-coverage-v1"
@@ -132,8 +133,15 @@ class Model:
 
     def hf_input(self, request):
         """The HF input of `request` under this model's transport and
-        reasoning controls (`hf_input`)."""
-        return hf_input(request, self.transport, self.declaration["reasoning"])
+        reasoning controls (`hf_input`), with each request field the cases
+        module lists in `INPUT_FIELDS` passed through as sent: a reference
+        that renders a field a template never reads (a Python encoder's
+        `response_format`) receives it."""
+        arguments = hf_input(request, self.transport, self.declaration["reasoning"])
+        for field in getattr(self.cases, "INPUT_FIELDS", ()):
+            if field in request:
+                arguments[field] = copy.deepcopy(request[field])
+        return arguments
 
     def full_cases(self, seed):
         """The full corpus's cases: the shared generator's and the model's."""
@@ -413,6 +421,24 @@ class Reference:
                 message = str(error).split("\n")[0][:200]
                 return {"refusal": {"class": type(error).__name__, "message": message}, "lines": sorted(hit)}
         return {"rendered_text": text, "token_ids": self.tokenize(text), "lines": sorted(hit)}
+
+    @classmethod
+    def python_encoder(cls, checkpoint, source, render):
+        """The reference of a model whose checkpoint ships a Python encoder
+        instead of a chat template: `source` runs once into its own
+        namespace (`PythonSourceCoverage`), and each render calls
+        `render(namespace, **hf_input)`, the cases module's mapping of the HF
+        input onto the encoder's functions. The tokenizer is the
+        checkpoint's, as for a template."""
+        from transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained(checkpoint, local_files_only=True)
+        coverage = PythonSourceCoverage(source)
+        normalizer = tokenizer.backend_tokenizer.normalizer
+        return cls(coverage, lambda **arguments: render(coverage.namespace, **arguments),
+                   lambda text: list(tokenizer(text, add_special_tokens=False)["input_ids"]),
+                   reference_environment("transformers", "tokenizers"),
+                   normalizer.normalize_str if normalizer is not None else None)
 
     def with_reference_text(self, reference_text):
         """This reference with `reference_text(text, arguments)` applied to
@@ -808,15 +834,28 @@ def check_continuation(model, reference, request, rendered, base, endings):
 # generate ---------------------------------------------------------------------------------
 
 def template_source(model, template=None):
-    """The template text and its digest. The model's own template must match
-    the pin; one passed explicitly (a drill) is read as it is."""
-    path = Path(template) if template else model.checkpoint() / "chat_template.jinja"
+    """The reference source and its digest: the checkpoint's chat template,
+    or the file the pin names as `source` (a Python encoder) with its
+    `source_sha256`. The model's own source must match the pin; one passed
+    explicitly (a drill) is read as it is."""
+    name = model.pin.get("source", "chat_template.jinja")
+    pinned = model.pin["source_sha256"] if "source" in model.pin else model.pin["template_sha256"]
+    path = Path(template) if template else model.checkpoint() / name
     data = path.read_bytes()
     digest = hashlib.sha256(data).hexdigest()
-    if template is None and digest != model.pin["template_sha256"]:
-        raise CorpusError(f"{path.name} is {digest}, not the pinned {model.pin['template_sha256']} "
+    if template is None and digest != pinned:
+        raise CorpusError(f"{path.name} is {digest}, not the pinned {pinned} "
                           f"(revision {model.pin['revision']})")
     return data.decode(), digest
+
+
+def model_reference(model, source):
+    """The reference a model's pin names: its Python encoder through the
+    cases module's `encoder_render` when the pin names a `source`, else HF
+    at its chat template."""
+    if "source" in model.pin:
+        return Reference.python_encoder(model.checkpoint(), source, model.cases.encoder_render)
+    return Reference.hf(model.checkpoint(), source)
 
 
 def build_corpus(model, reference, cases, table, refusals=None):
@@ -873,7 +912,7 @@ def write_json(path, value):
 def generate(model, output, seed=0, divergences=None, template=None, refusals=None, reference=None):
     source, digest = template_source(model, template)
     if reference is None:
-        reference = Reference.hf(model.checkpoint(), source)
+        reference = model_reference(model, source)
     reference = reference.with_reference_text(model.reference_text)
     table = read_divergences(divergences if divergences is not None else model.divergences_path)
     cases = model.full_cases(seed)
@@ -1026,7 +1065,7 @@ def check(model, fixtures=None, divergences=None, reference=None, template=None)
     fixtures = Path(fixtures) if fixtures else model.fixtures
     source, digest = template_source(model, template)
     if reference is None:
-        reference = Reference.hf(model.checkpoint(), source)
+        reference = model_reference(model, source)
     reference = reference.with_reference_text(model.reference_text)
     table = read_divergences(divergences if divergences is not None else model.divergences_path)
     vectors, rounds, coverage, _ = read_corpus(fixtures)
@@ -1331,7 +1370,7 @@ def recompute_rounds(model, corpus, divergences=None, template=None, reference=N
     """Recomputes the round-trip vectors of a corpus directory's cases."""
     source, _ = template_source(model, template)
     if reference is None:
-        reference = Reference.hf(model.checkpoint(), source)
+        reference = model_reference(model, source)
     reference = reference.with_reference_text(model.reference_text)
     table = read_divergences(divergences if divergences is not None else model.divergences_path)
     corpus = Path(corpus)

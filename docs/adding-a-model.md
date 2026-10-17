@@ -434,8 +434,12 @@ reads the model-neutral sections and passes `format` to the bundle unread.
   the model's own feature axes and cases) and its divergence table
   (`frontend-divergences.json`: template lines no accepted request reaches,
   and requests whose outcome differs from HF's on purpose, each with its
-  reason). Then run `python3 -m tools.refrun.frontend_corpus generate --model
-  <m>`, which renders every case with HF at the pinned template into
+  reason). A checkpoint that ships a Python encoder instead of a chat template pins
+  the encoder (`PIN["source"]` and `source_sha256`) and maps the HF input
+  onto it (`encoder_render`), and the corpus traces the encoder's function
+  lines as it would a template's. Then run `python3 -m tools.refrun.frontend_corpus generate --model
+  <m>`, which renders every case with HF at the pinned template (or with the
+  pinned encoder) into
   `$CHOPINFER_DATA/frontend-corpus/<m>/`; run the model's Rust corpus test
   over that full corpus with `CHOPINFER_FRONTEND_CORPUS_DIR` set; `minimize`
   it into `fixtures/<m>/frontend/corpus*.json`, which keeps every template

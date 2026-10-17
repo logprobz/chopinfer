@@ -21,8 +21,10 @@ Nothing here imports transformers until that compiler is asked for.
 """
 
 from contextlib import contextmanager
+import dis
 import re
 import sys
+import types
 
 # The first line of a compound statement in generated code.
 COMPOUND = re.compile(r"(if|elif|else|for|while|try|except|finally|with|def|async def)\b")
@@ -156,6 +158,51 @@ class TemplateCoverage:
         with self.tracing() as hit:
             text = self.template.render(**context)
         return text, set(hit)
+
+    def line_text(self, line):
+        return self.source.split("\n")[line - 1]
+
+
+def function_lines(code):
+    """The source lines with code of every function compiled from `code`, a
+    module: each line an instruction starts, without a function's `def`
+    line, which a call does not run as a line of its body."""
+    lines = set()
+    pending = [constant for constant in code.co_consts if isinstance(constant, types.CodeType)]
+    while pending:
+        function = pending.pop()
+        lines.update(line for _, line in dis.findlinestarts(function)
+                     if line is not None and line != function.co_firstlineno)
+        pending += [constant for constant in function.co_consts if isinstance(constant, types.CodeType)]
+    return lines
+
+
+class PythonSourceCoverage:
+    """One Python source module, a model's pinned encoder, and the lines its
+    functions run.
+
+    The source is compiled under `filename` and run once into a fresh
+    namespace (`namespace`), whose functions a reference calls. Its lines
+    with code are those of its functions (`function_lines`): definitions
+    and constants run once when the module loads, never in a render. A
+    caller pins the source's digest before it is run."""
+
+    def __init__(self, source, filename="<python-encoder>"):
+        self.source = source
+        code = compile(source, filename, "exec")
+        self.namespace = {"__name__": "python_encoder", "__builtins__": __builtins__}
+        exec(code, self.namespace)
+        lines = function_lines(code)
+        self.line_map = LineMap({line: line for line in lines}, lines)
+        self.tracer = LineTracer(filename, self.line_map, self.namespace)
+
+    @property
+    def lines_with_code(self):
+        return self.line_map.source_lines()
+
+    def tracing(self):
+        """A block whose calls into the module record their lines."""
+        return self.tracer.tracing()
 
     def line_text(self, line):
         return self.source.split("\n")[line - 1]

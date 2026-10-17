@@ -54,12 +54,15 @@ runner's CUDA environment ([setup](../../docs/reference-runner.md#prepare-and-ru
 | `calibrate.py` | GPU calibration: GEMM and attention rates, read rates, determinism |
 | `requirements-cu130.txt` | The pinned distributions of the runner's environment |
 | `frontend.py` | Frontend goldens of the legacy capture fixtures, rendered by HF |
-| `template_coverage.py` | The chat-template lines one render runs, from the compiled template's line marks |
+| `template_coverage.py` | The chat-template lines one render runs, from the compiled template's line marks, and the function lines a pinned Python encoder runs |
 | `frontend_cases.py` | Seeded, pairwise chat requests over model-neutral feature axes, each with its `axis:value` tags |
 | `frontend_corpus.py` | The frontend corpus: HF renders through the model's transport translation, coverage, round-trip vectors, minimization and the coverage and divergence gate |
 
 A model's frontend corpus reads `models/<model>/frontend_cases.py` (the
-template pin, the transport translation, generation endings, how a history
+template pin, or for a checkpoint that ships a Python encoder instead of a
+template, the encoder's `source` and `source_sha256` with `encoder_render`,
+the mapping of the HF input onto its functions, and `INPUT_FIELDS`, the
+request fields it renders beyond the HF input; the transport translation, generation endings, how a history
 turn reads back, and the model's own axes and cases) and its divergence
 table `models/<model>/frontend-divergences.json`. `generate` writes the full
 corpus under `$CHOPINFER_DATA/frontend-corpus/<model>/`; `minimize` writes

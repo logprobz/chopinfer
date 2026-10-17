@@ -5,6 +5,7 @@ environment configured as transformers configures its own, and tokenizes one
 id per character.
 """
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -21,7 +22,7 @@ from jinja2.sandbox import ImmutableSandboxedEnvironment
 
 from tools.refrun import frontend_cases
 from tools.refrun import frontend_corpus as corpus
-from tools.refrun.template_coverage import TemplateCoverage
+from tools.refrun.template_coverage import PythonSourceCoverage, TemplateCoverage
 
 TOY = """\
 {%- set effort = reasoning_effort if reasoning_effort in ['low', 'high'] else 'max' -%}
@@ -276,6 +277,81 @@ MACRO = """\
 {%- endif -%}
 {%- endmacro -%}
 {{- pick(value) -}}"""
+
+
+# A model's pinned Python encoder in miniature: lines 1 and 3 run when the
+# module loads, the functions' bodies when a render calls them.
+TOY_ENCODER = """\
+import json
+
+PREFIX = "<sys>"
+
+
+def encode(messages, response_format=None):
+    prompt = PREFIX
+    for message in messages:
+        if message["role"] == "user":
+            prompt += "<user>" + message["content"]
+        elif message["role"] == "assistant":
+            prompt += "<asst>" + (message.get("content") or "")
+        else:
+            raise ValueError("unknown role " + message["role"])
+    if response_format is not None:
+        prompt += json.dumps(response_format)
+    return prompt + "<asst>"
+
+
+def unused():
+    return json.dumps({})
+"""
+
+
+def encoder_reference():
+    coverage = PythonSourceCoverage(TOY_ENCODER)
+
+    def render(messages, tools, add_generation_prompt, continue_final_message, keywords, response_format=None):
+        return coverage.namespace["encode"](messages, response_format)
+
+    return corpus.Reference(coverage, render, lambda text: [ord(character) for character in text])
+
+
+class PythonEncoderTests(unittest.TestCase):
+    def test_only_function_bodies_have_lines(self):
+        coverage = PythonSourceCoverage(TOY_ENCODER)
+        self.assertEqual(coverage.lines_with_code, {7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 21})
+        self.assertEqual(coverage.line_text(14).strip(), 'raise ValueError("unknown role " + message["role"])')
+
+    def test_a_render_records_the_lines_it_runs_and_a_raise_is_a_refusal(self):
+        reference = encoder_reference()
+        arguments = {"tools": None, "add_generation_prompt": True, "continue_final_message": False, "keywords": {}}
+        outcome = reference.outcome({**arguments, "messages": [user()]})
+        self.assertEqual(outcome["rendered_text"], "<sys><user>hi<asst>")
+        self.assertEqual(outcome["lines"], [7, 8, 9, 10, 15, 17])
+        refused = reference.outcome({**arguments, "messages": [{"role": "critic", "content": "no"}]})
+        self.assertEqual(refused["refusal"], {"class": "ValueError", "message": "unknown role critic"})
+        self.assertIn(14, refused["lines"])
+
+    def test_listed_request_fields_reach_the_reference(self):
+        request = {"messages": [user()], "response_format": {"type": "json_object"}}
+        model = ToyModel(Path(tempfile.mkdtemp()))
+        self.assertNotIn("response_format", model.hf_input(request))
+        model.cases.INPUT_FIELDS = ("response_format",)
+        arguments = model.hf_input(request)
+        self.assertEqual(arguments["response_format"], {"type": "json_object"})
+        self.assertEqual(encoder_reference().outcome(arguments)["rendered_text"],
+                         '<sys><user>hi{"type": "json_object"}<asst>')
+
+    def test_a_source_pin_names_the_file_and_its_digest(self):
+        directory = Path(tempfile.mkdtemp())
+        (directory / "encoder.py").write_text(TOY_ENCODER)
+        model = ToyModel(directory)
+        digest = hashlib.sha256(TOY_ENCODER.encode()).hexdigest()
+        model.cases.PIN = {**model.cases.PIN, "source": "encoder.py", "source_sha256": digest}
+        with unittest.mock.patch.dict(os.environ, {"TOY_CHECKPOINT": str(directory)}):
+            self.assertEqual(corpus.template_source(model), (TOY_ENCODER, digest))
+            model.cases.PIN["source_sha256"] = "0" * 64
+            with self.assertRaisesRegex(corpus.CorpusError, "encoder.py is .*, not the pinned 0{64}"):
+                corpus.template_source(model)
 
 
 class MacroCoverageTests(unittest.TestCase):

@@ -29,7 +29,7 @@ fn check(report: &kit::Report, gpu: bool) {
             }
         }
         for name in if gpu {
-            &["declaration", "conformance", "pdl_dependency_order"][..]
+            &["declaration", "conformance", kit::PDL][..]
         } else {
             &["declaration"][..]
         } {

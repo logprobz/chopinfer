@@ -17,6 +17,7 @@ use kernel_core::latent_attention_oracle::{
     LatentAttentionResult, LatentCompressedInput, LatentKeyLists, LatentPaging, LatentSourcesInput,
     LatentWindowInput, latent_attention_with_sources,
 };
+use kernel_core::oracle::{OracleOutput, check_numeric};
 use kernels_sm120::latent::sources::Entry;
 
 pub const CAPACITY: u32 = 4;
@@ -28,6 +29,39 @@ fn i32_bytes(values: &[i32]) -> Vec<u8> {
 }
 fn f32_bytes(values: &[f32]) -> Vec<u8> {
     values.iter().flat_map(|x| x.to_le_bytes()).collect()
+}
+
+// Empty partials carry an exact -inf sentinel. The numeric gate covers
+// finite arithmetic only, so keep that sentinel out of its reduction.
+fn maximum_expected(reference: OracleOutput, live_elements: usize) -> Expected {
+    Expected::Judge(Box::new(move |bytes| {
+        if bytes.len() != reference.values.len() * 4 || live_elements > reference.values.len() {
+            return Err("partial maximum shape mismatch".into());
+        }
+        let mut actual = Vec::new();
+        let mut finite = OracleOutput {
+            values: Vec::new(),
+            sum_abs_products: Vec::new(),
+            reduction_lengths: Vec::new(),
+        };
+        for (at, bytes) in bytes.chunks_exact(4).take(live_elements).enumerate() {
+            let bits = u32::from_le_bytes(bytes.try_into().expect("F32 bytes"));
+            if reference.values[at] == f64::NEG_INFINITY {
+                if bits != f32::NEG_INFINITY.to_bits() {
+                    return Err(format!("empty partial maximum {at} is not -inf: {bits:#x}"));
+                }
+            } else {
+                actual.push(f64::from(f32::from_bits(bits)));
+                finite.values.push(reference.values[at]);
+                finite.sum_abs_products.push(reference.sum_abs_products[at]);
+                finite
+                    .reduction_lengths
+                    .push(reference.reduction_lengths[at]);
+            }
+        }
+        check_numeric(&actual, &finite, DType::F32)
+            .map_err(|failure| format!("finite partial maximum: {failure:?}"))
+    }))
 }
 
 /// Raw trained-format values with independent code and scale variation.
@@ -187,7 +221,7 @@ pub fn case<'a>(
         workspace: Spec::scratch(workspace),
         live_rows: Spec::live(),
     };
-    let oracle = move |images: &Images, _: u32| -> LabResult<Vec<(String, Expected)>> {
+    let oracle = move |images: &Images, live: u32| -> LabResult<Vec<(String, Expected)>> {
         let q = images
             .u16s("q")?
             .iter()
@@ -263,7 +297,10 @@ pub fn case<'a>(
                 vec![("output".into(), Expected::Values(out))]
             }
             LatentAttentionResult::Partial(p) => vec![
-                ("partial.max".into(), Expected::Values(p.maximum)),
+                (
+                    "partial.max".into(),
+                    maximum_expected(p.maximum, live as usize * heads),
+                ),
                 ("partial.den".into(), Expected::Values(p.denominator)),
                 ("partial.num".into(), Expected::Values(p.numerator)),
             ],
@@ -286,4 +323,77 @@ pub fn family<'a>(entries: &[Entry]) -> Vec<Required<'a>> {
             .required()
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kernel_core::backend::Backend;
+    use kernel_core::contract::AttentionPhase;
+    use kernels_sm120::backend::Sm120;
+    use kernels_sm120::{Profile, ProfileNames};
+
+    #[test]
+    fn native_partial_oracle_accepts_empty_sentinels_and_rejects_corruption() {
+        let query = LatentAttentionQuery::Attention {
+            heads: 4,
+            latent: 128,
+            max_keys: 128,
+            softmax_scale_bits: (128_f32).powf(-0.5).to_bits(),
+            page_size: 16,
+            kv: LatentKvFormat::Fp8E4M3Ue8M0Block32,
+            phase: AttentionPhase::Prefill,
+            output: LatentAttentionOutput::Partial,
+            sink: true,
+            tail_rope_dims: 64,
+            second_fp4_keys: false,
+            capacity: CAPACITY,
+        };
+        let profile = Profile::synthetic(ProfileNames {
+            name: "native-latent-oracle-test",
+            tag: "native_latent_oracle_test",
+        });
+        let entries = kernels_sm120::latent::sources::entries(profile, query).unwrap();
+        let backend = entries
+            .into_iter()
+            .fold(Sm120::new(), Sm120::with_latent_sources);
+        let prepared = backend
+            .latent_attention_sources(&query, Need::rows(CAPACITY))
+            .unwrap();
+        let workspace = prepared.info().bytes_of("workspace").unwrap() as usize;
+        let case = case(query, CAPACITY, prepared).unwrap().case;
+        let images = case.images();
+        let mut result = std::collections::BTreeMap::new();
+        for (name, expected) in case.expected(&images, CAPACITY).unwrap() {
+            let bytes = if name == "partial.max" {
+                let mut maxima = vec![0.0_f32; 16];
+                maxima[4..8].fill(f32::NEG_INFINITY);
+                f32_bytes(&maxima)
+            } else {
+                let Expected::Values(values) = expected else {
+                    panic!("finite partial oracle")
+                };
+                f32_bytes(&values.values.iter().map(|&x| x as f32).collect::<Vec<_>>())
+            };
+            result.insert(name, bytes);
+        }
+        result.insert("workspace".into(), vec![0; workspace]);
+        let judge = |result: &_| {
+            case.judge(
+                case.expected(&images, CAPACITY).unwrap(),
+                &images,
+                CAPACITY,
+                result,
+            )
+        };
+        judge(&result).unwrap();
+        for value in [0.0_f32, f32::INFINITY, f32::NAN] {
+            let mut bad = result.clone();
+            bad.get_mut("partial.max").unwrap()[16..20].copy_from_slice(&value.to_le_bytes());
+            assert!(judge(&bad).is_err());
+        }
+        let mut bad = result;
+        bad.get_mut("partial.max").unwrap()[0..4].copy_from_slice(&0.25_f32.to_le_bytes());
+        assert!(judge(&bad).is_err());
+    }
 }

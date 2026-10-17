@@ -122,6 +122,8 @@ class WorkloadTests(unittest.TestCase):
             self.assertTrue(w.call('read', args).startswith('tool error:'), args)
         w = Workspace({'a': 'é' * 100}, 60)
         self.assertLessEqual(len(w.call('read', '{"path":"a"}').encode()), 60)
+        w.call('list_files', '{}')
+        self.assertEqual((w.results, w.truncated), (2, 1))
 
 
 class StreamTests(unittest.TestCase):
@@ -408,6 +410,30 @@ class PressureTests(unittest.TestCase):
             self.assertGreater(level['measured_completed'], 0)
             self.assertTrue(all(s['valid'] for s in level['sessions']))
             self.assertTrue({s['focus_path'] for s in level['sessions']} <= set(groups['coding']))
+
+    def test_the_tool_result_limit_binds_on_a_staged_corpus(self):
+        """Runyard's 16, 32 or 64 KiB per-task limit never binds on its own
+        corpus; a staged corpus sets 16 KiB, so a 200-line read meets its
+        4 and 8 KiB tiers. Each session counts its truncated results."""
+        runyard, groups = load_corpus()
+        level = self.sweep(runyard, groups['coding'])
+        self.assertEqual(level['tool_results']['truncated'], 0)
+        self.assertGreater(level['tool_results']['results'], 0)
+        with tempfile.TemporaryDirectory() as name:
+            _, _, out, manifest = self.staged(Path(name))
+            self.assertEqual(manifest['max_tool_result_bytes'], 16384)
+            manifest, groups = load_corpus(out)
+            tiers = {task_for(manifest, groups['coding'], 'seed', 1, i)['tool_result_bytes'] for i in range(64)}
+            self.assertEqual(tiers, {4096, 8192, 16384})
+            level = self.sweep(manifest, groups['coding'])
+        counts = level['tool_results']
+        self.assertGreater(counts['truncated'], 0)
+        measured = [s for s in level['sessions'] if s['phase'] == 'measured']
+        self.assertEqual(counts['truncated'], sum(s['truncated_tool_results'] for s in measured))
+        self.assertEqual(counts['results'], sum(s['tool_results'] for s in measured))
+        self.assertLessEqual(set(counts['by_limit']), {'4096', '8192', '16384'})
+        self.assertEqual(sum(tier['truncated'] for tier in counts['by_limit'].values()), counts['truncated'])
+        self.assertTrue(all(s['valid'] for s in level['sessions']))
 
     def test_main_records_the_staged_corpus_identity_and_no_path(self):
         with tempfile.TemporaryDirectory() as name:

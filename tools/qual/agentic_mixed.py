@@ -24,7 +24,7 @@ from agentic_metrics import (INVALID_SESSION, RAW_CALLS_AGREE, RAW_MALFORMED_CAL
                              distribution, histogram_reports, level_verdict, metrics_delta, prefill_evidence, ratio,
                              summarize)
 from agentic_server import observe_startup, mode_evidence, verify_arm
-from agentic_workload import CORPUS, Workspace, decode_context, load_corpus, task_for, valid_session
+from agentic_workload import CORPUS, Workspace, decode_context, load_corpus, max_tool_result_bytes, task_for, valid_session
 
 REVISION = 'chopinfer.agentic-mixed.v3'
 MAX_REQUEST = 4 << 20
@@ -887,6 +887,7 @@ def session(client, model, profile, manifest, files, concurrency, index, phase):
                 tool_seconds=tool_seconds, model_seconds=sum(t['elapsed_seconds'] for t in turns),
                 read_before_edit=bool(workspace.read_paths), patch_applied=workspace.patched,
                 finished=finished, valid=valid, tool_errors=workspace.tool_errors,
+                tool_results=workspace.results, truncated_tool_results=workspace.truncated,
                 argument_errors=workspace.argument_errors, failure=failure, runner_error=runner_error,
                 slot=index % concurrency, slot_sequence=index // concurrency)
 
@@ -1244,7 +1245,8 @@ def main(argv=None):
                if k not in ('url', 'model', 'label', 'arm', 'dry_run', 'fake_prefill_budget', 'frontend', 'model_root',
                             'corpus')}
     profile['levels'] = levels
-    profile.update(max_request_bytes=MAX_REQUEST, max_response_bytes=MAX_RESPONSE, max_tool_result_bytes=65536,
+    profile.update(max_request_bytes=MAX_REQUEST, max_response_bytes=MAX_RESPONSE,
+                   max_tool_result_bytes=max_tool_result_bytes(manifest),
                    case_assignment='slot-strided-v1', request_seed_derivation='sha256-case-turn-v1')
     result = dict(workload_schema=REVISION, source_revision=manifest['revision'], source_commit=manifest['source_commit'],
                   corpus_digest=manifest['corpus_digest'],

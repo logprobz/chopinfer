@@ -62,7 +62,7 @@ def summarize(sessions, start, end, concurrency, stall_threshold_ms=100):
                 request_ms=distribution([t['elapsed_seconds'] * 1000 for t in turns]),
                 session_ms=distribution([s['elapsed_seconds'] * 1000 for s in completed]),
                 peak_http_in_flight=peak, average_http_in_flight=occupied / seconds,
-                tool_errors=sum(s['tool_errors'] for s in completed),
+                tool_errors=sum(s['tool_errors'] for s in completed), tool_results=tool_results(completed),
                 errors=sum(bool(s.get('runner_error')) or (not s['turns'] and bool(s.get('failure'))) for s in completed)
                        + sum(bool(t.get('failure')) for t in turns),
                 timeouts=sum(bool(t.get('timed_out')) for t in turns),
@@ -136,6 +136,21 @@ def metrics_delta(before, after):
                          delta=new - old if reason is None else None, unavailable=reason,
                          gauge_change=new-old if reason == 'gauge; no counter delta' else None))
     return {'series': rows, 'unavailable': None if rows else 'no supported metrics exposed'}
+
+
+def tool_results(sessions):
+    """Tool results the sessions returned and those cut to the session's
+    limit, in total and per limit: whether the limit bound at all."""
+    by_limit = {}
+    for s in sessions:
+        if s.get('tool_result_bytes') is None:
+            continue
+        tier = by_limit.setdefault(str(s['tool_result_bytes']), dict(results=0, truncated=0))
+        tier['results'] += s.get('tool_results', 0)
+        tier['truncated'] += s.get('truncated_tool_results', 0)
+    return dict(results=sum(t['results'] for t in by_limit.values()),
+                truncated=sum(t['truncated'] for t in by_limit.values()),
+                by_limit=dict(sorted(by_limit.items(), key=lambda item: int(item[0]))))
 
 
 def token_total(rows, field):

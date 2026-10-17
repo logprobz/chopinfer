@@ -11,6 +11,11 @@ from pathlib import Path
 CORPUS = Path(__file__).with_name('agentic_corpus')
 ROOT = Path(__file__).resolve().parents[2]
 STAGED_REVISION = 'chopinfer-source.v1'
+# A staged corpus's tool-result limit: its per-task tiers of 4, 8 and 16 KiB
+# truncate many 200-line reads of Rust source. Runyard's 64 KiB (tiers of 16,
+# 32 and 64 KiB) never binds on its own small files.
+STAGED_MAX_TOOL_RESULT_BYTES = 16384
+RUNYARD_MAX_TOOL_RESULT_BYTES = 65536
 # Generic instructions for a staged file: each needs one read and one edit.
 STAGED_TASKS = {
     'bug fix': 'Find one place where an edge case or error is not handled and fix it with one small edit.',
@@ -77,13 +82,18 @@ def stage_corpus(repository, revision, out, count=64, min_bytes=4096, max_bytes=
         files.append(dict(group='coding', fixture=fixture, path=path, sha256=hashlib.sha256(raw).hexdigest()))
         digest.update(path.encode() + b'\0' + raw + b'\0')
     manifest = dict(source_commit=commit, revision=STAGED_REVISION, corpus_digest=digest.hexdigest(), files=files,
+                    max_tool_result_bytes=STAGED_MAX_TOOL_RESULT_BYTES,
                     tasks={entry['path']: dict(STAGED_TASKS) for entry in files},
                     tools=runyard['tools'], setup=runyard['setup'])
     (out / 'manifest.json').write_text(json.dumps(manifest, indent=1) + '\n')
     return manifest
 
 
-def task_for(manifest, files, seed, concurrency, index, max_tool_bytes=65536):
+def task_for(manifest, files, seed, concurrency, index, max_tool_bytes=None):
+    """Task INDEX of a level. Its tool-result limit is a quarter, half or all of
+    MAX_TOOL_BYTES, by default the manifest's `max_tool_result_bytes`."""
+    if max_tool_bytes is None:
+        max_tool_bytes = max_tool_result_bytes(manifest)
     key = hashlib.sha256(f'{seed}/C{concurrency}/{index}/task-selection-v1'.encode()).digest()
     paths = list(files)
     selected = key[0] % len(paths)
@@ -106,6 +116,10 @@ def task_for(manifest, files, seed, concurrency, index, max_tool_bytes=65536):
     return dict(id=f'coding-{index + 1:06d}', focus_path=path, kind=kind,
                 prompt=prompt, tool_result_bytes=limit,
                 prompt_sha256=hashlib.sha256(prompt.encode()).hexdigest())
+
+
+def max_tool_result_bytes(manifest):
+    return manifest.get('max_tool_result_bytes', RUNYARD_MAX_TOOL_RESULT_BYTES)
 
 
 def decode_context(groups, target_tokens):
@@ -136,6 +150,8 @@ class Workspace:
         self.read_paths = set()
         self.patched = False
         self.tool_errors = 0
+        # Tool results returned, and those cut to the session's limit.
+        self.results = self.truncated = 0
         # Arguments the server delivered that are not a JSON object: the
         # parser builds them, so they are not evidence of a model choice.
         self.argument_errors = 0
@@ -152,7 +168,9 @@ class Workspace:
             out = self.execute(name, args)
             marker = b'\n[tool result truncated; use a smaller limit]'
             encoded = out.encode()
+            self.results += 1
             if len(encoded) > self.max_result:
+                self.truncated += 1
                 if self.max_result <= len(marker):
                     return marker[:self.max_result].decode()
                 out = encoded[:self.max_result - len(marker)].decode('utf-8', errors='ignore') + marker.decode()

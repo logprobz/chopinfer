@@ -1275,6 +1275,13 @@ the client's prompt and uncached prompt tokens per turn, and the
 `chop_mixed_step_actual_over_predicted` histogram (count, mean and bucket
 bounds).
 
+The tool-result limit belongs to the corpus: each task's limit is a quarter,
+half or all of the manifest's `max_tool_result_bytes`. Runyard's 64 KiB
+never binds on its small files. A staged corpus sets 16 KiB, so its 4 and
+8 KiB tiers cut many 200-line reads. Each session records `tool_results`
+and `truncated_tool_results`, and each level totals them per limit
+(`tool_results`).
+
 The raw re-parse reads the served model's frontend declaration: `--frontend`,
 else the `frontend` input of `CHOPINFER_QUAL_CONFIG`, else the inventoried
 model whose frontend declares the served model ID. It is independent of the

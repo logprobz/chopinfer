@@ -522,7 +522,12 @@ def check_bundle():
         raise SystemExit(f'model inventory: {error}')
     MODEL_PACKAGES = model_inventory.packages(models)
     BUNDLES = {name for name, package in MODEL_PACKAGES.items() if package.role == 'bundle'}
-    EXPECTED_MEMBERS = SHARED_MEMBERS | set(MODEL_PACKAGES) | DEVELOPMENT_TOOLS
+    # Each model's kernel test crate (models/<m>/lab), named by its manifest.
+    lab_manifests = {(Path.cwd() / model.lab).resolve() for model in models if model.lab}
+    MODEL_LABS = {package['name'] for package in metadata['packages']
+                  if package['id'] in metadata['workspace_members'] and 'manifest_path' in package
+                  and Path(package['manifest_path']).resolve() in lab_manifests}
+    EXPECTED_MEMBERS = SHARED_MEMBERS | set(MODEL_PACKAGES) | MODEL_LABS | DEVELOPMENT_TOOLS
     CUDA_BUILD_OWNERS = SHARED_CUDA_BUILD_OWNERS | BUNDLES
     TARGETS = SHARED_TARGETS | {name: set(package.targets) for name, package in MODEL_PACKAGES.items()}
 
@@ -548,6 +553,12 @@ def check_bundle():
                 previous = owner.setdefault(target['name'], packages[id]['name'])
                 if previous != packages[id]['name']:
                     raise SystemExit(f'binary {target["name"]} has two owners')
+
+    for name in MODEL_LABS:
+        # A model tests its kernels on kernel-harness, never through kernel-lab.
+        tested = {graph.packages[key]['name'] for key in graph.closure(workspace[name], tests=True)}
+        if tested & {'kernel-lab', 'kernel-lab-families'}:
+            raise SystemExit(f'{name} links kernel-lab: {sorted(tested & {"kernel-lab", "kernel-lab-families"})}')
 
     for name in workspace:
         reached = closure(name)

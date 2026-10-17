@@ -2,7 +2,9 @@
 """Read and check the model inventories, models/<m>/model.toml.
 
 A model directory holds up to three crates, one per role: bundle/, compiler/
-and contract/. The role is the directory. The inventory records what Cargo
+and contract/. The role is the directory. A fourth, lab/, is optional: the
+model's kernel test crate on kernel-harness, a workspace member with no bin or
+cdylib target that is never a default member. The inventory records what Cargo
 metadata cannot: each role's package name, its exact bin and cdylib targets
 (a policy assertion, not a derived fact), the stem of the model's
 checkpoint variables for CPU CI, and the publisher whose checkpoints the
@@ -156,6 +158,8 @@ class Model:
     # The model author whose checkpoints the model's JSON may name
     # (`publisher`); none for a model that does not declare one.
     publisher: str | None = None
+    # The kernel test crate's manifest, workspace-relative, when lab/ has one.
+    lab: str | None = None
 
     @property
     def directory(self) -> str:
@@ -596,11 +600,17 @@ def load_model(root: pathlib.Path, directory: pathlib.Path) -> Model:
     for role in ROLES:
         if role not in packages and (directory / role / "Cargo.toml").is_file():
             raise InventoryError(f"{relative}: {role}/Cargo.toml has no [{role}] entry")
+    lab = None
+    if (directory / "lab").is_symlink() or (directory / "lab/Cargo.toml").is_symlink():
+        raise InventoryError(f"{relative}: lab must not be a symlink")
+    if (directory / "lab/Cargo.toml").is_file():
+        lab = (pathlib.PurePosixPath(directory.relative_to(root).as_posix()) / "lab/Cargo.toml").as_posix()
     model = Model(directory.name, stem, packages, publisher=publisher)
     release, contributor, checks, kernel_lab, recipe = _operational(data, model, relative)
     model = dataclasses.replace(model, release=release, contributor=contributor,
                                 checks=checks, kernel_lab=kernel_lab, geometry_recipe=recipe,
-                                kernel_locks=_kernel_locks(root, directory, relative) if "bundle" in packages else ())
+                                kernel_locks=_kernel_locks(root, directory, relative) if "bundle" in packages else (),
+                                lab=lab)
     release_plan([model])
     return model
 
@@ -638,24 +648,37 @@ def packages(models) -> dict[str, Package]:
 
 
 def check_metadata(models, metadata, root, *, external=False) -> None:
-    """Every workspace package under models/ has exactly one declared role and
-    every declared package is a workspace member at its role's path, with
-    exactly the declared bin and cdylib targets."""
+    """Every workspace package under models/ has exactly one declared role or
+    is a model's kernel test crate, and every declared package is a workspace
+    member at its role's path, with exactly the declared bin and cdylib
+    targets. A kernel test crate has no bin or cdylib target and, in this
+    workspace, is the only member left out of the default members."""
     root = pathlib.Path(root).resolve()
     declared = packages(models)
+    labs = {model.lab for model in models if model.lab}
     members = {}
     by_id = {package["id"]: package for package in metadata["packages"]}
+    # An external workspace may keep other test crates out of its defaults.
+    defaults = None if external else metadata.get("workspace_default_members")
     for id in metadata["workspace_members"]:
         package = by_id[id]
         manifest = pathlib.Path(package["manifest_path"]).resolve().relative_to(root).as_posix()
         if package["name"] in members:
             raise InventoryError(f"ambiguous workspace package {package['name']}")
         members[package["name"]] = (manifest, package)
+        if manifest in labs:
+            if any(kind in ("bin", "cdylib") for target in package["targets"] for kind in target["kind"]):
+                raise InventoryError(f"{manifest}: a kernel test crate has no bin or cdylib target")
+            if defaults is not None and id in defaults:
+                raise InventoryError(f"{manifest}: a kernel test crate is not a default workspace member")
+            continue
         if manifest.startswith("models/") or (external and any(
             kind in ("bin", "cdylib") for target in package["targets"] for kind in target["kind"])):
             expected = declared.get(package["name"])
             if expected is None or expected.manifest != manifest:
                 raise InventoryError(f"{manifest}: package {package['name']} has no role in its model.toml")
+        if defaults is not None and id not in defaults:
+            raise InventoryError(f"{manifest}: package {package['name']} is missing from the default workspace members")
     for model in models:
         if model.contributor:
             for key, names in (("roots", model.contributor.roots),

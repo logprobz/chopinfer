@@ -40,6 +40,14 @@ LABEL = "models/m3/model.toml"
 # macro, so a bundle cannot run scenarios without startup.
 SUITE = re.compile(r'\b(?:conformance::suite|conformance_suite)!')
 DIRECT = re.compile(r'\bconformance::run\b|\bconformance::\{[^}]*\brun\b')
+EXPORTS_API = re.compile(r'\bexport_bundle_api_v1!')
+
+
+def exports_bundle_api(root, model):
+    """Whether `model`'s bundle exports the bundle API, so a host can serve
+    it. A skeleton bundle with no program yet exports nothing."""
+    bundle = pathlib.PurePosixPath(model.directory) / 'bundle/src'
+    return any(EXPORTS_API.search(path.read_text()) for path in sorted((root / bundle).rglob('*.rs')))
 
 
 def conformance_suite(root, model):
@@ -307,6 +315,31 @@ class InventoryTests(unittest.TestCase):
                      metadata=self.metadata(members=['bundle-m3']))
         inventory.check_metadata(self.load(VALID + RECIPE + 'suites = ["bounded"]\nbins = ["m3-package"]\n'), self.metadata(), self.root)
 
+    def test_a_kernel_test_crate_has_no_role_no_artifact_and_no_default_membership(self):
+        def with_lab(targets=(("sm120", "test"),), default=False):
+            data = self.metadata()
+            data["packages"].append({"id": "m3-lab", "name": "m3-lab",
+                                     "manifest_path": str(self.root / "models/m3/lab/Cargo.toml"),
+                                     "targets": [{"name": name, "kind": [kind]} for name, kind in targets]})
+            data["workspace_members"].append("m3-lab")
+            data["workspace_default_members"] = [p["id"] for p in data["packages"] if default or p["id"] != "m3-lab"]
+            return data
+        # Without lab/, the member has no role.
+        self.refused(VALID, "models/m3/lab/Cargo.toml: package m3-lab has no role in its model.toml", metadata=with_lab())
+        self.write("models/m3/lab/Cargo.toml", "")
+        self.assertEqual(self.load()[0].lab, "models/m3/lab/Cargo.toml")
+        inventory.check_metadata(self.load(), with_lab(), self.root)
+        self.refused(VALID, "models/m3/lab/Cargo.toml: a kernel test crate is not a default workspace member",
+                     metadata=with_lab(default=True))
+        self.refused(VALID, "models/m3/lab/Cargo.toml: a kernel test crate has no bin or cdylib target",
+                     metadata=with_lab(targets=(("lab", "bin"),)))
+        data = with_lab()
+        data["workspace_default_members"].remove("model-m3")
+        self.refused(VALID, "models/m3/compiler/Cargo.toml: package model-m3 is missing from the default workspace members",
+                     metadata=data)
+        # An external workspace may keep other test crates out of its defaults.
+        inventory.check_metadata(self.load(), data, self.root, external=True)
+
     def test_compile_patterns_are_bounded_and_admit_new_files(self):
         self.write('models/outside.py', 'exists')
         for path in ('../outside.py', 'reference\\*.py', '/reference.py'):
@@ -535,6 +568,10 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaises(AssertionError) as caught:
             conformance_suite(self.root, model)
         self.assertEqual(str(caught.exception), refused + '[]')
+        # Only a bundle that exports the bundle API can be served.
+        self.assertFalse(exports_bundle_api(self.root, model))
+        self.write('models/m3/bundle/src/lib.rs', 'runtime_bundle_abi::export_bundle_api_v1!(\n    Model,\n);\n')
+        self.assertTrue(exports_bundle_api(self.root, model))
         suite = 'conformance::suite! {\n    startup: Served {\n        tp4_ar: "tp4-ar",\n    }\n}\n'
         self.write('models/m3/bundle/src/tests/conformance.rs', suite)
         self.assertEqual(conformance_suite(self.root, model), 'models/m3/bundle/src/tests/conformance.rs')
@@ -556,7 +593,8 @@ class InventoryTests(unittest.TestCase):
         models = inventory.load(root)
         inventory.check_files(models, root)
         for model in models:
-            conformance_suite(root, model)
+            if model.release.enabled or exports_bundle_api(root, model):
+                conformance_suite(root, model)
         # Each in-tree model names its author, whose checkpoints alone its JSON names.
         for model in models:
             self.assertIsNotNone(model.publisher, f'{model.directory}/model.toml: declare its publisher')

@@ -1935,7 +1935,7 @@
     },
     "media_preprocessing_reference": {
       "env": "CHOPINFER_DATA",
-      "path": "refrun/g9-min8192/preprocessing/qwen38"
+      "path": "refrun/preprocessing-2026-10-17/qwen38"
     },
     "media_preprocessing_frontend": "models/qwen38/compiler/src/frontend-multimodal.json",
     "layer_reference": {

@@ -2885,7 +2885,7 @@
     "media_images": "models/glm5next/probe_images.py",
     "media_preprocessing_reference": {
       "env": "CHOPINFER_DATA",
-      "path": "glm5next/refrun/preprocessing"
+      "path": "refrun/preprocessing-2026-10-17/glm5next"
     },
     "media_preprocessing_frontend": "models/glm5next/compiler/src/frontend.json",
     "needle": {

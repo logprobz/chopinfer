@@ -4,10 +4,12 @@
 //! (codes and scales) into rank 0's staging buffer, its copy into the other
 //! ranks' staging buffers, and each rank's device copy on its own stream.
 //!
-//! For each step size it evicts the tables' pages from the page cache
-//! (`POSIX_FADV_DONTNEED`, clean pages only), gathers once cold and once warm
-//! (the same rows again), and records wall time, page faults, resident pages,
-//! distinct rows and copy time. The device bytes are checked against the
+//! For each step size it drops the mappings' resident pages
+//! (`MADV_DONTNEED`) and evicts the tables' clean pages from the page cache
+//! (`POSIX_FADV_DONTNEED`), checks with `mincore` that none is resident
+//! (labelling the pass "partly-warm" otherwise), gathers once cold and once
+//! warm (the same rows again), and records wall time, page faults, resident
+//! pages, distinct rows and copy time. The device bytes are checked against the
 //! mapped bytes.
 //!
 //! Opt-in, for one GPU job that has the host to itself:
@@ -42,6 +44,7 @@ use runtime_host::direct::{
     DirectCheckpointV1, DirectLoadOptionsV1, PlannedImageV1, implementation_v1,
 };
 use runtime_host::fake::FakeHostDeviceV1;
+use runtime_host::host_rows::{MappedRowsV1, RowAdviceV1};
 use runtime_host::page_cache::{CacheAdviceV1, advise_v1};
 use runtime_host::{
     HostDeviceBackendV1, HostInstanceConfigV1, HostServicesV1Backend, HostTopologyV1,
@@ -188,17 +191,30 @@ fn gather(table: &[u8], row_bytes: usize, ids: &[u64], out: &mut [u8], threads: 
     });
 }
 
-fn evict(root: &Path, planes: &[Plane]) {
+/// Evicts the tables from memory: first this process's resident pages of
+/// each mapping (`MADV_DONTNEED`), which a file advice alone leaves mapped,
+/// then the page cache's clean pages of the file range
+/// (`POSIX_FADV_DONTNEED`). Answers whether no page of any mapping is
+/// resident afterwards; another process mapping the same pages keeps them.
+fn evict(root: &Path, planes: &[Plane], mappings: &[Arc<MappedRowsV1>]) -> bool {
+    for rows in mappings {
+        rows.advise(RowAdviceV1::DontNeed).unwrap();
+    }
+    // The advice drops only pages wholly inside its range, so it covers each
+    // plane's pages whole, its neighbours' shared end pages included.
+    const PAGE: u64 = 4096;
     for plane in planes {
         let file = std::fs::File::open(root.join(&plane.file_name)).unwrap();
-        advise_v1(
-            &file,
-            plane.data_offset,
-            plane.bytes(),
-            CacheAdviceV1::DontNeed,
-        )
-        .unwrap();
+        let start = plane.data_offset - plane.data_offset % PAGE;
+        let end = (plane.data_offset + plane.bytes()).next_multiple_of(PAGE);
+        advise_v1(&file, start, end - start, CacheAdviceV1::DontNeed).unwrap();
     }
+    for rows in mappings {
+        rows.advise(RowAdviceV1::Random).unwrap();
+    }
+    mappings
+        .iter()
+        .all(|rows| rows.resident_pages().unwrap().0 == 0)
 }
 
 /// What one measurement reads: the checkpoint, its tables and the gather.
@@ -272,7 +288,7 @@ fn measure<D: HostDeviceBackendV1 + 'static>(
         .iter()
         .map(|plane| Arc::clone(image.mapped_view(0, plane.tensor.as_bytes()).unwrap()))
         .collect();
-    let resident = |mappings: &[Arc<runtime_host::host_rows::MappedRowsV1>]| -> Value {
+    let resident = |mappings: &[Arc<MappedRowsV1>]| -> Value {
         mappings
             .iter()
             .map(|rows| {
@@ -361,10 +377,11 @@ fn measure<D: HostDeviceBackendV1 + 'static>(
                     .unwrap()
             })
             .collect();
-        evict(root, &planes);
+        // A pass is cold only when no page of the tables is resident first.
+        let cold = evict(root, &planes, &mappings);
         let evicted = resident(&mappings);
         let mut passes = Vec::new();
-        for pass in ["cold", "warm"] {
+        for pass in [if cold { "cold" } else { "partly-warm" }, "warm"] {
             let (minor, major) = faults();
             let begun = Instant::now();
             host.with_staging_buffer(staging[0], |out| {
@@ -462,7 +479,7 @@ fn measure<D: HostDeviceBackendV1 + 'static>(
         }
         let summary = json!({
             "tokens": tokens, "rows_per_table": count, "distinct_rows": distinct,
-            "staging_bytes_per_rank": bytes, "resident_after_eviction": evicted,
+            "staging_bytes_per_rank": bytes, "resident_after_eviction": evicted, "cold": cold,
             "passes": passes, "verified_ranks": ranks,
         });
         eprintln!("host rows cost: {summary}");
@@ -571,7 +588,12 @@ fn the_measurement_runs_on_the_host_memory_device() {
     let mut file = (header.len() as u64).to_le_bytes().to_vec();
     file.extend(header);
     file.extend(payload);
-    std::fs::write(root.join("model.safetensors"), file).unwrap();
+    // Written back, so the eviction can drop its clean pages where the
+    // file system holds them in the page cache (not on tmpfs).
+    let mut written = std::fs::File::create(root.join("model.safetensors")).unwrap();
+    std::io::Write::write_all(&mut written, &file).unwrap();
+    written.sync_all().unwrap();
+    drop(written);
     let run = Run {
         root: &root,
         tables: "a.codes:a.scales,b.codes:b.scales",
@@ -581,6 +603,11 @@ fn the_measurement_runs_on_the_host_memory_device() {
     };
     let result = measure(&run, Some(vec![0, 1, 2, 3]), FakeHostDeviceV1::new).unwrap();
     assert_eq!(result["one_mapping_per_plane"], true);
+    // Every step evicted the tables whole before its first pass.
+    for step in result["steps"].as_array().unwrap() {
+        assert_eq!(step["cold"], true, "{step}");
+        assert_eq!(step["passes"][0]["pass"], "cold");
+    }
     assert_eq!(result["steps"].as_array().unwrap().len(), 3);
     assert_eq!(result["steps"][2]["verified_ranks"], 4);
     assert_eq!(result["pinned_bytes_after_setup"], 0);

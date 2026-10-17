@@ -35,6 +35,10 @@ pub enum RowAdviceV1 {
     Normal,
     /// Read the whole range into the page cache now (`MADV_WILLNEED`).
     WillNeed,
+    /// Drop this mapping's resident pages (`MADV_DONTNEED`): the next read
+    /// faults again, from the page cache if it still holds the page. For a
+    /// measurement that evicts the file's pages afterwards.
+    DontNeed,
 }
 
 /// Which bytes a mapping holds: the file (device and inode) and the range.
@@ -109,6 +113,7 @@ impl MappedRowsV1 {
             RowAdviceV1::Random => libc::MADV_RANDOM,
             RowAdviceV1::Normal => libc::MADV_NORMAL,
             RowAdviceV1::WillNeed => libc::MADV_WILLNEED,
+            RowAdviceV1::DontNeed => libc::MADV_DONTNEED,
         };
         // SAFETY-REVIEWED: the range is exactly the mapping this value owns.
         if unsafe { libc::madvise(self.base, self.mapped_length, advice) } != 0 {

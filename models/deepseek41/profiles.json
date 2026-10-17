@@ -1,0 +1,26 @@
+{
+  "schema": "chopinfer-serve-profiles-v2",
+  "model": "deepseek41",
+  "served_model_name": "DeepSeek-V4.1-Flash",
+  "profiles": {
+    "tp4-ar": {
+      "bundle_id": "deepseek41.v1",
+      "topology": "deepseek41-flash-tp4",
+      "tensor_parallel": 4,
+      "devices_required": 4,
+      "devices": [0, 1, 2, 3],
+      "speculation": {"mode": "fixed", "tokens": 0, "draft_cost": "per-token", "drafter": "none"},
+      "max_sequences": 32,
+      "qualified_max_sequences": null,
+      "qualification": "Not qualified: the M1 bring-up profile, autoregressive at TP4 on the deepseek-ai checkpoint with the native KV layout. Its evidence is the release preview's full suite at the release revision (models/deepseek41/README.md#qualification).",
+      "kv_cache_dtype": "auto",
+      "prefix_cache": true,
+      "max_batch_tokens": 8192,
+      "prefill_chunk_tokens": 2048,
+      "queue_depth": null,
+      "kv_memory_fraction": 0.9,
+      "status": "experimental",
+      "evidence": ["models/deepseek41/README.md#qualification"]
+    }
+  }
+}

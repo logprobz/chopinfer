@@ -1,0 +1,235 @@
+{
+  "schema": "chopinfer-qual-model/v1",
+  "model": "deepseek41",
+  "cohorts": {
+    "quick": {
+      "checks": [
+        "api",
+        "structured",
+        "soak"
+      ]
+    },
+    "full": {
+      "checks": [
+        "api",
+        "structured",
+        "soak",
+        "prefix_exact",
+        "preemption_exact"
+      ]
+    }
+  },
+  "change_classes": {
+    "frontend": [
+      "api",
+      "structured"
+    ],
+    "quality": [
+      "api",
+      "structured"
+    ],
+    "service": [
+      "soak",
+      "preemption_exact"
+    ],
+    "speculation": [],
+    "prefix": [
+      "prefix_exact"
+    ]
+  },
+  "checks": {
+    "api": {
+      "module": "api",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-api.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ]
+    },
+    "structured": {
+      "module": "structured",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--stream"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-structured.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ]
+    },
+    "soak": {
+      "module": "soak",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--structured-mix"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-soak.json",
+      "cohort_args": {
+        "quick": [
+          "--duration",
+          "60",
+          "--concurrency",
+          "4"
+        ],
+        "full": [
+          "--duration",
+          "1200",
+          "--concurrency",
+          "32",
+          "--prefix-mix"
+        ]
+      },
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        }
+      ]
+    },
+    "prefix_exact": {
+      "module": "prefix_exact",
+      "args": [
+        "report",
+        "--record",
+        "{prefix_record_1}",
+        "--record",
+        "{prefix_record_2}"
+      ],
+      "timeout_seconds": 1740,
+      "stdout_json": true,
+      "files": [
+        "prefix_record_1",
+        "prefix_record_2"
+      ],
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        }
+      ]
+    },
+    "preemption_exact": {
+      "module": "preempt_compare",
+      "args": [
+        "compare",
+        "--reserved",
+        "{preemption_reserved}",
+        "--preempted",
+        "{preemption_candidate}",
+        "--every",
+        "32",
+        "--exact"
+      ],
+      "timeout_seconds": 1740,
+      "stdout_json": true,
+      "files": [
+        "preemption_reserved",
+        "preemption_candidate"
+      ],
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        },
+        {
+          "path": [
+            "exact"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        },
+        {
+          "path": [
+            "requests"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        },
+        {
+          "path": [
+            "positions_after_first_preemption"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+        }
+      ]
+    }
+  },
+  "inputs": {
+    "tokenizer_goldens": "fixtures/deepseek41/frontend/tokenizer-golden.json"
+  },
+  "qualification": {
+    "teacher_reference_kind": "exact",
+    "teacher_receipt": "teacher",
+    "teacher_capture_schema": "chopinfer.deepseek41.teacher-capture.v1",
+    "verify_buckets": [
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "chars_per_token": 4.0,
+    "mechanics_only": false,
+    "checkpoint": {
+      "lock": "models/deepseek41/checkpoint-files.json",
+      "repository": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      "revision": "1bae0e1088993b9b82de08f59de5be5a34e42170",
+      "served_model_name": "DeepSeek-V4.1-Flash",
+      "source_lock_sha256": "e07153915448929eee0310cb97f76acb5d79555f85459cbfba604f8e5ef88606",
+      "checkpoint_identity": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b"
+    }
+  },
+  "receipts": {
+    "env": "CHOPINFER_DATA",
+    "path": "qual/deepseek41"
+  },
+  "limitations": [
+    "Skeleton, not a qualification: deepseek41 is unreleased and serves nothing yet. The checks declared here carry only their pass and exactness rules; no numerical limit is set before the references that bound it exist.",
+    "Pending checks, each added with its references and limits pinned from the reference spread before any candidate run, never moved after a result (models/deepseek41/README.md#qualification): teacher, chat and long_context (131,072 tokens) against the refrun F32-TQ reference of the pinned vendor code, with mean |dlogprob| and top-1 limits from the BF16 versus F32-TQ and F32-TQ versus F64-TQ spreads; paired_teacher once a stored teacher exists; determinism, verify_exact and spec_verify with DSpark; needle (8K to 1M); evals_gsm8k and gsm8k_regression; frontend_goldens with the chat frontend; multimodal, media_preprocessing and encoder_parity with the vision encoder; kv_offload_plain and kv_offload_pressure.",
+    "Pending sections: preview (profile tp4-ar, quick_arms [\"ar\"]) with the chopinfer-model-deepseek41 helper; the kv-bf16 comparison configuration with the BF16 KV layout, never a served default and not qualified for capacity, preemption under pressure or offload, since its pages are about 3.6 times larger."
+  ]
+}

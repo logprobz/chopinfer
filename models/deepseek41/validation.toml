@@ -1,0 +1,18 @@
+schema = "chopinfer-model-validation-v1"
+profiles = "profiles.json"
+capabilities = []
+locks = []
+kernel_commands = []
+
+[[rules]]
+paths = ["compiler/src/tokenizer*", "compiler/tests/tokenizer*"]
+class = "frontend"
+[[rules]]
+paths = ["bundle/src/sm120/build.rs"]
+class = "local_kernel"
+[[rules]]
+paths = ["compiler/*"]
+class = "packing"
+[[rules]]
+paths = ["bundle/*", "contract/*", "geometries/*"]
+class = "program"

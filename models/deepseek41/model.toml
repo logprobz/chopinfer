@@ -20,3 +20,10 @@ package = "model-deepseek41-contract"
 # preview.
 [release]
 enabled = false
+
+# tests/model-geometry-recipe.sh: one `--contract` leg per fixture under
+# fixtures/deepseek41/geometries/, until the bundle serves an added geometry.
+[geometry_recipe]
+stage = "contract"
+fixtures = ["synthetic-small"]
+architecture = "DeepseekV41GeometryRecipeForCausalLM"

@@ -27,4 +27,45 @@ cargo test --locked --offline -p model-deepseek41-lab --test sm120
 ```
 
 CPU checks that read the checkpoint take it from
-`$CHOPINFER_DEEPSEEK_CHECKPOINT`.
+`$CHOPINFER_DEEPSEEK_CHECKPOINT`; the tokenizer corpus test also reads the
+HF corpus `tokenizer_goldens.py corpus` writes, named by
+`$CHOPINFER_DEEPSEEK_TOKENIZER_CORPUS`.
+
+## Checkpoint and geometry
+
+`checkpoint-files.json` pins every file of the official revision, for
+provenance and the qualification binding. Admission reads `config.json`
+alone: aliases, semantic rules, the block-32 FP8 recipe, the CSA2, Engram
+and DSpark relations (`contract/src/structure.rs`), then the closed match
+against `geometries/flash.json`, each refusal naming its field. The
+synthetic geometry (`fixtures/deepseek41/geometries/synthetic-small/`, 12
+layers carrying every CSA2 role, 32 experts, one DSpark stage) admits at
+TP1, TP2 and TP4 when `CHOPINFER_DEEPSEEK41_GEOMETRY_DIRS` names its
+directory.
+
+`contract/projections.json` declares every projection, stem, side tensor
+and encoder tensor once; `checkpoint::bind` binds a checkpoint's
+safetensors headers to it before any payload is read. The official
+revision binds all 96,085 tensors, each claimed once
+(`compiler/tests/checkpoint_binding.rs`).
+
+## Qualification
+
+The model is not qualified. `qual.json` is a skeleton: its checks carry
+only their pass and exactness rules, and every numerical limit is pinned from the spread
+of the refrun references of the pinned vendor code before the first
+candidate run, never moved after a result:
+
+- teacher, chat and long_context (131,072 tokens): gated against the
+  F32 run with BF16-rounded quantizer inputs (F32-TQ); mean |dlogprob|
+  and top-1 limits from the BF16 versus F32-TQ and F32-TQ versus F64-TQ
+  spreads, with complete scores for the same items;
+- per-layer taps (`taps.json`) within the same spread;
+- the `kv-bf16` comparison configuration: native versus BF16 KV served
+  bits equal; never a served default, and not qualified for capacity,
+  preemption under pressure or offload, since its pages are about 3.6
+  times larger.
+
+`profiles.json` holds the experimental `tp4-ar` bring-up profile. The
+release preview's full suite at the release revision is the
+qualification evidence.

@@ -1,0 +1,18 @@
+{
+  "entries": {
+    "tokenizer_goldens": {
+      "directory": false,
+      "members": {
+        ".": "68ed31564260e7013fa284531dfe74ae449d8a7e2bd2b042687a2f7d2ac96891"
+      },
+      "path": "fixtures/deepseek41/frontend/tokenizer-golden.json"
+    }
+  },
+  "model": "deepseek41",
+  "objects": {
+    "68ed31564260e7013fa284531dfe74ae449d8a7e2bd2b042687a2f7d2ac96891": {
+      "schema": "legacy-json-array"
+    }
+  },
+  "schema": "chopinfer-qual-references/v1"
+}

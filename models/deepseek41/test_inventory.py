@@ -1,0 +1,59 @@
+"""DeepSeek V4.1 Flash's own inventory requirements (tests/model_requirements.py),
+run by tests/test_model_inventory.py."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tests'))
+from model_requirements import ROOT, ModelRequirements  # noqa: E402
+from tools.model_sdk.graph import Graph  # noqa: E402
+
+
+class DeepseekInventory(ModelRequirements):
+    MODEL = 'deepseek41'
+
+    def test_unreleased_until_qualified(self):
+        # Released only after its full qualification through the release preview.
+        self.assertIs(self.declared['release']['enabled'], False)
+        self.assertIsNone(self.release())
+        self.assertEqual(self.model.checkpoint_env, 'DEEPSEEK')
+
+    def test_one_bundle_and_its_roles(self):
+        self.assertEqual({role: package.name for role, package in self.model.packages.items()},
+                         {'bundle': 'bundle-deepseek41', 'compiler': 'model-deepseek41',
+                          'contract': 'model-deepseek41-contract'})
+        self.assertEqual(self.declared['bundle']['cdylib'], ['bundle_deepseek41'])
+        self.assertEqual(self.model.lab, 'models/deepseek41/lab/Cargo.toml')
+
+    def test_the_checkpoint_pin_names_the_official_revision(self):
+        pin = self.qual()['qualification']['checkpoint']
+        self.assertEqual(pin['lock'], 'models/deepseek41/checkpoint-files.json')
+        self.assertEqual((pin['repository'], pin['revision']),
+                         ('deepseek-ai/DeepSeek-V4.1-Flash-1017', '1bae0e1088993b9b82de08f59de5be5a34e42170'))
+
+    def test_the_kernel_test_crate_never_links_kernel_lab(self):
+        # The model tests its kernels on kernel-harness from its lab crate,
+        # by every edge including the dev edges its tests build.
+        metadata = json.loads(subprocess.check_output(
+            [os.environ.get('CARGO', 'cargo'), 'metadata', '--locked', '--offline', '--format-version', '1',
+             '--all-features'], cwd=ROOT))
+        graph = Graph(metadata)
+        [lab] = graph.package_ids(['model-deepseek41-lab'])
+        linked = {graph.packages[key]['name'] for key in graph.closure(lab, tests=True)}
+        self.assertIn('kernel-harness', linked)
+        self.assertFalse(linked & {'kernel-lab', 'kernel-lab-families'}, sorted(linked))
+        self.assertNotIn(lab, metadata['workspace_default_members'])
+        self.assertFalse(self.model.kernel_lab.catalog)
+
+    def test_geometry_recipe_legs(self):
+        # Contract stage until the bundle serves an added geometry.
+        self.assertEqual(self.geometry_legs('--contract'), [('deepseek41', 'synthetic-small')])
+        self.assertEqual(self.geometry_legs('--ci'), [])
+        self.assertEqual(self.model.geometry_recipe.architecture, 'DeepseekV41GeometryRecipeForCausalLM')
+
+
+if __name__ == '__main__':
+    unittest.main()

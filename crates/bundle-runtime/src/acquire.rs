@@ -304,6 +304,23 @@ pub fn place_views(
     index: &RankIndex,
     placements: &[Placement],
 ) -> Result<BTreeMap<String, Placed>, PlaceError> {
+    place_views_mapped(services, image, arena, index, placements, &[])
+}
+
+/// [`place_views`] for an image whose plan also maps the views `mapped`
+/// (their names in the rank index) from the checkpoint
+/// (`chop.host-mapped-rows.v1`). The host cut each out of the arena as it
+/// cuts a host view, so the views after it moved down by its rounded length.
+/// A mapped view has no device span and is not placed: the bundle reads it
+/// with `HostServicesV1::with_mapped_view`.
+pub fn place_views_mapped(
+    services: &HostServicesV1,
+    image: BundleCompiledImageHandleV1,
+    arena: BundleRankArenaHandleV1,
+    index: &RankIndex,
+    placements: &[Placement],
+    mapped: &[&str],
+) -> Result<BTreeMap<String, Placed>, PlaceError> {
     let rank = index.rank;
     let whole = services.resolve_compiled_image_view(image, arena, rank, b"")?;
     let mut hosted = BTreeMap::new();
@@ -319,7 +336,15 @@ pub fn place_views(
             Err(error) => return Err(error.into()),
         }
     }
-    place(index, whole.buffer, whole.alignment, &hosted, placements).map_err(PlaceError::Layout)
+    place_mapped(
+        index,
+        whole.buffer,
+        whole.alignment,
+        &hosted,
+        placements,
+        mapped,
+    )
+    .map_err(PlaceError::Layout)
 }
 
 /// [`place_views`] once the host resolved the arena (`arena`, the image's
@@ -330,6 +355,19 @@ pub fn place(
     alignment: u64,
     hosted: &BTreeMap<&str, DeviceBufferSpanV1>,
     placements: &[Placement],
+) -> Result<BTreeMap<String, Placed>, String> {
+    place_mapped(index, arena, alignment, hosted, placements, &[])
+}
+
+/// [`place`] with the views `mapped` cut out of the arena and left unplaced
+/// ([`place_views_mapped`]).
+pub fn place_mapped(
+    index: &RankIndex,
+    arena: DeviceBufferSpanV1,
+    alignment: u64,
+    hosted: &BTreeMap<&str, DeviceBufferSpanV1>,
+    placements: &[Placement],
+    mapped: &[&str],
 ) -> Result<BTreeMap<String, Placed>, String> {
     let rank = index.rank;
     let view = |name: &str| {
@@ -350,14 +388,19 @@ pub fn place(
         }
     }
     // The image ranges the host cut out, in image order.
-    let mut cuts = Vec::with_capacity(hosted.len());
-    for (name, host) in hosted {
+    let mut cuts = Vec::with_capacity(hosted.len() + mapped.len());
+    for name in hosted.keys().chain(mapped) {
         let view = view(name)?;
-        if host.length != view.bytes {
-            return Err(format!(
-                "rank {rank} host view {name} holds {} bytes, the index {}",
-                host.length, view.bytes
-            ));
+        if let Some(host) = hosted.get(name) {
+            if mapped.contains(name) {
+                return Err(format!("rank {rank} view {name} is both host and mapped"));
+            }
+            if host.length != view.bytes {
+                return Err(format!(
+                    "rank {rank} host view {name} holds {} bytes, the index {}",
+                    host.length, view.bytes
+                ));
+            }
         }
         // As the host cuts it: the view's end rounded up to the image
         // alignment, clipped to the image.
@@ -369,6 +412,9 @@ pub fn place(
         cuts.push((view.offset, end.min(index.image_bytes)));
     }
     cuts.sort_unstable();
+    if cuts.windows(2).any(|pair| pair[0].1 > pair[1].0) {
+        return Err(format!("rank {rank} host and mapped views overlap"));
+    }
     let cut_bytes = cuts.iter().map(|(start, end)| end - start).sum::<u64>();
     if index.image_bytes.checked_sub(cut_bytes) != Some(arena.length) {
         return Err(format!(
@@ -385,6 +431,7 @@ pub fn place(
     index
         .views
         .iter()
+        .filter(|(name, _)| !mapped.contains(&name.as_str()))
         .map(|(name, view)| {
             if let Some(&span) = hosted.get(name.as_str()) {
                 let placed = Placed {
@@ -678,5 +725,75 @@ mod tests {
             ..placements[0]
         }];
         assert!(place(&index, span(1, 0, 1536), 256, &BTreeMap::new(), &uneven).is_err());
+    }
+
+    /// A mapped view leaves the arena like a host view and is not placed;
+    /// the views after both cuts move down by both rounded lengths.
+    #[test]
+    fn mapped_views_are_cut_out_and_left_unplaced() {
+        let mut index = RankIndex {
+            rank: 0,
+            image: "rank0.img".into(),
+            image_bytes: 2048,
+            sha256: Some("0".repeat(64)),
+            direct_identity: None,
+            views: BTreeMap::new(),
+        };
+        index.views.insert("head".into(), view(0, 256));
+        index.views.insert("codes".into(), view(256, 700));
+        index.views.insert("table".into(), view(1024, 256));
+        index.views.insert("tail".into(), view(1280, 256));
+        let span = |buffer, offset, length| {
+            DeviceBufferSpanV1::new(
+                BundleDeviceBufferHandleV1::from_parts(1, buffer),
+                offset,
+                length,
+            )
+        };
+        let placements = [Placement {
+            name: "table",
+            host_view: Some(b"table.v1"),
+            rows: None,
+        }];
+        let host = BTreeMap::from([("table", span(2, 0, 256))]);
+        // 2048 less the codes rounded to 768 and the table's 256.
+        let placed = place_mapped(
+            &index,
+            span(1, 0, 1024),
+            256,
+            &host,
+            &placements,
+            &["codes"],
+        )
+        .unwrap();
+        assert!(!placed.contains_key("codes"));
+        assert_eq!(placed["head"].span, span(1, 0, 256));
+        assert_eq!(placed["table"].residency, Residency::PinnedHost);
+        assert_eq!(placed["tail"].span, span(1, 256, 256));
+        // An arena that still holds the mapped bytes, a view the index does
+        // not name, and a view both host and mapped are refused.
+        assert!(place(&index, span(1, 0, 1024), 256, &host, &placements).is_err());
+        assert!(
+            place_mapped(
+                &index,
+                span(1, 0, 1024),
+                256,
+                &host,
+                &placements,
+                &["absent"]
+            )
+            .is_err()
+        );
+        assert!(
+            place_mapped(
+                &index,
+                span(1, 0, 1024),
+                256,
+                &host,
+                &placements,
+                &["table"]
+            )
+            .is_err()
+        );
     }
 }

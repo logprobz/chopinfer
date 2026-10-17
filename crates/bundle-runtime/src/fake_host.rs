@@ -205,6 +205,9 @@ pub struct FakeDevice<O = NoObserver> {
     pub released: Cell<u32>,
     /// Bytes of every span a call may point into, by buffer slot.
     pub extents: RefCell<BTreeMap<u32, u64>>,
+    /// The host bytes of every staging buffer, by buffer slot
+    /// (`chop.host-mapped-rows.v1`).
+    pub staging: RefCell<BTreeMap<u32, Box<[u8]>>>,
     /// (stream, collective) of every launch, eager or captured, for the
     /// captures to count their nodes in.
     launched: RefCell<Vec<(u32, bool)>>,

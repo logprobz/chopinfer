@@ -20,7 +20,7 @@ use runtime_bundle_abi::{
     BundleRawBatchLimitsV1, BundleRawClusterResidencyV1, BundleRawSpeculationV1,
     BundleStateHandleV1, BundleStatusV1, BundleStreamHandleV1, CompiledImageSpanV1,
     DeviceBufferSpanV1, HostServiceResultV1, HostServicesBackendV1, KernelArgumentV1,
-    LaunchConfigV1, StateRequestV1,
+    LaunchConfigV1, LentHostBytesV1, StateRequestV1,
 };
 
 use super::{FakeDevice, JournalObserver, SnapshotOp, fnv1a};
@@ -133,6 +133,17 @@ pub trait FakePackage {
     fn acquire_serving_kv(&self, layout_id: &[u8]) -> HostServiceResultV1<u64>;
     fn resolve_serving_kv_pool(&self, rank: u32) -> HostServiceResultV1<DeviceBufferSpanV1>;
     fn query_speculation(&self) -> HostServiceResultV1<BundleRawSpeculationV1>;
+
+    /// The bytes of one host-mapped view (`chop.host-mapped-rows.v1`): by
+    /// default the package maps none.
+    fn resolve_mapped_view(
+        &self,
+        _image: BundleCompiledImageHandleV1,
+        _rank: u32,
+        _view_id: &[u8],
+    ) -> HostServiceResultV1<LentHostBytesV1> {
+        Err(BundleStatusV1::NotFound)
+    }
 
     /// What the device reports for a cluster residency query that nothing
     /// set on the [`FakeDevice`] answers: by default no report, a host that
@@ -431,8 +442,53 @@ impl<P: FakePackage> HostServicesBackendV1 for Backend<P> {
     }
     fn release_device_buffer(&self, buffer: BundleDeviceBufferHandleV1) -> HostServiceResultV1<()> {
         self.release(Handle::Buffer(buffer.slot()), || {
-            self.0.device().extents.borrow_mut().remove(&buffer.slot());
+            let device = self.0.device();
+            device.extents.borrow_mut().remove(&buffer.slot());
+            device.staging.borrow_mut().remove(&buffer.slot());
         })
+    }
+    /// A staging buffer: zeroed host bytes the bundle writes, journalled as
+    /// `staging <bytes> <alignment>`.
+    fn allocate_staging_buffer(
+        &self,
+        pool: BundleMemoryPoolHandleV1,
+        _stream: BundleStreamHandleV1,
+        byte_length: u64,
+        alignment: u64,
+    ) -> HostServiceResultV1<BundleDeviceBufferHandleV1> {
+        if byte_length == 0 || !alignment.is_power_of_two() || pool.slot() == 0 {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let length = usize::try_from(byte_length).map_err(|_| BundleStatusV1::ResourceExhausted)?;
+        let device = self.0.device();
+        let id = device.acquire();
+        device.note(format!("staging {byte_length} {alignment}"));
+        device.extents.borrow_mut().insert(id, byte_length);
+        device
+            .staging
+            .borrow_mut()
+            .insert(id, vec![0; length].into_boxed_slice());
+        self.0.on_acquire(Handle::Buffer(id));
+        Ok(BundleDeviceBufferHandleV1::from_parts(1, id))
+    }
+    fn lend_staging_buffer(
+        &self,
+        buffer: BundleDeviceBufferHandleV1,
+    ) -> HostServiceResultV1<LentHostBytesV1> {
+        let mut staging = self.0.device().staging.borrow_mut();
+        let bytes = staging
+            .get_mut(&buffer.slot())
+            .ok_or(BundleStatusV1::InvalidArgument)?;
+        // The box is never reallocated, so its bytes stay until release.
+        Ok(LentHostBytesV1::new(bytes.as_mut_ptr(), bytes.len() as u64))
+    }
+    fn resolve_mapped_view(
+        &self,
+        image: BundleCompiledImageHandleV1,
+        rank: u32,
+        view_id: &[u8],
+    ) -> HostServiceResultV1<LentHostBytesV1> {
+        self.0.resolve_mapped_view(image, rank, view_id)
     }
     fn open_compiled_image(&self, role: &[u8]) -> HostServiceResultV1<BundleCompiledImageHandleV1> {
         let image = self.0.open_compiled_image(role)?;
@@ -897,6 +953,57 @@ mod tests {
         let stream = host.create_stream(context, 0).unwrap();
         let buffer = host.allocate_device_buffer(pool, stream, 64, 16).unwrap();
         (host, stream, buffer)
+    }
+
+    /// A staging buffer is zeroed host memory the bundle writes in place
+    /// through the safe caller, journalled and counted like any buffer and
+    /// freed with it; a package that maps nothing answers no mapped view.
+    #[test]
+    fn staging_buffers_lend_their_bytes_and_release_like_buffers() {
+        let (host, stream, buffer) = host();
+        let host = std::rc::Rc::new(host);
+        let table = runtime_bundle_abi::HostServicesTableV1::new(std::rc::Rc::clone(&host));
+        let services = table.caller();
+        let pool = host
+            .device()
+            .memory_pool(BundleContextHandleV1::from_parts(1, 1));
+        let staging = services
+            .allocate_staging_buffer(pool, stream, 32, 16)
+            .unwrap();
+        services
+            .with_staging_buffer(staging, |bytes| {
+                assert_eq!(bytes, [0; 32]);
+                bytes[..4].copy_from_slice(&[1, 2, 3, 4]);
+            })
+            .unwrap();
+        assert_eq!(
+            host.device().staging.borrow()[&staging.slot()][..5],
+            [1, 2, 3, 4, 0]
+        );
+        assert!(services.with_staging_buffer(buffer, |_| ()).is_err());
+        let image = BundleCompiledImageHandleV1::from_parts(1, 9);
+        assert_eq!(
+            services.with_mapped_view(image, 0, b"rows", |_| ()),
+            Err(runtime_bundle_abi::BundleAbiError::Status(
+                BundleStatusV1::NotFound
+            ))
+        );
+        assert_eq!(
+            host.allocate_staging_buffer(pool, stream, 0, 16),
+            Err(BundleStatusV1::InvalidArgument)
+        );
+        services.release_device_buffer(staging).unwrap();
+        assert!(host.device().staging.borrow().is_empty());
+        assert!(
+            host.device()
+                .journal
+                .borrow()
+                .contains(&"staging 32 16".to_owned())
+        );
+        assert_eq!(
+            *host.1.borrow(),
+            ["context 1", "pool 1", "stream 1", "buffer 2"]
+        );
     }
 
     #[test]

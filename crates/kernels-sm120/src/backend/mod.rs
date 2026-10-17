@@ -70,7 +70,9 @@ use kernel_core::rmsnorm::{RmsNormBuffers, RmsNormLayout, RmsNormRequirement};
 use kernel_core::rope_kv::{
     RingWriteBuffers, RingWriteOp, RopeBuffers, RopeKvBuffers, RopeKvOp, RopeOp,
 };
-use kernel_core::row_copy::{ColumnSlice, RowCopyBuffers, StreamBroadcast};
+use kernel_core::row_copy::{
+    ColumnSlice, GatherByIndex, GatherByIndexBuffers, RowCopyBuffers, StreamBroadcast,
+};
 use kernel_core::rows::{
     ArgmaxFinalBuffers, ArgmaxPartialBuffers, BottleneckBuffers, EmbeddingBuffers,
     GroupedNormBuffers, InjectBuffers, LogitsBuffers, MixBuffers, NgramBuffers, PleGateBuffers,
@@ -111,6 +113,7 @@ mod rmsnorm;
 mod rope_kv;
 mod rounded_all_reduce;
 mod row_copies;
+mod row_gather;
 mod rows;
 mod select;
 mod silu_mul_quantize;
@@ -189,6 +192,7 @@ pub struct Sm120 {
     rounded_all_reduce: rounded_all_reduce::Selection,
     context_parallel: context_parallel::Selection,
     row_copies: Vec<crate::row::copy::Entry>,
+    row_gathers: Vec<String>,
     row_rmsnorms: Vec<crate::row::RowInstantiation>,
     block_quantizers: Vec<crate::row::block_quantize::Entry>,
     silu_mul_quantizers: Vec<crate::row::silu_mul_quantize::Entry>,
@@ -911,6 +915,14 @@ impl Sm120 {
     /// every stream broadcast or every column slice SM120 takes.
     pub fn with_row_copy(mut self, entry: crate::row::copy::Entry) -> Self {
         self.row_copies.push(entry);
+        self
+    }
+
+    /// A gather by index entry the model's build compiles
+    /// (`row::gather::cubin_spec`, the shared symbol `row::gather::SYMBOL`),
+    /// which serves every gather by index SM120 takes.
+    pub fn with_row_gather(mut self, symbol: impl Into<String>) -> Self {
+        self.row_gathers.push(symbol.into());
         self
     }
 
@@ -1791,6 +1803,14 @@ impl Backend for Sm120 {
         need: Need,
     ) -> Result<Prepared<RowCopyBuffers<View>>, Refused> {
         row_copies::column_slice(&self.row_copies, op, need)
+    }
+
+    fn gather_by_index(
+        &self,
+        op: &GatherByIndex,
+        need: Need,
+    ) -> Result<Prepared<GatherByIndexBuffers<View>>, Refused> {
+        row_gather::gather_by_index(&self.row_gathers, op, need)
     }
 }
 

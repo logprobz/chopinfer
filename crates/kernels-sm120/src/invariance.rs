@@ -219,7 +219,10 @@ pub fn contributions(catalogs: &Catalogs) -> Vec<Declared> {
             entry.invariance,
         );
     }
-    for entry in row::copy::declared_entries() {
+    for entry in row::copy::declared_entries()
+        .into_iter()
+        .chain(row::gather::declared_entries())
+    {
         add(&entry.symbol, entry.profile, entry.op, entry.invariance);
     }
     for entry in comm::declared_entries() {

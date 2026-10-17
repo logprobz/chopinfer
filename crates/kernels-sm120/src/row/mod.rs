@@ -5,6 +5,7 @@ pub mod argmax;
 pub mod block_quantize;
 pub mod builders;
 pub mod copy;
+pub mod gather;
 pub mod hyper_connection;
 pub mod ngram_hash;
 pub mod ordered_sum;

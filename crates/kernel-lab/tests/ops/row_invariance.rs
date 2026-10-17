@@ -42,12 +42,14 @@ use kernel_core::contract::{
     Refusal, SigmoidMeanHyperConnectionQuery as H, StaticQuery,
 };
 use kernel_core::ngram_oracle;
-use kernel_core::row_copy::{ColumnSlice, RowCopyBuffers, StreamBroadcast};
+use kernel_core::row_copy::{
+    ColumnSlice, GatherByIndex, GatherByIndexBuffers, RowCopyBuffers, StreamBroadcast,
+};
 use kernels_sm120::attention::gated;
 use kernels_sm120::backend::Sm120;
 use kernels_sm120::invariance::{Declared, OpKind};
-use kernels_sm120::row::copy;
 use kernels_sm120::row::{Grid, smallest_bucket};
+use kernels_sm120::row::{copy, gather};
 use model_qwen38_contract::sm120::row as qwen38;
 use std::collections::BTreeSet;
 use std::ops::Range;
@@ -1093,6 +1095,7 @@ enum Family {
     Gated(gated::Entry),
     Qwen(kernels_sm120::row::hyper_connection::Entry, Qwen),
     Copy(copy::Entry),
+    Gather(String),
 }
 
 fn family(symbol: &str) -> LabResult<Family> {
@@ -1115,6 +1118,9 @@ fn family(symbol: &str) -> LabResult<Family> {
     }
     if let Some(entry) = copy::entries().into_iter().find(|e| e.symbol == symbol) {
         return Ok(Family::Copy(entry));
+    }
+    if symbol == gather::SYMBOL {
+        return Ok(Family::Gather(symbol.into()));
     }
     Err(format!("{symbol}: not in a row adapter catalog"))
 }
@@ -1237,6 +1243,109 @@ fn copy_rows(session: &Session, entry: &copy::Entry, seeds: &[u64]) -> LabResult
         .collect())
 }
 
+/// The shape the shared gather runs at: BF16 rows of 512.
+const GATHER: GatherByIndex = GatherByIndex {
+    dtype: DType::Bf16,
+    width: 512,
+    alignment_bytes: 16,
+};
+
+/// One launch of the shared gather `symbol` over a source row per seed,
+/// laid out in reverse so destination row `r` gathers the source row of
+/// seed `r` from the other end, as the SM120 backend prepares it at those
+/// rows: each unit is one row's destination bytes, written whole, with the
+/// poisoned padding row past them untouched.
+fn gather_rows(session: &Session, symbol: &str, seeds: &[u64]) -> LabResult<Units> {
+    let rows = seeds.len();
+    let backend = Sm120::new().with_row_gather(symbol);
+    let prepared = backend
+        .gather_by_index(&GATHER, Need::rows(rows as u32))
+        .map_err(|e| format!("{symbol}: {e}"))?;
+    let row = GATHER.row_bytes().map_err(|e| e.to_string())? as usize;
+    let mut source_rows = rows_of(seeds, GATHER.width as usize, 70);
+    source_rows.reverse();
+    let source_bytes = source_rows
+        .iter()
+        .flat_map(|v| v.to_ne_bytes())
+        .collect::<Vec<_>>();
+    let indices = (0..rows as u32)
+        .rev()
+        .flat_map(u32::to_le_bytes)
+        .collect::<Vec<_>>();
+    let upload = |bytes: &[u8]| -> LabResult<DeviceBuffer> {
+        let buffer = session.allocate(bytes.len())?;
+        poison::write(session, &buffer, 0, bytes)?;
+        Ok(buffer)
+    };
+    let source = upload(&source_bytes)?;
+    let row_indices = upload(&indices)?;
+    let count = upload(&(rows as u32).to_le_bytes())?;
+    let destination = upload(&vec![POISON; (rows + 1) * row])?;
+    let view = |handle, buffer: &DeviceBuffer| View {
+        handle,
+        bytes: buffer.byte_len() as u64,
+    };
+    let buffers = GatherByIndexBuffers {
+        source: view(1, &source),
+        row_indices: view(2, &row_indices),
+        count: view(3, &count),
+        destination: view(4, &destination),
+    };
+    let launches = prepared
+        .launches(&buffers, View::EMPTY, Counts::rows(rows as u32))
+        .map_err(|e| format!("{symbol}: {e}"))?;
+    let module = session.module(gather::CUBIN)?;
+    let bindings = Bindings {
+        buffers: BTreeMap::from([
+            (1, &source),
+            (2, &row_indices),
+            (3, &count),
+            (4, &destination),
+        ]),
+    };
+    for one in &launches {
+        let function = module.function(&one.symbol).map_err(|e| e.to_string())?;
+        launch::launch(
+            &session.context,
+            &function,
+            &session.stream,
+            one.plan,
+            &one.arguments,
+            &bindings,
+        )?;
+        kernel_lab::launched(&one.symbol);
+    }
+    let bytes = bytes_of(session, &destination)?;
+    written_rows(
+        &format!("{symbol} destination"),
+        &bytes,
+        rows * row,
+        Element::Bf16,
+    )?;
+    Ok(bytes[..rows * row]
+        .chunks(row)
+        .map(<[u8]>::to_vec)
+        .collect())
+}
+
+/// The shared gather entry resolves to the gather family and prepares
+/// with its declared claims (no GPU).
+#[test]
+fn the_shared_gather_entry_resolves_to_the_gather() {
+    let inventory = crate::invariance::inventory();
+    let declared = inventory
+        .iter()
+        .find(|d| d.symbol == gather::SYMBOL)
+        .unwrap();
+    assert_eq!(declared.op, OpKind::Row);
+    assert!(matches!(family(gather::SYMBOL).unwrap(), Family::Gather(_)));
+    let prepared = Sm120::new()
+        .with_row_gather(gather::SYMBOL)
+        .gather_by_index(&GATHER, Need::rows(512))
+        .unwrap();
+    assert_eq!(prepared.info().guarantees, declared.invariance);
+}
+
 /// Every shared copy entry resolves to the copy family, and the copy
 /// shapes prepare (no GPU).
 #[test]
@@ -1306,6 +1415,16 @@ impl Adapter for Row {
                 }
                 Ok(units)
             }
+            Family::Gather(symbol) => {
+                let mut units = Vec::new();
+                let mut start = 0;
+                for &end in ends {
+                    let seeds = (start..end).map(u64::from).collect::<Vec<_>>();
+                    units.extend(gather_rows(session, &symbol, &seeds)?);
+                    start = end;
+                }
+                Ok(units)
+            }
         }
     }
 
@@ -1329,6 +1448,7 @@ impl Adapter for Row {
                     .collect())
             }
             Family::Copy(entry) => copy_rows(session, &entry, seeds),
+            Family::Gather(symbol) => gather_rows(session, &symbol, seeds),
         }
     }
 

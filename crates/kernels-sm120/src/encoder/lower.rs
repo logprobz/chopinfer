@@ -219,23 +219,20 @@ impl Lowering<'_> {
     /// The output layout's kernels: the language model's prefill writes the
     /// encoder rows over its token rows.
     pub fn layout(&mut self, layout: &Layout) -> Result<(), String> {
-        match layout {
-            Layout::Tokens(params) => {
-                self.at("layout", None);
-                self.push(
-                    &layout.id(),
-                    None,
-                    MultimodalQuery::EmbeddingOverride {
-                        width: params.hidden,
-                        capacity: OVERRIDE_ROWS,
-                    },
-                );
-                Ok(())
-            }
-            Layout::LearnedDelimiters(_) => {
-                Err(format!("`{}` has no encoder kernel yet", layout.id()))
-            }
-        }
+        // The encoder runtime writes a learned-delimiter span whole into the
+        // arena (its cells at their placed rows, the learned rows between
+        // them), so both layouts inject arena rows by the same override.
+        let (Layout::Tokens(params) | Layout::LearnedDelimiters(params)) = layout;
+        self.at("layout", None);
+        self.push(
+            &layout.id(),
+            None,
+            MultimodalQuery::EmbeddingOverride {
+                width: params.hidden,
+                capacity: OVERRIDE_ROWS,
+            },
+        );
+        Ok(())
     }
 
     fn conv1d(&mut self, conv: &Conv1d, input: &Boundary) -> Result<(), String> {

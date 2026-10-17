@@ -20,6 +20,7 @@ use encoder_spec::components::rotary::{Rotary, Table};
 use encoder_spec::components::{
     Data, Item, Layout, Linear, Merge, Mlp, Norm, RotarySlot, StageOp, Transformer,
 };
+use encoder_spec::placement::{Delimiter, Piece};
 use encoder_spec::weights::Source;
 use encoder_spec::{Declaration, ImageLayout};
 use kernel_core::allocation::Traversal;
@@ -193,6 +194,95 @@ pub struct Lowered {
     pub(super) joined: Option<(&'static str, usize)>,
     /// The layout's embedding override, run in the language model's prefill.
     pub(super) inject: Inject,
+    /// Under `layout.learned-delimiters.v1`, the views of its learned start,
+    /// newline and end rows ([`Delimiter`] order), each one BF16 row.
+    pub(super) delimiters: Option<[String; 3]>,
+}
+
+/// What one placed row of an item's span is written from.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PlacedSource {
+    /// `rows` encoder output rows from row `first` of the run's output.
+    Output { first: u64, rows: u64 },
+    /// One learned delimiter row.
+    Learned(Delimiter),
+}
+
+/// One copy into an item's span: `source` to placed rows from `placed`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlacedCopy {
+    pub source: PlacedSource,
+    pub placed: u64,
+}
+
+/// The copies that write a run's part of an item's span under `layout`,
+/// from the item's rows after the last stage (`encoded`): the run's output
+/// rows (item rows `output`) at their placed rows in `Layout::place` order,
+/// and, in the run whose output starts the item, every learned delimiter
+/// row. Under `layout.tokens.v1` the span is the encoder rows in order.
+pub fn placed_copies(
+    layout: &Layout,
+    encoded: Item,
+    output: std::ops::Range<u64>,
+) -> Result<Vec<PlacedCopy>, String> {
+    let placement = layout.place(encoded, 0)?;
+    let mut copies = Vec::new();
+    let mut placed = 0;
+    for piece in placement.pieces {
+        match piece {
+            Piece::Rows { media_row, rows } => {
+                let first = media_row.max(output.start);
+                let end = (media_row + rows).min(output.end);
+                if first < end {
+                    copies.push(PlacedCopy {
+                        source: PlacedSource::Output {
+                            first: first - output.start,
+                            rows: end - first,
+                        },
+                        placed: placed + (first - media_row),
+                    });
+                }
+            }
+            Piece::Learned(delimiter) => {
+                if output.start == 0 {
+                    copies.push(PlacedCopy {
+                        source: PlacedSource::Learned(delimiter),
+                        placed,
+                    });
+                }
+            }
+        }
+        placed += piece.rows();
+    }
+    Ok(copies)
+}
+
+/// The views of the output layout's learned start, newline and end rows,
+/// named as the stages' views are (the checkpoint prefix and the tensor).
+fn delimiter_views(declaration: &Declaration) -> Result<[String; 3], String> {
+    let view = |role: &str| {
+        let source = declaration
+            .output
+            .weights
+            .get(role)
+            .ok_or_else(|| format!("the layout binds no `{role}` row"))?;
+        let tensor = match (declaration.image_layout, source) {
+            (ImageLayout::ViewOrder, Source::Tensor(tensor)) => tensor,
+            (ImageLayout::ViewOrder, _) => {
+                return Err(format!("`{role}`: view-order.v1 binds single tensors only"));
+            }
+            (ImageLayout::ProgramOrderStacked, source) => {
+                first_tensor(source).ok_or_else(|| {
+                    format!("`{role}`: program-order-stacked.v1 names views by their first tensor")
+                })?
+            }
+        };
+        Ok(format!(
+            "{}{}",
+            declaration.checkpoint.prefix, tensor.tensor
+        ))
+    };
+    Ok([view("start")?, view("newline")?, view("end")?])
 }
 
 /// The region whose uses include `what` of `encoder` at `stage`.
@@ -1103,20 +1193,26 @@ impl Lowered {
         let last = declaration.stages.len() - 1;
         let lowered = lower_pairs(&mut builder, plan, payload, registered)?;
         let place = lowered.ok_or_else(|| format!("{name}: no stages"))?;
-        let Layout::Tokens(_) = &declaration.output.op else {
-            return Err(format!("{name}: only `layout.tokens.v1` writes the arena"));
+        let delimiters = match &declaration.output.op {
+            Layout::Tokens(_) => None,
+            Layout::LearnedDelimiters(_) => {
+                Some(delimiter_views(declaration).map_err(|error| format!("{name}: {error}"))?)
+            }
         };
         let row_bytes = u64::from(declaration.output.op.params().hidden) * 2;
         let inject = inject(declaration, resolver).map_err(|error| format!("{name}: {error}"))?;
         let input = &declaration.input;
-        // Every recipe's item traces through the declaration.
+        // Every recipe's item traces through the declaration, with a grid
+        // of its rows (`multiple` is one merge block) for a layout that
+        // follows one.
         for recipe in &input.recipes {
+            let rows = recipe.rows().map_err(|error| format!("{name}: {error}"))?;
+            let side = rows.multiple.isqrt();
+            let grid = (delimiters.is_some() && side * side == rows.multiple)
+                .then(|| [rows.item / rows.grid, side, rows.grid / side]);
             let item = encoder_spec::components::Item {
-                rows: recipe
-                    .rows()
-                    .map_err(|error| format!("{name}: {error}"))?
-                    .item,
-                grid: None,
+                rows: rows.item,
+                grid,
             };
             declaration.trace(item).map_err(|error| error.0)?;
         }
@@ -1134,6 +1230,7 @@ impl Lowered {
             output: (place, rows[last][1] * row_bytes),
             joined: builder.joined,
             inject,
+            delimiters,
         })
     }
 
@@ -1149,6 +1246,19 @@ impl Lowered {
     /// as large enough), so a view too small for its stage fails create
     /// rather than a record.
     pub(super) fn check(&self, weights: &BTreeMap<String, Span>) -> Result<(), String> {
+        for name in self.delimiters.iter().flatten() {
+            let span = weights
+                .get(name)
+                .ok_or_else(|| format!("{}: no encoder view {name}", self.declaration.name))?;
+            if span.length != self.row_bytes() {
+                return Err(format!(
+                    "{}: the learned row {name} holds {} bytes, not one BF16 row of {}",
+                    self.declaration.name,
+                    span.length,
+                    self.row_bytes()
+                ));
+            }
+        }
         for launch in &self.launches {
             let roles = &launch.roles;
             let (slot, op) = &self.prepared[launch.op];
@@ -1580,6 +1690,181 @@ mod tests {
         };
         let plan = buffers::plan(&[&tower], 4096, serving).unwrap();
         (lower(&tower, &plan, kernel_params, &Shared).unwrap(), plan)
+    }
+
+    /// The span of a merged `[t, h, w]` grid as the vendor lays an image
+    /// (image_processor.py `image_token_types`, model.py
+    /// `merge_image_embeddings`) per temporal grid: a start row, each grid
+    /// row's cells in raster order then a newline row, an end row; cells
+    /// numbered in the encoder's output order.
+    fn vendor_span([t, h, w]: [u64; 3]) -> Vec<PlacedSource> {
+        let mut span = Vec::new();
+        for g in 0..t {
+            span.push(PlacedSource::Learned(Delimiter::Start));
+            for i in 0..h {
+                for j in 0..w {
+                    span.push(PlacedSource::Output {
+                        first: (g * h + i) * w + j,
+                        rows: 1,
+                    });
+                }
+                span.push(PlacedSource::Learned(Delimiter::Newline));
+            }
+            span.push(PlacedSource::Learned(Delimiter::End));
+        }
+        span
+    }
+
+    /// The placed rows of every run of an item laid end to end: each run's
+    /// copies, its output rows numbered as item rows.
+    fn placed_span(layout: &Layout, grid: [u64; 3], cuts: &[u64]) -> Vec<Option<PlacedSource>> {
+        let encoded = Item {
+            rows: grid.iter().product(),
+            grid: Some(grid),
+        };
+        let rows = layout.place(encoded, 0).unwrap().positions.len();
+        let mut span = vec![None; rows];
+        let mut bounds = vec![0];
+        bounds.extend(
+            cuts.iter()
+                .copied()
+                .filter(|&cut| cut > 0 && cut < encoded.rows),
+        );
+        bounds.push(encoded.rows);
+        for run in bounds.windows(2) {
+            for copy in placed_copies(layout, encoded, run[0]..run[1]).unwrap() {
+                let row = copy.placed as usize;
+                match copy.source {
+                    PlacedSource::Output { first, rows } => {
+                        for k in 0..rows as usize {
+                            assert!(span[row + k].is_none(), "row {} written twice", row + k);
+                            span[row + k] = Some(PlacedSource::Output {
+                                first: run[0] + first + k as u64,
+                                rows: 1,
+                            });
+                        }
+                    }
+                    learned => {
+                        assert!(span[row].is_none(), "row {row} written twice");
+                        span[row] = Some(learned);
+                    }
+                }
+            }
+        }
+        span
+    }
+
+    /// Every placed row of a learned-delimiter span is written once, from the
+    /// encoder row or the learned row the vendor puts there, however the
+    /// item's output rows are cut into runs; a token layout's span is the
+    /// encoder rows in order.
+    #[test]
+    fn learned_delimiter_spans_place_rows_as_the_vendor_lays_images() {
+        let params = encoder_spec::components::layout::LayoutParams {
+            hidden: 8,
+            positions: encoder_spec::components::layout::PositionRule::Sequential,
+            media_mask: true,
+        };
+        let delimited = Layout::LearnedDelimiters(params.clone());
+        for grid in [[1, 2, 3], [1, 5, 7], [1, 1, 1], [2, 3, 4], [3, 1, 2]] {
+            let cells: u64 = grid.iter().product();
+            let expected: Vec<_> = vendor_span(grid).into_iter().map(Some).collect();
+            assert_eq!(
+                expected.len() as u64,
+                grid[0] * (grid[1] * (grid[2] + 1) + 2)
+            );
+            for cuts in [
+                vec![],
+                vec![1],
+                vec![cells / 2],
+                vec![2, 5, 7, 11],
+                (1..cells).collect(),
+            ] {
+                assert_eq!(
+                    placed_span(&delimited, grid, &cuts),
+                    expected,
+                    "{grid:?} cut at {cuts:?}"
+                );
+            }
+        }
+        let tokens = Layout::Tokens(params);
+        let span = placed_span(&tokens, [1, 2, 3], &[4]);
+        let ordered: Vec<_> = (0..6)
+            .map(|k| Some(PlacedSource::Output { first: k, rows: 1 }))
+            .collect();
+        assert_eq!(span, ordered);
+        // a learned row is written in the run that starts the item only
+        let later = placed_copies(
+            &delimited,
+            Item {
+                rows: 6,
+                grid: Some([1, 2, 3]),
+            },
+            3..6,
+        )
+        .unwrap();
+        assert!(
+            later
+                .iter()
+                .all(|copy| matches!(copy.source, PlacedSource::Output { .. }))
+        );
+    }
+
+    /// A learned-delimiter tower lowers with its three learned rows as views
+    /// of the image, and create refuses one that is missing or not one BF16
+    /// row of the language model's hidden size.
+    #[test]
+    fn learned_delimiter_towers_lower_with_their_learned_rows() {
+        let mut value: serde_json::Value = serde_json::from_str(TOWER).unwrap();
+        value["output"] = serde_json::json!({
+            "op": "layout.learned-delimiters.v1", "hidden": 512, "positions": "sequential",
+            "media_mask": true,
+            "weights": {"start": "img.start", "newline": "img.newline", "end": "img.end"}});
+        let tower = parse(&value.to_string(), &Environment::new("alpha")).unwrap();
+        let serving = Serving {
+            arena_rows: 1024,
+            prefill_rows: 64,
+            staging_bytes: 0,
+        };
+        let plan = buffers::plan(&[&tower], 4096, serving).unwrap();
+        let delimited = lower(&tower, &plan, kernel_params, &Shared).unwrap();
+        assert_eq!(
+            delimited.delimiters,
+            Some(["visual.img.start", "visual.img.newline", "visual.img.end"].map(String::from))
+        );
+        let (tokens, _) = lowered();
+        assert_eq!(tokens.delimiters, None);
+        let view = |bytes| {
+            Span::new(
+                runtime_bundle_abi::BundleDeviceBufferHandleV1::from_raw(0),
+                0,
+                bytes,
+            )
+        };
+        let mut weights: BTreeMap<String, Span> = BTreeMap::new();
+        for launch in &delimited.launches {
+            for operand in launch.operands() {
+                if let Operand::Weight(name) = operand {
+                    weights.insert(name, view(u64::MAX));
+                }
+            }
+        }
+        for name in ["visual.img.start", "visual.img.newline"] {
+            weights.insert(name.into(), view(1024));
+        }
+        let missing = delimited.check(&weights).unwrap_err();
+        assert!(
+            missing.contains("no encoder view visual.img.end"),
+            "{missing}"
+        );
+        weights.insert("visual.img.end".into(), view(1022));
+        let short = delimited.check(&weights).unwrap_err();
+        assert!(
+            short.contains("holds 1022 bytes, not one BF16 row of 1024"),
+            "{short}"
+        );
+        weights.insert("visual.img.end".into(), view(1024));
+        delimited.check(&weights).unwrap();
     }
 
     /// Zero-column padding before the patch GEMM: it reads the payload in

@@ -519,8 +519,10 @@ impl Encoder {
     }
 
     /// The program of `record` on `rank`: every run's uploads, commands and
-    /// copies of its output rows to the record's arena pages. `sides` holds
-    /// each run's side inputs.
+    /// copies of its output rows to the record's arena pages, at the rows the
+    /// layout places them (with its learned rows) for the item whose rows
+    /// after the last stage are `encoded`. `sides` holds each run's side
+    /// inputs.
     #[allow(clippy::too_many_arguments)]
     fn program<'p>(
         &self,
@@ -528,6 +530,7 @@ impl Encoder {
         symbols: &BTreeMap<String, BundleCudaSymbolHandleV1>,
         lowered: &Lowered,
         record: &BatchMediaEncodeV3,
+        encoded: encoder_spec::components::Item,
         runs: &[encoder_spec::geometry::Run],
         payload: &'p [u8],
         sides: &'p [side::Side],
@@ -694,6 +697,58 @@ impl Encoder {
             // Only runs through the last stage write output rows.
             if run.steps.last().map(|step| step.stage) != Some(lowered.declaration.stages.len() - 1)
             {
+                continue;
+            }
+            if let Some(delimiters) = &lowered.delimiters {
+                let copies = lower::placed_copies(
+                    &lowered.declaration.output.op,
+                    encoded,
+                    run.output.start..run.output.end,
+                )?;
+                for placed in copies {
+                    let (source, rows) = match placed.source {
+                        lower::PlacedSource::Output { first, rows } => (
+                            Span::new(
+                                output.buffer,
+                                output.offset + first * row_bytes,
+                                rows * row_bytes,
+                            ),
+                            rows,
+                        ),
+                        lower::PlacedSource::Learned(delimiter) => {
+                            let name = &delimiters[match delimiter {
+                                encoder_spec::placement::Delimiter::Start => 0,
+                                encoder_spec::placement::Delimiter::Newline => 1,
+                                encoder_spec::placement::Delimiter::End => 2,
+                            }];
+                            let view = *regions
+                                .weights
+                                .get(name)
+                                .ok_or_else(|| format!("no encoder view {name}"))?;
+                            (view, 1)
+                        }
+                    };
+                    let placed_rows =
+                        u32::try_from(placed.placed).map_err(|_| "placed rows exceed 32 bits")?;
+                    let mut offset = 0;
+                    for copy in self
+                        .config
+                        .arena
+                        .runs(&record.pages, record.output_rows, placed_rows, rows as u32)
+                        .map_err(|error| error.to_string())?
+                    {
+                        let bytes = u64::from(copy.rows) * row_bytes;
+                        program.copy(
+                            Span::new(source.buffer, source.offset + offset, bytes),
+                            Span::new(
+                                arena.buffer,
+                                arena.offset + copy.arena_row * row_bytes,
+                                bytes,
+                            ),
+                        );
+                        offset += bytes;
+                    }
+                }
                 continue;
             }
             let rows = (run.output.end - run.output.start) as u32;
@@ -997,7 +1052,17 @@ impl Encoder {
                 if let Some(probe) = &self.probe {
                     probe.flush([]);
                 }
-                self.program(rank, &symbols[rank], lowered, record, runs, payload, &sides)
+                let encoded = admitted.geometry.rows[lowered.declaration.stages.len() - 1];
+                self.program(
+                    rank,
+                    &symbols[rank],
+                    lowered,
+                    record,
+                    encoded,
+                    runs,
+                    payload,
+                    &sides,
+                )
             };
             let mut timings = Timings::default();
             let mut prepare = Duration::ZERO;

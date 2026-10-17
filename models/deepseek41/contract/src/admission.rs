@@ -194,7 +194,8 @@ mod tests {
             (
                 "architectures",
                 json!(["DeepseekV4ForCausalLM"]),
-                "unsupported architectures: expected some of [\"DeepseekV41ForCausalLM\"], received [\"DeepseekV4ForCausalLM\"]",
+                // A geometry recipe adds its own alias after the checkpoint's.
+                "unsupported architectures: expected some of [\"DeepseekV41ForCausalLM\"",
             ),
             (
                 "text_config.model_type",

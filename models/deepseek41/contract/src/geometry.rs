@@ -139,7 +139,8 @@ mod tests {
         assert_eq!(FLASH.shape.rope.compress_theta, 160000.0);
         assert_eq!(FLASH.shape.dspark.targets, &[37, 38, 39]);
         assert_eq!(FLASH.shape.tokens.image, 129264);
-        assert_eq!(ARCHITECTURE_ALIASES, &["DeepseekV41ForCausalLM"]);
+        // The checkpoint's architecture first; a geometry recipe appends its own.
+        assert_eq!(ARCHITECTURE_ALIASES[0], "DeepseekV41ForCausalLM");
     }
 
     #[test]

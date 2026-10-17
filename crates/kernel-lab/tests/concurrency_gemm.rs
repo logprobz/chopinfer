@@ -3,7 +3,8 @@
 
 use kernel_core::codec::{bf16_to_f32, f32_to_bf16};
 use kernel_core::contract::{
-    ActivationFormat, DType, GemmQuery, RuntimeCounts, ScaleMode, StaticQuery, WeightFormat,
+    ActivationFormat, DType, GemmQuery, Refusal, RuntimeCounts, ScaleMode, StaticQuery,
+    WeightFormat,
 };
 use kernel_core::oracle::{self, GemmEpilogue, GemmShape, OracleOutput};
 use kernel_core::quantize::{self, Quantized, Scales};
@@ -111,6 +112,9 @@ fn weight(
         WeightFormat::Mxfp8 => quantize::mxfp8(values, rows, k),
         WeightFormat::Mxfp4 => quantize::mxfp4(values, rows, k),
         WeightFormat::Nvfp4 => quantize::nvfp4(values, rows, k),
+        WeightFormat::Fp8Block32x32 => Err(Refusal(
+            "32x32 UE8M0 fixtures require explicit codes and scales",
+        )),
     }
     .map_err(|e| e.to_string())?;
     Ok(encoded_quantized(quantized, oracle))

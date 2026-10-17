@@ -8,6 +8,8 @@ pub mod geometry;
 pub mod projections;
 pub mod structure;
 
+pub mod own_ops;
+
 /// The model's one bundle ID. Every rank count it supports is a topology of
 /// this bundle, never a bundle ID of its own.
 pub const BUNDLE_ID: &str = "deepseek41.v1";

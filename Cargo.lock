@@ -736,6 +736,7 @@ dependencies = [
  "model-compiler-sdk",
  "projection-spec",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

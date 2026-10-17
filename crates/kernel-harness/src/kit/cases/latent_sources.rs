@@ -503,6 +503,78 @@ mod tests {
     }
 
     #[test]
+    fn native_partial_gate_covers_maximum_score_cancellation() {
+        let (width, heads, budget) = (512, 4, 128);
+        let query = LatentAttentionQuery::Attention {
+            heads: heads as u32,
+            latent: width as u32,
+            max_keys: budget as u32,
+            softmax_scale_bits: (width as f32).powf(-0.5).to_bits(),
+            page_size: 16,
+            kv: LatentKvFormat::Fp8E4M3Ue8M0Block32,
+            phase: AttentionPhase::Prefill,
+            output: LatentAttentionOutput::Partial,
+            sink: true,
+            tail_rope_dims: 64,
+            second_fp4_keys: false,
+            capacity: CAPACITY,
+        };
+        let profile = Profile::synthetic(ProfileNames {
+            name: "native-max-bound",
+            tag: "native_max_bound",
+        });
+        let backend = kernels_sm120::latent::sources::entries(profile, query)
+            .unwrap()
+            .into_iter()
+            .fold(Sm120::new(), Sm120::with_latent_sources);
+        let prepared = backend
+            .latent_attention_sources(&query, Need::rows(CAPACITY))
+            .unwrap();
+        let case = numerical_case(query, CAPACITY, prepared).unwrap();
+        let mut images = case.images();
+        let stride = images.bytes("window.pool").unwrap().len() / SEQUENCES;
+        let slots = (stride - PAD) / (width + width / 32);
+        let mut pool = vec![0; stride * SEQUENCES];
+        for seq in 0..SEQUENCES {
+            let start = seq * stride + slots * width;
+            pool[start..start + slots * width / 32].fill(127);
+        }
+        for at in [0, 128, 256, width + 1] {
+            pool[at] = 0x38;
+        }
+        let mut q = vec![0; CAPACITY as usize * heads * width];
+        for head in 0..heads {
+            for (d, value) in [(0, 2_f32.powi(24)), (128, 1.0), (256, -2_f32.powi(24))] {
+                q[head * width + d] = f32_to_bf16(value);
+            }
+        }
+        let mut ids = vec![-1; CAPACITY as usize * budget];
+        ids[..2].copy_from_slice(&[0, 1]);
+        images = images
+            .with("window.pool", pool)
+            .with("q", bf16_bytes(&q))
+            .with("row_batch", i32_bytes(&[0; CAPACITY as usize]))
+            .with("window.key_lists", i32_bytes(&ids));
+        let mut den = vec![0.0; CAPACITY as usize * heads];
+        den[..heads].fill(2.0);
+        let mut num = vec![0.0; CAPACITY as usize * heads * width];
+        for head in 0..heads {
+            for d in [0, 1, 128, 256] {
+                num[head * width + d] = 1.0;
+            }
+        }
+        let outputs = std::collections::BTreeMap::from([
+            (
+                "partial.max".into(),
+                f32_bytes(&vec![0.0; CAPACITY as usize * heads]),
+            ),
+            ("partial.den".into(), f32_bytes(&den)),
+            ("partial.num".into(), f32_bytes(&num)),
+        ]);
+        case.judge_outputs(&images, 1, &outputs).unwrap();
+    }
+
+    #[test]
     fn native_partial_oracle_accepts_empty_sentinels_and_rejects_corruption() {
         let query = LatentAttentionQuery::Attention {
             heads: 4,

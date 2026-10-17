@@ -440,6 +440,8 @@ crate::scratch_record! {
     /// Per-layer native FP8 window: each sequence holds all code rows,
     /// followed by all UE8M0 scale rows. Lists name physical ring slots or
     /// staged rows, with `key_stride` entries per query and `budget` live.
+    /// The pool base is at least two-byte aligned; pair-loading backends
+    /// also require an even byte `sequence_stride`.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct LatentWindowBuffers {
         pub pool: value,
@@ -470,6 +472,10 @@ crate::scratch_record! {
     /// `cos_sin` is F32 `[rows, tail_rope_dims/2, 2]`, for the normalized
     /// output's inverse rotation; partials leave it to their final merge.
     /// `compressed` is present exactly when `second_fp4_keys` is set.
+    /// Role bases have their scalar element alignment. The normalized
+    /// BF16 output base is four-byte aligned for paired stores. Window
+    /// pool alignment is stated on [`LatentWindowBuffers`]; compressed
+    /// codes and scales need only byte alignment.
     /// The original paged attention buffer record and ABI stay unchanged.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct LatentSourcesBuffers {

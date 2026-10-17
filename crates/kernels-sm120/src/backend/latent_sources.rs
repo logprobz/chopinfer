@@ -124,6 +124,15 @@ impl PreparedOp<LatentSourcesBuffers<View>> for Sources {
         {
             return Err(Refusal("native latent window geometry or budget mismatch"));
         }
+        // The FP8 pair load needs two-byte alignment. Pool bases have the
+        // role's alignment, and slot * latent and the pair's channel offset
+        // are even. FP4 codes and both scale planes use byte loads; I32 key
+        // strides count elements and preserve their own alignment.
+        if !b.window.sequence_stride.is_multiple_of(2) {
+            return Err(Refusal(
+                "native latent window sequence stride must preserve 2-byte alignment",
+            ));
+        }
         let last = bytes(&[u64::from(b.window.sequences - 1), b.window.sequence_stride])?;
         b.window.pool.covers(
             last.checked_add(window_bytes)
@@ -371,6 +380,46 @@ mod tests {
             assert!(launches[1].arguments.0.contains(&Argument::DeviceBuffer(8)));
             assert!(launches[1].arguments.0.contains(&Argument::DeviceBuffer(9)));
         }
+    }
+
+    #[test]
+    fn native_sources_refuse_misaligned_window_sequence_strides() {
+        let mut e = entry();
+        if let LatentAttentionQuery::Attention { latent, .. } = &mut e.query {
+            *latent = 512;
+        }
+        let op = Sm120::new()
+            .with_latent_sources(e.clone())
+            .latent_attention_sources(&e.query, Need::rows(1))
+            .unwrap();
+        let mut b = buffers();
+        let window = LatentKvFormat::Fp8E4M3Ue8M0Block32.page_bytes(512, 128);
+        assert_eq!(window, 67584);
+        b.q.bytes = 4 * 512 * 2;
+        b.output.as_mut().unwrap().bytes = 4 * 512 * 2;
+        b.workspace.bytes = e.workspace_bytes(1);
+        let c = b.compressed.as_mut().unwrap();
+        c.cache.page_stride = LatentKvFormat::Fp4E2M1E4M3Block16.page_bytes(512, 16) + 1;
+        c.cache.pool.bytes = c.cache.page_stride * u64::from(c.cache.pages);
+        // FP4 codes and both formats' scales use byte loads. Odd compressed
+        // page strides and odd I32 list element strides remain valid.
+        b.window.budget = 127;
+        b.window.key_stride = 127;
+        c.budget = 31;
+        c.key_stride = 31;
+        b.window.sequence_stride = window + 1;
+        b.window.pool.bytes = 2 * window + 1;
+        assert_eq!(b.window.pool.bytes, 135169);
+        let error = op
+            .launches(&b, View::default(), Counts::rows(1))
+            .unwrap_err();
+        assert_eq!(
+            error.0,
+            "native latent window sequence stride must preserve 2-byte alignment"
+        );
+        b.window.sequence_stride += 1;
+        b.window.pool.bytes += 1;
+        assert!(op.launches(&b, View::default(), Counts::rows(1)).is_ok());
     }
 
     #[test]

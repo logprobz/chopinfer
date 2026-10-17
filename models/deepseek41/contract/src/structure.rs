@@ -156,11 +156,12 @@ pub fn check(config: &Value) -> Result<(), String> {
         }
     }
 
-    // The projection declaration names the CSA2 roles by position: three
-    // pooling (ratio 2) KV sources, then the ratio-1 candidate source, then
-    // four reindexing index sources reading its candidates.
-    let pooled = kv.iter().filter(|&&id| ratios[id as usize] == 2).count();
-    if kv.len() != 4 || pooled != 3 || kv[3] != candidate {
+    // The projection declaration names the CSA2 roles by position: the
+    // first three KV sources pool (ratio 2, so they own `wgate`), the fourth
+    // is the ratio-1 candidate source, then four reindexing index sources
+    // read its candidates.
+    let source_ratios = kv.iter().map(|&id| ratios[id as usize]).collect::<Vec<_>>();
+    if source_ratios != [2, 2, 2, 1] || kv[3] != candidate {
         return Err(refuse(
             &kv_path,
             "three ratio-2 sources, then the ratio-1 candidate source",
@@ -255,4 +256,30 @@ pub fn check(config: &Value) -> Result<(), String> {
         return Err(refuse(&t("dspark_block_size"), "a positive block", 0));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    fn synthetic() -> Value {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../fixtures/deepseek41/geometries/synthetic-small/config.json");
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn the_pooling_sources_are_the_first_three_kv_sources() {
+        let mut config = synthetic();
+        super::check(&config).unwrap();
+        // Ratio 1 at layers 2-3 and 2 from layer 4 keeps every source
+        // relation and three ratio-2 sources, but the first source (layer 2)
+        // would own no `wgate` and the candidate (layer 6) one.
+        config["text_config"]["compress_ratios"] = json!([0, 0, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 0]);
+        assert_eq!(
+            super::check(&config).unwrap_err(),
+            "unsupported text_config.kv_source_layer_ids: expected three ratio-2 sources, \
+             then the ratio-1 candidate source, received [2, 4, 5, 6]"
+        );
+    }
 }

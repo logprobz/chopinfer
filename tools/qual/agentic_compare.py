@@ -4,10 +4,10 @@ and a candidate, replica by replica: replica R of one arm repeats replica R
 of the other. Each level reports every replica's pair and the spread of each
 figure across replicas, never tails pooled over them.
 
-An arm label is a prefill-budget mode, `fixed` or `tbt`, alone or with a
-`-` suffix naming the arm's other server settings (`fixed-mbt4096`); the mode
-is verified against each level's evidence. The first receipt is the
-baseline, except that of a `fixed` and `tbt` pair `fixed` always is."""
+An arm label is a prefill-budget mode (`fixed`, `tbt`, `decode-aware`),
+alone or with a `-` suffix naming the arm's other server settings
+(`fixed-mbt4096`); the mode is verified against each level's evidence. The first receipt is the
+baseline, except that of two arms of different modes the `fixed` one is."""
 import argparse
 import hashlib
 import json
@@ -87,9 +87,16 @@ def spread(replicas):
 
 
 
+def ordered(left, right):
+    """(baseline, candidate): the arm whose mode is fixed when the arms'
+    modes differ, else the first receipt."""
+    modes = arm_mode(left['arm']), arm_mode(right['arm'])
+    return (right, left) if modes[0] != modes[1] and modes[1] == 'fixed' else (left, right)
+
+
 def compare(left, right):
     validate_pair(left, right)
-    receipts = dict(zip(ARMS, (right, left) if (left['arm'], right['arm']) == ('tbt', 'fixed') else (left, right)))
+    receipts = dict(zip(ARMS, ordered(left, right)))
     pairs = []
     for baseline, candidate in zip(receipts['baseline']['levels'], receipts['candidate']['levels']):
         levels = dict(baseline=baseline, candidate=candidate)

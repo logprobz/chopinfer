@@ -448,6 +448,21 @@ class ReplicaTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'arm labels'):
             validate_pair(receipts['fixed'], unlabeled)
 
+    def test_a_fixed_arm_is_the_cross_mode_baseline_in_either_order(self):
+        """The baseline of a fixed and tbt pair follows the arms' modes, not
+        their exact labels, so suffixed labels never reverse the differences."""
+        from agentic_compare import compare
+        receipts = self.sweeps('--replicas', '1', arms=(('tbt-150ms', 'tbt'), ('fixed-mbt8192', 'fixed')))
+        forward = compare(receipts['tbt-150ms'], receipts['fixed-mbt8192'])
+        backward = compare(receipts['fixed-mbt8192'], receipts['tbt-150ms'])
+        for compared in (forward, backward):
+            self.assertEqual(compared['arms'], {'baseline': 'fixed-mbt8192', 'candidate': 'tbt-150ms'})
+        self.assertEqual(forward['levels'], backward['levels'])
+        figure = forward['levels'][0]['spread']['output_tokens_per_second']
+        self.assertEqual(figure['candidate_minus_baseline']['values'],
+                         [receipts['tbt-150ms']['levels'][0]['output_tokens_per_second']['value']
+                          - receipts['fixed-mbt8192']['levels'][0]['output_tokens_per_second']['value']])
+
     def test_comparison_refuses_a_missing_replica(self):
         from agentic_compare import validate_pair
         receipts = self.sweeps('--replicas', '2')

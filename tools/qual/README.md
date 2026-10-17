@@ -1313,7 +1313,8 @@ selected-budget histogram comes from both and establishes neither. Pass
 `--prefill-budget` to the server explicitly for a `fixed` arm, which renders
 no policy series.
 The output names the arms (`arms`) and reports `candidate_minus_baseline`.
-Of a `fixed` and `tbt` pair, `fixed` is the baseline in either order.
+Of two arms with different modes, the `fixed` one is the baseline in
+either order (`fixed-mbt8192` before `tbt-150ms`).
 
 The raw re-parse reads the served model's frontend declaration: `--frontend`,
 else the `frontend` input of `CHOPINFER_QUAL_CONFIG`, else the inventoried

@@ -656,11 +656,20 @@ class Reports(unittest.TestCase):
             self.assertTrue(any('duplicate lock family coverage' in gap for gap in report['gaps']))
             self.assertIn('duplicate lock family coverage', validation.render_text(report))
 
+    def runtime_host_compilers(self):
+        """The models whose compiler links runtime-host, and through it the
+        evaluation kinds every gate reader feeds."""
+        nodes = {node['id']: node for node in self.metadata['resolve']['nodes']}
+        return {model.name for model in inventory.load(ROOT)
+                if 'runtime-host' in nodes[model.packages['compiler'].name]['dependencies']}
+
     def test_tool_reader_and_cross_model_fixture_consumers(self):
         tool = self.report('tools/qual/qwen38_layers.py')
         # The executable reader keeps its gate scope, while the package fallback
-        # conservatively retains both compilers' CPU contracts.
-        self.assertEqual(self.models(tool), MODELS)
+        # conservatively retains the CPU contracts of every compiler that
+        # links its Cargo consumer.
+        self.assertLessEqual({'glm5next', 'mimo26', 'qwen38'}, self.runtime_host_compilers())
+        self.assertEqual(self.models(tool), self.runtime_host_compilers() | {'qwen38'})
         self.assertIn('mimo26:package', self.ids(tool))
         self.assertNotIn('mimo26:quality', self.ids(tool))
         self.assertIn('qwen38:gate:qwen38_layers', self.ids(tool))

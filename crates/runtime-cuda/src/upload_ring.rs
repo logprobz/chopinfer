@@ -100,18 +100,46 @@ impl PinnedUploadRing {
         source: &[u8],
         stream: &Stream,
     ) -> Result<(), CudaError> {
+        self.upload_with(
+            destination,
+            offset,
+            source.len(),
+            stream,
+            &mut |at, chunk| {
+                chunk.copy_from_slice(&source[at..at + chunk.len()]);
+            },
+        )
+    }
+
+    /// Copies `length` bytes that `fill` writes to `destination` at `offset`,
+    /// ordered on `stream` after its earlier work, as [`Self::upload`] does:
+    /// `fill(at, chunk)` writes bytes `at..at + chunk.len()` of the upload
+    /// straight into the ring, chunk by chunk in order, before this returns.
+    pub fn upload_with(
+        &mut self,
+        destination: &DeviceBuffer,
+        offset: usize,
+        length: usize,
+        stream: &Stream,
+        fill: &mut dyn FnMut(usize, &mut [u8]),
+    ) -> Result<(), CudaError> {
         require_same_context(&destination.stream.context, &self.staging.context)?;
         require_same_context(&destination.stream.context, &stream.inner.context)?;
         stream.require_live()?;
-        destination.pointer_at(offset, source.len())?;
-        for (index, chunk) in source.chunks(self.regions.capacity).enumerate() {
-            let at = offset + index * self.regions.capacity;
-            let (start, waits) = self.regions.place(chunk.len());
+        destination.pointer_at(offset, length)?;
+        let capacity = self.regions.capacity;
+        for first in (0..length).step_by(capacity) {
+            let bytes = capacity.min(length - first);
+            let at = offset + first;
+            let (start, waits) = self.regions.place(bytes);
             for _ in 0..waits.max((self.in_flight.len() + 1).saturating_sub(MAX_IN_FLIGHT)) {
                 self.retire_oldest();
             }
-            self.staging.as_mut_slice()[start..start + chunk.len()].copy_from_slice(chunk);
-            let pointer = destination.pointer_at(at, chunk.len())?;
+            fill(
+                first,
+                &mut self.staging.as_mut_slice()[start..start + bytes],
+            );
+            let pointer = destination.pointer_at(at, bytes)?;
             set_current_inner(&stream.inner.context)?;
             checked(
                 "cuMemcpyHtoDAsync",
@@ -119,7 +147,7 @@ impl PinnedUploadRing {
                     pointer,
                     &self.staging.allocation,
                     start,
-                    chunk.len(),
+                    bytes,
                     stream.inner.handle,
                 ),
             )?;
@@ -136,7 +164,7 @@ impl PinnedUploadRing {
                 }
                 return recorded.map(|_| ());
             };
-            self.regions.occupy(start, chunk.len());
+            self.regions.occupy(start, bytes);
             self.in_flight.push_back(InFlight {
                 event,
                 _destination: destination.clone(),
@@ -144,6 +172,12 @@ impl PinnedUploadRing {
             });
         }
         Ok(())
+    }
+
+    /// The page-locked bytes the ring holds.
+    #[must_use]
+    pub fn capacity(&self) -> usize {
+        self.regions.capacity
     }
 
     /// Waits for every copy still in flight and lets go of what they held.

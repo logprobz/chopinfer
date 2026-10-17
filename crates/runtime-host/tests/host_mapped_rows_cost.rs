@@ -22,8 +22,10 @@
 //! - `CHOPINFER_KERNEL_GPUS`: the ranks' GPUs, comma-separated ordinals;
 //!   without it the test plans and maps the tables for four ranks and stops.
 //!
-//! It needs the CUDA backend: `--release --features linux-cuda-host`.
-#![cfg(all(target_os = "linux", feature = "linux-cuda-host"))]
+//! The measurement needs the CUDA backend (`--release --features
+//! linux-cuda-host`). The same sequence runs on the host-memory device over a
+//! small synthetic checkpoint in every build.
+#![cfg(target_os = "linux")]
 #![allow(clippy::single_range_in_vec_init)]
 
 use std::path::{Path, PathBuf};
@@ -36,16 +38,19 @@ use runtime_bundle_abi::weight_plan::{
     PlannedViewV1, RecordSourceV1, ViewPlacementV1, WeightPlanV1, WeightRecordV1,
 };
 use runtime_bundle_abi::{DeviceBufferSpanV1, HostServicesTableV1, RankArenaUploadV1};
-use runtime_host::cuda::CudaHostDeviceV1;
 use runtime_host::direct::{
     DirectCheckpointV1, DirectLoadOptionsV1, PlannedImageV1, implementation_v1,
 };
+use runtime_host::fake::FakeHostDeviceV1;
 use runtime_host::page_cache::{CacheAdviceV1, advise_v1};
-use runtime_host::{HostInstanceConfigV1, HostServicesV1Backend, HostTopologyV1};
+use runtime_host::{
+    HostDeviceBackendV1, HostInstanceConfigV1, HostServicesV1Backend, HostTopologyV1,
+};
 use serde_json::{Value, json};
 
 const ROLE: &str = "host-rows-cost.v1";
 const ALIGNMENT: u64 = 4096;
+/// Tokens per measured step.
 const TOKENS: [u64; 4] = [32, 512, 4096, 16384];
 
 fn env(name: &str) -> Option<String> {
@@ -196,32 +201,35 @@ fn evict(root: &Path, planes: &[Plane]) {
     }
 }
 
-#[test]
-fn host_mapped_rows_cost() {
-    let (Some(out), Some(root), Some(tables)) = (
-        env("CHOPINFER_HOST_ROWS_COST"),
-        env("CHOPINFER_HOST_ROWS_CHECKPOINT"),
-        env("CHOPINFER_HOST_ROWS_TABLES"),
-    ) else {
-        eprintln!("skipped: CHOPINFER_HOST_ROWS_COST, _CHECKPOINT or _TABLES is not set");
-        return;
-    };
-    let (out, root) = (PathBuf::from(out), PathBuf::from(root));
-    assert!(!out.exists(), "{} exists", out.display());
-    let per_token: u64 = env("CHOPINFER_HOST_ROWS_PER_TOKEN").map_or(24, |v| v.parse().unwrap());
-    let threads: usize = env("CHOPINFER_HOST_ROWS_THREADS").map_or(8, |v| v.parse().unwrap());
-    let ordinals: Option<Vec<i32>> = env("CHOPINFER_KERNEL_GPUS").map(|ordinals| {
-        ordinals
-            .split(',')
-            .map(|ordinal| ordinal.trim().parse().expect("GPU ordinal"))
-            .collect()
-    });
+/// What one measurement reads: the checkpoint, its tables and the gather.
+struct Run<'a> {
+    root: &'a Path,
+    tables: &'a str,
+    per_token: u64,
+    threads: usize,
+    tokens: &'a [u64],
+}
+
+/// Plans and maps the tables for `ordinals.len()` ranks (four without
+/// GPUs), then, with ranks, measures every step on `device` and answers the
+/// result.
+fn measure<D: HostDeviceBackendV1 + 'static>(
+    run: &Run,
+    ordinals: Option<Vec<i32>>,
+    device: impl FnOnce() -> D,
+) -> Option<Value> {
+    let Run {
+        root,
+        tables,
+        per_token,
+        threads,
+        tokens,
+    } = *run;
     let ranks = ordinals
         .as_ref()
         .map_or(4, |ordinals| ordinals.len() as u32);
-
     let started = Instant::now();
-    let checkpoint = Arc::new(DirectCheckpointV1::open(&root).unwrap());
+    let checkpoint = Arc::new(DirectCheckpointV1::open(root).unwrap());
     let pairs: Vec<(Plane, Plane)> = tables
         .split(',')
         .map(|pair| {
@@ -281,15 +289,12 @@ fn host_mapped_rows_cost() {
              plane: {shared}; skipped the rest: CHOPINFER_KERNEL_GPUS is not set"
         );
         assert!(shared, "ranks did not share one mapping per plane");
-        return;
+        return None;
     };
     let config = HostInstanceConfigV1::new(HostTopologyV1::new(ordinals.clone()).unwrap())
         .with_planned_compiled_image(Arc::new(image))
         .unwrap();
-    let backend = Rc::new(HostServicesV1Backend::new(
-        CudaHostDeviceV1::new().unwrap(),
-        config,
-    ));
+    let backend = Rc::new(HostServicesV1Backend::new(device(), config));
     let table = HostServicesTableV1::new(Rc::clone(&backend));
     let host = table.caller();
     let handles: Vec<_> = ordinals
@@ -320,7 +325,7 @@ fn host_mapped_rows_cost() {
     let memory = backend.host_memory_v1();
 
     let mut steps = Vec::new();
-    for (step, tokens) in TOKENS.into_iter().enumerate() {
+    for (step, &tokens) in tokens.iter().enumerate() {
         let count = tokens * per_token;
         let ids: Vec<Vec<u64>> = pairs
             .iter()
@@ -356,7 +361,7 @@ fn host_mapped_rows_cost() {
                     .unwrap()
             })
             .collect();
-        evict(&root, &planes);
+        evict(root, &planes);
         let evicted = resident(&mappings);
         let mut passes = Vec::new();
         for pass in ["cold", "warm"] {
@@ -450,7 +455,9 @@ fn host_mapped_rows_cost() {
                 "rank {rank} device rows differ at {tokens} tokens"
             );
         }
-        for buffer in device.into_iter().chain(staging) {
+        // The host releases in reverse acquisition order: the device
+        // buffers, newest first, then the staging buffers.
+        for buffer in staging.into_iter().chain(device).rev() {
             host.release_device_buffer(buffer).unwrap();
         }
         let summary = json!({
@@ -483,11 +490,99 @@ fn host_mapped_rows_cost() {
         "mapped_view_bytes_after_setup": memory.mapped_view_bytes,
         "steps": steps,
     });
+    assert!(shared, "ranks did not share one mapping per plane");
+    Some(result)
+}
+
+#[test]
+fn host_mapped_rows_cost() {
+    let (Some(out), Some(root), Some(tables)) = (
+        env("CHOPINFER_HOST_ROWS_COST"),
+        env("CHOPINFER_HOST_ROWS_CHECKPOINT"),
+        env("CHOPINFER_HOST_ROWS_TABLES"),
+    ) else {
+        eprintln!("skipped: CHOPINFER_HOST_ROWS_COST, _CHECKPOINT or _TABLES is not set");
+        return;
+    };
+    let (out, root) = (PathBuf::from(out), PathBuf::from(root));
+    assert!(!out.exists(), "{} exists", out.display());
+    let run = Run {
+        root: &root,
+        tables: &tables,
+        per_token: env("CHOPINFER_HOST_ROWS_PER_TOKEN").map_or(24, |v| v.parse().unwrap()),
+        threads: env("CHOPINFER_HOST_ROWS_THREADS").map_or(8, |v| v.parse().unwrap()),
+        tokens: &TOKENS,
+    };
+    let ordinals: Option<Vec<i32>> = env("CHOPINFER_KERNEL_GPUS").map(|ordinals| {
+        ordinals
+            .split(',')
+            .map(|ordinal| ordinal.trim().parse().expect("GPU ordinal"))
+            .collect()
+    });
+    #[cfg(feature = "linux-cuda-host")]
+    let result = measure(&run, ordinals, || {
+        runtime_host::cuda::CudaHostDeviceV1::new().unwrap()
+    });
+    #[cfg(not(feature = "linux-cuda-host"))]
+    let result = {
+        assert!(
+            ordinals.is_none(),
+            "measuring on GPUs needs --features linux-cuda-host"
+        );
+        measure(&run, None, FakeHostDeviceV1::new)
+    };
+    let Some(result) = result else {
+        return;
+    };
     std::fs::create_dir_all(&out).unwrap();
     std::fs::write(
         out.join("result.json"),
         serde_json::to_vec_pretty(&result).unwrap(),
     )
     .unwrap();
-    assert!(shared, "ranks did not share one mapping per plane");
+}
+
+/// The measurement's whole sequence, releases included, on the host-memory
+/// device over two small tables: every rank's device bytes are the gathered
+/// rows at each step.
+#[test]
+fn the_measurement_runs_on_the_host_memory_device() {
+    let root = std::env::temp_dir().join(format!("host-rows-cost-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let rows = 3000_u64;
+    let mut header = serde_json::Map::new();
+    let mut payload = Vec::new();
+    for (name, row_bytes) in [
+        ("a.codes", 64),
+        ("a.scales", 2),
+        ("b.codes", 64),
+        ("b.scales", 2),
+    ] {
+        let start = payload.len() as u64;
+        payload.extend((0..rows * row_bytes).map(|i| (i * 7 + start + 1) as u8));
+        header.insert(
+            name.into(),
+            json!({"dtype": "U8", "shape": [rows, row_bytes],
+                   "data_offsets": [start, payload.len() as u64]}),
+        );
+    }
+    let header = serde_json::to_vec(&Value::Object(header)).unwrap();
+    let mut file = (header.len() as u64).to_le_bytes().to_vec();
+    file.extend(header);
+    file.extend(payload);
+    std::fs::write(root.join("model.safetensors"), file).unwrap();
+    let run = Run {
+        root: &root,
+        tables: "a.codes:a.scales,b.codes:b.scales",
+        per_token: 3,
+        threads: 3,
+        tokens: &[1, 5, 40],
+    };
+    let result = measure(&run, Some(vec![0, 1, 2, 3]), FakeHostDeviceV1::new).unwrap();
+    assert_eq!(result["one_mapping_per_plane"], true);
+    assert_eq!(result["steps"].as_array().unwrap().len(), 3);
+    assert_eq!(result["steps"][2]["verified_ranks"], 4);
+    assert_eq!(result["pinned_bytes_after_setup"], 0);
+    let _ = std::fs::remove_dir_all(&root);
 }

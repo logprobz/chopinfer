@@ -91,6 +91,8 @@ pub struct CudaHostDeviceV1 {
     /// Per stream, staging for ordered uploads still in flight. A ring holds
     /// its streams and destinations until drained, so releases drain first.
     upload_rings: BTreeMap<u64, PinnedUploadRing>,
+    /// The rings filled uploads (gathered rows) stage through, by stream.
+    fill_rings: BTreeMap<u64, PinnedUploadRing>,
 }
 
 const TENSOR_MAP_CACHE_CAPACITY: usize = 64;
@@ -102,6 +104,11 @@ const DIAGNOSTIC_ENTRY_BYTES: usize = 4096;
 const PINNED_RANK_UPLOAD_CHUNK_BYTES: usize = 64 * 1024 * 1024;
 const PINNED_SERVICE_TRANSFER_CHUNK_BYTES: usize = 1024 * 1024;
 const PINNED_UPLOAD_RING_BYTES: usize = 4 * 1024 * 1024;
+
+/// Page-locked bytes of each stream's ring for filled uploads. A gather the
+/// ring cannot hold waits for its oldest copies on the stream, so the ring
+/// holds a decode step's rows of every table without waiting.
+const FILL_RING_BYTES: usize = 64 * 1024 * 1024;
 
 fn record_diagnostic_v1(entries: &mut Vec<Vec<u8>>, value: &[u8]) {
     if entries.len() == DIAGNOSTIC_ENTRY_CAPACITY {
@@ -127,6 +134,7 @@ impl CudaHostDeviceV1 {
             samplers: BTreeMap::new(),
             pinned_transfers: BTreeMap::new(),
             upload_rings: BTreeMap::new(),
+            fill_rings: BTreeMap::new(),
         })
     }
 
@@ -1093,6 +1101,7 @@ impl HostDeviceBackendV1 for CudaHostDeviceV1 {
         // An ordered upload into this buffer may still hold it.
         self.upload_rings
             .values_mut()
+            .chain(self.fill_rings.values_mut())
             .for_each(PinnedUploadRing::synchronize);
         if self.buffer(buffer)?.is_mapped_host() {
             return self.release(buffer, |object| match object {
@@ -1178,8 +1187,9 @@ impl HostDeviceBackendV1 for CudaHostDeviceV1 {
     }
 
     fn release_stream(&mut self, stream: DeviceObjectV1) -> HostDeviceResultV1<()> {
-        // Dropping the ring waits for its copies and lets go of the stream.
+        // Dropping a ring waits for its copies and lets go of the stream.
         self.upload_rings.remove(&stream.get());
+        self.fill_rings.remove(&stream.get());
         self.release(stream, |object| match object {
             CudaObjectV1::Stream(stream) => stream.release().map_err(driver_status),
             _ => Err(BundleStatusV1::InvalidArgument),
@@ -1338,6 +1348,38 @@ impl HostDeviceBackendV1 for CudaHostDeviceV1 {
         };
         ring.upload(&buffer, offset, source, &stream_handle)
             .map_err(driver_status)
+    }
+
+    fn fill_host_to_device_ordered(
+        &mut self,
+        stream: DeviceObjectV1,
+        destination: DeviceRangeV1,
+        fill: &mut dyn FnMut(usize, &mut [u8]),
+    ) -> HostDeviceResultV1<()> {
+        let (buffer, offset, length) = self.range(destination)?;
+        if length == 0 {
+            return Ok(());
+        }
+        let buffer = buffer.clone();
+        let stream_handle = self.stream(stream)?.clone();
+        let ring = match self.fill_rings.entry(stream.get()) {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(PinnedUploadRing::new(
+                    PinnedHostBuffer::new(&stream_handle.context(), FILL_RING_BYTES)
+                        .map_err(driver_status)?,
+                ))
+            }
+        };
+        ring.upload_with(&buffer, offset, length, &stream_handle, fill)
+            .map_err(driver_status)
+    }
+
+    fn fill_staging_bytes(&self) -> u64 {
+        self.fill_rings
+            .values()
+            .map(|ring| ring.capacity() as u64)
+            .sum()
     }
 
     fn copy_device_to_host(

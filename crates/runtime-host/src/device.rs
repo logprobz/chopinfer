@@ -433,6 +433,31 @@ pub trait HostDeviceBackendV1 {
         self.copy_host_to_device(stream, destination, source)
     }
 
+    /// Copies bytes that `fill` writes into one device range, ordered on
+    /// `stream` as [`Self::copy_host_to_device_ordered`] is: `fill(at, chunk)`
+    /// writes bytes `at..at + chunk.len()` of the range, chunk by chunk in
+    /// order, before this returns. A backend with its own page-locked staging
+    /// hands `fill` that memory, so the bytes are written once; the default
+    /// fills host memory and copies it.
+    fn fill_host_to_device_ordered(
+        &mut self,
+        stream: DeviceObjectV1,
+        destination: DeviceRangeV1,
+        fill: &mut dyn FnMut(usize, &mut [u8]),
+    ) -> HostDeviceResultV1<()> {
+        let length =
+            usize::try_from(destination.length).map_err(|_| BundleStatusV1::ResourceExhausted)?;
+        let mut bytes = vec![0; length];
+        fill(0, &mut bytes);
+        self.copy_host_to_device_ordered(stream, destination, &bytes)
+    }
+
+    /// Page-locked bytes this backend holds of its own to stage
+    /// [`Self::fill_host_to_device_ordered`].
+    fn fill_staging_bytes(&self) -> u64 {
+        0
+    }
+
     /// A backend may stage a file-backed rank range with its own pinned copy
     /// pipeline. Returning `None` uses the ordinary bounded host-copy path.
     fn upload_pinned_file_range(

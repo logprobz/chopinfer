@@ -1,5 +1,5 @@
-//! Host-mapped rows: read-only mappings of checkpoint bytes the CPU reads in
-//! place (`chop.host-mapped-rows.v1`).
+//! Host-mapped rows: read-only mappings of checkpoint bytes whose rows the
+//! host gathers on the CPU (`chop.host-mapped-gather.v1`).
 //!
 //! A planned view placed `ViewPlacementV1::Mapped` is one tensor, or one run
 //! of its leading-axis rows, stored unchanged. The direct load checks the

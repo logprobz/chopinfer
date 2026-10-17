@@ -156,6 +156,10 @@ pub struct FakeHostDeviceV1 {
     /// and nothing else about this backend would reveal it.
     deferred: Vec<(u64, DeferredTransferV1)>,
     defer_transfers: bool,
+    /// The chunk each filled upload is staged in, and the streams that
+    /// staged one, each holding one chunk.
+    fill_chunk_bytes: usize,
+    fill_streams: BTreeSet<u64>,
     skip_collective_ordering: bool,
     /// Whether a launch this backend checked is reported as accepted.
     accept_launches: bool,
@@ -236,6 +240,8 @@ impl FakeHostDeviceV1 {
             device_memory_bytes: DEFAULT_FAKE_DEVICE_MEMORY_BYTES_V1,
             deferred: Vec::new(),
             defer_transfers: false,
+            fill_chunk_bytes: 4096,
+            fill_streams: BTreeSet::new(),
             skip_collective_ordering: false,
             accept_launches: false,
             cluster_residency: None,
@@ -365,6 +371,13 @@ impl FakeHostDeviceV1 {
     /// it cannot use.
     pub fn set_allocation_alignment(&mut self, alignment: u64) {
         self.allocation_alignment = alignment;
+    }
+
+    /// Sets the chunk a filled upload is staged in, so a test can split one
+    /// across chunks.
+    pub fn set_fill_chunk_bytes(&mut self, bytes: usize) {
+        assert!(bytes > 0, "a fill chunk holds a byte");
+        self.fill_chunk_bytes = bytes;
     }
 
     /// Sets the memory each device reports before its allocations, so a
@@ -1165,7 +1178,10 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
 
     fn release_stream(&mut self, stream: DeviceObjectV1) -> HostDeviceResultV1<()> {
         self.check(FakeRefusalV1::ReleaseStream)?;
-        self.destroy(stream, FakeObjectKindV1::Stream)
+        self.destroy(stream, FakeObjectKindV1::Stream)?;
+        // A released stream's staging chunk goes with it.
+        self.fill_streams.remove(&stream.get());
+        Ok(())
     }
 
     fn begin_graph_capture(&mut self, stream: DeviceObjectV1) -> HostDeviceResultV1<()> {
@@ -1232,6 +1248,36 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
     fn release_event(&mut self, event: DeviceObjectV1) -> HostDeviceResultV1<()> {
         self.check(FakeRefusalV1::ReleaseEvent)?;
         self.destroy(event, FakeObjectKindV1::Event)
+    }
+
+    /// Stages each chunk as a real ring would: filled in place, then copied.
+    fn fill_host_to_device_ordered(
+        &mut self,
+        stream: DeviceObjectV1,
+        destination: DeviceRangeV1,
+        fill: &mut dyn FnMut(usize, &mut [u8]),
+    ) -> HostDeviceResultV1<()> {
+        self.require(stream, FakeObjectKindV1::Stream)?;
+        self.range(destination)?;
+        self.fill_streams.insert(stream.get());
+        let length =
+            usize::try_from(destination.length).map_err(|_| BundleStatusV1::ResourceExhausted)?;
+        let mut chunk = vec![0; self.fill_chunk_bytes];
+        for at in (0..length).step_by(self.fill_chunk_bytes) {
+            let bytes = self.fill_chunk_bytes.min(length - at);
+            fill(at, &mut chunk[..bytes]);
+            let range = DeviceRangeV1 {
+                offset: destination.offset + at as u64,
+                length: bytes as u64,
+                ..destination
+            };
+            self.copy_host_to_device_ordered(stream, range, &chunk[..bytes])?;
+        }
+        Ok(())
+    }
+
+    fn fill_staging_bytes(&self) -> u64 {
+        (self.fill_streams.len() * self.fill_chunk_bytes) as u64
     }
 
     fn copy_host_to_device(

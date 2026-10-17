@@ -20,7 +20,8 @@ use runtime_bundle_abi::{
     BundleRankArenaHandleV1, BundleStateHandleV1, BundleStatusV1, BundleStreamHandleV1,
     CollectiveRequestV1, CompiledImageSpanV1, CustomCompletionV1, CustomOperandV1,
     CustomOperationV1, DeviceBufferSpanV1, HostServiceResultV1, HostServicesBackendV1,
-    KernelArgumentV1, LaunchConfigV1, PhysicalKvRequestV1, RankArenaUploadV1, StateRequestV1,
+    KernelArgumentV1, LaunchConfigV1, MappedRowGatherV1, PhysicalKvRequestV1, RankArenaUploadV1,
+    StateRequestV1,
 };
 use runtime_weights::sha256_bytes;
 
@@ -159,7 +160,7 @@ pub struct CompiledImageViewV1 {
     /// Kept in mapped host memory rather than the rank arena.
     host: bool,
     /// Mapped read-only from the checkpoint rather than held anywhere
-    /// (`chop.host-mapped-rows.v1`).
+    /// (`chop.host-mapped-gather.v1`).
     mapped: bool,
 }
 
@@ -182,9 +183,9 @@ impl CompiledImageViewV1 {
         self
     }
 
-    /// Places this view in a read-only mapping of the checkpoint the CPU
-    /// reads (`HOST_MAPPED_ROWS_CAPABILITY_V1`): the upload cuts it out of
-    /// the rank arena like a host view and copies no byte of it.
+    /// Places this view in a read-only mapping of the checkpoint whose rows
+    /// the host gathers (`HOST_MAPPED_GATHER_CAPABILITY_V1`): the upload cuts
+    /// it out of the rank arena like a host view and copies no byte of it.
     #[must_use]
     pub const fn mapped(mut self) -> Self {
         self.mapped = true;
@@ -391,6 +392,54 @@ impl CompiledImageDescriptionV1 {
             return Err(BundleStatusV1::InvalidArgument);
         }
         Ok(layout)
+    }
+}
+
+/// Chunks at least this long are gathered on several threads: page faults
+/// on a cold mapping then overlap.
+const PARALLEL_GATHER_BYTES: usize = 1 << 20;
+
+/// Most threads one chunk's gather uses.
+const GATHER_THREADS: usize = 8;
+
+/// Writes bytes `at..at + chunk.len()` of the rows `rows` of `table`, each
+/// `row_bytes` long, laid end to end, into `chunk`. The caller has checked
+/// every row against the table.
+fn gather_rows_v1(table: &[u8], row_bytes: usize, rows: &[u32], at: usize, chunk: &mut [u8]) {
+    let threads = if chunk.len() < PARALLEL_GATHER_BYTES {
+        1
+    } else {
+        std::thread::available_parallelism().map_or(1, |n| n.get().min(GATHER_THREADS))
+    };
+    if threads == 1 {
+        return gather_span_v1(table, row_bytes, rows, at, chunk);
+    }
+    // Whole rows per thread, so no two threads share a row.
+    let share = chunk.len().div_ceil(threads).div_ceil(row_bytes) * row_bytes;
+    let first = row_bytes - at % row_bytes;
+    std::thread::scope(|scope| {
+        let (head, mut rest) = chunk.split_at_mut(first.min(chunk.len()));
+        gather_span_v1(table, row_bytes, rows, at, head);
+        let mut start = at + head.len();
+        while !rest.is_empty() {
+            let (part, tail) = rest.split_at_mut(share.min(rest.len()));
+            let part_start = start;
+            start += part.len();
+            scope.spawn(move || gather_span_v1(table, row_bytes, rows, part_start, part));
+            rest = tail;
+        }
+    });
+}
+
+fn gather_span_v1(table: &[u8], row_bytes: usize, rows: &[u32], at: usize, out: &mut [u8]) {
+    let mut written = 0;
+    while written < out.len() {
+        let position = at + written;
+        let (index, within) = (position / row_bytes, position % row_bytes);
+        let take = (row_bytes - within).min(out.len() - written);
+        let source = rows[index] as usize * row_bytes + within;
+        out[written..written + take].copy_from_slice(&table[source..source + take]);
+        written += take;
     }
 }
 
@@ -1459,8 +1508,11 @@ struct HostStateV1<D> {
 /// The host memory one instance holds ([`HostServicesV1Backend::host_memory_v1`]).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct HostMemoryV1 {
-    /// Page-locked bytes: the host-resident views.
+    /// Page-locked bytes: the host-resident views and the staging the
+    /// device backend holds for gathers.
     pub pinned_bytes: u64,
+    /// The gather staging's part of `pinned_bytes`.
+    pub gather_staging_bytes: u64,
     /// The bytes the rank arenas leave to mapped views, each view rounded
     /// to its image alignment and summed over ranks; not page-locked.
     pub mapped_view_bytes: u64,
@@ -1655,13 +1707,14 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
     }
 
     /// The host memory this instance holds now: page-locked bytes (host
-    /// views), and the bytes its rank arenas leave to
+    /// views and gather staging), and the bytes its rank arenas leave to
     /// checkpoint mappings, which no page-locked or device budget holds
     /// (summed over ranks, though ranks naming the same bytes share one
     /// mapping).
     #[must_use]
     pub fn host_memory_v1(&self) -> HostMemoryV1 {
         let state = self.state.borrow();
+        let gather_staging_bytes = state.device.fill_staging_bytes();
         let arenas = state.arenas.values();
         let (host_view_bytes, mapped_view_bytes) = arenas.fold((0, 0), |(host, mapped), arena| {
             (
@@ -1670,7 +1723,8 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
             )
         });
         HostMemoryV1 {
-            pinned_bytes: host_view_bytes,
+            pinned_bytes: host_view_bytes + gather_staging_bytes,
+            gather_staging_bytes,
             mapped_view_bytes,
         }
     }
@@ -3375,6 +3429,60 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
     ) -> HostServiceResultV1<()> {
         let mut state = self.state.borrow_mut();
         release_tracked_resource_v1!(state, images, key_of_v1!(image))
+    }
+
+    fn gather_mapped_rows(
+        &self,
+        stream: BundleStreamHandleV1,
+        destination: DeviceBufferSpanV1,
+        gather: MappedRowGatherV1<'_>,
+    ) -> HostServiceResultV1<()> {
+        let _profile =
+            runtime_engine::profile::PhaseTimer::new(runtime_engine::profile::StepPhase::Upload);
+        let mut state = self.state.borrow_mut();
+        state.refuse_during_capture(state.streams.get(key_of_v1!(stream))?.context)?;
+        if gather.rank >= state.config.topology.rank_count() {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let ComponentStorageV1::Planned(planned) =
+            &state.images.get(key_of_v1!(gather.image))?.storage
+        else {
+            return Err(BundleStatusV1::NotFound);
+        };
+        // The instance's configuration holds the planned image, and with it
+        // the mapping, for the instance's whole life.
+        let mapping = Arc::clone(
+            planned
+                .mapped_view(gather.rank, gather.view_id)
+                .ok_or(BundleStatusV1::NotFound)?,
+        );
+        let table = mapping.bytes();
+        let row_bytes =
+            usize::try_from(gather.row_bytes).map_err(|_| BundleStatusV1::InvalidArgument)?;
+        if gather.rows.is_empty() || row_bytes == 0 || !table.len().is_multiple_of(row_bytes) {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let table_rows = table.len() / row_bytes;
+        if gather.rows.iter().any(|&row| row as usize >= table_rows) {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let stream_object = state.stream_object(stream)?;
+        let range = state.resolve_range(destination)?;
+        if (gather.rows.len() as u64).checked_mul(gather.row_bytes) != Some(range.length) {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        state
+            .device
+            .fill_host_to_device_ordered(stream_object, range, &mut |at, chunk| {
+                gather_rows_v1(table, row_bytes, gather.rows, at, chunk);
+            })
+            .inspect_err(|status| {
+                eprintln!(
+                    "host gather_mapped_rows: {} rows of {row_bytes} bytes, stream {}: {status:?}",
+                    gather.rows.len(),
+                    stream.slot()
+                );
+            })
     }
 
     fn open_authenticated_component(

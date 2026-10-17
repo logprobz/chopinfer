@@ -1,6 +1,8 @@
-//! Host-mapped views: a planned view placed `Mapped` is the checkpoint's own
-//! bytes, mapped read-only once per process. Its bytes reach neither the
-//! device arena nor any page-locked budget.
+//! Host-mapped views (`chop.host-mapped-gather.v1`): a planned view placed
+//! `Mapped` is the checkpoint's own bytes, mapped read-only once per
+//! process, whose rows the host gathers into a device buffer through
+//! page-locked staging of its own. The mapped bytes reach neither the device
+//! arena nor any page-locked budget.
 #![allow(clippy::single_range_in_vec_init)]
 
 use std::path::{Path, PathBuf};
@@ -12,7 +14,8 @@ use runtime_bundle_abi::weight_plan::{
     PlannedViewV1, RecordSourceV1, ViewPlacementV1, WeightPlanV1, WeightRecordV1,
 };
 use runtime_bundle_abi::{
-    BundleAbiError, BundleStatusV1, DeviceBufferSpanV1, HostServicesTableV1, RankArenaUploadV1,
+    BundleAbiError, BundleStatusV1, DeviceBufferSpanV1, HostServicesTableV1, MappedRowGatherV1,
+    RankArenaUploadV1,
 };
 use runtime_host::direct::{
     DirectCheckpointV1, DirectLoadOptionsV1, PlannedImageV1, implementation_v1,
@@ -233,13 +236,124 @@ fn mapped_views_map_the_checkpoint_bytes_and_leave_the_arena() {
     }
     // Page-locked memory holds the host views only; the mapped views' bytes
     // are the page cache's.
+    let held = |gather_staging_bytes| HostMemoryV1 {
+        pinned_bytes: u64::from(RANKS) * 128 + gather_staging_bytes,
+        gather_staging_bytes,
+        mapped_view_bytes: u64::from(RANKS) * (ROWS * 8 + share),
+    };
+    assert_eq!(backend.host_memory_v1(), held(0));
+
+    // Gather rows of rank 1's views into a device buffer: the host reads them
+    // in 12-byte staging chunks, which split rows, and copies each chunk on
+    // the rank's stream.
+    backend.with_device_mut(|device| device.set_fill_chunk_bytes(12));
+    let (_, pool, stream) = ranks[1];
+    let device = host.allocate_device_buffer(pool, stream, 64, 64).unwrap();
+    let read = |span: DeviceBufferSpanV1| {
+        let mut bytes = vec![0_u8; span.length as usize];
+        host.copy_device_to_host(stream, &mut bytes, span).unwrap();
+        bytes
+    };
+    let gather = |view_id: &'static [u8], row_bytes: u64, rows: &'static [u32]| MappedRowGatherV1 {
+        image: compiled,
+        rank: 1,
+        view_id,
+        row_bytes,
+        rows,
+    };
+    let picked: &[u32] = &[3, 900, 3, 17, 1023];
+    let codes_span = DeviceBufferSpanV1::new(device, 8, 40);
+    host.gather_mapped_rows(stream, codes_span, gather(b"codes", 8, picked))
+        .unwrap();
+    let expected: Vec<u8> = picked
+        .iter()
+        .flat_map(|&row| codes()[row as usize * 8..row as usize * 8 + 8].to_vec())
+        .collect();
+    assert_eq!(read(codes_span), expected);
+    // Row indices count from the start of the view: rank 1's scale rows.
+    let scales_span = DeviceBufferSpanV1::new(device, 48, 3);
+    host.gather_mapped_rows(stream, scales_span, gather(b"scales", 1, &[0, 255, 7]))
+        .unwrap();
+    let first = share as usize;
     assert_eq!(
-        backend.host_memory_v1(),
-        HostMemoryV1 {
-            pinned_bytes: u64::from(RANKS) * 128,
-            mapped_view_bytes: u64::from(RANKS) * (ROWS * 8 + share),
-        }
+        read(scales_span),
+        [scales()[first], scales()[first + 255], scales()[first + 7]]
     );
+    // The stream's staging chunk is page-locked memory the host owns.
+    assert_eq!(backend.host_memory_v1(), held(12));
+    let refused = |status| Err(BundleAbiError::Status(status));
+    let invalid = refused(BundleStatusV1::InvalidArgument);
+    // Only a view the image maps for that rank is gathered from.
+    for id in [&b"half"[..], b"dense", b"absent"] {
+        let request = MappedRowGatherV1 {
+            view_id: id,
+            ..gather(b"codes", 8, &[0])
+        };
+        assert_eq!(
+            host.gather_mapped_rows(stream, DeviceBufferSpanV1::new(device, 0, 8), request),
+            refused(BundleStatusV1::NotFound)
+        );
+    }
+    for (request, length) in [
+        // A row past the view's end.
+        (gather(b"codes", 8, &[1024]), 8),
+        (gather(b"scales", 1, &[256]), 1),
+        // No rows, a row length that does not divide the view, and a
+        // destination of another length.
+        (gather(b"codes", 8, &[]), 0),
+        (gather(b"codes", 0, &[1]), 0),
+        (gather(b"codes", 24, &[1]), 24),
+        (gather(b"codes", 8, &[1, 2]), 8),
+        (
+            MappedRowGatherV1 {
+                rank: RANKS,
+                ..gather(b"codes", 8, &[1])
+            },
+            8,
+        ),
+    ] {
+        assert_eq!(
+            host.gather_mapped_rows(stream, DeviceBufferSpanV1::new(device, 0, length), request),
+            invalid
+        );
+    }
+    // A graph would replay the copy of rows the host gathered once.
+    host.begin_graph_capture(stream).unwrap();
+    assert_eq!(
+        host.gather_mapped_rows(stream, codes_span, gather(b"codes", 8, picked)),
+        refused(BundleStatusV1::InvalidState)
+    );
+    let graph = host.end_graph_capture(stream).unwrap();
+    host.release_graph(graph).unwrap();
+    host.release_device_buffer(device).unwrap();
+
+    // A gather of megabytes is read on several threads, chunk by chunk.
+    let chunk = (1 << 20) + 4;
+    backend.with_device_mut(|device| device.set_fill_chunk_bytes(chunk));
+    let rows: Vec<u32> = (0..3 * chunk as u32 / 8)
+        .map(|i| (i * 7 + 1) % 1024)
+        .collect();
+    let bytes = rows.len() as u64 * 8;
+    let large = host
+        .allocate_device_buffer(pool, stream, bytes, 64)
+        .unwrap();
+    let span = DeviceBufferSpanV1::new(large, 0, bytes);
+    host.gather_mapped_rows(
+        stream,
+        span,
+        MappedRowGatherV1 {
+            rows: &rows,
+            ..gather(b"codes", 8, &[])
+        },
+    )
+    .unwrap();
+    let table = codes();
+    let expected: Vec<u8> = rows
+        .iter()
+        .flat_map(|&row| table[row as usize * 8..row as usize * 8 + 8].to_vec())
+        .collect();
+    assert!(read(span) == expected);
+    host.release_device_buffer(large).unwrap();
     for arena in arenas.into_iter().rev() {
         host.release_rank_arena(arena).unwrap();
     }
@@ -250,6 +364,7 @@ fn mapped_views_map_the_checkpoint_bytes_and_leave_the_arena() {
         host.release_context(context).unwrap();
     }
     assert_eq!(backend.live_resource_count(), 0);
+    // A released stream's staging goes with it.
     assert_eq!(backend.host_memory_v1(), HostMemoryV1::default());
 }
 

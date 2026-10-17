@@ -337,7 +337,8 @@ where every query fails changes nothing. A poll whose process lists fail keeps
 the list from before, for up to the five minutes of history, and the
 Processes panel gives its age; no process is reported again or forgotten. A
 GPU that NVML lists but will not open for this user shows why (such as no
-permission) and is not lost.
+permission) and is not lost. It is looked up again every 5 polls, and once it
+opens it is described again and read like the others.
 
 GPM counters (Hopper and newer) are sampled only while the GPU view is open;
 `--no-gpu-counters` stops them, and `--no-gpus` stops GPU reading. Their

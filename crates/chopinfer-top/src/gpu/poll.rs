@@ -31,6 +31,9 @@ pub enum Report {
     },
     /// NVML could not be opened, and why. Nothing more follows.
     Unavailable(String),
+    /// GPU `index`, whose handle did not open, described again: it opens
+    /// now, or fails another way.
+    Reopened { index: usize, device: Device },
     /// One reading of every GPU, in device order.
     Polled(Vec<Reading>),
 }
@@ -60,6 +63,22 @@ impl<'a> Sampler<'a> {
             gpm: (0..count).map(|_| None).collect(),
             owners: Owners::new(proc_root),
         }
+    }
+
+    /// Every [`SLOW_POLLS`] polls, looks up again each GPU whose handle did
+    /// not open, and describes again those that changed.
+    pub fn reopen(&mut self) -> Vec<(usize, Device)> {
+        if self.polls == 0 || self.polls % SLOW_POLLS != 0 {
+            return Vec::new();
+        }
+        let mut reopened = Vec::new();
+        for index in 0..self.devices.len() {
+            if self.devices[index].unreadable.is_some() && self.nvml.reopen(index) {
+                self.devices[index] = self.nvml.device(index);
+                reopened.push((index, self.devices[index].clone()));
+            }
+        }
+        reopened
     }
 
     /// One reading of every GPU at `at` seconds, with GPM figures when
@@ -165,6 +184,11 @@ impl GpuPoller {
             }
             let mut sampler = Sampler::new(&nvml, devices, "/proc");
             loop {
+                for (index, device) in sampler.reopen() {
+                    if results.send(Report::Reopened { index, device }).is_err() {
+                        return;
+                    }
+                }
                 let at = origin.elapsed().as_secs_f64();
                 let readings = sampler.poll(at, counters.load(Ordering::Relaxed));
                 if results.send(Report::Polled(readings)).is_err() {

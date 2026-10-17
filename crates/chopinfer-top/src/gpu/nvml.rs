@@ -4,6 +4,7 @@
 // SAFETY-REVIEWED: All native calls use checked symbols and the vendor ABI types of nvml.h.
 #![allow(unsafe_code)]
 
+use std::cell::Cell;
 use std::ffi::{CStr, c_char, c_int, c_uint, c_ulonglong, c_void};
 
 use super::{Activity, Device, Process, Reading, Reasons};
@@ -370,6 +371,16 @@ fn listed(compute: Option<Option<List>>, graphics: Option<Option<List>>) -> Opti
     }
 }
 
+fn lookup(api: &Api, index: c_uint) -> Lookup {
+    let mut handle = std::ptr::null_mut();
+    let code = (api.by_index)(index, &mut handle);
+    if code == SUCCESS && !handle.is_null() {
+        Ok(handle)
+    } else {
+        Err(code)
+    }
+}
+
 /// The reading of a GPU whose handle did not open with status `code`: lost
 /// only when NVML says so, and otherwise unread, which changes nothing.
 fn unopened(at: f64, code: c_int) -> Reading {
@@ -380,11 +391,27 @@ fn unopened(at: f64, code: c_int) -> Reading {
     }
 }
 
+/// A GPU's handle, or the status its lookup failed with.
+type Lookup = Result<Handle, c_int>;
+
+/// `handle`, else the result of looking it up again, and whether that
+/// differs: a GPU that opens now, or fails another way.
+fn retry(handle: Lookup, lookup: impl FnOnce() -> Lookup) -> (Lookup, bool) {
+    match handle {
+        Ok(_) => (handle, false),
+        Err(code) => {
+            let again = lookup();
+            (again, again != Err(code))
+        }
+    }
+}
+
 /// NVML, initialized, with a handle for each GPU, or the status its lookup
-/// failed with: a GPU this user may not open is counted all the same.
+/// failed with: a GPU this user may not open is counted all the same, and
+/// looked up again by [`Nvml::reopen`].
 pub struct Nvml {
     api: Api,
-    handles: Vec<Result<Handle, c_int>>,
+    handles: Vec<Cell<Lookup>>,
     // Dropped after `Drop::drop` shuts NVML down.
     _library: Library,
 }
@@ -404,21 +431,23 @@ impl Nvml {
             (api.shutdown)();
             return Err(format!("NVML did not count the GPUs (status {code})"));
         }
-        let mut handles = Vec::new();
-        for index in 0..count {
-            let mut handle = std::ptr::null_mut();
-            let code = (api.by_index)(index, &mut handle);
-            handles.push(if code == SUCCESS && !handle.is_null() {
-                Ok(handle)
-            } else {
-                Err(code)
-            });
-        }
+        let handles = (0..count)
+            .map(|index| Cell::new(lookup(&api, index)))
+            .collect();
         Ok(Self {
             api,
             handles,
             _library: library,
         })
+    }
+
+    /// Looks up the handle of GPU `index` again if it did not open; whether
+    /// that changed it, so that [`Nvml::device`] says something new.
+    pub fn reopen(&self, index: usize) -> bool {
+        let slot = &self.handles[index];
+        let (handle, changed) = retry(slot.get(), || lookup(&self.api, index as c_uint));
+        slot.set(handle);
+        changed
     }
 
     pub fn driver(&self) -> Option<String> {
@@ -459,7 +488,7 @@ impl Nvml {
 
     /// What does not change about GPU `index`.
     pub fn device(&self, index: usize) -> Device {
-        let handle = match self.handles[index] {
+        let handle = match self.handles[index].get() {
             Ok(handle) => handle,
             Err(code) => {
                 return Device {
@@ -606,7 +635,7 @@ impl Nvml {
     /// errors (and the thermal margin of a GPU without a threshold), are
     /// made only when `slow`; the poller does so every few polls.
     pub fn read(&self, index: usize, device: &Device, at: f64, slow: bool) -> Reading {
-        let handle = match self.handles[index] {
+        let handle = match self.handles[index].get() {
             Ok(handle) => handle,
             Err(code) => return unopened(at, code),
         };
@@ -690,7 +719,7 @@ impl Nvml {
 
     /// Takes GPM sample `sample` of GPU `index`.
     pub fn take(&self, index: usize, sample: &mut Sample<'_>) -> bool {
-        let Ok(handle) = self.handles[index] else {
+        let Ok(handle) = self.handles[index].get() else {
             return false;
         };
         self.api
@@ -812,6 +841,22 @@ mod tests {
         assert_eq!(pids(listed(list(7), Some(None))), None);
         assert_eq!(pids(listed(Some(None), list(9))), None);
         assert_eq!(pids(listed(None, None)), None);
+    }
+
+    #[test]
+    fn a_handle_that_did_not_open_is_looked_up_again() {
+        let handle = std::ptr::NonNull::<c_void>::dangling().as_ptr();
+        let unexpected = || -> Lookup { panic!("an open handle is not looked up") };
+        assert_eq!(retry(Ok(handle), unexpected), (Ok(handle), false));
+        let mut slot = Err(ERROR_NO_PERMISSION);
+        let mut changes = Vec::new();
+        for answer in [Err(ERROR_NO_PERMISSION), Err(ERROR_GPU_IS_LOST), Ok(handle)] {
+            let changed;
+            (slot, changed) = retry(slot, || answer);
+            changes.push(changed);
+        }
+        assert_eq!(slot, Ok(handle));
+        assert_eq!(changes, [false, true, true]);
     }
 
     #[test]

@@ -370,9 +370,10 @@ impl Gpus {
     }
 
     /// Takes a report at `now`, noting in `registry` what changed: GPUs
-    /// found, a slowdown starting or ending, a GPU near its temperature
-    /// limit, uncorrected ECC errors, a GPU lost, and a process that is no
-    /// instance holding memory beside one.
+    /// found, a GPU that opens after failing to, a slowdown starting or
+    /// ending, a GPU near its temperature limit, uncorrected ECC errors, a
+    /// GPU lost, and a process that is no instance holding memory beside
+    /// one.
     pub fn apply(&mut self, report: Report, registry: &mut Registry, now: f64) {
         match report {
             Report::Opened { driver, devices } => {
@@ -398,6 +399,21 @@ impl Gpus {
             Report::Unavailable(reason) => {
                 registry.note(now, "GPUs", format!("not read: {reason}"), Tone::Normal);
                 self.status = Status::Unavailable(reason);
+            }
+            Report::Reopened { index, device } => {
+                let Some(slot) = self.devices.get_mut(index) else {
+                    return;
+                };
+                // A lost GPU that opens says so when it answers.
+                if device.unreadable.is_none() && !self.watches[index].lost {
+                    registry.note(
+                        now,
+                        format!("GPU {}", device.index),
+                        format!("opened: {}", device.name),
+                        Tone::Good,
+                    );
+                }
+                *slot = device;
             }
             Report::Polled(readings) => {
                 for (index, reading) in readings.into_iter().enumerate().take(self.devices.len()) {
@@ -1025,6 +1041,97 @@ mod tests {
         assert!(!gpus.lost(0));
         assert_eq!(gpus.processes_read(0), None);
         assert_eq!(registry.events.len(), 1, "{:?}", registry.events);
+    }
+
+    #[test]
+    fn a_gpu_that_opens_later_is_described_again() {
+        let mut registry = Registry::new(1.0);
+        let mut gpus = Gpus::new(Status::Opening, true, 1.0);
+        let unopened = |index, reason: &str| Device {
+            index,
+            name: "GPU".into(),
+            unreadable: Some(reason.into()),
+            ..Device::default()
+        };
+        let opened = |index| Device {
+            index,
+            name: "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition".into(),
+            memory_total: Some(96 << 30),
+            ..Device::default()
+        };
+        gpus.apply(
+            Report::Opened {
+                driver: None,
+                devices: vec![
+                    unopened(0, "no permission"),
+                    unopened(1, "lost or off the bus"),
+                ],
+            },
+            &mut registry,
+            0.0,
+        );
+        let unread = |lost| Reading {
+            lost,
+            ..Reading::default()
+        };
+        let answered = |at| Reading {
+            at,
+            answered: true,
+            ..Reading::default()
+        };
+        for (at, report) in [
+            (1.0, Report::Polled(vec![unread(false), unread(true)])),
+            // Another failure is told, but is no event.
+            (
+                5.0,
+                Report::Reopened {
+                    index: 0,
+                    device: unopened(0, "not found"),
+                },
+            ),
+            (5.0, Report::Polled(vec![unread(false), unread(true)])),
+            (
+                10.0,
+                Report::Reopened {
+                    index: 0,
+                    device: opened(0),
+                },
+            ),
+            (
+                10.0,
+                Report::Reopened {
+                    index: 1,
+                    device: opened(1),
+                },
+            ),
+            (10.0, Report::Polled(vec![answered(10.0), answered(10.0)])),
+        ] {
+            gpus.apply(report, &mut registry, at);
+            if at == 5.0 {
+                assert_eq!(gpus.devices[0].unreadable.as_deref(), Some("not found"));
+            }
+        }
+        assert_eq!(gpus.devices, [opened(0), opened(1)]);
+        assert_eq!(gpus.histories[0].latest(), Some(&answered(10.0)));
+        assert!(!gpus.lost(1));
+        let events = registry
+            .events
+            .iter()
+            .skip(1)
+            .map(|event| (event.at, event.who.as_str(), event.what.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            events,
+            [
+                (1.0, "GPU 1", "stopped answering NVML: lost or off the bus"),
+                (
+                    10.0,
+                    "GPU 0",
+                    "opened: NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition"
+                ),
+                (10.0, "GPU 1", "answering NVML again"),
+            ]
+        );
     }
 
     #[test]

@@ -3,6 +3,74 @@ use kernel_core::precision::execution::ImplementationProvider;
 use kernel_core::precision::*;
 use kernels_sm120::{gemm, moe, precision::*, row::precision as row};
 
+#[test]
+fn mx_offers_bind_scale_rules_and_refuse_false_execution_claims() {
+    use kernel_core::precision::capability::ActivationCapability;
+    use kernel_core::precision::execution::BlockScaledExecution as Execution;
+    let offer = |activation| {
+        KernelOffer::dense(
+            gemm::DenseRequest {
+                query: GemmQuery {
+                    m_capacity: 1,
+                    n: 256,
+                    k: 256,
+                    weight: WeightFormat::Mxfp8,
+                    activation,
+                    output: DType::Bf16,
+                    epilogues: Epilogues::default(),
+                    grouped: None,
+                },
+                kernel: DenseKernel::Tiled { splits: 1 },
+                target: Target::Sm120f,
+                symbol: "mx_compute_v1".into(),
+                knobs: None,
+            },
+            usage(),
+            row::Nvfp4Global::Absent,
+            "mx_quantize_v1",
+        )
+        .unwrap()
+    };
+    let legacy = offer(ActivationFormat::Mxfp8);
+    let old = legacy.capability().unwrap();
+    assert_eq!(old.activation, Some(ActivationCapability::Mxfp8));
+    legacy
+        .require_execution(Execution::NativeBlockScaledMma)
+        .unwrap();
+    assert!(
+        legacy
+            .require_execution(Execution::ExactDecodedBf16Mma)
+            .is_err()
+    );
+    let ceil = legacy
+        .with_dynamic_scale(DynamicScale::MXFP8_CEIL, "mx_ceil_v1")
+        .unwrap();
+    let selected = ceil.capability().unwrap();
+    assert_eq!(
+        selected.activation,
+        Some(ActivationCapability::Mxfp8Ceil {
+            amax_floor_bits: 1e-4_f32.to_bits()
+        })
+    );
+    assert_eq!(selected.arithmetic, old.arithmetic);
+    ceil.require_execution(Execution::NativeBlockScaledMma)
+        .unwrap();
+    let decoded = offer(ActivationFormat::Bf16);
+    decoded
+        .require_execution(Execution::ExactDecodedBf16Mma)
+        .unwrap();
+    assert!(
+        decoded
+            .require_execution(Execution::NativeBlockScaledMma)
+            .is_err()
+    );
+    assert!(
+        decoded
+            .with_dynamic_scale(DynamicScale::MXFP8_CEIL, "invalid_v1")
+            .is_err()
+    );
+}
+
 fn tensor(name: &str, dtype: DType, shape: Vec<u64>) -> TensorSpan {
     let byte_length = shape.iter().product::<u64>() * dtype_bits(dtype) / 8;
     TensorSpan {

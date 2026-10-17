@@ -80,6 +80,7 @@ use crate::linear::{self, channel_decay};
 mod all_reduce;
 mod attention;
 mod bf16_all_reduce;
+mod block_quantize;
 mod context_parallel;
 mod fused_all_reduce;
 mod gated_sparse;
@@ -165,9 +166,17 @@ pub struct Sm120 {
     context_parallel: context_parallel::Selection,
     row_copies: Vec<crate::row::copy::Entry>,
     row_rmsnorms: Vec<crate::row::RowInstantiation>,
+    block_quantizers: Vec<crate::row::block_quantize::Entry>,
 }
 
 impl Sm120 {
+    /// Register a compiled block quantizer. The backend matches its complete
+    /// input rounding, scale rule, output form and width at preparation.
+    pub fn with_block_quantize(mut self, entry: crate::row::block_quantize::Entry) -> Self {
+        self.block_quantizers.push(entry);
+        self
+    }
+
     pub fn new() -> Sm120 {
         Sm120::default()
     }
@@ -787,6 +796,15 @@ impl Sm120 {
 impl Backend for Sm120 {
     fn name(&self) -> &str {
         "sm120"
+    }
+
+    fn block_quantize(
+        &self,
+        op: &kernel_core::precision::quantizer::BlockQuantizeQuery,
+        need: Need,
+    ) -> Result<Prepared<kernel_core::precision::quantizer::BlockQuantizeBuffers<View>>, Refused>
+    {
+        block_quantize::prepare(&self.block_quantizers, op, need)
     }
 
     // Rows.

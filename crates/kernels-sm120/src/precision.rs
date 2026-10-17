@@ -13,8 +13,8 @@ use kernel_core::precision::capability::{
 };
 use kernel_core::precision::execution::{Binding, ImplementationProvider};
 use kernel_core::precision::{
-    ArithmeticSpec, DecodeOrder, MatrixGeometry, OperationKind, OperationSpec, OperationUse,
-    Rounding, WeightLayout,
+    ArithmeticSpec, DecodeOrder, DynamicScale, MatrixGeometry, OperationKind, OperationSpec,
+    OperationUse, Rounding, WeightLayout,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -373,10 +373,11 @@ fn quantizer(
     capacity: u32,
     global: row::Nvfp4Global,
     symbol: &str,
+    scale_rule: Option<DynamicScale>,
 ) -> Result<Option<row::Quantizer>, Refusal> {
     let output = match format {
         ActivationFormat::Bf16 => {
-            if global != row::Nvfp4Global::Absent {
+            if global != row::Nvfp4Global::Absent || scale_rule.is_some() {
                 return Err(Refusal("BF16 operands cannot bind an activation global"));
             }
             return Ok(None);
@@ -385,7 +386,7 @@ fn quantizer(
         ActivationFormat::Mxfp8 => OutputQuantization::Mxfp8,
         ActivationFormat::Nvfp4 => OutputQuantization::Nvfp4,
     };
-    Ok(Some(row::Quantizer::new(
+    let quantizer = row::Quantizer::new(
         width,
         capacity,
         output,
@@ -393,7 +394,11 @@ fn quantizer(
         symbol,
         ROW_SHAPES,
         row::RowResources::SM120F,
-    )?))
+    )?;
+    Ok(Some(match scale_rule {
+        Some(rule) => quantizer.with_dynamic_scale(rule, symbol)?,
+        None => quantizer,
+    }))
 }
 
 /// What a generated dense offer keeps of its rows' bits, from the kernel
@@ -504,6 +509,7 @@ impl KernelOffer {
             query.m_capacity,
             global,
             quantizer_symbol,
+            None,
         )?;
         Ok(Self {
             usage,
@@ -591,6 +597,7 @@ impl KernelOffer {
             capacity,
             global,
             quantizer_symbol,
+            None,
         )?;
         Ok(Self {
             usage,
@@ -632,6 +639,42 @@ impl KernelOffer {
     }
     pub fn usage(&self) -> OperationUse {
         self.usage
+    }
+    /// Bind the declared input scale rule to this offer's quantizer. The
+    /// compute instruction path remains the one the builder actually emits.
+    pub fn with_dynamic_scale(mut self, rule: DynamicScale, symbol: &str) -> Result<Self, Refusal> {
+        let (format, width, capacity) = match &self.handle.compute {
+            Compute::Dense(spec) => {
+                let StaticQuery::Gemm(q) = spec.key.query else {
+                    unreachable!()
+                };
+                (q.activation, q.k, q.m_capacity)
+            }
+            Compute::Grouped(g) => (
+                g.query.activation,
+                g.query.k,
+                self.handle
+                    .gather
+                    .as_ref()
+                    .map_or(g.tokens_capacity, |g| g.stage().capacity()),
+            ),
+            Compute::Lookup(_) => return Err(Refusal("lookup has no activation quantizer")),
+        };
+        self.handle.quantizer =
+            quantizer(format, width, capacity, self.nv_global, symbol, Some(rule))?;
+        Ok(self)
+    }
+
+    /// Check a requested MX instruction claim against this supplied entry.
+    /// A claim cannot change a decoded-BF16 entry into a native MMA entry.
+    pub fn require_execution(
+        &self,
+        execution: kernel_core::precision::execution::BlockScaledExecution,
+    ) -> Result<(), Refusal> {
+        let capability = self.capability()?;
+        execution
+            .require(capability.weight, &capability.arithmetic)
+            .map_err(|_| Refusal("MX execution claim disagrees with the supplied instruction path"))
     }
     pub fn handle(&self) -> &OperationHandle {
         &self.handle
@@ -782,7 +825,22 @@ impl KernelOffer {
                     (ActivationFormat::Fp8Group128(mode), _) => {
                         ActivationCapability::Fp8Group128(mode)
                     }
-                    (ActivationFormat::Mxfp8, _) => ActivationCapability::Mxfp8,
+                    (ActivationFormat::Mxfp8, _) => match self
+                        .handle
+                        .quantizer
+                        .as_ref()
+                        .and_then(row::Quantizer::scale_rule)
+                    {
+                        Some(DynamicScale::CeilPowerOfTwo { amax_floor_bits }) => {
+                            ActivationCapability::Mxfp8Ceil { amax_floor_bits }
+                        }
+                        Some(DynamicScale::MxPowerOfTwo) => ActivationCapability::Mxfp8,
+                        _ => {
+                            return Err(Refusal(
+                                "MXFP8 capability requires its declared scale rule",
+                            ));
+                        }
+                    },
                     (ActivationFormat::Nvfp4, row::Nvfp4Global::Supplied) => {
                         ActivationCapability::Nvfp4StaticScalar
                     }

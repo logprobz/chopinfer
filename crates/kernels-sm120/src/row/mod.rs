@@ -2,6 +2,7 @@
 //! grids select prepared token capacity buckets without changing the cubin.
 
 pub mod argmax;
+pub mod block_quantize;
 pub mod builders;
 pub mod copy;
 pub mod hyper_connection;

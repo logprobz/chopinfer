@@ -6,6 +6,7 @@ use kernel_core::contract::{
     Argument, ArgumentList, CompileKey, CompileKnobs, DType, InstantiationSpec, LaunchPlan,
     OpFamily, OutputQuantization, Refusal, ScaleMode, StaticQuery, Target, Validate, WeightFormat,
 };
+use kernel_core::precision::DynamicScale;
 
 #[derive(Clone, Copy, Debug)]
 pub struct RowResources {
@@ -276,6 +277,12 @@ pub fn cubin_spec(name: &str, stages: &[RowStage]) -> Result<CubinSpec, Refusal>
     if stages.iter().any(|s| s.shapes == ShapeBinding::Launch) {
         headers.push("#include \"row/precision_launch.cuh\"".into());
     }
+    if stages
+        .iter()
+        .any(|s| s.numerical_contract == "quantize.bf16-input.e4m3-ceil-ue8m0-32.codes.v1")
+    {
+        headers.push(format!("#include \"{}\"", super::block_quantize::HEADER));
+    }
     Ok(CubinSpec {
         name: name.into(),
         sources_root: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("cuda"),
@@ -314,6 +321,7 @@ pub struct Quantizer {
     width: u32,
     format: OutputQuantization,
     resources: RowResources,
+    scale_rule: Option<DynamicScale>,
 }
 
 impl Quantizer {
@@ -460,12 +468,74 @@ impl Quantizer {
             width,
             format,
             resources,
+            scale_rule: match format {
+                OutputQuantization::Fp8Group128(mode) => Some(DynamicScale::GroupAmax(mode)),
+                OutputQuantization::Mxfp8 => Some(DynamicScale::MxPowerOfTwo),
+                OutputQuantization::Nvfp4 if global == Nvfp4Global::TensorAmax => {
+                    Some(DynamicScale::Nvfp4TensorAmax)
+                }
+                _ => None,
+            },
         })
     }
+
+    /// Choose the declared dynamic scale rule, never infer a ceiling rule
+    /// from the MXFP8 storage format. Existing rules retain their entries.
+    pub fn with_dynamic_scale(&self, rule: DynamicScale, symbol: &str) -> Result<Self, Refusal> {
+        rule.validate()
+            .map_err(|_| Refusal("invalid dynamic quantizer scale rule"))?;
+        let stage = self.stages.last().expect("quantizer stage");
+        let mut selected = Self::new(
+            self.width,
+            stage.capacity,
+            self.format,
+            self.global,
+            symbol,
+            stage.shapes,
+            self.resources,
+        )?;
+        if let (OutputQuantization::Mxfp8, DynamicScale::CeilPowerOfTwo { amax_floor_bits }) =
+            (self.format, rule)
+        {
+            use kernel_core::precision::quantizer::{
+                BlockQuantization, BlockQuantizeQuery, QuantizeOutput,
+            };
+            let entry = super::block_quantize::Entry::new(
+                BlockQuantizeQuery {
+                    width: self.width,
+                    input: DType::Bf16,
+                    format: BlockQuantization::E4M3Ceil32 { amax_floor_bits },
+                    output: QuantizeOutput::Codes,
+                },
+                stage.capacity,
+                symbol,
+            )?;
+            selected.stages = vec![RowStage::new(
+                entry.spec_with_shapes(stage.shapes),
+                stage.capacity,
+                Grid::rows_by(self.width / 32, "width / group"),
+                self.width,
+                "quantize.bf16-input.e4m3-ceil-ue8m0-32.codes.v1",
+                stage.shapes,
+                self.resources,
+            )?];
+            selected.scale_rule = Some(rule);
+        } else if selected.scale_rule != Some(rule) {
+            return Err(Refusal(
+                "dynamic scale rule does not match the quantizer format or global recipe",
+            ));
+        }
+        Ok(selected)
+    }
+
+    pub fn scale_rule(&self) -> Option<DynamicScale> {
+        self.scale_rule
+    }
+
     /// The same quantizer with its shapes bound the other way, under `symbol`.
     pub fn with_shapes(&self, shapes: ShapeBinding, symbol: &str) -> Result<Self, Refusal> {
         let main = self.stages.last().expect("quantizer stage");
-        Self::new(
+        let selected = Self::new(
             self.width,
             main.capacity,
             self.format,
@@ -473,7 +543,11 @@ impl Quantizer {
             symbol,
             shapes,
             self.resources,
-        )
+        )?;
+        match self.scale_rule {
+            Some(rule) => selected.with_dynamic_scale(rule, symbol),
+            None => Ok(selected),
+        }
     }
     pub fn stages(&self) -> &[RowStage] {
         &self.stages
@@ -505,6 +579,16 @@ impl Quantizer {
                     "quantizer buffers do not match its supplied or dynamic global recipe",
                 ));
             }
+        }
+        if matches!(self.scale_rule, Some(DynamicScale::CeilPowerOfTwo { .. })) {
+            let values = [ptr(b.input), ptr(b.codes), ptr(b.scales), ptr(b.live_rows)]
+                .into_iter()
+                .chain(
+                    (self.stages[0].shapes == ShapeBinding::Launch)
+                        .then_some(Argument::U32(self.width)),
+                )
+                .collect();
+            return Ok(vec![self.stages[0].arguments(values)?]);
         }
         let mut values = Vec::new();
         let width =

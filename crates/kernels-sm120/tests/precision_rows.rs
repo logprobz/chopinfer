@@ -2,6 +2,76 @@ use kernel_core::contract::{DType, OutputQuantization as Q, ScaleMode, WeightFor
 use kernels_sm120::row::{self, precision::*};
 
 #[test]
+fn ceil_quantizer_keeps_its_rule_when_shapes_are_rebound() {
+    use kernel_core::precision::DynamicScale;
+    let legacy = Quantizer::new(
+        576,
+        16,
+        Q::Mxfp8,
+        Nvfp4Global::Absent,
+        "legacy_mx_v1",
+        ShapeBinding::Compiled,
+        RowResources::SM120F,
+    )
+    .unwrap();
+    let legacy_spec = cubin_spec("legacy", legacy.stages()).unwrap();
+    assert!(
+        !legacy_spec
+            .headers
+            .iter()
+            .any(|h| h.contains("block_quantize"))
+    );
+    let ceil = legacy
+        .with_dynamic_scale(DynamicScale::MXFP8_CEIL, "ceil_mx_v1")
+        .unwrap();
+    assert_ne!(
+        ceil.stages()[0].numerical_contract(),
+        legacy.stages()[0].numerical_contract()
+    );
+    assert!(
+        cubin_spec("ceil", ceil.stages())
+            .unwrap()
+            .headers
+            .iter()
+            .any(|h| h.contains("block_quantize"))
+    );
+    assert_eq!(legacy.scale_rule(), Some(DynamicScale::MxPowerOfTwo));
+    for shapes in [ShapeBinding::Compiled, ShapeBinding::Launch] {
+        let selected = ceil.with_shapes(shapes, "rebound_v1").unwrap();
+        assert_eq!(selected.scale_rule(), Some(DynamicScale::MXFP8_CEIL));
+        let args = selected
+            .arguments(QuantizerBuffers {
+                input: 1,
+                codes: 2,
+                scales: 3,
+                live_rows: 4,
+                global_scale: None,
+                row_amax: None,
+            })
+            .unwrap();
+        assert_eq!(args.len(), 1);
+        assert_eq!(
+            args[0].0.len(),
+            if shapes == ShapeBinding::Launch { 5 } else { 4 }
+        );
+        assert_eq!(selected.stages()[0].plan(7).unwrap().grid, [16, 18, 1]);
+    }
+    assert!(
+        legacy
+            .with_dynamic_scale(DynamicScale::Nvfp4TensorAmax, "invalid_v1")
+            .is_err()
+    );
+    assert!(
+        legacy
+            .with_dynamic_scale(
+                DynamicScale::CeilPowerOfTwo { amax_floor_bits: 0 },
+                "invalid_v1"
+            )
+            .is_err()
+    );
+}
+
+#[test]
 fn quantizers_keep_supplied_and_dynamic_globals_separate() {
     let supplied = Quantizer::new(
         256,

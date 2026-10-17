@@ -601,7 +601,8 @@ impl<P: FakePackage> HostServicesBackendV1 for Backend<P> {
         self.0.on_upload(stream, destination, source)
     }
     /// Gathers the rows from the package's mapped view and uploads them,
-    /// checked as the host checks them and journalled as
+    /// checked as the host checks them (a capturing stream is refused, since
+    /// a graph would replay rows read once) and journalled as
     /// `gather <stream> <view> <rows> <destination> <digest>`.
     fn gather_mapped_rows(
         &self,
@@ -609,6 +610,9 @@ impl<P: FakePackage> HostServicesBackendV1 for Backend<P> {
         destination: DeviceBufferSpanV1,
         gather: MappedRowGatherV1<'_>,
     ) -> HostServiceResultV1<()> {
+        if self.0.device().capture_of(stream.slot()).is_some() {
+            return Err(BundleStatusV1::InvalidState);
+        }
         let table = self
             .0
             .mapped_view(gather.image, gather.rank, gather.view_id)?;
@@ -990,6 +994,12 @@ mod tests {
             host.gather_mapped_rows(stream, span, gather(0, b"rows", &[0, 1])),
             Err(BundleStatusV1::NotFound)
         );
+        host.begin_graph_capture(stream).unwrap();
+        assert_eq!(
+            host.gather_mapped_rows(stream, span, gather(1, b"rows", &[3, 0])),
+            Err(BundleStatusV1::InvalidState)
+        );
+        host.device().end_capture(stream, || 99).unwrap();
         for rows in [&[4_u32, 0][..], &[0], &[]] {
             let length = rows.len() as u64 * 8;
             assert_eq!(

@@ -19,6 +19,12 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
+/// The head's uniform bound times sqrt(hidden). Unit-RMS hidden rows give
+/// logits of standard deviation HEAD_SCALE / sqrt(3), about 4.6, so the
+/// next-token distribution is peaked (a mean entropy near 4 nats over the
+/// flash vocabulary) rather than near uniform.
+pub const HEAD_SCALE: f32 = 8.0;
+
 /// How a tensor's values are drawn.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Fill {
@@ -145,7 +151,13 @@ pub fn tensors(geometry: &Geometry) -> Result<Vec<Tensor>, String> {
                         dtype: "BF16",
                         shape: vec![rows, k],
                         fill: Fill::Uniform {
-                            scale: if lookup { 1.0 } else { 1.0 / (k as f32).sqrt() },
+                            scale: if lookup {
+                                1.0
+                            } else if projection.id == "head" {
+                                HEAD_SCALE / (k as f32).sqrt()
+                            } else {
+                                1.0 / (k as f32).sqrt()
+                            },
                         },
                     }),
                     Some(FormatId::Fp8Block32) => {
@@ -429,6 +441,19 @@ mod tests {
             .map(|t| (t.name, (t.dtype.to_owned(), t.shape)))
             .collect();
         assert_eq!(generated, official);
+    }
+
+    #[test]
+    fn the_head_is_scaled_for_peaked_logits() {
+        let tensors = tensors(&FLASH).unwrap();
+        let find = |name: &str| tensors.iter().find(|t| t.name == name).unwrap();
+        let k = FLASH.shape.hidden as f32;
+        assert_eq!(
+            find("head.weight").fill,
+            Fill::Uniform {
+                scale: HEAD_SCALE / k.sqrt()
+            }
+        );
     }
 
     #[test]

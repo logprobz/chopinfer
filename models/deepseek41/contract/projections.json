@@ -1171,7 +1171,8 @@
     "kind": "lookup_table"
    },
    "split": {
-    "class": "replicate"
+    "class": "vocab_sharded",
+    "tile": 1
    },
    "epilogues": {
     "residual_add": false,
@@ -1199,7 +1200,8 @@
     "kind": "dense"
    },
    "split": {
-    "class": "replicate"
+    "class": "column",
+    "tile": 1
    },
    "epilogues": {
     "residual_add": false,
@@ -1226,7 +1228,8 @@
     "kind": "lookup_table"
    },
    "split": {
-    "class": "replicate"
+    "class": "vocab_sharded",
+    "tile": 1
    },
    "epilogues": {
     "residual_add": false,
@@ -1254,7 +1257,7 @@
    },
    "split": {
     "class": "column",
-    "tile": 32
+    "tile": 1
    },
    "epilogues": {
     "residual_add": false,

@@ -163,7 +163,7 @@ mod tests {
         let declaration = declaration(&crate::geometry::FLASH).unwrap();
         assert_eq!(
             declaration.digest(),
-            "65df0a376d5c250dd7086add04796d4f10e0e09826ba323ad98cca4330600b01"
+            "93b04b3f9c6d0456f695636de99740737bc35f1a88e3c56b476a197a294ccf18"
         );
     }
 }

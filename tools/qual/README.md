@@ -1038,14 +1038,15 @@ window that is not idle makes the receipt's timing informational:
 `spec_bench.py` samples at the start and end of each cohort, and
 `agentic_mixed.py` of each level's measured window, leaving out its
 warm-up, drain and other levels; each level also records its own
-`host_load`. A receipt without them has
-`timing` `informational` ("no host load samples bound the timed work"),
-since a window from the check's start would average warm-up into the timed
-work. The other `common.receipt` writers take none: they time nothing, or
-their per-request seconds describe an accuracy check rather than measure
-performance (each says which where it writes its receipt). The host is
-idle when, over every interval between samples, the CPU idle fraction
-(idle plus iowait; niced work is busy) is at least 0.9 and the shares of elapsed time (uptime, not wall time) in which
+`host_load`, and its Markdown summary states both labels. A receipt without
+samples or windows has `timing` `informational` ("no host load samples
+bound the timed work"), since a window from the check's start would average
+warm-up into the timed work. Every `common.receipt` writer not named here
+passes neither: it times nothing, or its per-request seconds describe an
+accuracy check rather than measure performance (each says which where it
+writes its receipt). The host is idle when, over every interval between
+samples, the CPU idle fraction (idle plus iowait; niced work is busy) is at
+least 0.9 and the shares of elapsed time (uptime, not wall time) in which
 some task stalled waiting for a CPU and for I/O are each at most 0.1. The
 1-minute load average is recorded but not judged: it carries minutes of
 work from before the window, such as a server's startup reads. Otherwise,
@@ -1292,6 +1293,12 @@ never binds on its small files. A staged corpus sets 16 KiB, so its 4 and
 8 KiB tiers cut many 200-line reads. Each session records `tool_results`
 and `truncated_tool_results`, and each level totals them per limit
 (`tool_results`).
+
+The summary's `Timing` line is the receipt's `host_load` verdict over the
+levels' measured windows and its Timing column each level's own; its
+throughput, TTFT, step and burst figures are performance evidence only when
+the line reads `evidence`. The separate C1 decode probe runs outside those
+windows, so its tok/s is labelled informational.
 
 Every percentile comes with its sample count. The JSON distributions carry
 `samples`; the summary prints n beside each figure and stars a percentile

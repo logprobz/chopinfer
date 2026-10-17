@@ -362,6 +362,7 @@ class FakeIntegrationTests(unittest.TestCase):
                     fake_time(clock), redirect_stdout(io.StringIO()):
                 main(['--dry-run', '--levels', '1,2', '--seconds', '.05', '--warmup-waves', '3', '--replicas', '1',
                       '--min-samples', '1', '--no-decode'])
+            summary = (Path(name) / f'{len(results)}.md').read_text()
         result, load = results[-1]
         self.assertEqual(result['receipt_kind'], 'sweep')
         levels = result['levels']
@@ -378,6 +379,10 @@ class FakeIntegrationTests(unittest.TestCase):
         self.assertTrue(all(reason.startswith(('window 1: CPU idle fell to 0.8', 'window 2: CPU idle fell to 0.8'))
                             for reason in load['reasons']), load['reasons'])
         self.assertEqual([level['host_load']['timing'] for level in levels], ['informational'] * 2)
+        # The summary carries the receipt's label, overall and per level.
+        self.assertIn(f"Timing: informational ({'; '.join(load['reasons'])}).", summary)
+        rows = summary.split('| C | Replica |')[1].split('## Replica spread')[0].splitlines()[2:]
+        self.assertEqual([row.rsplit('|', 2)[1].strip() for row in rows if row.startswith('| ')], ['informational'] * 2)
         # Sampled from the start of the run, the quiet warm-up would hide it.
         diluted = common.host_load([counters_at(0, busy['since']), load['windows'][0]['samples'][-1]])
         self.assertTrue(diluted['idle'], diluted['reasons'])
@@ -465,6 +470,9 @@ class ReplicaTests(unittest.TestCase):
         summary = markdown(sweep)
         self.assertIn('Replica spread', summary)
         self.assertRegex(summary, r'\| 1 \| 1 \| ')
+        self.assertIn('Timing: informational (no host load recorded).', summary)
+        idle = common.host_load_windows([[counters_at(0, 10), counters_at(1, 10)]])
+        self.assertIn('Timing: evidence.', markdown(sweep, idle))
 
     def test_comparison_pairs_replicas_and_reports_their_spread(self):
         from agentic_compare import compare

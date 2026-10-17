@@ -1249,11 +1249,16 @@ def replica_lines(spreads, number):
     return lines
 
 
-def markdown(result):
+def markdown(result, host_load=None):
+    """The summary of `result`, labelled with `host_load`, the receipt's
+    verdict over the levels' measured windows (None: no host load)."""
+    timing = host_load['timing'] if host_load else 'informational'
+    reasons = host_load['reasons'] if host_load else ['no host load recorded']
     lines = ['# Agentic mixed workload', '', f"Revision: `{REVISION}`. Fake server: {result['dry_run']}.",
-             f"Receipt: {result['receipt_kind']}. Aborted: {result.get('aborted') or 'no'}.", '',
-             '| C | Replica | Mode | Valid/completed | Errors/timeouts | Output tok/s | Prefill tok/step | TTFT p50/p95 ms | Server step evidence | Client burst p50/p95/p99/max ms | Client stalls/1000 gaps |',
-             '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |']
+             f"Receipt: {result['receipt_kind']}. Aborted: {result.get('aborted') or 'no'}.",
+             f"Timing: {timing}" + (f" ({'; '.join(reasons)})" if reasons else '') + '.', '',
+             '| C | Replica | Mode | Valid/completed | Errors/timeouts | Output tok/s | Prefill tok/step | TTFT p50/p95 ms | Server step evidence | Client burst p50/p95/p99/max ms | Client stalls/1000 gaps | Timing |',
+             '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |']
     def number(value):
         return 'unavailable' if value is None else f'{value:.3f}'
     def quantiles(values, names, samples):
@@ -1276,7 +1281,8 @@ def markdown(result):
                      f"{number(level['output_tokens_per_second']['value'])} | {number(prefill['value'])} (n={prefill['samples']}) | "
                      f"{percentiles(level['ttft_ms'], ('p50', 'p95'), level['ttft_ms']['samples'])} | {evidence} | "
                      f"{percentiles(gaps, ('p50', 'p95', 'p99', 'max'), gaps['samples'])} | "
-                     f"{number(level['client_stalls']['per_1000_gaps'])} (n={level['client_stalls']['eligible_gaps']}) |")
+                     f"{number(level['client_stalls']['per_1000_gaps'])} (n={level['client_stalls']['eligible_gaps']}) | "
+                     f"{(level.get('host_load') or {}).get('timing', 'informational')} |")
         for warning in level['arm_verification'].get('warnings', []):
             lines.append('Arm activity: ' + warning)
         if not level['arm_verification']['passed']:
@@ -1289,10 +1295,13 @@ def markdown(result):
             lines.append(f"C{level['concurrency']} failed: " + '; '.join(verdict['problems']))
     lines += replica_lines(result.get('replica_spread') or [], number)
     if result.get('decode'):
-        lines += ['', f"Separate C1 decode tok/s: {number(result['decode'].get('decode_tokens_per_second'))}."]
+        lines += ['', f"Separate C1 decode tok/s (outside the judged windows, informational): "
+                      f"{number(result['decode'].get('decode_tokens_per_second'))}."]
     lines += ['', 'n is the sample count of each figure: prefill steps, turns, histogram observations or client gaps. '
               'A star marks a percentile with fewer samples than it needs (20 for p95, 100 for p99).',
-              'Server step histograms are primary stall evidence. Client bursts are a secondary proxy affected by transport and frontend holdback.',
+              'Throughput, TTFT, step and burst figures are performance evidence only when the timing above is evidence; '
+              'each level\'s Timing judges its own measured window.',
+              'Server step histograms are the primary stall measure. Client bursts are a secondary proxy affected by transport and frontend holdback.',
               'Kind/tool transitions are marked as possible holdback; within-run gaps can still contain undetectable holdback or client jitter.',
               'Measured and drain counters are separate. Validity checks tool flow, not semantic correctness.', '']
     return '\n'.join(lines)
@@ -1336,12 +1345,13 @@ def main(argv=None):
         snapshot['passed'] = (kind != 'partial' and not snapshot['aborted'] and bool(snapshot['levels'])
                               and all(level_passed(level) for level in snapshot['levels'])
                               and (not snapshot['decode'] or not snapshot['decode']['failure']))
-        # Each level's measured window is judged alone (common.host_load_windows).
-        path = common.receipt('agentic-mixed', identity, snapshot, args.dry_run,
-                              load_windows=[level['host_load']['samples'] for level in snapshot['levels']
-                                            if level.get('host_load', {}).get('samples')])
+        # Each level's measured window is judged alone (common.host_load_windows),
+        # and the summary carries the receipt's verdict.
+        windows = [level['host_load']['samples'] for level in snapshot['levels']
+                   if level.get('host_load', {}).get('samples')]
+        path = common.receipt('agentic-mixed', identity, snapshot, args.dry_run, load_windows=windows)
         with path.with_suffix('.md').open('x') as summary:
-            summary.write(markdown(snapshot))
+            summary.write(markdown(snapshot, common.host_load_windows(windows)))
         return path, snapshot['passed']
 
     if args.dry_run:

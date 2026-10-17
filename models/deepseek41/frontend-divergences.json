@@ -162,18 +162,24 @@
     {
       "id": "namespaces",
       "lines": [
-        90,
-        94,
-        95,
         105,
         106,
         108,
         111,
-        119,
         134
       ],
-      "blocked_by": "tool and call names admit no '::' and the transport carries no namespace",
+      "blocked_by": "tool and call names admit no '::', a tool namespace is refused (tool-namespaces) and calls carry no namespace",
       "reason": "a namespace on a tool or call, a qualified name and their conflicts need namespace transport, which this declaration does not serve yet"
+    },
+    {
+      "id": "effort-names",
+      "lines": [
+        464,
+        467,
+        468
+      ],
+      "blocked_by": "the format passes only an effort the encoder names",
+      "reason": "a request's effort is a declared one (low, high or max) or a protocol alias the format reads as one of them, and select_mode_v1 refuses any other, so the encoder's invalid-effort assertion never fails"
     },
     {
       "id": "images",
@@ -242,6 +248,18 @@
         "parameter": "messages"
       },
       "reason": "the encoder renders a message's tools only on a system message (lines 626-627); on another role it reads them only to keep earlier reasoning (line 787), so the format refuses them there"
+    },
+    {
+      "id": "tool-namespaces",
+      "kind": "refused",
+      "when": [
+        "tool-namespace:present"
+      ],
+      "outcome": {
+        "message": "invalid conversation field: tool namespaces are not served",
+        "parameter": "messages"
+      },
+      "reason": "the encoder writes a tool whose tool or function object names a namespace as namespace::name (lines 86-121), a name neither the offered tools nor the declared parser know; the format refuses the namespace key until namespaces are served"
     },
     {
       "id": "missing-call-id",

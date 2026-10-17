@@ -346,19 +346,31 @@ fn the_default_request_thinks_at_high_effort() {
         "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the \
          value, the more thorough the reasoning)\n\n<｜User｜>question<｜Assistant｜><think>"
     );
-    for (effort, budget) in [("low", 50), ("max", 100)] {
-        let rendered = frontend
-            .render_chat(FrontendChatRequestV1 {
-                reasoning_effort: Some(effort.into()),
-                ..request(vec![user("question")])
-            })
-            .unwrap();
-        assert!(
-            rendered
-                .prompt
-                .contains(&format!("Reasoning Effort: {budget} (range")),
-            "{effort}"
-        );
+    // The protocol aliases read as deepseek-recipe maps them, top-level
+    // and nested.
+    let efforts = [
+        ("low", 50),
+        ("max", 100),
+        ("minimal", 50),
+        ("medium", 75),
+        ("xhigh", 75),
+    ];
+    for (effort, budget) in efforts {
+        for nested in [false, true] {
+            let rendered = frontend
+                .render_chat(FrontendChatRequestV1 {
+                    reasoning_effort: (!nested).then(|| effort.into()),
+                    nested_reasoning_effort: nested.then(|| effort.into()),
+                    ..request(vec![user("question")])
+                })
+                .unwrap();
+            assert!(
+                rendered
+                    .prompt
+                    .contains(&format!("Reasoning Effort: {budget} (range")),
+                "{effort}"
+            );
+        }
     }
     let rendered = frontend
         .render_chat(FrontendChatRequestV1 {
@@ -369,5 +381,98 @@ fn the_default_request_thinks_at_high_effort() {
     assert_eq!(
         rendered.prompt,
         "<｜begin▁of▁sentence｜><｜User｜>question<｜Assistant｜></think>"
+    );
+}
+
+fn message(role: FrontendRoleV1, content: &str) -> FrontendMessageV1 {
+    FrontendMessageV1 {
+        role,
+        content: Some(content.into()),
+        parts: None,
+        reasoning_content: None,
+        tool_calls: Vec::new(),
+        tool_call_id: None,
+        tools: Vec::new(),
+    }
+}
+
+/// A request offering `function` (a function object as sent) after a user
+/// turn and one call of it with `arguments` as sent.
+fn called(function: Value, arguments: &str) -> FrontendChatRequestV1 {
+    let mut assistant = message(FrontendRoleV1::Assistant, "");
+    assistant.tool_calls.push(FrontendToolCallV1 {
+        id: "call_0".into(),
+        name: "f".into(),
+        arguments: arguments.into(),
+    });
+    let mut result = message(FrontendRoleV1::Tool, "ok");
+    result.tool_call_id = Some("call_0".into());
+    FrontendChatRequestV1 {
+        tools: vec![FrontendToolV1 {
+            name: "f".into(),
+            description: None,
+            parameters: FrontendJsonV1::Null,
+            parameters_present: false,
+            strict: None,
+        }],
+        tool_objects: vec![json(&function)],
+        ..request(vec![message(FrontendRoleV1::User, "go"), assistant, result])
+    }
+}
+
+#[test]
+fn the_served_format_reads_tool_objects_and_arguments_as_the_encoder_does() {
+    let frontend = PairedFrontendV1::chat_format::<DeepSeekV41Format>(descriptor()).unwrap();
+    let render = |function: Value, arguments: &str| {
+        frontend
+            .render_chat(called(function, arguments))
+            .map(|rendered| rendered.prompt)
+            .map_err(|error| error.message)
+    };
+    let plain = serde_json::json!({"name": "f"});
+    // A function object holding a `function` key is still wrapped.
+    let prompt = render(
+        serde_json::json!({"name": "f", "function": {"name": "g"}}),
+        "{}",
+    )
+    .unwrap();
+    assert!(
+        prompt.contains(r#"{"name": "f", "function": {"name": "g"}}"#),
+        "{prompt}"
+    );
+    // Argument text the encoder reads itself: spacing kept in a value it
+    // reads once, and a repeated key at its first place with its last value.
+    let prompt = render(plain.clone(), "[1,  2]").unwrap();
+    assert!(prompt.contains("string=\"true\">[1,  2]<"), "{prompt}");
+    let prompt = render(plain.clone(), r#"{"x":1,"y":3,"x":2}"#).unwrap();
+    assert!(
+        prompt.contains(
+            "name=\"x\" string=\"false\">2</｜DSML｜ parameter>\n\
+             <｜DSML｜ parameter name=\"y\" string=\"false\">3<"
+        ),
+        "{prompt}"
+    );
+    // A namespace on a function object or a system message's tool object
+    // is refused by name.
+    let refused = render(
+        serde_json::json!({"name": "f", "namespace": {"name": "ns", "description": "N"}}),
+        "{}",
+    )
+    .unwrap_err();
+    assert!(
+        refused.contains("tool namespaces are not served"),
+        "{refused}"
+    );
+    let mut system = message(FrontendRoleV1::System, "s");
+    system.tools = vec![json(
+        &serde_json::json!({"type": "function", "namespace": "ns", "function": plain}),
+    )];
+    let refused = frontend
+        .render_chat(request(vec![system, message(FrontendRoleV1::User, "q")]))
+        .unwrap_err();
+    assert!(
+        refused.message.contains("tool namespaces are not served"),
+        "{}",
+        refused.message
     );
 }

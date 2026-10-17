@@ -33,6 +33,15 @@ TRANSPORT = {
 # The request fields the encoder renders beyond the HF input.
 INPUT_FIELDS = ("response_format",)
 
+# Tool-call arguments reach the encoder as the text sent: it reads them
+# itself, up to twice (lines 533-544).
+RAW_TOOL_ARGUMENTS = True
+
+# The protocol efforts the encoder does not name, as deepseek-recipe maps
+# them and the served format reads them: minimal as low, medium and xhigh
+# as high.
+EFFORT_ALIASES = {"minimal": "low", "medium": "high", "xhigh": "high"}
+
 EOS = "<｜end▁of▁sentence｜>"
 
 # Every assistant turn ends with the end-of-sentence token (encoding.py
@@ -76,8 +85,8 @@ def encoder_render(namespace, messages, tools, add_generation_prompt, continue_f
     """The prompt `encode_messages` (lines 810-844) writes for one HF input,
     mapped as the served format maps a request:
     - the mode from the thinking keywords, and the effort (the keyword
-      `reasoning_effort`, which a top-level effort sets) in thinking mode
-      only;
+      `reasoning_effort`, which a top-level effort sets, with a protocol
+      alias read as the effort it names) in thinking mode only;
     - `preserve_thinking` turns off `drop_thinking`;
     - the offered tools and `response_format` go to the leading system
       message, an empty one when the request has none (README: tools are
@@ -87,6 +96,7 @@ def encoder_render(namespace, messages, tools, add_generation_prompt, continue_f
       `add_generation_prompt` changes nothing."""
     mode = "thinking" if thinking(keywords) else "chat"
     effort = keywords.get("reasoning_effort") if mode == "thinking" else None
+    effort = EFFORT_ALIASES.get(effort, effort) if isinstance(effort, str) else effort
     messages = [encoder_message(message) for message in messages]
     if continue_final_message:
         if not messages or messages[-1].get("role") != "assistant":
@@ -245,3 +255,38 @@ def cases(declaration):
         {"role": "developer", "content": "Be terse."}, user("q1"),
         {"role": "assistant", "content": "a1"}, user("q2"),
     ]}, {"fixed:developer-before-last-user", "developer:present"}
+    # Protocol efforts the encoder does not name, top-level and nested.
+    yield "medium-effort", {"messages": [user("q")], "reasoning_effort": "medium"}, {"fixed:medium-effort"}
+    yield "nested-xhigh-effort", {"messages": [user("q")], "chat_template_kwargs": {"reasoning_effort": "xhigh"}}, {
+        "fixed:nested-xhigh-effort"}
+    # Argument text the encoder reads itself: spacing kept in a value it
+    # reads once, a null, three JSON string layers, and a repeated key,
+    # whose last value Python keeps.
+    raw = lambda identifier, arguments: {"id": identifier, "type": "function",
+                                         "function": {"name": "f", "arguments": arguments}}
+    yield "raw-argument-text", {"messages": [
+        user("Go."),
+        {"role": "assistant", "content": "", "tool_calls": [
+            raw("call_l", "[1,  2]"), raw("call_n", "null"),
+            raw("call_t", json.dumps(json.dumps(json.dumps({"x": 1})))), raw("call_r", "{\"x\":1,\"y\":3,\"x\":2}")]},
+        {"role": "tool", "tool_call_id": "call_l", "content": "ok"},
+        {"role": "tool", "tool_call_id": "call_n", "content": "ok"},
+        {"role": "tool", "tool_call_id": "call_t", "content": "ok"},
+        {"role": "tool", "tool_call_id": "call_r", "content": "ok"},
+    ], "tools": [{"type": "function", "function": {"name": "f", "parameters": {"type": "object"}}}]}, {
+        "fixed:raw-argument-text", "tools:wrapped"}
+    # A function object holding a `function` key is still wrapped whole.
+    yield "function-key-in-function", {"messages": [user("q")], "tools": [
+        {"type": "function", "function": {"name": "f", "function": {"name": "g"}}}]}, {
+        "fixed:function-key-in-function", "tools:wrapped"}
+    # A namespace on a function object or a system message's tool object,
+    # which the encoder writes as namespace::name and this format refuses.
+    yield "namespaced-function-object", {"messages": [user("q")], "tools": [
+        {"type": "function", "function": {"name": "f", "namespace": {"name": "ns", "description": "Tools of ns."},
+                                          "description": "F.", "parameters": {"type": "object"}}}]}, {
+        "fixed:namespaced-function-object", "tool-namespace:present"}
+    yield "namespaced-system-tool", {"messages": [
+        {"role": "system", "content": "s", "tools": [
+            {"type": "function", "namespace": "ns", "function": {"name": "f", "parameters": {"type": "object"}}}]},
+        user("q"),
+    ]}, {"fixed:namespaced-system-tool", "tool-namespace:present"}

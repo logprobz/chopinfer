@@ -553,7 +553,7 @@ fn encode_arguments_to_dsml(call: &ToolCall) -> Result<String> {
         let FrontendJsonV1::String(text) = &arguments else {
             break;
         };
-        match json_loads(text)? {
+        match json_loads(text) {
             Some(value) => arguments = value,
             None => break,
         }
@@ -578,16 +578,31 @@ fn encode_arguments_to_dsml(call: &ToolCall) -> Result<String> {
     Ok(parameters.join("\n"))
 }
 
-/// `json.loads(text)`, or `None` where Python raises. Text Python reads but
-/// this reader refuses (a repeated key, which Python reads as its last
-/// value) is refused rather than misread.
-fn json_loads(text: &str) -> Result<Option<FrontendJsonV1>> {
-    match serde_json::from_str::<FrontendJsonV1>(text) {
-        Ok(value) => Ok(Some(value)),
-        Err(_) if serde_json::from_str::<serde_json::Value>(text).is_ok() => {
-            error("tool call arguments repeat a key")
+/// `json.loads(text)`, or `None` where Python raises. A repeated key keeps
+/// its first position and takes its last value, as a Python dict does; the
+/// workspace's `serde_json` map keeps insertion order the same way.
+pub fn json_loads(text: &str) -> Option<FrontendJsonV1> {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .map(from_json_value)
+}
+
+/// A `serde_json` value as the request's JSON value, keys in map order.
+fn from_json_value(value: serde_json::Value) -> FrontendJsonV1 {
+    match value {
+        serde_json::Value::Null => FrontendJsonV1::Null,
+        serde_json::Value::Bool(value) => FrontendJsonV1::Bool(value),
+        serde_json::Value::Number(number) => FrontendJsonV1::Number(number),
+        serde_json::Value::String(text) => FrontendJsonV1::String(text),
+        serde_json::Value::Array(values) => {
+            FrontendJsonV1::Array(values.into_iter().map(from_json_value).collect())
         }
-        Err(_) => Ok(None),
+        serde_json::Value::Object(entries) => FrontendJsonV1::Object(
+            entries
+                .into_iter()
+                .map(|(key, value)| (key, from_json_value(value)))
+                .collect(),
+        ),
     }
 }
 

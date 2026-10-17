@@ -255,112 +255,6 @@
   "separator": ""
  },
  {
-  "id": "g0101-round-endofsentence",
-  "request": {
-   "messages": [
-    {
-     "role": "system",
-     "content": ""
-    },
-    {
-     "role": "user",
-     "content": "What is the weather in Paris?"
-    }
-   ],
-   "tools": [
-    {
-     "type": "function",
-     "function": {
-      "name": "clock",
-      "description": "The time.",
-      "parameters": {
-       "type": "object",
-       "properties": {}
-      },
-      "defer_loading": true
-     }
-    }
-   ]
-  },
-  "token_ids": [
-   31002,
-   270,
-   3287,
-   16,
-   128822,
-   1
-  ],
-  "expect": {
-   "reasoning": "Plan the answer.",
-   "finish_reason": "stop"
-  },
-  "separator": ""
- },
- {
-  "id": "g0102-round-endofsentence",
-  "request": {
-   "messages": [
-    {
-     "role": "user",
-     "content": "What is the weather in Paris?"
-    },
-    {
-     "role": "assistant",
-     "content": "One moment."
-    },
-    {
-     "role": "system",
-     "content": "Now answer in French."
-    },
-    {
-     "role": "user",
-     "content": "Go on."
-    }
-   ],
-   "tools": [
-    {
-     "type": "function",
-     "function": {
-      "name": "clock",
-      "description": "The time.",
-      "parameters": {
-       "type": "object",
-       "properties": {}
-      },
-      "defer_loading": true
-     }
-    }
-   ],
-   "chat_template_kwargs": {
-    "clear_thinking": false,
-    "preserve_thinking": true
-   }
-  },
-  "token_ids": [
-   31002,
-   270,
-   3287,
-   16,
-   128822,
-   223,
-   983,
-   344,
-   223,
-   864,
-   8490,
-   37,
-   16,
-   262,
-   1
-  ],
-  "expect": {
-   "reasoning": "Plan the answer.",
-   "content": "  It is 18 °C.  ",
-   "finish_reason": "stop"
-  },
-  "separator": ""
- },
- {
   "id": "vendor-pair-1-round-endofsentence",
   "request": {
    "messages": [
@@ -385,7 +279,7 @@
        }
       }
      ],
-     "reasoning": "The user wants the weather in Beijing. I should call get_weather."
+     "reasoning_content": "The user wants the weather in Beijing. I should call get_weather."
     },
     {
      "role": "tool",

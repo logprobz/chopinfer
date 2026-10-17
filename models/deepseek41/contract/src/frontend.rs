@@ -12,11 +12,17 @@
 //! `models/deepseek41/frontend_cases.py` maps its HF input the same way):
 //! - Thinking mode and the effort come from the declared reasoning controls
 //!   (`select_mode_v1`). The effort is passed in thinking mode only, where
-//!   the encoder writes it; a chat prompt never reads it.
+//!   the encoder writes it; a chat prompt never reads it. The protocol
+//!   efforts the encoder does not name read as deepseek-recipe maps them:
+//!   minimal as low, medium and xhigh as high.
 //! - The request's tools and `response_format` belong to the leading system
 //!   message, where the encoder renders them (vendor README, "Tools are
 //!   defined on the `system` message"). A request without one gets an empty
-//!   leading system message to carry them.
+//!   leading system message to carry them. Each offered function object is
+//!   wrapped as a tool object whatever keys it holds; a system message's
+//!   own tools arrive as the tool objects the client sent.
+//! - Tool-call arguments reach the encoder as the text sent, which it reads
+//!   as Python's `json.loads` does: a repeated key takes its last value.
 //! - `continue_final_message` renders the final assistant turn without its
 //!   end-of-sentence token (`wo_eos`). The encoder writes the generation
 //!   header itself after a final user or later system message, so
@@ -29,8 +35,9 @@
 //! The roles the encoder reads that the transport carries are system, user,
 //! assistant and tool. A developer message, a message's own tools on a role
 //! other than system, and media outside a user message are refused (see
-//! `models/deepseek41/frontend-divergences.json`). The encoder's
-//! `latest_reminder` role and `task` flag are not served.
+//! `models/deepseek41/frontend-divergences.json`), as is a tool or function
+//! object that names a namespace. The encoder's `latest_reminder` role and
+//! `task` flag are not served.
 
 pub mod encoding;
 
@@ -49,6 +56,22 @@ use encoding::{Block, Message, ReasoningEffort, Role, ThinkingMode, ToolCall};
 
 /// The efforts the encoder names (lines 448-453), in its order.
 const EFFORTS: [&str; 3] = ["low", "high", "max"];
+
+/// The protocol efforts the encoder does not name, each read as the effort
+/// deepseek-recipe maps it to (`ReasoningEffort`, recipe commit 8cadfede):
+/// minimal as low (50), medium and xhigh as high (75).
+const EFFORT_ALIASES: [(&str, &str); 3] =
+    [("minimal", "low"), ("medium", "high"), ("xhigh", "high")];
+
+/// `effort` with a protocol alias read as the effort it names.
+fn effort_alias(effort: Option<String>) -> Option<String> {
+    effort.map(|name| {
+        EFFORT_ALIASES
+            .iter()
+            .find(|(alias, _)| *alias == name)
+            .map_or(name, |(_, effort)| (*effort).to_owned())
+    })
+}
 
 /// The reasoning keywords this format reads to switch thinking.
 const THINKING_KEYWORDS: [&str; 2] = ["enable_thinking", "thinking"];
@@ -203,6 +226,9 @@ impl ChatFormatV1 for DeepSeekV41Format {
         request: FormatRenderRequestV1<'_>,
     ) -> Result<FormatRenderedV1, FrontendErrorV1> {
         let refuse = |message: String| FrontendErrorV1::new(message, Some("messages"));
+        let mut request = request;
+        request.reasoning_effort = effort_alias(request.reasoning_effort.take());
+        request.nested_reasoning_effort = effort_alias(request.nested_reasoning_effort.take());
         let (mode, effort) = select_mode_v1(&self.descriptor.reasoning, &request)?;
         let thinking_mode = match mode {
             PromptModeV1::Thinking => ThinkingMode::Thinking,
@@ -393,8 +419,7 @@ impl DeepSeekV41Format {
             if call.arguments.len() > limits.maximum_json_bytes {
                 return Err(resource_v1("JSON input exceeds the byte limit"));
             }
-            if let Ok(FrontendJsonV1::Object(entries)) =
-                serde_json::from_str::<FrontendJsonV1>(&call.arguments)
+            if let Some(FrontendJsonV1::Object(entries)) = encoding::json_loads(&call.arguments)
                 && entries.len() > limits.maximum_tool_parameters
             {
                 return Err(resource_v1("too many tool parameters"));
@@ -406,11 +431,22 @@ impl DeepSeekV41Format {
                 arguments: call.arguments.clone(),
             });
         }
-        result.tools = message
+        // A message's own tools arrive as the tool objects the client sent.
+        let function = |tool: &FrontendJsonV1| match tool {
+            FrontendJsonV1::Object(entries) => entries
+                .iter()
+                .find(|(key, _)| key == "function")
+                .is_some_and(|(_, function)| namespaced(function)),
+            _ => false,
+        };
+        if message
             .tools
             .iter()
-            .map(|tool| wrap_function(tool.clone()))
-            .collect();
+            .any(|tool| namespaced(tool) || function(tool))
+        {
+            return Err(field_v1(NAMESPACES_UNSERVED));
+        }
+        result.tools.clone_from(&message.tools);
         Ok(result)
     }
 }
@@ -434,20 +470,26 @@ fn tool_objects(
     objects
         .iter()
         .map(|object| match object {
+            FrontendJsonV1::Object(_) if namespaced(object) => Err(field_v1(NAMESPACES_UNSERVED)),
             FrontendJsonV1::Object(_) => Ok(wrap_function(object.clone())),
             _ => Err(field_v1("a tool's function must be an object")),
         })
         .collect()
 }
 
-/// A function object as the OpenAI tool object the encoder reads.
+/// The refusal of a tool object or function object that names a namespace.
+/// The encoder writes such a tool as `namespace::name` (lines 86-121), a
+/// name neither the offered tools nor the declared parser know.
+const NAMESPACES_UNSERVED: &str = "tool namespaces are not served";
+
+/// Whether a tool or function object carries a `namespace` key.
+fn namespaced(object: &FrontendJsonV1) -> bool {
+    matches!(object, FrontendJsonV1::Object(entries) if entries.iter().any(|(key, _)| key == "namespace"))
+}
+
+/// A function object as the OpenAI tool object the encoder reads, whatever
+/// keys the function object holds.
 fn wrap_function(function: FrontendJsonV1) -> FrontendJsonV1 {
-    // A message's own tools already arrive as tool objects.
-    if let FrontendJsonV1::Object(entries) = &function
-        && entries.iter().any(|(key, _)| key == "function")
-    {
-        return function;
-    }
     FrontendJsonV1::Object(vec![
         ("type".to_owned(), FrontendJsonV1::String("function".into())),
         ("function".to_owned(), function),

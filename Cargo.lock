@@ -716,6 +716,11 @@ name = "model-deepseek41"
 version = "0.1.0-alpha.3"
 dependencies = [
  "model-deepseek41-contract",
+ "runtime-frontend-contract",
+ "runtime-tokenizer",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

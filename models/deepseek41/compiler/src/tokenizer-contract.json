@@ -1,0 +1,141 @@
+{
+  "tokenizer": {
+    "repository": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+    "revision": "1bae0e1088993b9b82de08f59de5be5a34e42170",
+    "definition": {
+      "name": "tokenizer.json",
+      "byte_length": 6367257,
+      "sha256": "c90dfa01249db1be4245780a052ede752e1361c612ac6d08e2bdada7d599476b"
+    },
+    "configuration": {
+      "name": "tokenizer_config.json",
+      "byte_length": 801,
+      "sha256": "6ac8c8dc065ed118161d02dd532749ae3f52c243deac27872134fae2f50d8547"
+    },
+    "policy": {
+      "normalizer": "identity-sequence",
+      "pretokenizer_byte_level": {
+        "add_prefix_space": false,
+        "trim_offsets": true,
+        "use_regex": false
+      },
+      "post_processor_byte_level": {
+        "add_prefix_space": true,
+        "trim_offsets": false,
+        "use_regex": true
+      },
+      "decoder_byte_level": {
+        "add_prefix_space": true,
+        "trim_offsets": true,
+        "use_regex": true
+      },
+      "merge_results": {
+        "kind": "sequential",
+        "first_id": 259
+      },
+      "merge_records": "space-separated-string",
+      "base_tokens": {
+        "kind": "literal-prefix-then-byte-level",
+        "byte_start_id": 3
+      },
+      "config_tokens": {
+        "kind": "added-token",
+        "normalized": true
+      },
+      "add_bos_token": {
+        "kind": "required",
+        "value": false
+      },
+      "bos_token": {
+        "kind": "required",
+        "value": {
+          "kind": "contract-value"
+        }
+      },
+      "unk_token": {
+        "kind": "required-null"
+      },
+      "tokenizer_class": "PreTrainedTokenizerFast",
+      "continuing_subword_prefix": null,
+      "end_of_word_suffix": null,
+      "ignore_merges": "absent",
+      "add_eos_token": false,
+      "legacy": true,
+      "empty_sentencepiece_kwargs": true
+    },
+    "base_vocabulary_size": 128000,
+    "merge_count": 127741,
+    "added_token_count": 1283,
+    "model_max_length": 1048576,
+    "bos_token": "<｜begin▁of▁sentence｜>",
+    "eos_token": "<｜end▁of▁sentence｜>",
+    "pad_token": "<｜end▁of▁sentence｜>",
+    "pretokenizer_patterns": [
+      "\\p{N}{1,3}",
+      "[一-龥぀-ゟ゠-ヿ]+",
+      "[!\"#$%&'()*+,\\-./:;<=>?@\\[\\\\\\]^_`{|}~][A-Za-z]+|[^\r\n\\p{L}\\p{P}\\p{S}]?[\\p{L}\\p{M}]+| ?[\\p{P}\\p{S}]+[\r\n]*|\\s*[\r\n]+|\\s+(?!\\S)|\\s+"
+    ]
+  },
+  "vocabulary": {
+    "size": 129280,
+    "bos_token_id": 0,
+    "eos_token_id": 1,
+    "stop_token_ids": [
+      1
+    ],
+    "boundary_tokens": [
+      {
+        "text": "<｜begin▁of▁sentence｜>",
+        "id": 0
+      },
+      {
+        "text": "<｜end▁of▁sentence｜>",
+        "id": 1
+      },
+      {
+        "text": "<｜User｜>",
+        "id": 128803
+      },
+      {
+        "text": "<｜Assistant｜>",
+        "id": 128804
+      },
+      {
+        "text": "<｜System｜>",
+        "id": 128799
+      },
+      {
+        "text": "<think>",
+        "id": 128821
+      },
+      {
+        "text": "</think>",
+        "id": 128822
+      },
+      {
+        "text": "｜DSML｜",
+        "id": 128825
+      },
+      {
+        "text": "<｜latest_reminder｜>",
+        "id": 128828
+      },
+      {
+        "text": "<｜deepseek_image｜>",
+        "id": 129264
+      }
+    ],
+    "prompt_special_tokens": [
+      "<｜begin▁of▁sentence｜>",
+      "<｜end▁of▁sentence｜>",
+      "<｜User｜>",
+      "<｜Assistant｜>",
+      "<｜System｜>",
+      "<think>",
+      "</think>",
+      "｜DSML｜",
+      "<｜latest_reminder｜>",
+      "<｜deepseek_image｜>"
+    ]
+  }
+}

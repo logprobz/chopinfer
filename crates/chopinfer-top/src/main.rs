@@ -56,17 +56,18 @@ fn main() -> ExitCode {
     });
     let (discovery, notes, sources) = discovery(&options, !targets.is_empty());
     if options.list {
-        let (registry, now) = listing::collect(
+        let (registry, gpus, now) = listing::collect(
             targets,
             discovery,
             notes,
             options.interval,
             bearer.as_deref(),
+            options.gpus,
         );
         if options.json {
-            println!("{}", listing::document(&registry, now));
+            println!("{}", listing::document(&registry, &gpus, now));
         } else {
-            print!("{}", listing::table(&registry, now));
+            print!("{}", listing::table(&registry, &gpus, now));
             for event in &registry.events {
                 if matches!(event.tone, Tone::Warning | Tone::Bad) {
                     eprintln!(

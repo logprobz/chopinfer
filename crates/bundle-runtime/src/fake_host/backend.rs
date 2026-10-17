@@ -20,7 +20,7 @@ use runtime_bundle_abi::{
     BundleRawBatchLimitsV1, BundleRawClusterResidencyV1, BundleRawSpeculationV1,
     BundleStateHandleV1, BundleStatusV1, BundleStreamHandleV1, CompiledImageSpanV1,
     DeviceBufferSpanV1, HostServiceResultV1, HostServicesBackendV1, KernelArgumentV1,
-    LaunchConfigV1, StateRequestV1,
+    LaunchConfigV1, MappedRowGatherV1, StateRequestV1,
 };
 
 use super::{FakeDevice, JournalObserver, SnapshotOp, fnv1a};
@@ -133,6 +133,17 @@ pub trait FakePackage {
     fn acquire_serving_kv(&self, layout_id: &[u8]) -> HostServiceResultV1<u64>;
     fn resolve_serving_kv_pool(&self, rank: u32) -> HostServiceResultV1<DeviceBufferSpanV1>;
     fn query_speculation(&self) -> HostServiceResultV1<BundleRawSpeculationV1>;
+
+    /// The bytes of one host-mapped view, whose rows the backend gathers
+    /// (`chop.host-mapped-gather.v1`): by default the package maps none.
+    fn mapped_view(
+        &self,
+        _image: BundleCompiledImageHandleV1,
+        _rank: u32,
+        _view_id: &[u8],
+    ) -> HostServiceResultV1<Vec<u8>> {
+        Err(BundleStatusV1::NotFound)
+    }
 
     /// What the device reports for a cluster residency query that nothing
     /// set on the [`FakeDevice`] answers: by default no report, a host that
@@ -589,6 +600,50 @@ impl<P: FakePackage> HostServicesBackendV1 for Backend<P> {
         ));
         self.0.on_upload(stream, destination, source)
     }
+    /// Gathers the rows from the package's mapped view and uploads them,
+    /// checked as the host checks them and journalled as
+    /// `gather <stream> <view> <rows> <destination> <digest>`.
+    fn gather_mapped_rows(
+        &self,
+        stream: BundleStreamHandleV1,
+        destination: DeviceBufferSpanV1,
+        gather: MappedRowGatherV1<'_>,
+    ) -> HostServiceResultV1<()> {
+        let table = self
+            .0
+            .mapped_view(gather.image, gather.rank, gather.view_id)?;
+        let row_bytes =
+            usize::try_from(gather.row_bytes).map_err(|_| BundleStatusV1::InvalidArgument)?;
+        if gather.rows.is_empty()
+            || row_bytes == 0
+            || !table.len().is_multiple_of(row_bytes)
+            || gather
+                .rows
+                .iter()
+                .any(|&row| row as usize >= table.len() / row_bytes)
+            || destination.length != (gather.rows.len() * row_bytes) as u64
+        {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let bytes: Vec<u8> = gather
+            .rows
+            .iter()
+            .flat_map(|&row| &table[row as usize * row_bytes..(row as usize + 1) * row_bytes])
+            .copied()
+            .collect();
+        self.0.check_span(destination);
+        self.0.admit_upload(stream, destination, &bytes)?;
+        let device = self.0.device();
+        device.snapshot_op(|| SnapshotOp::Upload(stream.slot(), destination, bytes.clone()));
+        device.note(format!(
+            "gather {} {} {} {destination:?} {:016x}",
+            stream.slot(),
+            String::from_utf8_lossy(gather.view_id),
+            gather.rows.len(),
+            fnv1a(&bytes)
+        ));
+        self.0.on_upload(stream, destination, &bytes)
+    }
     fn copy_device_to_host(
         &self,
         stream: BundleStreamHandleV1,
@@ -788,6 +843,7 @@ mod tests {
     /// A package without images, components, KV or state, whose readbacks
     /// read sevens. It holds its live handles, newest last, releases only
     /// the newest, and refuses a synchronization when its countdown fires.
+    /// Its one mapped view, `rows` of rank 1, holds `0..32`.
     #[derive(Default)]
     struct Empty(FakeDevice, RefCell<Vec<String>>, Countdown);
 
@@ -843,6 +899,18 @@ mod tests {
         fn query_speculation(&self) -> HostServiceResultV1<BundleRawSpeculationV1> {
             Ok(BundleRawSpeculationV1::disabled())
         }
+        fn mapped_view(
+            &self,
+            _image: BundleCompiledImageHandleV1,
+            rank: u32,
+            view_id: &[u8],
+        ) -> HostServiceResultV1<Vec<u8>> {
+            if rank == 1 && view_id == b"rows" {
+                Ok((0..32).collect())
+            } else {
+                Err(BundleStatusV1::NotFound)
+            }
+        }
         fn allocate_state(
             &self,
             _request: &StateRequestV1,
@@ -897,6 +965,42 @@ mod tests {
         let stream = host.create_stream(context, 0).unwrap();
         let buffer = host.allocate_device_buffer(pool, stream, 64, 16).unwrap();
         (host, stream, buffer)
+    }
+
+    /// A gather uploads the named rows of the package's mapped view, checked
+    /// as the host checks them; a view the package does not map is not
+    /// found.
+    #[test]
+    fn gathers_upload_the_rows_of_the_package_mapped_view() {
+        let (host, stream, buffer) = host();
+        let gather = |rank, view_id: &'static [u8], rows: &'static [u32]| MappedRowGatherV1 {
+            image: BundleCompiledImageHandleV1::from_parts(1, 9),
+            rank,
+            view_id,
+            row_bytes: 8,
+            rows,
+        };
+        let span = DeviceBufferSpanV1::new(buffer, 8, 16);
+        host.gather_mapped_rows(stream, span, gather(1, b"rows", &[3, 0]))
+            .unwrap();
+        let expected: Vec<u8> = (24..32).chain(0..8).collect();
+        let note = format!("gather 1 rows 2 {span:?} {:016x}", fnv1a(&expected));
+        assert!(host.device().journal.borrow().contains(&note));
+        assert_eq!(
+            host.gather_mapped_rows(stream, span, gather(0, b"rows", &[0, 1])),
+            Err(BundleStatusV1::NotFound)
+        );
+        for rows in [&[4_u32, 0][..], &[0], &[]] {
+            let length = rows.len() as u64 * 8;
+            assert_eq!(
+                host.gather_mapped_rows(
+                    stream,
+                    DeviceBufferSpanV1::new(buffer, 0, length.max(16)),
+                    gather(1, b"rows", rows)
+                ),
+                Err(BundleStatusV1::InvalidArgument)
+            );
+        }
     }
 
     #[test]

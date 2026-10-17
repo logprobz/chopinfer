@@ -309,10 +309,10 @@ pub fn place_views(
 
 /// [`place_views`] for an image whose plan also maps the views `mapped`
 /// (their names in the rank index) from the checkpoint
-/// (`chop.host-mapped-rows.v1`). The host cut each out of the arena as it
+/// (`chop.host-mapped-gather.v1`). The host cut each out of the arena as it
 /// cuts a host view, so the views after it moved down by its rounded length.
-/// A mapped view has no device span and is not placed: the bundle reads it
-/// with `HostServicesV1::with_mapped_view`.
+/// A mapped view has no device span and is not placed: the bundle copies
+/// rows of it with `HostServicesV1::gather_mapped_rows`.
 pub fn place_views_mapped(
     services: &HostServicesV1,
     image: BundleCompiledImageHandleV1,

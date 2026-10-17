@@ -25,10 +25,10 @@
 └───────────────────│                                                                                          │───────────────────┘
 ┌─ Processes  on GPU│ NVML is read once a poll, GPM counters only while this view is                           │───────────────────┐
 │ PID     TYPE      │ open. GPU numbers are nvidia-smi's, not CUDA ordinals.                                   │                   │
-│ 48211   C     86.9│                                                                                          │                   │
-│ 2210    G      0.1│ Press any key to close.                                                                  │                   │
-│                   └──────────────────────────────────────────────────────────────────────────────────────────┘                   │
-│                                                         ││                                                                       │
+│ 48211   C     86.9│                                                                                          │ide MiMo-V2.6-Flas │
+│ 2210    G      0.1│ Press any key to close.                                                                  │ beside MiMo-V2.6- │
+│                   └──────────────────────────────────────────────────────────────────────────────────────────┘ck 1,650 of 3,090  │
+│                                                         ││ 1m00s ago  GPU 2  2C under the temperature limit at 90C               │
 │                                                         ││                                                                       │
 │                                                         ││                                                                       │
 │                                                         ││                                                                       │

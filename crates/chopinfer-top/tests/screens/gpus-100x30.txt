@@ -21,10 +21,10 @@
 │ PCIe         gen 5 x16   ECC off                    ││                                           │
 └─────────────────────────────────────────────────────┘└───────────────────────────────────────────┘
 ┌─ Processes  on GPU 2 ─────────────────────┐┌─ GPU events ────────────────────────────────────────┐
-│ PID     TYPE      VRAM  PROCESS           ││ none                                                │
-│ 48211   C     86.9 GiB  MiMo-V2.6-Flash   ││                                                     │
-│                                           ││                                                     │
-│                                           ││                                                     │
-│                                           ││                                                     │
+│ PID     TYPE      VRAM  PROCESS           ││ 5m00s ago  GPUs   4 found, driver 615.71.09         │
+│ 48211   C     86.9 GiB  MiMo-V2.6-Flash   ││ 5m00s ago  GPU 0  pid 2210 (Xorg) holds 0.1 GiB bes │
+│                                           ││ 5m00s ago  GPU 3  pid 51877 (python3) holds 1.4 GiB │
+│                                           ││ 1m00s ago  GPU 2  hardware thermal slowdown: SM clo │
+│                                           ││ 1m00s ago  GPU 2  2C under the temperature limit at │
 └───────────────────────────────────────────┘└─────────────────────────────────────────────────────┘
  Esc back   ↑↓ jk select   Enter instance   w window   r rescan   p pause   ? help   q quit

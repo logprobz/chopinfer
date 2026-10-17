@@ -280,10 +280,14 @@ fn with_gpus(app: &mut App, counters: bool) {
         ecc: Some(false),
         gpm: true,
     };
-    gpus.apply(Report::Opened {
-        driver: Some("615.71.09".to_owned()),
-        devices: (0..4).map(device).collect(),
-    });
+    gpus.apply(
+        Report::Opened {
+            driver: Some("615.71.09".to_owned()),
+            devices: (0..4).map(device).collect(),
+        },
+        &mut app.registry,
+        0.0,
+    );
     let process = |pid, memory, kind, ticks, name: &str| Process {
         pid,
         memory: Some(memory),
@@ -351,7 +355,11 @@ fn with_gpus(app: &mut App, counters: bool) {
                 lost: false,
             }
         };
-        gpus.apply(Report::Polled((0..4).map(reading).collect()));
+        gpus.apply(
+            Report::Polled((0..4).map(reading).collect()),
+            &mut app.registry,
+            t,
+        );
     }
     app.gpus = gpus;
 }

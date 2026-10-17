@@ -393,15 +393,19 @@ mod tests {
         use crate::gpu::{Device, Status, poll::Report};
         let mut app = app(2);
         let mut gpus = Gpus::new(Status::Opening, true, 1.0);
-        gpus.apply(Report::Opened {
-            driver: None,
-            devices: (0..3)
-                .map(|index| Device {
-                    index,
-                    ..Device::default()
-                })
-                .collect(),
-        });
+        gpus.apply(
+            Report::Opened {
+                driver: None,
+                devices: (0..3)
+                    .map(|index| Device {
+                        index,
+                        ..Device::default()
+                    })
+                    .collect(),
+            },
+            &mut app.registry,
+            0.0,
+        );
         app.gpus = gpus;
         app.settle(24);
         press(&mut app, KeyCode::Char('g'));

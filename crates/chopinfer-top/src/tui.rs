@@ -367,8 +367,9 @@ fn run_loop(
             Ordering::Relaxed,
         );
         if !app.paused && !held_gpus.is_empty() {
+            let at = now();
             for report in held_gpus.drain(..) {
-                app.gpus.apply(report);
+                app.gpus.apply(report, &mut app.registry, at);
             }
             dirty = true;
         }

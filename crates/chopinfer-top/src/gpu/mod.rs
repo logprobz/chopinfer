@@ -11,8 +11,9 @@ pub mod poll;
 
 use std::collections::VecDeque;
 
-use crate::instances::Instance;
+use crate::instances::{Instance, Registry, Tone};
 use crate::stats::{HISTORY_SECONDS, RATE_POLLS};
+use crate::ui::widgets::integer;
 pub use owners::Owner;
 use poll::Report;
 
@@ -304,6 +305,22 @@ pub enum Status {
     Open,
 }
 
+/// What has been said about one GPU, so that each change is one event.
+#[derive(Clone, Debug, Default)]
+struct Watch {
+    slowdown: bool,
+    /// Under [`HOT_HEADROOM`] degrees of headroom, until [`COOL_HEADROOM`].
+    hot: bool,
+    ecc: u64,
+    lost: bool,
+    /// Processes beside an instance already reported.
+    strangers: Vec<u32>,
+}
+
+/// Headroom that is reported, and headroom that ends the report.
+const HOT_HEADROOM: i32 = 5;
+const COOL_HEADROOM: i32 = 10;
+
 /// What the interface knows about the GPUs.
 #[derive(Clone, Debug)]
 pub struct Gpus {
@@ -315,6 +332,7 @@ pub struct Gpus {
     /// Whether GPM counters may be read: not `--no-gpu-counters`.
     pub counters: bool,
     interval: f64,
+    watches: Vec<Watch>,
 }
 
 impl Gpus {
@@ -326,6 +344,7 @@ impl Gpus {
             histories: Vec::new(),
             counters,
             interval,
+            watches: Vec::new(),
         }
     }
 
@@ -334,24 +353,160 @@ impl Gpus {
         Self::new(Status::Off, false, 1.0)
     }
 
-    pub fn apply(&mut self, report: Report) {
+    /// Takes a report at `now`, noting in `registry` what changed: GPUs
+    /// found, a slowdown starting or ending, a GPU near its temperature
+    /// limit, uncorrected ECC errors, a GPU lost, and a process that is no
+    /// instance holding memory beside one.
+    pub fn apply(&mut self, report: Report, registry: &mut Registry, now: f64) {
         match report {
             Report::Opened { driver, devices } => {
+                registry.note(
+                    now,
+                    "GPUs",
+                    format!(
+                        "{} found, driver {}",
+                        devices.len(),
+                        driver.as_deref().unwrap_or("unknown")
+                    ),
+                    Tone::Normal,
+                );
                 self.status = Status::Open;
                 self.driver = driver;
                 self.histories = devices
                     .iter()
                     .map(|_| History::new(self.interval))
                     .collect();
+                self.watches = vec![Watch::default(); devices.len()];
                 self.devices = devices;
             }
-            Report::Unavailable(reason) => self.status = Status::Unavailable(reason),
+            Report::Unavailable(reason) => {
+                registry.note(now, "GPUs", format!("not read: {reason}"), Tone::Normal);
+                self.status = Status::Unavailable(reason);
+            }
             Report::Polled(readings) => {
-                for (history, reading) in self.histories.iter_mut().zip(readings) {
-                    history.push(reading);
+                for (index, reading) in readings.into_iter().enumerate().take(self.devices.len()) {
+                    self.watch(index, &reading, registry, now);
+                    self.histories[index].push(reading);
                 }
             }
         }
+    }
+
+    fn watch(&mut self, index: usize, reading: &Reading, registry: &mut Registry, now: f64) {
+        let device = &self.devices[index];
+        let who = format!("GPU {}", device.index);
+        let watch = &mut self.watches[index];
+        if reading.lost != watch.lost {
+            watch.lost = reading.lost;
+            if reading.lost {
+                registry.note(
+                    now,
+                    &who,
+                    "stopped answering NVML: lost or off the bus",
+                    Tone::Bad,
+                );
+            } else {
+                registry.note(now, &who, "answering NVML again", Tone::Good);
+            }
+        }
+        if reading.lost {
+            return;
+        }
+        let reasons = reading.reasons.unwrap_or_default();
+        if reasons.slowdown() != watch.slowdown {
+            watch.slowdown = reasons.slowdown();
+            let clock = reading.sm_mhz.map(|mhz| integer(f64::from(mhz)));
+            if watch.slowdown {
+                let mut what = reasons.label().unwrap_or("slowdown").to_owned();
+                if let Some(clock) = &clock {
+                    what.push_str(&format!(": SM clock {clock}"));
+                    match device.sm_max_mhz {
+                        Some(max) => what.push_str(&format!(" of {} MHz", integer(f64::from(max)))),
+                        None => what.push_str(" MHz"),
+                    }
+                }
+                if let Some(headroom) = reading.headroom {
+                    what.push_str(&format!(", {}C under the limit", headroom.max(0)));
+                }
+                registry.note(now, &who, what, Tone::Warning);
+            } else {
+                let what = clock.map_or_else(
+                    || "slowdown over".to_owned(),
+                    |clock| format!("slowdown over: SM clock {clock} MHz"),
+                );
+                registry.note(now, &who, what, Tone::Normal);
+            }
+        }
+        if let Some(headroom) = reading.headroom {
+            if !watch.hot && headroom < HOT_HEADROOM {
+                watch.hot = true;
+                let at = reading
+                    .temperature
+                    .map_or_else(String::new, |celsius| format!(" at {celsius}C"));
+                registry.note(
+                    now,
+                    &who,
+                    format!("{}C under the temperature limit{at}", headroom.max(0)),
+                    Tone::Warning,
+                );
+            } else if watch.hot && headroom >= COOL_HEADROOM {
+                watch.hot = false;
+            }
+        }
+        if let Some(errors) = reading.ecc_uncorrected
+            && errors > watch.ecc
+        {
+            watch.ecc = errors;
+            registry.note(
+                now,
+                &who,
+                format!(
+                    "{errors} uncorrected ECC error{} since the driver loaded",
+                    if errors == 1 { "" } else { "s" }
+                ),
+                Tone::Bad,
+            );
+        }
+        let rows = reading
+            .processes
+            .iter()
+            .map(|process| owners::row(&registry.instances, process))
+            .collect::<Vec<_>>();
+        let beside = rows
+            .iter()
+            .flatten()
+            .next()
+            .and_then(|id| registry.get(*id))
+            .map(|instance| {
+                instance
+                    .name()
+                    .map_or_else(|| instance.label(), str::to_owned)
+            });
+        if let Some(beside) = beside {
+            for (process, row) in reading.processes.iter().zip(&rows) {
+                if row.is_some() || watch.strangers.contains(&process.pid) {
+                    continue;
+                }
+                watch.strangers.push(process.pid);
+                let name = process.owner.name.as_deref().unwrap_or("-");
+                let memory = process.memory.map_or_else(
+                    || "memory".to_owned(),
+                    |bytes| format!("{:.1} GiB", bytes as f64 / f64::from(1 << 30)),
+                );
+                registry.note(
+                    now,
+                    &who,
+                    format!(
+                        "pid {} ({name}) holds {memory} beside {beside}",
+                        process.pid
+                    ),
+                    Tone::Warning,
+                );
+            }
+        }
+        watch
+            .strangers
+            .retain(|pid| reading.processes.iter().any(|process| process.pid == *pid));
     }
 
     pub fn latest(&self, index: usize) -> Option<&Reading> {
@@ -508,10 +663,14 @@ mod tests {
             name: "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition".into(),
             ..Device::default()
         };
-        gpus.apply(Report::Opened {
-            driver: Some("615.71.09".into()),
-            devices: vec![device(0), device(1), device(2)],
-        });
+        gpus.apply(
+            Report::Opened {
+                driver: Some("615.71.09".into()),
+                devices: vec![device(0), device(1), device(2)],
+            },
+            &mut registry,
+            0.0,
+        );
         assert_eq!(gpus.status, Status::Open);
         let serving = |pid| Reading {
             processes: vec![Process {
@@ -524,15 +683,131 @@ mod tests {
             }],
             ..Reading::default()
         };
-        gpus.apply(Report::Polled(vec![
-            serving(7),
-            Reading::default(),
-            serving(7),
-        ]));
+        gpus.apply(
+            Report::Polled(vec![serving(7), Reading::default(), serving(7)]),
+            &mut registry,
+            1.0,
+        );
         assert_eq!(gpus.of_instance(&registry.instances, row), [0, 2]);
         assert_eq!(gpus.processes(1, &registry.instances), []);
-        gpus.apply(Report::Unavailable("gone".into()));
+        gpus.apply(Report::Unavailable("gone".into()), &mut registry, 2.0);
         assert_eq!(gpus.status, Status::Unavailable("gone".into()));
+    }
+
+    #[test]
+    fn each_change_of_a_gpu_is_one_event() {
+        use crate::targets::Target;
+        let mut registry = Registry::new(1.0);
+        registry.add_target(Target::parse(":8311").unwrap(), 0.0);
+        let mut gpus = Gpus::new(Status::Opening, true, 1.0);
+        let device = Device {
+            index: 2,
+            sm_max_mhz: Some(3090),
+            ..Device::default()
+        };
+        gpus.apply(
+            Report::Opened {
+                driver: Some("615.71.09".into()),
+                devices: vec![device],
+            },
+            &mut registry,
+            0.0,
+        );
+        let process = |pid, listen: Option<&str>, name: &str| Process {
+            pid,
+            memory: Some(3 << 29),
+            owner: Owner {
+                name: Some(name.into()),
+                listen: listen.map(str::to_owned),
+                ..Owner::default()
+            },
+            ..Process::default()
+        };
+        let reading = |reasons, headroom, ecc, lost, stranger: bool| {
+            let mut processes = vec![process(7, Some("0.0.0.0:8311"), "chopinfer")];
+            if stranger {
+                processes.push(process(9, None, "python3"));
+            }
+            Reading {
+                temperature: Some(92 - headroom),
+                headroom: Some(headroom),
+                sm_mhz: Some(1650),
+                reasons: Some(Reasons(reasons)),
+                ecc_uncorrected: Some(ecc),
+                processes,
+                lost,
+                ..Reading::default()
+            }
+        };
+        let thermal = Reasons::HARDWARE_THERMAL;
+        for (at, reading) in [
+            (1.0, reading(Reasons::POWER_CAP, 20, 0, false, false)),
+            (2.0, reading(thermal, 3, 0, false, true)),
+            // Nothing new: no event.
+            (3.0, reading(thermal, 2, 0, false, true)),
+            (4.0, reading(Reasons::POWER_CAP, 8, 1, false, true)),
+            // Still under the re-arming headroom: no second warning.
+            (5.0, reading(Reasons::POWER_CAP, 4, 1, false, false)),
+            (6.0, reading(0, 0, 0, true, false)),
+            (7.0, reading(Reasons::POWER_CAP, 20, 1, false, false)),
+        ] {
+            gpus.apply(Report::Polled(vec![reading]), &mut registry, at);
+        }
+        let events = registry
+            .events
+            .iter()
+            .map(|event| {
+                (
+                    event.at,
+                    event.who.as_str(),
+                    event.what.as_str(),
+                    event.tone,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            events,
+            [
+                (0.0, "GPUs", "1 found, driver 615.71.09", Tone::Normal),
+                (
+                    2.0,
+                    "GPU 2",
+                    "hardware thermal slowdown: SM clock 1,650 of 3,090 MHz, 3C under the limit",
+                    Tone::Warning
+                ),
+                (
+                    2.0,
+                    "GPU 2",
+                    "3C under the temperature limit at 89C",
+                    Tone::Warning
+                ),
+                (
+                    2.0,
+                    "GPU 2",
+                    "pid 9 (python3) holds 1.5 GiB beside target 127.0.0.1:8311",
+                    Tone::Warning
+                ),
+                (
+                    4.0,
+                    "GPU 2",
+                    "slowdown over: SM clock 1,650 MHz",
+                    Tone::Normal
+                ),
+                (
+                    4.0,
+                    "GPU 2",
+                    "1 uncorrected ECC error since the driver loaded",
+                    Tone::Bad
+                ),
+                (
+                    6.0,
+                    "GPU 2",
+                    "stopped answering NVML: lost or off the bus",
+                    Tone::Bad
+                ),
+                (7.0, "GPU 2", "answering NVML again", Tone::Good),
+            ]
+        );
     }
 
     #[test]

@@ -283,14 +283,17 @@ validates). A refusal names the field and exits 2.
 ```text
 chopinfer-top [--target HOST:PORT]... [--targets-file FILE]
               [--no-discover] [--no-docker] [--interval SECONDS]
-              [--rescan SECONDS] [--api-key KEY] [--list [--json]]
+              [--rescan SECONDS] [--api-key KEY] [--no-gpus]
+              [--no-gpu-counters] [--list [--json]]
 ```
 
 `chopinfer-top`, shipped beside `chopinfer`, is a live terminal view of
-running `chopinfer serve` instances. It reads only `/health` and `/metrics`.
-Without flags it finds this user's serve processes and Docker containers
-running serve. `--list` prints the instances once and exits; `--list --json`
-prints a `chopinfer.top.list.v1` document.
+running `chopinfer serve` instances and of the GPUs of the host it runs on.
+It reads only `/health` and `/metrics` from servers, and the GPUs through
+the NVIDIA driver's NVML. Without flags it finds this user's serve processes
+and Docker containers running serve; `g` shows the GPUs. `--list` prints the
+instances and GPUs once and exits; `--list --json` prints a
+`chopinfer.top.list.v1` document.
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -301,8 +304,10 @@ prints a `chopinfer.top.list.v1` document.
 | `--interval SECONDS` | 1 | Seconds between polls of each instance, 0.5 to 60 |
 | `--rescan SECONDS` | 15 | Seconds between discovery scans, 2 to 300 |
 | `--api-key KEY` | `CHOPINFER_API_KEY` | Bearer token for explicit targets behind an authenticating proxy |
-| `--list`, `--json` | off | Print the instances once and exit; `--json` needs `--list` |
+| `--no-gpus` | off | Do not read this host's GPUs |
+| `--no-gpu-counters` | off | Do not sample GPM counters (SM, tensor and DRAM activity) while the GPU view is open |
+| `--list`, `--json` | off | Print the instances and GPUs once and exit; `--json` needs `--list` |
 
 A usage error, or the interactive view without a terminal, exits 2. Sources,
-states, the series behind each number and the keys are in
+states, the series behind each number, the GPU view and the keys are in
 [watch running instances with chopinfer-top](operations-observability.md#watch-running-instances-with-chopinfer-top).

@@ -148,10 +148,11 @@ after upload.
 ## Watch running instances with chopinfer-top
 
 `chopinfer-top` is a terminal view of the `chopinfer serve` instances on a
-host: what each serves, whether it is ready, and how it is doing. It is a
-separate binary, shipped in `bin/` beside `chopinfer` and in the image. It is
-a client of `/health` and `/metrics` only, which need no API key, and it links
-no serving code. The flags are in [operator commands](cli.md#live-view-chopinfer-top).
+host: what each serves, whether it is ready, and how it is doing, and of the
+host's GPUs. It is a separate binary, shipped in `bin/` beside `chopinfer` and
+in the image. It is a client of `/health` and `/metrics` only, which need no
+API key, reads the GPUs through NVML, and links no serving code. The flags are
+in [operator commands](cli.md#live-view-chopinfer-top).
 
 ```text
 chopinfer-top                          # find instances and watch them
@@ -274,14 +275,78 @@ startup nonce, or a counter or the server clock going backwards, is a restart:
 the history is dropped, the counters are re-baselined and the restart is
 counted.
 
+### GPUs
+
+`g` opens a view of the GPUs of the host chopinfer-top runs on, read through
+NVML (`libnvidia-ml.so.1`, loaded at run time; without it the view says why).
+Instances on other hosts show no GPUs. In a container NVML comes from the
+NVIDIA runtime's `utility` driver capability, which the image sets; NVML there
+may not list processes in a way `/proc` can resolve, so GPUs may not name
+their instance. GPU numbers are NVML's, as nvidia-smi shows them, not CUDA
+ordinals, which `CUDA_VISIBLE_DEVICES` renumbers.
+
+The view has a table of every GPU, then for the selected one its activity and
+power over the last minutes and its state, a Time panel, its processes, and
+the GPU events. Shares and rates cover the last three polls, as instance rates
+do. Smaller terminals drop columns and panels; the Time panel stays longest.
+
+| Shown | Source |
+|---|---|
+| Temperature | `nvmlDeviceGetTemperature`; yellow under 10 C of headroom, red at none or in a thermal slowdown |
+| Headroom ("under the limit") | The maximum operating temperature (else the slowdown threshold), read once, less the temperature: nvidia-smi's T.Limit |
+| Fan | `nvmlDeviceGetFanSpeed`, every fifth poll |
+| Power | `nvmlDeviceGetPowerUsage`, averaged over a second on Ampere and newer, against `nvmlDeviceGetEnforcedPowerLimit` |
+| SM and memory clocks, P-state | `nvmlDeviceGetClockInfo` against `nvmlDeviceGetMaxClockInfo`, `nvmlDeviceGetPerformanceState` |
+| Limited by | The most serious reason of `nvmlDeviceGetCurrentClocksEventReasons`: a thermal or hardware slowdown (red, and an event), the power brake, the power cap (normal for a capped card under load), reliability, idle |
+| VRAM | `nvmlDeviceGetMemoryInfo_v2` used against total, as nvidia-smi counts it; red above 95% |
+| UTIL, kernels | GPM graphics activity while the view is open, else the GPU share of `nvmlDeviceGetUtilizationRates` |
+| Tensor, DRAM, SM busy, SM occupancy, PCIe rx and tx | GPM metrics: any tensor activity, DRAM bandwidth against its peak, SM activity, active warps against the most the SMs hold, PCIe bytes a second |
+| Memory busy (without GPM) | The memory share of `nvmlDeviceGetUtilizationRates` |
+| PCIe link | Current generation and width against the maximum; a link below its maximum while the GPU is busy is marked |
+| ECC | `nvmlDeviceGetEccMode`, read once, and uncorrected volatile errors, every fifth poll |
+| Processes | `nvmlDeviceGetComputeRunningProcesses_v3` and `nvmlDeviceGetGraphicsRunningProcesses_v3` merged by pid, marked C, G or C+G; a process on both counts its memory once |
+
+The Time panel splits wall time into kernels, the share of time any kernel ran
+from any process on the GPU, and no kernel: the GPU waiting for the host or
+for work. It does not split no-kernel time further. serve books a step's time
+when the step commits, so a long prefill lands in a later poll, and GPU
+activity counts every process, so the difference between the two is not a
+reliable measure of host time. The instance's running and waiting requests on
+the next line tell the cases apart: no-kernel time while requests run is time
+on the host. With GPM the panel also shows how busy the SMs, their warps, the
+tensor pipes and DRAM bandwidth were; these overlap rather than add up.
+
+GPU processes map to instances through `/proc`: process rows by pid and start
+time, container rows by the Docker container id in the process's cgroup, and
+explicit targets on this host by serve's `--listen` port, so a systemd unit
+watched with `--target` names its GPUs. Each pid is read once per start time,
+so a serve that restarts is found under its new pid. Enter on a GPU opens its
+instance's details, which name the instance's GPUs, and Esc returns.
+
+Each change is one event in the log: GPUs found or not read, a thermal or
+hardware slowdown starting or ending, headroom under 5 C (again only once it
+has been back to 10 C), uncorrected ECC errors rising, a GPU no longer
+answering NVML, and a process that is no instance holding memory on a GPU
+beside one, once per pid.
+
+GPM counters (Hopper and newer) are sampled only while the GPU view is open;
+`--no-gpu-counters` stops them, and `--no-gpus` stops GPU reading. Their
+figures matched `nvidia-smi dmon --gpm-metrics` under a copy kernel on an RTX
+PRO 6000 Blackwell Max-Q with driver 615.71 (graphics activity 99 to 100%, SM
+94%, occupancy 64%, DRAM 71%), and the two read side by side. Whether a
+profiler such as Nsight Compute, or Nsight Systems' GPU metrics, starts while
+the view samples GPM was not tested: on that host the profilers needed
+administrator access to the counters.
+
 ### Keys and scripted use
 
 | Key | Action |
 |---|---|
-| Up, Down, `j`, `k` | Select an instance (list) |
-| Enter, double click | Open its details; a click selects |
-| Esc, Backspace, `h` | Back to the list |
+| Up, Down, `j`, `k` | Select an instance (list) or a GPU (GPU view) |
+| Enter, double click | Open its details, or the details of the GPU's instance; a click selects |
+| Esc, Backspace, `h` | Back to the view before |
 | Right, Left, Tab, Shift-Tab, `l` | Next or previous instance (details) |
+| `g` | Open or leave the GPU view |
 | `w` | Window: 60 s, 5 m, since start |
 | `r` | Rescan for processes and containers now |
 | `p` | Pause the screen; polls keep their latest result |
@@ -290,14 +355,18 @@ counted.
 
 The interactive view needs a terminal; without one chopinfer-top exits with
 status 2 and points to `--list`. `--list` runs one discovery pass and two
-polls one interval apart, prints a table (source, address, model, state,
-decode and prefill tok/s, running/waiting, KV) and writes warnings to
-stderr. `--list --json` prints a `chopinfer.top.list.v1` document: an
-`instances` array (source, pid or container or target, address, state and
-detail, model, uptime, the `/health` identity, rates, gauges, ratios and
-counter totals) and the `events` log. Its ratios use the 60 s window, which
-for a server older than a minute covers only the interval between the two
-polls.
+polls one interval apart, reading the GPUs at each without GPM, prints a
+table (source, address, model, state, decode and prefill tok/s,
+running/waiting, KV), then the GPUs (temperature, fan, power, SM clock, VRAM,
+utilization, instance), and writes warnings to stderr. `--list --json`
+prints a `chopinfer.top.list.v1` document: an `instances` array (source, pid
+or container or target, address, state and detail, model, uptime, the
+`/health` identity, rates, gauges, ratios and counter totals), a `gpus`
+object (`status` of `read`, `off` or `unavailable` with its `detail`, the
+`driver`, and `devices` with each GPU's readings and processes, each with its
+`C` or `G` type and instance) and the `events` log. Its ratios use the 60 s
+window, which for a server older than a minute covers only the interval
+between the two polls.
 
 ### Polling cost
 
@@ -307,6 +376,14 @@ Each poll of an instance is one `/health` and one `/metrics` request. The
 polled every 5 s. A few dashboards on one server cost nothing measurable.
 chopinfer-top keeps no history beyond five minutes and raises no alerts:
 scrape with Prometheus for alerting and dashboards, as below.
+
+Reading the GPUs takes about 0.2 ms of NVML queries per GPU a poll, plus the
+fan and ECC errors every fifth poll, at about a millisecond each. NVML
+creates no CUDA context and submits no GPU work. On four idle RTX PRO 6000
+Blackwell Max-Q with driver 615.71 (2026-10-17), chopinfer-top used about
+7 ms of CPU a second reading them, against under 1 ms with `--no-gpus`; the
+GPU view's GPM sampling added about 15 ms a second, nearly all of it in
+`nvmlGpmMetricsGet`. The effect on serving throughput was not measured.
 
 ## Example alerts
 

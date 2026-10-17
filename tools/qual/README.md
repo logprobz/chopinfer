@@ -1286,7 +1286,11 @@ Every percentile comes with its sample count. The JSON distributions carry
 `samples`; the summary prints n beside each figure and stars a percentile
 with fewer samples than it needs (20 for p95, 100 for p99,
 `agentic_metrics.TAIL_SAMPLES`); `agentic_compare.py` gives each figure's
-samples in both arms, and `supported` for a percentile.
+samples in both arms, and `supported` for a percentile. `--min-samples`
+(default 20) is the number of completed measured sessions a level needs;
+with fewer it is insufficient, since a p95 over fewer than 20 sessions is
+the slowest session or next to it. Lengthen `--seconds` rather than lower
+it.
 
 The raw re-parse reads the served model's frontend declaration: `--frontend`,
 else the `frontend` input of `CHOPINFER_QUAL_CONFIG`, else the inventoried

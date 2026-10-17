@@ -385,7 +385,8 @@ class ReParserSelection(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, patch.object(common, 'RECEIPTS', Path(directory)), \
                 redirect_stdout(io.StringIO()):
             code = agentic_mixed.main(['--dry-run', '--frontend', str(self.frontend), '--model-root', str(self.root),
-                                       '--levels', '1', '--seconds', '.3', '--warmup-waves', '0', '--no-decode'])
+                                       '--levels', '1', '--seconds', '.3', '--warmup-waves', '0', '--no-decode',
+                                       '--min-samples', '2'])
             receipts = [p.read_text() for p in Path(directory).glob('*.json')]
         self.assertEqual(code, 0)
         sweep = next(json.loads(r) for r in receipts if json.loads(r)['receipt_kind'] == 'sweep')

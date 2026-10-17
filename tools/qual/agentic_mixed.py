@@ -947,7 +947,8 @@ def run_level(client, model, profile, manifest, files, concurrency, on_partial=N
                        stall_threshold_ms=profile['stall_threshold_ms'], sessions=saved,
                        drain_seconds=max(0, max((r['ended'] for r in saved), default=measured_end) - measured_end))
         summary['insufficient'] = (aborted or ('session cap reached before measured interval ended' if cap_reached else
-                                   'too few completed measured sessions' if summary['measured_completed'] < profile['min_samples'] else None))
+                                   f"too few completed measured sessions: {summary['measured_completed']} of {profile['min_samples']}"
+                                   if summary['measured_completed'] < profile['min_samples'] else None))
         delta = metrics_delta(before, boundary)
         drain_delta = metrics_delta(boundary, after)
         summary['server_metrics'] = dict(scope='measured window; scrape timing uncertainty retained',
@@ -1049,7 +1050,10 @@ def parser():
     p.add_argument('--seconds', type=float, default=60)
     p.add_argument('--warmup-waves', type=int, default=1)
     p.add_argument('--max-sessions-per-c', type=int, default=64)
-    p.add_argument('--min-samples', type=int, default=2)
+    p.add_argument('--min-samples', type=int, default=TAIL_SAMPLES['p95'],
+                   help='completed measured sessions each level needs, else it is insufficient (default %(default)s: '
+                        'the fewest for which a nearest-rank p95 over sessions has one session above it; with fewer, '
+                        'the p95 is the slowest session or next to it). Lengthen --seconds rather than lower it')
     p.add_argument('--max-turns', type=int, default=64)
     p.add_argument('--max-output-tokens', type=int, default=131072)
     p.add_argument('--temperature', type=float, default=0)

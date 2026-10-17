@@ -255,7 +255,7 @@ class FakeIntegrationTests(unittest.TestCase):
             with patch('agentic_mixed.common.startup'), patch('agentic_mixed.common.receipt', side_effect=receipt), \
                     fake_time(FakeClock()), redirect_stdout(io.StringIO()):
                 for arm in ['tbt', 'fixed']:
-                    self.assertEqual(main(['--dry-run', '--levels', '1', '--seconds', '.5', '--warmup-waves', '0',
+                    self.assertEqual(main(['--dry-run', '--levels', '1', '--seconds', '.5', '--warmup-waves', '0', '--min-samples', '2',
                                            '--no-decode', '--arm', arm, '--fake-prefill-budget', arm, '--label', 'comparison']), 0)
                     summary = (Path(name) / (arm + '-sweep.md')).read_text()
                     self.assertIn('Server step evidence', summary)
@@ -277,7 +277,7 @@ class FakeIntegrationTests(unittest.TestCase):
         scrape still run on real time: this checks session accounting, not
         when the boundary scrape happens."""
         manifest, groups = load_corpus()
-        profile = vars(parser().parse_args(['--levels', '1', '--seconds', '.25', '--warmup-waves', '1']))
+        profile = vars(parser().parse_args(['--levels', '1', '--seconds', '.25', '--warmup-waves', '1', '--min-samples', '4']))
         clock, reads = FakeClock(), Reads()
         with fake_server(groups['coding'], clock=clock, reads=reads) as url, patch('agentic_mixed.time', clock):
             client = ConfirmingTransport(url, 5, reads)
@@ -298,6 +298,20 @@ class FakeIntegrationTests(unittest.TestCase):
             self.assertIsNone(probe['failure'])
             self.assertAlmostEqual(probe['decode_seconds'], EVENT_SECONDS, places=9)
             self.assertGreater(probe['decode_tokens_per_second'], 0)
+
+    def test_too_few_sessions_for_a_p95_are_insufficient(self):
+        """By default a level needs as many completed sessions as a p95 over
+        them needs (agentic_metrics.TAIL_SAMPLES), and the help says why."""
+        from agentic_metrics import TAIL_SAMPLES
+        self.assertEqual(parser().parse_args([]).min_samples, TAIL_SAMPLES['p95'])
+        self.assertIn('p95', next(a.help for a in parser()._actions if a.dest == 'min_samples'))
+        manifest, groups = load_corpus()
+        profile = vars(parser().parse_args(['--levels', '1', '--seconds', '.25', '--warmup-waves', '0']))
+        clock, reads = FakeClock(), Reads()
+        with fake_server(groups['coding'], clock=clock, reads=reads) as url, patch('agentic_mixed.time', clock):
+            row = run_level(ConfirmingTransport(url, 5, reads), 'fake-agentic', profile, manifest, groups['coding'], 1)
+        self.assertEqual(row['insufficient'], f"too few completed measured sessions: {row['measured_completed']} of 20")
+        self.assertIn('insufficient', ' '.join(row['verdict']['problems']))
 
     def test_unconfirmed_reads(self):
         """A named stream whose reads are not confirmed in time ends in a

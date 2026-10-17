@@ -308,7 +308,7 @@ class DurabilityAndComparisonTests(unittest.TestCase):
             # The fake sweep's window is in event time, so its sessions fit on any host.
             with patch.object(common, 'RECEIPTS', Path(directory)), fake_time(FakeClock()), redirect_stdout(io.StringIO()):
                 for arm in ('tbt', 'fixed'):
-                    self.assertEqual(main(['--dry-run', '--levels', '1', '--seconds', '.4', '--warmup-waves', '0',
+                    self.assertEqual(main(['--dry-run', '--levels', '1', '--seconds', '.4', '--warmup-waves', '0', '--min-samples', '2',
                                            '--no-decode', '--arm', arm, '--fake-prefill-budget', arm, '--label', 'review']), 0)
             receipts = [json.loads(p.read_text()) for p in Path(directory).glob('*.json')]
             a, b = [r for r in receipts if r['receipt_kind'] == 'sweep']

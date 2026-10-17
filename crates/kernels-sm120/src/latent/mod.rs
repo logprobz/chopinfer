@@ -31,6 +31,7 @@
 
 pub mod merge_columns;
 pub mod slices;
+pub mod sources;
 
 use std::path::PathBuf;
 

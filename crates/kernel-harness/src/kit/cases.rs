@@ -13,6 +13,7 @@ pub mod collectives;
 pub mod context_parallel;
 pub mod gated_sparse;
 pub mod latent;
+pub mod latent_sources;
 pub mod moe;
 pub mod moe_routed;
 pub mod multimodal;

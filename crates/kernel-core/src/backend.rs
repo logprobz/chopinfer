@@ -42,7 +42,7 @@ use crate::gated_sparse::{
 };
 use crate::latent_attention::{
     HeadBatchedGemmQuery, HeadGemmBuffers, LatentAttentionBuffers, LatentAttentionQuery,
-    LatentKvWriteBuffers,
+    LatentKvWriteBuffers, LatentSourcesBuffers,
 };
 use crate::moe::{
     CombineBuffers, ExpertCombineOp, ProjectedRouteBuffers, RouteBuffers, RoutedSumBuffers,
@@ -934,6 +934,19 @@ pub trait Backend: Send + Sync {
         op: &LatentAttentionQuery,
         need: Need,
     ) -> Result<Prepared<LatentAttentionBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
+    /// Native latent attention over a per-layer window and an optional
+    /// paged compressed source. Lists specify visibility; -1 is a hole.
+    /// The caller keeps sequence, page and key indices within their views.
+    /// Source code/scale products must be exact finite BF16 operands.
+    fn latent_attention_sources(
+        &self,
+        op: &LatentAttentionQuery,
+        need: Need,
+    ) -> Result<Prepared<LatentSourcesBuffers<View>>, Refused> {
         let _ = (op, need);
         Err(Refused::Unsupported)
     }
@@ -2040,6 +2053,7 @@ mod tests {
             Need::rows(4),
         );
         latent_attention: Empty.latent_attention(&latent(), Need::rows(4));
+        latent_attention_sources: Empty.latent_attention_sources(&latent(), Need::rows(4));
         head_batched_gemm: Empty.head_batched_gemm(
             &HeadBatchedGemmQuery {
                 heads: 16,

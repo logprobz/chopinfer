@@ -88,6 +88,7 @@ mod gated_sparse;
 mod gather;
 mod hc_all_reduce;
 mod latent;
+mod latent_sources;
 mod moe_experts;
 mod moe_route;
 mod multimodal;
@@ -153,6 +154,7 @@ pub struct Sm120 {
     rope_kv: Vec<RopeKvEntry>,
     attention: Option<Box<AttentionEntries>>,
     latent: latent::Selection,
+    latent_sources: Vec<crate::latent::sources::Entry>,
     recurrent: recurrent::Entries,
     experts: moe_experts::Selection,
     indexer: pooled_indexer::Selection,
@@ -272,6 +274,12 @@ impl Sm120 {
     /// The model's attention variants and its choices among them.
     pub fn with_attention(mut self, entries: AttentionEntries) -> Self {
         self.attention = Some(Box::new(entries));
+        self
+    }
+
+    /// Register a native window and paged compressed latent attention entry.
+    pub fn with_latent_sources(mut self, entry: crate::latent::sources::Entry) -> Self {
+        self.latent_sources.push(entry);
         self
     }
 
@@ -1140,6 +1148,14 @@ impl Backend for Sm120 {
         need: Need,
     ) -> Result<Prepared<LatentKvWriteBuffers<View>>, Refused> {
         latent::kv_write(&self.latent, op, need)
+    }
+
+    fn latent_attention_sources(
+        &self,
+        op: &LatentAttentionQuery,
+        need: Need,
+    ) -> Result<Prepared<kernel_core::latent_attention::LatentSourcesBuffers<View>>, Refused> {
+        latent_sources::prepare(&self.latent_sources, op, need)
     }
 
     fn latent_attention(

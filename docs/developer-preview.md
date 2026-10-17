@@ -22,7 +22,7 @@ REVISION --local-dir DIRECTORY`, retaining its download metadata:
 |---|---|---|
 | MiMo | `XiaomiMiMo/MiMo-V2.6-Flash-MOPD` | `2479e2d0029eca9a34cc7e7f55a121925f81908e` |
 | Qwen | `Qwen/Qwen3.8-Flash-Next-FP8` | `236dfdf285828023ca3bcd3f37366c58a3469b13` |
-| GLM (`main` only; TP4 only) | `zai-org/GLM-5.3-Flash` | `eb9eb208eb0d988989d07a6a12d0fdeb5f52574a` |
+| GLM (TP4 only) | `zai-org/GLM-5.3-Flash` | `eb9eb208eb0d988989d07a6a12d0fdeb5f52574a` |
 
 GLM's two NVFP4 exports are listed in its
 [deployment page](deploy-glm5next.md#checkpoints).

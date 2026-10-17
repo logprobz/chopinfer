@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 
 use super::Process;
@@ -128,7 +128,8 @@ pub fn container_id(cgroup: &str) -> Option<String> {
 }
 
 /// Whether serve listening on `listen` is `target`: the same port, and the
-/// target names this host's loopback or the listen address itself.
+/// target names the listen address itself, `localhost` for 127.0.0.1 or
+/// ::1, or, for a wildcard bind, any loopback address.
 fn serves(target: &Target, listen: &str) -> bool {
     let Ok(address) = listen.parse::<SocketAddr>() else {
         return false;
@@ -137,10 +138,18 @@ fn serves(target: &Target, listen: &str) -> bool {
         return false;
     }
     let host = target.host.trim_start_matches('[').trim_end_matches(']');
-    let named = host.parse::<IpAddr>().ok();
-    let loopback = host == "localhost" || named.is_some_and(|ip| ip.is_loopback());
-    (loopback && (address.ip().is_loopback() || address.ip().is_unspecified()))
-        || named == Some(address.ip())
+    let listen = address.ip();
+    match host.parse::<IpAddr>() {
+        // The address itself, or any loopback address for a wildcard bind;
+        // 127.0.0.1 and 127.0.0.2 are different listeners.
+        Ok(named) => named == listen || (listen.is_unspecified() && named.is_loopback()),
+        Err(_) => {
+            host == "localhost"
+                && (listen.is_unspecified()
+                    || listen == IpAddr::from(Ipv4Addr::LOCALHOST)
+                    || listen == IpAddr::from(Ipv6Addr::LOCALHOST))
+        }
+    }
 }
 
 /// The visible row `process` is: a process row by pid and start time or a
@@ -437,5 +446,37 @@ mod tests {
         assert_eq!(row_of(owner(Some(OTHER), Some(true))), Some(target));
         // Another user's systemd unit: no namespace to read, no container.
         assert_eq!(row_of(owner(None, None)), Some(target));
+    }
+
+    #[test]
+    fn loopback_listeners_on_one_port_are_different_servers() {
+        let mut registry = Registry::new(1.0);
+        let first = registry.add_target(Target::parse("127.0.0.1:8310").unwrap(), 0.0);
+        let second = registry.add_target(Target::parse("127.0.0.2:8310").unwrap(), 0.0);
+        let row_of = |listen: &str| {
+            let owner = Owner {
+                listen: Some(listen.to_owned()),
+                ..Owner::default()
+            };
+            row(&registry.instances, &gpu_process(5, owner))
+        };
+        assert_eq!(row_of("127.0.0.1:8310"), Some(first));
+        assert_eq!(row_of("127.0.0.2:8310"), Some(second));
+        assert_eq!(row_of("127.0.0.3:8310"), None);
+        // A wildcard bind answers on every loopback address.
+        assert_eq!(row_of("0.0.0.0:8310"), Some(first));
+        let mut named = Registry::new(1.0);
+        let localhost = named.add_target(Target::parse("localhost:8310").unwrap(), 0.0);
+        let row_of = |listen: &str| {
+            let owner = Owner {
+                listen: Some(listen.to_owned()),
+                ..Owner::default()
+            };
+            row(&named.instances, &gpu_process(5, owner))
+        };
+        assert_eq!(row_of("127.0.0.1:8310"), Some(localhost));
+        assert_eq!(row_of("[::1]:8310"), Some(localhost));
+        assert_eq!(row_of("[::]:8310"), Some(localhost));
+        assert_eq!(row_of("127.0.0.2:8310"), None);
     }
 }

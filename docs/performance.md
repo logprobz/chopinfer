@@ -158,15 +158,16 @@ change) and reports per-phase timing, clocks and power.
   The code emits no NVTX ranges, so the timeline has kernels but no
   engine phases.
 - **Step breakdown.** `tools/profile/serving_step_breakdown.py` splits the
-  same export into host steps (each ends at the sampler's collect on the
-  engine thread) and reports, per step and device, kernel-busy time, gaps
-  inside the step, device idle between steps, critical-path charges per
-  kernel class and the collectives' intrinsic and skew-wait time, plus the
-  host phases (pre-launch work, launch calls, the logits wait, sampling and
-  the KV pool's page preparation). With `--step-trace` it also summarizes
-  the server's `CHOPINFER_STEP_TRACE` lines (optionally time-prefixed,
-  filtered by `--window-ns`). It works at graph node or whole-graph
-  granularity:
+  same export into host steps, found by structure (each ends at the
+  sampler's collect on the engine thread), and reports, per step and device,
+  kernel-busy time, gaps inside the step, device idle between steps,
+  critical-path charges per kernel class and the collectives' intrinsic,
+  skew-wait and launch-gap time, plus the host phases (pre-launch work,
+  bundle issue, the wait for the device, sampling and the KV pool's page
+  preparation). With `--step-trace` it also summarizes the server's
+  `CHOPINFER_STEP_TRACE` lines (optionally time-prefixed, filtered by
+  `--window-ns`). Kernel-busy time and gaps need graph node granularity; at
+  whole-graph granularity it reports each graph's elapsed time instead:
 
   ```sh
   python3 -B tools/profile/serving_step_breakdown.py "$profile_prefix.sqlite" \

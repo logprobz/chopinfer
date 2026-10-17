@@ -2,34 +2,56 @@
 """Where each serving step's time goes, from an Nsight Systems SQLite export
 of a server (CUDA trace) and, optionally, its `CHOPINFER_STEP_TRACE` lines.
 
-Host steps come from the engine thread, the thread issuing the most CUDA API
-calls. A step ends at its sampler collect: the last device-to-host copy that
-is waited on (cuMemcpyDtoH*, then cuStreamSynchronize) after the step's long
-logits wait (a cuStreamSynchronize of at least `--long-sync-us`) and before
-the next step's first cuGraphLaunch. Each kernel belongs to the step of the
-API call that launched it (correlationId), so graph-node kernels belong to
-the step whose cuGraphLaunch issued them. At graph granularity, whole-graph
-records (CUPTI_ACTIVITY_KIND_GRAPH_TRACE) stand in for their kernels.
+Steps are found by structure, not by how long anything waits. The engine
+thread is the thread issuing the most CUDA API calls. Its launch calls
+(cuGraphLaunch, cuLaunchKernel, cuLaunchKernelEx, cuLaunchCooperativeKernel)
+are sampler launches when their kernels run on a sampler stream, a stream
+carrying a kernel whose name starts with `--sampler-kernel` (the host
+sampler's `chop_sampling_`), and bundle launches otherwise. A sampler collect
+is a device-to-host copy on a sampler stream (CUPTI_ACTIVITY_KIND_MEMCPY),
+complete when the engine thread's next synchronize call returns. A step ends
+at the last collect before the next bundle launch. A step counts only if it
+holds, in order, a bundle launch, a sampler launch after its last bundle
+launch, and a collect; the others are reported as `rejected_steps`.
 
-Per step and device:
+Each kernel belongs to the step of the API call that launched it
+(correlationId), so graph-node kernels belong to the step whose cuGraphLaunch
+issued them. Per step and device:
   span         first kernel start to last kernel end;
   busy         union of kernel intervals (PDL overlap counted once);
   inner gap    span minus busy, idle device time inside the step;
   idle before  the previous step's last kernel end to this step's first
                kernel start: device idle between steps.
-Each kernel is charged the advance it causes in the running latest end (as
-serving_step_nsys.py does), summed per kernel class (`--class`).
+At graph granularity (CUPTI_ACTIVITY_KIND_GRAPH_TRACE) a graph's record is
+its elapsed envelope, not kernel time: it is reported as `graph_elapsed`, and
+busy and inner gap are null (unavailable without node tracing) for a device
+whose step holds a graph record.
+Each kernel (or graph record) is charged the advance it causes in the
+running latest end (as serving_step_nsys.py does), summed per kernel class
+(`--class`); idle time inside the step goes to the record after it.
 
-Collectives: the k-th collective kernel of a step on every device is one
-instance. A device arrives when its earlier kernels in the step have ended;
-the instance's intrinsic time is the latest exit minus the latest arrival,
-and a device's skew wait is the latest arrival minus its own.
+Collectives: the k-th collective kernel (`comm` class) of a step on every
+device is one instance. Its dependency is the previous kernel on the same
+stream; a device arrives at the later of that kernel's end and its own
+collective's start, and its launch gap is how long its collective started
+after that dependency ended. The instance's intrinsic time is the latest
+exit minus the latest arrival, a device's skew wait the latest arrival minus
+its own. An instance whose collective has no earlier kernel on its stream in
+the step has an unknown dependency (arrival bounded by its start) and is
+counted in `unknown_dependency`; cross-stream dependencies are not seen.
 
-Host phases per step: pre_launch (step start to the first graph launch:
-commit, scheduling, batch preparation, uploads), launch_api, logits_wait,
-after_logits (sampling issue, wait and collect), prepare_kv (from the first
-cuMemset* to the last cuStreamSynchronize before the first graph launch, the
-host KV pool's page zeroing).
+Host phases per step (they add up to the period):
+  pre_launch    step start to the first bundle launch: commit, scheduling,
+                batch preparation, uploads;
+  bundle_issue  first bundle launch to the end of the last one;
+  wait          end of the last bundle launch to the first sampler launch,
+                of which device_wait is spent in synchronize calls;
+  sampling      first sampler launch to the step's end (issue and collect).
+Bundle launches include the commit's state-copy kernels, so pre_launch ends
+at the first GPU work the step submits. Also launch_api (time in bundle
+launch calls) and prepare_kv: from the first cuMemset* before the first
+bundle launch to the last cuStreamSynchronize before it (the host KV pool's
+page zeroing; the bundle's uploads wait on events), zero without memsets.
 
 The step trace reader takes JSON lines (`chopinfer.step.v1`), each optionally
 prefixed by a unix time in ns and a tab, and summarizes the decode steps
@@ -37,7 +59,7 @@ prefixed by a unix time in ns and a tab, and summarizes the decode steps
 
 Usage: serving_step_breakdown.py [EXPORT.sqlite] [--step-trace FILE]
        [--window-ns START END] [--class LABEL=PREFIX[,PREFIX...]]...
-       [--long-sync-us N] [--skip N] [--json OUT]
+       [--sampler-kernel PREFIX] [--skip N] [--json OUT]
 """
 
 import argparse
@@ -54,10 +76,14 @@ CLASSES = [
     ("linear_attn", ("chop_channel_decay_", "chop_delta_", "chop_linear_")),
     ("attention", ("chop_latent_", "chop_pooled_indexer_", "chop_attn_", "chop_attention_")),
     ("hyper_conn", ("chop_sinkhorn_hc_",)),
+    ("sampling", ("chop_sampling_",)),
     ("graph", ("<graph>",)),
 ]
-SYNC = "cuStreamSynchronize"
-LAUNCHES = ("cuGraphLaunch", "cuLaunchKernelEx", "cuLaunchKernel")
+GRAPH = "<graph>"
+SAMPLER = "chop_sampling_"
+LAUNCHES = ("cuGraphLaunch", "cuLaunchKernel", "cuLaunchKernelEx", "cuLaunchCooperativeKernel")
+SYNCS = ("cuStreamSynchronize", "cuEventSynchronize", "cuCtxSynchronize")
+DTOH = 2  # CUPTI copyKind
 TOP = 15
 
 
@@ -68,8 +94,22 @@ def kernel_class(name, classes):
     return "other"
 
 
+def base(name):
+    """The driver API name without its version or stream suffix
+    (cuMemcpyDtoHAsync_v2, cuStreamSynchronize_ptsz)."""
+    return name.split("_", 1)[0]
+
+
+def is_launch(name):
+    return base(name) in LAUNCHES
+
+
+def is_sync(name):
+    return base(name) in SYNCS
+
+
 def load(connection):
-    """(engine-thread API calls, kernels) with names resolved."""
+    """(engine-thread API calls, kernels, sampler copy correlations)."""
     names = dict(connection.execute("SELECT id, value FROM StringIds"))
     api = connection.execute(
         "SELECT start, end, globalTid, correlationId, nameId FROM CUPTI_ACTIVITY_KIND_RUNTIME ORDER BY start"
@@ -80,42 +120,118 @@ def load(connection):
     engine = max(calls, key=calls.get)
     api = [(start, end, correlation, names[name]) for start, end, thread, correlation, name in api
            if thread == engine]
-    kernels = [(start, end, device, correlation, names[name]) for start, end, device, correlation, name in
-               connection.execute("SELECT start, end, deviceId, correlationId, shortName "
-                                  "FROM CUPTI_ACTIVITY_KIND_KERNEL")]
     tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    kernels = [(start, end, device, correlation, names[name], stream)
+               for start, end, device, correlation, name, stream in
+               connection.execute("SELECT start, end, deviceId, correlationId, shortName, streamId "
+                                  "FROM CUPTI_ACTIVITY_KIND_KERNEL")]
     if "CUPTI_ACTIVITY_KIND_GRAPH_TRACE" in tables:
-        kernels += [(start, end, device, correlation, "<graph>") for start, end, device, correlation in
-                    connection.execute("SELECT start, end, deviceId, correlationId "
+        kernels += [(start, end, device, correlation, GRAPH, stream) for start, end, device, correlation, stream in
+                    connection.execute("SELECT start, end, deviceId, correlationId, streamId "
                                        "FROM CUPTI_ACTIVITY_KIND_GRAPH_TRACE")]
     kernels.sort()
-    return api, kernels
+    copies = []
+    if "CUPTI_ACTIVITY_KIND_MEMCPY" in tables:
+        copies = connection.execute("SELECT correlationId, deviceId, streamId FROM CUPTI_ACTIVITY_KIND_MEMCPY "
+                                    "WHERE copyKind = ?", (DTOH,)).fetchall()
+    return api, kernels, copies
 
 
-def host_steps(api, long_sync_ns):
-    """[(start, end, calls)] between consecutive sampler collects."""
+def classify(api, kernels, copies, sampler_prefix):
+    """Per engine-thread call: 'bundle', 'sampler', 'collect', 'sync',
+    'memset' or None."""
+    sampler_streams = {(device, stream) for _, _, device, _, name, stream in kernels
+                       if name.startswith(sampler_prefix)}
+    sampler_launches = {correlation for _, _, device, correlation, name, stream in kernels
+                        if (device, stream) in sampler_streams}
+    collects = {correlation for correlation, device, stream in copies if (device, stream) in sampler_streams}
+    kinds = []
+    for _, _, correlation, name in api:
+        if is_launch(name):
+            kinds.append("sampler" if correlation in sampler_launches else "bundle")
+        elif base(name).startswith("cuMemcpyDtoH") and correlation in collects:
+            kinds.append("collect")
+        elif is_sync(name):
+            kinds.append("sync")
+        elif name.startswith("cuMemset"):
+            kinds.append("memset")
+        else:
+            kinds.append(None)
+    return kinds
+
+
+def host_steps(api, kinds):
+    """([(start, end, calls, kinds)], rejected): steps between the ends of
+    the last sampler collect before each bundle launch."""
     boundaries = []
-    waiting = pending_copy = False
-    collect = None
-    for start, end, _, name in api:
-        if name == SYNC and end - start >= long_sync_ns:
-            if waiting and collect is not None:
-                boundaries.append(collect)
-            waiting, pending_copy, collect = True, False, None
-        elif not waiting:
-            continue
-        elif name.startswith("cuMemcpyDtoH"):
-            pending_copy = True
-        elif name == SYNC and pending_copy:
-            collect, pending_copy = end, False
-        elif name == "cuGraphLaunch":
-            if collect is not None:
-                boundaries.append(collect)
-            waiting, collect = False, None
-    steps = []
+    collect_end = None  # end of the latest completed collect since the last bundle launch
+    pending = None  # a collect copy waiting for its synchronize call
+    for (start, end, _, _), kind in zip(api, kinds):
+        if kind == "collect":
+            pending = end
+        elif kind == "sync" and pending is not None:
+            collect_end, pending = end, None
+        elif kind == "bundle":
+            if pending is not None:  # a collect without a wait completes at its copy call
+                collect_end, pending = pending, None
+            if collect_end is not None:
+                boundaries.append(collect_end)
+            collect_end = None
+    steps, rejected = [], 0
+    index = 0
     for first, last in zip(boundaries, boundaries[1:]):
-        steps.append((first, last, [call for call in api if first <= call[0] < last]))
-    return steps
+        while index < len(api) and api[index][0] < first:
+            index += 1
+        stop = index
+        while stop < len(api) and api[stop][0] < last:
+            stop += 1
+        calls, step_kinds = api[index:stop], kinds[index:stop]
+        if valid(step_kinds):
+            steps.append((first, last, calls, step_kinds))
+        else:
+            rejected += 1
+    return steps, rejected
+
+
+def valid(kinds):
+    """A bundle launch, then a sampler launch after the last bundle launch,
+    then a collect."""
+    bundles = [index for index, kind in enumerate(kinds) if kind == "bundle"]
+    if not bundles:
+        return False
+    after = kinds[bundles[-1] + 1:]
+    if "sampler" not in after:
+        return False
+    return "collect" in after[after.index("sampler"):]
+
+
+def host_phases(calls, kinds, first, last):
+    bundles = [index for index, kind in enumerate(kinds) if kind == "bundle"]
+    sampler = next(index for index in range(bundles[-1] + 1, len(kinds)) if kinds[index] == "sampler")
+    launch_start, launch_end = calls[bundles[0]][0], calls[bundles[-1]][1]
+    sampling_start = calls[sampler][0]
+    memsets = [index for index in range(bundles[0]) if kinds[index] == "memset"]
+    prepare = 0
+    if memsets:
+        ends = [calls[index][1] for index in range(memsets[0], bundles[0])
+                if base(calls[index][3]) == "cuStreamSynchronize"]
+        prepare = max(ends) - calls[memsets[0]][0] if ends else 0
+    return {
+        "period": last - first,
+        "pre_launch": launch_start - first,
+        "bundle_issue": launch_end - launch_start,
+        "wait": sampling_start - launch_end,
+        "device_wait": sum(calls[index][1] - calls[index][0] for index in range(bundles[-1] + 1, sampler)
+                           if kinds[index] == "sync"),
+        "sampling": last - sampling_start,
+        "launch_api": sum(calls[index][1] - calls[index][0] for index in bundles),
+        "prepare_kv": prepare,
+        "graph_launches": sum(1 for index in bundles if base(calls[index][3]) == "cuGraphLaunch"),
+        "kernel_launches": sum(1 for index in bundles if base(calls[index][3]) != "cuGraphLaunch"),
+        "sampler_launches": kinds.count("sampler"),
+        "collects": kinds.count("collect"),
+        "memsets": len(memsets),
+    }
 
 
 def union(intervals):
@@ -130,70 +246,67 @@ def union(intervals):
     return total + (current[1] - current[0] if current else 0)
 
 
-def host_phases(calls, first, last):
-    syncs = [(start, end) for start, end, _, name in calls if name == SYNC]
-    graphs = [start for start, _, _, name in calls if name == "cuGraphLaunch"]
-    logits = max(syncs, key=lambda sync: sync[1] - sync[0]) if syncs else (last, last)
-    launch = graphs[0] if graphs else logits[0]
-    memsets = [start for start, _, _, name in calls if name.startswith("cuMemset")]
-    prepare = 0
-    if memsets:
-        ends = [end for start, end in syncs if memsets[0] <= start and end <= launch]
-        prepare = max(ends) - memsets[0] if ends else 0
-    return {
-        "period": last - first,
-        "pre_launch": launch - first,
-        "launch_api": sum(end - start for start, end, _, name in calls if name in LAUNCHES),
-        "logits_wait": logits[1] - logits[0],
-        "after_logits": last - logits[1],
-        "prepare_kv": prepare,
-        "graph_launches": len(graphs),
-        "kernel_launches": sum(1 for call in calls if call[3] in LAUNCHES[1:]),
-        "memsets": len(memsets),
-    }
-
-
 def device_step(kernels, classes):
     """One device's kernels of one step: timing, charges and collectives."""
     kernels = sorted(kernels)
     charges = defaultdict(float)
     by_name = defaultdict(lambda: [0, 0.0])
     collectives = []
+    stream_end = {}
     latest = kernels[0][0]
-    for start, end, _, _, name in kernels:
+    for start, end, _, _, name, stream in kernels:
         advance = max(0, end - latest)
         label = kernel_class(name, classes)
         charges[label] += advance
         by_name[name][0] += 1
         by_name[name][1] += advance
         if label == "comm":
-            collectives.append((latest, end))
+            dependency = stream_end.get(stream)
+            collectives.append({
+                "arrive": start if dependency is None else max(start, dependency),
+                "exit": end,
+                "launch_gap": None if dependency is None else max(0, start - dependency),
+            })
+        stream_end[stream] = max(stream_end.get(stream, end), end)
         latest = max(latest, end)
     first, last = kernels[0][0], max(kernel[1] for kernel in kernels)
-    busy = union([(kernel[0], kernel[1]) for kernel in kernels])
-    return {"start": first, "end": last, "kernels": len(kernels), "span": last - first, "busy": busy,
-            "inner_gap": last - first - busy, "charges": dict(charges), "names": dict(by_name),
-            "collectives": collectives}
+    graphs = [(kernel[0], kernel[1]) for kernel in kernels if kernel[4] == GRAPH]
+    busy = None if graphs else union([(kernel[0], kernel[1]) for kernel in kernels])
+    return {"start": first, "end": last, "kernels": len(kernels) - len(graphs), "graphs": len(graphs),
+            "span": last - first, "busy": busy, "inner_gap": None if busy is None else last - first - busy,
+            "graph_elapsed": union(graphs) if graphs else None,
+            "charges": dict(charges), "names": dict(by_name), "collectives": collectives}
 
 
 def collective_times(per_device):
-    """(instances, intrinsic, mean skew wait) of one step, or None when it
-    ran none or the devices ran different numbers of collectives."""
+    """Per step: instances, intrinsic, mean skew wait, mean launch gap and the
+    instances with an unknown dependency; None when the step ran none or the
+    devices ran different numbers of collectives."""
     lists = [data["collectives"] for data in per_device.values()]
     if not lists or not lists[0] or len({len(entry) for entry in lists}) != 1:
         return None
-    intrinsic = skew = 0
+    intrinsic = skew = gap = 0
+    unknown = 0
     for instance in zip(*lists):
-        arrivals = [arrive for arrive, _ in instance]
-        intrinsic += max(0, max(exit for _, exit in instance) - max(arrivals))
+        arrivals = [entry["arrive"] for entry in instance]
+        intrinsic += max(0, max(entry["exit"] for entry in instance) - max(arrivals))
         skew += statistics.mean(max(arrivals) - arrive for arrive in arrivals)
-    return len(lists[0]), intrinsic, skew
+        gaps = [entry["launch_gap"] for entry in instance]
+        if None in gaps:
+            unknown += 1
+        else:
+            gap += statistics.mean(gaps)
+    return {"instances": len(lists[0]), "intrinsic": intrinsic, "skew_wait": skew, "launch_gap": gap,
+            "unknown_dependency": unknown}
 
 
-def analyze(connection, long_sync_us=1000, skip=1, classes=CLASSES):
-    api, kernels = load(connection)
-    steps = host_steps(api, long_sync_us * 1000)[skip:]
-    owner = {correlation: index for index, (_, _, calls) in enumerate(steps) for _, _, correlation, _ in calls}
+def analyze(connection, skip=1, classes=CLASSES, sampler_prefix=SAMPLER):
+    """(per-step records, rejected step count)."""
+    api, kernels, copies = load(connection)
+    kinds = classify(api, kernels, copies, sampler_prefix)
+    steps, rejected = host_steps(api, kinds)
+    steps = steps[skip:]
+    owner = {correlation: index for index, (_, _, calls, _) in enumerate(steps) for _, _, correlation, _ in calls}
     launched = [defaultdict(list) for _ in steps]
     for kernel in kernels:
         index = owner.get(kernel[3])
@@ -201,14 +314,14 @@ def analyze(connection, long_sync_us=1000, skip=1, classes=CLASSES):
             launched[index][kernel[2]].append(kernel)
     records = []
     previous_end = {}
-    for index, (first, last, calls) in enumerate(steps):
+    for index, (first, last, calls, step_kinds) in enumerate(steps):
         per_device = {device: device_step(rows, classes) for device, rows in sorted(launched[index].items())}
         for device, data in per_device.items():
             data["idle_before"] = data["start"] - previous_end[device] if device in previous_end else None
             previous_end[device] = data["end"]
-        records.append({"host": host_phases(calls, first, last), "devices": per_device,
+        records.append({"host": host_phases(calls, step_kinds, first, last), "devices": per_device,
                         "collectives": collective_times(per_device)})
-    return records
+    return records, rejected
 
 
 def us(values):
@@ -216,19 +329,24 @@ def us(values):
     return round(statistics.median(values) / 1000, 1) if values else None
 
 
-def summarize(records):
-    """Medians per step in microseconds (charges are means, so they add up)."""
+COUNTS = ("graph_launches", "kernel_launches", "sampler_launches", "collects", "memsets")
+
+
+def summarize(records, rejected=0):
+    """Medians per step in microseconds (charges are means, so they add up);
+    null where a figure is unavailable."""
+    report = {"steps": len(records), "rejected_steps": rejected}
     if not records:
-        return {"steps": 0}
-    report = {"steps": len(records), "host_us": {}, "devices": {}}
+        return report
+    report["host_us"] = {}
     for key in records[0]["host"]:
         values = [record["host"][key] for record in records]
-        count = key in ("graph_launches", "kernel_launches", "memsets")
-        report["host_us"][key] = statistics.median(values) if count else us(values)
+        report["host_us"][key] = statistics.median(values) if key in COUNTS else us(values)
     report["page_work_step_fraction"] = round(
         sum(1 for record in records if record["host"]["memsets"]) / len(records), 3)
     report["prepare_kv_mean_us"] = round(
         statistics.mean(record["host"]["prepare_kv"] for record in records) / 1000, 1)
+    report["devices"] = {}
     devices = sorted({device for record in records for device in record["devices"]})
     for device in devices:
         rows = [record["devices"][device] for record in records if device in record["devices"]]
@@ -240,9 +358,11 @@ def summarize(records):
                 totals[name][1] += charge
         report["devices"][str(device)] = {
             "kernels": statistics.median(row["kernels"] for row in rows),
+            "graphs": statistics.median(row["graphs"] for row in rows),
             "span_us": us([row["span"] for row in rows]),
             "busy_us": us([row["busy"] for row in rows]),
             "inner_gap_us": us([row["inner_gap"] for row in rows]),
+            "graph_elapsed_us": us([row["graph_elapsed"] for row in rows]),
             "idle_before_us": us([row["idle_before"] for row in rows]),
             "charged_us": {label: round(statistics.mean(row["charges"].get(label, 0) for row in rows) / 1000, 1)
                            for label in labels},
@@ -255,9 +375,11 @@ def summarize(records):
     collectives = [record["collectives"] for record in records if record["collectives"]]
     if collectives:
         report["collectives"] = {
-            "instances": statistics.median(entry[0] for entry in collectives),
-            "intrinsic_us": us([entry[1] for entry in collectives]),
-            "mean_skew_wait_us": us([entry[2] for entry in collectives]),
+            "instances": statistics.median(entry["instances"] for entry in collectives),
+            "intrinsic_us": us([entry["intrinsic"] for entry in collectives]),
+            "mean_skew_wait_us": us([entry["skew_wait"] for entry in collectives]),
+            "mean_launch_gap_us": us([entry["launch_gap"] for entry in collectives]),
+            "unknown_dependency": statistics.median(entry["unknown_dependency"] for entry in collectives),
         }
     return report
 
@@ -308,7 +430,7 @@ def main(argv=None):
     parser.add_argument("--window-ns", nargs=2, type=int, metavar=("START", "END"))
     parser.add_argument("--class", dest="classes", action="append", type=class_option, default=[],
                         help="kernel class LABEL=PREFIX[,PREFIX...], tried before the defaults")
-    parser.add_argument("--long-sync-us", type=float, default=1000)
+    parser.add_argument("--sampler-kernel", default=SAMPLER, help=f"sampler kernel prefix (default {SAMPLER})")
     parser.add_argument("--skip", type=int, default=1, help="leading steps to drop (default 1)")
     parser.add_argument("--json")
     args = parser.parse_args(argv)
@@ -317,7 +439,8 @@ def main(argv=None):
     report = {}
     if args.sqlite:
         connection = sqlite3.connect(args.sqlite)
-        report["nsys"] = summarize(analyze(connection, args.long_sync_us, args.skip, args.classes + CLASSES))
+        records, rejected = analyze(connection, args.skip, args.classes + CLASSES, args.sampler_kernel)
+        report["nsys"] = summarize(records, rejected)
     if args.step_trace:
         with open(args.step_trace, errors="replace") as lines:
             report["step_trace"] = step_trace(lines, args.window_ns)

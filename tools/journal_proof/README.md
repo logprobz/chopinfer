@@ -235,7 +235,8 @@ The tests are the executable reference for every field:
 - `test_extensions.py`: replacements, expansions and allocation-bound rewrites;
 - `test_history.py`: history, layouts and graph pieces;
 - `test_text.py`: text journals;
-- `test_layout.py`: layout declarations and their witness writer.
+- `test_layout.py`: layout declarations and their witness writer;
+- `test_mutations.py`: the mutation harness below, over toy devices.
 
 ## Writing specs
 
@@ -436,6 +437,48 @@ A declaration is model-specific, so it lives with its model:
 A declaration written after its change landed names the revision that holds
 it with `--declaration-revision`. Every committed declaration must parse
 (`test_layout.py`).
+
+### Mutation harness
+
+`mutations.py` checks the write and zero rules of added buffers against
+mutated histories. It starts from a proven device fixture, mirrors one
+mutation into the base and head histories at the same place (or changes the
+head's declared zero), and proves the fixture again. An oracle written apart
+from `layout.py` gives each mutation's expected outcome from the journal:
+
+- refused: a zero, upload, copy or peer copy into the replaced buffer, or a
+  launch naming it, before a collective reads it; an executed launch on a
+  plan-only device whose plan records name it; an earlier site launch that
+  also names it in another argument; the declared zero deleted, moved after
+  the first use or onto another stream;
+- proven: reads and copies out of it, writes of unrelated buffers, any write
+  after its last collective, plan records on a plan-only device, the
+  declared zero moved right after its allocation.
+
+Writes of a replaced buffer on a device that runs the instance create are
+outside these rules and only reported. A mutation refused where the oracle
+expects a proof is a false refusal; one proven where it expects a refusal is
+an escape. `--weaken CLASS` runs with that class's rule deliberately weakened
+(`WEAKENED`), and the harness must then report escapes of it.
+
+```sh
+python3 -B tools/journal_proof/mutations.py pair --repo "$REPOSITORY" --model MODEL \
+  --base "$BASE_COMMIT" --head "$HEAD_COMMIT" --spec "$CHANGE_SPEC" \
+  --base-capture-index "$BASE_CAPTURE/index.json" --head-capture-index "$HEAD_CAPTURE/index.json" \
+  --report "$RESULTS/mutations.json" [--declaration-revision REV] [--weaken CLASS] [--jobs N]
+python3 -B tools/journal_proof/mutations.py overlay --repo "$REPOSITORY" --model MODEL \
+  --revision "$COMMIT" --capture-index "$CAPTURE/index.json" --report "$RESULTS/overlay.json" \
+  [--weaken CLASS] [--jobs N]
+```
+
+`pair` runs on a capture pair under its committed declaration. `overlay`
+needs no layout change: it turns each device of one capture into a plan-only
+device (its allocations, then each executed launch as a plan record) and
+declares a zeroed added buffer per rank replacing one collective's peer
+array, once for buffers nothing else names and once for buffers other
+records name too. Exit 0 means every baseline proved with no escape and no
+false refusal. Mutations change history lines only, in memory: nothing is
+sealed or written beside the report.
 
 ## Producing a capture
 

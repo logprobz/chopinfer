@@ -1,4 +1,5 @@
-"""Exercise tests/leak_guard.py's Git modes on temporary repositories."""
+"""Exercise tests/leak_guard.py's Git modes and tools/dev/pre-push.sh on
+temporary repositories."""
 import contextlib
 import importlib.util
 import io
@@ -182,6 +183,94 @@ class GitModes(Isolated):
     def test_base_needs_a_revision(self):
         with patch('sys.stderr'), self.assertRaises(SystemExit):
             leak_guard.arguments(['--base', 'main'])
+
+
+class PrePushHook(Isolated):
+    """tools/dev/pre-push.sh installed as documented, against a bare origin."""
+
+    def setUp(self):
+        super().setUp()
+        os.environ['CHOPINFER_LEAK_DENYLIST'] = str(self.denylist)
+        self.origin = self.tmp / 'origin.git'
+        subprocess.run(['git', 'init', '-q', '--bare', '-b', 'main', str(self.origin)], check=True)
+        self.repo = Repo(self.tmp / 'work')
+        subprocess.run(['git', 'init', '-q', '-b', 'main', str(self.repo.root)], check=True)
+        for name in ('tests/leak_guard.py', 'tools/dev/pre-push.sh'):
+            (self.repo.root / name).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / name, self.repo.root / name)
+            self.repo.git('add', name)
+        self.root = self.repo.commit('Initial release', {'docs/developer-preview.md': DATA_PATH})
+        self.repo.git('remote', 'add', 'origin', str(self.origin))
+        self.repo.git('push', '-q', 'origin', 'main')
+        hook = self.repo.root / '.git/hooks/pre-push'
+        hook.write_text('#!/bin/sh\nexec bash "$(git rev-parse --show-toplevel)/tools/dev/pre-push.sh" "$@"\n')
+        hook.chmod(0o755)
+
+    def push(self, *refs, repo=None):
+        result = subprocess.run(['git', '-C', str((repo or self.repo).root), 'push', '-q', 'origin', *refs],
+                                capture_output=True, text=True)
+        return result.returncode, result.stderr
+
+    def published(self, ref):
+        return subprocess.run(['git', '--git-dir', str(self.origin), 'rev-parse', '--verify', '-q', ref],
+                              capture_output=True, text=True).stdout.strip()
+
+    def refused(self, *refs, says, repo=None):
+        code, err = self.push(*refs, repo=repo)
+        self.assertNotEqual(code, 0, err)
+        self.assertIn(says, err)
+
+    def test_a_clean_branch_and_tag_publish(self):
+        head = self.repo.commit(f'Add notes\n\n{TRAILER}', {'notes.md': 'Plain text.\n'})
+        self.assertEqual(self.push('main'), (0, ''))
+        self.assertEqual(self.published('main'), head)
+        self.repo.git('tag', '-a', 'v1', '-m', 'Release v1')
+        self.assertEqual(self.push('v1')[0], 0)
+
+    def test_history_that_does_not_start_at_the_public_root_is_refused(self):
+        self.repo.git('checkout', '-q', '--orphan', 'private')
+        private = self.repo.commit('Private history')
+        self.refused('private', says="does not start at origin/main's root")
+        self.repo.git('tag', '-a', 'old', '-m', 'An old release')
+        self.refused('old', says="does not start at origin/main's root")
+        self.repo.git('checkout', '-q', 'main')
+        self.repo.git('merge', '-q', '--allow-unrelated-histories', '-m', 'Merge', 'private')
+        self.refused('main', says="does not start at origin/main's root")
+        self.assertEqual(self.published('private'), '')
+        self.assertEqual(self.published('main'), self.root)
+        self.repo.git('reset', '-q', '--hard', self.root)
+        self.repo.commit(f'Port {private[:9]}')
+        self.refused('main', says=f'cites commit {private[:9]} outside this history')
+
+    def test_leaks_in_any_outgoing_version_are_refused(self):
+        self.repo.commit('Add notes', {'notes.md': f'Built on {HOST}.\n'})
+        self.repo.commit('Reword notes', {'notes.md': 'Built here.\n'})
+        self.refused('main', says='notes.md:1: local deny-list pattern')
+        self.repo.git('reset', '-q', '--hard', self.root)
+        shutil.copy(self.repo.root / 'docs/developer-preview.md', self.repo.root / 'docs/notes.md')
+        self.repo.git('add', 'docs/notes.md')
+        self.repo.commit('Copy the preview')
+        self.refused('main', says='docs/notes.md:1: local /data path')
+        self.assertEqual(self.published('main'), self.root)
+
+    def test_an_annotated_tag_on_published_history_is_checked(self):
+        self.repo.git('tag', '-a', 'v1', '-m', f'Release v1, built on {HOST}')
+        self.refused('v1', says='the tag failed the leak guard')
+        self.assertEqual(self.published('v1'), '')
+
+    def test_deleting_main_or_a_tag_is_refused(self):
+        self.repo.git('tag', 'v1')
+        self.assertEqual(self.push('v1')[0], 0)
+        self.refused('--delete', 'main', says='refusing to delete refs/heads/main')
+        self.refused('--delete', 'v1', says='refusing to delete refs/tags/v1')
+
+    def test_a_worktree_without_the_script_is_refused(self):
+        old = self.repo.commit('Drop the hook script', remove=['tools/dev/pre-push.sh'])
+        self.repo.git('reset', '-q', '--hard', self.root)
+        self.repo.git('worktree', 'add', '-q', str(self.tmp / 'old'), old)
+        code, _ = self.push('HEAD:refs/heads/old', repo=Repo(self.tmp / 'old'))
+        self.assertNotEqual(code, 0)
+        self.assertEqual(self.published('old'), '')
 
 
 if __name__ == '__main__':

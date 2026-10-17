@@ -80,6 +80,30 @@ serial script, for about 30% more CPU time. Its host memory use peaked near
 temporary and target directories near 40 GB.
 Both scripts source `local.env` (see [toolchain.md](toolchain.md)).
 
+A push publishes, and the full gate is not run for every push, so install
+`tools/dev/pre-push.sh` as your checkout's pre-push hook:
+
+```sh
+printf '#!/bin/sh\nexec bash "$(git rev-parse --show-toplevel)/tools/dev/pre-push.sh" "$@"\n' > .git/hooks/pre-push
+chmod +x .git/hooks/pre-push
+```
+
+It refuses a pushed ref whose history does not start at `origin/main`'s root
+commit, and the deletion of `main` or a tag. It then runs the leak guard on
+what the push sends that `origin` does not already have:
+
+- every file version each outgoing commit adds or changes, under each path
+  it appears at (`--rev REV --base ...`), so a version a later commit
+  removes, a rename and a copy are all checked;
+- each commit's message and author and committer lines (`--messages`);
+- each annotated tag (`--tag`).
+
+Messages and tags get no file's allowances, may name only noreply
+addresses, and may not cite a commit outside the pushed history. A one-commit
+push checked in well under a second on 2026-10-17, against about 45 seconds
+for the whole tree. A worktree without the script cannot push, so rebase old
+branches onto `origin/main` first.
+
 After CPU acceptance, kernel changes also need the affected `kernel-lab`
 test on an idle GPU ([testing.md](testing.md)). For example, a sampling
 change uses:

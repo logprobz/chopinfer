@@ -664,24 +664,36 @@ def thinking_mode(keywords, declaration):
     return "thinking" if switch else "chat"
 
 
-def argument_failure(message, tools, parser):
+def argument_failure(message, tools, parser, arguments_of=None):
     """The first argument of the turn's calls the parser cannot read back
     as sent, as `(kind, detail)`, or None. `tools` are the request's
-    offered tools and `parser` the declaration's format.parser section."""
+    offered tools and `parser` the declaration's format.parser section;
+    `arguments_of`, a cases module's `turn_arguments`, reads a call's
+    arguments as its template writes them, where the HF input keeps them as
+    text. The typed grammar writes every value with the close that types
+    it, so only a raw string can lose its value, to a marker it spells."""
     functions = {tool["function"].get("name"): tool["function"] for tool in tools or []
                  if isinstance(tool, dict) and isinstance(tool.get("function"), dict)}
     markers = frontend_cases.raw_markers(parser)
+    typed = (parser or {}).get("tool_grammar") == "xml-typed-parameters-v1"
     for call in message.get("tool_calls") or []:
         function = functions.get(call["function"]["name"]) or {}
         arguments = call["function"]["arguments"]
+        if arguments_of is not None:
+            arguments = arguments_of(arguments)
         for name, value in arguments.items():
-            loss = frontend_cases.argument_loss(value, function.get("parameters"), name)
-            if loss:
-                return loss
-            # The scan reads a raw value to the first marker that ends one;
-            # in a JSON value a marker inside a string literal is content.
-            if frontend_cases.json_scanned(function, name):
-                continue
+            if typed:
+                if not isinstance(value, str):
+                    continue
+            else:
+                loss = frontend_cases.argument_loss(value, function.get("parameters"), name)
+                if loss:
+                    return loss
+                # The scan reads a raw value to the first marker that ends
+                # one; in a JSON value a marker inside a string literal is
+                # content.
+                if frontend_cases.json_scanned(function, name):
+                    continue
             spelled = [marker for marker in markers
                        if any(marker in text for text in frontend_cases.strings_of(value))]
             if spelled:
@@ -775,7 +787,7 @@ def round_vectors(model, reference, case):
     if expected is None:
         return [], {}, RoundTripFailure(
             "read-back", "the cases module reads no turn back from this history render", mode), None
-    loss = argument_failure(last, request.get("tools"), model.parser)
+    loss = argument_failure(last, request.get("tools"), model.parser, getattr(model.cases, "turn_arguments", None))
     if loss:
         kind, detail = loss
         return [], {}, RoundTripFailure(kind, f"the parser cannot read the turn's arguments back: {detail}",

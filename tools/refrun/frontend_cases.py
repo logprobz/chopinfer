@@ -340,15 +340,20 @@ def json_scanned(function, name):
     return isinstance(schema, dict) and not admits_string(schema)
 
 
+# The tool grammars with a function element, whose parameters a function
+# close ends.
+FUNCTION_GRAMMARS = ("xml-function-parameters-v1", "xml-typed-parameters-v1")
+
+
 def raw_markers(parser):
     """The bare markers that end a raw (string) parameter value in the
     declared tool grammar: the parameter open and close and the function
-    close in the function-parameter grammar, the value close and the call
-    close in the key-value one."""
+    close in the function-parameter and typed grammars, the value close and
+    the call close in the key-value one."""
     if parser is None:
         return []
     names = (("parameter_open", "parameter_close", "function_close")
-             if parser.get("tool_grammar") == "xml-function-parameters-v1" else ("parameter_close", "tool_call_close"))
+             if parser.get("tool_grammar") in FUNCTION_GRAMMARS else ("parameter_close", "tool_call_close"))
     return [parser[name].strip() for name in names if parser.get(name, "").strip()]
 
 

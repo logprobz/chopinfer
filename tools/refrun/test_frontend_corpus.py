@@ -890,6 +890,24 @@ UNION = calling("union", {"type": "object", "properties": {"n": {"type": ["strin
 UNION_ENTRY = {"id": "union", "kind": "no-round-trip", "when": ["round-trip:union"], "reason": "-"}
 
 
+class TypedArgumentTests(unittest.TestCase):
+    PARSER = {"tool_grammar": "xml-typed-parameters-v1", "parameter_open": "<p name=\"",
+              "parameter_close": "</p>", "function_close": "</f>"}
+
+    def test_a_typed_value_is_lost_only_to_a_marker_a_raw_string_spells(self):
+        def turn(arguments):
+            return {"role": "assistant", "tool_calls": [{"function": {"name": "f", "arguments": arguments}}]}
+
+        tools = [{"type": "function", "function": {"name": "f", "parameters": {
+            "type": "object", "properties": {"n": {"type": "string"}}}}}]
+        # The close types every value, whatever its schema names.
+        self.assertIsNone(corpus.argument_failure(turn({"n": 1, "u": [1, "</p>"]}), tools, self.PARSER))
+        self.assertEqual(corpus.argument_failure(turn({"n": "a</p>"}), tools, self.PARSER),
+                         ("delimiter", "n is raw text that spells the marker '</p>'"))
+        # A cases module reads arguments the HF input keeps as text.
+        self.assertIsNone(corpus.argument_failure(turn("{\"n\": 1}"), tools, self.PARSER, json.loads))
+
+
 class RoundTripDomainTests(Harness):
     """Accepted arguments outside the parser's lossless domain fail their
     round trip, and only an exercised no-round-trip entry of their class

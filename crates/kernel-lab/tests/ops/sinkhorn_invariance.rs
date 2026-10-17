@@ -11,6 +11,9 @@
 //!   the split entry, the op's one-row launch, whose bits every form
 //!   declares. Chunks below its rows run the split entry.
 //! - The fused mix-collapse and norm runs its tree entry.
+//! - The lagged engine's lab entries (`sinkhorn_hc::lagged`) run on a
+//!   backend of those entries, over the kit's lagged cases
+//!   (`kit::cases::sinkhorn_lagged`).
 //!
 //! The negative control (`a_tiled_mutant_fails_the_rows_case_gpu`)
 //! registers the tile whose warp sums run their levels in reverse
@@ -23,11 +26,12 @@ use kernel_core::sinkhorn_hyper_connection::{
     SinkhornHyperConnectionQuery as Query, StreamHeadMode,
 };
 use kernel_lab::kit::cases::sinkhorn as kit;
+use kernel_lab::kit::cases::sinkhorn_lagged as lagged_kit;
 use kernel_lab::kit::{Modules, OpCase};
 use kernel_lab::{LabResult, gpu_test};
 use kernels_sm120::backend::Sm120;
 use kernels_sm120::invariance::{Declared, OpKind};
-use kernels_sm120::sinkhorn_hc::{self, Op, SERVED, mix_norm_tree, split, tiled};
+use kernels_sm120::sinkhorn_hc::{self, Op, SERVED, lagged, mix_norm_tree, split, tiled};
 
 /// Which of the family's entries a symbol is.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -36,6 +40,7 @@ enum Form {
     Split,
     Tiled(u32),
     MixNorm,
+    Lagged(lagged::Op),
 }
 
 /// Every declared entry of the family (`kernel_lab::declared::sinkhorn`),
@@ -54,7 +59,12 @@ fn entries() -> Vec<(Declared, Form)> {
                 .into_iter()
                 .find(|&tile| tiled::served(tile).symbol == declared.symbol)
                 .map(Form::Tiled);
+            let lagged = lagged::catalog()
+                .into_iter()
+                .find(|entry| entry.symbol == declared.symbol)
+                .map(|entry| Form::Lagged(entry.op));
             let form = one_cta
+                .or(lagged)
                 .or(tile)
                 .or((declared.symbol == split).then_some(Form::Split))
                 .or((declared.symbol == fused).then_some(Form::MixNorm))
@@ -137,6 +147,42 @@ impl Family for Sinkhorn {
                     .sinkhorn_mix_collapse_norm(&op, need)
                     .map_err(err)?;
                 kit::mix_collapse_norm_case(op, capacity, prepared)
+            }
+            Form::Lagged(op) => {
+                let lab = lagged::LAB;
+                let (streams, width) = (lab.mix.streams, lab.mix.width);
+                let backend = lagged_kit::sm120();
+                match op {
+                    lagged::Op::MixCollapse { .. } => {
+                        let op = Query::MixCollapse {
+                            mix: lab.mix,
+                            capacity: lab.capacity,
+                        };
+                        let prepared = backend
+                            .sinkhorn_lagged_mix_collapse(&op, need)
+                            .map_err(err)?;
+                        lagged_kit::mix_collapse_case(op, capacity, prepared)
+                    }
+                    lagged::Op::Expand => {
+                        let op = Query::ExpandF32 {
+                            streams,
+                            width,
+                            capacity: lab.capacity,
+                        };
+                        let prepared = backend.sinkhorn_expand(&op, need).map_err(err)?;
+                        lagged_kit::expand_case(op, capacity, prepared)
+                    }
+                    lagged::Op::Head => {
+                        let op = Query::Head {
+                            streams,
+                            width,
+                            mode: StreamHeadMode::SigmoidWeighted,
+                            capacity: lab.capacity,
+                        };
+                        let prepared = backend.sinkhorn_weighted_head(&op, need).map_err(err)?;
+                        lagged_kit::head_case(op, capacity, prepared)
+                    }
+                }
             }
         }
     }

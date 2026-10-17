@@ -21,6 +21,7 @@ pub mod rope_kv;
 #[cfg(feature = "host-sampling")]
 pub mod sampling;
 pub mod sinkhorn;
+pub mod sinkhorn_lagged;
 
 use super::{OpCase, Required, Spec, bf16_bytes, bf16_values};
 use crate::LabResult;

@@ -86,6 +86,11 @@ const FAMILIES: &[Family] = &[
         sm120: || Ok(kit::cases::sinkhorn::sm120_mix_norm()),
         required: || Ok(kit::cases::sinkhorn::required_mix_norm()),
     },
+    Family {
+        name: "sinkhorn lagged",
+        sm120: || Ok(kit::cases::sinkhorn_lagged::sm120()),
+        required: || Ok(kit::cases::sinkhorn_lagged::required()),
+    },
 ];
 
 fn family(name: &str) -> &'static Family {
@@ -239,6 +244,16 @@ fn sm120_passes_the_sinkhorn_cases_on_a_gpu() {
 fn sm120_passes_the_sinkhorn_tiled_and_mix_norm_cases_on_a_gpu() {
     gpu("sinkhorn tiled");
     gpu("sinkhorn mix norm");
+}
+
+#[test]
+fn sinkhorn_lagged_cases_declare_on_sm120() {
+    cpu("sinkhorn lagged");
+}
+
+#[test]
+fn sm120_passes_the_sinkhorn_lagged_cases_on_a_gpu() {
+    gpu("sinkhorn lagged");
 }
 
 #[test]

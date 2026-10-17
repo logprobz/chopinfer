@@ -167,7 +167,8 @@ pub fn latent() -> Vec<Declared> {
 
 /// The served Sinkhorn mixer's entries: the one-CTA mix-collapse, expand
 /// and head, the split mix-collapse, the served tiles and the split fused
-/// with the tree norm.
+/// with the tree norm; and the lagged engine's lab entries (the lagged
+/// mix-collapse, the F32 expand and the weighted head).
 pub fn sinkhorn() -> Vec<Declared> {
     let declared = |symbol: &str, invariance| Declared {
         symbol: symbol.to_owned(),
@@ -187,5 +188,11 @@ pub fn sinkhorn() -> Vec<Declared> {
     }
     let fused = mix_norm_tree::served();
     all.push(declared(&fused.symbol, fused.invariance()));
+    all.extend(sinkhorn_hc::lagged::catalog().iter().map(|entry| Declared {
+        symbol: entry.symbol.clone(),
+        profile: Some(sinkhorn_hc::lagged::LAB_PROFILE),
+        op: OpKind::Sinkhorn,
+        invariance: entry.invariance(),
+    }));
     all
 }

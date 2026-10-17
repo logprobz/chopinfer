@@ -5,6 +5,7 @@
 //! Every completion is read whole and at every byte split, with tool calls
 //! delivered whole and streamed.
 
+#[allow(dead_code)]
 mod common;
 
 use std::sync::Arc;

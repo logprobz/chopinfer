@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 //! The `format.parser` section: what the shared parsers and tool-choice
 //! grammars read, which a model that renders its own prompt declares.
+#[allow(dead_code)]
 mod common;
 
 use std::sync::Arc;

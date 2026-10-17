@@ -83,6 +83,7 @@ pub fn parser_declaration() -> FrontendParserDeclarationV1 {
         function_close: "</function>".into(),
         parameter_open: "<parameter=".into(),
         parameter_name_close: ">".into(),
+        parameter_json_name_close: String::new(),
         parameter_value_open: String::new(),
         parameter_close: "</parameter>".into(),
         drop_blank_tool_call_content: false,

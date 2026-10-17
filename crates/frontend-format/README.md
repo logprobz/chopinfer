@@ -44,8 +44,8 @@ name delimiter.
 ## The `format.parser` section
 
 The shared streaming parser, whole-text parser and tool-choice grammars read
-one input: the tool grammar (`xml-function-parameters-v1` or
-`xml-key-value-arguments-v1`), the JSON encoding of parsed arguments, the
+one input: the tool grammar (`xml-function-parameters-v1`,
+`xml-key-value-arguments-v1` or `xml-typed-parameters-v1`), the JSON encoding of parsed arguments, the
 reasoning open and close, `answer_prefix`, the tool-call, function and
 parameter markers with `parameter_value_open` and `tool_call_separator`,
 `drop_blank_tool_call_content`, and the reserved markers. `turn_open` (the
@@ -80,18 +80,21 @@ writes; the parsers read most of them without that whitespace.
 ```
 
 `answer_prefix`, `tool_call_separator`, the three function markers,
-`parameter_value_open`, `drop_blank_tool_call_content` and
-`reserved_markers` may be left out and default to empty. The reasoning,
+`parameter_value_open`, `parameter_json_name_close`,
+`drop_blank_tool_call_content` and `reserved_markers` may be left out and
+default to empty. The reasoning,
 tool-call and parameter markers may not be blank. The function markers are
-present for function parameters and empty for key-value arguments, which
-alone has `parameter_value_open`. Each stop token has a boundary text, each
+present for function and typed parameters and empty for key-value
+arguments, which alone has `parameter_value_open`; typed parameters alone
+have `parameter_json_name_close`, which neither begins nor is begun by
+`parameter_name_close`. Each stop token has a boundary text, each
 `turn_open` entry is a boundary token, and `assistant_header` begins with
 one of them.
 
 ## The parser families
 
-The two tool grammars are named families every model's parser section picks
-from:
+The three tool grammars are named families every model's parser section
+picks from:
 
 - **Function parameters** (`xml-function-parameters-v1`): a call is the
   tool-call open, a function element around the name, one parameter element
@@ -99,6 +102,15 @@ from:
 - **Key-value arguments** (`xml-key-value-arguments-v1`): the name follows
   the call open directly, and each argument is a key element then a value
   element. There is no function element.
+- **Typed parameters** (`xml-typed-parameters-v1`): the function element of
+  function parameters, whose parameter open tag ends in one of two closes
+  that type the value: `parameter_name_close` for raw text, read as the
+  string it spells whatever the schema says, and `parameter_json_name_close`
+  for JSON, read as the value it spells (a repeated key taking its last
+  value; JSON that does not read stays text). The call open is read with
+  the whitespace written before it, so text before a call keeps none of
+  it. A forced call writes string values raw and every other value as
+  JSON with the JSON close.
 
 A string argument is raw text up to its close, and any other argument is
 JSON for its schema. A type the coercion reads as a string, by name or by

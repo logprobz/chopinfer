@@ -29,6 +29,8 @@ pub(crate) struct ChatMlTerminalsV1<'a> {
     function_close: &'a str,
     parameter_open: &'a str,
     parameter_name_close: &'a str,
+    /// The typed grammar's close of a JSON value's name; empty otherwise.
+    parameter_json_name_close: &'a str,
     parameter_value_open: &'a str,
     parameter_close: &'a str,
     /// The whitespace the declared parameter name close writes after its
@@ -47,13 +49,14 @@ impl<'a> ChatMlTerminalsV1<'a> {
         Self {
             reasoning_open: parser.reasoning_open.trim(),
             reasoning_close: parser.reasoning_close.trim(),
-            tool_open: parser.tool_call_open.trim(),
+            tool_open: call_open_v1(parser).0,
             tool_close: parser.tool_call_close.trim(),
             function_open: parser.function_open.trim(),
             function_name_close: parser.function_name_close.trim(),
             function_close: parser.function_close.trim(),
             parameter_open: parser.parameter_open.trim(),
             parameter_name_close: parser.parameter_name_close.trim(),
+            parameter_json_name_close: parser.parameter_json_name_close.trim(),
             parameter_value_open: parser.parameter_value_open.trim(),
             parameter_close: parser.parameter_close.trim(),
             value_lead: &parser.parameter_name_close
@@ -75,6 +78,7 @@ impl<'a> ChatMlTerminalsV1<'a> {
             self.function_close,
             self.parameter_open,
             self.parameter_name_close,
+            self.parameter_json_name_close,
             self.parameter_close,
         ]
         .iter()
@@ -83,6 +87,20 @@ impl<'a> ChatMlTerminalsV1<'a> {
         .unwrap_or_default()
         .max(1)
     }
+}
+
+/// The call open as a completion is read by, and the whitespace the template
+/// writes after it: the declared marker trimmed, except that the typed
+/// grammar keeps the whitespace written before it.
+pub(crate) fn call_open_v1(parser: &FrontendParserDeclarationV1) -> (&str, &str) {
+    let marker = parser.tool_call_open.as_str();
+    let read = if parser.tool_grammar == FrontendToolGrammarV1::XmlTypedParametersV1 {
+        marker.trim_end()
+    } else {
+        marker.trim()
+    };
+    let end = marker.find(read).unwrap_or_default() + read.len();
+    (read, &marker[end..])
 }
 
 /// One call a tool region named.
@@ -294,7 +312,7 @@ impl RegionScanV1 {
                         // content; a raw value ends at the first close.
                         if !cursor
                             .walk
-                            .walk(terminals, &arguments[..at], json, &mut |_, _| ())
+                            .walk(terminals, &arguments[..at], json, &mut |_, _, _| ())
                         {
                             break Some(at);
                         }
@@ -696,7 +714,7 @@ impl ParameterWalkV1 {
         terminals: ChatMlTerminalsV1<'_>,
         raw: &'a str,
         json: &dyn Fn(&str) -> bool,
-        found: &mut dyn FnMut(&'a str, Option<&'a str>),
+        found: &mut dyn FnMut(&'a str, Option<&'a str>, bool),
     ) -> bool {
         let settles =
             floor_char_boundary_v1(raw, raw.len().saturating_sub(terminals.longest() - 1));
@@ -724,13 +742,24 @@ impl ParameterWalkV1 {
                     }
                 }
                 ParameterStateV1::Name(name) => {
-                    if here.starts_with(terminals.parameter_name_close) {
+                    // The typed grammar's close says whether the value is
+                    // JSON; otherwise the parameter's schema does.
+                    let typed = terminals.grammar == FrontendToolGrammarV1::XmlTypedParametersV1;
+                    let close = if here.starts_with(terminals.parameter_name_close) {
+                        Some((terminals.parameter_name_close, false))
+                    } else if typed && here.starts_with(terminals.parameter_json_name_close) {
+                        Some((terminals.parameter_json_name_close, true))
+                    } else {
+                        None
+                    };
+                    if let Some((close, flagged)) = close {
                         let parameter = raw[name..walk.at].trim();
-                        let value = walk.at + terminals.parameter_name_close.len();
+                        let value = walk.at + close.len();
+                        let scanned = if typed { flagged } else { json(parameter) };
                         walk.state = ParameterStateV1::Value {
                             name: (name, walk.at),
                             value,
-                            json: json(parameter).then(JsonStringsV1::default),
+                            json: scanned.then(JsonStringsV1::default),
                         };
                         walk.at = value;
                         continue;
@@ -750,7 +779,11 @@ impl ParameterWalkV1 {
                         None
                     };
                     if let Some(length) = end {
-                        found(raw[name.0..name.1].trim(), Some(&raw[value..walk.at]));
+                        found(
+                            raw[name.0..name.1].trim(),
+                            Some(&raw[value..walk.at]),
+                            false,
+                        );
                         walk.state = ParameterStateV1::Seek;
                         walk.at += length;
                         continue;
@@ -768,7 +801,7 @@ impl ParameterWalkV1 {
                             json: Some(strings),
                         };
                     } else if let Some((terminal, closes)) = longest_terminal_v1(here, &ends) {
-                        found(raw[name.0..name.1].trim(), Some(&raw[value..walk.at]));
+                        found(raw[name.0..name.1].trim(), Some(&raw[value..walk.at]), true);
                         walk.state = ParameterStateV1::Seek;
                         walk.at += if closes { terminal.len() } else { 0 };
                         continue;
@@ -780,7 +813,7 @@ impl ParameterWalkV1 {
         match walk.state {
             ParameterStateV1::Seek | ParameterStateV1::Name(_) => false,
             ParameterStateV1::Value { name, json, .. } => {
-                found(raw[name.0..name.1].trim(), None);
+                found(raw[name.0..name.1].trim(), None, json.is_some());
                 json.is_some_and(|strings| strings.in_string)
             }
         }
@@ -811,21 +844,22 @@ pub(crate) fn call_arguments_v1(
     }
     let json = json_arguments_v1(tools, &call.name);
     let mut parameters = Vec::new();
-    ParameterWalkV1::default().walk(terminals, raw, &json, &mut |parameter, value| {
-        parameters.push((parameter, value));
+    ParameterWalkV1::default().walk(terminals, raw, &json, &mut |parameter, value, flagged| {
+        parameters.push((parameter, value, flagged));
     });
     let schema = tool_parameters_v1(tools, &call.name);
     let mut arguments: Vec<(String, FrontendJsonV1)> = Vec::new();
-    for (parameter, value) in parameters {
+    for (parameter, value, flagged) in parameters {
         validate_name_v1(descriptor, parameter, "parsed parameter")?;
         let Some(value) = value else {
             break;
         };
-        let value = coerce_parameter(
-            schema.as_ref(),
-            parameter,
-            framed_value_v1(terminals, value),
-        );
+        let value = framed_value_v1(terminals, value);
+        let value = if terminals.grammar == FrontendToolGrammarV1::XmlTypedParametersV1 {
+            typed_value_v1(value, flagged)
+        } else {
+            coerce_parameter(schema.as_ref(), parameter, value)
+        };
         insert_argument_v1(descriptor, &mut arguments, parameter, value)?;
     }
     json_to_string_v1(
@@ -833,6 +867,36 @@ pub(crate) fn call_arguments_v1(
         terminals.json_encoding,
         "tool arguments",
     )
+}
+
+/// A typed grammar's value as its close typed it: raw text is the string it
+/// spells, and JSON the value it spells, a repeated key taking its last
+/// value. JSON that does not read is kept as its text.
+fn typed_value_v1(value: &str, json: bool) -> FrontendJsonV1 {
+    if !json {
+        return FrontendJsonV1::String(value.to_owned());
+    }
+    serde_json::from_str::<Value>(value)
+        .map_or_else(|_| FrontendJsonV1::String(value.to_owned()), json_value_v1)
+}
+
+/// A `serde_json` value as a request's JSON value, keys in map order.
+fn json_value_v1(value: Value) -> FrontendJsonV1 {
+    match value {
+        Value::Null => FrontendJsonV1::Null,
+        Value::Bool(value) => FrontendJsonV1::Bool(value),
+        Value::Number(number) => FrontendJsonV1::Number(number),
+        Value::String(text) => FrontendJsonV1::String(text),
+        Value::Array(values) => {
+            FrontendJsonV1::Array(values.into_iter().map(json_value_v1).collect())
+        }
+        Value::Object(entries) => FrontendJsonV1::Object(
+            entries
+                .into_iter()
+                .map(|(key, value)| (key, json_value_v1(value)))
+                .collect(),
+        ),
+    }
 }
 
 /// One key-value call's arguments in the declared JSON encoding.
@@ -918,7 +982,11 @@ pub(crate) fn literal_value_reads_back_v1(
         return false;
     };
     let schema = tool_parameters_v1(tools, &tool.name);
-    let argument = coerce_parameter(schema.as_ref(), key, value);
+    let argument = if parser.tool_grammar == FrontendToolGrammarV1::XmlTypedParametersV1 {
+        FrontendJsonV1::String(value.to_owned())
+    } else {
+        coerce_parameter(schema.as_ref(), key, value)
+    };
     let Ok(arguments) = json_to_string_v1(
         &FrontendJsonV1::Object(vec![(key.to_owned(), argument)]),
         parser.json_encoding,

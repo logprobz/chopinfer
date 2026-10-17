@@ -10,7 +10,9 @@
 //! The decoder reads calls by the bare markers, without the template's
 //! whitespace, so free text avoids the bare markers that would end it early.
 //! A grammar without a function element declares its function markers empty,
-//! and an empty marker is written as nothing and avoided nowhere.
+//! and an empty marker is written as nothing and avoided nowhere. The typed
+//! grammar closes a raw value's name with `parameter_name_close` and a JSON
+//! value's with `parameter_json_name_close`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -21,7 +23,8 @@ use runtime_grammar::{
 use serde_json::Value;
 
 use crate::chatml_decode::{
-    ParameterSchemaV1, additional_schema_v1, admits_string_v1, literal_value_reads_back_v1,
+    ParameterSchemaV1, additional_schema_v1, admits_string_v1, call_open_v1,
+    literal_value_reads_back_v1,
 };
 use crate::descriptor::{FormatDescriptorV1, FrontendParserDeclarationV1, FrontendToolGrammarV1};
 use crate::request::{FrontendErrorV1, FrontendToolChoiceV1, FrontendToolV1};
@@ -125,7 +128,7 @@ fn calls_v1(
         // the first call or function marker on as calls, so the text contains
         // neither and, when calls follow, ends at the first call marker.
         _ => {
-            let (tool_open, after_open) = bare_v1(&format.tool_call_open);
+            let (tool_open, after_open) = call_open_v1(format);
             let function_open = format.function_open.trim();
             Expr::alt([
                 Expr::TextExcluding(bare_markers_v1([tool_open, function_open])),
@@ -160,11 +163,18 @@ fn call_after_open(
     // bare close marker, as the decoder reads it, including one that begins
     // inside the text, and cannot hold a bare marker that would end it
     // sooner.
-    let parameter = |name: Expr, value_and_close: Expr| {
+    // The typed grammar closes a JSON value's name with its own close.
+    let parameter = |name: Expr, (value_and_close, json): (Expr, bool)| {
+        let name_close =
+            if json && format.tool_grammar == FrontendToolGrammarV1::XmlTypedParametersV1 {
+                &format.parameter_json_name_close
+            } else {
+                &format.parameter_name_close
+            };
         Expr::seq([
             Expr::literal(&format.parameter_open),
             name,
-            Expr::literal(&format.parameter_name_close),
+            Expr::literal(name_close),
             Expr::literal(&format.parameter_value_open),
             value_and_close,
         ])
@@ -174,7 +184,8 @@ fn call_after_open(
     // A function's arguments end at its close; a key-value call's arguments
     // end at the call close, and a value may hold the next key's open marker.
     let avoid = match format.tool_grammar {
-        FrontendToolGrammarV1::XmlFunctionParametersV1 => {
+        FrontendToolGrammarV1::XmlFunctionParametersV1
+        | FrontendToolGrammarV1::XmlTypedParametersV1 => {
             bare_markers_v1([format.parameter_open.trim(), format.function_close.trim()])
         }
         FrontendToolGrammarV1::XmlKeyValueArgumentsV1 => {
@@ -202,7 +213,7 @@ fn call_after_open(
         // Arguments are not constrained: any parameters, as free text.
         Expr::OrderedSubset {
             items: Vec::new(),
-            tail: Some(Box::new(parameter(free_name(), free_text()))),
+            tail: Some(Box::new(parameter(free_name(), (free_text(), false)))),
             separator: Box::new(Expr::Empty),
         }
     } else {
@@ -252,8 +263,8 @@ fn call_after_open(
                         &literal(name),
                         name,
                     )?,
-                    ParameterSchemaV1::Free => free_text(),
-                    ParameterSchemaV1::Refused => Expr::Nothing,
+                    ParameterSchemaV1::Free => (free_text(), false),
+                    ParameterSchemaV1::Refused => (Expr::Nothing, false),
                 };
                 items.push((parameter(Expr::literal(name), value), true));
             }
@@ -287,7 +298,7 @@ fn call_after_open(
                     )?,
                 ))
             }
-            ParameterSchemaV1::Free => Some(parameter(other_name(), free_text())),
+            ParameterSchemaV1::Free => Some(parameter(other_name(), (free_text(), false))),
             ParameterSchemaV1::Refused => None,
         };
         Expr::OrderedSubset {
@@ -307,9 +318,9 @@ fn call_after_open(
     ]))
 }
 
-/// A parameter's value text and its close marker. Anything a string could be
-/// is raw text, as the decoder keeps it; string enumerations are their raw
-/// values; every other schema is JSON.
+/// A parameter's value text and its close marker, and whether the value is
+/// JSON. Anything a string could be is raw text, as the decoder keeps it;
+/// string enumerations are their raw values; every other schema is JSON.
 ///
 /// A string enumeration or constant value is written as it is, so each must
 /// read back whole (`reads_back`): one that spells a marker ending a raw
@@ -323,9 +334,9 @@ fn parameter_value(
     close: &dyn Fn() -> Expr,
     reads_back: &dyn Fn(&str) -> bool,
     name: &str,
-) -> Result<Expr, FrontendErrorV1> {
+) -> Result<(Expr, bool), FrontendErrorV1> {
     let Value::Object(fields) = schema else {
-        return Ok(free_text());
+        return Ok((free_text(), false));
     };
     let values = fields
         .get("enum")
@@ -353,15 +364,15 @@ fn parameter_value(
                 .iter()
                 .map(|value| Expr::literal(value.as_str().expect("checked string"))),
         );
-        return Ok(Expr::seq([values, close()]));
+        return Ok((Expr::seq([values, close()]), false));
     }
     if admits_string_v1(schema) {
-        return Ok(free_text());
+        return Ok((free_text(), false));
     }
     let value = compiler
         .schema(schema)
         .map_err(|error| grammar_error(&error))?;
-    Ok(Expr::seq([value, close()]))
+    Ok((Expr::seq([value, close()]), true))
 }
 
 /// One byte of `bytes`.

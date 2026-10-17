@@ -95,7 +95,8 @@ fn call_block(descriptor: &FrontendDescriptorV1, name: &str, value: &str) -> Str
             "{}{name}{argument}{}",
             parser.tool_call_open, parser.tool_call_close
         ),
-        FrontendToolGrammarV1::XmlFunctionParametersV1 => format!(
+        FrontendToolGrammarV1::XmlFunctionParametersV1
+        | FrontendToolGrammarV1::XmlTypedParametersV1 => format!(
             "{}{}{name}{}{argument}{}{}",
             parser.tool_call_open,
             parser.function_open,

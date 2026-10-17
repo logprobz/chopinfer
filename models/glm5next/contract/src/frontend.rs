@@ -82,6 +82,7 @@ pub fn parser_declaration() -> FrontendParserDeclarationV1 {
         function_close: String::new(),
         parameter_open: text("<arg_key>"),
         parameter_name_close: text("</arg_key>"),
+        parameter_json_name_close: String::new(),
         parameter_value_open: text("<arg_value>"),
         parameter_close: text("</arg_value>"),
         drop_blank_tool_call_content: false,

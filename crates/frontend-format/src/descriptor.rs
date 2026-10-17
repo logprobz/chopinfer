@@ -42,6 +42,13 @@ pub enum FrontendToolGrammarV1 {
     /// `parameter_close`. There is no function element, so the three function
     /// markers are empty.
     XmlKeyValueArgumentsV1,
+    /// The function element of [`Self::XmlFunctionParametersV1`], whose
+    /// parameter open tag ends in one of two declared closes that type the
+    /// value: `parameter_name_close` for raw text, read as a string, and
+    /// `parameter_json_name_close` for JSON, read as the value it spells.
+    /// The call open is read with the whitespace the template writes before
+    /// it, so text before a call keeps none of it.
+    XmlTypedParametersV1,
 }
 
 /// What the shared parsers and tool-choice grammars read of a format: the
@@ -77,6 +84,10 @@ pub struct FrontendParserDeclarationV1 {
     pub function_close: String,
     pub parameter_open: String,
     pub parameter_name_close: String,
+    /// The parameter name close of a value written as JSON; only the typed
+    /// grammar has one, where `parameter_name_close` closes a raw value.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub parameter_json_name_close: String,
     /// What opens an argument's value after its name closes; only the
     /// key-value grammar has one.
     #[serde(default)]
@@ -215,6 +226,10 @@ impl FormatDescriptorV1 {
             (&parser.function_close, "function_close"),
             (&parser.parameter_open, "parameter_open"),
             (&parser.parameter_name_close, "parameter_name_close"),
+            (
+                &parser.parameter_json_name_close,
+                "parameter_json_name_close",
+            ),
             (&parser.parameter_value_open, "parameter_value_open"),
             (&parser.parameter_close, "parameter_close"),
             (&parser.assistant_header, "assistant_header"),
@@ -301,18 +316,30 @@ impl FormatDescriptorV1 {
     ) -> Result<(), FrontendComponentErrorV1> {
         // The shared parsers match their markers trimmed.
         let ends = match parser.tool_grammar {
-            FrontendToolGrammarV1::XmlFunctionParametersV1 => [
+            FrontendToolGrammarV1::XmlFunctionParametersV1 => vec![
                 (&parser.function_name_close, "function_name_close"),
                 (&parser.function_close, "function_close"),
                 (&parser.parameter_name_close, "parameter_name_close"),
             ],
-            FrontendToolGrammarV1::XmlKeyValueArgumentsV1 => [
+            FrontendToolGrammarV1::XmlKeyValueArgumentsV1 => vec![
                 (&parser.parameter_open, "parameter_open"),
                 (&parser.tool_call_close, "tool_call_close"),
                 (&parser.parameter_name_close, "parameter_name_close"),
             ],
+            FrontendToolGrammarV1::XmlTypedParametersV1 => vec![
+                (&parser.function_name_close, "function_name_close"),
+                (&parser.function_close, "function_close"),
+                (&parser.parameter_name_close, "parameter_name_close"),
+                (
+                    &parser.parameter_json_name_close,
+                    "parameter_json_name_close",
+                ),
+            ],
         };
-        let delimiters = ends.map(|(marker, field)| (marker.trim(), field));
+        let delimiters: Vec<(&str, &str)> = ends
+            .into_iter()
+            .map(|(marker, field)| (marker.trim(), field))
+            .collect();
         let names = &self.tools.name_bytes;
         for byte in (0..=127_u8).filter(|byte| names.permits(*byte)) {
             if byte.is_ascii_whitespace() {
@@ -382,8 +409,15 @@ fn validate_tool_grammar_markers(
         (&parser.function_name_close, "function_name_close"),
         (&parser.function_close, "function_close"),
     ];
+    let typed = parser.tool_grammar == FrontendToolGrammarV1::XmlTypedParametersV1;
+    if typed == parser.parameter_json_name_close.is_empty() {
+        return Err(invalid(
+            "parameter_json_name_close is declared by the typed tool grammar, and only by it",
+        ));
+    }
     match parser.tool_grammar {
-        FrontendToolGrammarV1::XmlFunctionParametersV1 => {
+        FrontendToolGrammarV1::XmlFunctionParametersV1
+        | FrontendToolGrammarV1::XmlTypedParametersV1 => {
             for (marker, name) in function {
                 if marker.trim().is_empty() {
                     return Err(invalid(format!("format.parser {name} cannot be blank")));
@@ -392,6 +426,18 @@ fn validate_tool_grammar_markers(
             if !parser.parameter_value_open.is_empty() {
                 return Err(invalid(
                     "parameter_value_open is declared only by the key-value tool grammar",
+                ));
+            }
+            // The close a parameter's open tag ends in types its value, so
+            // neither close may begin the other.
+            let (raw, json) = (
+                parser.parameter_name_close.trim(),
+                parser.parameter_json_name_close.trim(),
+            );
+            if typed && (json.is_empty() || raw.starts_with(json) || json.starts_with(raw)) {
+                return Err(invalid(
+                    "format.parser parameter_json_name_close must be a nonblank close that \
+                     neither begins nor is begun by parameter_name_close",
                 ));
             }
         }

@@ -8,10 +8,11 @@ use frontend_format::{FormatDescriptorV1, PromptModeV1, parse_completion_v1};
 use runtime_frontend_contract::FrontendBoundaryTokenV1;
 
 /// The parser fixtures, one on each shared tool grammar.
-fn fixtures() -> [(&'static str, FormatDescriptorV1); 2] {
+fn fixtures() -> [(&'static str, FormatDescriptorV1); 3] {
     [
         ("key-value", common::KEY_VALUE),
         ("function-parameters", common::FUNCTION_PARAMETERS),
+        ("typed-parameters", common::TYPED_PARAMETERS),
     ]
     .map(|(name, declaration)| {
         (

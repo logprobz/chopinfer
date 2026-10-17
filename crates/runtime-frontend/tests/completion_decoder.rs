@@ -74,7 +74,8 @@ impl FixtureV1 {
             FrontendToolGrammarV1::XmlKeyValueArgumentsV1 => {
                 format!("{}{name}", parser.tool_call_open)
             }
-            FrontendToolGrammarV1::XmlFunctionParametersV1 => format!(
+            FrontendToolGrammarV1::XmlFunctionParametersV1
+            | FrontendToolGrammarV1::XmlTypedParametersV1 => format!(
                 "{}{}{name}{}",
                 parser.tool_call_open, parser.function_open, parser.function_name_close
             ),
@@ -98,7 +99,8 @@ impl FixtureV1 {
         let parser = &self.parser;
         match parser.tool_grammar {
             FrontendToolGrammarV1::XmlKeyValueArgumentsV1 => parser.tool_call_close.clone(),
-            FrontendToolGrammarV1::XmlFunctionParametersV1 => {
+            FrontendToolGrammarV1::XmlFunctionParametersV1
+            | FrontendToolGrammarV1::XmlTypedParametersV1 => {
                 format!("{}{}", parser.function_close, parser.tool_call_close)
             }
         }

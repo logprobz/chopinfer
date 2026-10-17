@@ -17,6 +17,7 @@ fn forms() -> Vec<(&'static str, FormatDescriptorV1, Vec<String>)> {
     [
         ("function-parameter", common::FUNCTION_PARAMETERS),
         ("key-value", common::KEY_VALUE),
+        ("typed-parameter", common::TYPED_PARAMETERS),
     ]
     .into_iter()
     .map(|(name, declaration)| {
@@ -25,15 +26,21 @@ fn forms() -> Vec<(&'static str, FormatDescriptorV1, Vec<String>)> {
         descriptor.limits.maximum_name_bytes = 128;
         let parser = descriptor.parser.clone();
         let delimiters = match parser.tool_grammar {
-            FrontendToolGrammarV1::XmlKeyValueArgumentsV1 => [
+            FrontendToolGrammarV1::XmlKeyValueArgumentsV1 => vec![
                 parser.parameter_open,
                 parser.tool_call_close,
                 parser.parameter_name_close,
             ],
-            FrontendToolGrammarV1::XmlFunctionParametersV1 => [
+            FrontendToolGrammarV1::XmlFunctionParametersV1 => vec![
                 parser.function_name_close,
                 parser.function_close,
                 parser.parameter_name_close,
+            ],
+            FrontendToolGrammarV1::XmlTypedParametersV1 => vec![
+                parser.function_name_close,
+                parser.function_close,
+                parser.parameter_name_close,
+                parser.parameter_json_name_close,
             ],
         };
         let delimiters = delimiters.iter().map(|d| d.trim().to_owned()).collect();

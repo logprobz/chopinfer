@@ -729,6 +729,7 @@ dependencies = [
  "projection-spec",
  "runtime-frontend",
  "runtime-frontend-contract",
+ "runtime-host",
  "runtime-server",
  "runtime-tokenizer",
  "runtime-weights",

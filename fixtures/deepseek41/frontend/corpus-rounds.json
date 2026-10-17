@@ -1,0 +1,454 @@
+[
+ {
+  "id": "g0026-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "  \n "
+    },
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "Look at this "
+      },
+      {
+       "type": "text",
+       "text": " and say what it is."
+      }
+     ]
+    }
+   ],
+   "chat_template_kwargs": {
+    "enable_thinking": false,
+    "preserve_thinking": false
+   },
+   "response_format": {
+    "type": "json_schema",
+    "json_schema": {
+     "name": "answer",
+     "strict": true,
+     "schema": {
+      "type": "object",
+      "properties": {
+       "city": {
+        "type": "string"
+       },
+       "days": {
+        "type": "integer"
+       }
+      },
+      "required": [
+       "city"
+      ],
+      "additionalProperties": false
+     }
+    }
+   }
+  },
+  "token_ids": [
+   223,
+   983,
+   344,
+   223,
+   864,
+   8490,
+   37,
+   16,
+   262,
+   1
+  ],
+  "expect": {
+   "content": "  It is 18 °C.  ",
+   "finish_reason": "stop"
+  },
+  "separator": ""
+ },
+ {
+  "id": "g0038-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "You are terse."
+    },
+    {
+     "role": "user",
+     "content": "  Weather?  \n"
+    }
+   ],
+   "chat_template_kwargs": {
+    "enable_thinking": false
+   },
+   "response_format": {
+    "type": "json_schema",
+    "json_schema": {
+     "name": "answer",
+     "strict": true,
+     "schema": {
+      "type": "object",
+      "properties": {
+       "city": {
+        "type": "string"
+       },
+       "days": {
+        "type": "integer"
+       }
+      },
+      "required": [
+       "city"
+      ],
+      "additionalProperties": false
+     }
+    }
+   }
+  },
+  "token_ids": [
+   539,
+   223,
+   1
+  ],
+  "expect": {
+   "content": " \n ",
+   "finish_reason": "stop"
+  },
+  "separator": ""
+ },
+ {
+  "id": "g0059-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "system",
+     "content": ""
+    },
+    {
+     "role": "user",
+     "content": ""
+    }
+   ],
+   "chat_template_kwargs": {
+    "reasoning_effort": "high",
+    "thinking": false,
+    "preserve_thinking": false
+   },
+   "response_format": {
+    "type": "json_object"
+   }
+  },
+  "token_ids": [
+   1
+  ],
+  "expect": {
+   "finish_reason": "stop"
+  },
+  "separator": ""
+ },
+ {
+  "id": "g0067-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": ""
+    },
+    {
+     "role": "assistant",
+     "content": "One moment."
+    },
+    {
+     "role": "system",
+     "content": "Now answer in French."
+    },
+    {
+     "role": "user",
+     "content": "Go on."
+    }
+   ],
+   "chat_template_kwargs": {
+    "reasoning_effort": "low",
+    "clear_thinking": true,
+    "preserve_thinking": true
+   },
+   "response_format": {
+    "type": "json_schema",
+    "json_schema": {
+     "name": "answer",
+     "strict": true,
+     "schema": {
+      "type": "object",
+      "properties": {
+       "city": {
+        "type": "string"
+       },
+       "days": {
+        "type": "integer"
+       }
+      },
+      "required": [
+       "city"
+      ],
+      "additionalProperties": false
+     }
+    }
+   }
+  },
+  "token_ids": [
+   128822,
+   1
+  ],
+  "expect": {
+   "finish_reason": "stop"
+  },
+  "separator": ""
+ },
+ {
+  "id": "g0100-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "  \n "
+    },
+    {
+     "role": "user",
+     "content": "What is the weather in Paris?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      },
+      "defer_loading": "true"
+     }
+    }
+   ],
+   "chat_template_kwargs": {
+    "clear_thinking": false
+   }
+  },
+  "token_ids": [
+   128822,
+   223,
+   983,
+   344,
+   223,
+   864,
+   8490,
+   37,
+   16,
+   262,
+   1
+  ],
+  "expect": {
+   "content": "  It is 18 °C.  ",
+   "finish_reason": "stop"
+  },
+  "separator": ""
+ },
+ {
+  "id": "g0101-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "system",
+     "content": ""
+    },
+    {
+     "role": "user",
+     "content": "What is the weather in Paris?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      },
+      "defer_loading": true
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   31002,
+   270,
+   3287,
+   16,
+   128822,
+   1
+  ],
+  "expect": {
+   "reasoning": "Plan the answer.",
+   "finish_reason": "stop"
+  },
+  "separator": ""
+ },
+ {
+  "id": "g0102-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "What is the weather in Paris?"
+    },
+    {
+     "role": "assistant",
+     "content": "One moment."
+    },
+    {
+     "role": "system",
+     "content": "Now answer in French."
+    },
+    {
+     "role": "user",
+     "content": "Go on."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      },
+      "defer_loading": true
+     }
+    }
+   ],
+   "chat_template_kwargs": {
+    "clear_thinking": false,
+    "preserve_thinking": true
+   }
+  },
+  "token_ids": [
+   31002,
+   270,
+   3287,
+   16,
+   128822,
+   223,
+   983,
+   344,
+   223,
+   864,
+   8490,
+   37,
+   16,
+   262,
+   1
+  ],
+  "expect": {
+   "reasoning": "Plan the answer.",
+   "content": "  It is 18 °C.  ",
+   "finish_reason": "stop"
+  },
+  "separator": ""
+ },
+ {
+  "id": "vendor-pair-1-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "You are a helpful assistant."
+    },
+    {
+     "role": "user",
+     "content": "What's the weather like in Beijing?"
+    },
+    {
+     "role": "assistant",
+     "content": "",
+     "tool_calls": [
+      {
+       "id": "call_0",
+       "type": "function",
+       "function": {
+        "name": "get_weather",
+        "arguments": "{\"location\": \"Beijing\", \"unit\": \"celsius\"}"
+       }
+      }
+     ],
+     "reasoning": "The user wants the weather in Beijing. I should call get_weather."
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_0",
+     "content": "{\"temperature\": 22, \"condition\": \"sunny\"}"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "Get the weather for a specific location",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "location": {
+         "type": "string",
+         "description": "The city name"
+        },
+        "unit": {
+         "type": "string",
+         "enum": [
+          "celsius",
+          "fahrenheit"
+         ],
+         "description": "Temperature unit"
+        }
+       },
+       "required": [
+        "location"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   70935,
+   270,
+   9670,
+   1499,
+   16,
+   128822,
+   671,
+   9670,
+   295,
+   29660,
+   344,
+   43905,
+   509,
+   223,
+   1302,
+   2614,
+   37,
+   16,
+   1
+  ],
+  "expect": {
+   "reasoning": "Got the weather data.",
+   "content": "The weather in Beijing is sunny at 22°C.",
+   "finish_reason": "stop"
+  },
+  "separator": ""
+ }
+]

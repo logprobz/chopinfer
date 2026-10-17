@@ -1,0 +1,322 @@
+{
+  "schema": "chop-frontend-divergences-v1",
+  "lines": [
+    {
+      "id": "completion-parser",
+      "lines": [
+        141,
+        142,
+        143,
+        144,
+        145,
+        146,
+        147,
+        150,
+        151,
+        152,
+        153,
+        167,
+        168,
+        169,
+        170,
+        172,
+        173,
+        174,
+        175,
+        176,
+        177,
+        406,
+        407,
+        409,
+        410,
+        411,
+        412,
+        413,
+        415,
+        416,
+        417,
+        419,
+        420,
+        897,
+        898,
+        899,
+        900,
+        901,
+        902,
+        903,
+        905,
+        906,
+        907,
+        908,
+        910,
+        911,
+        913,
+        914,
+        916,
+        918,
+        919,
+        920,
+        921,
+        923,
+        924,
+        925,
+        927,
+        928,
+        929,
+        930,
+        932,
+        933,
+        934,
+        936,
+        937,
+        938,
+        940,
+        941,
+        943,
+        954,
+        955,
+        956,
+        958,
+        959,
+        961,
+        962,
+        963,
+        964,
+        966,
+        967,
+        968,
+        969,
+        971,
+        973,
+        974,
+        976,
+        977,
+        979,
+        981,
+        982,
+        983,
+        985,
+        986,
+        987,
+        988,
+        989
+      ],
+      "blocked_by": "the served parser reads completions",
+      "reason": "tool_calls_to_openai_format, decode_dsml_to_arguments, _read_until_stop, parse_tool_calls and parse_message_from_completion_text parse a completion, which the served parser does and the round trips check; no render runs them"
+    },
+    {
+      "id": "file-helpers",
+      "lines": [
+        275,
+        276,
+        277,
+        278,
+        279,
+        280,
+        282,
+        283,
+        284,
+        285,
+        286,
+        287,
+        288,
+        289,
+        290,
+        291,
+        292,
+        294,
+        295,
+        296,
+        297,
+        843,
+        849,
+        850,
+        851,
+        852,
+        853,
+        854,
+        856,
+        857,
+        858,
+        859,
+        860,
+        861,
+        862,
+        863,
+        864,
+        865,
+        866,
+        867,
+        869,
+        876,
+        877,
+        878,
+        879,
+        880,
+        881,
+        883
+      ],
+      "blocked_by": "requests arrive as messages",
+      "reason": "parse_tagged_text, load_cases and encode_case read the vendor's text and JSON case files, and the media records encode_messages returns with return_multi_modal_data are the host's to collect"
+    },
+    {
+      "id": "namespaces",
+      "lines": [
+        90,
+        94,
+        95,
+        105,
+        106,
+        108,
+        111,
+        119,
+        134
+      ],
+      "blocked_by": "tool and call names admit no '::' and the transport carries no namespace",
+      "reason": "a namespace on a tool or call, a qualified name and their conflicts need namespace transport, which this declaration does not serve yet"
+    },
+    {
+      "id": "images",
+      "lines": [
+        311,
+        315,
+        316,
+        317,
+        319,
+        331,
+        332
+      ],
+      "blocked_by": "this bundle does not support media inputs",
+      "reason": "an image record's source forms and images inside a tool result run only when the declaration serves images"
+    },
+    {
+      "id": "unserved-roles-and-tasks",
+      "lines": [
+        660,
+        663,
+        719,
+        720,
+        722,
+        724,
+        727,
+        728,
+        729
+      ],
+      "blocked_by": "the transport carries system, user, assistant and tool messages without a task",
+      "reason": "the latest_reminder role and the task tokens are internal to the vendor's service, and a tool message never reaches render_message once merged"
+    },
+    {
+      "id": "unreachable-shapes",
+      "lines": [
+        80,
+        81,
+        201,
+        650,
+        657
+      ],
+      "blocked_by": "the transport sends valid UTF-8 and OpenAI content",
+      "reason": "json.dumps raises only for a lone surrogate, content_blocks is not an OpenAI field, a tool result list holds only text parts, and every user block is text, an image or a result"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "developer-role",
+      "kind": "refused",
+      "when": [
+        "developer:present"
+      ],
+      "outcome": {
+        "message": "invalid conversation field: developer role is not declared",
+        "parameter": "messages"
+      },
+      "reason": "the encoder has no developer role: render_message raises for it (encoding.py line 710), except before the last user turn in thinking mode, where _drop_thinking_messages drops it unread (lines 756-761); the format refuses it always"
+    },
+    {
+      "id": "message-tools",
+      "kind": "refused",
+      "when": [
+        "message-tools:present"
+      ],
+      "outcome": {
+        "message": "invalid conversation field: message tools are declared only on system messages",
+        "parameter": "messages"
+      },
+      "reason": "the encoder renders a message's tools only on a system message (lines 626-627); on another role it reads them only to keep earlier reasoning (line 787), so the format refuses them there"
+    },
+    {
+      "id": "missing-call-id",
+      "kind": "refused",
+      "when": [
+        "call-id:missing"
+      ],
+      "outcome": {
+        "parameter": "id"
+      },
+      "reason": "the transport requires a tool call id; the encoder reads a call without one as unordered"
+    },
+    {
+      "id": "missing-tool-call-id",
+      "kind": "refused",
+      "when": [
+        "results:missing-id"
+      ],
+      "outcome": {
+        "message": "tool message requires tool_call_id",
+        "parameter": "messages"
+      },
+      "reason": "the transport requires a tool result to name its call; the encoder renders one without an id first among the results it sorts (line 254)"
+    },
+    {
+      "id": "media-image-url",
+      "kind": "refused",
+      "when": [
+        "media:image_url"
+      ],
+      "outcome": {
+        "message": "this bundle does not support media inputs"
+      },
+      "reason": "this declaration serves no media yet; the encoder writes an image as <｜deepseek_image｜> (lines 334-335), which the image declaration will pad"
+    },
+    {
+      "id": "media-video-url",
+      "kind": "refused",
+      "when": [
+        "media:video_url"
+      ],
+      "outcome": {
+        "message": "this bundle does not support media inputs"
+      },
+      "reason": "this declaration serves no media; the encoder writes images as <｜deepseek_image｜> and has no video form"
+    },
+    {
+      "id": "media-audio-url",
+      "kind": "refused",
+      "when": [
+        "media:audio_url"
+      ],
+      "outcome": {
+        "message": "this bundle does not support media inputs"
+      },
+      "reason": "this declaration serves no media; the encoder writes images as <｜deepseek_image｜> and has no audio form"
+    },
+    {
+      "id": "media-input-audio",
+      "kind": "refused",
+      "when": [
+        "media:input_audio"
+      ],
+      "outcome": {
+        "message": "this bundle does not support media inputs"
+      },
+      "reason": "this declaration serves no media; the encoder writes images as <｜deepseek_image｜> and has no audio form"
+    },
+    {
+      "id": "tool-call-read-back",
+      "kind": "no-round-trip",
+      "when": [
+        "round-trip:read-back"
+      ],
+      "reason": "a turn with tool calls reads back only through a parser of DSML, whose parameters carry string=\"true|false\" (lines 524-555); the declared parser section reads string parameters only until that parser family exists"
+    }
+  ]
+}

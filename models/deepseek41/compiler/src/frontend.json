@@ -203,7 +203,7 @@
     ]
   },
   "response": {
-    "reasoning_field": "reasoning_content"
+    "reasoning_field": "reasoning"
   },
   "format": {
     "parser": {

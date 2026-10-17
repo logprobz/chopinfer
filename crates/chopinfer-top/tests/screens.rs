@@ -635,6 +635,28 @@ fn a_failed_process_query_shows_the_list_before_it() {
 }
 
 #[test]
+fn text_on_the_header_and_footer_bars_is_not_their_color() {
+    use chopinfer_top::ui::buffer::Color;
+    let mut app = fleet();
+    with_gpus(&mut app, true);
+    for view in [View::List, View::Detail, View::Gpus] {
+        app.view = view;
+        let frame = ui::draw(&app, 132, 38, NOW);
+        for y in [0, frame.height - 1] {
+            for x in 0..frame.width {
+                let cell = frame.cell(x, y).unwrap();
+                // Dim text is the bar's own dark grey.
+                assert!(
+                    cell.character == ' ' || cell.style.fg != Color::Dim,
+                    "{view:?} at ({x}, {y}): {}",
+                    frame.text().lines().nth(usize::from(y)).unwrap()
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn every_size_draws_without_panicking() {
     let mut app = fleet();
     with_gpus(&mut app, true);

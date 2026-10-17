@@ -56,7 +56,13 @@ pub fn tone_color(tone: Tone) -> Color {
 pub fn header(buffer: &mut Buffer, app: &App, crumbs: &[(String, Style)]) {
     let width = buffer.width;
     buffer.background(0, 0, width, Color::Bar);
+    // Dim text is the bar's own color, so on the bar it is plain.
     let bar = |style: Style| Style {
+        fg: if style.fg == Color::Dim {
+            Color::Default
+        } else {
+            style.fg
+        },
         bg: Some(Color::Bar),
         ..style
     };

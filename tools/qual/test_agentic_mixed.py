@@ -16,7 +16,7 @@ from unittest.mock import patch
 import agentic_fake
 from agentic_fake import EVENT_SECONDS, FakeClock, Reads, fake_server
 from agentic_metrics import distribution, metrics_delta, parse_metrics, ratio, summarize
-from agentic_mixed import Transport, main, parser, run_decode, run_level, session, sse_events, stream_request
+from agentic_mixed import Transport, main, markdown, parser, run_decode, run_level, session, sse_events, stream_request
 from agentic_workload import CORPUS, Workspace, decode_context, load_corpus, stage_corpus, task_for, valid_session
 
 
@@ -250,7 +250,8 @@ class FakeIntegrationTests(unittest.TestCase):
                 self.assertTrue(mechanics_only)
                 self.assertEqual(identity['model'], 'fake-agentic')
                 results.append(result)
-                return Path(name) / (result['arm'] + '-' + result['receipt_kind'] + '.json')
+                kind = result['receipt_kind'] if result['receipt_kind'] == 'sweep' else f"{result['receipt_kind']}-{len(results)}"
+                return Path(name) / (result['arm'] + '-' + kind + '.json')
             # The fake sweep's window is in event time, so its two sessions fit on any host.
             with patch('agentic_mixed.common.startup'), patch('agentic_mixed.common.receipt', side_effect=receipt), \
                     fake_time(FakeClock()), redirect_stdout(io.StringIO()):
@@ -261,7 +262,7 @@ class FakeIntegrationTests(unittest.TestCase):
                     self.assertIn('Server step evidence', summary)
                     # Every percentile in the summary carries its sample count.
                     for line in summary.splitlines():
-                        if line.startswith('| 1 |'):
+                        if re.match(r'\| 1 \| \d+ \| ', line):
                             cells = line.split(' | ')
                             self.assertRegex(line, r'p95 upper [0-9.]+\*? ms \(n=\d+\)')
                             self.assertEqual(sum(bool(re.search(r'\(n=\d+\)', cell)) for cell in cells), 5, line)
@@ -351,6 +352,81 @@ class FakeIntegrationTests(unittest.TestCase):
         self.assertFalse(result['valid'])
         self.assertFalse(result['patch_applied'])
         self.assertEqual(result['failure'], 'output token limit')
+
+
+class ReplicaTests(unittest.TestCase):
+    """Repeated passes are replicas of one workload: each reports its own
+    figures, and the receipt and comparison give their spread, never tails
+    pooled across replicas."""
+
+    def sweeps(self, *flags):
+        receipts = {}
+        with tempfile.TemporaryDirectory() as name:
+            def receipt(check, identity, result, mechanics_only):
+                if result['receipt_kind'] == 'sweep':
+                    receipts[result['arm']] = json.loads(json.dumps({**result, 'server': identity}))
+                return Path(name) / f"{result['arm']}-{result['receipt_kind']}-{len(result['level_receipts'])}.json"
+            with patch('agentic_mixed.common.startup'), patch('agentic_mixed.common.receipt', side_effect=receipt), \
+                    fake_time(FakeClock()), redirect_stdout(io.StringIO()):
+                for arm in ('tbt', 'fixed'):
+                    self.assertEqual(main(['--dry-run', '--levels', '1,2', '--seconds', '.4', '--warmup-waves', '0',
+                                           '--min-samples', '2', '--no-decode', '--arm', arm, '--fake-prefill-budget', arm,
+                                           '--label', 'replicas', *flags]), 0)
+        for receipt in receipts.values():
+            receipt.update(schema='chopinfer-qualification/v1', check='agentic-mixed', mechanics_only=True)
+        return receipts
+
+    def test_replicas_are_separate_passes_with_a_spread(self):
+        self.assertEqual(parser().parse_args([]).replicas, 3)
+        sweep = self.sweeps('--replicas', '2')['tbt']
+        self.assertEqual([(l['concurrency'], l['replica']) for l in sweep['levels']], [(1, 0), (1, 1), (2, 0), (2, 1)])
+        first, second = sweep['levels'][:2]
+        # Replica 0 keeps the profile seed; replica 1 draws its own tasks and request seeds.
+        self.assertEqual((first['seed'], second['seed']), ('runyard-coding-v1', 'runyard-coding-v1/replica-1'))
+        self.assertNotEqual([s['prompt_sha256'] for s in first['sessions']], [s['prompt_sha256'] for s in second['sessions']])
+        self.assertEqual([s['concurrency'] for s in sweep['replica_spread']], [1, 2])
+        spread = sweep['replica_spread'][0]
+        self.assertEqual(spread['replicas'], [0, 1])
+        figure = spread['figures']['ttft_p95_ms']
+        self.assertEqual(figure['values'], [first['ttft_ms']['p95'], second['ttft_ms']['p95']])
+        self.assertEqual(figure['samples'], [first['ttft_ms']['samples'], second['ttft_ms']['samples']])
+        self.assertEqual((figure['min'], figure['max']), (min(figure['values']), max(figure['values'])))
+        throughput = spread['figures']['output_tokens_per_second']['values']
+        self.assertEqual(throughput, [level['output_tokens_per_second']['value'] for level in (first, second)])
+        summary = markdown(sweep)
+        self.assertIn('Replica spread', summary)
+        self.assertRegex(summary, r'\| 1 \| 1 \| ')
+
+    def test_comparison_pairs_replicas_and_reports_their_spread(self):
+        from agentic_compare import compare
+        receipts = self.sweeps('--replicas', '2')
+        with patch('agentic_compare.validate_pair'):
+            compared = compare(receipts['tbt'], receipts['fixed'])
+        self.assertEqual(compared['schema'], 'chopinfer.agentic-mixed-comparison.v2')
+        self.assertEqual([level['concurrency'] for level in compared['levels']], [1, 2])
+        level = compared['levels'][0]
+        self.assertEqual([pair['replica'] for pair in level['replicas']], [0, 1])
+        for pair in level['replicas']:
+            # Replica r of one arm repeats replica r of the other.
+            self.assertGreater(pair['trajectories']['shared_turns'], 0)
+            self.assertEqual(pair['trajectories']['equal_requests'], pair['trajectories']['shared_turns'])
+        figure = level['spread']['ttft_p95_ms']
+        fixed = [l for l in receipts['fixed']['levels'] if l['concurrency'] == 1]
+        tbt = [l for l in receipts['tbt']['levels'] if l['concurrency'] == 1]
+        self.assertEqual(figure['fixed']['values'], [l['ttft_ms']['p95'] for l in fixed])
+        self.assertEqual(figure['fixed']['samples'], [l['ttft_ms']['samples'] for l in fixed])
+        self.assertEqual(figure['tbt_minus_fixed']['values'],
+                         [b['ttft_ms']['p95'] - a['ttft_ms']['p95'] for a, b in zip(fixed, tbt)])
+        self.assertIn(figure['ranges_overlap'], (True, False))
+        self.assertNotIn('pooled', json.dumps(compared))
+
+    def test_comparison_refuses_a_missing_replica(self):
+        from agentic_compare import validate_pair
+        receipts = self.sweeps('--replicas', '2')
+        broken = json.loads(json.dumps(receipts['fixed']))
+        del broken['levels'][1]
+        with self.assertRaisesRegex(ValueError, 'levels'):
+            validate_pair(receipts['tbt'], broken)
 
 
 def source_repository(directory, files):

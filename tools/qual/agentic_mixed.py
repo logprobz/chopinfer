@@ -22,7 +22,7 @@ import declaration
 import model_modules
 from agentic_metrics import (INVALID_SESSION, RAW_CALLS_AGREE, RAW_MALFORMED_CALL, RAW_REASONING_ONLY, TAIL_SAMPLES,
                              burst_metrics, distribution, histogram_reports, level_verdict, metrics_delta,
-                             prefill_evidence, ratio, summarize)
+                             prefill_evidence, ratio, replica_spread, summarize)
 from agentic_server import observe_startup, mode_evidence, verify_arm
 from agentic_workload import CORPUS, Workspace, decode_context, load_corpus, max_tool_result_bytes, task_for, valid_session
 
@@ -799,6 +799,13 @@ def raw_class(client, model, evidence, answer=None, tools=()):
     return MARKUP.last_class(*parts) if answer is None else calls_class(MARKUP, *parts, answer, tools)
 
 
+def replica_seed(seed, replica):
+    """The seed of replica REPLICA of a level: SEED for the first, so one
+    replica is the plain workload, and SEED/replica-R for the others, which
+    draw their own tasks, request seeds and cache salts."""
+    return seed if replica == 0 else f'{seed}/replica-{replica}'
+
+
 def request_seed(seed, concurrency, case, turn):
     raw = f'{seed}/C{concurrency}/{case}/turn-{turn}/sampling-v1'.encode()
     return int.from_bytes(hashlib.sha256(raw).digest()[:8], 'big') & ((1 << 63) - 1)
@@ -943,8 +950,8 @@ def run_level(client, model, profile, manifest, files, concurrency, on_partial=N
             saved = sorted(outcomes, key=lambda result: result['index'])
         measured_end = max(start + 1e-9, min(end, time.monotonic())) if aborted else end
         summary = summarize(saved, start, measured_end, concurrency, profile['stall_threshold_ms'])
-        summary.update(aborted=aborted, target_window_end=end, burst_window_ms=profile['burst_window_ms'],
-                       stall_threshold_ms=profile['stall_threshold_ms'], sessions=saved,
+        summary.update(replica=profile.get('replica', 0), seed=profile['seed'], aborted=aborted, target_window_end=end,
+                       burst_window_ms=profile['burst_window_ms'], stall_threshold_ms=profile['stall_threshold_ms'], sessions=saved,
                        drain_seconds=max(0, max((r['ended'] for r in saved), default=measured_end) - measured_end))
         summary['insufficient'] = (aborted or ('session cap reached before measured interval ended' if cap_reached else
                                    f"too few completed measured sessions: {summary['measured_completed']} of {profile['min_samples']}"
@@ -1047,11 +1054,16 @@ def parser():
                    help='session (default): send each session its own cache_salt, so no other session or run absorbs '
                         'its prefill and the prefill budgets see real pressure; none: share prefixes across sessions')
     p.add_argument('--seed', default='runyard-coding-v1')
+    p.add_argument('--replicas', type=int, default=3,
+                   help='passes of each level, run back to back against the same server (default %(default)s). '
+                        'Replica R draws its tasks, request seeds and cache salts from SEED/replica-R (the first from '
+                        'SEED), so replica R of one arm repeats replica R of the other. The summary and agentic_compare '
+                        'report each replica and the spread across replicas, never tails pooled over them')
     p.add_argument('--seconds', type=float, default=60)
     p.add_argument('--warmup-waves', type=int, default=1)
     p.add_argument('--max-sessions-per-c', type=int, default=64)
     p.add_argument('--min-samples', type=int, default=TAIL_SAMPLES['p95'],
-                   help='completed measured sessions each level needs, else it is insufficient (default %(default)s: '
+                   help='completed measured sessions each replica of a level needs, else it is insufficient (default %(default)s: '
                         'the fewest for which a nearest-rank p95 over sessions has one session above it; with fewer, '
                         'the p95 is the slowest session or next to it). Lengthen --seconds rather than lower it')
     p.add_argument('--max-turns', type=int, default=64)
@@ -1082,7 +1094,7 @@ def validate(p, args):
         p.error('levels must be comma-separated integers')
     if not levels or len(levels) > 64 or len(set(levels)) != len(levels) or min(levels) < 1 or max(levels) > 1024:
         p.error('levels must be unique integers from 1 to 1024')
-    bounds = {'burst_window_ms': (.001, 100), 'stall_threshold_ms': (.001, 3600000), 'seconds': (0.001, 86400), 'warmup_waves': (0, 100), 'max_sessions_per_c': (2, 10000),
+    bounds = {'replicas': (1, 32), 'burst_window_ms': (.001, 100), 'stall_threshold_ms': (.001, 3600000), 'seconds': (0.001, 86400), 'warmup_waves': (0, 100), 'max_sessions_per_c': (2, 10000),
               'min_samples': (1, args.max_sessions_per_c), 'max_turns': (1, 64), 'max_output_tokens': (1, 131072),
               'temperature': (0, 2), 'request_timeout_seconds': (.001, 3600),
               'session_timeout_seconds': (args.request_timeout_seconds, 86400),
@@ -1093,7 +1105,7 @@ def validate(p, args):
             p.error(f'{name} must be in [{low}, {high}]')
     if not args.seed.strip() or len(args.seed.encode()) > 256:
         p.error('seed must contain 1 to 256 bytes')
-    if sum(levels) * (args.warmup_waves + args.max_sessions_per_c) > 100000:
+    if sum(levels) * (args.warmup_waves + args.max_sessions_per_c) * args.replicas > 100000:
         p.error('profile exceeds 100000 sessions')
     return levels
 
@@ -1194,11 +1206,33 @@ def level_passed(level):
     return level_verdict(level)['passed']
 
 
+# The figures of the summary's replica spread.
+SPREAD_FIGURES = ('output_tokens_per_second', 'ttft_p95_ms', 'client_step_gap_p95_ms', 'server_prefill_tokens_per_step',
+                  'mixed_actual_over_predicted_mean', 'vllm:inter_token_latency_seconds p95_upper_ms')
+
+
+def replica_lines(spreads, number):
+    """The summary's replica spread: each figure's per-replica values with
+    their samples, and their min, median and max across replicas."""
+    if not spreads:
+        return []
+    lines = ['', '## Replica spread', '', 'Each value is one replica\'s figure (n samples); replicas are not pooled.', '',
+             '| C | Figure | Per replica | Min / median / max |', '| --- | --- | --- | --- |']
+    for spread in spreads:
+        for name in SPREAD_FIGURES:
+            figure = spread['figures'].get(name)
+            if figure:
+                values = ', '.join(f'{number(v)} (n={n})' for v, n in zip(figure['values'], figure['samples']))
+                lines.append(f"| {spread['concurrency']} | {name} | {values} | "
+                             f"{number(figure['min'])} / {number(figure['median'])} / {number(figure['max'])} |")
+    return lines
+
+
 def markdown(result):
     lines = ['# Agentic mixed workload', '', f"Revision: `{REVISION}`. Fake server: {result['dry_run']}.",
              f"Receipt: {result['receipt_kind']}. Aborted: {result.get('aborted') or 'no'}.", '',
-             '| C | Mode | Valid/completed | Errors/timeouts | Output tok/s | Prefill tok/step | TTFT p50/p95 ms | Server step evidence | Client burst p50/p95/p99/max ms | Client stalls/1000 gaps |',
-             '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |']
+             '| C | Replica | Mode | Valid/completed | Errors/timeouts | Output tok/s | Prefill tok/step | TTFT p50/p95 ms | Server step evidence | Client burst p50/p95/p99/max ms | Client stalls/1000 gaps |',
+             '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |']
     def number(value):
         return 'unavailable' if value is None else f'{value:.3f}'
     def quantiles(values, names, samples):
@@ -1216,7 +1250,7 @@ def markdown(result):
                              f"(n={int(h['count'] or 0)}), stalls/1000 [{number(h['stall_per_1000_lower'])}, "
                              f"{number(h['stall_per_1000_upper'])}]" for h in primary) or 'unavailable'
         prefill = level['prefill']['server_prefill_tokens_per_step']
-        lines.append(f"| {level['concurrency']} | {level['prefill_budget']['mode'] or 'unknown'} | "
+        lines.append(f"| {level['concurrency']} | {level.get('replica', 0)} | {level['prefill_budget']['mode'] or 'unknown'} | "
                      f"{level['valid_sessions']}/{level['measured_completed']} | {level['errors']}/{level['timeouts']} | "
                      f"{number(level['output_tokens_per_second']['value'])} | {number(prefill['value'])} (n={prefill['samples']}) | "
                      f"{percentiles(level['ttft_ms'], ('p50', 'p95'), level['ttft_ms']['samples'])} | {evidence} | "
@@ -1232,6 +1266,7 @@ def markdown(result):
                          f"(limit {verdict['model_outcome_limit']} of {verdict['measured_sessions']} measured sessions)")
         if verdict['problems']:
             lines.append(f"C{level['concurrency']} failed: " + '; '.join(verdict['problems']))
+    lines += replica_lines(result.get('replica_spread') or [], number)
     if result.get('decode'):
         lines += ['', f"Separate C1 decode tok/s: {number(result['decode'].get('decode_tokens_per_second'))}."]
     lines += ['', 'n is the sample count of each figure: prefill steps, turns, histogram observations or client gaps. '
@@ -1274,6 +1309,7 @@ def main(argv=None):
         snapshot = {**result, 'receipt_kind': kind, 'levels': list(result['levels'] if saved_levels is None else saved_levels),
                     'level_receipts': list(result['level_receipts'])}
         snapshot['profile_digest'] = hashlib.sha256(json.dumps(profile, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        snapshot['replica_spread'] = replica_spread(snapshot['levels'])
         if aborted:
             snapshot['aborted'] = aborted
         snapshot['passed'] = (kind != 'partial' and not snapshot['aborted'] and bool(snapshot['levels'])
@@ -1307,13 +1343,15 @@ def main(argv=None):
                 result['frontend'] = frontend
             if context_window:
                 profile['max_output_tokens'] = min(profile['max_output_tokens'], max(1, context_window // 2))
-            for c in levels:
-                print(f'Running C{c}: warmup, {args.seconds:g}s measured interval, then drain', flush=True)
+            for c, replica in [(c, replica) for c in levels for replica in range(args.replicas)]:
+                print(f'Running C{c} replica {replica + 1} of {args.replicas}: warmup, {args.seconds:g}s measured '
+                      'interval, then drain', flush=True)
                 def partial(level):
                     path, _ = save('partial', [level], level['aborted'])
                     result['level_receipts'].append(str(path))
-                level = run_level(client, model, {**profile, 'arm': args.arm, 'run_id': result['run_id']}, manifest,
-                                  groups['coding'], c, on_partial=partial)
+                level = run_level(client, model, {**profile, 'arm': args.arm, 'run_id': result['run_id'], 'replica': replica,
+                                                  'seed': replica_seed(args.seed, replica)},
+                                  manifest, groups['coding'], c, on_partial=partial)
                 result['levels'].append(level)
                 path, _ = save('level', [level], level.get('aborted'))
                 result['level_receipts'].append(str(path))

@@ -1,6 +1,7 @@
 """Stable mixed-workload measurement math and Prometheus counter deltas."""
 import math
 import re
+import statistics
 
 
 def distribution(values):
@@ -357,6 +358,71 @@ def summarize_gaps(turns, threshold=100):
                 client_stalls=stall_stats(values, threshold), within_run_client_stalls=stall_stats(within, threshold),
                 request_max_gap_ms=distribution([t['step_gap_ms']['max'] for t in turns
                                                 if t.get('step_gap_ms', {}).get('max') is not None]))
+
+
+def span(values):
+    """Min, median and max of the known VALUES, and whether every value is known."""
+    known = sorted(v for v in values if v is not None)
+    return dict(min=known[0] if known else None, median=statistics.median(known) if known else None,
+                max=known[-1] if known else None, complete=len(known) == len(values))
+
+
+def server_key(histogram):
+    labels = ','.join(f'{k}={v}' for k, v in sorted(histogram['labels'].items()) if k not in ('model_name', 'engine'))
+    return histogram['name'] + (f'{{{labels}}}' if labels else '')
+
+
+def replica_figures(level):
+    """One replica's figures, each {value, samples} and, for a percentile,
+    whether its samples support it (`tail`): what the replica spread and
+    agentic_compare read."""
+    prefill = level['prefill']
+    ratio = prefill['mixed_actual_over_predicted']
+    figures = {
+        'output_tokens_per_second': dict(value=level['output_tokens_per_second']['value'],
+                                         samples=level['output_tokens_per_second']['samples']),
+        'valid_sessions_per_minute': dict(value=level['valid_sessions_per_minute'], samples=level['measured_completed']),
+        'session_p95_ms': tail(level['session_ms'], 'p95'),
+        'ttft_p50_ms': tail(level['ttft_ms'], 'p50'),
+        'ttft_p95_ms': tail(level['ttft_ms'], 'p95'),
+        'client_step_gap_p95_ms': tail(level['step_gap_ms'], 'p95'),
+        'client_stalls_per_1000_gaps': dict(value=level['client_stalls']['per_1000_gaps'],
+                                            samples=level['client_stalls']['eligible_gaps']),
+        'prompt_tokens_per_turn_p50': tail(prefill['prompt_tokens_per_turn'], 'p50'),
+        'uncached_prompt_tokens_p50': tail(prefill['uncached_prompt_tokens'], 'p50'),
+        'server_prefill_tokens_per_step': {k: prefill['server_prefill_tokens_per_step'][k] for k in ('value', 'samples')},
+        'server_prefix_cache_reuse': {k: prefill['server_prefix_cache_reuse'][k] for k in ('value', 'samples')},
+        'mixed_actual_over_predicted_mean': dict(value=ratio['mean'], samples=ratio['count']),
+        'mixed_actual_over_predicted_p95_upper': dict(value=ratio['quantile_upper']['p95'], samples=ratio['count'],
+                                                      supported=ratio['count'] >= TAIL_SAMPLES['p95']),
+    }
+    for histogram in level['server_metrics']['histograms']:
+        if any(part in histogram['name'] for part in ('step_', 'inter_token_latency', 'decode_')):
+            count = int(histogram['count'] or 0)
+            key = server_key(histogram)
+            figures[key + ' mean_ms'] = dict(value=histogram['mean_ms'], samples=count)
+            figures[key + ' p95_upper_ms'] = dict(value=histogram['quantile_upper_ms']['p95'], samples=count,
+                                                  supported=count >= TAIL_SAMPLES['p95'])
+    return figures
+
+
+def replica_spread(levels):
+    """Per concurrency, each figure's value and samples in every replica,
+    with their min, median and max. Replicas are repeated passes of one
+    workload, so the spread is across replicas; no tail pools their samples."""
+    groups = {}
+    for level in levels:
+        groups.setdefault(level['concurrency'], []).append(level)
+    spreads = []
+    for concurrency, group in groups.items():
+        group = sorted(group, key=lambda level: level.get('replica', 0))
+        figures = [replica_figures(level) for level in group]
+        spread = {}
+        for name in sorted(set().union(*figures)):
+            values = [f.get(name, {}).get('value') for f in figures]
+            spread[name] = dict(values=values, samples=[f.get(name, {}).get('samples', 0) for f in figures], **span(values))
+        spreads.append(dict(concurrency=concurrency, replicas=[level.get('replica', 0) for level in group], figures=spread))
+    return spreads
 
 
 def counter_total(delta, name):

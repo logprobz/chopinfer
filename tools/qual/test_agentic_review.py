@@ -238,7 +238,8 @@ class DurabilityAndComparisonTests(unittest.TestCase):
                 code = agentic_mixed.main(['--dry-run', '--levels', '1,2', '--seconds', '.3', '--warmup-waves', '0', '--no-decode'])
             receipts = [json.loads(p.read_text()) for p in Path(directory).glob('*.json')]
             self.assertEqual(code, 1)
-            self.assertEqual([r['receipt_kind'] for r in receipts].count('level'), 1)
+            # One checkpoint per replica of the completed level.
+            self.assertEqual([r['receipt_kind'] for r in receipts].count('level'), 3)
             partial = next(r for r in receipts if r['receipt_kind'] == 'partial')
             self.assertFalse(partial['passed'])
             self.assertEqual(partial['aborted'], 'runner error: RuntimeError')
@@ -316,17 +317,18 @@ class DurabilityAndComparisonTests(unittest.TestCase):
             compared = compare(a, b)
             self.assertEqual(compared['host_load']['timing'],
                              'evidence' if a['host_load']['idle'] and b['host_load']['idle'] else 'informational')
-            self.assertTrue(compared['levels'][0]['primary_server_step_evidence'])
+            replica = compared['levels'][0]['replicas'][0]
+            self.assertTrue(replica['primary_server_step_evidence'])
             # Each compared figure states its samples in both arms.
-            for figure in compared['levels'][0]['secondary_client_metrics'].values():
+            for figure in replica['secondary_client_metrics'].values():
                 for arm in ('fixed', 'tbt'):
                     self.assertIsInstance(figure[arm]['samples'], int)
             for name in ('ttft_p95_ms', 'client_step_gap_p95_ms'):
-                figure = compared['levels'][0]['secondary_client_metrics'][name]
+                figure = replica['secondary_client_metrics'][name]
                 self.assertEqual(set(figure['fixed']), {'value', 'samples', 'supported'})
-            for pair in compared['levels'][0]['primary_server_step_evidence']:
+            for pair in replica['primary_server_step_evidence']:
                 self.assertEqual(pair['samples'], {'fixed': pair['fixed']['count'], 'tbt': pair['tbt']['count']})
-            trajectory = compared['levels'][0]['trajectories']
+            trajectory = replica['trajectories']
             self.assertGreater(trajectory['shared_turns'], 0)
             self.assertEqual(trajectory['equal_requests'], trajectory['shared_turns'])
             self.assertEqual(trajectory['equal_answers'], trajectory['shared_turns'])

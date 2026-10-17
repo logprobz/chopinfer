@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Compare a verified tbt/fixed pair of completed agentic-mixed v3 sweeps."""
+"""Compare a verified tbt/fixed pair of completed agentic-mixed v3 sweeps,
+replica by replica: replica R of one arm repeats replica R of the other. Each
+level reports every replica's pair and the spread of each figure across
+replicas, never tails pooled over them."""
 import argparse
 import hashlib
 import json
 from pathlib import Path
 
-from agentic_metrics import tail
+from agentic_metrics import replica_figures, span
 from agentic_mixed import REVISION
 from agentic_server import mode_evidence, verify_arm
 from common import compared_timing
@@ -27,8 +30,9 @@ def validate_pair(left, right):
         digest = hashlib.sha256(json.dumps(profile, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         if digest != receipt['profile_digest']:
             raise ValueError('profile digest does not match recorded settings')
-        if [level['concurrency'] for level in receipt['levels']] != profile['levels']:
-            raise ValueError('recorded levels do not match the profile')
+        expected = [(c, replica) for c in profile['levels'] for replica in range(profile['replicas'])]
+        if [(level['concurrency'], level.get('replica')) for level in receipt['levels']] != expected:
+            raise ValueError('recorded levels and replicas do not match the profile')
         for level in receipt['levels']:
             evidence = level['prefill_budget']
             actual = mode_evidence(level['server_metrics']['before'], level['server_metrics']['after'],
@@ -48,17 +52,39 @@ def validate_pair(left, right):
             raise ValueError(f'incompatible server {key}')
 
 
+def spread(replicas):
+    """Each figure across one level's replica pairs: per arm the values,
+    samples and their min, median and max; the per-replica tbt minus fixed
+    differences and their span; and whether the arms' ranges overlap."""
+    names = sorted(set().union(*(pair['figures'][arm] for pair in replicas for arm in ('fixed', 'tbt'))))
+    figures = {}
+    for name in names:
+        arms = {}
+        for arm in ('fixed', 'tbt'):
+            rows = [pair['figures'][arm].get(name, {}) for pair in replicas]
+            values = [row.get('value') for row in rows]
+            arms[arm] = dict(values=values, samples=[row.get('samples', 0) for row in rows], **span(values))
+        differences = [b - a if a is not None and b is not None else None
+                       for a, b in zip(arms['fixed']['values'], arms['tbt']['values'])]
+        overlap = None
+        if arms['fixed']['complete'] and arms['tbt']['complete'] and replicas:
+            overlap = arms['tbt']['min'] <= arms['fixed']['max'] and arms['fixed']['min'] <= arms['tbt']['max']
+        figures[name] = dict(**arms, tbt_minus_fixed=dict(values=differences, **span(differences)), ranges_overlap=overlap)
+    return figures
+
+
 def compare(left, right):
     validate_pair(left, right)
     arms = {r['arm']: r for r in (left, right)}
-    results = []
+    pairs = []
     for fixed, tbt in zip(arms['fixed']['levels'], arms['tbt']['levels']):
         def coverage(level):
             return dict(valid=level['valid_sessions'], completed=level['measured_completed'],
                         errors=level['errors'], timeouts=level['timeouts'], failure_reasons=level['failure_reasons'],
                         arm_warnings=level['arm_verification'].get('warnings', []),
                         prompt_tokens=level['prompt_tokens'], output_tokens=level['output_tokens'],
-                        drain_seconds=level['drain_seconds'],
+                        drain_seconds=level['drain_seconds'], tool_results=level['tool_results'],
+                        server_prefill_tokens_per_step=level['prefill']['server_prefill_tokens_per_step'],
                         server_histograms_unavailable=[{'name': h['name'], 'labels': h['labels'], 'reason': h['unavailable']}
                                                        for h in level['server_metrics']['histograms'] if h['unavailable']])
         def trajectories(level):
@@ -69,17 +95,10 @@ def compare(left, right):
         shared = a.keys() & b.keys()
         # Every figure carries its sample count in each arm; a percentile also
         # whether that count supports it (agentic_metrics.TAIL_SAMPLES).
-        figures = {
-            'output_tokens_per_second': lambda level: dict(value=level['output_tokens_per_second']['value'],
-                                                           samples=level['output_tokens_per_second']['samples']),
-            'ttft_p95_ms': lambda level: tail(level['ttft_ms'], 'p95'),
-            'client_step_gap_p95_ms': lambda level: tail(level['step_gap_ms'], 'p95'),
-            'client_stalls_per_1000_gaps': lambda level: dict(value=level['client_stalls']['per_1000_gaps'],
-                                                              samples=level['client_stalls']['eligible_gaps']),
-        }
+        figures = {'fixed': replica_figures(fixed), 'tbt': replica_figures(tbt)}
         comparisons = {}
-        for name, figure in figures.items():
-            x, y = figure(fixed), figure(tbt)
+        for name in ('output_tokens_per_second', 'ttft_p95_ms', 'client_step_gap_p95_ms', 'client_stalls_per_1000_gaps'):
+            x, y = figures['fixed'][name], figures['tbt'][name]
             comparisons[name] = dict(fixed=x, tbt=y, tbt_minus_fixed=y['value'] - x['value']
                                      if x['value'] is not None and y['value'] is not None else None)
         # Server timing histograms are primary and kept per metric/label set.
@@ -101,14 +120,20 @@ def compare(left, right):
                     if t['stall_per_1000_lower'] is not None and f['stall_per_1000_upper'] is not None else None,
                     'upper': t['stall_per_1000_upper'] - f['stall_per_1000_lower']
                     if t['stall_per_1000_upper'] is not None and f['stall_per_1000_lower'] is not None else None}
-        results.append(dict(concurrency=fixed['concurrency'], coverage={'fixed': coverage(fixed), 'tbt': coverage(tbt)},
-                            primary_server_step_evidence=list(server.values()), secondary_client_metrics=comparisons,
-                            trajectories=dict(shared_turns=len(shared), fixed_turns=len(a), tbt_turns=len(b),
-                                              equal_requests=sum(a[k][0] == b[k][0] for k in shared),
-                                              equal_answers=sum(a[k][1] == b[k][1] for k in shared))))
+        pairs.append(dict(concurrency=fixed['concurrency'], replica=fixed['replica'],
+                          coverage={'fixed': coverage(fixed), 'tbt': coverage(tbt)},
+                          primary_server_step_evidence=list(server.values()), secondary_client_metrics=comparisons,
+                          trajectories=dict(shared_turns=len(shared), fixed_turns=len(a), tbt_turns=len(b),
+                                            equal_requests=sum(a[k][0] == b[k][0] for k in shared),
+                                            equal_answers=sum(a[k][1] == b[k][1] for k in shared)),
+                          figures=figures))
+    results = []
+    for concurrency in arms['fixed']['profile']['levels']:
+        replicas = [pair for pair in pairs if pair['concurrency'] == concurrency]
+        results.append(dict(concurrency=concurrency, replicas=replicas, spread=spread(replicas)))
     # Throughput and latency compared across the arms count only when both
     # ran on an idle host (common.HOST_LOAD_RULE); the label gates nothing.
-    return dict(schema='chopinfer.agentic-mixed-comparison.v1', label=left['label'], mechanics_only=left['mechanics_only'],
+    return dict(schema='chopinfer.agentic-mixed-comparison.v2', label=left['label'], mechanics_only=left['mechanics_only'],
                 profile_digest=left['profile_digest'], levels=results,
                 host_load=compared_timing({arm: arms[arm].get('host_load') for arm in ('fixed', 'tbt')}))
 

@@ -1234,13 +1234,13 @@ runs). It compares prefill-budget modes under mixed prefill and decode load.
 ```sh
 python3 -B tools/qual/agentic_mixed.py --url http://127.0.0.1:8101 \
   --model MiMo-V2.6-Flash-MOPD --levels 1,4,8,16 --seconds 60 \
-  --arm tbt --label sched-repeat-1 --seed runyard-coding-v1 --temperature 0
-# Repeat against the fixed-budget server with --arm fixed and the same label.
+  --arm tbt --label sched-1 --seed runyard-coding-v1 --temperature 0
+# Run again against the fixed-budget server with --arm fixed and the same label.
 python3 -B tools/qual/agentic_compare.py TBT-SWEEP.json FIXED-SWEEP.json
 ```
 
-Pass the root URL (without `/v1`). Use at least three paired repeats with a
-new shared label per pair and identical flags except URL and arm. A level
+Pass the root URL (without `/v1`). Use a new shared label per pair of
+sweeps and identical flags except URL and arm. A level
 passes when its arm's prefill-budget mode is verified (from `/metrics` or the
 local process's `--prefill-budget`), it has no request errors or timeouts,
 and every invalid session is a proven model outcome (ending inside the
@@ -1287,10 +1287,20 @@ Every percentile comes with its sample count. The JSON distributions carry
 with fewer samples than it needs (20 for p95, 100 for p99,
 `agentic_metrics.TAIL_SAMPLES`); `agentic_compare.py` gives each figure's
 samples in both arms, and `supported` for a percentile. `--min-samples`
-(default 20) is the number of completed measured sessions a level needs;
-with fewer it is insufficient, since a p95 over fewer than 20 sessions is
-the slowest session or next to it. Lengthen `--seconds` rather than lower
+(default 20) is the number of completed measured sessions each replica of a
+level needs; with fewer it is insufficient, since a p95 over fewer than 20
+sessions is the slowest session or next to it. Lengthen `--seconds` rather than lower
 it.
+
+Each level runs `--replicas` passes (default 3) back to back against the
+same server. Replica R takes its tasks, request seeds and cache salts from
+`SEED/replica-R` (replica 0 from the seed itself), so both arms run the same
+replicas. Replicas are repeated measurements of one workload, not samples to
+pool: each is its own level entry with its own figures, and the receipt's
+`replica_spread` gives each figure's per-replica values and samples with
+their min, median and max. `agentic_compare.py` pairs replica R of one arm
+with replica R of the other and reports, per figure, both arms' spreads, the
+per-replica differences and whether the arms' ranges overlap.
 
 The raw re-parse reads the served model's frontend declaration: `--frontend`,
 else the `frontend` input of `CHOPINFER_QUAL_CONFIG`, else the inventoried

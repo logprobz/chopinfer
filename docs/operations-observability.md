@@ -322,8 +322,10 @@ explicit targets on this host by serve's `--listen` port, so a systemd unit
 watched with `--target` names its GPUs. A listen port counts only for
 `chopinfer` or `chopinfer-host` running serve on this host's network: in
 chopinfer-top's network namespace or, where that cannot be read, in no
-container. Each pid is read once per start time, so a serve that restarts is
-found under its new pid. Enter on a GPU opens its
+container. The target names the listen address, `localhost`, or, for a
+wildcard bind, a loopback address the bind accepts: IPv4 for `0.0.0.0`, both
+families for `[::]`. Each pid is read once per start time, so a serve that
+restarts is found under its new pid. Enter on a GPU opens its
 instance's details, which name the instance's GPUs, and Esc returns.
 
 Each change is one event in the log: GPUs found or not read, a thermal or

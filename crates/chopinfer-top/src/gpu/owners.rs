@@ -129,7 +129,8 @@ pub fn container_id(cgroup: &str) -> Option<String> {
 
 /// Whether serve listening on `listen` is `target`: the same port, and the
 /// target names the listen address itself, `localhost` for 127.0.0.1 or
-/// ::1, or, for a wildcard bind, any loopback address.
+/// ::1, or, for a wildcard bind, a loopback address it takes connections
+/// on: 0.0.0.0 only IPv4 ones, Linux's dual-stack [::] both.
 fn serves(target: &Target, listen: &str) -> bool {
     let Ok(address) = listen.parse::<SocketAddr>() else {
         return false;
@@ -140,9 +141,14 @@ fn serves(target: &Target, listen: &str) -> bool {
     let host = target.host.trim_start_matches('[').trim_end_matches(']');
     let listen = address.ip();
     match host.parse::<IpAddr>() {
-        // The address itself, or any loopback address for a wildcard bind;
+        // The address itself, or a loopback address for a wildcard bind;
         // 127.0.0.1 and 127.0.0.2 are different listeners.
-        Ok(named) => named == listen || (listen.is_unspecified() && named.is_loopback()),
+        Ok(named) => {
+            named == listen
+                || (listen.is_unspecified()
+                    && named.is_loopback()
+                    && (listen.is_ipv6() || named.is_ipv4()))
+        }
         Err(_) => {
             host == "localhost"
                 && (listen.is_unspecified()
@@ -478,5 +484,41 @@ mod tests {
         assert_eq!(row_of("[::1]:8310"), Some(localhost));
         assert_eq!(row_of("[::]:8310"), Some(localhost));
         assert_eq!(row_of("127.0.0.2:8310"), None);
+    }
+
+    #[test]
+    fn a_wildcard_bind_answers_only_on_its_own_address_family() {
+        let mut registry = Registry::new(1.0);
+        let six = registry.add_target(Target::parse("[::1]:8310").unwrap(), 0.0);
+        let four = registry.add_target(Target::parse("127.0.0.1:8310").unwrap(), 0.0);
+        let row_of = |listen: &str| {
+            let owner = Owner {
+                listen: Some(listen.to_owned()),
+                ..Owner::default()
+            };
+            row(&registry.instances, &gpu_process(5, owner))
+        };
+        // 0.0.0.0 takes no IPv6 connection, so it is not [::1].
+        assert_eq!(row_of("0.0.0.0:8310"), Some(four));
+        assert_eq!(row_of("[::]:8310"), Some(six));
+        assert_eq!(row_of("[::1]:8310"), Some(six));
+        let mut only_six = Registry::new(1.0);
+        only_six.add_target(Target::parse("[::1]:8310").unwrap(), 0.0);
+        let owner = Owner {
+            listen: Some("0.0.0.0:8310".to_owned()),
+            ..Owner::default()
+        };
+        assert_eq!(row(&only_six.instances, &gpu_process(5, owner)), None);
+        // Linux's [::] takes IPv4 connections too.
+        let mut only_four = Registry::new(1.0);
+        let four = only_four.add_target(Target::parse("127.0.0.1:8310").unwrap(), 0.0);
+        let owner = Owner {
+            listen: Some("[::]:8310".to_owned()),
+            ..Owner::default()
+        };
+        assert_eq!(
+            row(&only_four.instances, &gpu_process(5, owner)),
+            Some(four)
+        );
     }
 }

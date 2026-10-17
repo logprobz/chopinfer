@@ -5,6 +5,9 @@
 //! dot products, the key sums and the GEMM reductions) are
 //! Neumaier-compensated.
 
+mod native;
+pub use native::*;
+
 use crate::codec::bf16_to_f32;
 use crate::contract::{Refusal, ScaleMode, Validate};
 use crate::latent_attention::{
@@ -59,22 +62,29 @@ impl Layout {
         if column >= paging.max_pages {
             return Err(Refusal("latent position past the page table"));
         }
+        let table_index = sequence
+            .checked_mul(paging.max_pages)
+            .and_then(|base| base.checked_add(column))
+            .ok_or(Refusal("latent page table offset overflows"))?;
         let page = paging
             .block_tables
-            .get(sequence * paging.max_pages + column)
+            .get(table_index)
             .copied()
             .and_then(|page| usize::try_from(page).ok())
             .ok_or(Refusal("latent page table entry missing or negative"))?;
         let base = page
             .checked_mul(paging.page_stride)
-            .filter(|&base| base + self.page_bytes() <= pool_bytes)
+            .filter(|&base| {
+                base.checked_add(self.page_bytes())
+                    .is_some_and(|end| end <= pool_bytes)
+            })
             .ok_or(Refusal("latent page outside the pool"))?;
         Ok((base, position % self.page_size))
     }
 
     /// Token `slot`'s decoded latent row of the page at `page`.
-    fn decode(&self, page: &[u8], slot: usize) -> Vec<f64> {
-        match self.kv {
+    fn decode(&self, page: &[u8], slot: usize) -> Result<Vec<f64>, Refusal> {
+        Ok(match self.kv {
             LatentKvFormat::Bf16 => page[slot * self.latent * 2..(slot + 1) * self.latent * 2]
                 .chunks_exact(2)
                 .map(|b| f64::from(bf16_to_f32(u16::from_le_bytes([b[0], b[1]]))))
@@ -94,7 +104,10 @@ impl Layout {
                     })
                     .collect()
             }
-        }
+            LatentKvFormat::Fp8E4M3Ue8M0Block32 | LatentKvFormat::Fp4E2M1E4M3Block16 => {
+                decode_native_page(self.kv, self.latent, self.page_size, page, slot)?
+            }
+        })
     }
 }
 
@@ -118,18 +131,21 @@ fn kv_write_layout(query: LatentAttentionQuery) -> Result<(Layout, u32), Refusal
     }
 }
 
-/// One encoded latent row: its value bytes (BF16 little endian, or E4M3
-/// codes) and, for FP8, one F32 scale per 128 elements.
+/// One encoded latent row: its value bytes (BF16 little endian, E4M3
+/// bytes, or packed E2M1), with either F32 or native byte scales.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EncodedLatent {
     pub values: Vec<u8>,
     pub scales: Vec<f32>,
+    /// Native byte scales; empty for the original BF16 and F32-scale formats.
+    pub scale_bytes: Vec<u8>,
 }
 
 /// Encodes one BF16 latent row (`latent` bit patterns) in `kv` format with
 /// the contract's scale rule: per 128 elements, scale = max |x| / 448 in F32
 /// (1 for an all-zero block) and code = `E4M3(x / scale)`, rounded to
-/// nearest and saturated (`quantize::fp8_activation_1x128`).
+/// nearest and saturated (`quantize::fp8_activation_1x128`). Native formats
+/// use their declared per-32 UE8M0 or per-16 E4M3 scale rules instead.
 pub fn encode_latent_row(kv: LatentKvFormat, latent: &[u16]) -> Result<EncodedLatent, Refusal> {
     let block = LATENT_FP8_SCALE_BLOCK as usize;
     if latent.is_empty() || !latent.len().is_multiple_of(block) {
@@ -139,6 +155,7 @@ pub fn encode_latent_row(kv: LatentKvFormat, latent: &[u16]) -> Result<EncodedLa
         LatentKvFormat::Bf16 => Ok(EncodedLatent {
             values: latent.iter().flat_map(|x| x.to_le_bytes()).collect(),
             scales: Vec::new(),
+            scale_bytes: Vec::new(),
         }),
         LatentKvFormat::Fp8E4M3Block128 => {
             let values = latent.iter().map(|&x| bf16_to_f32(x)).collect::<Vec<_>>();
@@ -150,7 +167,11 @@ pub fn encode_latent_row(kv: LatentKvFormat, latent: &[u16]) -> Result<EncodedLa
             Ok(EncodedLatent {
                 values: quantized.codes,
                 scales,
+                scale_bytes: Vec::new(),
             })
+        }
+        LatentKvFormat::Fp8E4M3Ue8M0Block32 | LatentKvFormat::Fp4E2M1E4M3Block16 => {
+            encode_native_row(kv, latent)
         }
     }
 }
@@ -188,6 +209,10 @@ pub fn latent_kv_write(
         )?;
         let width = encoded.values.len();
         pool[base + slot * width..base + (slot + 1) * width].copy_from_slice(&encoded.values);
+        if !encoded.scale_bytes.is_empty() {
+            let scales = base + layout.page_size * width + slot * encoded.scale_bytes.len();
+            pool[scales..scales + encoded.scale_bytes.len()].copy_from_slice(&encoded.scale_bytes);
+        }
         if layout.kv == LatentKvFormat::Fp8E4M3Block128 {
             let scales = base + layout.page_size * layout.latent + slot * layout.scale_blocks() * 4;
             for (i, scale) in encoded.scales.iter().enumerate() {
@@ -292,6 +317,20 @@ pub fn latent_attention(
     input: LatentAttentionInput<'_>,
 ) -> Result<LatentAttentionResult, Refusal> {
     query.validate()?;
+    if matches!(
+        query,
+        LatentAttentionQuery::Attention { sink: true, .. }
+            | LatentAttentionQuery::Attention {
+                tail_rope_dims: 64,
+                ..
+            }
+            | LatentAttentionQuery::Attention {
+                second_fp4_keys: true,
+                ..
+            }
+    ) {
+        return Err(Refusal("latent extensions require the source-aware oracle"));
+    }
     let LatentAttentionQuery::Attention {
         heads,
         latent,
@@ -354,7 +393,7 @@ pub fn latent_attention(
             .map(|&p| {
                 let (base, slot) =
                     layout.locate(input.paging, input.pool.len(), input.row_batch[row], p)?;
-                Ok(layout.decode(&input.pool[base..base + layout.page_bytes()], slot))
+                layout.decode(&input.pool[base..base + layout.page_bytes()], slot)
             })
             .collect::<Result<Vec<_>, Refusal>>()?;
         let n = keys.len();
@@ -434,6 +473,23 @@ pub fn latent_attention(
 /// o_r`, output `O / L` (zeros when every rank is empty). S is `sum_r a_r
 /// S_r / L` and K the ranks' summed key counts.
 pub fn merge_partials(ranks: &[LatentPartials]) -> Result<OracleOutput, Refusal> {
+    merge_with_sink(ranks, None)
+}
+
+/// Merge sink-free partials, adding one F32 sink logit per head exactly
+/// once. Head indices repeat for every row. This precedes BF16 rounding
+/// and the inverse tail rotation. Even an empty split contributes no sink.
+pub fn merge_partials_with_sink(
+    ranks: &[LatentPartials],
+    sinks: &[f32],
+) -> Result<OracleOutput, Refusal> {
+    merge_with_sink(ranks, Some(sinks))
+}
+
+fn merge_with_sink(
+    ranks: &[LatentPartials],
+    sinks: Option<&[f32]>,
+) -> Result<OracleOutput, Refusal> {
     let Some(first) = ranks.first() else {
         return Err(Refusal("latent partial merge needs a rank"));
     };
@@ -445,9 +501,17 @@ pub fn merge_partials(ranks: &[LatentPartials]) -> Result<OracleOutput, Refusal>
             r.maximum.values.len() != pairs
                 || r.denominator.values.len() != pairs
                 || r.numerator.values.len() != elements
+                || r.numerator.sum_abs_products.len() != elements
+                || r.numerator.reduction_lengths.len() != elements
+                || r.denominator.sum_abs_products.len() != pairs
         })
     {
         return Err(Refusal("latent partial ranks differ in shape"));
+    }
+    if sinks.is_some_and(|s| {
+        s.is_empty() || !pairs.is_multiple_of(s.len()) || s.iter().any(|x| !x.is_finite())
+    }) {
+        return Err(Refusal("latent sink shape or value mismatch"));
     }
     let width = elements / pairs;
     let mut merged = OracleOutput {
@@ -460,6 +524,8 @@ pub fn merge_partials(ranks: &[LatentPartials]) -> Result<OracleOutput, Refusal>
             .iter()
             .map(|r| r.maximum.values[pair])
             .fold(f64::NEG_INFINITY, f64::max);
+        let sink = sinks.map(|s| f64::from(s[pair % s.len()]));
+        let top = sink.map_or(top, |s| top.max(s));
         let weights = ranks
             .iter()
             .map(|r| {
@@ -472,8 +538,15 @@ pub fn merge_partials(ranks: &[LatentPartials]) -> Result<OracleOutput, Refusal>
             })
             .collect::<Vec<_>>();
         let mut l = NeumaierSum::default();
+        let mut denominator_bound = NeumaierSum::default();
         for (rank, &a) in ranks.iter().zip(&weights) {
             l.add(a * rank.denominator.values[pair]);
+            if sink.is_some() {
+                denominator_bound.add(a * rank.denominator.sum_abs_products[pair]);
+            }
+        }
+        if let Some(sink) = sink {
+            l.add((sink - top).exp());
         }
         let l = l.value();
         for column in 0..width {
@@ -486,11 +559,17 @@ pub fn merge_partials(ranks: &[LatentPartials]) -> Result<OracleOutput, Refusal>
                     keys += rank.numerator.reduction_lengths[index];
                 }
             }
-            let (value, bound) = if top == f64::NEG_INFINITY {
+            let (value, mut bound) = if top == f64::NEG_INFINITY {
                 (0.0, 0.0)
             } else {
                 (o.value() / l, bound.value() / l)
             };
+            if sink.is_some() {
+                // Bound the denominator's perturbation as well as the
+                // numerator's. Sink logits are exact F32 inputs.
+                bound += value.abs() * denominator_bound.value() / l;
+                keys += 1;
+            }
             merged.values.push(value);
             merged.sum_abs_products.push(bound);
             merged.reduction_lengths.push(keys.max(1));
@@ -647,7 +726,9 @@ mod tests {
             let (base, slot) = layout
                 .locate(self.paging(), self.pool.len(), 0, position)
                 .unwrap();
-            layout.decode(&self.pool[base..base + layout.page_bytes()], slot)
+            layout
+                .decode(&self.pool[base..base + layout.page_bytes()], slot)
+                .unwrap()
         }
 
         fn run(

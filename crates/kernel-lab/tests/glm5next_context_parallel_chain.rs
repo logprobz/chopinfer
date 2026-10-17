@@ -2056,6 +2056,9 @@ fn check_writes(reference: &Instance, pool: &[u8], step: &StepSpec) -> LabResult
     let element = match kv {
         LatentKvFormat::Bf16 => 2,
         LatentKvFormat::Fp8E4M3Block128 => 1,
+        LatentKvFormat::Fp8E4M3Ue8M0Block32 | LatentKvFormat::Fp4E2M1E4M3Block16 => {
+            unreachable!("native latent formats need their own conformance cases")
+        }
     };
     let latent_page = SHAPE.latent_page_bytes(kv) as usize;
     let group = SHAPE.profile.index_pool as usize;

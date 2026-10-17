@@ -105,6 +105,9 @@ fn spans(
     slot: usize,
 ) -> Vec<std::ops::Range<usize>> {
     match kv {
+        LatentKvFormat::Fp8E4M3Ue8M0Block32 | LatentKvFormat::Fp4E2M1E4M3Block16 => {
+            unreachable!("native latent formats need their own conformance cases")
+        }
         LatentKvFormat::Bf16 => {
             std::iter::once(base + slot * latent * 2..base + (slot + 1) * latent * 2).collect()
         }
@@ -129,6 +132,9 @@ fn pool_element(kv: LatentKvFormat) -> DType {
     match kv {
         LatentKvFormat::Bf16 => DType::Bf16,
         LatentKvFormat::Fp8E4M3Block128 => DType::F32,
+        LatentKvFormat::Fp8E4M3Ue8M0Block32 | LatentKvFormat::Fp4E2M1E4M3Block16 => {
+            unreachable!("native latent formats need their own conformance cases")
+        }
     }
 }
 
@@ -148,6 +154,9 @@ pub fn kv_write_case<'a>(
     else {
         return Err("a latent KV write case writes by a KV write query".into());
     };
+    if !matches!(kv, LatentKvFormat::Bf16 | LatentKvFormat::Fp8E4M3Block128) {
+        return Err("native latent formats require the source-aware conformance case".into());
+    }
     let (width, page) = (latent as usize, page_size as usize);
     let rows = capacity as usize;
     let bases = [page.saturating_sub(3), 2 * page + 1];

@@ -173,6 +173,29 @@ fn bf16_exact(values: &[f64]) -> Vec<f64> {
         .collect()
 }
 
+#[test]
+fn latent_sink_and_in_place_tail_contract_validate() {
+    use kernel_core::contract::{AttentionPhase, Validate};
+    use kernel_core::latent_attention::{
+        LatentAttentionOutput, LatentAttentionQuery, LatentKvFormat,
+    };
+    let query = LatentAttentionQuery::Attention {
+        heads: 16,
+        latent: 512,
+        max_keys: 128,
+        softmax_scale_bits: (512_f32).powf(-0.5).to_bits(),
+        page_size: 128,
+        kv: LatentKvFormat::Bf16,
+        phase: AttentionPhase::Decode,
+        output: LatentAttentionOutput::Normalized,
+        sink: true,
+        tail_rope_dims: 64,
+        second_fp4_keys: false,
+        capacity: 1,
+    };
+    query.validate().unwrap();
+}
+
 /// DeepSeek's RMSNorm: F32 arithmetic, weight multiplied before the single
 /// BF16 rounding, eps 1e-20.
 const DEEPSEEK_NORM: RmsNorm = RmsNorm {
@@ -1295,4 +1318,462 @@ fn clamped_silu_mul_rounds_only_its_product_before_ceil_quantization() {
     gate[0] = f32::NAN;
     assert!(query.apply(&gate, &up, rows).is_err());
     assert!(query.oracle(&gate, &up, rows).is_err());
+}
+
+mod latent_parameters {
+    use super::*;
+    use kernel_core::contract::{AttentionPhase, NumericalContract, Validate};
+    use kernel_core::latent_attention::{
+        LatentAttentionOutput as Output, LatentAttentionQuery as Query, LatentKvFormat as Format,
+        LatentWindowStorage,
+    };
+    use kernel_core::latent_attention_oracle::{
+        LatentAttentionResult as ResultRows, LatentCompressedInput, LatentKeyLists, LatentPaging,
+        LatentSourcesInput, LatentWindowInput, decode_native_page, encode_latent_row,
+        latent_attention_with_sources, latent_kv_write, latent_tail_rope, merge_partials_with_sink,
+    };
+
+    const D: usize = 512;
+    const WINDOW: Format = Format::Fp8E4M3Ue8M0Block32;
+    const COMPRESSED: Format = Format::Fp4E2M1E4M3Block16;
+
+    fn query(output: Output) -> Query {
+        Query::Attention {
+            heads: 2,
+            latent: D as u32,
+            max_keys: 8,
+            softmax_scale_bits: (D as f32).powf(-0.5).to_bits(),
+            page_size: 2,
+            kv: WINDOW,
+            phase: AttentionPhase::Decode,
+            output,
+            sink: true,
+            tail_rope_dims: 64,
+            second_fp4_keys: true,
+            capacity: 2,
+        }
+    }
+
+    fn normalized(result: ResultRows) -> Vec<f64> {
+        let ResultRows::Normalized(out) = result else {
+            panic!("expected normalized output")
+        };
+        out.values
+    }
+
+    struct Sources {
+        window: Vec<u8>,
+        compressed: Vec<u8>,
+        q: Vec<f64>,
+        sinks: [f32; 2],
+    }
+
+    impl Sources {
+        fn new() -> Self {
+            // Ring slot 127 is 2, slot 0 is 1. Every 32-channel block has
+            // its own power-of-two scale: 1, 2, 4, repeated.
+            let mut window = vec![0; WINDOW.page_bytes(D as u32, 128) as usize];
+            for slot in 0..128 {
+                window[slot * D..(slot + 1) * D].fill(if slot % 2 == 0 { 0x38 } else { 0x40 });
+                for block in 0..D / 32 {
+                    window[128 * D + slot * (D / 32) + block] = 127 + (block % 3) as u8;
+                }
+            }
+            // Two FP4 pages. The table reverses them. Every channel pair
+            // is 1, 1.5 times a positive scale, 0.5 on page 0 and 1 on 1.
+            let page = COMPRESSED.page_bytes(D as u32, 2) as usize;
+            let mut compressed = vec![0; 2 * page];
+            for p in 0..2 {
+                compressed[p * page..p * page + D].fill(0x32);
+                compressed[p * page + D..(p + 1) * page].fill(if p == 0 { 0x30 } else { 0x38 });
+            }
+            Self {
+                window,
+                compressed,
+                q: vec![0.0; 2 * D],
+                sinks: [0.0, 2.0],
+            }
+        }
+
+        fn input<'a>(&'a self, window: &'a [i32], compressed: &'a [i32]) -> LatentSourcesInput<'a> {
+            LatentSourcesInput {
+                q: &self.q,
+                row_batch: &[0],
+                sinks: Some(&self.sinks),
+                window: LatentWindowInput {
+                    pool: &self.window,
+                    sequence_stride: self.window.len(),
+                    storage: LatentWindowStorage::Ring128,
+                    lists: LatentKeyLists {
+                        indices: window,
+                        stride: window.len(),
+                        budget: window.len(),
+                    },
+                },
+                compressed: Some(LatentCompressedInput {
+                    pool: &self.compressed,
+                    paging: LatentPaging {
+                        block_tables: &[1, 0],
+                        max_pages: 2,
+                        page_stride: COMPRESSED.page_bytes(D as u32, 2) as usize,
+                    },
+                    lists: LatentKeyLists {
+                        indices: compressed,
+                        stride: compressed.len(),
+                        budget: compressed.len(),
+                    },
+                }),
+            }
+        }
+    }
+
+    #[test]
+    fn latent_native_layout_and_quantizer_formulas() {
+        assert_eq!(WINDOW.token_bytes(512), 528);
+        assert_eq!(COMPRESSED.token_bytes(512), 288);
+        for format in [WINDOW, COMPRESSED] {
+            let zero = encode_latent_row(format, &vec![0; D]).unwrap();
+            assert!(zero.values.iter().all(|&c| c == 0));
+            assert!(zero.scales.is_empty());
+            let expected = if format == WINDOW { 105 } else { 1 };
+            assert!(zero.scale_bytes.iter().all(|&s| s == expected));
+        }
+        // Exact power of two and just above it exercise ceil, not RNE.
+        for (amax, scale) in [(448_f32, 127), (450_f32, 128)] {
+            let mut row = vec![f32_to_bf16(-1.0); D];
+            row[0] = f32_to_bf16(amax);
+            let encoded = encode_latent_row(WINDOW, &row).unwrap();
+            assert_eq!(encoded.scale_bytes[0], scale);
+            assert_eq!(encoded.values[0], if scale == 127 { 0x7e } else { 0x76 });
+        }
+        let mut row = vec![f32_to_bf16(6.0); D];
+        row[0] = f32_to_bf16(1.25); // E2M1 tie rounds to even code 2.
+        row[1] = f32_to_bf16(-1.75); // tie rounds to even code 4, negative.
+        let encoded = encode_latent_row(COMPRESSED, &row).unwrap();
+        assert_eq!(encoded.values[0], 0xc2);
+        assert!(encoded.scale_bytes.iter().all(|&s| s == 0x38));
+        // Exact decode for every E2M1 code and every positive E4M3 scale.
+        for scale in 1..=126 {
+            let mut page = vec![0; 72];
+            for (i, code) in page[..64].iter_mut().enumerate() {
+                *code = ((i % 16) * 17) as u8;
+            }
+            page[64..].fill(scale);
+            let decoded = decode_native_page(COMPRESSED, 128, 1, &page, 0).unwrap();
+            for (i, &x) in decoded.iter().enumerate() {
+                assert_eq!(
+                    x,
+                    SmallFloat::E2M1.decode_f64(((i / 2) % 16) as u8)
+                        * SmallFloat::E4M3.decode_f64(scale)
+                );
+                assert_eq!(x, bf16(x));
+            }
+        }
+    }
+
+    #[test]
+    fn latent_two_sources_one_softmax_and_sink_once_across_splits() {
+        let source = Sources::new();
+        let whole = normalized(
+            latent_attention_with_sources(
+                query(Output::Normalized),
+                source.input(&[127, -1, 0], &[0, -1, 3]),
+            )
+            .unwrap(),
+        );
+        for head in 0..2 {
+            for col in 0..D {
+                let ring_scale = 2_f64.powi(((col / 32) % 3) as i32);
+                let compressed = if col % 2 == 0 { 1.0 } else { 1.5 };
+                let expected = (3.0 * ring_scale + 1.5 * compressed)
+                    / (4.0 + f64::from(source.sinks[head]).exp());
+                assert!((whole[head * D + col] - expected).abs() < 1e-14);
+            }
+        }
+        let mut parts = Vec::new();
+        for (w, c) in [
+            (&[127, -1][..], &[-1][..]),
+            (&[-1, 0][..], &[0, 3][..]),
+            (&[-1][..], &[-1][..]),
+        ] {
+            let ResultRows::Partial(partial) =
+                latent_attention_with_sources(query(Output::Partial), source.input(w, c)).unwrap()
+            else {
+                panic!()
+            };
+            parts.push(partial);
+        }
+        let merged = merge_partials_with_sink(&parts, &source.sinks).unwrap();
+        for (a, b) in merged.values.iter().zip(&whole) {
+            assert!((a - b).abs() < 1e-14);
+        }
+        // Negative control: each split receives a sink, counting it three
+        // times at the final merge. It must differ from the correct result.
+        let mut wrong = parts.clone();
+        for part in &mut wrong {
+            for h in 0..2 {
+                let old = part.maximum.values[h];
+                let sink = f64::from(source.sinks[h]);
+                let top = old.max(sink);
+                let rescale = (old - top).exp();
+                part.maximum.values[h] = top;
+                part.denominator.values[h] =
+                    part.denominator.values[h] * rescale + (sink - top).exp();
+                for col in 0..D {
+                    part.numerator.values[h * D + col] *= rescale;
+                }
+            }
+        }
+        let wrong = kernel_core::latent_attention_oracle::merge_partials(&wrong).unwrap();
+        assert!((wrong.values[0] - whole[0]).abs() > 0.1);
+        assert_eq!(parts[2].maximum.values, vec![f64::NEG_INFINITY; 2]);
+        assert_eq!(parts[2].denominator.values, vec![0.0; 2]);
+    }
+
+    #[test]
+    fn latent_scale_and_source_order_follow_the_vendor_formula() {
+        let mut source = Sources::new();
+        source.q[0] = 0.5;
+        source.q[D - 1] = -0.25;
+        source.q[D] = -0.5;
+        source.q[2 * D - 1] = 0.25;
+        let out = normalized(
+            latent_attention_with_sources(
+                query(Output::Normalized),
+                source.input(&[127, 0], &[0, 3]),
+            )
+            .unwrap(),
+        );
+        let mut keys = vec![vec![0.0; D]; 4];
+        for col in 0..D {
+            let scale = 2_f64.powi(((col / 32) % 3) as i32);
+            keys[0][col] = 2.0 * scale;
+            keys[1][col] = scale;
+            keys[2][col] = if col % 2 == 0 { 1.0 } else { 1.5 };
+            keys[3][col] = keys[2][col] * 0.5;
+        }
+        for h in 0..2 {
+            let scale = f64::from((D as f32).powf(-0.5));
+            let weights = keys
+                .iter()
+                .map(|k| {
+                    (scale * (source.q[h * D] * k[0] + source.q[(h + 1) * D - 1] * k[D - 1])).exp()
+                })
+                .collect::<Vec<_>>();
+            let den = weights.iter().sum::<f64>() + f64::from(source.sinks[h]).exp();
+            for col in 0..D {
+                let expected = keys
+                    .iter()
+                    .zip(&weights)
+                    .map(|(k, w)| k[col] * w)
+                    .sum::<f64>()
+                    / den;
+                assert!((expected - out[h * D + col]).abs() < 1e-14);
+            }
+        }
+        // The two sources are never separately normalized and added.
+        assert_ne!(out[0], 1.5 + 0.75);
+    }
+
+    #[test]
+    fn latent_holes_do_not_read_storage_and_large_sinks_are_stable() {
+        let mut source = Sources::new();
+        source.sinks = [1000.0, -1000.0];
+        let mut input = source.input(&[-1, -1], &[-1]);
+        input.window.pool = &[];
+        input.compressed.as_mut().unwrap().pool = &[];
+        input.compressed.as_mut().unwrap().paging.block_tables = &[];
+        assert_eq!(
+            normalized(latent_attention_with_sources(query(Output::Normalized), input).unwrap()),
+            vec![0.0; 2 * D]
+        );
+        let out = normalized(
+            latent_attention_with_sources(query(Output::Normalized), source.input(&[0], &[]))
+                .unwrap(),
+        );
+        assert_eq!(out[0], 0.0);
+        assert_eq!(out[D], 1.0);
+    }
+
+    #[test]
+    fn latent_native_paged_write_and_staged_prefill_preserve_earlier_rows() {
+        for format in [WINDOW, COMPRESSED] {
+            let page = format.page_bytes(D as u32, 2) as usize;
+            let mut pool = vec![0xa5; 2 * (page + 64)];
+            let paging = LatentPaging {
+                block_tables: &[1, 0],
+                max_pages: 2,
+                page_stride: page + 64,
+            };
+            let row = vec![f32_to_bf16(1.0); 2 * D];
+            latent_kv_write(
+                Query::KvWrite {
+                    latent: D as u32,
+                    page_size: 2,
+                    kv: format,
+                    capacity: 2,
+                },
+                &row,
+                &[0, 0],
+                &[3, -1],
+                paging,
+                &mut pool,
+            )
+            .unwrap();
+            let decoded = decode_native_page(format, D, 2, &pool[..page], 1).unwrap();
+            // E4M3(1/6) = 0.171875, then E2M1(1/scale) = 6.
+            let expected = if format == WINDOW { 1.0 } else { 1.03125 };
+            assert!(decoded.iter().all(|&x| x == expected));
+            assert!(pool[page..].iter().all(|&x| x == 0xa5));
+        }
+        // A staged prefill can read row 128 as well as row 0, even though
+        // both would occupy slot 0 in the final 128-slot ring.
+        let source = Sources::new();
+        let mut staged = vec![0x38; 129 * D];
+        staged.extend(vec![127; 129 * (D / 32)]);
+        staged[128 * D..129 * D].fill(0x40);
+        let mut input = source.input(&[0, 128], &[]);
+        input.window.pool = &staged;
+        input.window.sequence_stride = staged.len();
+        input.window.storage = LatentWindowStorage::Staged { slots: 129 };
+        let out =
+            normalized(latent_attention_with_sources(query(Output::Normalized), input).unwrap());
+        assert_eq!(out[0], 1.0); // (1 + 2) / (2 + exp(0))
+        input.window.storage = LatentWindowStorage::Ring128;
+        assert!(latent_attention_with_sources(query(Output::Normalized), input).is_err());
+    }
+
+    #[test]
+    fn latent_tail_is_in_place_and_inverse_follows_the_bf16_boundary() {
+        let mut input = vec![0.0; 2 * D];
+        input[0] = -0.0;
+        input[D - 64] = 3.0;
+        input[D - 63] = 4.0;
+        input[2 * D - 64] = -2.0;
+        input[2 * D - 63] = 1.0;
+        let frequencies = [0.6_f32, 0.8_f32].repeat(32);
+        let forward = latent_tail_rope(&input, D, 2, 64, &frequencies, false).unwrap();
+        assert_eq!(forward.values.len(), 2 * D);
+        assert_eq!(forward.values[0].to_bits(), (-0.0_f64).to_bits());
+        assert!((forward.values[D - 64] + 1.4).abs() < 2e-7);
+        let stored = bf16_exact(&forward.values);
+        let inverse = latent_tail_rope(&stored, D, 2, 64, &frequencies, true).unwrap();
+        let x = stored[D - 64];
+        let y = stored[D - 63];
+        assert_eq!(
+            inverse.values[D - 64],
+            x * f64::from(0.6_f32) + y * f64::from(0.8_f32)
+        );
+        assert_eq!(
+            inverse.values[D - 63],
+            -x * f64::from(0.8_f32) + y * f64::from(0.6_f32)
+        );
+        assert_ne!(inverse.values[D - 64], input[D - 64]);
+        let unchanged = latent_tail_rope(&input, D, 2, 0, &[f32::NAN], true).unwrap();
+        assert_eq!(
+            unchanged
+                .values
+                .iter()
+                .map(|v| v.to_bits())
+                .collect::<Vec<_>>(),
+            input.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn latent_online_softmax_rounds_unnormalized_probabilities_before_pv() {
+        use kernel_core::latent_attention_oracle::latent_online_softmax;
+        // A masked tile does not read its poisoned values. The next tile
+        // raises the maximum, so its rescale must precede the final sink.
+        let mut scores = vec![f64::NEG_INFINITY; 129];
+        let mut values = vec![f64::NAN; 129];
+        scores[0] = 0.0;
+        values[0] = 2.0;
+        scores[1] = -0.7;
+        values[1] = -3.0;
+        scores[128] = 0.3;
+        values[128] = 4.0;
+        let out = latent_online_softmax(&scores, &values, 1, 0.2).unwrap();
+        let p = (-0.7_f64).exp();
+        let rescale = (-0.3_f64).exp();
+        let den = (1.0 + p) * rescale + 1.0 + (f64::from(0.2_f32) - 0.3).exp();
+        let expected = ((2.0 - 3.0 * bf16(p)) * rescale + 4.0) / den;
+        assert!((out[0] - expected).abs() < 1e-15);
+        let wrong =
+            2.0 * bf16(rescale / den) - 3.0 * bf16(p * rescale / den) + 4.0 * bf16(1.0 / den);
+        assert!((wrong - expected).abs() > 1e-4);
+        // Letting the sink join the maximum before PV changes its rounding.
+        let sink = 5.0_f32;
+        let correct = latent_online_softmax(&[0.0, -0.7], &[2.0, -3.0], 1, sink).unwrap()[0];
+        let bad = (2.0 * bf16((-5.0_f64).exp()) - 3.0 * bf16((-5.7_f64).exp()))
+            / ((-5.0_f64).exp() + (-5.7_f64).exp() + 1.0);
+        assert!((correct - bad).abs() > 1e-7);
+    }
+
+    #[test]
+    fn latent_sources_refuse_malformed_storage_and_operands() {
+        let source = Sources::new();
+        for (w, c) in [
+            (&[-2][..], &[][..]),
+            (&[0, 0][..], &[][..]),
+            (&[][..], &[4][..]),
+            (&[][..], &[0, 0][..]),
+        ] {
+            assert!(
+                latent_attention_with_sources(query(Output::Normalized), source.input(w, c))
+                    .is_err()
+            );
+        }
+        let mut input = source.input(&[0], &[0]);
+        input.sinks = None;
+        assert!(latent_attention_with_sources(query(Output::Normalized), input).is_err());
+        input.sinks = Some(&[f32::NAN, 0.0]);
+        assert!(latent_attention_with_sources(query(Output::Normalized), input).is_err());
+        input.sinks = Some(&source.sinks);
+        input.compressed = None;
+        assert!(latent_attention_with_sources(query(Output::Normalized), input).is_err());
+        for (format, code, scale) in [
+            (WINDOW, 0x7f, 127),
+            (WINDOW, 0x38, 255),
+            (WINDOW, 0x7e, 254),
+            (WINDOW, 1, 0),
+            (COMPRESSED, 0x22, 0),
+            (COMPRESSED, 0x22, 0xb8),
+        ] {
+            let bytes = if format == WINDOW { D } else { D / 2 };
+            let mut page = vec![code; bytes];
+            page.extend(vec![scale; if format == WINDOW { D / 32 } else { D / 16 }]);
+            assert!(decode_native_page(format, D, 1, &page, 0).is_err());
+        }
+    }
+
+    #[test]
+    fn latent_contracts_cover_phases_and_preserve_existing_ids() {
+        for phase in [
+            AttentionPhase::Prefill,
+            AttentionPhase::Decode,
+            AttentionPhase::Verify,
+        ] {
+            for output in [Output::Normalized, Output::Partial] {
+                let mut q = query(output);
+                if let Query::Attention { phase: p, .. } = &mut q {
+                    *p = phase;
+                }
+                q.validate().unwrap();
+                let id = q.numerical_contract_id().unwrap();
+                assert!(
+                    id.as_str()
+                        .contains("sink-once.tail-rope64-in-place.window-fp4-paged")
+                );
+            }
+        }
+        let mut q = query(Output::Normalized);
+        if let Query::Attention { kv, .. } = &mut q {
+            *kv = Format::Bf16;
+        }
+        assert_eq!(
+            q.validate().unwrap_err().0,
+            "latent attention second FP4 source requires the native FP8 window"
+        );
+    }
 }

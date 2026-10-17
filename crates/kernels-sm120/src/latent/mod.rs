@@ -147,9 +147,41 @@ fn unit_keys(latent: u32, fp8: bool) -> Option<u32> {
 /// Checks `query` against SM120's limits, which its contract leaves open:
 /// latent widths up to 1024, pages of a power of two of tokens, attention
 /// heads in 16s up to 128 whose tiles fit shared memory, and GEMM N in 64s
-/// and K in 128s. The contract refuses the declared extensions (sink, tail
-/// RoPE, a second FP4 key source) by name.
+/// and K in 128s. This original engine refuses extensions and native
+/// formats by name; their contracts do not imply a kernel implementation.
 pub fn check_limits(query: Query) -> Result<(), Refusal> {
+    if let Query::Latent(q) = query {
+        if let LatentAttentionQuery::Attention {
+            sink,
+            tail_rope_dims,
+            second_fp4_keys,
+            ..
+        } = q
+        {
+            if sink {
+                return Err(Refusal(
+                    "latent attention with an attention sink is declared but not supported",
+                ));
+            }
+            if tail_rope_dims != 0 {
+                return Err(Refusal(
+                    "latent attention with tail RoPE and its inverse is declared but not supported",
+                ));
+            }
+            if second_fp4_keys {
+                return Err(Refusal(
+                    "latent attention with a second FP4 key source is declared but not supported",
+                ));
+            }
+        }
+        let (LatentAttentionQuery::KvWrite { kv, .. } | LatentAttentionQuery::Attention { kv, .. }) =
+            q;
+        if !matches!(kv, LatentKvFormat::Bf16 | LatentKvFormat::Fp8E4M3Block128) {
+            return Err(Refusal(
+                "native latent storage requires a source-aware engine",
+            ));
+        }
+    }
     match query {
         Query::Latent(
             LatentAttentionQuery::KvWrite {
@@ -897,7 +929,7 @@ mod tests {
             ),
             (
                 with(heads, false, 0, true),
-                "latent attention with a second FP4 key source is declared but not supported",
+                "latent attention second FP4 source requires the native FP8 window",
             ),
             (
                 with(8, false, 0, false),
@@ -907,6 +939,33 @@ mod tests {
             assert_eq!(entry.contract().unwrap_err(), Refusal(refusal));
             assert_eq!(entry.plan(1).unwrap_err(), Refusal(refusal));
             assert!(entry.entry_specs().is_err());
+        }
+        for kv in [
+            LatentKvFormat::Fp8E4M3Ue8M0Block32,
+            LatentKvFormat::Fp4E2M1E4M3Block16,
+        ] {
+            let mut native = attention.clone();
+            if let Query::Latent(LatentAttentionQuery::Attention { kv: format, .. }) =
+                &mut native.query
+            {
+                *format = kv;
+            }
+            assert_eq!(
+                native.contract().unwrap_err().0,
+                "native latent storage requires a source-aware engine"
+            );
+            assert!(native.entry_specs().is_err());
+            assert_eq!(
+                check_limits(Query::Latent(LatentAttentionQuery::KvWrite {
+                    latent,
+                    page_size,
+                    kv,
+                    capacity,
+                }))
+                .unwrap_err()
+                .0,
+                "native latent storage requires a source-aware engine"
+            );
         }
         let key = find(&base, "absorb_key");
         let Query::HeadGemm(gemm) = key.query else {

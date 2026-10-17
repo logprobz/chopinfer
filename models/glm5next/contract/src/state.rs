@@ -38,6 +38,9 @@ fn sparse_streams(shape: Shape, kv: LatentKvFormat) -> Vec<KvStream> {
                 entry_bytes: 4 * latent.div_ceil(u64::from(LATENT_FP8_SCALE_BLOCK)),
             },
         ],
+        LatentKvFormat::Fp8E4M3Ue8M0Block32 | LatentKvFormat::Fp4E2M1E4M3Block16 => {
+            unreachable!("native latent formats are not declared by this model")
+        }
         LatentKvFormat::Bf16 => vec![KvStream {
             name: "latent",
             tokens_per_entry: 1,

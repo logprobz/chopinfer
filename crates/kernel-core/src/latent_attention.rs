@@ -25,6 +25,16 @@ use crate::contract::{
 
 /// Latent elements covered by one FP8 scale.
 pub const LATENT_FP8_SCALE_BLOCK: u32 = 128;
+/// Slots in the native window ring, independently owned by each layer.
+pub const LATENT_WINDOW_SLOTS: u32 = 128;
+
+/// The window's index space. Staged prefill retains the whole chunk while
+/// each query attends its own window; a ring retains the latest 128 rows.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum LatentWindowStorage {
+    Ring128,
+    Staged { slots: u32 },
+}
 
 /// How the latent cache stores one token.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -38,6 +48,16 @@ pub enum LatentKvFormat {
     /// division and `cvt.rn.satfinite`, as `quantize::fp8_activation_1x128`.
     /// A reader decodes `E4M3(code) * scale`.
     Fp8E4M3Block128,
+    /// E4M3 codes and UE8M0 scales, one scale per 32 channels. The
+    /// post-rotation BF16 input is quantized with amax floored at 1e-4,
+    /// scale = 2^ceil(log2(amax * RN32(1/448))), and RNE saturated codes.
+    /// Codes times scales must decode exactly to finite BF16 operands.
+    Fp8E4M3Ue8M0Block32,
+    /// Packed E2M1 codes (even channel in the low nibble) and positive
+    /// E4M3 scales, one per 16 channels. Scale = E4M3(max(amax, 6*2^-9)/6)
+    /// in F32, then code = E2M1(clamp(x/scale, -6, 6)), RNE. There is no
+    /// global scale. Code times scale is exact in BF16.
+    Fp4E2M1E4M3Block16,
 }
 
 impl LatentKvFormat {
@@ -47,6 +67,8 @@ impl LatentKvFormat {
         match self {
             Self::Bf16 => 2 * latent,
             Self::Fp8E4M3Block128 => latent + 4 * latent.div_ceil(LATENT_FP8_SCALE_BLOCK.into()),
+            Self::Fp8E4M3Ue8M0Block32 => latent + latent.div_ceil(32),
+            Self::Fp4E2M1E4M3Block16 => latent.div_ceil(2) + latent.div_ceil(16),
         }
     }
 
@@ -54,6 +76,8 @@ impl LatentKvFormat {
     /// BF16, rows `[page_size][latent]`; for FP8, every token's codes
     /// `[page_size][latent]` first, then their scales
     /// `[page_size][latent / 128]` F32, so code rows stay 16-byte aligned.
+    /// The native formats also store every code row first, then all scale
+    /// rows: one byte per scale, per 32 or 16 channels respectively.
     pub fn page_bytes(self, latent: u32, page_size: u32) -> u64 {
         self.token_bytes(latent) * u64::from(page_size)
     }
@@ -62,6 +86,8 @@ impl LatentKvFormat {
         match self {
             Self::Bf16 => DType::Bf16,
             Self::Fp8E4M3Block128 => DType::Fp8E4M3,
+            Self::Fp8E4M3Ue8M0Block32 => DType::Fp8E4M3,
+            Self::Fp4E2M1E4M3Block16 => DType::Fp4E2M1,
         }
     }
 
@@ -69,6 +95,8 @@ impl LatentKvFormat {
         match self {
             Self::Bf16 => "bf16",
             Self::Fp8E4M3Block128 => "fp8-e4m3-block128",
+            Self::Fp8E4M3Ue8M0Block32 => "fp8-e4m3-ue8m0-block32",
+            Self::Fp4E2M1E4M3Block16 => "fp4-e2m1-e4m3-block16",
         }
     }
 }
@@ -83,7 +111,9 @@ pub enum LatentAttentionOutput {
     /// (`context_parallel::ContextParallelQuery::PartialMerge`): running
     /// maximum `m` `[rows, heads]` F32, denominator `l` `[rows, heads]` F32
     /// and numerator `o` `[rows, heads, latent]` F32. An empty key list
-    /// writes `m = -inf`, `l = 0` and `o = 0`.
+    /// writes `m = -inf`, `l = 0` and `o = 0`. Partials exclude the sink
+    /// and output inverse rotation. The final merge adds the sink once,
+    /// normalizes, rounds to BF16, then applies the inverse tail rotation.
     Partial,
 }
 
@@ -140,9 +170,19 @@ pub enum LatentAttentionQuery {
     ///   into `o` in key-list order.
     /// - output per `LatentAttentionOutput`.
     ///
-    /// The declared extensions (`sink`, `tail_rope_dims`,
-    /// `second_fp4_keys`) exist in the contract and refuse by name until an
-    /// engine and oracle define them.
+    /// Native code/scale products decode exactly into BF16 before both QK
+    /// and PV. They do not apply scales after the QK reduction. The native
+    /// online softmax casts the unnormalized probabilities to BF16 before
+    /// PV; its denominator uses the F32 probabilities. The numerical oracle
+    /// remains f64 over those decoded operands.
+    ///
+    /// With two sources, concatenate the window list then the compressed
+    /// list before one softmax, with at most `max_keys` entries in total.
+    /// Window lists name slots of a per-layer 128-slot ring (absolute token
+    /// position modulo 128), or rows of a staged prefill chunk. Compressed
+    /// lists name positions through their own page table. Each source skips
+    /// -1 without reading storage; positions must not repeat within a source.
+    /// The lists alone specify visibility, including block-visible verify.
     Attention {
         heads: u32,
         latent: u32,
@@ -152,12 +192,18 @@ pub enum LatentAttentionQuery {
         kv: LatentKvFormat,
         phase: AttentionPhase,
         output: LatentAttentionOutput,
-        /// A learned per-head sink logit joining every softmax denominator.
+        /// Learned F32 logits `[heads]`. Add exp(sink[h] - m) to the final
+        /// denominator exactly once, after all sources and splits. The sink
+        /// contributes no value. An all-hole row produces zeros.
         sink: bool,
-        /// Rotary dimensions appended to the latent key (with the inverse
-        /// rotation on the output); 0 for none.
+        /// 0 or 64. Adjacent pairs in the last 64 of `latent` channels are
+        /// rotated in place, never appended. Q and K arrive already rotated
+        /// using F32 cos/sin and rounded to BF16; cache quantization follows
+        /// that rounding. After normalization round to BF16, apply the
+        /// conjugate query rotation in F32, and round to BF16 again. A
+        /// 512-wide query still uses scale 512^-0.5 and writes 512 channels.
         tail_rope_dims: u32,
-        /// A second, FP4 key source scored beside the latent.
+        /// Paged `Fp4E2M1E4M3Block16` keys alongside a native FP8 window.
         second_fp4_keys: bool,
         capacity: u32,
     },
@@ -215,9 +261,9 @@ impl Validate for LatentAttentionQuery {
                 max_keys,
                 softmax_scale_bits,
                 page_size,
-                sink,
                 tail_rope_dims,
                 second_fp4_keys,
+                kv,
                 capacity,
                 ..
             } => {
@@ -232,19 +278,14 @@ impl Validate for LatentAttentionQuery {
                 {
                     return Err(Refusal("invalid latent attention geometry or scale"));
                 }
-                if sink {
+                if !matches!(tail_rope_dims, 0 | 64) {
                     return Err(Refusal(
-                        "latent attention with an attention sink is declared but not supported",
+                        "latent attention tail RoPE supports 0 or 64 in-place dimensions",
                     ));
                 }
-                if tail_rope_dims != 0 {
+                if second_fp4_keys && kv != LatentKvFormat::Fp8E4M3Ue8M0Block32 {
                     return Err(Refusal(
-                        "latent attention with tail RoPE and its inverse is declared but not supported",
-                    ));
-                }
-                if second_fp4_keys {
-                    return Err(Refusal(
-                        "latent attention with a second FP4 key source is declared but not supported",
+                        "latent attention second FP4 source requires the native FP8 window",
                     ));
                 }
             }
@@ -279,14 +320,34 @@ impl NumericalContract for LatentAttentionQuery {
         let name = match *self {
             Self::KvWrite { kv, .. } => format!("row.latent-kv-write-{}.v1", kv.name()),
             Self::Attention {
-                kv, phase, output, ..
+                kv,
+                phase,
+                output,
+                sink,
+                tail_rope_dims,
+                second_fp4_keys,
+                ..
             } => {
                 let output = match output {
                     LatentAttentionOutput::Normalized => "",
                     LatentAttentionOutput::Partial => ".partial-lse",
                 };
+                let extensions = format!(
+                    "{}{}{}",
+                    if sink { ".sink-once" } else { "" },
+                    if tail_rope_dims == 64 {
+                        ".tail-rope64-in-place"
+                    } else {
+                        ""
+                    },
+                    if second_fp4_keys {
+                        ".window-fp4-paged"
+                    } else {
+                        ""
+                    }
+                );
                 format!(
-                    "attention.latent-paged-kv-{}-gathered.{}{output}.v1",
+                    "attention.latent-paged-kv-{}-gathered.{}{output}{extensions}.v1",
                     kv.name(),
                     phase_name(phase)
                 )
@@ -366,6 +427,56 @@ crate::scratch_record! {
         pub row_batch: value,
         pub key_lists: value,
         pub budget: scalar(u32),
+        pub output: option,
+        pub partial: optional(LatentPartial),
+        pub workspace: value,
+        pub live_rows: value,
+    }
+}
+
+crate::scratch_record! {
+    /// Per-layer native FP8 window: each sequence holds all code rows,
+    /// followed by all UE8M0 scale rows. Lists name physical ring slots or
+    /// staged rows, with `key_stride` entries per query and `budget` live.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct LatentWindowBuffers {
+        pub pool: value,
+        pub sequences: scalar(u32),
+        pub sequence_stride: scalar(u64),
+        pub storage: scalar(LatentWindowStorage),
+        pub key_lists: value,
+        pub key_stride: scalar(u32),
+        pub budget: scalar(u32),
+    }
+}
+
+crate::scratch_record! {
+    /// Native compressed FP4 keys, with a separate index space and table.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct LatentCompressedBuffers {
+        pub cache: record(LatentKvCache),
+        pub block_tables: record(BlockTables),
+        pub key_lists: value,
+        pub key_stride: scalar(u32),
+        pub budget: scalar(u32),
+    }
+}
+
+crate::scratch_record! {
+    /// Native attention extension operands. `q` is already tail-rotated
+    /// BF16. `sinks` is F32 `[heads]`, present exactly when declared.
+    /// `cos_sin` is F32 `[rows, tail_rope_dims/2, 2]`, for the normalized
+    /// output's inverse rotation; partials leave it to their final merge.
+    /// `compressed` is present exactly when `second_fp4_keys` is set.
+    /// The original paged attention buffer record and ABI stay unchanged.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct LatentSourcesBuffers {
+        pub q: value,
+        pub row_batch: value,
+        pub window: record(LatentWindowBuffers),
+        pub compressed: optional(LatentCompressedBuffers),
+        pub sinks: option,
+        pub cos_sin: option,
         pub output: option,
         pub partial: optional(LatentPartial),
         pub workspace: value,
@@ -487,59 +598,34 @@ mod tests {
     }
 
     #[test]
-    fn declared_extensions_refuse_by_name() {
-        let base = attention(AttentionPhase::Decode, LatentKvFormat::Fp8E4M3Block128);
-        let LatentAttentionQuery::Attention {
-            heads,
-            latent,
-            max_keys,
-            softmax_scale_bits,
-            page_size,
-            kv,
-            phase,
-            output,
-            capacity,
-            ..
-        } = base
-        else {
-            unreachable!()
-        };
-        let with = |sink, tail_rope_dims, second_fp4_keys| LatentAttentionQuery::Attention {
-            heads,
-            latent,
-            max_keys,
-            softmax_scale_bits,
-            page_size,
-            kv,
-            phase,
-            output,
-            sink,
-            tail_rope_dims,
-            second_fp4_keys,
-            capacity,
-        };
-        assert_eq!(
-            with(true, 0, false).validate(),
-            Err(Refusal(
-                "latent attention with an attention sink is declared but not supported"
-            ))
+    fn extensions_have_distinct_contracts_and_refuse_unknown_tail_widths() {
+        let base = attention(AttentionPhase::Decode, LatentKvFormat::Bf16);
+        let mut sink = base;
+        if let LatentAttentionQuery::Attention { sink, .. } = &mut sink {
+            *sink = true;
+        }
+        sink.validate().unwrap();
+        assert_ne!(
+            base.numerical_contract_id().unwrap(),
+            sink.numerical_contract_id().unwrap()
         );
-        assert_eq!(
-            with(false, 64, false).validate(),
-            Err(Refusal(
-                "latent attention with tail RoPE and its inverse is declared but not supported"
-            ))
+        let mut tail = base;
+        if let LatentAttentionQuery::Attention { tail_rope_dims, .. } = &mut tail {
+            *tail_rope_dims = 64;
+        }
+        tail.validate().unwrap();
+        assert_ne!(
+            base.numerical_contract_id().unwrap(),
+            tail.numerical_contract_id().unwrap()
         );
+        if let LatentAttentionQuery::Attention { tail_rope_dims, .. } = &mut tail {
+            *tail_rope_dims = 32;
+        }
         assert_eq!(
-            with(false, 0, true).validate(),
+            tail.validate(),
             Err(Refusal(
-                "latent attention with a second FP4 key source is declared but not supported"
+                "latent attention tail RoPE supports 0 or 64 in-place dimensions"
             ))
-        );
-        assert_eq!(
-            with(false, 0, false).validate(),
-            Ok(()),
-            "the base query is valid"
         );
     }
 

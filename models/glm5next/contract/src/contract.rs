@@ -319,6 +319,9 @@ impl Shape {
             element: match kv {
                 LatentKvFormat::Bf16 => DType::Bf16,
                 LatentKvFormat::Fp8E4M3Block128 => DType::Fp8E4M3,
+                LatentKvFormat::Fp8E4M3Ue8M0Block32 | LatentKvFormat::Fp4E2M1E4M3Block16 => {
+                    unreachable!("native latent formats are not declared by this model")
+                }
             },
             // The FP8 latent carries its own block scales in the page.
             scales: &[],

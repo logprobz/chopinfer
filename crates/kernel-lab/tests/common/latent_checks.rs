@@ -128,6 +128,9 @@ fn dtype_name(kv: LatentKvFormat) -> &'static str {
     match kv {
         LatentKvFormat::Bf16 => "bf16",
         LatentKvFormat::Fp8E4M3Block128 => "fp8",
+        LatentKvFormat::Fp8E4M3Ue8M0Block32 | LatentKvFormat::Fp4E2M1E4M3Block16 => {
+            unreachable!("native latent formats need their own conformance cases")
+        }
     }
 }
 
@@ -1712,6 +1715,9 @@ fn written_pool(cache: &Cache, sequence: usize, positions: Range<usize>) -> Vec<
     let token = match cache.kv {
         LatentKvFormat::Bf16 => LATENT * 2,
         LatentKvFormat::Fp8E4M3Block128 => LATENT,
+        LatentKvFormat::Fp8E4M3Ue8M0Block32 | LatentKvFormat::Fp4E2M1E4M3Block16 => {
+            unreachable!("native latent formats need their own conformance cases")
+        }
     };
     let mut ranges = Vec::new();
     for p in positions {

@@ -16,8 +16,8 @@
 //! An f64 cosine or sine within 2 ulp, rounded to F32, is correctly rounded
 //! at every position below [`MAX_POSITIONS`]: of every pair's cosine and
 //! sine there, the closest to an F32 rounding midpoint is 3.3e-16 of it
-//! (the sine at position 127,994, pair 11 of the window table), about 2.6
-//! f64 ulp, found by an offline scan and resolved at 160 bits. The oracle
+//! (the sine at position 127,994, pair 11 of the window table), 2.44 f64
+//! ulp, found by an offline scan and resolved at 160 bits. The oracle
 //! uses the host's f64 `cos` and `sin`; the near cases are pinned in this
 //! module's tests.
 
@@ -28,7 +28,11 @@ use kernel_core::contract::Refusal;
 pub const PAIRS: usize = 32;
 
 /// Positions below this are in the contract's domain: the served 1,048,576
-/// positions and 65,536 beyond.
+/// positions and 65,536 beyond. A `Range` op refuses rows past it at
+/// launch. A `Positions` op cannot check device positions there: a position
+/// at or past it writes NaN cosine and sine. The host keeps positions below
+/// the served context, at most 1,048,576, so a served position never
+/// reaches it.
 pub const MAX_POSITIONS: u32 = 1_114_112;
 
 /// One of the two rotary tables.
@@ -101,8 +105,8 @@ pub enum RopeRows {
 }
 
 /// Cosine and sine rows of one table: `output[r][pair] = (cos, sin)` in F32
-/// of the row's position, as [`RopeTable::cos_sin`]. Positions are below
-/// [`MAX_POSITIONS`]; the host keeps them there.
+/// of the row's position, as [`RopeTable::cos_sin`], for positions below
+/// [`MAX_POSITIONS`] (see there for the rest).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct RopeCosSin {
     pub table: RopeTable,

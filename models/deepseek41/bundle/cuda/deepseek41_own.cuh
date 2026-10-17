@@ -7,10 +7,10 @@
 #include <stdint.h>
 
 // The RoPE frequencies' F32 bits, pair i of the window table as DS41_RWi
-// and of the compressed table as DS41_RCi, defined by the build from the
-// contract's pinned bits.
-#if !defined(DS41_RW31) || !defined(DS41_RC31)
-#error "the build defines DS41_RW0..31 and DS41_RC0..31"
+// and of the compressed table as DS41_RCi, and the position domain
+// DS41_ROPE_POSITIONS, defined by the build from the contract.
+#if !defined(DS41_RW31) || !defined(DS41_RC31) || !defined(DS41_ROPE_POSITIONS)
+#error "the build defines DS41_RW0..31, DS41_RC0..31 and DS41_ROPE_POSITIONS"
 #endif
 
 namespace chop {
@@ -57,9 +57,9 @@ __device__ __forceinline__ void block_sum3(float& a, float& b, float& c) {
 
 // The Engram gate: one block per (row, stream), grid [rows, STREAMS].
 // Every thread reads its elements of the stream before the block sum and
-// writes them after it, so `output` may be `x`.
+// writes them after it, so `output` may be `x`; neither is `__restrict__`.
 template <int WIDTH, int STREAMS, bool MASKED>
-__device__ __forceinline__ void engram_gate(const uint16_t* __restrict__ x_in,
+__device__ __forceinline__ void engram_gate(const uint16_t* x_in,
                                             const uint16_t* __restrict__ kv,
                                             const uint16_t* __restrict__ q_weight,
                                             const uint16_t* __restrict__ k_weight,
@@ -148,7 +148,8 @@ __device__ __forceinline__ void rope_range(uint32_t first, uint32_t rows, float*
     rope_pair<COMPRESSED>(first + row, t % 32, output + size_t(t) * 2);
 }
 
-// Rows at `positions[r]` for r below `*live_rows`.
+// Rows at `positions[r]` for r below `*live_rows`. A position past the
+// contract's domain writes NaN cosine and sine.
 template <bool COMPRESSED>
 __device__ __forceinline__ void rope_positions(const uint32_t* __restrict__ positions,
                                                const uint32_t* __restrict__ live_rows,
@@ -158,7 +159,13 @@ __device__ __forceinline__ void rope_positions(const uint32_t* __restrict__ posi
     if (row >= *live_rows) {
         return;
     }
-    rope_pair<COMPRESSED>(positions[row], t % 32, output + size_t(t) * 2);
+    const uint32_t position = positions[row];
+    if (position >= DS41_ROPE_POSITIONS) {
+        output[size_t(t) * 2] = __int_as_float(0x7fffffff);
+        output[size_t(t) * 2 + 1] = __int_as_float(0x7fffffff);
+        return;
+    }
+    rope_pair<COMPRESSED>(position, t % 32, output + size_t(t) * 2);
 }
 
 }  // namespace deepseek41

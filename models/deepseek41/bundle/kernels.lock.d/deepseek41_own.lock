@@ -267,6 +267,10 @@
       [
         "DS41_RC31",
         "0x35187c4du"
+      ],
+      [
+        "DS41_ROPE_POSITIONS",
+        "1114112u"
       ]
     ],
     "entries": [
@@ -445,7 +449,7 @@
         "allowed_local_bytes": 40
       }
     ],
-    "cubin_sha256": "1321d542a7284dd7c76b0e959db0e265e7a1a727766aae26eb022ae5b207f1b4",
+    "cubin_sha256": "a1ded3015251a270b4070fb46ab5f9ee12a8d512f0a824aac54aaafa743a8f8e",
     "resources": [
       {
         "symbol": "chop_deepseek41_engram_gate_w5120_s4_masked_v1",

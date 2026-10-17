@@ -3,7 +3,7 @@
 
 use super::own_entries::{CUBIN, THREADS, gate_symbol, gates, rope_symbol};
 use kernel_build::{CubinSpec, EntryParam, EntrySpec};
-use model_deepseek41_contract::own_ops::rope::{RopeRows, RopeTable};
+use model_deepseek41_contract::own_ops::rope::{MAX_POSITIONS, RopeRows, RopeTable};
 use std::path::Path;
 
 /// CUDA's f64 `sincos` keeps a stack frame for its reduction of arguments
@@ -83,6 +83,7 @@ pub fn cubin_spec(bundle: &Path) -> CubinSpec {
             defines.push((format!("{prefix}{pair}"), format!("0x{bits:08x}u")));
         }
     }
+    defines.push(("DS41_ROPE_POSITIONS".into(), format!("{MAX_POSITIONS}u")));
     CubinSpec {
         name: CUBIN.into(),
         sources_root: bundle.to_path_buf(),

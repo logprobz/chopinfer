@@ -434,6 +434,56 @@ fn rope_rows_by_position_write_only_live_rows() {
                 session.receipt("deepseek41-rope", receipt)?;
             }
         }
+        // Positions past the domain write NaN; the last position in it does not.
+        let edge = [MAX_POSITIONS - 1, MAX_POSITIONS, u32::MAX];
+        positions_buffer
+            .copy_from_bytes(&u32_bytes(&edge), &session.stream)
+            .map_err(|e| e.to_string())?;
+        live.copy_from_bytes(&3_u32.to_le_bytes(), &session.stream)
+            .map_err(|e| e.to_string())?;
+        let prepared = Sm120Own::new()
+            .rope_cos_sin(
+                &RopeCosSin {
+                    table: RopeTable::Window,
+                    rows: RopeRows::Positions,
+                },
+                Need::rows(capacity),
+            )
+            .map_err(|e| e.to_string())?;
+        let step = single(
+            prepared
+                .launches(
+                    &RopeCosSinBuffers {
+                        positions: Some(view(1, capacity as usize * 4)),
+                        live_rows: Some(view(2, 4)),
+                        first: 0,
+                        output: view(3, RopeCosSin::output_bytes(capacity) as usize),
+                    },
+                    View::EMPTY,
+                    Counts::rows(capacity),
+                )
+                .map_err(|e| e.to_string())?,
+        )?;
+        let function = module.function(&step.symbol).map_err(|e| e.to_string())?;
+        launch(
+            &session.context,
+            &function,
+            &session.stream,
+            step.plan,
+            &step.arguments,
+            &bindings,
+        )?;
+        let actual = session.download_f32(&output, 3 * PAIRS * 2)?;
+        let inside = reference(RopeTable::Window, &edge[..1]).map_err(|e| e.to_string())?;
+        if actual[..PAIRS * 2]
+            .iter()
+            .zip(&inside)
+            .any(|(a, e)| a.to_bits() != e.to_bits())
+            || actual[PAIRS * 2..].iter().any(|v| !v.is_nan())
+        {
+            return Err("RoPE rows at the domain's edge are not the oracle's, then NaN".into());
+        }
+
         // A range from a nonzero first position equals those rows.
         let prepared = Sm120Own::new()
             .rope_cos_sin(

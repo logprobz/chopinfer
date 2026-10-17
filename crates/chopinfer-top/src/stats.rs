@@ -13,7 +13,7 @@ use crate::prometheus::{Exposition, Histogram};
 /// The longest window, in seconds.
 pub const HISTORY_SECONDS: f64 = 300.0;
 /// Polls a throughput rate spans.
-const RATE_POLLS: usize = 3;
+pub const RATE_POLLS: usize = 3;
 
 /// The window latency quantiles and ratios cover.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

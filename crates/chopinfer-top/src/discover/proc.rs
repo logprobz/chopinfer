@@ -166,7 +166,7 @@ impl ProcScanner {
     }
 }
 
-fn read_cmdline(path: &Path) -> Option<Vec<String>> {
+pub(crate) fn read_cmdline(path: &Path) -> Option<Vec<String>> {
     let bytes = fs::read(path).ok()?;
     let bytes = &bytes[..bytes.len().min(MAX_CMDLINE)];
     Some(
@@ -180,7 +180,7 @@ fn read_cmdline(path: &Path) -> Option<Vec<String>> {
 
 /// Field 22 of `/proc/PID/stat`, counted after the command name, which can
 /// itself hold spaces and parentheses.
-fn start_ticks(directory: &Path) -> Option<u64> {
+pub(crate) fn start_ticks(directory: &Path) -> Option<u64> {
     let stat = fs::read_to_string(directory.join("stat")).ok()?;
     let after = &stat[stat.rfind(')')? + 1..];
     after.split_whitespace().nth(19)?.parse().ok()

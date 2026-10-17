@@ -11,6 +11,8 @@ license.workspace = true
 # terminal dependencies stay out of every serving binary.
 [dependencies]
 crossterm.workspace = true
+# dlopen for NVML, read only when the driver is present.
+libc.workspace = true
 serde_json.workspace = true
 # Restores the terminal on SIGTERM and SIGHUP; already locked through crossterm.
 signal-hook.workspace = true

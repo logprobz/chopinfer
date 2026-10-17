@@ -39,6 +39,7 @@ pub mod frontend_corpus;
 mod generation;
 mod grammar;
 mod handles;
+pub mod host_rows;
 mod install;
 mod kernel;
 mod kv_cache_dtype;
@@ -139,7 +140,7 @@ pub use services::{
     BUNDLE_CONFIGURATION_MAGIC_V1, COMPILED_IMAGE_ARENA_VIEW_V1, CONTEXT_PARALLEL_TAG_V1,
     CompiledImageDescriptionV1, CompiledImageViewV1, CompiledRankImageV1, CompiledViewSpanV1,
     DeclaredKvContractV1, DeclaredStateContractV1, FILE_BACKED_COMPONENT_UPLOAD_BUFFER_BYTES_V1,
-    HostConfigErrorV1, HostInstanceConfigV1, HostServicesV1Backend, HostTopologyV1,
+    HostConfigErrorV1, HostInstanceConfigV1, HostMemoryV1, HostServicesV1Backend, HostTopologyV1,
     KV_APPEND_OPERATION_V1, KV_RANK_POOL_VIEW_V1, ServingKvPolicyV1, kv_append_operation_v1,
     kv_page_view_id_v1,
 };

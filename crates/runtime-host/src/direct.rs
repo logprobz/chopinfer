@@ -30,11 +30,12 @@ use kernel_core::weight_transform::{
     PreparedRecord, SourceTensor, WeightRecord, WeightTransform, WeightTransformError,
 };
 use runtime_bundle_abi::weight_plan::{
-    BundleWeightTransformFnV1, CheckpointFileV1, NamedBytesV1, ViewPlacementV1,
+    BundleWeightTransformFnV1, CheckpointFileV1, NamedBytesV1, PlannedViewV1, ViewPlacementV1,
     WeightPlanImplementationV1, WeightPlanRequestV1, WeightPlanV1, WeightRecordV1,
 };
 use runtime_weights::checkpoint::{CheckpointFile, header_identity};
 
+use crate::host_rows::MappedRowsV1;
 use crate::page_cache::{CacheAdviceV1, advise_v1, cached_pages_v1, direct_io_alignment_v1};
 
 use crate::services::{
@@ -377,21 +378,113 @@ impl DirectCheckpointV1 {
     /// Refuses a checkpoint whose files moved, changed length or header since
     /// it was opened.
     pub fn verify_unchanged(&self) -> Result<(), String> {
-        for shard in &self.shards {
-            shard
-                .file
-                .verify()
-                .map_err(|e| format!("checkpoint file {} changed: {e}", shard.name))?;
-            let length = shard.file.metadata().map_err(|e| e.to_string())?.len();
-            if length != shard.byte_length || read_header(&shard.file, length)?.1 != shard.header {
-                return Err(format!(
-                    "checkpoint file {} changed during the load",
-                    shard.name
-                ));
-            }
+        self.shards.iter().try_for_each(ShardV1::verify_unchanged)
+    }
+}
+
+impl ShardV1 {
+    /// Refuses a file that moved, changed length or header since it was
+    /// opened.
+    fn verify_unchanged(&self) -> Result<(), String> {
+        self.file
+            .verify()
+            .map_err(|e| format!("checkpoint file {} changed: {e}", self.name))?;
+        let length = self.file.metadata().map_err(|e| e.to_string())?.len();
+        if length != self.byte_length || read_header(&self.file, length)?.1 != self.header {
+            return Err(format!(
+                "checkpoint file {} changed during the load",
+                self.name
+            ));
         }
         Ok(())
     }
+}
+
+/// The checkpoint bytes one mapped view names.
+struct MappedSourceV1 {
+    /// The plan's one record covering the view.
+    record: usize,
+    shard: usize,
+    file_offset: u64,
+    byte_length: u64,
+}
+
+/// Checks that exactly one record covers the mapped view `view` of `plan`,
+/// and that it is a plain copy of one tensor, whole or one range of its
+/// leading axis, stored unchanged; answers the file bytes it reads.
+fn mapped_source_v1(
+    checkpoint: &DirectCheckpointV1,
+    plan: &WeightPlanV1,
+    view: &PlannedViewV1,
+) -> Result<MappedSourceV1, String> {
+    let refuse = |reason: &str| {
+        Err(format!(
+            "rank {} mapped view {}: {reason}",
+            plan.rank, view.id
+        ))
+    };
+    let end = view.offset.saturating_add(view.byte_length);
+    let mut covering = plan.records.iter().enumerate().filter(|(_, record)| {
+        record.arena_offset < end
+            && view.offset < record.arena_offset.saturating_add(record.byte_length)
+    });
+    let (Some((index, record)), None) = (covering.next(), covering.next()) else {
+        return refuse("exactly one record must cover it");
+    };
+    if record.arena_offset != view.offset || record.byte_length != view.byte_length {
+        return refuse("its record must cover exactly the view");
+    }
+    if WeightTransform::decode(record.transform, &record.params) != Ok(WeightTransform::Copy) {
+        return refuse("its record must be a plain copy");
+    }
+    let [source] = &record.sources[..] else {
+        return refuse("its record must read exactly one tensor");
+    };
+    let shard = checkpoint
+        .shards
+        .get(source.file as usize)
+        .ok_or_else(|| format!("record names file {}", source.file))?;
+    let (tensor, begin) = shard
+        .tensors
+        .get(&source.tensor)
+        .ok_or_else(|| format!("tensor {} is not in {}", source.tensor, shard.name))?;
+    let (rows, kept) = match (record.axis, &record.ranges[..]) {
+        (None, []) => (
+            0..tensor.shape.first().copied().unwrap_or(1),
+            tensor.shape.clone(),
+        ),
+        (Some(0), [range]) => {
+            let Some((&leading, rest)) = tensor.shape.split_first() else {
+                return refuse("a range selects rows of a tensor with a leading axis");
+            };
+            if range.start >= range.end || range.end > leading {
+                return refuse("its rows lie outside the tensor");
+            }
+            (
+                range.clone(),
+                [&[range.end - range.start][..], rest].concat(),
+            )
+        }
+        _ => return refuse("it maps a whole tensor or one range of its leading axis"),
+    };
+    if record.stored_shape != kept {
+        return refuse("it must store the rows it reads unchanged");
+    }
+    let leading = tensor.shape.first().copied().unwrap_or(1);
+    if leading == 0 || !tensor.byte_length.is_multiple_of(leading) {
+        return refuse("its tensor's bytes are not whole rows");
+    }
+    let row_bytes = tensor.byte_length / leading;
+    let byte_length = (rows.end - rows.start) * row_bytes;
+    if byte_length != view.byte_length {
+        return refuse("its length is not its rows' bytes");
+    }
+    Ok(MappedSourceV1 {
+        record: index,
+        shard: source.file as usize,
+        file_offset: begin + rows.start * row_bytes,
+        byte_length,
+    })
 }
 
 /// How a planned image is produced.
@@ -642,6 +735,9 @@ pub struct PlannedImageV1 {
     components: Vec<NamedBytesV1>,
     /// Each rank's image identity, hex SHA-256 of its plan's identity document.
     identities: Vec<String>,
+    /// The mapped views' bytes, by rank and view identifier; ranks naming the
+    /// same bytes share one mapping.
+    mapped: BTreeMap<(u32, Vec<u8>), Arc<MappedRowsV1>>,
     /// Each rank's read-ahead queue: the arena offsets to advise up to.
     read_ahead: Vec<SyncSender<u64>>,
     /// The read-ahead threads, stopped on drop so a dropped image no longer
@@ -750,12 +846,30 @@ impl PlannedImageV1 {
         {
             return Err("rank plans disagree on the rank count, role or alignment".into());
         }
+        // A mapped view's record maps checkpoint bytes instead of producing
+        // them, so no rank read executes it.
+        let mut mapped_sources = Vec::new();
+        let mut unproduced: Vec<std::collections::BTreeSet<usize>> =
+            vec![Default::default(); count];
+        for plan in &plans {
+            for view in plan
+                .views
+                .iter()
+                .filter(|view| view.placement == ViewPlacementV1::Mapped)
+            {
+                let source = mapped_source_v1(&checkpoint, plan, view)?;
+                unproduced[plan.rank as usize].insert(source.record);
+                mapped_sources.push((plan.rank, view.id.clone().into_bytes(), source));
+            }
+        }
         let mut shared_keys: BTreeMap<String, usize> = BTreeMap::new();
         let mut shared_users: Vec<([u64; 3], usize)> = Vec::new();
         let mut ranks = Vec::with_capacity(count);
         let mut components: Vec<NamedBytesV1> = Vec::new();
-        let mut views: BTreeMap<Vec<u8>, (u64, bool, BTreeMap<u32, CompiledViewSpanV1>)> =
-            BTreeMap::new();
+        let mut views: BTreeMap<
+            Vec<u8>,
+            (u64, ViewPlacementV1, BTreeMap<u32, CompiledViewSpanV1>),
+        > = BTreeMap::new();
         let mut offsets = Vec::with_capacity(count);
         let mut next = 0_u64;
         // Each rank's records are checked and prepared, and its identity
@@ -767,6 +881,7 @@ impl PlannedImageV1 {
                 .map(|plan| {
                     let checkpoint = &checkpoint;
                     let implementation = &implementation;
+                    let unproduced = &unproduced[plan.rank as usize];
                     scope.spawn(move || -> Result<_, String> {
                         let identity = runtime_weights::sha256_bytes(
                             &plan.identity_document(&checkpoint.identity, implementation),
@@ -774,7 +889,9 @@ impl PlannedImageV1 {
                         let records = plan
                             .records
                             .iter()
-                            .map(|record| prepare_record_v1(checkpoint, transform, record))
+                            .enumerate()
+                            .filter(|(index, _)| !unproduced.contains(index))
+                            .map(|(_, record)| prepare_record_v1(checkpoint, transform, record))
                             .collect::<Result<Vec<_>, String>>()?;
                         Ok((identity, records))
                     })
@@ -803,11 +920,10 @@ impl PlannedImageV1 {
             for view in plan.views {
                 let entry = views.entry(view.id.clone().into_bytes()).or_insert((
                     view.alignment,
-                    view.placement == ViewPlacementV1::Host,
+                    view.placement,
                     BTreeMap::new(),
                 ));
-                if entry.0 != view.alignment || entry.1 != (view.placement == ViewPlacementV1::Host)
-                {
+                if entry.0 != view.alignment || entry.1 != view.placement {
                     return Err(format!("view {} differs between ranks", view.id));
                 }
                 entry.2.insert(
@@ -880,12 +996,33 @@ impl PlannedImageV1 {
                 .collect(),
             views
                 .into_iter()
-                .map(|(id, (alignment, host, spans))| {
+                .map(|(id, (alignment, placement, spans))| {
                     let view = CompiledImageViewV1::new(alignment, spans);
-                    (id, if host { view.on_host() } else { view })
+                    let view = match placement {
+                        ViewPlacementV1::Device => view,
+                        ViewPlacementV1::Host => view.on_host(),
+                        ViewPlacementV1::Mapped => view.mapped(),
+                    };
+                    (id, view)
                 })
                 .collect(),
         );
+        // Each mapping reads the file as its header was when it was opened.
+        let mut mapped = BTreeMap::new();
+        for (rank, view, source) in mapped_sources {
+            let shard = &checkpoint.shards[source.shard];
+            shard.verify_unchanged()?;
+            let rows =
+                crate::host_rows::map_rows_v1(&shard.file, source.file_offset, source.byte_length)
+                    .map_err(|e| {
+                        format!(
+                            "map {} for view {}: {e}",
+                            shard.name,
+                            String::from_utf8_lossy(&view)
+                        )
+                    })?;
+            mapped.insert((rank, view), rows);
+        }
         let inner = Arc::new(InnerV1 {
             checkpoint,
             ranks,
@@ -939,6 +1076,7 @@ impl PlannedImageV1 {
             image_role,
             components,
             identities,
+            mapped,
             read_ahead,
             read_ahead_threads,
             read_ahead_exits: Mutex::new(read_ahead_exits),
@@ -972,6 +1110,29 @@ impl PlannedImageV1 {
     #[must_use]
     pub fn checkpoint(&self) -> &DirectCheckpointV1 {
         &self.inner.checkpoint
+    }
+
+    /// The bytes of rank `rank`'s mapped view `view`, if the plans map one.
+    #[must_use]
+    pub fn mapped_view(&self, rank: u32, view: &[u8]) -> Option<&Arc<MappedRowsV1>> {
+        self.mapped.get(&(rank, view.to_vec()))
+    }
+
+    /// Bytes the mapped views map, each mapping counted once however many
+    /// ranks share it. Neither the device nor page-locked memory holds them.
+    #[must_use]
+    pub fn mapped_bytes(&self) -> u64 {
+        let mut seen: Vec<*const MappedRowsV1> = Vec::new();
+        self.mapped
+            .values()
+            .filter(|rows| {
+                let pointer = Arc::as_ptr(rows);
+                let fresh = !seen.contains(&pointer);
+                seen.push(pointer);
+                fresh
+            })
+            .map(|rows| rows.len())
+            .sum()
     }
 
     /// Rank `rank`'s arena length.

@@ -154,6 +154,11 @@ impl<T> SlotTableV1<T> {
         Ok(value)
     }
 
+    /// Every live value, in slot order.
+    pub(crate) fn values(&self) -> impl Iterator<Item = &T> {
+        self.slots.iter().filter_map(|slot| slot.value.as_ref())
+    }
+
     #[cfg(test)]
     pub(crate) fn live_count(&self) -> usize {
         self.slots

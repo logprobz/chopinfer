@@ -1089,6 +1089,12 @@ impl HostDeviceBackendV1 for CudaHostDeviceV1 {
         Ok(DeviceObjectV1::new(identity))
     }
 
+    fn mapped_host_address(&mut self, buffer: DeviceObjectV1) -> HostDeviceResultV1<usize> {
+        self.buffer(buffer)?
+            .mapped_host_address()
+            .ok_or(BundleStatusV1::InvalidArgument)
+    }
+
     fn release_device_buffer(&mut self, buffer: DeviceObjectV1) -> HostDeviceResultV1<()> {
         // An ordered upload into this buffer may still hold it.
         self.upload_rings

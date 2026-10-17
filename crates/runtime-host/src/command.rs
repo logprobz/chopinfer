@@ -5254,6 +5254,9 @@ impl ArgumentsV1 {
                 runtime_bundle_abi::HOST_RESIDENT_VIEWS_CAPABILITY_V1,
             ))
             .chain(std::iter::once(
+                runtime_bundle_abi::HOST_MAPPED_ROWS_CAPABILITY_V1,
+            ))
+            .chain(std::iter::once(
                 runtime_bundle_abi::SERVED_ITEMS_CAPABILITY_V1,
             ))
             .chain(std::iter::once(
@@ -7891,6 +7894,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 runtime_bundle_abi::frontend::FRONTEND_CAPABILITY_V1,
+                runtime_bundle_abi::HOST_MAPPED_ROWS_CAPABILITY_V1,
                 runtime_bundle_abi::HOST_RESIDENT_VIEWS_CAPABILITY_V1,
                 runtime_bundle_abi::FP8_KV_CAPABILITY_V1,
                 crate::offload::KV_OFFLOAD_CAPABILITY_V1,
@@ -7926,6 +7930,7 @@ mod tests {
             stated.capabilities().collect::<Vec<_>>(),
             vec![
                 &BundleOpaqueId::new(runtime_bundle_abi::frontend::FRONTEND_CAPABILITY_V1).unwrap(),
+                &BundleOpaqueId::new(runtime_bundle_abi::HOST_MAPPED_ROWS_CAPABILITY_V1).unwrap(),
                 &BundleOpaqueId::new(runtime_bundle_abi::HOST_RESIDENT_VIEWS_CAPABILITY_V1)
                     .unwrap(),
                 &BundleOpaqueId::new(runtime_bundle_abi::FP8_KV_CAPABILITY_V1).unwrap(),

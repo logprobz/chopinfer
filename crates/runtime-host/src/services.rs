@@ -20,7 +20,8 @@ use runtime_bundle_abi::{
     BundleRankArenaHandleV1, BundleStateHandleV1, BundleStatusV1, BundleStreamHandleV1,
     CollectiveRequestV1, CompiledImageSpanV1, CustomCompletionV1, CustomOperandV1,
     CustomOperationV1, DeviceBufferSpanV1, HostServiceResultV1, HostServicesBackendV1,
-    KernelArgumentV1, LaunchConfigV1, PhysicalKvRequestV1, RankArenaUploadV1, StateRequestV1,
+    KernelArgumentV1, LaunchConfigV1, LentHostBytesV1, PhysicalKvRequestV1, RankArenaUploadV1,
+    StateRequestV1,
 };
 use runtime_weights::sha256_bytes;
 
@@ -158,6 +159,9 @@ pub struct CompiledImageViewV1 {
     spans: BTreeMap<u32, CompiledViewSpanV1>,
     /// Kept in mapped host memory rather than the rank arena.
     host: bool,
+    /// Mapped read-only from the checkpoint rather than held anywhere
+    /// (`chop.host-mapped-rows.v1`).
+    mapped: bool,
 }
 
 impl CompiledImageViewV1 {
@@ -167,6 +171,7 @@ impl CompiledImageViewV1 {
             alignment,
             spans,
             host: false,
+            mapped: false,
         }
     }
 
@@ -176,6 +181,20 @@ impl CompiledImageViewV1 {
     pub const fn on_host(mut self) -> Self {
         self.host = true;
         self
+    }
+
+    /// Places this view in a read-only mapping of the checkpoint the CPU
+    /// reads (`HOST_MAPPED_ROWS_CAPABILITY_V1`): the upload cuts it out of
+    /// the rank arena like a host view and copies no byte of it.
+    #[must_use]
+    pub const fn mapped(mut self) -> Self {
+        self.mapped = true;
+        self
+    }
+
+    /// Whether the span leaves the rank arena.
+    const fn cut(&self) -> bool {
+        self.host || self.mapped
     }
 }
 
@@ -187,8 +206,12 @@ impl CompiledImageViewV1 {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct RankImageLayoutV1 {
     image_bytes: u64,
-    /// Disjoint rank-image ranges `(start, end)` in increasing order.
+    /// Disjoint rank-image ranges `(start, end)` in increasing order: the
+    /// host views, which the host buffer holds.
     cuts: Vec<(u64, u64)>,
+    /// The same for the mapped views, which nothing holds; disjoint from
+    /// `cuts`.
+    mapped: Vec<(u64, u64)>,
 }
 
 impl RankImageLayoutV1 {
@@ -196,15 +219,27 @@ impl RankImageLayoutV1 {
         self.cuts.iter().map(|(start, end)| end - start).sum()
     }
 
+    fn mapped_bytes(&self) -> u64 {
+        self.mapped.iter().map(|(start, end)| end - start).sum()
+    }
+
     fn device_bytes(&self) -> u64 {
-        self.image_bytes - self.host_bytes()
+        self.image_bytes - self.host_bytes() - self.mapped_bytes()
+    }
+
+    /// Every range the arena leaves out, host and mapped, in order.
+    fn removed(&self) -> Vec<(u64, u64)> {
+        let mut removed = [&self.cuts[..], &self.mapped[..]].concat();
+        removed.sort_unstable();
+        removed
     }
 
     /// The rank-image ranges `(start, length)` the arena holds, in order.
     fn device_segments(&self) -> Vec<(u64, u64)> {
-        let mut segments = Vec::with_capacity(self.cuts.len() + 1);
+        let removed = self.removed();
+        let mut segments = Vec::with_capacity(removed.len() + 1);
         let mut at = 0;
-        for &(start, end) in &self.cuts {
+        for &(start, end) in &removed {
             if start > at {
                 segments.push((at, start - at));
             }
@@ -223,7 +258,7 @@ impl RankImageLayoutV1 {
             .checked_add(length)
             .ok_or(BundleStatusV1::InvalidArgument)?;
         let mut removed = 0;
-        for &(start, cut_end) in &self.cuts {
+        for &(start, cut_end) in &self.removed() {
             if end <= start {
                 break;
             }
@@ -307,7 +342,8 @@ impl CompiledImageDescriptionV1 {
     fn rank_layout(&self, rank: u32) -> HostServiceResultV1<RankImageLayoutV1> {
         let image_bytes = self.rank_image(rank)?.byte_length;
         let mut cuts = Vec::new();
-        for view in self.views.values().filter(|view| view.host) {
+        let mut mapped = Vec::new();
+        for view in self.views.values().filter(|view| view.cut()) {
             let Some(span) = view.spans.get(&rank) else {
                 continue;
             };
@@ -321,19 +357,32 @@ impl CompiledImageDescriptionV1 {
             if span.byte_length == 0 || end > image_bytes {
                 return Err(BundleStatusV1::InvalidArgument);
             }
-            cuts.push(
+            let cut =
                 host_view_excision_v1(span.offset, span.byte_length, self.alignment, image_bytes)
-                    .ok_or(BundleStatusV1::InvalidArgument)?,
-            );
+                    .ok_or(BundleStatusV1::InvalidArgument)?;
+            if view.mapped {
+                mapped.push(cut);
+            } else {
+                cuts.push(cut);
+            }
         }
         cuts.sort_unstable();
-        if cuts.windows(2).any(|pair| pair[0].1 > pair[1].0) {
+        mapped.sort_unstable();
+        let layout = RankImageLayoutV1 {
+            image_bytes,
+            cuts,
+            mapped,
+        };
+        if layout
+            .removed()
+            .windows(2)
+            .any(|pair| pair[0].1 > pair[1].0)
+        {
             return Err(BundleStatusV1::InvalidArgument);
         }
-        let layout = RankImageLayoutV1 { image_bytes, cuts };
         // A view aligned above the image alignment could not keep it once
         // moved, and an empty arena has no allocation to hold.
-        if !layout.cuts.is_empty()
+        if !layout.removed().is_empty()
             && (layout.device_bytes() == 0
                 || self
                     .views
@@ -895,6 +944,9 @@ struct DeviceBufferRecordV1 {
     /// their allocations carry `None` and are refused as cross-context addresses
     /// rather than guessed at.
     origin: Option<BufferOriginV1>,
+    /// A bundle's staging buffer: page-locked host memory whose bytes the
+    /// host lends the CPU (`chop.host-mapped-rows.v1`).
+    staging: bool,
 }
 
 /// The pool and context one allocation came from.
@@ -1408,6 +1460,18 @@ struct HostStateV1<D> {
     probe_fault_observed: bool,
 }
 
+/// The host memory one instance holds ([`HostServicesV1Backend::host_memory_v1`]).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct HostMemoryV1 {
+    /// Page-locked bytes: host-resident views and staging buffers.
+    pub pinned_bytes: u64,
+    /// The staging buffers' part of `pinned_bytes`.
+    pub staging_bytes: u64,
+    /// The bytes the rank arenas leave to mapped views, each view rounded
+    /// to its image alignment and summed over ranks; not page-locked.
+    pub mapped_view_bytes: u64,
+}
+
 /// One bundle instance's complete model-neutral host service table.
 pub struct HostServicesV1Backend<D: HostDeviceBackendV1> {
     state: RefCell<HostStateV1<D>>,
@@ -1594,6 +1658,34 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
     #[cfg(test)]
     pub(crate) fn probe_fault_observed(&self) -> bool {
         self.state.borrow().probe_fault_observed
+    }
+
+    /// The host memory this instance holds now: page-locked bytes (host
+    /// views and staging buffers), and the bytes its rank arenas leave to
+    /// checkpoint mappings, which no page-locked or device budget holds
+    /// (summed over ranks, though ranks naming the same bytes share one
+    /// mapping).
+    #[must_use]
+    pub fn host_memory_v1(&self) -> HostMemoryV1 {
+        let state = self.state.borrow();
+        let staging_bytes = state
+            .buffers
+            .values()
+            .filter(|buffer| buffer.staging)
+            .map(|buffer| buffer.byte_length)
+            .sum();
+        let arenas = state.arenas.values();
+        let (host_view_bytes, mapped_view_bytes) = arenas.fold((0, 0), |(host, mapped), arena| {
+            (
+                host + arena.layout.host_bytes(),
+                mapped + arena.layout.mapped_bytes(),
+            )
+        });
+        HostMemoryV1 {
+            pinned_bytes: host_view_bytes + staging_bytes,
+            staging_bytes,
+            mapped_view_bytes,
+        }
     }
 
     /// Returns the number of resources the bundle has not released.
@@ -2321,6 +2413,7 @@ impl<D: HostDeviceBackendV1> HostStateV1<D> {
             byte_length,
             owner: BufferOwnerV1::Host,
             origin,
+            staging: false,
         }) {
             Ok(key) => Ok(key),
             Err(status) => {
@@ -2370,6 +2463,7 @@ impl<D: HostDeviceBackendV1> HostStateV1<D> {
             byte_length,
             owner: BufferOwnerV1::Host,
             origin,
+            staging: false,
         }) {
             Ok(key) => Ok(key),
             Err(status) => {
@@ -2945,6 +3039,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             byte_length,
             owner: BufferOwnerV1::Bundle(order),
             origin: Some(pool_origin),
+            staging: false,
         }) {
             Ok(key) => Ok(BundleDeviceBufferHandleV1::from_parts(
                 key.generation,
@@ -2974,6 +3069,87 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         state.device.release_device_buffer(object)?;
         state.order.release(order)?;
         state.buffers.remove(key).map(|_| ())
+    }
+
+    fn allocate_staging_buffer(
+        &self,
+        pool: BundleMemoryPoolHandleV1,
+        stream: BundleStreamHandleV1,
+        byte_length: u64,
+        alignment: u64,
+    ) -> HostServiceResultV1<BundleDeviceBufferHandleV1> {
+        let mut state = self.state.borrow_mut();
+        let pool_key = key_of_v1!(pool);
+        let context = state.pools.get(pool_key)?.context;
+        state.refuse_during_capture(context)?;
+        if state.streams.get(key_of_v1!(stream))?.context != context
+            || byte_length == 0
+            || !alignment.is_power_of_two()
+        {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let stream_object = state.stream_object(stream)?;
+        let object = state
+            .device
+            .allocate_mapped_host_buffer(stream_object, byte_length, &mut |bytes| {
+                bytes.fill(0);
+                true
+            })
+            .inspect_err(|status| {
+                eprintln!(
+                    "host allocate_staging_buffer: {byte_length} bytes: {status:?}; \
+                     page-locked host memory may be limited (docs/deploy-common.md)"
+                );
+            })?;
+        let release = |state: &mut HostStateV1<D>, status| {
+            let _ = state.device.release_device_buffer(object);
+            Err(status)
+        };
+        match state
+            .device
+            .allocation_satisfies_alignment(object, alignment)
+        {
+            Ok(true) => {}
+            Ok(false) => return release(&mut state, BundleStatusV1::Unsupported),
+            Err(status) => return release(&mut state, status),
+        }
+        let order = match state.order.acquire() {
+            Ok(order) => order,
+            Err(status) => return release(&mut state, status),
+        };
+        match state.buffers.insert(DeviceBufferRecordV1 {
+            object,
+            byte_length,
+            owner: BufferOwnerV1::Bundle(order),
+            origin: Some(BufferOriginV1 {
+                context,
+                pool: pool_key,
+            }),
+            staging: true,
+        }) {
+            Ok(key) => Ok(BundleDeviceBufferHandleV1::from_parts(
+                key.generation,
+                key.slot,
+            )),
+            Err(status) => {
+                let _ = state.order.release(order);
+                release(&mut state, status)
+            }
+        }
+    }
+
+    fn lend_staging_buffer(
+        &self,
+        buffer: BundleDeviceBufferHandleV1,
+    ) -> HostServiceResultV1<LentHostBytesV1> {
+        let mut state = self.state.borrow_mut();
+        let record = state.buffers.get(key_of_v1!(buffer))?;
+        if !record.staging || !matches!(record.owner, BufferOwnerV1::Bundle(_)) {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let (object, byte_length) = (record.object, record.byte_length);
+        let address = state.device.mapped_host_address(object)?;
+        Ok(LentHostBytesV1::new(address as *const u8, byte_length))
     }
 
     fn open_compiled_image(
@@ -3167,17 +3343,20 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             if result.is_ok() && !sparse {
                 result = verify_direct_sources_v1(&ComponentStorageV1::Planned(Arc::clone(image)));
             }
-            eprintln!(
-                "startup direct_load: {}",
-                serde_json::json!({
-                    "seconds": upload_seconds, "digest_seconds": digest_seconds,
-                    "produced_bytes": stats.produced_bytes, "source_bytes": stats.source_bytes, "source_reads": stats.source_reads,
-                    "advised_bytes": stats.advised_bytes, "direct_bytes": stats.direct_bytes,
-                    "read_seconds": stats.read_seconds, "produce_seconds": stats.produce_seconds,
-                    "shared_seconds": stats.shared_seconds, "rank_seconds": stats.rank_seconds,
-                    "checkpoint_identity": image.checkpoint().identity_hex(),
-                })
-            );
+            let mut line = serde_json::json!({
+                "seconds": upload_seconds, "digest_seconds": digest_seconds,
+                "produced_bytes": stats.produced_bytes, "source_bytes": stats.source_bytes, "source_reads": stats.source_reads,
+                "advised_bytes": stats.advised_bytes, "direct_bytes": stats.direct_bytes,
+                "read_seconds": stats.read_seconds, "produce_seconds": stats.produce_seconds,
+                "shared_seconds": stats.shared_seconds, "rank_seconds": stats.rank_seconds,
+                "checkpoint_identity": image.checkpoint().identity_hex(),
+            });
+            // Checkpoint bytes the mapped views map instead of uploading,
+            // each mapping once; stated only for images that map any.
+            if image.mapped_bytes() > 0 {
+                line["mapped_bytes"] = image.mapped_bytes().into();
+            }
+            eprintln!("startup direct_load: {line}");
         }
         let planned: u64 = prepared.iter().map(PreparedRankUploadV1::byte_length).sum();
         eprintln!(
@@ -3254,6 +3433,11 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             .get(&rank)
             .copied()
             .ok_or(BundleStatusV1::NotFound)?;
+        // A mapped view has no device address: `resolve_mapped_view` lends
+        // its bytes to the CPU.
+        if view.mapped {
+            return Err(BundleStatusV1::NotFound);
+        }
         let (key, offset) = if view.host {
             let key = record.host_buffer.ok_or(BundleStatusV1::InvalidState)?;
             (
@@ -3289,6 +3473,28 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
     ) -> HostServiceResultV1<()> {
         let mut state = self.state.borrow_mut();
         release_tracked_resource_v1!(state, images, key_of_v1!(image))
+    }
+
+    fn resolve_mapped_view(
+        &self,
+        image: BundleCompiledImageHandleV1,
+        rank: u32,
+        view_id: &[u8],
+    ) -> HostServiceResultV1<LentHostBytesV1> {
+        let state = self.state.borrow();
+        if rank >= state.config.topology.rank_count() {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let record = state.images.get(key_of_v1!(image))?;
+        let ComponentStorageV1::Planned(planned) = &record.storage else {
+            return Err(BundleStatusV1::NotFound);
+        };
+        // The instance's configuration holds the planned image, and with it
+        // the mapping, for as long as the instance lives.
+        let rows = planned
+            .mapped_view(rank, view_id)
+            .ok_or(BundleStatusV1::NotFound)?;
+        Ok(LentHostBytesV1::new(rows.bytes().as_ptr(), rows.len()))
     }
 
     fn open_authenticated_component(

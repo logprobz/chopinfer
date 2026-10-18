@@ -702,3 +702,38 @@ fn a_dsml_marker_outside_a_calls_block_is_refused() {
         assert!(parse(text.clone()).is_err(), "{text:?}");
     }
 }
+
+/// Generation that ends inside the calls opening: once the DSML marker is
+/// complete the opening is structure, as deepseek-recipe's stream parser
+/// has entered its calls by then and drops the unfinished block; before
+/// that it is text.
+#[test]
+fn a_cut_calls_opening_is_not_content() {
+    use runtime_frontend::{
+        CompletionDecoderV1, CompletionUpdateV1, DecoderLimitsV1, GeneratedTokenV1,
+    };
+    let descriptor = std::sync::Arc::new(descriptor());
+    for (generated, content) in [
+        ("ok\n\n<｜DSML｜ calls", "ok"),
+        ("ok\n\n<｜DSML｜", "ok"),
+        ("ok\n\n<｜DS", "ok\n\n<｜DS"),
+    ] {
+        let mut decoder = CompletionDecoderV1::new(
+            std::sync::Arc::clone(&descriptor),
+            PromptModeV1::Chat,
+            DecoderLimitsV1::declared(&descriptor),
+        );
+        let mut updates = decoder
+            .push(GeneratedTokenV1::new(0, 100, generated.as_bytes().to_vec()))
+            .unwrap();
+        updates.extend(decoder.finish_length().unwrap());
+        let text: String = updates
+            .iter()
+            .filter_map(|update| match update {
+                CompletionUpdateV1::Content(part) => Some(part.text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, content, "{generated:?}");
+    }
+}

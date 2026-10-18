@@ -237,6 +237,32 @@ impl DeclaredParserV1 {
         }
     }
 
+    /// Where held text that a generation ended in begins an unfinished call
+    /// opening, for the typed grammar: the longest tail of the pending text
+    /// that is a proper prefix of the tool call open and already spells a
+    /// reserved marker, which text may not carry. The vendor's stream
+    /// parser has entered its calls by then and drops the unfinished block,
+    /// so it is not text; a shorter tail is.
+    fn unfinished_open(&self, end: usize) -> Option<usize> {
+        if self.parser.tool_grammar != FrontendToolGrammarV1::XmlTypedParametersV1 {
+            return None;
+        }
+        let open = self.parser.tool_call_open.as_bytes();
+        let pending = &self.bytes[self.cursor..end];
+        (1..open.len().min(pending.len() + 1))
+            .rev()
+            .find(|&length| {
+                let prefix = &open[..length];
+                pending.ends_with(prefix)
+                    && self
+                        .parser
+                        .reserved_markers
+                        .iter()
+                        .any(|marker| find_bytes_v1(prefix, marker.as_bytes()).is_some())
+            })
+            .map(|length| end - length)
+    }
+
     /// Reads the last bytes, and ends the completion where generation ended.
     fn finish(&mut self, valid_end: usize) -> Result<Vec<FormatEventV1>, String> {
         let mut updates = self.advance_text(valid_end)?;
@@ -251,6 +277,12 @@ impl DeclaredParserV1 {
                 .ok_or_else(|| malformed_v1("missing tool start"))?;
             let end = self.bytes.len();
             self.finish_region(start, end, &mut updates)?;
+        } else if let Some(start) = self.unfinished_open(self.bytes.len()) {
+            // An unfinished call opening is structure, not text: the text
+            // before it is sent as before a call.
+            if start > self.cursor && !self.holds_blank_answer(start) {
+                updates.push(self.text_update(self.cursor, start)?);
+            }
         } else if self.cursor < self.bytes.len() && !self.drops_blank_answer(self.bytes.len()) {
             updates.push(self.text_update(self.cursor, self.bytes.len())?);
         }

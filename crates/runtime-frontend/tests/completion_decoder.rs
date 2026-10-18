@@ -378,6 +378,73 @@ fn typed_values_stream_as_the_whole_parse_reads_them() {
     }
 }
 
+/// A typed completion that generation ends anywhere inside its calls block
+/// leaks no markup: once the held call opening spells a reserved marker it
+/// is structure, as the vendor's stream parser reads it, and a call cut
+/// inside a tag or a raw or JSON value delivers only whole parameters.
+#[test]
+fn a_typed_completion_cut_anywhere_leaks_no_markup() {
+    let mut declaration: serde_json::Value = serde_json::from_str(TYPED_PARAMETERS).unwrap();
+    declaration["context"]["maximum_total_tokens"] = json!(1024);
+    declaration["tokenizer"]["model_max_length"] = json!(1024);
+    declaration["limits"]["maximum_generated_tokens"] = json!(1024);
+    declaration["format"]["parser"]["reserved_markers"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("<calls"));
+    let fixture = FixtureV1::new("typed-parameters", &declaration.to_string());
+    let whole = "ok\n\n<calls>\n<invoke name=\"f\">\n\
+                 <parameter name=\"x\" string=\"true\">a b</parameter>\n\
+                 <parameter name=\"n\" string=\"false\">{\"k\": [1, \"</parameter>\"]}</parameter>\n\
+                 </invoke>\n</calls>";
+    let markup = [
+        "<calls",
+        "<invoke",
+        "<parameter",
+        "</parameter",
+        "</invoke",
+        "</calls",
+    ];
+    for cut in 0..=whole.len() {
+        let prefix = &whole[..cut];
+        for parts in [
+            vec![prefix.as_bytes()],
+            prefix.as_bytes().chunks(1).collect(),
+        ] {
+            let mut decoder = fixture.decoder(PromptModeV1::Chat);
+            let mut updates = feed(&mut decoder, &parts);
+            updates.extend(decoder.finish_length().expect("a cut completion finishes"));
+            let content = text(&updates).1;
+            if prefix.contains("<calls") {
+                assert_eq!(content, "ok", "cut {cut}");
+            } else {
+                assert_eq!(content, prefix, "cut {cut}");
+            }
+            for call in updates
+                .iter()
+                .filter_map(|update| match update {
+                    CompletionUpdateV1::ToolCalls(calls) => Some(calls.calls.clone()),
+                    _ => None,
+                })
+                .flatten()
+            {
+                assert_eq!(call.name, "f", "cut {cut}");
+                let arguments: serde_json::Value = serde_json::from_str(&call.arguments).unwrap();
+                let whole_values = [json!("a b"), json!({"k": [1, "</parameter>"]})];
+                for (name, value) in arguments.as_object().unwrap() {
+                    assert!(
+                        !value
+                            .as_str()
+                            .is_some_and(|text| markup.iter().any(|m| text.contains(m))),
+                        "cut {cut}: {name} = {value}"
+                    );
+                    assert!(whole_values.contains(value), "cut {cut}: {name} = {value}");
+                }
+            }
+        }
+    }
+}
+
 /// A client stop matches at any byte boundary and leaks nothing after it.
 #[test]
 fn client_stops_match_at_every_byte_and_token_boundary_without_leaking() {

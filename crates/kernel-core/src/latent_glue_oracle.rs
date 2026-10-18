@@ -144,8 +144,12 @@ pub fn window_norm_f32(
         for (i, warp) in lanes.chunks_exact_mut(32).enumerate() {
             warps[i] = reduce(warp);
         }
-        let mean = reduce(&mut warps) / width as f32;
+        let total = reduce(&mut warps);
+        let mean = total / width as f32;
         let inv = 1.0 / (mean + f32::from_bits(query.epsilon_bits)).sqrt();
+        if !total.is_finite() || !mean.is_finite() || !inv.is_finite() {
+            return Err(Refusal("window norm reduction or reciprocal overflows F32"));
+        }
         output.extend(
             row.iter()
                 .zip(weight)
@@ -648,25 +652,43 @@ pub fn query_rope_status(
     for row in 0..prior.len() {
         let at = row * width..(row + 1) * width;
         let angles = &table[row * tail..(row + 1) * tail];
-        if input[at.clone()]
-            .iter()
-            .chain(angles)
-            .any(|v| !v.is_finite())
-        {
-            status[row] |= NONFINITE_INPUT;
-            continue;
-        }
-        match query_rope_f32(query, &input[at.clone()], angles) {
-            Ok((values, bits)) => {
-                if bits.iter().any(|&v| !bf16_to_f32(v).is_finite()) {
-                    status[row] |= UNREPRESENTABLE_OUTPUT;
-                }
-                if status[row] == 0 {
-                    rotated[at.clone()].copy_from_slice(&values);
-                    native[at].copy_from_slice(&bits);
-                }
+        let mut values = input[at.clone()].to_vec();
+        let mut bits = vec![0; width];
+        let mut current = 0;
+        for head in 0..query.heads as usize {
+            for column in (0..query.latent as usize).step_by(2) {
+                let pair = head * query.latent as usize + column;
+                let (a, b) = (input[at.start + pair], input[at.start + pair + 1]);
+                let mut invalid = !a.is_finite() || !b.is_finite();
+                let (x, y) = if column >= query.latent as usize - tail {
+                    let angle = column - (query.latent as usize - tail);
+                    let (c, s) = (angles[angle], angles[angle + 1]);
+                    invalid |= !c.is_finite() || !s.is_finite();
+                    (a * c - b * s, a * s + b * c)
+                } else {
+                    (a, b)
+                };
+                values[pair] = x;
+                values[pair + 1] = y;
+                bits[pair] = f32_to_bf16(x);
+                bits[pair + 1] = f32_to_bf16(y);
+                current |= if invalid {
+                    NONFINITE_INPUT
+                } else if !x.is_finite()
+                    || !y.is_finite()
+                    || !bf16_to_f32(bits[pair]).is_finite()
+                    || !bf16_to_f32(bits[pair + 1]).is_finite()
+                {
+                    UNREPRESENTABLE_OUTPUT
+                } else {
+                    0
+                };
             }
-            Err(_) => status[row] |= UNREPRESENTABLE_OUTPUT,
+        }
+        status[row] = prior[row] | current;
+        if status[row] == 0 {
+            rotated[at.clone()].copy_from_slice(&values);
+            native[at].copy_from_slice(&bits);
         }
     }
     Ok((rotated, native, status))
@@ -707,20 +729,15 @@ pub fn window_rows_status(
     for row in 0..prior.len() {
         let at = row * width..(row + 1) * width;
         let angles = &table[row * tail..(row + 1) * tail];
-        if input[at.clone()]
+        let mut current = 0;
+        let values = if input[at.clone()]
             .iter()
             .chain(angles)
             .any(|v| !v.is_finite())
             || weight.iter().any(|&v| !bf16_to_f32(v).is_finite())
         {
-            status[row] |= NONFINITE_INPUT;
-        } else if input[at.clone()]
-            .iter()
-            .map(|&v| f64::from(v) * f64::from(v))
-            .sum::<f64>()
-            > f64::from(f32::MAX)
-        {
-            status[row] |= UNREPRESENTABLE_OUTPUT;
+            current = NONFINITE_INPUT;
+            None
         } else {
             let result = window_norm_f32(query, &input[at.clone()], weight).and_then(|norm| {
                 query_rope_f32(
@@ -734,10 +751,17 @@ pub fn window_rows_status(
                 )
             });
             match result {
-                Ok((values, _)) if status[row] == 0 => latent[at.clone()].copy_from_slice(&values),
-                Ok(_) => {}
-                Err(_) => status[row] |= UNREPRESENTABLE_OUTPUT,
+                Ok((values, _)) => Some(values),
+                Err(_) => {
+                    current = UNREPRESENTABLE_OUTPUT;
+                    None
+                }
             }
+        };
+        status[row] = prior[row] | current;
+        if status[row] == 0 {
+            latent[at.clone()]
+                .copy_from_slice(&values.expect("a successful row has normalized values"));
         }
         status[row] = quantizer.row_status(&latent[at.clone()], &[status[row]])?[0];
         encoded.push(if status[row] == 0 {
@@ -794,5 +818,71 @@ mod status_tests {
         assert!(latent.iter().all(|v| v.to_bits() == 0));
         assert!(encoded[0].values.iter().all(|&v| v == 0));
         assert!(encoded[0].scale_bytes.iter().all(|&v| v == 127));
+    }
+}
+
+#[cfg(test)]
+mod status_boundary_tests {
+    use super::*;
+    fn query() -> LatentWindowWrite {
+        LatentWindowWrite {
+            latent: 512,
+            rotary: 64,
+            epsilon_bits: 1e-20_f32.to_bits(),
+            addressing: WindowAddressing::Circular { slots: 136 },
+        }
+    }
+    #[test]
+    fn status_boundary_window_keeps_a_finite_fused_reduction() {
+        let mut input = vec![0.0; 512];
+        input[0] = f32::from_bits(0x5f7ffff3);
+        input[1] = f32::from_bits(0x5a9ffffe);
+        assert_eq!(
+            input[1].mul_add(input[1], input[0] * input[0]).to_bits(),
+            0x7f7fffff
+        );
+        let (output, encoded, status) = window_rows_status(
+            query(),
+            &input,
+            &vec![0x3f80; 512],
+            &[1.0, 0.0].repeat(32),
+            &[0],
+        )
+        .unwrap();
+        assert_eq!(status, [0]);
+        assert!(output[0] > 20.0);
+        assert_ne!(encoded[0].values[0], 0);
+    }
+    #[test]
+    fn status_boundary_window_accumulates_current_overflow_with_prior_flags() {
+        for (value, weight) in [(f32::MAX, 0x3f80), (1.0, 0x7f7f)] {
+            let mut input = vec![0.0; 512];
+            input[0] = value;
+            let (output, _, status) = window_rows_status(
+                query(),
+                &input,
+                &vec![weight; 512],
+                &[1.0, 0.0].repeat(32),
+                &[1],
+            )
+            .unwrap();
+            assert_eq!(status, [5]);
+            assert!(output.iter().all(|v| v.to_bits() == 0));
+        }
+    }
+    #[test]
+    fn status_boundary_query_keeps_current_flags_independent_of_prior_and_other_pairs() {
+        let q = LatentQueryRope {
+            heads: 3,
+            latent: 512,
+            rotary: 64,
+        };
+        let mut input = vec![0.0; 3 * 512];
+        input[0] = f32::MAX;
+        let (_, _, status) = query_rope_status(q, &input, &[1.0, 0.0].repeat(32), &[1]).unwrap();
+        assert_eq!(status, [5]);
+        input[2 * 512 + 511] = f32::NAN;
+        let (_, _, status) = query_rope_status(q, &input, &[1.0, 0.0].repeat(32), &[0]).unwrap();
+        assert_eq!(status, [5]);
     }
 }

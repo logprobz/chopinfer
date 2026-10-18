@@ -117,13 +117,20 @@ fn host_admits(document: &str, name: &str) -> Result<(), String> {
 /// helper selects the package's own entry for the requested rank count.
 #[test]
 fn the_profile_follows_the_geometry_and_rank_count() {
-    let flash = select_profile(&FLASH, 4).unwrap();
-    assert_eq!(flash.name, "tp4-ar");
-    assert_eq!(flash.profile["topology"], topology_id(&FLASH, 4));
-    assert!(select_profile(&FLASH, 2).is_err());
     let document = profiles(&FLASH, &[4]).unwrap();
     let file: serde_json::Value = serde_json::from_str(&document).unwrap();
-    assert_eq!(file["profiles"]["tp4-ar"], flash.profile);
+    let name = if file["profiles"].get("tp4-dspark").is_some() {
+        "tp4-dspark"
+    } else {
+        "tp4-ar"
+    };
+    let flash = select_profile(&FLASH, 4).unwrap();
+    assert_eq!(flash.name, name);
+    assert_eq!(flash.profile["topology"], topology_id(&FLASH, 4));
+    assert_eq!(flash.profile["prefix_cache"], true);
+    assert!(select_profile(&FLASH, 2).is_err());
+    assert_eq!(file["profiles"][name], flash.profile);
+    host_admits(&document, name).unwrap();
     host_admits(&document, "tp4-ar").unwrap();
     assert!(profiles(&FLASH, &[2]).is_err());
     let Some(geometry) = synthetic() else {
@@ -642,6 +649,15 @@ fn a_checkpoint_with_the_tower_provides_images() {
     let both = BTreeSet::from([Modality::Text, Modality::Image]);
     assert_eq!(served(ModalitySelection::Auto).unwrap(), both);
     assert_eq!(served(ModalitySelection::All).unwrap(), both);
+    let expected = select_profile(&FLASH, 4).unwrap();
+    for modalities in [ModalitySelection::Auto, ModalitySelection::All] {
+        let selected = DeepSeek41Family
+            .direct_profile(&root, &request(modalities))
+            .unwrap();
+        assert_eq!(selected.name, expected.name);
+        assert_eq!(selected.profile, expected.profile);
+        assert_eq!(selected.profile["prefix_cache"], true);
+    }
     let text = BTreeSet::from([Modality::Text]);
     assert_eq!(served(ModalitySelection::Only(text.clone())).unwrap(), text);
     let images = BTreeSet::from([Modality::Image]);

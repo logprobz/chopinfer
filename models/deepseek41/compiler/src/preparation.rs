@@ -70,12 +70,11 @@ fn served_modalities(
     Ok(served)
 }
 
-/// The serving profile of `geometry` at `ranks`: the autoregressive entry
-/// for `ranks` of the profiles a package of `geometry` carries
-/// (`package::profiles`), so the selected profile is the package's own.
+/// The package's DSpark profile at `ranks`, falling back to its
+/// autoregressive profile when it carries no DSpark entry.
 pub fn select_profile(geometry: &Geometry, ranks: u32) -> Result<DirectProfile> {
     let document = crate::package::profiles(geometry, &[ranks])?;
-    default_profile(&document, ranks, &["none"])
+    default_profile(&document, ranks, &["dspark", "none"])
 }
 
 /// The most weight bytes one rank of `ranks` holds of the checkpoint at

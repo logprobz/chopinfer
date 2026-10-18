@@ -131,6 +131,7 @@ name = "bundle-deepseek41"
 version = "0.1.0-alpha.3"
 dependencies = [
  "bundle-runtime",
+ "encoder-spec",
  "kernel-build",
  "kernel-core",
  "kernels-sm120",

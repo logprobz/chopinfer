@@ -20,6 +20,8 @@ pub(crate) mod own_ops;
 // The build compiles each registration file's cubins; the bundle registers
 // their entries.
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
+pub(crate) mod encoder;
+#[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod rows;
 
 impl crate::Kernels {
@@ -27,6 +29,8 @@ impl crate::Kernels {
     /// and the model's own kernels.
     pub(crate) fn new(shape: &crate::shape::Shape) -> Result<Self, String> {
         let sm120 = rows::register(Sm120::new(), shape.geometry, shape.ranks());
+        // The vision encoder's shared entries (`crate::encoders`).
+        let sm120 = encoder::register(sm120)?;
         Ok(Self {
             backend: Box::new(sm120),
             own: Box::new(own_ops::Sm120Own::new()),

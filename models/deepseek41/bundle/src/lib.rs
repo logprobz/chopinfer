@@ -10,6 +10,11 @@
 mod api;
 pub mod buffers;
 pub mod config;
+#[allow(
+    dead_code,
+    reason = "the program acquires the encoder once media steps land"
+)]
+pub mod encoders;
 #[cfg(test)]
 mod fake_host_tests;
 #[cfg_attr(

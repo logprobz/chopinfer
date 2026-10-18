@@ -156,7 +156,7 @@ fn rows_match_the_reference_bit_for_bit() {
     let golden = golden();
     let recipe = recipe(&golden);
     let cases = golden["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 16);
+    assert_eq!(cases.len(), 17);
     for case in cases {
         let name = case["name"].as_str().unwrap();
         let (width, height) = (

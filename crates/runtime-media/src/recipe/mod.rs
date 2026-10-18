@@ -7,8 +7,9 @@ mod resample;
 mod token_budget;
 
 pub use centered_pad::{
-    CenteredPadPlan, CenteredPadRecipe, centered_pad_grid, centered_pad_plan,
-    centered_pad_preparation_bytes, centered_pad_span_tokens, check_centered_pad_recipe,
+    CenteredPadPlan, CenteredPadRecipe, centered_pad_emits_size, centered_pad_grid,
+    centered_pad_plan, centered_pad_preparation_bytes, centered_pad_span_tokens,
+    check_centered_pad_recipe,
 };
 pub use token_budget::{
     PaddedSize, TokenBudgetRecipe, check_token_budget_recipe, padded_emits_size,

@@ -158,8 +158,43 @@ pub fn centered_pad_plan(
         offset: (size(offset.0)?, size(offset.1)?),
         tokens: (size(rows)?, size(columns)?),
     };
-    limits.check_image(plan.canvas.1, plan.canvas.0)?;
+    // Only the canvas's pixels are limited: its aspect ratio can pass the
+    // source's, since rounding can drop a side by a patch (a 79 x 15000
+    // source plans a 28 x 7966 canvas).
+    if canvas_h * canvas_w > limits.maximum_pixels {
+        return Err(MediaError::new("decoded image pixel limit exceeded"));
+    }
     Ok(plan)
+}
+
+/// Whether the recipe may emit a `height x width` canvas: one aligned to
+/// the patch, within the token budget and the decoded pixel limit. Every
+/// emitted canvas is such a size. Conversely, such a size with at least
+/// `minimum_pixels` is its own plan, so a source of that size emits it;
+/// a smaller one is admitted without showing a source reaches it. The
+/// upscale's truncation and the solve's rounding (`floor(w * (a * c / w) /
+/// patch)` can fall one patch short) both emit canvases under
+/// `minimum_pixels` that are not their own plan, and those have no closed
+/// form, so this admits a superset of the emitted canvases below
+/// `minimum_pixels` and exactly the emitted ones at or above it.
+pub fn centered_pad_emits_size(
+    height: u32,
+    width: u32,
+    recipe: CenteredPadRecipe,
+    limits: MediaLimits,
+) -> bool {
+    let Ok(_) = recipe.cell() else {
+        return false;
+    };
+    let (p, d) = (u64::from(recipe.patch), u64::from(recipe.downsample));
+    let (h, w) = (u64::from(height), u64::from(width));
+    h > 0
+        && w > 0
+        && h % p == 0
+        && w % p == 0
+        && h * w <= limits.maximum_pixels
+        && centered_pad_span_tokens((h / p).div_ceil(d), (w / p).div_ceil(d))
+            <= recipe.maximum_tokens
 }
 
 /// Refuses a recipe [`centered_pad_plan`] or [`centered_pad_grid`] cannot
@@ -331,6 +366,50 @@ mod tests {
         // Very tall and very wide sources collapse to one cell.
         assert_eq!(plan(100_000, 10).canvas, (511 * 42, 42));
         assert_eq!(plan(10, 100_000).canvas, (42, 1021 * 42));
+    }
+
+    #[test]
+    fn rounding_can_drop_a_patch_and_pass_the_source_aspect() {
+        // 79 x 15000 solves at a = 1 token column: 79 * (42 / 79) is just
+        // under 42 in f64, so the canvas is 2 patches wide, not 3, as the
+        // reference's plan_image_grid gives. Its 284.5:1 aspect passes the
+        // source's 190:1 and a 200:1 limit, and its area is under the
+        // minimum, so it is not its own plan.
+        let narrow = MediaLimits {
+            maximum_aspect_ratio: 200.0,
+            ..limits()
+        };
+        let plan = centered_pad_plan(15000, 79, recipe(), narrow).unwrap();
+        assert_eq!(plan.canvas, (7966, 28));
+        assert_eq!(plan.tokens, (190, 1));
+        assert!(narrow.check_image(28, 7966).is_err());
+        assert_ne!(
+            centered_pad_plan(7966, 28, recipe(), limits())
+                .unwrap()
+                .canvas,
+            plan.canvas
+        );
+        assert!(centered_pad_emits_size(7966, 28, recipe(), narrow));
+    }
+
+    #[test]
+    fn emitted_sizes_are_aligned_within_budget_and_pixels() {
+        let limits = limits();
+        assert!(centered_pad_emits_size(560, 560, recipe(), limits));
+        // Its own plan at or above the minimum.
+        for (h, w) in [(1134, 1512), (511 * 42, 42), (42, 1021 * 42)] {
+            assert!(centered_pad_emits_size(h, w, recipe(), limits));
+            assert_eq!(plan(h, w).canvas, (h, w));
+        }
+        assert!(!centered_pad_emits_size(561, 560, recipe(), limits));
+        assert!(!centered_pad_emits_size(0, 560, recipe(), limits));
+        // 34 x 30 tokens span 34 * 31 + 2 = 1056 > 1024.
+        assert!(!centered_pad_emits_size(34 * 42, 30 * 42, recipe(), limits));
+        let small = MediaLimits {
+            maximum_pixels: 560 * 560 - 1,
+            ..limits
+        };
+        assert!(!centered_pad_emits_size(560, 560, recipe(), small));
     }
 
     #[test]

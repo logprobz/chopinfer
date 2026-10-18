@@ -287,6 +287,31 @@
    "bf16_sha256": "7ed23e45622d0a49e696a74418192d7d5727cab5c6ed6102acef153e83c90d29"
   },
   {
+   "name": "solve-rounding-79x15000",
+   "pattern": "noise",
+   "width": 79,
+   "height": 15000,
+   "plan": [
+    7966,
+    28,
+    5316,
+    28,
+    1325,
+    0,
+    190,
+    1
+   ],
+   "grid": [
+    1,
+    569,
+    2
+   ],
+   "tokens": 190,
+   "span_tokens": 382,
+   "rows_sha256": "f18927e29846a9efad6c9472c3635958d3acfdbb88090e779b6d5d45556a3d5b",
+   "bf16_sha256": "1598a9cd513b2571655c2e4f95b493d1a7a86bd31e308e8caf3114f745a3c64b"
+  },
+  {
    "name": "long-row-10000x10",
    "pattern": "noise",
    "width": 10000,

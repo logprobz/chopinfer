@@ -46,6 +46,9 @@ CASES = [
     ("downscale-pad-901x613", "noise", 901, 613),
     ("solve-2000x1500", "noise", 2000, 1500),
     ("solve-tall-1100x2600", "blocks", 1100, 2600),
+    # 79 * (42 / 79) falls just under 42, so the solved canvas is 2
+    # patches wide.
+    ("solve-rounding-79x15000", "noise", 79, 15000),
     ("long-row-10000x10", "noise", 10000, 10),
     ("solve-thin-45000x60", "noise", 45000, 60),
     ("collapse-row-50000x40", "blocks", 50000, 40),

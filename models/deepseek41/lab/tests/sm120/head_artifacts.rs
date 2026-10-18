@@ -216,7 +216,10 @@ pub fn cubins() -> &'static Artifacts {
                     && !kernel_harness::require_all().unwrap(),
                 "GPU runs require prebuilt head artifacts in {ARTIFACTS}"
             );
-            let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("deepseek41-head");
+            // Nextest runs each test in its own process. Each build clears
+            // its staging directories, so processes cannot share an output.
+            let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+                .join(format!("deepseek41-head-{}", std::process::id()));
             build(&root);
             root
         };

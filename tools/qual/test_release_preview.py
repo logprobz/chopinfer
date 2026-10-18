@@ -322,7 +322,10 @@ class PlanTests(unittest.TestCase):
                     for arm in arms:
                         ordered = [step['check'] for step in arm['steps'] if step['kind'] == 'check']
                         self.assertEqual(ordered, [check for check in selected if check in ordered])
-                    self.assertEqual(arms[-1]['serve'][:len(served['serve'])], served['serve'])
+                    # The configuration's own server starts last; a module's
+                    # offline steps run after it, on no server.
+                    last = [arm for arm in arms if arm.get('server', True)][-1]
+                    self.assertEqual(last['serve'][:len(served['serve'])], served['serve'])
 
     def test_two_gpu_configurations_run_together_on_separate_pairs(self):
         configs = {'default': {'tensor_parallel_size': 4}, 'tp2-a': {'tensor_parallel_size': 2},

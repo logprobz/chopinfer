@@ -1285,6 +1285,30 @@ python3 tools/qual/logprobs_parity.py capture --arm chopinfer --url http://127.0
 python3 tools/qual/logprobs_parity.py compare EXTERNAL.json CHOPINFER.json
 ```
 
+## KV layout equality
+
+A comparison KV layout that stores the same values as the served one (BF16
+pages holding exactly what the native formats decode to) must serve the
+same bits. `kv_layout_equality` is declared in the comparison layout's
+configuration. In the full suite the runner records the determinism
+request set (`determinism.py record`) twice in one run: on the
+configuration's own server (input `kv_layout_comparison`) and on a
+`kv-native` server, whose serve words replace the configuration's
+`--kv-cache-dtype` with `auto`, the package's preferred layout (input
+`kv_layout_native`). After both servers stop, `compare` requires every
+request's text, finish reason, token IDs, tokens and selected and top
+logprobs to be bit-identical, and names the first differing request, field
+and position. Both records must come from one run and one build (checkpoint,
+metadata, source commit, bundle, version and served model) with the same
+effective profile in every field but `kv_cache_dtype`, which must differ;
+the package identity may follow the layout and is reported. The records
+exist only in the full suite, so the check belongs in a configuration's
+`checks`, not its `quick`.
+
+```sh
+python3 tools/qual/kv_layout_equality.py compare NATIVE_RECORD COMPARISON_RECORD
+```
+
 ## Preemption by recompute
 
 Record the same prompts against a server started with `--admission

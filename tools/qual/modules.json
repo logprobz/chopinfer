@@ -206,6 +206,13 @@
    "CAPACITY_LINE": "number",
    "GROUP_LINE": "number"
   },
+  "kv_layout_equality": {
+   "LAYOUT_FIELDS": "list",
+   "RUNNER_ARMS": "dict",
+   "RUNNER_CHECK_ARM": "str",
+   "RUNNER_RECORDS": "number",
+   "_RECORD": "list"
+  },
   "kv_offload": {
    "CONCURRENCY": "int",
    "COUNTERS": "dict",

@@ -36,6 +36,7 @@ pub(crate) struct Shape {
     pub max_keys: u32,
     pub scale_bits: u32,
     pub second: bool,
+    pub bf16: bool,
     pub sink: bool,
     pub tail: u32,
     pub partial: bool,
@@ -61,9 +62,12 @@ pub(crate) fn shape(query: LatentAttentionQuery) -> Result<Shape, Refusal> {
     else {
         return Err(Refusal("native latent sources require an attention query"));
     };
-    if kv != LatentKvFormat::Fp8E4M3Ue8M0Block32 {
+    if !matches!(
+        kv,
+        LatentKvFormat::Fp8E4M3Ue8M0Block32 | LatentKvFormat::Bf16
+    ) {
         return Err(Refusal(
-            "native latent sources require the FP8 UE8M0 window",
+            "native latent sources require FP8 UE8M0 or BF16 storage",
         ));
     }
     if heads > 128 || latent > 512 || !page_size.is_power_of_two() || max_keys > 1_048_576 {
@@ -78,6 +82,7 @@ pub(crate) fn shape(query: LatentAttentionQuery) -> Result<Shape, Refusal> {
         max_keys,
         scale_bits: softmax_scale_bits,
         second: second_fp4_keys,
+        bf16: kv == LatentKvFormat::Bf16,
         sink,
         tail: tail_rope_dims,
         partial: output == LatentAttentionOutput::Partial,
@@ -286,6 +291,11 @@ impl Entry {
         self.contract()?;
         let s = shape(self.query)?;
         let traits = self.traits()?;
+        let attention_traits = if s.bf16 {
+            format!("{traits},chop::latent::sources::NativeAddress,true")
+        } else {
+            traits.clone()
+        };
         let sources = if s.second {
             "compressed_pool,compressed_keys,block_tables"
         } else {
@@ -316,7 +326,7 @@ impl Entry {
                 self.symbol(),
                 self.params()?,
                 format!(
-                    "chop::latent::sources::attention<{traits}>(q,row_batch,live_rows,window_codes,window_scales,window_item_slots,window_keys,{sources},workspace,window_code_stride,window_scale_stride,window_slots,window_sequences,window_items,window_key_stride,window_budget,{geometry},scale_bits);"
+                    "chop::latent::sources::attention<{attention_traits}>(q,row_batch,live_rows,window_codes,window_scales,window_item_slots,window_keys,{sources},workspace,window_code_stride,window_scale_stride,window_slots,window_sequences,window_items,window_key_stride,window_budget,{geometry},scale_bits);"
                 ),
                 s.latent / 128 * 32,
                 1,
@@ -365,6 +375,11 @@ pub fn entries(profile: Profile, query: LatentAttentionQuery) -> Result<Vec<Entr
             query,
             splits,
         });
+    }
+    if s.bf16 {
+        for entry in &mut entries {
+            entry.name.push_str("_bf16");
+        }
     }
     Ok(entries)
 }
@@ -546,7 +561,7 @@ mod tests {
             ..
         } = &mut legacy.query
         {
-            *kv = LatentKvFormat::Bf16;
+            *kv = LatentKvFormat::Fp8E4M3Block128;
             *second_fp4_keys = false;
         }
         assert!(legacy.contract().is_err());

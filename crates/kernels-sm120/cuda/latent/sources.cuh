@@ -53,7 +53,7 @@ struct NativeAddress {
 
 // One CTA per row, 8-head group and fixed split. Both lists contribute to
 // a single 64-key tile stream. Holes neither read codes nor read scales.
-template<class T, class Address = NativeAddress>
+template<class T, class Address = NativeAddress, bool Bf16 = false>
 __device__ void attention(
     const uint16_t* q, const int32_t* row_batch, const uint32_t* live_rows,
     const uint8_t* window_codes, const uint8_t* window_scales,
@@ -132,8 +132,8 @@ __device__ void attention(
       if (j < window_budget && state_slot >= 0 && uint32_t(state_slot) < window_sequences) {
         const int32_t position = window_keys[uint64_t(row) * window_key_stride + j];
         if (position >= 0 && uint32_t(position) < window_slots) {
-          codes = window_codes + uint64_t(state_slot) * window_code_stride + uint64_t(position) * T::latent;
-          scales = window_scales + uint64_t(state_slot) * window_scale_stride + uint64_t(position) * (T::latent / 32);
+          codes = window_codes + uint64_t(state_slot) * window_code_stride + uint64_t(position) * T::latent * (Bf16 ? 2 : 1);
+          if constexpr (!Bf16) scales = window_scales + uint64_t(state_slot) * window_scale_stride + uint64_t(position) * (T::latent / 32);
           kind = 1;
         }
       } else if constexpr (T::second) {
@@ -144,8 +144,8 @@ __device__ void attention(
             if (page >= 0 && uint32_t(page) < compressed_pages) {
               const uint8_t* base = compressed_pool + uint64_t(page) * page_stride;
               const uint32_t slot = uint32_t(position) % T::page;
-              codes = base + uint64_t(slot) * (T::latent / 2);
-              scales = Address::scale_row(base, compressed_pool, uint64_t(page) * page_stride, uint64_t(T::page), slot, T::latent);
+              codes = base + uint64_t(slot) * (Bf16 ? T::latent * 2 : T::latent / 2);
+              if constexpr (!Bf16) scales = Address::scale_row(base, compressed_pool, uint64_t(page) * page_stride, uint64_t(T::page), slot, T::latent);
               kind = 2;
             }
           }
@@ -159,7 +159,12 @@ __device__ void attention(
     for (int i = threadIdx.x; i < T::keys * T::latent / 2; i += T::threads) {
       const int key = i / (T::latent / 2), d = (i % (T::latent / 2)) * 2;
       uint32_t pair = 0;
-      if (valid[key] == 1) {
+      if constexpr (Bf16) {
+        if (valid[key] != 0) {
+          const auto* values = reinterpret_cast<const uint16_t*>(code_rows[key]);
+          pair = uint32_t(values[d]) | uint32_t(values[d + 1]) << 16;
+        }
+      } else if (valid[key] == 1) {
         const auto code = *reinterpret_cast<const uint16_t*>(code_rows[key] + d);
         const auto value = convert::unpack_f32_e4m3(code);
         const float s = convert::unpack_f32_ue8m0(scale_rows[key][d / 32]).lo;

@@ -116,7 +116,7 @@ impl PreparedOp<LatentSourcesBuffers<View>> for Sources {
             LatentWindowStorage::Ring128 => LATENT_WINDOW_SLOTS,
             LatentWindowStorage::Staged { slots } => slots,
         };
-        let code_bytes = bytes(&[u64::from(slots), width])?;
+        let code_bytes = bytes(&[u64::from(slots), width, if s.bf16 { 2 } else { 1 }])?;
         let scale_bytes = bytes(&[u64::from(slots), width / 32])?;
         if slots == 0 || b.window.sequences == 0 || b.window.budget > b.window.key_stride {
             return Err(Refusal("native latent window geometry or budget mismatch"));
@@ -131,7 +131,7 @@ impl PreparedOp<LatentSourcesBuffers<View>> for Sources {
         if b.window.code_stride < code_bytes {
             return Err(Refusal("native latent window code stride is too short"));
         }
-        if b.window.scale_stride < scale_bytes {
+        if !s.bf16 && b.window.scale_stride < scale_bytes {
             return Err(Refusal("native latent window scale stride is too short"));
         }
         // The FP8 pair load needs two-byte alignment. Code bases have the
@@ -156,7 +156,10 @@ impl PreparedOp<LatentSourcesBuffers<View>> for Sources {
                 scale_bytes,
                 "native latent window scales view is too short",
             ),
-        ] {
+        ]
+        .into_iter()
+        .take(if s.bf16 { 1 } else { 2 })
+        {
             let last = bytes(&[u64::from(b.window.sequences - 1), stride])?;
             let end = last
                 .checked_add(plane_bytes)
@@ -199,7 +202,14 @@ impl PreparedOp<LatentSourcesBuffers<View>> for Sources {
             ("row_batch", buffer(b.row_batch)),
             ("live_rows", buffer(b.live_rows)),
             ("window_codes", buffer(b.window.codes)),
-            ("window_scales", buffer(b.window.scales)),
+            (
+                "window_scales",
+                buffer(if s.bf16 {
+                    b.window.codes
+                } else {
+                    b.window.scales
+                }),
+            ),
             ("window_item_slots", buffer(b.window.item_slots)),
             ("window_items", Argument::U32(b.window.items)),
             ("window_keys", buffer(b.window.key_lists)),
@@ -214,7 +224,17 @@ impl PreparedOp<LatentSourcesBuffers<View>> for Sources {
         ];
         if let Some(c) = b.compressed {
             c.block_tables.check()?;
-            let page_bytes = LatentKvFormat::Fp4E2M1E4M3Block16.page_bytes(s.latent, s.page);
+            let format = if s.bf16 {
+                LatentKvFormat::Bf16
+            } else {
+                LatentKvFormat::Fp4E2M1E4M3Block16
+            };
+            let page_bytes = format.page_bytes(s.latent, s.page);
+            if s.bf16 && !c.cache.page_stride.is_multiple_of(2) {
+                return Err(Refusal(
+                    "BF16 latent page stride must preserve 2-byte alignment",
+                ));
+            }
             if c.cache.pages == 0
                 || c.cache.page_stride < page_bytes
                 || c.budget > c.key_stride
@@ -512,6 +532,57 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn bf16_sources_validate_value_planes_and_ignore_scale_views() {
+        let mut e = entry();
+        if let LatentAttentionQuery::Attention { kv, .. } = &mut e.query {
+            *kv = LatentKvFormat::Bf16;
+        }
+        let op = Sm120::new()
+            .with_latent_sources(e.clone())
+            .latent_attention_sources(&e.query, Need::rows(8))
+            .unwrap();
+        let mut b = buffers();
+        b.window.code_stride = 128 * 128 * 2;
+        b.window.codes.bytes = 2 * b.window.code_stride;
+        b.window.scale_stride = 0;
+        b.window.scales = View {
+            handle: u64::MAX,
+            bytes: 0,
+        };
+        let c = b.compressed.as_mut().unwrap();
+        c.cache.page_stride = 16 * 128 * 2;
+        c.cache.pool.bytes = 4 * c.cache.page_stride;
+        let calls = op.launches(&b, View::default(), Counts::rows(8)).unwrap();
+        assert!(
+            !calls[0]
+                .arguments
+                .0
+                .contains(&Argument::DeviceBuffer(u64::MAX))
+        );
+        let mut short = b;
+        short.window.codes.bytes -= 1;
+        assert!(
+            op.launches(&short, View::default(), Counts::rows(8))
+                .is_err()
+        );
+        short = b;
+        short.compressed.as_mut().unwrap().cache.pool.bytes -= 1;
+        assert!(
+            op.launches(&short, View::default(), Counts::rows(8))
+                .is_err()
+        );
+        let c = b.compressed.as_mut().unwrap();
+        c.cache.page_stride += 1;
+        c.cache.pool.bytes += 4;
+        assert_eq!(
+            op.launches(&b, View::default(), Counts::rows(8))
+                .unwrap_err()
+                .0,
+            "BF16 latent page stride must preserve 2-byte alignment"
+        );
     }
 
     #[test]

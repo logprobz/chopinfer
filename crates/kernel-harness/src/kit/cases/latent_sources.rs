@@ -15,7 +15,7 @@ use kernel_core::latent_attention::{
 };
 use kernel_core::latent_attention_oracle::{
     LatentAttentionResult, LatentCompressedInput, LatentKeyLists, LatentPaging, LatentSourcesInput,
-    LatentWindowInput, latent_attention_with_sources,
+    LatentWindowInput, decode_native_page, latent_attention_with_sources,
 };
 use kernel_core::oracle::{OracleOutput, check_numeric};
 use kernels_sm120::latent::sources::Entry;
@@ -129,6 +129,39 @@ fn pool(format: LatentKvFormat, width: usize, slots: usize, pages: usize) -> (Ve
     (out, stride)
 }
 
+// Expand the same trained codes into their exact BF16 operands. This is
+// fixture storage conversion, not another quantization of the input rows.
+fn expanded_pool(
+    format: LatentKvFormat,
+    width: usize,
+    slots: usize,
+    pages: usize,
+    native: &[u8],
+    native_stride: usize,
+) -> LabResult<(Vec<u8>, usize)> {
+    let stride = slots * width * 2 + PAD + 2;
+    let mut out = vec![0xa5; pages * stride];
+    for page in 0..pages {
+        for slot in 0..slots {
+            let values = decode_native_page(
+                format,
+                width,
+                slots,
+                &native[page * native_stride..(page + 1) * native_stride],
+                slot,
+            )
+            .map_err(|e| e.to_string())?;
+            let bits = values
+                .iter()
+                .map(|&v| f32_to_bf16(v as f32))
+                .collect::<Vec<_>>();
+            let at = page * stride + slot * width * 2;
+            out[at..at + width * 2].copy_from_slice(&bf16_bytes(&bits));
+        }
+    }
+    Ok((out, stride))
+}
+
 pub fn case<'a>(
     query: LatentAttentionQuery,
     capacity: u32,
@@ -159,6 +192,7 @@ fn with_queries<'a>(
         latent,
         max_keys,
         page_size,
+        kv,
         sink,
         tail_rope_dims,
         second_fp4_keys,
@@ -175,6 +209,7 @@ fn with_queries<'a>(
         capacity as usize,
         page_size as usize,
     );
+    let bf16 = kv == LatentKvFormat::Bf16;
     let window_budget = if second_fp4_keys {
         max_keys.min(128)
     } else {
@@ -211,11 +246,16 @@ fn with_queries<'a>(
     let pages = visible_pages + 1;
     let (window, packed_stride) =
         pool(LatentKvFormat::Fp8E4M3Ue8M0Block32, width, slots, SEQUENCES);
-    let window_code_stride = slots * width + PAD;
-    let window_scale_stride = slots * (width / 32) + PAD + 1;
+    let window_code_stride =
+        slots * width * if bf16 { 2 } else { 1 } + PAD + if bf16 { 2 } else { 0 };
+    let window_scale_stride = if bf16 {
+        1
+    } else {
+        slots * (width / 32) + PAD + 1
+    };
     let mut window_codes = vec![0xa5; SEQUENCES * window_code_stride];
     let mut window_scales = vec![0xa5; SEQUENCES * window_scale_stride];
-    for seq in 0..SEQUENCES {
+    for seq in 0..if bf16 { 0 } else { SEQUENCES } {
         window_codes[seq * window_code_stride..seq * window_code_stride + slots * width]
             .copy_from_slice(&window[seq * packed_stride..seq * packed_stride + slots * width]);
         window_scales[seq * window_scale_stride..seq * window_scale_stride + slots * (width / 32)]
@@ -224,7 +264,30 @@ fn with_queries<'a>(
                     ..seq * packed_stride + slots * (width + width / 32)],
             );
     }
+    if bf16 {
+        window_codes = expanded_pool(
+            LatentKvFormat::Fp8E4M3Ue8M0Block32,
+            width,
+            slots,
+            SEQUENCES,
+            &window,
+            packed_stride,
+        )?
+        .0;
+    }
     let (compressed, page_stride) = pool(LatentKvFormat::Fp4E2M1E4M3Block16, width, page, pages);
+    let (compressed, page_stride) = if bf16 {
+        expanded_pool(
+            LatentKvFormat::Fp4E2M1E4M3Block16,
+            width,
+            page,
+            pages,
+            &compressed,
+            page_stride,
+        )?
+    } else {
+        (compressed, page_stride)
+    };
     let mut tables = (0..visible_pages as i32).rev().collect::<Vec<_>>();
     if page_edges {
         for item in 0..ITEMS {

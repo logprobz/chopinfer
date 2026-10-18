@@ -39,27 +39,70 @@ fn native_compressed_pages_keep_wide_offsets_at_a_million_tokens() {
     wide_addresses(entries, &["compressed"], true);
 }
 
+#[test]
+fn bf16_compressed_pages_keep_wide_offsets_at_a_million_tokens() {
+    use kernel_core::contract::AttentionPhase;
+    use kernel_core::latent_attention::{LatentAttentionOutput, LatentAttentionQuery};
+    let entries = kernel_lab::families::latent_sources_bf16::catalog()
+        .into_iter()
+        .filter(|e| {
+            matches!(
+                e.query,
+                LatentAttentionQuery::Attention {
+                    phase: AttentionPhase::Decode,
+                    output: LatentAttentionOutput::Normalized,
+                    second_fp4_keys: true,
+                    ..
+                }
+            )
+        })
+        .collect();
+    wide_addresses(entries, &["compressed"], true);
+}
+
 fn wide_addresses(
     entries: Vec<kernels_sm120::latent::sources::Entry>,
     modes: &[&str],
     million: bool,
 ) {
     let expected_cases = entries.len() * modes.len();
-    kernel_lab::gpu_test(5_u64 << 30, |session| {
+    let memory = if entries.iter().any(|e| {
+        matches!(
+            e.query,
+            kernel_core::latent_attention::LatentAttentionQuery::Attention {
+                kv: LatentKvFormat::Bf16,
+                ..
+            }
+        )
+    }) {
+        14_u64 << 30
+    } else {
+        5_u64 << 30
+    };
+    kernel_lab::gpu_test(memory, |session| {
         let functions = LabModules.load(session)?;
         let (width, heads) = (512_usize, 4_usize);
-        let code_bytes = 128 * width;
+        let native_code_bytes = 128 * width;
         let scale_bytes = 128 * width / 32;
         let mut receipts = Vec::new();
         for entry in entries {
             let kernel_core::latent_attention::LatentAttentionQuery::Attention {
-                page_size, ..
+                page_size,
+                kv,
+                ..
             } = entry.query
             else {
                 unreachable!()
             };
             let page = page_size as usize;
-            let page_bytes = LatentKvFormat::Fp4E2M1E4M3Block16.page_bytes(512, page_size) as usize;
+            let bf16 = kv == LatentKvFormat::Bf16;
+            let code_bytes = native_code_bytes * if bf16 { 2 } else { 1 };
+            let format = if bf16 {
+                LatentKvFormat::Bf16
+            } else {
+                LatentKvFormat::Fp4E2M1E4M3Block16
+            };
+            let page_bytes = format.page_bytes(512, page_size) as usize;
             let position = if million {
                 (1_usize << 20) / (64 / page) - 1
             } else {
@@ -79,7 +122,13 @@ fn wide_addresses(
                 } else {
                     scale_bytes + 3
                 };
-                let page_stride = if wide_window { page_bytes } else { 65536 };
+                let page_stride = if wide_window {
+                    page_bytes
+                } else if bf16 {
+                    3 * 65536 + 128
+                } else {
+                    65536
+                };
                 let page_id = if wide_window { 0_usize } else { 65537 };
                 let page_offset = page_id * page_stride;
                 let prepared = Sm120::new()
@@ -169,6 +218,16 @@ fn wide_addresses(
                     for (offset, code) in [(scale_stride, 128), (scale_stride as u32 as usize, 127)]
                     {
                         write("window_scales", offset, &vec![code; width / 32])?;
+                    }
+                } else if bf16 {
+                    assert!(page_id > u16::MAX as usize && page_offset > u32::MAX as usize);
+                    for (offset, value) in [(page_offset, 2.0), (page_offset as u32 as usize, 1.0)]
+                    {
+                        write(
+                            "compressed",
+                            offset + (position % page) * width * 2,
+                            &kernel_lab::kit::bf16_bytes(&vec![f32_to_bf16(value); width]),
+                        )?;
                     }
                 } else {
                     assert!(page_id > u16::MAX as usize && page_offset > u32::MAX as usize);
@@ -292,7 +351,7 @@ fn wide_addresses(
                 replay.graph(&session.capture(run)?)?;
                 let mut receipt = BTreeMap::new();
                 replay.record(&mut receipt);
-                if million {
+                if million && !bf16 {
                     let spec =
                         kernel_lab::families::latent_sources_scale_narrow::entry_spec(&entry);
                     let mutant = functions(&spec.symbol)?;

@@ -12,7 +12,7 @@
       "speculation": {"mode": "fixed", "tokens": 0, "draft_cost": "per-token", "drafter": "none"},
       "max_sequences": 32,
       "qualified_max_sequences": null,
-      "qualification": "Not qualified: the M1 bring-up profile, autoregressive at TP4 on the deepseek-ai checkpoint with the native KV layout. Its evidence is the release preview's full suite at the release revision (models/deepseek41/README.md#qualification).",
+      "qualification": "Not qualified: the M1 bring-up profile, autoregressive at TP4 on the deepseek-ai checkpoint with the native KV layout, which kv_cache_dtype auto serves. The BF16 KV layout is not a served profile: it is qual.json's kv-bf16 comparison configuration, not qualified for capacity, preemption under pressure or offload. Its evidence is the release preview's full suite at the release revision (models/deepseek41/README.md#qualification).",
       "kv_cache_dtype": "auto",
       "prefix_cache": true,
       "max_batch_tokens": 8192,

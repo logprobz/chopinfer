@@ -230,6 +230,39 @@
   "limitations": [
     "Skeleton, not a qualification: deepseek41 is unreleased and serves nothing yet. The checks declared here carry only their pass and exactness rules; no numerical limit is set before the references that bound it exist.",
     "Pending checks, each added with its references and limits pinned from the reference spread before any candidate run, never moved after a result (models/deepseek41/README.md#qualification): teacher, chat and long_context (131,072 tokens) against the refrun F32-TQ reference of the pinned vendor code, with mean |dlogprob| and top-1 limits from the BF16 versus F32-TQ and F32-TQ versus F64-TQ spreads; paired_teacher once a stored teacher exists; determinism, verify_exact and spec_verify with DSpark; needle (8K to 1M); evals_gsm8k and gsm8k_regression; frontend_goldens with the chat frontend; multimodal, media_preprocessing and encoder_parity with the vision encoder; kv_offload_plain and kv_offload_pressure.",
-    "Pending sections, deferred from the skeleton by a revision of its acceptance scope (integration owner, 2026-10-17): preview (profile tp4-ar, quick_arms [\"ar\"]) lands with the chopinfer-model-deepseek41 helper of the geometry recipe; the kv-bf16 comparison configuration lands with the mixed-plane KV profiles and its BF16 KV layout, never a served default and not qualified for capacity, preemption under pressure or offload, since its pages are about 3.6 times larger."
-  ]
+    "Pending sections, deferred from the skeleton by a revision of its acceptance scope (integration owner, 2026-10-17): preview (profile tp4-ar, quick_arms [\"ar\"]) lands with the chopinfer-model-deepseek41 helper of the geometry recipe.",
+    "kv-bf16 is a comparison configuration, never a served default: --kv-cache-dtype bf16 serves the BF16 KV layout, which stores the same values as the native trained formats, and its served bits must equal the native layout's bit for bit. Its pages are about 3.6 times larger (3,200 bytes against 890 per token), and capacity, offload and pressure behavior follow page size, so it is not qualified for capacity, preemption under pressure or offload. Its checks are prefix_exact now; teacher, teacher_arms and chat join with their references, and native versus BF16 served-bits equality with its runtime-eval check."
+  ],
+  "configurations": {
+    "kv-bf16": {
+      "serve": [
+        "--kv-cache-dtype",
+        "bf16"
+      ],
+      "checks": [
+        "prefix_exact"
+      ],
+      "quick": [
+        "prefix_exact"
+      ],
+      "serving": {
+        "kv_cache_dtype": "bf16"
+      },
+      "media": false,
+      "keep_references": [],
+      "capabilities": {
+        "text": false,
+        "frontend": false,
+        "api": false,
+        "structured": false,
+        "prefix_cache": true,
+        "preemption": false,
+        "long_context": false,
+        "stability": false,
+        "kv_offload": false,
+        "media": [],
+        "speculation": "none"
+      }
+    }
+  }
 }

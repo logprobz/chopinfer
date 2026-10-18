@@ -61,10 +61,13 @@ candidate run, never moved after a result:
   and top-1 limits from the BF16 versus F32-TQ and F32-TQ versus F64-TQ
   spreads, with complete scores for the same items;
 - per-layer taps (`taps.json`) within the same spread;
-- the `kv-bf16` comparison configuration: native versus BF16 KV served
-  bits equal; never a served default, and not qualified for capacity,
+- the `kv-bf16` comparison configuration (`serve --kv-cache-dtype bf16`):
+  the BF16 KV layout holds the same values as the native trained formats,
+  and native versus BF16 served bits must be equal. It runs prefix_exact
+  now, and teacher, teacher_arms, chat and the served-bits equality as
+  they land. It is never a served default and not qualified for capacity,
   preemption under pressure or offload, since its pages are about 3.6
-  times larger.
+  times larger (3,200 bytes against 890 per token).
 
 `profiles.json` holds the experimental `tp4-ar` bring-up profile. The
 release preview's full suite at the release revision is the

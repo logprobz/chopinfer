@@ -19,7 +19,9 @@
 //!   `s..n` give the bits of one launch over `0..n`, at splits 1, `n / 2`
 //!   and `n - 1` (multiples of `g` for a granule).
 //!
-//! In-place states ([`super::Spec::state`], such as a KV cache) are
+//! Live-row state moves with the input row and is compared as a whole output
+//! row, including preserved columns. Every execution reloads its initial image.
+//! Fixed-row in-place states ([`super::Spec::state`], such as a KV cache) are
 //! compared where a row writes them: each check compares the state bytes
 //! the compared row's launch alone writes (its write map and its
 //! read-modify-write ranges at one live row over that row's inputs, as
@@ -83,7 +85,14 @@ fn rows(leaves: &[Leaf], scope: Scope) -> Result<Layout<'_>, String> {
         match (leaf.tag, leaf.rows) {
             (Tag::Input, Rows::Live) => inputs.push((leaf.path.as_str(), leaf.row_bytes)),
             (Tag::Output, Rows::Live) => outputs.push((leaf.path.as_str(), leaf.row_bytes)),
-            (Tag::State, _) => states.push(leaf.path.as_str()),
+            (Tag::State, Rows::Live) => {
+                // Each initial state row belongs to the input row being moved.
+                // Compare the same logical row after execution, not its former
+                // absolute address in the full launch.
+                inputs.push((leaf.path.as_str(), leaf.row_bytes));
+                outputs.push((leaf.path.as_str(), leaf.row_bytes));
+            }
+            (Tag::State, Rows::Fixed(_)) => states.push(leaf.path.as_str()),
             (Tag::Input | Tag::Weight | Tag::Zeroed | Tag::Scratch | Tag::Live, _) => {}
             (Tag::Output, Rows::Fixed(_))
                 if scope == Scope::RoutedOperation && leaf.route_metadata =>
@@ -383,6 +392,7 @@ impl Runner<'_> {
         Ok(json!({
             "rows": n,
             "compared_rows": "every row",
+            "row_outputs": self.layout.outputs.iter().map(|(path, _)| *path).collect::<Vec<_>>(),
             "states": self.layout.states,
             "state_bytes": state_bytes,
             "routed_metadata_not_compared": self.layout.routed,
@@ -412,6 +422,7 @@ impl Runner<'_> {
         Ok(json!({
             "rows": n,
             "compared_rows": rows,
+            "row_outputs": self.layout.outputs.iter().map(|(path, _)| *path).collect::<Vec<_>>(),
             "states": self.layout.states,
             "state_bytes": state_bytes,
             "routed_metadata_not_compared": self.layout.routed,
@@ -451,6 +462,7 @@ impl Runner<'_> {
         Ok(json!({
             "rows": n,
             "splits": splits,
+            "row_outputs": self.layout.outputs.iter().map(|(path, _)| *path).collect::<Vec<_>>(),
             "states": self.layout.states,
             "state_bytes": state_bytes,
             "routed_metadata_not_compared": self.layout.routed,
@@ -739,6 +751,60 @@ mod tests {
             }
             results.insert("s".into(), state);
             Ok(results)
+        }
+    }
+
+    #[test]
+    fn live_row_state_moves_with_its_initial_image_and_detects_neighbour_flags() {
+        let claims = Invariance::any_rows(CAPACITY);
+        let mut roles = leaves();
+        roles.push(Leaf {
+            path: "s".into(),
+            rows: Rows::Live,
+            row_bytes: 1,
+            tag: Tag::State,
+            route_metadata: false,
+        });
+        let initial = vec![0, 0x80, 0, 0, 2, 0, 0, 4];
+        let images = images().with("s", initial.clone());
+        let run = |mixed: bool| {
+            let execute = |images: &Images, rows: u32| {
+                let x = images.bytes("x")?;
+                let mut state = images.bytes("s")?.to_vec();
+                let mut output = vec![0; CAPACITY as usize * WIDTH];
+                for row in 0..rows as usize {
+                    let source = if mixed {
+                        (row + 1) % rows as usize
+                    } else {
+                        row
+                    };
+                    state[row] |= u8::from(x[source * WIDTH] & 4 != 0);
+                    if state[row] == 0 {
+                        output[row * WIDTH..(row + 1) * WIDTH]
+                            .copy_from_slice(&x[row * WIDTH..(row + 1) * WIDTH]);
+                    }
+                }
+                Ok(Results::from([("y".into(), output), ("s".into(), state)]))
+            };
+            check(
+                claims,
+                &claims.claims(),
+                &roles,
+                &images,
+                CAPACITY,
+                &execute,
+                &|_, _, live| Ok((0..live as usize).map(|r| r..r + 1).collect()),
+            )
+        };
+        for check in run(false) {
+            assert!(matches!(check.outcome, Outcome::Passed(_)), "{check:?}");
+        }
+        for check in run(true) {
+            assert!(matches!(check.outcome, Outcome::Failed(_)), "{check:?}");
+        }
+        assert_eq!(images.bytes("s").unwrap(), initial);
+        for check in run(false) {
+            assert!(matches!(check.outcome, Outcome::Passed(_)), "{check:?}");
         }
     }
 

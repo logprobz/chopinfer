@@ -201,7 +201,10 @@ impl<'a> Spec<'a> {
     /// In-place state of `rows` rows of `row_elements` holding `image`
     /// before each launch: every launch writes the elements `write` names
     /// (poisoned first) and keeps every other byte, as a KV cache's planes.
-    /// The oracle gives the whole state.
+    /// The oracle gives the whole state. Live-row state belongs to its row:
+    /// row selection moves the initial image with the input and compares the
+    /// resulting row, including preserved columns. Fixed-row state retains
+    /// its absolute addresses and is compared through its write ranges.
     pub fn state(
         dtype: DType,
         (rows, row_elements): (Rows, usize),
@@ -1777,6 +1780,58 @@ mod tests {
         declared(Fault::Unread)
             .unwrap()
             .oracle(|_, _| Ok(vec![("y".into(), Expected::Bits(vec![0; 4 * WIDTH * 2]))]))
+    }
+
+    #[test]
+    fn selected_live_state_keeps_its_rows_and_preserves_fixed_images() {
+        let make = |capacity: u32, salt: u8| {
+            let rows = (0..capacity as usize * WIDTH * 2)
+                .map(|i| salt.wrapping_add(i as u8))
+                .collect();
+            let roles = RmsNormBuffers {
+                x: Spec::state_updating(
+                    DType::Bf16,
+                    (Rows::Live, WIDTH),
+                    rows,
+                    Write::Map(Box::new(|_, _| WriteMap::of(DType::Bf16).none())),
+                    |_, live| {
+                        Ok((0..live as usize)
+                            .map(|r| r * WIDTH * 2..(r * WIDTH + 1) * 2)
+                            .collect())
+                    },
+                ),
+                weight: Spec::input(DType::Bf16, (Rows::Fixed(1), WIDTH), vec![salt; WIDTH * 2]),
+                residual: None,
+                y: Spec::output(DType::Bf16, (Rows::Live, WIDTH)),
+                live_rows: Spec::live(),
+            };
+            let op: Prepared<RmsNormBuffers<View>> = Box::new(Fake::new(Fault::None));
+            OpCase::new(op, capacity, roles).unwrap()
+        };
+        let source = make(4, 10).images();
+        let target = make(3, 90);
+        let roles = target
+            .row_roles(kernel_core::properties::Scope::Entry)
+            .unwrap();
+        assert!(roles.inputs.iter().any(|(name, _)| name == "x"));
+        assert_eq!(
+            roles.outputs.iter().filter(|(name, _)| name == "x").count(),
+            1
+        );
+        assert!(roles.states.is_empty());
+        let selected = target.select(&source, &[2, 2]).unwrap();
+        let row = WIDTH * 2;
+        let expected = [
+            &source.bytes("x").unwrap()[2 * row..3 * row],
+            &source.bytes("x").unwrap()[2 * row..3 * row],
+            &target.images().bytes("x").unwrap()[2 * row..3 * row],
+        ]
+        .concat();
+        assert_eq!(selected.bytes("x").unwrap(), expected);
+        assert_eq!(
+            selected.bytes("weight").unwrap(),
+            source.bytes("weight").unwrap()
+        );
     }
 
     /// A state binds as in-place state: its image, a write map the oracle

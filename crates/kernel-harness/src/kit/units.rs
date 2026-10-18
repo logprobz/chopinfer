@@ -58,7 +58,11 @@ impl OpCase<'_> {
                 (Tag::Output, Rows::Live) => {
                     roles.outputs.push((leaf.path.clone(), leaf.row_bytes))
                 }
-                (Tag::State, _) => roles.states.push(leaf.path.clone()),
+                (Tag::State, Rows::Live) => {
+                    roles.inputs.push((leaf.path.clone(), leaf.row_bytes));
+                    roles.outputs.push((leaf.path.clone(), leaf.row_bytes));
+                }
+                (Tag::State, Rows::Fixed(_)) => roles.states.push(leaf.path.clone()),
                 (Tag::Output, Rows::Fixed(_))
                     if scope == Scope::RoutedOperation && leaf.route_metadata => {}
                 (Tag::Output, Rows::Fixed(_)) => {

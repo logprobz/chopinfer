@@ -930,7 +930,7 @@ mod tests {
             ),
             (
                 with(heads, false, 0, true),
-                "latent attention second FP4 source requires the native FP8 window",
+                "latent attention second source requires a native FP8 or BF16 window",
             ),
             (
                 with(8, false, 0, false),

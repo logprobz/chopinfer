@@ -363,13 +363,26 @@ fn kept_pools(k: usize, scores: &[f32], owned: Option<&[bool]>) -> Vec<usize> {
 }
 
 /// The `Global` key list of a row at `position`, from the F32 scores of its
-/// visible pools.
+/// visible pools. Position queries are refused: use
+/// [`crate::position_indexer_oracle::select`] for their visibility, masks
+/// and non-finite rejection policy.
 pub fn select(
     query: PooledIndexerQuery,
     top_k: u32,
     position: u64,
     scores: &[f32],
 ) -> Result<Vec<i32>, Refusal> {
+    if matches!(
+        query,
+        PooledIndexerQuery::Select {
+            granularity: crate::pooled_indexer::IndexerGranularity::Position,
+            ..
+        }
+    ) {
+        return Err(Refusal(
+            "Position selection requires the position indexer oracle",
+        ));
+    }
     let (selection, mode) = selection(query)?;
     let k = selection.kept(top_k)?;
     if mode != IndexerSelectionMode::Global || scores.len() != selection.visible(position) {

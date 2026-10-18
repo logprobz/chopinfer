@@ -52,8 +52,9 @@ use kernel_core::multimodal::{
 use kernel_core::occupancy::EntryResources;
 use kernel_core::per_channel_decay_delta_rule::PerChannelDecayOp;
 use kernel_core::pooled_indexer::{
-    IndexerKeyWriteBuffers, IndexerMergeBuffers, IndexerSelectBuffers, PooledIndexerQuery,
-    SelectionCompactBuffers,
+    CandidateBlocksBuffers, CandidateBlocksQuery, IndexerKeyWriteBuffers, IndexerMergeBuffers,
+    IndexerSelectBuffers, PooledIndexerQuery, PositionIndexerQuery, PositionQueryBuffers,
+    PositionSelectBuffers, SelectionCompactBuffers,
 };
 use kernel_core::precision::buffers::ProjectionBuffers;
 use kernel_core::precision::execution::Binding;
@@ -92,6 +93,8 @@ mod moe_route;
 mod multimodal;
 pub mod own;
 mod pooled_indexer;
+mod position_indexer;
+mod position_query;
 mod projection;
 mod recurrent;
 mod rmsnorm;
@@ -153,6 +156,9 @@ pub struct Sm120 {
     recurrent: recurrent::Entries,
     experts: moe_experts::Selection,
     indexer: pooled_indexer::Selection,
+    position_indexers: Vec<crate::pooled_indexer::position::Entry>,
+    position_queries: Vec<crate::pooled_indexer::position_query::Entry>,
+    indexer_candidates: Vec<crate::pooled_indexer::position::CandidateEntry>,
     gated_sparse: Option<Box<GatedSparseEntries>>,
     sinkhorn: sinkhorn::Selection,
     hc_all_reduces: Vec<hc_all_reduce::Transport>,
@@ -403,6 +409,33 @@ impl Sm120 {
         entries: impl IntoIterator<Item = crate::pooled_indexer::block_merge::Entry>,
     ) -> Self {
         self.indexer.block_merges.extend(entries);
+        self
+    }
+
+    /// F32 query rotations compiled beside the registered shared quantizer.
+    pub fn with_position_queries(
+        mut self,
+        entries: impl IntoIterator<Item = crate::pooled_indexer::position_query::Entry>,
+    ) -> Self {
+        self.position_queries.extend(entries);
+        self
+    }
+
+    /// Position-indexer score/select entries compiled by the model.
+    pub fn with_position_indexer(
+        mut self,
+        entries: impl IntoIterator<Item = crate::pooled_indexer::position::Entry>,
+    ) -> Self {
+        self.position_indexers.extend(entries);
+        self
+    }
+
+    /// Candidate-block pre-filter entries compiled by the model.
+    pub fn with_indexer_candidate_blocks(
+        mut self,
+        entries: impl IntoIterator<Item = crate::pooled_indexer::position::CandidateEntry>,
+    ) -> Self {
+        self.indexer_candidates.extend(entries);
         self
     }
 
@@ -1175,6 +1208,33 @@ impl Backend for Sm120 {
         need: Need,
     ) -> Result<Prepared<SelectionCompactBuffers<View>>, Refused> {
         pooled_indexer::compact(&self.indexer, op, need)
+    }
+
+    fn position_indexer_query(
+        &self,
+        op: &PositionIndexerQuery,
+        need: Need,
+    ) -> Result<Prepared<PositionQueryBuffers<View>>, Refused> {
+        position_query::prepare(&self.position_queries, self, op, need)
+    }
+
+    fn position_indexer(
+        &self,
+        op: &PositionIndexerQuery,
+        top_k: u32,
+        position_capacity: u32,
+        need: Need,
+    ) -> Result<Prepared<PositionSelectBuffers<View>>, Refused> {
+        position_indexer::select(&self.position_indexers, op, top_k, position_capacity, need)
+    }
+
+    fn indexer_candidate_blocks(
+        &self,
+        op: &CandidateBlocksQuery,
+        position_capacity: u32,
+        need: Need,
+    ) -> Result<Prepared<CandidateBlocksBuffers<View>>, Refused> {
+        position_indexer::candidates(&self.indexer_candidates, op, position_capacity, need)
     }
 
     // Recurrent layers.

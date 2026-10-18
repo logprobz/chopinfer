@@ -139,19 +139,23 @@ pub enum IndexerCandidates {
 
 /// Position indexer preparation and selection over compressed keys.
 ///
-/// Queries are BF16 projections `[rows, heads, head_dim]`. Keys are BF16
+/// Queries are F32 projections `[rows, heads, head_dim]`. Keys are F32
 /// projections of the unrotated compressor output. RMSNorm applies to each
-/// key, with BF16 weights, F32 accumulation and `key_norm_eps_bits`, then
-/// rounds once to BF16. No key bias or mean subtraction is used.
+/// key, with BF16 weights decoded exactly, F32 accumulation and
+/// `key_norm_eps_bits`, and keeps its F32 result. No key bias or mean
+/// subtraction is used. Neither projection nor normalization rounds to BF16.
 ///
 /// Rotate interleaved pairs in the last `tail_rope_dims` of q and k, in
 /// place, using the supplied F32 cos/sin table. q uses its token position t;
 /// compressed key j uses position `j * compression_ratio`. The unrotated
-/// prefix stays unchanged. Round rotated values to BF16 before quantization.
+/// prefix stays unchanged. Rotation stays F32. The trained quantizer rounds
+/// once to BF16 immediately before its amax and code decisions.
 /// Both operands use E2M1 RNE, clamped to [-6, 6], in 32-channel blocks:
 /// `s = 2^ceil_log2(f32(max(amax, 6*2^-126) * f32(1/6)))`, where amax sees
 /// BF16-rounded values. Keys store MXFP4 codes and UE8M0 scales; queries
-/// store the same quantized values decoded to BF16. Non-finite operands,
+/// store the same quantized values decoded to BF16 without loss. Scores
+/// convert both operands exactly to F32 and use F32 projected head weights.
+/// Non-finite operands,
 /// scale byte 255 and code/scale products not finite and exact in BF16 are
 /// refused. Large scale bytes are not blanket-admitted.
 ///
@@ -160,6 +164,13 @@ pub enum IndexerCandidates {
 /// `selection()`, independent of rank count. Select over the kernel's own
 /// F32 scores exactly; bound those scores against f64 separately. Agreement
 /// with a BF16-score implementation is measured, not an exactness gate.
+/// Non-finite operands or arithmetic encountered while scoring an admitted
+/// position reject the row before ReLU or selection can hide the failure.
+/// Its failed scores are -inf, `status` is 1 and its whole output list is
+/// -1. Otherwise status is 0. The caller must reject a failed step before
+/// accepting its results. Failed scores remain safe for a following block
+/// filter in the same graph. Excluded positions are not read and cannot
+/// cause failure.
 /// Output lists contain compressed indices ascending, then -1 padding.
 /// An attention-source offset is applied by the consumer, after selection.
 ///
@@ -183,6 +194,41 @@ pub struct PositionIndexerQuery {
 }
 
 impl PositionIndexerQuery {
+    /// Shared trained quantization after query tail RoPE. All heads form
+    /// one row so the token live count is unchanged; each 32-channel scale
+    /// group stays within its head because head_dim is a multiple of 32.
+    pub fn query_quantization(
+        &self,
+    ) -> Result<crate::precision::quantizer::BlockQuantizeQuery, Refusal> {
+        use crate::precision::quantizer::{BlockQuantization, BlockQuantizeQuery, QuantizeOutput};
+        self.validate()?;
+        let width = self
+            .heads
+            .checked_mul(self.head_dim)
+            .ok_or(Refusal("position indexer query row width overflows u32"))?;
+        Ok(BlockQuantizeQuery {
+            width,
+            input: crate::contract::DType::F32,
+            format: BlockQuantization::E2M1Ceil32,
+            output: QuantizeOutput::Bf16,
+        })
+    }
+
+    /// Shared trained quantization of each RMSNorm'd, tail-rotated key,
+    /// before its codes and scales are written into the paged planes.
+    pub fn key_quantization(
+        &self,
+    ) -> Result<crate::precision::quantizer::BlockQuantizeQuery, Refusal> {
+        use crate::precision::quantizer::{BlockQuantization, BlockQuantizeQuery, QuantizeOutput};
+        self.validate()?;
+        Ok(BlockQuantizeQuery {
+            width: self.head_dim,
+            input: crate::contract::DType::F32,
+            format: BlockQuantization::E2M1Ceil32,
+            output: QuantizeOutput::Codes,
+        })
+    }
+
     pub fn selection(&self) -> PooledIndexerQuery {
         PooledIndexerQuery::Select {
             heads: self.heads,
@@ -238,7 +284,7 @@ impl NumericalContract for PositionIndexerQuery {
             IndexerCandidates::Mask => "masked",
         };
         Ok(NumericalContractId::new(format!(
-            "sparse.position-indexer-rmsnorm-tail-rope-mxfp4-weight-scale-f32-{mask}.v1"
+            "sparse.position-indexer-f32-rmsnorm-tail-rope-mxfp4-weight-scale-f32-{mask}.v3"
         )))
     }
 }
@@ -339,21 +385,27 @@ pub enum PooledIndexerQuery {
     ///
     /// `Position` instead consumes RoPE'd MXFP4 queries (fake-quantized,
     /// decoded to BF16) and keys, `group = 1`, no tail, and `Global` mode.
-    /// Its weights are BF16 projection outputs. The dot is unscaled:
+    /// Its weights are F32 projection outputs. Both dot operands are
+    /// converted exactly to F32. The dot is unscaled:
     /// `r_h = relu(f32(q_h . k_j))`, with 128-wide chains as above;
     /// `w_h = f32(weight_h * f32(head_dim^-0.5 * heads^-0.5))` and
     /// `score_j = sum_h w_h * r_h`, F32 FMA in head order. The scale is
     /// applied to the weights after the dot, never to q or the dot.
     /// Positions and lists here are compressed coordinates; the enclosing
     /// `PositionIndexerQuery` defines token visibility and candidate masks.
+    /// Non-finite admitted operands, arithmetic or scores reject the row:
+    /// status is 1 and the whole list is -1. The dedicated position oracle
+    /// reports refusal; the legacy pooled selection oracle refuses Position
+    /// queries. See `PositionIndexerQuery` for the complete failure policy.
     ///
     /// With the runtime `top_k` (a multiple of `group`, at most
     /// `max_top_k`; 2048 for the served indexer), `k = top_k / group`
     /// pools are kept: every visible pool when there are at most k,
     /// otherwise the exact top k of the F32 scores with ties to the lower
-    /// pool index. Scores compare in IEEE order with -0 equal to +0 and
-    /// every NaN below -inf; a NaN-scored pool stays a candidate. The engine
-    /// streams the selection and keeps no `[rows, pools]` score buffer.
+    /// pool index. For `Pool`, scores compare in IEEE order with -0 equal
+    /// to +0 and every NaN below -inf; a NaN-scored pool stays a candidate.
+    /// The pooled engine streams selection and keeps no `[rows, pools]`
+    /// score buffer. Position selection exposes its scores and row status.
     ///
     /// `Global` writes the key list `[rows, list_width()]` i32: the kept
     /// pools in ascending pool order, each as its `group` token positions
@@ -576,9 +628,8 @@ impl NumericalContract for PooledIndexerQuery {
             Self::Select {
                 granularity: IndexerGranularity::Position,
                 ..
-            } => {
-                "sparse.position-indexer-mxfp4-relu-weight-scale-f32-topk-lower-index.v1".to_owned()
-            }
+            } => "sparse.position-indexer-mxfp4-relu-f32-weight-scale-f32-topk-lower-index.v3"
+                .to_owned(),
             Self::Select {
                 always_tail, mode, ..
             } => {
@@ -624,8 +675,10 @@ crate::scratch_record! {
 }
 
 crate::scratch_record! {
-    /// Key preparation: BF16 projected keys `[rows][head_dim]` and RMSNorm
-    /// weight `[head_dim]`; F32 cos/sin `[tokens][tail_rope_dims / 2][2]`;
+    /// Key preparation: F32 projected keys `[rows][head_dim]` and BF16
+    /// RMSNorm weight `[head_dim]`; F32 cos/sin `[tokens][tail_rope_dims / 2][2]`;
+    /// normalization and rotation keep F32; only the trained quantizer rounds
+    /// to BF16, after both operations.
     /// I32 compressed key positions and item ids. Negative positions are
     /// holes and write nothing. Only live rows write their addressed page
     /// slots. No pooling or tail state is read here.
@@ -642,9 +695,10 @@ crate::scratch_record! {
 }
 
 crate::scratch_record! {
-    /// Query preparation: BF16 q `[rows][heads][head_dim]`, F32 cos/sin as
+    /// Query preparation: F32 q `[rows][heads][head_dim]`, F32 cos/sin as
     /// in the key write, I32 token positions and device live count. Output
-    /// has q's shape and holds the MXFP4 fake-quantized values as BF16.
+    /// has q's shape and holds the MXFP4 fake-quantized values as lossless
+    /// BF16. Rotation keeps F32 until the quantizer's BF16 input rounding.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct PositionQueryBuffers {
         pub q: value,
@@ -656,14 +710,18 @@ crate::scratch_record! {
 }
 
 crate::scratch_record! {
-    /// Score/select: prepared BF16 q, BF16 head weights, MXFP4 pages,
+    /// Score/select: prepared lossless BF16 q, F32 head weights, MXFP4 pages,
+    /// q and k decoded exactly to F32 before the dot,
     /// I32 row item and token position, and device live count. Mask mode
     /// requires `candidate_mask` bytes `[rows][position_capacity]`; All
     /// requires no mask. `scores` is F32 with that same shape: visible,
     /// admitted positions get their scores, excluded positions get -inf.
     /// This output is the exact selection oracle's input. The candidate
     /// source scores All positions, then passes these scores to the block
-    /// filter. `output` is I32 `[rows][max_top_k]`, ascending with -1 padding.
+    /// filter. `status` is I32 `[rows]`: 0 for success, 1 for non-finite
+    /// admitted operands or arithmetic. On failure scores contain -inf at
+    /// failed positions and `output` is all -1. Otherwise `output` is I32
+    /// `[rows][max_top_k]`, ascending with -1 padding.
     /// No buffers above the live rows are read or written.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct PositionSelectBuffers {
@@ -676,6 +734,7 @@ crate::scratch_record! {
         pub candidate_mask: option,
         pub position_capacity: scalar(u32),
         pub scores: value,
+        pub status: value,
         pub output: value,
     }
 }

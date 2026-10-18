@@ -21,6 +21,14 @@ fn query() -> PositionIndexerQuery {
 fn position_geometry_and_visibility_are_explicit() {
     let q = query();
     q.validate().unwrap();
+    assert!(q.numerical_contract_id().unwrap().as_str().ends_with(".v3"));
+    assert!(
+        q.selection()
+            .numerical_contract_id()
+            .unwrap()
+            .as_str()
+            .ends_with(".v3")
+    );
     assert_eq!(q.page_bytes(), (5120, 320));
     assert_eq!(
         (0..6)
@@ -66,6 +74,119 @@ fn position_geometry_and_visibility_are_explicit() {
     }
     .validate()
     .unwrap();
+}
+
+#[test]
+fn operand_preparation_uses_the_shared_trained_mxfp4_quantizer() {
+    use kernel_core::precision::quantizer::{BlockQuantization, QuantizeOutput};
+    let q = query();
+    let queries = q.query_quantization().unwrap();
+    let keys = q.key_quantization().unwrap();
+    queries.validate().unwrap();
+    keys.validate().unwrap();
+    assert_eq!(queries.width, q.heads * q.head_dim);
+    assert_eq!(keys.width, q.head_dim);
+    assert_eq!(queries.input, DType::F32);
+    assert_eq!(keys.input, DType::F32);
+    assert_eq!(queries.format, BlockQuantization::E2M1Ceil32);
+    assert_eq!(queries.format, keys.format);
+    assert_eq!(queries.output, QuantizeOutput::Bf16);
+    assert_eq!(keys.output, QuantizeOutput::Codes);
+    let input = vec![6.015625_f32; q.head_dim as usize];
+    let packed = keys.format.apply(&input, 1, q.head_dim as usize).unwrap();
+    let fake = queries
+        .format
+        .fake_quant(&input, 1, q.head_dim as usize)
+        .unwrap();
+    for (i, value) in fake.into_iter().enumerate() {
+        assert_eq!(
+            f64::from(kernel_core::codec::bf16_to_f32(value)),
+            packed.decode(0, i)
+        );
+        assert_eq!(packed.decode(0, i), 6.0);
+    }
+    assert!(
+        PositionIndexerQuery {
+            heads: u32::MAX,
+            ..q
+        }
+        .query_quantization()
+        .is_err()
+    );
+}
+
+#[test]
+fn f32_preparation_rounds_only_at_the_trained_quantizer() {
+    use kernel_core::codec::{bf16_to_f32, f32_to_bf16};
+    let q = PositionIndexerQuery {
+        heads: 1,
+        head_dim: 128,
+        ..query()
+    };
+    let mut table = [[1.0, 0.0]; 32];
+    table[0] = [0.8, 0.6];
+    let bf16 = |v: f32| bf16_to_f32(f32_to_bf16(v));
+    let quantized_rotation = |input: &[f32]| {
+        let input = input.iter().map(|&v| f64::from(v)).collect::<Vec<_>>();
+        let rotated = oracle::rotate_tail(q, &input, &table).unwrap();
+        let rotated = rotated.values.iter().map(|&v| v as f32).collect::<Vec<_>>();
+        q.query_quantization()
+            .unwrap()
+            .format
+            .fake_quant(&rotated, 1, 128)
+            .unwrap()
+    };
+    let mut projected = vec![6.0_f32; 128];
+    projected[64] = 1.0038;
+    projected[65] = 0.8164;
+    let kept = quantized_rotation(&projected);
+    let rounded = quantized_rotation(&projected.iter().copied().map(bf16).collect::<Vec<_>>());
+    assert_eq!(bf16_to_f32(kept[65]), 1.5);
+    assert_eq!(
+        bf16_to_f32(rounded[65]),
+        1.0,
+        "premature projection rounding control"
+    );
+
+    let mut key = vec![1.0_f32; 128];
+    key[64] = 1.004;
+    key[65] = 0.81;
+    let normalized = oracle::key_norm(
+        q,
+        &key.iter().map(|&v| f64::from(v)).collect::<Vec<_>>(),
+        &[1.0; 128],
+    )
+    .unwrap();
+    let normalized = normalized
+        .values
+        .iter()
+        .map(|&v| v as f32)
+        .collect::<Vec<_>>();
+    let kept = quantized_rotation(&normalized);
+    let rounded = quantized_rotation(&normalized.iter().copied().map(bf16).collect::<Vec<_>>());
+    assert_eq!(bf16_to_f32(kept[65]), 1.0);
+    assert_eq!(
+        bf16_to_f32(rounded[65]),
+        1.5,
+        "premature norm rounding control"
+    );
+}
+
+#[test]
+fn f32_head_weights_are_not_rounded_to_bf16() {
+    use kernel_core::codec::{bf16_to_f32, f32_to_bf16};
+    let q = query().selection();
+    let mut queries = vec![0.0_f32; 3 * 160];
+    queries[0] = 1.0;
+    let weights = [1.001_f32, 0.0, 0.0];
+    let keys = [1.0_f32; 160];
+    let widen = |v: &[f32]| v.iter().map(|&v| f64::from(v)).collect::<Vec<_>>();
+    let reference = oracle::scores(q, &widen(&queries), &widen(&weights), &widen(&keys)).unwrap();
+    let actual = oracle::scores_f32(q, &queries, &weights, &keys).unwrap();
+    check_numeric(&widen(&actual), &reference, DType::F32).unwrap();
+    let rounded = weights.map(|v| bf16_to_f32(f32_to_bf16(v)));
+    let wrong = oracle::scores_f32(q, &queries, &rounded, &keys).unwrap();
+    assert!(check_numeric(&widen(&wrong), &reference, DType::F32).is_err());
 }
 
 #[test]
@@ -153,7 +274,7 @@ fn selection_uses_own_f32_scores_masks_and_lower_index_ties() {
     assert!(oracle::select(q, 3, 5, &scores, Some(&mask)).is_err());
     assert!(oracle::select(masked, 3, 5, &scores, Some(&mask[..3])).is_err());
     assert_eq!(
-        oracle::select(q, 2, 5, &[-0.0, 0.0, f32::NAN], None).unwrap(),
+        oracle::select(q, 2, 3, &[-0.0, 0.0, f32::NAN], None).unwrap(),
         [0, 1, -1]
     );
     assert!(oracle::select(q, 3, u64::MAX, &scores, None).is_err());
@@ -255,4 +376,63 @@ fn candidate_filter_refuses_invalid_shapes_and_nonfinite_visible_scores() {
         oracle::select_candidate_blocks(q, &[1.0, f32::NAN], 1).unwrap(),
         [true, true]
     );
+}
+
+#[test]
+fn nonfinite_position_arithmetic_refuses_before_relu_or_selection() {
+    let q = PositionIndexerQuery {
+        heads: 1,
+        head_dim: 160,
+        ..query()
+    };
+    let huge = 2.0_f32.powi(80);
+    let mut input = vec![0.0; 160];
+    let mut key = vec![0.0; 160];
+    input[0] = huge;
+    key[0] = huge;
+    assert!(
+        oracle::scores_f32(q.selection(), &input, &[1.0], &key).is_err(),
+        "dot overflow"
+    );
+    input[128] = -huge;
+    key[128] = huge;
+    assert!(
+        oracle::scores_f32(q.selection(), &input, &[1.0], &key).is_err(),
+        "NaN dot must not disappear in ReLU"
+    );
+    input.fill(1.0);
+    key.fill(1.0);
+    assert!(
+        oracle::scores_f32(q.selection(), &input, &[f32::NAN], &key).is_err(),
+        "NaN weight"
+    );
+    let masked = PositionIndexerQuery {
+        candidates: IndexerCandidates::Mask,
+        ..q
+    };
+    for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        assert!(
+            oracle::select(q, 1, 1, &[bad], None).is_err(),
+            "non-finite admitted score {bad}"
+        );
+        assert!(
+            oracle::select(masked, 1, 1, &[bad], Some(&[false])).is_ok(),
+            "masked values are not read"
+        );
+        assert!(
+            oracle::select(q, 1, 0, &[bad], None).is_ok(),
+            "future data is not read"
+        );
+    }
+}
+
+#[test]
+fn legacy_pooled_oracle_refuses_position_selection() {
+    for score in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 0.0] {
+        assert!(
+            kernel_core::pooled_indexer_oracle::select(query().selection(), 1, 0, &[score])
+                .is_err(),
+            "Position selection must use its visibility, mask and failure policy"
+        );
+    }
 }

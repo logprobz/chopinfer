@@ -40,6 +40,8 @@ pub mod block_merge;
 pub mod head_sum;
 pub mod merge_radix;
 pub mod merge_tree;
+pub mod position;
+pub mod position_query;
 pub mod rows;
 
 use std::path::PathBuf;

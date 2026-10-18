@@ -55,8 +55,9 @@ use crate::multimodal::{
 };
 use crate::per_channel_decay_delta_rule::PerChannelDecayOp;
 use crate::pooled_indexer::{
-    IndexerKeyWriteBuffers, IndexerMergeBuffers, IndexerSelectBuffers, PooledIndexerQuery,
-    SelectionCompactBuffers,
+    CandidateBlocksBuffers, CandidateBlocksQuery, IndexerKeyWriteBuffers, IndexerMergeBuffers,
+    IndexerSelectBuffers, PooledIndexerQuery, PositionIndexerQuery, PositionQueryBuffers,
+    PositionSelectBuffers, SelectionCompactBuffers,
 };
 use crate::precision::buffers::ProjectionBuffers;
 use crate::precision::execution::Binding;
@@ -1018,6 +1019,58 @@ pub trait Backend: Send + Sync {
         need: Need,
     ) -> Result<Prepared<SelectionCompactBuffers<View>>, Refused> {
         let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
+    /// F32 tail rotation followed by shared trained MXFP4 fake quantization.
+    /// The only BF16 rounding is at the quantizer input; output BF16 stores
+    /// the decoded values without loss. Launches read `Counts::rows` and
+    /// `Counts::positions`, the number of table rows. Live query positions
+    /// are nonnegative and below that table extent. Inputs, output and
+    /// backend workspace occupy distinct storage.
+    fn position_indexer_query(
+        &self,
+        op: &PositionIndexerQuery,
+        need: Need,
+    ) -> Result<Prepared<PositionQueryBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
+    /// Position scores and exact top-k on losslessly stored BF16 queries,
+    /// F32 projected head weights and MXFP4 key pages. Both dot operands
+    /// decode exactly to F32. `position_capacity` is the score/mask row width; the
+    /// instance's `top_k` is at most the query's maximum.
+    ///
+    /// Launches read `Counts::rows` alone. The host bounds each row's item
+    /// by the page tables' sequences, token positions by the score width
+    /// times the compression ratio, and page ids by the key pool. Negative
+    /// positions and page-table entries are holes, excluded from selection.
+    /// Each live row writes status 0, or status 1 and an empty list on
+    /// non-finite admitted arithmetic. Failed scores become -inf so later
+    /// graph stages can run safely. The caller must reject failed steps
+    /// before accepting their results; see `PositionIndexerQuery`.
+    fn position_indexer(
+        &self,
+        op: &PositionIndexerQuery,
+        top_k: u32,
+        position_capacity: u32,
+        need: Need,
+    ) -> Result<Prepared<PositionSelectBuffers<View>>, Refused> {
+        let _ = (op, top_k, position_capacity, need);
+        Err(Refused::Unsupported)
+    }
+
+    /// Candidate block pre-filter over a row's F32 scores. Launches read
+    /// `Counts::rows` alone. The host bounds each visible compressed count
+    /// by `position_capacity`; zero visible positions emit an all-zero mask.
+    fn indexer_candidate_blocks(
+        &self,
+        op: &CandidateBlocksQuery,
+        position_capacity: u32,
+        need: Need,
+    ) -> Result<Prepared<CandidateBlocksBuffers<View>>, Refused> {
+        let _ = (op, position_capacity, need);
         Err(Refused::Unsupported)
     }
 
@@ -2011,6 +2064,19 @@ mod tests {
             Need::rows(4),
         );
         indexer_compact: Empty.indexer_compact(&indexer(), Need::rows(4));
+        position_indexer_query: Empty.position_indexer_query(&PositionIndexerQuery {
+            heads: 32, head_dim: 128, compression_ratio: 2, tail_rope_dims: 64,
+            key_norm_eps_bits: 1e-20_f32.to_bits(), max_top_k: 2048, page_size: 64,
+            candidates: crate::pooled_indexer::IndexerCandidates::All, capacity: 4,
+        }, Need::rows(4));
+        position_indexer: Empty.position_indexer(&PositionIndexerQuery {
+            heads: 32, head_dim: 128, compression_ratio: 2, tail_rope_dims: 64,
+            key_norm_eps_bits: 1e-20_f32.to_bits(), max_top_k: 2048, page_size: 64,
+            candidates: crate::pooled_indexer::IndexerCandidates::All, capacity: 4,
+        }, 2048, 16392, Need::rows(4));
+        indexer_candidate_blocks: Empty.indexer_candidate_blocks(&CandidateBlocksQuery {
+            block_size: 8, top_k_blocks: 2048, capacity: 4,
+        }, 16392, Need::rows(4));
         causal_conv1d: Empty.causal_conv1d(&recurrent(), 4, Need::rows(4));
         gated_delta_rule: Empty.gated_delta_rule(&recurrent(), 4, Need::rows(4));
         gated_rmsnorm: Empty.gated_rmsnorm(&recurrent(), Need::rows(4));

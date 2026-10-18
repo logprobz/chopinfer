@@ -10,24 +10,17 @@ use crate::pooled_indexer::{
 };
 use crate::pooled_indexer_oracle::score_rank;
 
-/// The trained MXFP4 quantizer. Its caller rounds to BF16 before amax;
-/// this is also the boundary after tail rotation. The shared quantizer
+/// The trained MXFP4 quantizer. Its caller rounds to BF16 before amax,
+/// once after F32 normalization and tail rotation. The shared quantizer
 /// owns code generation, not the indexer score oracle.
 pub fn quantizer() -> crate::quantize::Quantizer {
-    use crate::quantize::{AmaxRatio, QuantFormat, Quantizer, ScaleFormat, ScaleRule};
-    Quantizer {
-        format: QuantFormat {
-            element: crate::codec::SmallFloat::E2M1,
-            block: (1, 32),
-            scale: ScaleFormat::Ue8M0,
-            chunk_rows: None,
-        },
-        rule: ScaleRule::CeilPowerOfTwo(AmaxRatio::MultiplyReciprocal),
-        amax_floor: Some(6.0 * 2.0_f32.powi(-126)),
-    }
+    crate::precision::quantizer::BlockQuantization::E2M1Ceil32
+        .quantizer()
+        .expect("the fixed MXFP4 block format validates")
 }
 
-/// Key RMSNorm before its BF16 boundary, over decoded BF16 projections.
+/// Key RMSNorm over F32 projections. Its result stays F32 through RoPE;
+/// there is no BF16 boundary here.
 pub fn key_norm(
     query: PositionIndexerQuery,
     keys: &[f64],
@@ -44,9 +37,9 @@ pub fn key_norm(
     )
 }
 
-/// Tail-only interleaved RoPE of one decoded BF16 vector using the F32
+/// Tail-only interleaved RoPE of one F32 vector using the F32
 /// table row at the query token or compressed key's first token. The f64
-/// output precedes BF16 storage and trained quantization.
+/// output is stored F32 before the trained quantizer's one BF16 input rounding.
 pub fn rotate_tail(
     query: PositionIndexerQuery,
     vector: &[f64],
@@ -91,7 +84,7 @@ pub fn weight_scale(query: PooledIndexerQuery) -> Result<f32, Refusal> {
     Ok(((width as f64).sqrt().recip() * (heads as f64).sqrt().recip()) as f32)
 }
 
-/// F64 scores on exact decoded q `[heads][head_dim]`, BF16 projected
+/// F64 scores on exact decoded q `[heads][head_dim]`, F32 projected
 /// weights `[heads]` and decoded keys `[positions][head_dim]`. The combined
 /// scale is the declared F32 constant. K is width + heads + 1, and S
 /// includes absolute dot products even when cancellation or ReLU hides
@@ -161,10 +154,19 @@ pub fn scores_f32(
                     .iter()
                     .zip(k)
                     .fold(0.0_f32, |sum, (&q, &k)| q.mul_add(k, sum));
+                if !chain.is_finite() {
+                    return Err(Refusal("non-finite position indexer dot"));
+                }
                 dot += chain;
+                if !dot.is_finite() {
+                    return Err(Refusal("non-finite position indexer dot"));
+                }
             }
             let rectified = if dot > 0.0 { dot } else { 0.0 };
             score = rectified.mul_add(weight * scale, score);
+            if !score.is_finite() {
+                return Err(Refusal("non-finite position indexer score"));
+            }
         }
         if !score.is_finite() {
             return Err(Refusal("non-finite position indexer score"));
@@ -177,8 +179,9 @@ pub fn scores_f32(
 /// Exact second-level selection. The input width may include future
 /// positions; those never participate, even if their scores are larger.
 /// A false mask bit removes a candidate instead of turning it into an
-/// ordinary -inf-scored candidate. A visible admitted -inf is selectable;
-/// NaNs rank below -inf as in pooled selection. Output is sorted by index.
+/// ordinary -inf-scored candidate. Any non-finite admitted score refuses
+/// the row; the device reports this refusal with status 1 and an empty list.
+/// Output on success is sorted by index.
 pub fn select(
     query: PositionIndexerQuery,
     top_k: u32,
@@ -206,6 +209,9 @@ pub fn select(
     let mut kept = (0..visible)
         .filter(|&j| mask.is_none_or(|mask| mask[j]))
         .collect::<Vec<_>>();
+    if kept.iter().any(|&j| !scores[j].is_finite()) {
+        return Err(Refusal("non-finite admitted position indexer score"));
+    }
     kept.sort_unstable_by(|&a, &b| {
         score_rank(scores[b])
             .cmp(&score_rank(scores[a]))

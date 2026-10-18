@@ -4,23 +4,24 @@
 //!
 //! One package serves every rank count of `admission::SUPPORTED_RANKS` its
 //! geometry divides over and its weights fit, each as a topology with its
-//! own resources: the rank's planned weight bytes and the host reserve, the
-//! native KV layout's pages and the per-item state of that layout. The
-//! package serves autoregressively; the BF16 KV layout and the DSpark
-//! drafter need their own state bytes, which one state layout per topology
-//! cannot declare beside the native one.
+//! own resources: the rank's planned weight bytes and the host reserve, and
+//! its two KV formats (`crate::kv`): the native mixed-plane pages, preferred,
+//! with the manifest's per-item state, and the BF16 comparison pages with
+//! the larger state of BF16 window rings. The package serves
+//! autoregressively; the DSpark drafter's state joins with the drafter.
 
 use model_compiler_sdk::{BundleDraftV1, ComponentDraftV1, StagedContentV1, package_draft};
 use model_deepseek41_contract::geometry::Geometry;
 use model_deepseek41_contract::serving::{
-    DECODE_BATCH, KV_LAYOUT_NATIVE, PAGE_TOKENS, PREFILL_GRANULE, PREFILL_TOKENS, RANK_IMAGE_ROLE,
-    REQUEST_STATE_ID, SCORED_ROWS,
+    DECODE_BATCH, KV_LAYOUT_BF16, KV_LAYOUT_NATIVE, PAGE_TOKENS, PREFILL_GRANULE, PREFILL_TOKENS,
+    RANK_IMAGE_ROLE, REQUEST_STATE_ID, SCORED_ROWS,
 };
 use model_deepseek41_contract::state::{KvStorage, request_state};
 use model_deepseek41_contract::{BUNDLE_ID, admission};
 use runtime_bundle::{
-    BundleBatchLimitsV1, BundleError, BundleOpaqueId, BundleResourceRequirementsV1,
-    BundleStateLayoutV1, BundleStateLifetimeV1, BundleTargetV1, BundleTopologyV1,
+    BundleBatchLimitsV1, BundleError, BundleKvLayoutV1, BundleOpaqueId, BundleRankPlacementV1,
+    BundleResourceRequirementsV1, BundleStateLayoutV1, BundleStateLifetimeV1, BundleTargetV1,
+    BundleTopologyV1,
 };
 
 /// The device architecture the native module's kernels are built for.
@@ -49,9 +50,6 @@ pub const CAPABILITIES: [&str; 9] = [
     runtime_bundle_abi::weight_plan::WEIGHT_PLAN_CAPABILITY_V1,
 ];
 
-/// The KV storage every topology declares.
-const STORAGE: KvStorage = KvStorage::Native;
-
 fn id(value: impl Into<String>) -> Result<BundleOpaqueId, BundleError> {
     BundleOpaqueId::new(value)
 }
@@ -62,16 +60,16 @@ pub fn topology_id(geometry: &Geometry, ranks: u32) -> String {
     format!("deepseek41-{}-tp{ranks}", geometry.id)
 }
 
-/// The per-item state bytes of one state slot of `geometry` in the native
-/// storage without the drafter, in whole 256-byte blocks: what create
-/// checks against the served item count.
-pub fn slot_state_bytes(geometry: &Geometry) -> u64 {
+/// The per-item state bytes of one state slot of `geometry` in `storage`
+/// without the drafter, in whole 256-byte blocks: what create checks
+/// against the served item count.
+pub fn slot_state_bytes(geometry: &Geometry, storage: KvStorage) -> u64 {
     let slot = bundle_runtime::state::Extent {
         served: 1,
         bucket: 1,
         verify_rows: 0,
     };
-    request_state(geometry, STORAGE, false)
+    request_state(geometry, storage, false)
         .buffers
         .iter()
         .map(|buffer| buffer.bytes(slot))
@@ -131,6 +129,38 @@ pub fn draft(
     BundleDraftV1::for_topologies(drafts).map_err(|e| BundleError::validation(e.to_string()))
 }
 
+/// The per-item state layout of `geometry` in `storage`.
+fn state_layout(
+    geometry: &Geometry,
+    storage: KvStorage,
+) -> Result<BundleStateLayoutV1, BundleError> {
+    BundleStateLayoutV1::new(
+        id(REQUEST_STATE_ID)?,
+        slot_state_bytes(geometry, storage),
+        256,
+        BundleStateLifetimeV1::Request,
+    )
+}
+
+/// The native mixed-plane page layout of `geometry`: its pages as the state
+/// contract lays them out (890 bytes a token at flash, 56,960 a page),
+/// aligned by the largest power of two up to 256 that divides a page.
+pub fn native_layout(geometry: &Geometry) -> Result<BundleKvLayoutV1, BundleError> {
+    let page_bytes = request_state(geometry, KvStorage::Native, false).page_bytes();
+    let alignment = (page_bytes & page_bytes.wrapping_neg()).min(256);
+    BundleKvLayoutV1::new(
+        id(std::str::from_utf8(KV_LAYOUT_NATIVE).expect("ASCII layout identifier"))?,
+        page_bytes,
+        alignment,
+        PAGE_TOKENS as u32,
+        page_bytes / PAGE_TOKENS,
+        1,
+        geometry.context_tokens(),
+        BundleRankPlacementV1::RankLocal,
+        BundleStateLifetimeV1::Transaction,
+    )
+}
+
 fn topology_draft(
     geometry: &'static Geometry,
     ranks: u32,
@@ -140,12 +170,18 @@ fn topology_draft(
 ) -> Result<BundleDraftV1, BundleError> {
     admission::check_ranks(geometry, ranks).map_err(BundleError::validation)?;
     check_fit(ranks, weight_bytes).map_err(BundleError::validation)?;
-    let page_bytes = request_state(geometry, STORAGE, false).page_bytes();
-    let kv = package_draft::paged_kv_layout(
-        std::str::from_utf8(KV_LAYOUT_NATIVE).expect("ASCII layout identifier"),
-        page_bytes,
+    let native = native_layout(geometry)?;
+    let bf16 = package_draft::paged_kv_layout(
+        std::str::from_utf8(KV_LAYOUT_BF16).expect("ASCII layout identifier"),
+        request_state(geometry, KvStorage::Bf16, false).page_bytes(),
         PAGE_TOKENS,
         geometry.context_tokens(),
+    )?;
+    let formats = crate::kv::kv_formats(
+        geometry,
+        native.clone(),
+        bf16,
+        state_layout(geometry, KvStorage::Bf16)?,
     )?;
     let capabilities = CAPABILITIES
         .iter()
@@ -167,14 +203,10 @@ fn topology_draft(
             )?],
         )?,
         BundleResourceRequirementsV1::new(device_bytes(weight_bytes), capabilities)?,
-        kv,
-        BundleStateLayoutV1::new(
-            id(REQUEST_STATE_ID)?,
-            slot_state_bytes(geometry),
-            256,
-            BundleStateLifetimeV1::Request,
-        )?,
+        native,
+        state_layout(geometry, KvStorage::Native)?,
     )
+    .with_kv_formats(formats)
     .with_batch_limits(
         BundleBatchLimitsV1::new(DECODE_BATCH, PREFILL_TOKENS)?
             .with_prefill_granule(PREFILL_GRANULE)?

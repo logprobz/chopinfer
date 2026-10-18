@@ -17,9 +17,11 @@ use model_deepseek41::package::{
 use model_deepseek41::preparation::{DeepSeek41Family, emit, select_profile, served_topologies};
 use model_deepseek41_contract::geometry::{FLASH, GEOMETRIES, Geometry};
 use model_deepseek41_contract::serving::{
-    DECODE_BATCH, KV_LAYOUT_NATIVE, PREFILL_GRANULE, RANK_IMAGE_ROLE, REQUEST_STATE_ID, SCORED_ROWS,
+    DECODE_BATCH, KV_LAYOUT_BF16, KV_LAYOUT_NATIVE, PREFILL_GRANULE, RANK_IMAGE_ROLE,
+    REQUEST_STATE_ID, SCORED_ROWS,
 };
 use model_deepseek41_contract::state::{KvStorage, request_state};
+use runtime_bundle::BundleKvDtypeV1;
 use runtime_bundle::preparation::PrepareDirectRequest;
 use runtime_host::direct::{DirectCheckpointV1, implementation_v1};
 
@@ -142,8 +144,11 @@ fn the_plan_request_is_the_host_s() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
+/// Each topology declares the native mixed-plane pages (890 bytes a token
+/// at flash, 56,960 a page) with the native per-item state, and the BF16
+/// pages with the BF16 state; the manifest requires the mixed-plane
+/// capability.
 #[test]
-#[ignore = "the native KV page is not a whole number of 256-byte blocks, which a manifest page must be"]
 fn the_manifest_declares_each_topology_s_resources() {
     let geometry = &FLASH;
     let topologies = [(1, 3 << 30), (2, 2 << 30), (4, 1 << 30)];
@@ -201,10 +206,33 @@ fn the_manifest_declares_each_topology_s_resources() {
         assert_eq!(kv.id().as_str().as_bytes(), KV_LAYOUT_NATIVE);
         assert_eq!(kv.page_bytes(), page_bytes);
         assert_eq!(kv.maximum_sequence_tokens(), geometry.context_tokens());
-        assert!(topology.kv_formats().is_empty());
+        assert_eq!(kv.page_bytes(), 56_960);
+        assert_eq!(kv.alignment_bytes(), 128);
+        assert!(capabilities.contains(&"chop.kv-cache.mixed-planes.v1"));
         let state = topology.state_layout();
         assert_eq!(state.id().as_str(), REQUEST_STATE_ID);
-        assert_eq!(state.bytes(), slot_state_bytes(geometry));
+        assert_eq!(state.bytes(), slot_state_bytes(geometry, KvStorage::Native));
+        assert_eq!(state.bytes(), 2_970_624);
+        let formats = topology.kv_formats();
+        assert_eq!(
+            formats.iter().map(|f| f.dtype()).collect::<Vec<_>>(),
+            [BundleKvDtypeV1::Bf16, BundleKvDtypeV1::MixedPlanes]
+        );
+        assert_eq!(formats[1].layout(), kv);
+        assert_eq!(formats[1].state_layout(), None);
+        let bf16 = formats[0].layout();
+        assert_eq!(bf16.id().as_str().as_bytes(), KV_LAYOUT_BF16);
+        assert_eq!(
+            bf16.page_bytes(),
+            request_state(geometry, KvStorage::Bf16, false).page_bytes()
+        );
+        let bf16_state = formats[0].state_layout().unwrap();
+        assert_eq!(bf16_state.id().as_str(), REQUEST_STATE_ID);
+        assert_eq!(
+            bf16_state.bytes(),
+            slot_state_bytes(geometry, KvStorage::Bf16)
+        );
+        assert_eq!(bf16_state.bytes(), 5_668_864);
         let limits = topology.batch_limits().unwrap();
         assert_eq!(limits.maximum_sequences(), DECODE_BATCH);
         assert_eq!(limits.prefill_granule(), PREFILL_GRANULE);
@@ -215,7 +243,6 @@ fn the_manifest_declares_each_topology_s_resources() {
 /// Flash's weights fit a device at four ranks only: the package of its
 /// checkpoint serves TP4, and a TP2 request is refused by capacity.
 #[test]
-#[ignore = "the grouped dense output LoRA awaits its row-major-groups derivation (C1)"]
 fn flash_fits_at_four_ranks_alone() {
     let root = sparse(&FLASH);
     let served = served_topologies(&root, &FLASH, 4).unwrap();
@@ -240,7 +267,6 @@ fn flash_fits_at_four_ranks_alone() {
 }
 
 #[test]
-#[ignore = "the grouped dense derivation (C1) and a whole-block native KV page"]
 fn the_helper_emits_the_synthetic_package() {
     let Some(source) = std::env::var_os("CHOPINFER_DEEPSEEK41_SYNTHETIC_CHECKPOINT") else {
         eprintln!("CHOPINFER_DEEPSEEK41_SYNTHETIC_CHECKPOINT is unset: skipped");

@@ -2,24 +2,28 @@
 //! goldens in `fixtures/centered-pad.json`: the plan (canvas, content,
 //! offset and token grid) of a sweep of source sizes, and per image the
 //! SHA-256 of its F32 rows (bit-identical values), of their BF16 payload
-//! (the reference's BF16 patches), its grid and token counts. The sources
-//! come from `pattern`, which the golden generator mirrors.
+//! (the reference's BF16 patches), its grid and token counts. Synthetic
+//! sources come from `pattern`, which the golden generator mirrors; the
+//! grayscale, alpha, palette and tRNS PNGs and the JPEGs are files decoded
+//! as the reference's `Image.open` and `convert("RGB")` read them: alpha
+//! discarded and an EXIF orientation kept as stored.
 use std::path::Path;
 
 use runtime_media::recipe::{
     CenteredPadPlan, CenteredPadRecipe, centered_pad_grid, centered_pad_plan,
     centered_pad_span_tokens, check_centered_pad_recipe,
 };
-use runtime_media::{MediaLimits, RgbImage};
+use runtime_media::{Alpha, MediaLimits, Orientation, RgbImage, jpeg, png};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+fn fixtures() -> &'static Path {
+    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures"))
+}
+
 fn golden() -> Value {
-    let path = Path::new(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/centered-pad.json"
-    ));
-    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    let text = std::fs::read_to_string(fixtures().join("centered-pad.json")).unwrap();
+    serde_json::from_str(&text).unwrap()
 }
 
 fn limits() -> MediaLimits {
@@ -103,6 +107,7 @@ fn pattern(kind: &str, width: u32, height: u32) -> RgbImage {
                 (h & 255) as u8
             }
             "blocks" => ((x / 7 * 37 + y / 5 * 59 + c * 85) % 256) as u8,
+            "zero" => 0,
             _ => panic!("unknown pattern {kind}"),
         }
     };
@@ -130,7 +135,7 @@ fn plans_match_the_reference() {
     let golden = golden();
     let recipe = recipe(&golden);
     let sizes = golden["sizes"].as_array().unwrap();
-    assert_eq!(sizes.len(), 900);
+    assert_eq!(sizes.len(), 960);
     let mut solved = 0;
     for row in sizes {
         let row = numbers(row);
@@ -149,6 +154,34 @@ fn plans_match_the_reference() {
         );
     }
     assert!(solved > 50, "{solved} sizes solved the budget");
+    // Span costs 1022 to 1026 at one token row: a 42-high source keeps its
+    // canvas through 1024 and solves above it.
+    for (width, cost) in [
+        (42 * 1019_u32, 1022),
+        (42 * 1020, 1023),
+        (42 * 1021, 1024),
+        (42 * 1021 + 1, 1025),
+        (42 * 1023, 1026),
+    ] {
+        let columns = u64::from(width.div_ceil(14)).div_ceil(3);
+        assert_eq!(centered_pad_span_tokens(1, columns), cost);
+        let plan = centered_pad_plan(42, width, recipe, limits()).unwrap();
+        assert_eq!(
+            plan.canvas.1 == width.div_ceil(14) * 14,
+            cost <= 1024,
+            "{width}"
+        );
+    }
+    // The largest square the pixel limit takes plans; one more row is
+    // refused.
+    assert_eq!(
+        centered_pad_plan(16384, 16384, recipe, limits())
+            .unwrap()
+            .canvas,
+        (1302, 1302)
+    );
+    let refusal = centered_pad_plan(16385, 16384, recipe, limits()).unwrap_err();
+    assert!(refusal.to_string().contains("pixel limit"), "{refusal}");
 }
 
 #[test]
@@ -156,14 +189,31 @@ fn rows_match_the_reference_bit_for_bit() {
     let golden = golden();
     let recipe = recipe(&golden);
     let cases = golden["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 17);
+    assert_eq!(cases.len(), 32);
     for case in cases {
         let name = case["name"].as_str().unwrap();
         let (width, height) = (
             case["width"].as_u64().unwrap() as u32,
             case["height"].as_u64().unwrap() as u32,
         );
-        let image = pattern(case["pattern"].as_str().unwrap(), width, height);
+        let image = match case["file"].as_str() {
+            Some(file) => {
+                let bytes = std::fs::read(fixtures().join(file)).unwrap();
+                let image = if file.ends_with(".jpg") {
+                    jpeg::decode_oriented(&bytes, limits(), Orientation::Stored).unwrap()
+                } else {
+                    png::decode_with_alpha(&bytes, limits(), Alpha::Discard).unwrap()
+                };
+                assert_eq!(
+                    sha256(image.data.iter().copied()),
+                    case["decoded_rgb_sha256"].as_str().unwrap(),
+                    "{name}: decoded pixels"
+                );
+                image
+            }
+            None => pattern(case["pattern"].as_str().unwrap(), width, height),
+        };
+        assert_eq!((image.width, image.height), (width, height), "{name}");
         let plan = centered_pad_plan(height, width, recipe, limits()).unwrap();
         assert_eq!(flat(plan), numbers(&case["plan"]), "{name}");
         let grid = centered_pad_grid(&image, recipe, limits()).unwrap();
@@ -182,5 +232,30 @@ fn rows_match_the_reference_bit_for_bit() {
             case["bf16_sha256"].as_str().unwrap(),
             "{name}"
         );
+    }
+}
+
+#[test]
+fn exif_orientation_is_kept_as_stored() {
+    // The tagged orientation 6 would rotate 8 x 16 to 16 x 8; the recipe's
+    // reference keeps the stored size, and the default decoder rotates.
+    let bytes = std::fs::read(fixtures().join("centered-pad-jpeg-exif6-8x16.jpg")).unwrap();
+    assert_eq!(
+        jpeg::probe_oriented(&bytes, limits(), Orientation::Stored).unwrap(),
+        (8, 16)
+    );
+    assert_eq!(jpeg::probe(&bytes, limits()).unwrap(), (16, 8));
+    let stored = jpeg::decode_oriented(&bytes, limits(), Orientation::Stored).unwrap();
+    let rotated = jpeg::decode(&bytes, limits()).unwrap();
+    assert_eq!((stored.width, stored.height), (8, 16));
+    assert_eq!((rotated.width, rotated.height), (16, 8));
+    // Orientation 6 rotates clockwise: the rotated image's top row is the
+    // stored left column read bottom to top.
+    let pixel = |image: &RgbImage, x: u32, y: u32| {
+        let at = ((y * image.width + x) * 3) as usize;
+        image.data[at..at + 3].to_vec()
+    };
+    for x in 0..16 {
+        assert_eq!(pixel(&rotated, x, 0), pixel(&stored, 0, 15 - x));
     }
 }

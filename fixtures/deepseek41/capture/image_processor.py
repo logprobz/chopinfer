@@ -13,7 +13,12 @@ resampled for it. CPU preprocessing only; no model runs:
     CUDA_VISIBLE_DEVICES= $CHOPINFER_REFRUN_PYTHON -B fixtures/deepseek41/capture/image_processor.py \
         $CHOPINFER_DEEPSEEK_CHECKPOINT
 
-The synthetic patterns match `pattern()` in the runtime-media test.
+Sources go to the reference as encoded bytes: "RGB" cases as PNG built in
+memory; grayscale, alpha, palette and tRNS PNGs and JPEGs are also written
+beside the golden for the test to decode, as the reference's Image.open and
+convert("RGB") read them (alpha and transparency discarded, an EXIF
+orientation tag kept as stored). The synthetic patterns match `pattern()` in
+the runtime-media test.
 """
 
 import argparse
@@ -32,9 +37,11 @@ from PIL import Image, ImageOps
 import torch
 
 ROOT = Path(__file__).resolve().parents[3]
-OUTPUT = ROOT / "crates/runtime-media/tests/fixtures/centered-pad.json"
+FIXTURES = ROOT / "crates/runtime-media/tests/fixtures"
+OUTPUT = FIXTURES / "centered-pad.json"
+NAME = "centered-pad"
 
-# (name, pattern, width, height)
+# (name, pattern, width, height[, mode]); the mode defaults to "RGB".
 CASES = [
     ("keep-560x560", "noise", 560, 560),
     ("keep-wide-1386x700", "blocks", 1386, 700),
@@ -57,27 +64,85 @@ CASES = [
     # than wide vertically first.
     ("tall-ratio-100-300x30000", "noise", 300, 30000),
     ("tall-ratio-over-100-299x30000", "noise", 299, 30000),
+    # Over 100 times taller than wide, growing: the horizontal pass runs
+    # first.
+    ("tall-grows-3x400", "noise", 3, 400),
+    ("tall-grows-2x1000", "blocks", 2, 1000),
+    # The span at exactly the 1024-token budget: 1 x 1021 tokens.
+    ("exact-budget-42882x42", "noise", 42882, 42),
+    ("gray-45x31", "noise", 45, 31, "L"),
+    ("gray-alpha-translucent-45x31", "noise", 45, 31, "LA"),
+    ("rgba-translucent-64x50", "noise", 64, 50, "RGBA"),
+    ("rgba-transparent-black-112x112", "zero", 112, 112, "RGBA"),
+    ("palette-trns-48x36", "noise", 48, 36, "P"),
+    ("rgb-trns-50x20", "blocks", 50, 20, "RGB-tRNS"),
+    ("gray-trns-33x21", "blocks", 33, 21, "L-tRNS"),
+    ("jpeg-444-301x199", "blocks", 301, 199, "JPEG444"),
+    ("jpeg-420-160x96", "blocks", 160, 96, "JPEG420"),
+    ("jpeg-gray-64x48", "blocks", 64, 48, "JPEG-L"),
+    # An EXIF orientation of 6 (rotate 90) stays 8 x 16 as stored.
+    ("jpeg-exif6-8x16", "blocks", 8, 16, "JPEG-EXIF6"),
+    ("jpeg-exif6-64x40", "blocks", 64, 40, "JPEG-EXIF6"),
 ]
 
 
-def pattern(kind, width, height):
-    y, x = np.mgrid[0:height, 0:width].astype(np.uint64)
-    channels = []
-    for c in range(3):
-        c = np.uint64(c)
-        if kind == "noise":
-            h = ((x * np.uint64(0x9E3779B1)) ^ (y * np.uint64(0x85EBCA77)) ^ (c * np.uint64(0xC2B2AE3D))) & np.uint64(
-                0xFFFFFFFF
-            )
-            h ^= h >> np.uint64(15)
-            h = (h * np.uint64(0x2C1B3C6D)) & np.uint64(0xFFFFFFFF)
-            h ^= h >> np.uint64(12)
-            channels.append((h & np.uint64(255)).astype(np.uint8))
-        elif kind == "blocks":
-            channels.append(((x // np.uint64(7) * np.uint64(37) + y // np.uint64(5) * np.uint64(59) + c * np.uint64(85)) % np.uint64(256)).astype(np.uint8))
-        else:
-            raise ValueError(kind)
-    return Image.fromarray(np.stack(channels, axis=-1), "RGB")
+def pattern(kind, width, height, channels=3):
+    """uint8 [height, width, channels], from integer math only."""
+    y, x, c = np.meshgrid(
+        np.arange(height, dtype=np.uint64),
+        np.arange(width, dtype=np.uint64),
+        np.arange(channels, dtype=np.uint64),
+        indexing="ij",
+    )
+    mask = np.uint64(0xFFFFFFFF)
+    if kind == "noise":
+        h = (x * np.uint64(0x9E3779B1) ^ y * np.uint64(0x85EBCA77) ^ c * np.uint64(0xC2B2AE3D)) & mask
+        h ^= h >> np.uint64(15)
+        h = (h * np.uint64(0x2C1B3C6D)) & mask
+        h ^= h >> np.uint64(12)
+        return (h & np.uint64(255)).astype(np.uint8)
+    if kind == "zero":
+        return np.zeros((height, width, channels), np.uint8)
+    if kind == "blocks":
+        return ((x // np.uint64(7) * np.uint64(37) + y // np.uint64(5) * np.uint64(59) + c * np.uint64(85)) % np.uint64(256)).astype(np.uint8)
+    raise ValueError(kind)
+
+
+def encoded(name, kind, width, height, mode):
+    """The source's bytes and its file extension, or None for an in-memory PNG."""
+    buffer = io.BytesIO()
+    if mode == "RGB":
+        Image.fromarray(pattern(kind, width, height), "RGB").save(buffer, format="PNG")
+        return buffer.getvalue(), None
+    if mode == "P":
+        indices = pattern(kind, width, height, 1)[:, :, 0]
+        picture = Image.fromarray(indices, "P")
+        picture.putpalette(pattern("noise", 256, 1, 3).reshape(-1).tolist())
+        picture.save(buffer, format="PNG", transparency=bytes(i * 7 % 256 for i in range(256)))
+    elif mode in ("RGB-tRNS", "L-tRNS"):
+        gray = mode == "L-tRNS"
+        pixels = pattern(kind, width, height, 1 if gray else 3)
+        key = int(pixels[0, 0, 0]) if gray else tuple(int(v) for v in pixels[0, 0])
+        picture = Image.fromarray(pixels[:, :, 0] if gray else pixels, "L" if gray else "RGB")
+        picture.save(buffer, format="PNG", transparency=key)
+    elif mode in ("L", "LA", "RGBA"):
+        color = 1 if mode in ("L", "LA") else 3
+        pixels = pattern(kind, width, height, color + (mode != "L"))
+        Image.fromarray(pixels[:, :, 0] if mode == "L" else pixels, mode).save(buffer, format="PNG")
+    elif mode in ("JPEG444", "JPEG420", "JPEG-EXIF6"):
+        exif = Image.Exif()
+        if mode == "JPEG-EXIF6":
+            exif[0x0112] = 6
+        Image.fromarray(pattern(kind, width, height), "RGB").save(
+            buffer, format="JPEG", quality=92, subsampling=2 if mode == "JPEG420" else 0, exif=exif
+        )
+        return buffer.getvalue(), "jpg"
+    elif mode == "JPEG-L":
+        Image.fromarray(pattern(kind, width, height, 1)[:, :, 0], "L").save(buffer, format="JPEG", quality=92)
+        return buffer.getvalue(), "jpg"
+    else:
+        raise ValueError(mode)
+    return buffer.getvalue(), "png"
 
 
 class Stand:
@@ -130,7 +195,14 @@ def main():
     rng = random.Random(41)
     sides = [1, 2, 13, 14, 15, 41, 42, 43, 100, 383, 384, 543, 544, 545, 587, 588, 589, 1000, 1343, 1344, 1345, 2048, 4097, 9000]
     sizes = {(w, h) for w in sides for h in sides}
-    while len(sizes) < 900:
+    # Span costs 1022 to 1026 at one and two token rows, and the largest
+    # square the test's pixel limit takes.
+    for columns in range(1019, 1024):
+        sizes.update({(42 * columns - 41, 42), (42 * columns, 42), (42 * columns + 1, 42)})
+    for columns in range(509, 512):
+        sizes.update({(42 * columns, 84), (42 * columns + 1, 84)})
+    sizes.add((16384, 16384))
+    while len(sizes) < 960:
         w = int(10 ** rng.uniform(0, 4.3))
         h = int(10 ** rng.uniform(0, 4.3))
         if max(w, h) / min(w, h) <= 30000:
@@ -138,13 +210,16 @@ def main():
     sweep = [[h, w] + planned(module, args, w, h) for (w, h) in sorted(sizes)]
 
     cases = []
-    for name, kind, width, height in CASES:
-        image = pattern(kind, width, height)
-        buffer = io.BytesIO()
-        image.save(buffer, format="PNG")
-        patches, n_vit_h, n_vit_w, n_llm_h, n_llm_w = module.load_image({"data": buffer.getvalue()}, args)
+    for case in CASES:
+        name, kind, width, height = case[:4]
+        mode = case[4] if len(case) > 4 else "RGB"
+        data, extension = encoded(name, kind, width, height, mode)
+        patches, n_vit_h, n_vit_w, n_llm_h, n_llm_w = module.load_image({"data": data}, args)
         # The reference's F32 values before its BF16 conversion, by the same
-        # operations.
+        # operations on the same decode.
+        with Image.open(io.BytesIO(data)) as opened:
+            image = opened.convert("RGB")
+        assert image.size == (width, height), (name, image.size)
         plan = planned(module, args, width, height)
         padded = ImageOps.pad(image, (plan[1], plan[0]), color=(127, 127, 127))
         x = torch.from_numpy(np.asarray(padded, dtype=np.float32)).permute(2, 0, 1) / 255
@@ -152,12 +227,13 @@ def main():
         rows = x.reshape(3, n_vit_h, p, n_vit_w, p).permute(1, 3, 0, 2, 4).reshape(n_vit_h * n_vit_w, 3 * p * p)
         assert torch.equal(rows.to(torch.bfloat16).reshape(patches.shape), patches), name
         bf16 = patches.contiguous().view(torch.int16).numpy().astype("<i2").tobytes()
-        cases.append(
+        entry = {"name": name, "pattern": kind, "width": width, "height": height}
+        if extension is not None:
+            entry["file"] = f"{NAME}-{name}.{extension}"
+            (FIXTURES / entry["file"]).write_bytes(data)
+            entry["decoded_rgb_sha256"] = sha256(np.asarray(image, dtype=np.uint8).tobytes())
+        entry.update(
             {
-                "name": name,
-                "pattern": kind,
-                "width": width,
-                "height": height,
                 "plan": plan,
                 "grid": [1, n_vit_h, n_vit_w],
                 "tokens": n_llm_h * n_llm_w,
@@ -166,6 +242,7 @@ def main():
                 "bf16_sha256": sha256(bf16),
             }
         )
+        cases.append(entry)
 
     golden = {
         "source": f"reference inference image_processor.py load_image, Pillow {PIL.__version__}, torch {torch.__version__}, numpy {np.__version__}, on CPU; SHA-256 of the F32 rows and of the reference's BF16 patches",

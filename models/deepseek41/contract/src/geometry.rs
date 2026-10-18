@@ -2,6 +2,7 @@
 //! (`models/deepseek41/geometries`, and the directories
 //! `CHOPINFER_DEEPSEEK41_GEOMETRY_DIRS` lists). Every field is fixed at
 //! compile time: kernel instances and the tensor catalog derive from it.
+//! Runtime selection counts stay within those compiled limits.
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Geometry {
@@ -28,6 +29,22 @@ pub enum LayerRole {
     Reindex,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RuntimeField {
+    pub name: &'static str,
+    pub overridable: bool,
+    pub minimum: u32,
+    pub maximum: u32,
+    /// The geometry's own value, which qualification runs at.
+    pub qualified: u32,
+}
+
+/// A checkpoint's runtime field values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RuntimeValues {
+    pub index_topk: u32,
+}
+
 const fn count(length: usize) -> u32 {
     assert!(length <= u32::MAX as usize, "geometry list exceeds u32");
     length as u32
@@ -45,6 +62,122 @@ const fn contains(ids: &[u32], id: u32) -> bool {
 }
 
 impl Geometry {
+    /// The compiled selection limit and its qualified checkpoint value.
+    pub const fn runtime_fields(&self) -> [RuntimeField; 1] {
+        [RuntimeField {
+            name: "text_config.index_topk",
+            overridable: true,
+            minimum: 1,
+            maximum: self.shape.indexer.top_k,
+            qualified: self.shape.indexer.top_k,
+        }]
+    }
+
+    pub const fn runtime_defaults(&self) -> RuntimeValues {
+        RuntimeValues {
+            index_topk: self.shape.indexer.top_k,
+        }
+    }
+
+    /// Check the runtime settings declared by this geometry and read them.
+    pub fn check_runtime(&self, config: &serde_json::Value) -> Result<RuntimeValues, String> {
+        self.runtime_values(|field| model_compiler_sdk::geometry::field(config, field.name))
+    }
+
+    /// Check resolved `chop.model-options.v1` values (the host's resolution
+    /// of [`Self::model_options`]) and read them; an option absent from
+    /// `values` keeps the checkpoint's value.
+    pub fn resolve_model_options(
+        &self,
+        checkpoint: RuntimeValues,
+        values: &std::collections::BTreeMap<String, serde_json::Value>,
+    ) -> Result<RuntimeValues, String> {
+        let defaults = self.model_options(checkpoint);
+        if let Some(name) = values
+            .keys()
+            .find(|name| !defaults.iter().any(|option| &option.name == *name))
+        {
+            return Err(format!("unknown model option {name}"));
+        }
+        let mut owned = std::collections::BTreeMap::new();
+        for field in self.runtime_fields() {
+            let value = match values.get(field.name) {
+                Some(value) if field.overridable => value.clone(),
+                _ => match field.name {
+                    "text_config.index_topk" => checkpoint.index_topk.into(),
+                    _ => return Err(format!("unsupported runtime field {}", field.name)),
+                },
+            };
+            owned.insert(field.name, value);
+        }
+        self.runtime_values(|field| owned.get(field.name))
+    }
+
+    /// Each runtime field within its range and
+    /// equal to the qualified value unless it is overridable.
+    fn runtime_values<'a>(
+        &self,
+        lookup: impl Fn(&RuntimeField) -> Option<&'a serde_json::Value>,
+    ) -> Result<RuntimeValues, String> {
+        let mut values = RuntimeValues {
+            index_topk: self.shape.indexer.top_k,
+        };
+        for field in self.runtime_fields() {
+            let value = lookup(&field);
+            let number = value
+                .and_then(serde_json::Value::as_u64)
+                .filter(|&n| n >= u64::from(field.minimum) && n <= u64::from(field.maximum))
+                .ok_or_else(|| {
+                    format!(
+                        "unsupported runtime {}: expected {}..={}, received {}",
+                        field.name,
+                        field.minimum,
+                        field.maximum,
+                        value.unwrap_or(&serde_json::Value::Null)
+                    )
+                })?;
+            if !field.overridable && number != u64::from(field.qualified) {
+                return Err(format!(
+                    "unsupported runtime {}: expected {}, received {number}",
+                    field.name, field.qualified
+                ));
+            }
+            match field.name {
+                "text_config.index_topk" => values.index_topk = number as u32,
+                _ => return Err(format!("unsupported runtime field {}", field.name)),
+            }
+        }
+        Ok(values)
+    }
+
+    /// The `chop.model-options.v1` options of the overridable runtime
+    /// fields, defaulting to the checkpoint's values.
+    pub fn model_options(
+        &self,
+        checkpoint: RuntimeValues,
+    ) -> Vec<runtime_bundle::model_options::ModelOptionV1> {
+        use runtime_bundle::model_options::{ModelOptionV1, OptionDefinitionV1};
+        self.runtime_fields()
+            .into_iter()
+            .filter(|field| field.overridable)
+            .map(|field| {
+                let default = match field.name {
+                    "text_config.index_topk" => checkpoint.index_topk,
+                    _ => panic!("unsupported runtime field {}", field.name),
+                };
+                ModelOptionV1 {
+                    name: field.name.into(),
+                    definition: OptionDefinitionV1::Integer {
+                        default: i64::from(default),
+                        minimum: i64::from(field.minimum),
+                        maximum: i64::from(field.maximum),
+                    },
+                    default_is_qualified: default == field.qualified,
+                }
+            })
+            .collect()
+    }
+
     /// Backbone layers, without the DSpark stages.
     pub const fn layers(&self) -> u32 {
         self.shape.layers
@@ -101,6 +234,87 @@ include!(concat!(env!("OUT_DIR"), "/geometries.rs"));
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn index_topk_options_are_bounded_by_the_compiled_selection() {
+        use runtime_bundle::model_options::{CAPABILITY, ModelOptionsV1, OptionDefinitionV1};
+        use std::collections::BTreeMap;
+        let mut config: serde_json::Value = serde_json::from_str(FLASH.document).unwrap();
+        let checkpoint = FLASH.check_runtime(&config).unwrap();
+        assert_eq!(checkpoint.index_topk, 512);
+        let options = FLASH.model_options(checkpoint);
+        assert_eq!(options.len(), 1);
+        assert_eq!(options[0].name, "text_config.index_topk");
+        assert_eq!(
+            options[0].definition,
+            OptionDefinitionV1::Integer {
+                default: 512,
+                minimum: 1,
+                maximum: 512
+            }
+        );
+        assert!(options[0].default_is_qualified);
+        assert_eq!(
+            FLASH
+                .resolve_model_options(checkpoint, &BTreeMap::new())
+                .unwrap(),
+            checkpoint
+        );
+        for top_k in [1, 255, 256, 511, 512] {
+            let values = BTreeMap::from([("text_config.index_topk".to_owned(), top_k.into())]);
+            assert_eq!(
+                FLASH
+                    .resolve_model_options(checkpoint, &values)
+                    .unwrap()
+                    .index_topk,
+                top_k
+            );
+            config["text_config"]["index_topk"] = top_k.into();
+            let runtime = FLASH.check_runtime(&config).unwrap();
+            assert_eq!(
+                FLASH.model_options(runtime)[0].default_is_qualified,
+                top_k == 512
+            );
+        }
+        for value in [
+            serde_json::json!(0),
+            serde_json::json!(513),
+            serde_json::json!(-1),
+            serde_json::json!(1.5),
+            serde_json::json!(true),
+        ] {
+            let error = FLASH
+                .resolve_model_options(
+                    checkpoint,
+                    &BTreeMap::from([("text_config.index_topk".to_owned(), value.clone())]),
+                )
+                .unwrap_err();
+            assert_eq!(
+                error,
+                format!(
+                    "unsupported runtime text_config.index_topk: expected 1..=512, received {value}"
+                )
+            );
+        }
+        let declaration = ModelOptionsV1 {
+            schema: CAPABILITY.into(),
+            options,
+        };
+        let defaults = declaration.resolve(&BTreeMap::new()).unwrap();
+        assert!(declaration.is_qualified(&defaults));
+        let changed = declaration
+            .resolve(&BTreeMap::from([(
+                "text_config.index_topk".into(),
+                "256".into(),
+            )]))
+            .unwrap();
+        assert!(!declaration.is_qualified(&changed));
+        assert!(
+            FLASH
+                .resolve_model_options(checkpoint, &BTreeMap::from([("unknown".into(), 1.into())]))
+                .is_err()
+        );
+    }
 
     #[test]
     fn flash_layer_schedule() {

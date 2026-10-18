@@ -302,7 +302,17 @@ fn main() {
     }
     .read();
     let mut output = SCHEMA.declarations();
-    output += &SCHEMA.compile_fields(&directories[0].supported);
+    // Runtime selection counts do not choose a different compiled geometry.
+    let compile_fields = FIELDS
+        .iter()
+        .copied()
+        .filter(|(_, path, _)| *path != "text_config.index_topk")
+        .collect::<Vec<_>>();
+    output += &Schema {
+        fields: &compile_fields,
+        groups: GROUPS,
+    }
+    .compile_fields(&directories[0].supported);
     let mut values = Vec::new();
     let mut tags = BTreeSet::new();
     let mut shapes = BTreeSet::new();

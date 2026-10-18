@@ -112,6 +112,7 @@ pub fn admit(config: &Value) -> Result<&'static Geometry, String> {
         .collect::<Result<Vec<(&str, Value)>, _>>()?;
     let index = match_geometry(config, &documents, COMPILE_FIELDS)?;
     checked[index].clone()?;
+    GEOMETRIES[index].check_runtime(config)?;
     Ok(&GEOMETRIES[index])
 }
 
@@ -172,6 +173,13 @@ mod tests {
     #[test]
     fn the_flash_config_selects_the_flash_geometry() {
         assert_eq!(admit(&flash_config()).unwrap().id, "flash");
+        for top_k in [1, 255, 256, 512] {
+            let mut config = flash_config();
+            config["text_config"]["index_topk"] = top_k.into();
+            let geometry = admit(&config).unwrap();
+            assert_eq!(geometry.id, "flash");
+            assert_eq!(geometry.check_runtime(&config).unwrap().index_topk, top_k);
+        }
     }
 
     #[test]
@@ -275,7 +283,7 @@ mod tests {
             (
                 "text_config.index_topk",
                 json!(1024),
-                "unsupported geometry: flash: text_config.index_topk expected 512, received 1024",
+                "unsupported runtime text_config.index_topk: expected 1..=512, received 1024",
             ),
         ];
         for (path, value, expected) in cases {

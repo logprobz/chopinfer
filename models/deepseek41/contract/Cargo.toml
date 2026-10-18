@@ -13,6 +13,7 @@ frontend-format.workspace = true
 kernel-core = { workspace = true, features = ["precision-serde"] }
 model-compiler-sdk.workspace = true
 projection-spec.workspace = true
+runtime-bundle.workspace = true
 runtime-bundle-abi.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

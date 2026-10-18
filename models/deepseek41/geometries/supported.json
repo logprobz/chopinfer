@@ -20,7 +20,13 @@
       "kernel_tag": "deepseek41"
     }
   ],
-  "runtime_fields": {},
+  "runtime_fields": {
+    "text_config.index_topk": {
+      "overridable": true,
+      "reason": "the position indexer selects individual compressed positions up to its compiled maximum",
+      "minimum": 1
+    }
+  },
   "semantic_rules": {
     "dtype": [
       "bfloat16"

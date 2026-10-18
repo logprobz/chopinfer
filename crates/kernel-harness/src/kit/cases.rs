@@ -21,6 +21,7 @@ pub mod moe_chained_quantized;
 pub mod moe_routed;
 pub mod multimodal;
 pub mod pooled_indexer;
+pub mod position_blocks;
 pub mod position_indexer;
 pub mod position_query;
 pub mod recurrent;

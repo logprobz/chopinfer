@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path[:0] = [str(ROOT), str(ROOT / "tools/qual")]
 
 from fixtures.mimo26.capture.conversations import conversations  # noqa: E402
-from tools.qual.frontend_goldens import wire_message  # noqa: E402
+from tools.qual.frontend_goldens import capture_bodies, wire_message  # noqa: E402
 from tools.refrun.frontend_corpus import Model, model_reference, template_source  # noqa: E402
 
 
@@ -21,11 +21,14 @@ def main():
     args = parser.parse_args()
     os.environ.setdefault("CHOPINFER_MIMO_FIXTURES", str(ROOT / "fixtures/mimo26"))
     model = Model("deepseek41", root=ROOT)
+    os.environ["CHOPINFER_QUAL_CONFIG"] = str(model.directory / "qual.json")
     reference = model_reference(model, template_source(model)[0])
     rows = []
-    for request in conversations():
+    requests = list(conversations())
+    bodies, _ = capture_bodies(model.declaration["models"][0]["id"], requests, [])
+    for request, body in zip(requests, bodies):
         request = {**request, "messages": [wire_message(m) for m in request["messages"]]}
-        result = reference.outcome(model.hf_input(request))
+        result = reference.outcome(model.hf_input(body))
         if "refusal" in result:
             raise ValueError(f"{request['id']}: {result['refusal']}")
         rows.append({**request, **{key: result[key] for key in ("rendered_text", "token_ids")}})

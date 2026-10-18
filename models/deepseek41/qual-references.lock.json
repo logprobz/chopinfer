@@ -3,7 +3,7 @@
     "chat_renders": {
       "directory": false,
       "members": {
-        ".": "32f5d64d7c74e562b91d0bb0e761d146e86094264f6551c64bf068db6242e76e"
+        ".": "6550c1c3164b56a1215fcd9b1b5c0f0b63ee418eb4d59c617097208a298877c8"
       },
       "path": "fixtures/deepseek41/frontend/chat-renders.json"
     },
@@ -80,7 +80,7 @@
         "encoder-tests/test_output_4.txt": "94433b68370dcc69fa61efc5011b5d0e28685e4716fee1ee77fbbfc0c9935b54",
         "encoder-tests/test_output_5.txt": "4d673091746553d1cb2e40a3fc01dc09a7c53c40627096a3e49c97a269a81f64",
         "tokenizer-golden.json": "68ed31564260e7013fa284531dfe74ae449d8a7e2bd2b042687a2f7d2ac96891",
-        "chat-renders.json": "32f5d64d7c74e562b91d0bb0e761d146e86094264f6551c64bf068db6242e76e"
+        "chat-renders.json": "6550c1c3164b56a1215fcd9b1b5c0f0b63ee418eb4d59c617097208a298877c8"
       },
       "path": "fixtures/deepseek41/frontend"
     },
@@ -330,9 +330,6 @@
     "ac501d23dcd7a5e32afa726e36efa70c44e465fd81b055b5784ba96487bcf4cc": {
       "schema": "chopinfer.mimo26.teacher-texts.v1"
     },
-    "32f5d64d7c74e562b91d0bb0e761d146e86094264f6551c64bf068db6242e76e": {
-      "schema": "legacy-json-array"
-    },
     "9e7a837ae2185511a4a93baf5808a6e4a02fc402bce034da4c8ec59825ede5fc": {
       "schema": "legacy-json-array"
     },
@@ -373,6 +370,9 @@
         "workload_sha256": "74997b8243654c678ee69bc114f32d7d5b9d07ddad08526ad7055d98d82dbc62"
       },
       "schema": "chopinfer.deepseek41.image-probe-references.v1"
+    },
+    "6550c1c3164b56a1215fcd9b1b5c0f0b63ee418eb4d59c617097208a298877c8": {
+      "schema": "legacy-json-array"
     }
   },
   "schema": "chopinfer-qual-references/v1"

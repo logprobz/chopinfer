@@ -12,10 +12,12 @@ transformers and the pinned encoder and tokenizer files, from
 
 from pathlib import Path
 import hashlib
+import json
 import os
 import runpy
 import sys
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -23,6 +25,26 @@ sys.path.insert(0, str(ROOT))
 from tools.refrun.frontend_corpus import corpus_test_case  # noqa: E402
 
 FrontendCorpus = corpus_test_case("deepseek41", ROOT)
+
+
+class ChatRenders(unittest.TestCase):
+    def test_chat_fixture_uses_served_requests(self):
+        from tools.refrun.frontend_corpus import Model, model_reference, template_source
+
+        sys.path.insert(0, str(ROOT / "tools/qual"))
+        from tools.qual.frontend_goldens import capture_bodies
+
+        model = Model("deepseek41", root=ROOT)
+        reference = model_reference(model, template_source(model)[0])
+        rows = json.loads((ROOT / "fixtures/deepseek41/frontend/chat-renders.json").read_bytes())
+        with patch.dict(os.environ, {"CHOPINFER_QUAL_CONFIG": str(model.directory / "qual.json")}):
+            bodies, _ = capture_bodies(model.declaration["models"][0]["id"], rows, [])
+        self.assertEqual(len(rows), 61)
+        for row, body in zip(rows, bodies):
+            with self.subTest(id=row["id"]):
+                result = reference.outcome(model.hf_input(body))
+                self.assertEqual({key: row[key] for key in ("rendered_text", "token_ids")},
+                                 {key: result[key] for key in ("rendered_text", "token_ids")})
 
 
 class ToolImageOrder(unittest.TestCase):

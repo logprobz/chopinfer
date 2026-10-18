@@ -8,20 +8,25 @@
 
 use bundle_runtime::geometry::Ranks;
 use model_deepseek41_contract::admission::{SUPPORTED_RANKS, check_ranks};
-use model_deepseek41_contract::geometry::{GEOMETRIES, Geometry};
+use model_deepseek41_contract::geometry::{GEOMETRIES, Geometry, RuntimeValues};
 
 /// One instance's shape.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Shape {
     pub geometry: &'static Geometry,
     pub ranks: Ranks,
+    pub runtime: RuntimeValues,
 }
 
 impl Shape {
     /// `geometry` at `ranks`, or the field that refuses the split.
     pub fn new(geometry: &'static Geometry, ranks: Ranks) -> Result<Shape, String> {
         check_ranks(geometry, ranks.get())?;
-        Ok(Shape { geometry, ranks })
+        Ok(Shape {
+            geometry,
+            ranks,
+            runtime: geometry.runtime_defaults(),
+        })
     }
 
     /// The geometry's dimensions.

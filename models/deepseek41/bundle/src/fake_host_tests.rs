@@ -34,6 +34,52 @@ const INDEX_COMPONENT: u32 = 100;
 const IDENTITY_COMPONENT: u32 = 200;
 const VIEW_ALIGNMENT: u64 = 4096;
 
+#[test]
+fn runtime_index_topk_reaches_dense_and_compact_launches() {
+    for kv in KV_LAYOUTS {
+        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+        let host = FakeHost::new(shape, kv);
+        let mut record = crate::config::tests::record(&shape, kv, 1, false);
+        if let Some(at) = record
+            .windows(MODEL_OPTIONS_TAG_V1.len())
+            .position(|w| w == MODEL_OPTIONS_TAG_V1)
+        {
+            record.truncate(at);
+        } else {
+            record.extend_from_slice(&FLASH.context_tokens().to_le_bytes());
+        }
+        let options = br#"{"text_config.index_topk":256}"#;
+        record.extend_from_slice(MODEL_OPTIONS_TAG_V1);
+        record.extend_from_slice(&(options.len() as u32).to_le_bytes());
+        record.extend_from_slice(options);
+        let mut instance = api()
+            .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
+            .unwrap_or_else(|error| panic!("{error:?}: {:?}", host.logs.borrow()));
+        let mut views = Views::default();
+        instance
+            .execute(&prompt(11, 0, 0, 70, true), &mut views)
+            .unwrap();
+        let lines = host.device.journal.borrow();
+        for family in ["chop_position_indexer_", "chop_position_blocks_"] {
+            let selections: Vec<_> = lines
+                .iter()
+                .filter(|line| {
+                    line.starts_with("launch ")
+                        && line.contains(family)
+                        && line.contains("_select_v3")
+                })
+                .collect();
+            assert!(!selections.is_empty(), "{family}");
+            for line in selections {
+                assert!(line.ends_with("U32(256)]"), "{line}");
+            }
+        }
+        drop(lines);
+        instance.cancel().unwrap();
+        instance.destroy().unwrap();
+    }
+}
+
 /// The fake host of one package topology and KV layout.
 pub(crate) struct FakeHost {
     pub device: FakeDevice,

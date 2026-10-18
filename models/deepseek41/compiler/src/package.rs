@@ -20,7 +20,7 @@
 //! and buffers.
 
 use model_compiler_sdk::{BundleDraftV1, ComponentDraftV1, StagedContentV1, package_draft};
-use model_deepseek41_contract::geometry::Geometry;
+use model_deepseek41_contract::geometry::{Geometry, RuntimeValues};
 use model_deepseek41_contract::serving::{
     DECODE_BATCH, KV_LAYOUT_BF16, KV_LAYOUT_NATIVE, PAGE_TOKENS, PREFILL_GRANULE, PREFILL_TOKENS,
     RANK_IMAGE_ROLE, REQUEST_STATE_ID, SCORED_ROWS,
@@ -209,6 +209,7 @@ pub fn check_fit(ranks: u32, weight_bytes: u64) -> Result<(), String> {
 /// ([`media_bytes`]).
 pub fn draft(
     geometry: &'static Geometry,
+    runtime: RuntimeValues,
     topologies: &[(u32, u64)],
     components: Vec<ComponentDraftV1>,
     native_module: StagedContentV1,
@@ -244,7 +245,11 @@ pub fn draft(
                 media,
                 components.clone(),
                 native_module.clone(),
-            )
+            )?
+            .with_model_options(runtime_bundle::model_options::ModelOptionsV1 {
+                schema: runtime_bundle::model_options::CAPABILITY.into(),
+                options: geometry.model_options(runtime),
+            })
         })
         .collect::<Result<Vec<_>, _>>()?;
     BundleDraftV1::for_topologies(drafts).map_err(|e| BundleError::validation(e.to_string()))

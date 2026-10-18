@@ -4,14 +4,15 @@
 //! optional tap producer may follow. The topology names the geometry and the
 //! rank count; the KV layout names the storage of the pages and rings.
 
-use bundle_runtime::config::CreateConfig;
 use bundle_runtime::config::Topology;
+use bundle_runtime::config::{CreateConfig, MAGIC};
 use model_deepseek41_contract::serving::{
     DeepSeek, KV_LAYOUT_BF16, KV_LAYOUT_NATIVE, PAGE_TOKENS, RANK_IMAGE_ROLE, REQUEST_STATE_ID,
     index_role,
 };
 use model_deepseek41_contract::state::KvStorage;
-use runtime_bundle_abi::BundleStatusV1;
+use runtime_bundle_abi::{BundleStatusV1, MODEL_OPTIONS_TAG_V1};
+use runtime_bundle_sdk::BatchReaderV1;
 
 use crate::shape::Shape;
 
@@ -65,6 +66,37 @@ pub fn slot_state_bytes(shape: &Shape, storage: KvStorage, dspark: bool) -> u64 
         .next_multiple_of(256)
 }
 
+fn invalid<T>(_: T) -> BundleStatusV1 {
+    BundleStatusV1::InvalidArgument
+}
+
+/// The length of the record's shared fields, through the served context.
+fn shared_length(bytes: &[u8]) -> Result<usize, BundleStatusV1> {
+    let mut reader = BatchReaderV1::new("bundle configuration", bytes);
+    reader.expect_magic(MAGIC).map_err(invalid)?;
+    let field = |reader: &mut BatchReaderV1| -> Result<(), BundleStatusV1> {
+        let length = reader.count("identifier").map_err(invalid)?;
+        reader.take(length).map(|_| ()).map_err(invalid)
+    };
+    field(&mut reader)?;
+    let ranks = reader.count("rank count").map_err(invalid)?;
+    reader.take(4 * ranks).map_err(invalid)?;
+    // KV layout: its identifier and five u64 fields; state: its identifier
+    // and two.
+    field(&mut reader)?;
+    reader.take(5 * 8).map_err(invalid)?;
+    field(&mut reader)?;
+    reader.take(2 * 8).map_err(invalid)?;
+    let roles = reader.count("component roles").map_err(invalid)?;
+    for _ in 0..roles {
+        field(&mut reader)?;
+    }
+    // The served items and served context.
+    reader.u32().map_err(invalid)?;
+    reader.u64().map_err(invalid)?;
+    Ok(reader.position())
+}
+
 /// Decodes and checks a create record against the package's declarations.
 pub fn decode(bytes: &[u8], log: impl Fn(&str)) -> Result<Configuration, BundleStatusV1> {
     let shapes = crate::shape::topologies();
@@ -77,9 +109,33 @@ pub fn decode(bytes: &[u8], log: impl Fn(&str)) -> Result<Configuration, BundleS
             ranks: shape.ranks,
         })
         .collect::<Vec<_>>();
-    let create = bundle_runtime::config::decode_with_log::<DeepSeek>(bytes, &topologies, &log)?;
+    let shared = shared_length(bytes)?;
+    let mut create =
+        bundle_runtime::config::decode_with_log::<DeepSeek>(&bytes[..shared], &topologies, &log)?;
     let topology = bundle_runtime::config::topology_id(bytes)?;
-    let shape = crate::shape::of_topology(topology).ok_or(BundleStatusV1::Unsupported)?;
+    let mut shape = crate::shape::of_topology(topology).ok_or(BundleStatusV1::Unsupported)?;
+    let mut reader = BatchReaderV1::new("bundle configuration tail", &bytes[shared..]);
+    if !bytes[shared..].starts_with(MODEL_OPTIONS_TAG_V1) {
+        log("the create record carries no model options");
+        return Err(BundleStatusV1::InvalidArgument);
+    }
+    let options = runtime_bundle_sdk::model_options::read(&mut reader)?;
+    shape.runtime = shape
+        .geometry
+        .resolve_model_options(shape.geometry.runtime_defaults(), &options)
+        .map_err(|error| {
+            log(&error);
+            BundleStatusV1::InvalidArgument
+        })?;
+    if reader.remaining() != 0 {
+        reader
+            .expect_magic(runtime_bundle_sdk::taps::PRODUCER_TAG)
+            .map_err(invalid)?;
+        let length = reader.count("tap producer").map_err(invalid)?;
+        let nonce = reader.take(length).map_err(invalid)?;
+        create.tap_producer = Some(String::from_utf8(nonce.to_vec()).map_err(invalid)?);
+    }
+    reader.finish().map_err(invalid)?;
     if create
         .context_tokens
         .is_some_and(|tokens| tokens == 0 || tokens > shape.geometry.context_tokens())
@@ -208,7 +264,7 @@ pub(crate) mod tests {
         roles.extend((0..ranks.get()).map(|rank| index_role(rank).into_bytes()));
         roles.extend_from_slice(extra);
         let ordinals: Vec<i32> = (0..ranks.get() as i32).collect();
-        encode(
+        let mut bytes = encode(
             shape.topology().as_bytes(),
             &ordinals,
             &Kv {
@@ -226,7 +282,61 @@ pub(crate) mod tests {
             },
             &roles,
             Some(items),
-        )
+        );
+        bytes.extend_from_slice(&shape.geometry.context_tokens().to_le_bytes());
+        let options = serde_json::json!({"text_config.index_topk": shape.runtime.index_topk});
+        append_options(&mut bytes, &options);
+        bytes
+    }
+
+    fn append_options(bytes: &mut Vec<u8>, options: &serde_json::Value) {
+        let options = serde_json::to_vec(options).unwrap();
+        bytes.extend_from_slice(MODEL_OPTIONS_TAG_V1);
+        bytes.extend_from_slice(&(options.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&options);
+    }
+
+    #[test]
+    fn runtime_options_are_checked_before_create_and_keep_the_tap_tail() {
+        let shape = crate::shape::topologies()[0];
+        let mut bytes = record(&shape, KV_LAYOUTS[0], 1, false);
+        let shared = shared_length(&bytes).unwrap();
+        for value in [
+            serde_json::json!(0),
+            serde_json::json!(513),
+            serde_json::json!(-1),
+            serde_json::json!(1.5),
+            serde_json::json!(true),
+        ] {
+            bytes.truncate(shared);
+            append_options(
+                &mut bytes,
+                &serde_json::json!({"text_config.index_topk": value}),
+            );
+            let logs = std::cell::RefCell::new(Vec::new());
+            assert_eq!(
+                decode(&bytes, |line| logs.borrow_mut().push(line.to_owned())).unwrap_err(),
+                BundleStatusV1::InvalidArgument
+            );
+            assert!(logs.borrow()[0].starts_with("unsupported runtime text_config.index_topk:"));
+        }
+        bytes.truncate(shared);
+        append_options(&mut bytes, &serde_json::json!({"unknown": 1}));
+        assert!(decode(&bytes, |_| {}).is_err());
+        bytes.truncate(shared);
+        assert!(decode(&bytes, |_| {}).is_err());
+        append_options(
+            &mut bytes,
+            &serde_json::json!({"text_config.index_topk": 256}),
+        );
+        bytes.extend_from_slice(runtime_bundle_sdk::taps::PRODUCER_TAG);
+        bytes.extend_from_slice(&5_u32.to_le_bytes());
+        bytes.extend_from_slice(b"nonce");
+        let config = decode(&bytes, |_| {}).unwrap();
+        assert_eq!(config.shape.runtime.index_topk, 256);
+        assert_eq!(config.create.tap_producer.as_deref(), Some("nonce"));
+        bytes.push(0);
+        assert!(decode(&bytes, |_| {}).is_err());
     }
 
     #[test]

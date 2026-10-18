@@ -185,7 +185,7 @@ impl SelectOps {
                         backend.position_indexer_with_storage(
                             &query,
                             storage,
-                            query.max_top_k,
+                            shape.runtime.index_topk,
                             width,
                             need,
                         )
@@ -198,7 +198,7 @@ impl SelectOps {
                         backend.position_block_indexer_with_storage(
                             &query,
                             storage,
-                            query.indexer.max_top_k,
+                            shape.runtime.index_topk,
                             width,
                             need,
                         )

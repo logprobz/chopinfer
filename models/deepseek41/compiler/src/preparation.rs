@@ -158,6 +158,7 @@ pub fn emit(
     let topologies = served_topologies(root, geometry, ranks, crate::package::media_bytes(media)?)?;
     let draft = crate::package::draft(
         geometry,
+        geometry.check_runtime(&crate::checkpoint::document(root, "config.json")?)?,
         &topologies,
         components,
         StagedContentV1::file(module),

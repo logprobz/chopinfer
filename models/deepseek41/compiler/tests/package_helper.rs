@@ -212,12 +212,76 @@ fn flash_manifest() -> runtime_bundle::BundleManifestV1 {
     ];
     let draft = draft(
         &FLASH,
+        FLASH.runtime_defaults(),
         &FLASH_TOPOLOGIES,
         components,
         StagedContentV1::bytes(b"module".to_vec()),
     )
     .unwrap();
     model_compiler_sdk::plan_bundle_manifest_v1(&draft).unwrap()
+}
+
+#[test]
+fn serve_lists_flash_checkpoint_options_without_loading_weights() {
+    let module = native_fixture();
+    let root = config_only(&config(&FLASH));
+    for top_k in [512, 256] {
+        let components = vec![
+            package_draft::tokenizer_definition(StagedContentV1::bytes(b"{}".to_vec())).unwrap(),
+            package_draft::tokenizer_configuration(StagedContentV1::bytes(b"{}".to_vec())).unwrap(),
+        ];
+        let mut checkpoint = config(&FLASH);
+        checkpoint["text_config"]["index_topk"] = top_k.into();
+        let runtime = FLASH.check_runtime(&checkpoint).unwrap();
+        let draft = draft(
+            &FLASH,
+            runtime,
+            &FLASH_TOPOLOGIES,
+            components,
+            StagedContentV1::file(&module),
+        )
+        .unwrap();
+        let package = model_compiler_sdk::emit_bundle_directory_v1(
+            &draft,
+            &root.join(format!("package-{top_k}")),
+        )
+        .unwrap();
+        let args = [
+            "serve",
+            "--bundle",
+            package.root().to_str().unwrap(),
+            "--topology",
+            "deepseek41-flash-tp4",
+            "--list-model-options",
+            "--fake-host-services",
+        ]
+        .map(str::to_owned);
+        let command = runtime_host::parse_host_command_v1(&args).unwrap();
+        let output = runtime_host::run_host_command_v1(&command).unwrap();
+        let options: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(
+            options,
+            serde_json::json!({
+                "schema": "chop.model-options.v1",
+                "options": [{"name": "text_config.index_topk", "default_is_qualified": top_k == 512,
+                             "definition": {"type": "integer", "default": top_k, "minimum": 1, "maximum": 512}}]
+            })
+        );
+        for (ranks, _) in FLASH_TOPOLOGIES {
+            let topology = package
+                .manifest()
+                .for_topology(&topology_id(&FLASH, ranks))
+                .unwrap();
+            assert!(
+                topology
+                    .resource_requirements()
+                    .required_capabilities()
+                    .iter()
+                    .any(|id| id.as_str() == "chop.model-options.v1")
+            );
+        }
+    }
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 /// Each topology declares the native mixed-plane pages (890 bytes a token
@@ -580,6 +644,7 @@ fn an_image_package_plans_the_encoder_and_requires_media_inputs() {
         }
         let draft = draft(
             &FLASH,
+            FLASH.runtime_defaults(),
             &FLASH_TOPOLOGIES,
             components,
             StagedContentV1::bytes(b"module".to_vec()),

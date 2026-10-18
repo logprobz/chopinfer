@@ -497,7 +497,7 @@ def probe_forced_agreement(probe, reference, forced):
         if ids[position] != token:
             raise ValueError(f"forced answer token {offset} is {ids[position]}, the reference's {token}")
         logprobs.append(row[key]["logprob"])
-        served = int(max(row, key=lambda item: row[item]["logprob"]))
+        served = entries_top1(served_entries(row))
         top1s.append(served)
         if served != top1:
             flips.append((offset, served, {int(item): value["logprob"] for item, value in row.items()}))

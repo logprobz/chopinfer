@@ -805,6 +805,24 @@ class Qwen38ProbeTests(unittest.TestCase):
                 multimodal.main()
         self.assertEqual(clients, [])
 
+    def test_forced_top1_uses_rank_when_tied_rows_reverse_json_order(self):
+        probe = self.by_name["wide-1000x40"]
+        reference = self.references["wide-1000x40"]
+        for reverse in (False, True):
+            with self.subTest(reverse=reverse):
+                forced = self.forced_response(probe, reference)
+                for offset, (token, logprob, top1) in enumerate(reference["forced"]):
+                    other = max(token, top1) + 1
+                    row = {str(top1): {"logprob": logprob, "rank": 1},
+                           str(other): {"logprob": logprob, "rank": 2}}
+                    row.setdefault(str(token), {"logprob": logprob, "rank": 3})
+                    forced["prompt_logprobs"][len(probe["token_ids"]) + offset] = (
+                        dict(reversed(list(row.items()))) if reverse else row)
+                result = probe_forced_agreement(probe, reference, forced)
+                self.assertTrue(result["passed"], result)
+                self.assertEqual(result["top1_disagreement"], 0)
+                self.assertEqual(result["near_tie_report"]["flips"], [])
+
     def test_free_text_answers_gate_on_the_reference_answer_teacher_forced(self):
         probe = self.by_name["wide-1000x40"]
         reference = self.references["wide-1000x40"]

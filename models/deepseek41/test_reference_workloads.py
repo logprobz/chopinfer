@@ -21,9 +21,10 @@ except ModuleNotFoundError:
     tokenizers = None
 
 
-@unittest.skipIf(tokenizers is None or not CHECKPOINT or not (EVALS / "wikitext.json").exists(),
-                 "needs tokenizers, the checkpoint and the evals cache")
+@unittest.skipIf(tokenizers is None, "needs tokenizers (set CHOPINFER_REFRUN_PYTHON)")
+@unittest.skipUnless(CHECKPOINT, "needs the official checkpoint (CHOPINFER_DEEPSEEK_CHECKPOINT)")
 class Workloads(unittest.TestCase):
+    @unittest.skipUnless((EVALS / "wikitext.json").is_file(), "needs the wikitext cache (CHOPINFER_DATA/evals)")
     def test_teacher_and_long_context(self):
         import reference_workloads as workloads
         from tools.refrun import workload

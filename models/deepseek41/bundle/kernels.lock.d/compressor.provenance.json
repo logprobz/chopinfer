@@ -1,0 +1,14 @@
+[
+  {
+    "name": "deepseek41_compressor_keys_v1",
+    "source_closure_sha256": "99504084464dd9629d640a708022b0655045f9d499df465e86bc8bf05751b59c"
+  },
+  {
+    "name": "deepseek41_compressor_pooling_v1",
+    "source_closure_sha256": "0d165e773947fa073cd9a3fd70176a81b5ff1b2f06bbe21b8b9b9f5444adea84"
+  },
+  {
+    "name": "deepseek41_compressor_ratio_one_v1",
+    "source_closure_sha256": "6566792e5c04b75895030126b620cc6e9f65f4702691d789dc56d013ab672ecc"
+  }
+]

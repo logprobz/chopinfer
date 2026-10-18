@@ -19,12 +19,17 @@ mod encoder;
 mod hc;
 mod own_cubin;
 // The build compiles the entries; the bundle launches them.
+#[allow(dead_code, reason = "the bundle registers the entries")]
+mod compressor;
 #[path = "f32_dense.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod f32_dense;
 #[path = "f32_head.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod f32_head;
+#[path = "indexer.rs"]
+#[allow(dead_code, reason = "the bundle registers the entries")]
+mod indexer;
 #[path = "indexer_query.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod indexer_query;
@@ -59,6 +64,8 @@ fn main() {
     specs.extend(reduce::cubins(GEOMETRIES));
     specs.extend(hc::cubins(GEOMETRIES));
     specs.extend(latent::cubins(GEOMETRIES).expect("deepseek41 latent cubins"));
+    specs.extend(indexer::cubins(GEOMETRIES).expect("deepseek41 indexer cubins"));
+    specs.extend(compressor::cubins(GEOMETRIES).expect("deepseek41 compressor cubins"));
     specs.extend(f32_head::cubins(GEOMETRIES).expect("deepseek41 F32 head cubins"));
     specs.extend(f32_dense::cubins(GEOMETRIES).expect("deepseek41 F32 dense cubins"));
     specs.push(("dependencies", kernels_sm120::probes::cubin_spec()));

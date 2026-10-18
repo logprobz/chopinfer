@@ -25,6 +25,8 @@ pub(crate) mod own_entries;
 pub(crate) mod own_ops;
 // The build compiles each registration file's cubins; the bundle registers
 // their entries.
+#[allow(dead_code, reason = "the build compiles the entries and declarations")]
+mod compressor;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 pub(crate) mod encoder;
 #[allow(
@@ -38,6 +40,8 @@ mod f32_dense;
 pub mod f32_head;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod hc;
+#[allow(dead_code, reason = "the build script compiles the cubin specs")]
+mod indexer;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod indexer_query;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
@@ -110,6 +114,10 @@ impl crate::Kernels {
         let sm120 = reduce::register(sm120, shape.geometry);
         let sm120 = hc::register(sm120, shape.geometry);
         let sm120 = latent::register(sm120, shape.geometry, shape.ranks())?;
+        let sm120 = indexer::register(sm120, shape.geometry);
+        let sm120 = compressor::CompressorKernels::serving(shape.geometry)
+            .map_err(|e| e.to_string())?
+            .register(sm120);
         let sm120 = indexer_query::register(sm120, shape.geometry);
         let sm120 = latent_glue::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = latent_window_stage::register(sm120, shape.geometry, shape.ranks())?;

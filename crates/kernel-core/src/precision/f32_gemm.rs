@@ -8,14 +8,114 @@
 
 use crate::codec::{bf16_to_f32, f32_to_bf16};
 use crate::contract::{ActivationFormat, DType, GemmQuery, Refusal, Validate, WeightFormat};
-use crate::oracle::OracleOutput;
+use crate::oracle::CheckFailure;
 
 pub const FOLD_K: usize = 128;
 
-/// The numerical gate uses S from the original F32 and exactly widened
-/// weight operands, not from rounded inputs or the number of component MMAs.
-pub fn bound(sum_abs_products: f64) -> f64 {
-    crate::oracle::accumulation_bound(FOLD_K, sum_abs_products)
+/// F32 round-to-nearest unit roundoff and half the least subnormal. The
+/// contract requires gradual underflow: no FTZ flag or instruction modifier.
+pub const UNIT_ROUNDOFF: f64 = 1.0 / 16_777_216.0;
+pub const UNDERFLOW_ETA: f64 = f64::from_bits((1023 - 150) << 52);
+
+// An upward-rounded (1+u)^n, valid even when n*u >= 1 and gamma_n has no
+// finite bound. All multiplication operands are positive and at least one.
+fn growth(mut n: usize) -> f64 {
+    let mut result = 1.0;
+    let mut factor = 1.0 + UNIT_ROUNDOFF;
+    while n > 0 {
+        if n & 1 != 0 {
+            result = (result * factor).next_up();
+        }
+        n >>= 1;
+        if n > 0 {
+            factor = (factor * factor).next_up();
+        }
+    }
+    result
+}
+
+/// Let t=min(K,128), B=ceil(K/128), u=2^-24 and eta=2^-150. Each rounding
+/// obeys fl(z)=z*(1+delta)+epsilon, |delta|<=u, |epsilon|<=eta, provided no
+/// intermediate overflows and subnormals are retained.
+///
+/// The tensor path has at most (t-1)+2+(B-1)=t+B roundings on a product's
+/// path: a component sum (its first product is exact), two component merges,
+/// then the outer sum (its first partial is exact). Same-sign decomposition
+/// preserves S. Its at most 3*(K-B)+2*B+(B-1)=3*K-1 rounding sites each
+/// contribute an absolute error amplified by at most the same growth factor.
+/// SIMT has t+(B-1) relative roundings and K+(B-1) absolute sites, both
+/// bounded by those counts. Thus G=(1+u)^(t+B) gives the common allowance
+/// (G-1)*S + (3*K-1)*eta*G. This is the product-of-roundings derivation;
+/// replacing each (1+u)^n by 1+gamma_n is also valid when n*u<1.
+///
+/// The arithmetic computing this allowance rounds upward. Invalid K or S
+/// yields NaN, which the dedicated gate refuses. The generic GEMM gate is
+/// not this contract, because it has no absolute underflow term.
+pub fn bound(k: usize, sum_abs_products: f64) -> f64 {
+    if k == 0 || k > u32::MAX as usize || !sum_abs_products.is_finite() || sum_abs_products < 0.0 {
+        return f64::NAN;
+    }
+    let blocks = k.div_ceil(FOLD_K);
+    let g = growth(k.min(FOLD_K) + blocks);
+    let relative = ((g - 1.0).next_up() * sum_abs_products).next_up();
+    let absolute = (((3.0 * k as f64 - 1.0) * UNDERFLOW_ETA).next_up() * g).next_up();
+    (relative + absolute).next_up()
+}
+
+/// A dedicated result type prevents using the relative-only generic GEMM
+/// gate for this contract. K is the full logical reduction length.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Oracle {
+    pub values: Vec<f64>,
+    pub sum_abs_products: Vec<f64>,
+    pub k: usize,
+}
+
+pub fn check_numeric(actual: &[f64], reference: &Oracle) -> Result<(), CheckFailure> {
+    if actual.len() != reference.values.len()
+        || reference.values.len() != reference.sum_abs_products.len()
+        || reference.values.is_empty()
+    {
+        return Err(CheckFailure {
+            index: actual.len().min(reference.values.len()),
+            actual: f64::NAN,
+            reference: f64::NAN,
+            bound: 0.0,
+            error: f64::INFINITY,
+        });
+    }
+    let mut worst: Option<CheckFailure> = None;
+    for (index, (&actual, (&expected, &s))) in actual
+        .iter()
+        .zip(reference.values.iter().zip(&reference.sum_abs_products))
+        .enumerate()
+    {
+        let allowance = bound(reference.k, s);
+        let error = (actual - expected).abs();
+        if !actual.is_finite()
+            || !expected.is_finite()
+            || !allowance.is_finite()
+            || error > allowance
+        {
+            let failure = CheckFailure {
+                index,
+                actual,
+                reference: expected,
+                bound: allowance,
+                error: if error.is_finite() {
+                    error
+                } else {
+                    f64::INFINITY
+                },
+            };
+            if worst.as_ref().is_none_or(|w| {
+                !allowance.is_finite() || failure.error - allowance > w.error - w.bound
+            }) {
+                worst = Some(failure);
+            }
+        }
+    }
+    worst.map_or(Ok(()), Err)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -138,15 +238,9 @@ pub fn folded_dot(a: &[f32], b: &[f32], weight: DType) -> Result<f32, Refusal> {
     Ok(total)
 }
 
-/// F64 compensated dots over original operands. The numerical reference's
-/// reduction length is the 128-K chain limit, so `check_numeric` enforces
-/// exactly 2^-22 * 128 * S with no BF16 output-rounding allowance.
-pub fn oracle(
-    query: GemmQuery,
-    rows: usize,
-    a: &[f32],
-    b: &[f32],
-) -> Result<OracleOutput, Refusal> {
+/// F64 compensated dots over original operands, retaining logical K for the
+/// outer-reduction and underflow allowances in this module's `check_numeric`.
+pub fn oracle(query: GemmQuery, rows: usize, a: &[f32], b: &[f32]) -> Result<Oracle, Refusal> {
     query.validate()?;
     let (n, k) = (query.n as usize, query.k as usize);
     if query.activation != ActivationFormat::F32
@@ -184,5 +278,9 @@ pub fn oracle(
             magnitudes.push(magnitude);
         }
     }
-    OracleOutput::new(values, magnitudes, FOLD_K)
+    Ok(Oracle {
+        values,
+        sum_abs_products: magnitudes,
+        k,
+    })
 }

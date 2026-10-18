@@ -120,8 +120,30 @@ The links lead to each rule's details.
    increasing K order. Components and weights must be normal or zero, and
    each component product must be finite, normal or zero, and exact in F32.
    Finite values outside that domain use SIMT F32 FMA. Raw F32 weights also
-   use SIMT. The f64 oracle uses the original inputs and the bound
-   `2^-22 * 128 * S`, with no BF16 output-rounding allowance. Casting the
+   use SIMT. Their F32 arithmetic retains subnormals and refuses non-finite
+   accumulation; FTZ instructions and fast-math flushing do not satisfy this
+   contract. The fixed nvcc flags in `kernel-build::NVCC_FLAGS` select neither
+   `--ftz=true` nor `--use_fast_math`.
+
+   The dedicated F32 oracle uses the original inputs and logical K. Write
+   `t=min(K,128)`, `B=ceil(K/128)`, `u=2^-24` and `eta=2^-150`. Round-to-nearest
+   with gradual underflow obeys `fl(z)=z*(1+delta)+epsilon`, with
+   `|delta|<=u` and `|epsilon|<=eta`, in the absence of overflow. Each tensor
+   product passes through at most `t-1` component additions, two component
+   merges and `B-1` outer additions. The first product and first outer add
+   are exact. Because the three components share the activation's sign,
+   the sum of absolute component products remains S. With
+   `G=(1+u)^(t+B)`, relative error is at most `(G-1)*S`. This is the direct
+   product of rounding factors; the usual `1+gamma_n=1/(1-n*u)` can replace
+   a factor `(1+u)^n` when `n*u<1`, but G remains valid beyond that limit.
+   There are at most `3*(K-B)+2*B+(B-1)=3*K-1` tensor rounding sites. Each
+   can contribute eta, amplified by at most G. SIMT uses at most
+   `t+B-1` roundings per product and `K+B-1` sites, both below the tensor
+   counts. The common gate is therefore `(G-1)*S + (3*K-1)*eta*G`, computed
+   with upward rounding in F64. It includes the outer reduction and absolute
+   underflow error, with no BF16 output-rounding allowance. Use
+   `precision::f32_gemm::check_numeric`, whose oracle type is distinct from
+   the generic relative-only GEMM gate. Casting the
    activation to BF16 or TF32 is not an implementation of this contract.
    Attention PV, the encoder's pair GEMMs and PV, and the MXFP4 expert
    mainloops keep one MMA chain into their F32 accumulator over the whole

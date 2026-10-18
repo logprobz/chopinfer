@@ -305,23 +305,20 @@ fn f32_oracle_rejects_bf16_input_rounding_and_pins_the_fold_bound() {
     let q = query(WeightFormat::Bf16, 257);
     let reference = f32_gemm::oracle(q, 1, &a, &b).unwrap();
     assert_eq!(reference.values, [257.0 * f64::from(a[0])]);
-    assert_eq!(reference.reduction_lengths, [128]);
-    assert_eq!(
-        f32_gemm::bound(reference.sum_abs_products[0]),
-        2_f64.powi(-22) * 128.0 * reference.sum_abs_products[0]
+    assert_eq!(reference.k, 257);
+    assert!(
+        f32_gemm::bound(reference.k, reference.sum_abs_products[0])
+            < 2_f64.powi(-22) * 128.0 * reference.sum_abs_products[0]
     );
     assert_eq!(
         f32_gemm::dot_path(&a, &b, DType::Bf16).unwrap(),
         DotPath::Bf16Expansion3
     );
     let actual = f32_gemm::folded_dot(&a, &b, DType::Bf16).unwrap();
-    kernel_core::oracle::check_numeric(&[f64::from(actual)], &reference, DType::F32).unwrap();
+    f32_gemm::check_numeric(&[f64::from(actual)], &reference).unwrap();
     let rounded: Vec<_> = a.iter().map(|&v| bf16_to_f32(f32_to_bf16(v))).collect();
     let incorrect = f32_gemm::folded_dot(&rounded, &b, DType::Bf16).unwrap();
-    assert!(
-        kernel_core::oracle::check_numeric(&[f64::from(incorrect)], &reference, DType::F32)
-            .is_err()
-    );
+    assert!(f32_gemm::check_numeric(&[f64::from(incorrect)], &reference).is_err());
 }
 
 #[test]
@@ -335,7 +332,7 @@ fn finite_domain_exceptions_and_raw_f32_weights_use_simt_without_rounding() {
     let actual = f32_gemm::folded_dot(&a, &b, DType::Bf16).unwrap();
     assert_eq!(actual.to_bits(), a[0].mul_add(b[0], 0.0).to_bits());
     let reference = f32_gemm::oracle(query(WeightFormat::Bf16, 1), 1, &a, &b).unwrap();
-    kernel_core::oracle::check_numeric(&[f64::from(actual)], &reference, DType::F32).unwrap();
+    f32_gemm::check_numeric(&[f64::from(actual)], &reference).unwrap();
     assert_eq!(
         f32_gemm::dot_path(&[1.0], &[1.0039], DType::F32).unwrap(),
         DotPath::SimtF32
@@ -358,4 +355,88 @@ fn finite_domain_exceptions_and_raw_f32_weights_use_simt_without_rounding() {
         assert!(f32_gemm::dot_path(&[1.0], &[bad], DType::F32).is_err());
     }
     assert!(f32_gemm::oracle(query(WeightFormat::Bf16, 1), 1, &[1.0], &[1.0039]).is_err());
+}
+
+fn outer_rounding_witness(weight: WeightFormat, dtype: DType) {
+    let k = 65_792;
+    let mut a = vec![0.0_f32; k];
+    a[0] = 1.0;
+    for j in 1..=513 {
+        a[128 * j] = 2_f32.powi(-24);
+    }
+    let b = vec![1.0; k];
+    let actual = f32_gemm::folded_dot(&a, &b, dtype).unwrap();
+    assert_eq!(actual, 1.0);
+    let reference = f32_gemm::oracle(query(weight, k as u32), 1, &a, &b).unwrap();
+    assert_eq!(reference.values[0], 1.0 + 513.0 * 2_f64.powi(-24));
+    assert_eq!(reference.values, reference.sum_abs_products);
+    assert!(
+        (reference.values[0] - f64::from(actual)).abs()
+            > 2_f64.powi(-22) * 128.0 * reference.sum_abs_products[0]
+    );
+    f32_gemm::check_numeric(&[f64::from(actual)], &reference).unwrap();
+}
+
+#[test]
+fn outer_fold_rounding_is_covered_for_bf16_weights() {
+    outer_rounding_witness(WeightFormat::Bf16, DType::Bf16);
+}
+
+#[test]
+fn outer_fold_rounding_is_covered_for_f32_weights() {
+    outer_rounding_witness(WeightFormat::F32, DType::F32);
+}
+
+#[test]
+fn simt_underflow_passes_the_numerical_gate() {
+    for (weight, dtype) in [
+        (WeightFormat::Bf16, DType::Bf16),
+        (WeightFormat::F32, DType::F32),
+    ] {
+        for (a, b) in [
+            (2_f32.powi(-80), 2_f32.powi(-80)),
+            (2_f32.powi(-75), 2_f32.powi(-75)),
+            (2_f32.powi(-74), 2_f32.powi(-75)),
+            (f32::from_bits(1), 1.0),
+        ] {
+            assert_eq!(
+                f32_gemm::dot_path(&[a], &[b], dtype).unwrap(),
+                DotPath::SimtF32
+            );
+            let actual = f32_gemm::folded_dot(&[a], &[b], dtype).unwrap();
+            let exact = f64::from(a) * f64::from(b);
+            assert_eq!(actual.to_bits(), (exact as f32).to_bits());
+            let reference = f32_gemm::oracle(query(weight, 1), 1, &[a], &[b]).unwrap();
+            assert_eq!(reference.values, [exact]);
+            f32_gemm::check_numeric(&[f64::from(actual)], &reference).unwrap();
+            let wrong = f64::from(actual) + 8.0 * 2_f64.powi(-149);
+            assert!(f32_gemm::check_numeric(&[wrong], &reference).is_err());
+        }
+    }
+}
+
+#[test]
+fn derived_bound_is_tight_at_short_k_and_finite_through_u32_k() {
+    let u = f32_gemm::UNIT_ROUNDOFF;
+    for (k, path_length) in [(1, 2), (128, 129), (4096, 160), (65_792, 642)] {
+        let direct_product = ((path_length as f64) * u.ln_1p()).exp_m1();
+        let allowance = f32_gemm::bound(k, 1.0);
+        assert!(allowance >= direct_product);
+        let nu = path_length as f64 * u;
+        // The outward product remains tighter than the conventional gamma
+        // estimate at these lengths, without an arbitrary F64 tolerance.
+        assert!(allowance < nu / (1.0 - nu));
+    }
+    assert!(f32_gemm::bound(4096, 1.0) < 2_f64.powi(-22) * 128.0);
+    assert!(f32_gemm::bound(u32::MAX as usize, 1.0).is_finite());
+    assert!(f32_gemm::bound(0, 1.0).is_nan());
+    assert!(f32_gemm::bound(1, -1.0).is_nan());
+    let reference = f32_gemm::oracle(query(WeightFormat::F32, 1), 1, &[1.0], &[1.0]).unwrap();
+    for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(f32_gemm::check_numeric(&[bad], &reference).is_err());
+    }
+    assert!(f32_gemm::check_numeric(&[], &reference).is_err());
+    let mut invalid = reference;
+    invalid.k = 0;
+    assert!(f32_gemm::check_numeric(&[1.0], &invalid).is_err());
 }

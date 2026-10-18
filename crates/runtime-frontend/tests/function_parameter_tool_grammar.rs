@@ -502,3 +502,59 @@ fn invalid_bytes_inside_a_region_decode_as_replacements() {
         }
     }
 }
+
+/// A long raw value inside a call, which the parser does not settle until
+/// the call closes, costs its bytes once in the client-stop and end-marker
+/// searches, however many tokens carry it.
+#[test]
+fn a_long_raw_value_under_a_client_stop_decodes_in_linear_time() {
+    let mut d = descriptor();
+    d.limits.maximum_completion_bytes = 1 << 26;
+    d.limits.maximum_json_bytes = 1 << 24;
+    d.limits.maximum_generated_tokens = 1 << 20;
+    let d = Arc::new(d);
+    let run = |length: usize| {
+        let text = format!(
+            "plan</think>{}{STOP}",
+            call("read", &[("text", &"a".repeat(length))])
+        );
+        let mut decoder = CompletionDecoderV1::with_client_stops(
+            Arc::clone(&d),
+            PromptModeV1::Thinking,
+            DecoderLimitsV1::declared(&d),
+            &["ZZZ".to_owned()],
+        )
+        .unwrap();
+        decoder.set_tool_schemas(&tools());
+        let mut calls = 0;
+        for (ordinal, byte) in text.as_bytes().chunks(1).enumerate() {
+            for update in decoder
+                .push(GeneratedTokenV1::new(ordinal as u64, 42, byte.to_vec()))
+                .unwrap()
+            {
+                if let CompletionUpdateV1::ToolCalls(found) = update {
+                    calls += found.calls.len();
+                }
+            }
+        }
+        assert_eq!(calls, 1);
+    };
+    let fastest = |length: usize| {
+        (0..3)
+            .map(|_| {
+                let started = std::time::Instant::now();
+                run(length);
+                started.elapsed()
+            })
+            .min()
+            .unwrap()
+    };
+    // Four times the bytes must take well under sixteen times as long; the
+    // smaller run counts as at least 20 ms so timer noise cannot fail it.
+    let small = fastest(40_000).max(std::time::Duration::from_millis(20));
+    let large = fastest(160_000);
+    assert!(
+        large < 8 * small,
+        "four times the bytes took {large:?} against {small:?}"
+    );
+}

@@ -188,6 +188,10 @@ pub struct CompletionDecoderV1 {
     tokens: Vec<TokenRangeV1>,
     next_ordinal: Option<u64>,
     client_stops: Vec<Vec<u8>>,
+    /// Where a client stop can still begin: the search for one resumes
+    /// here, so a long region the parser has not settled costs its bytes
+    /// once rather than once per token.
+    stop_from: usize,
     minimum_new_tokens: usize,
     /// Whether the first token came through [`Self::push_engine_token`].
     /// Engine tokens carry stop IDs; their ordinary marker spellings are text.
@@ -231,6 +235,7 @@ impl CompletionDecoderV1 {
             tokens: Vec::new(),
             next_ordinal: None,
             client_stops: Vec::new(),
+            stop_from: 0,
             minimum_new_tokens: 0,
             engine_tokens: None,
             misuse: None,
@@ -655,11 +660,31 @@ impl CompletionDecoderV1 {
         }
     }
 
+    /// The longest stop text, which bounds how far back a stop that the
+    /// bytes through some end could still complete begins.
+    fn longest_stop(&self) -> usize {
+        self.client_stops.iter().map(Vec::len).max().unwrap_or(0)
+    }
+
+    /// Where a search from `from` through `end` for text of at most `span`
+    /// bytes that ends after `end` needs to begin: `span` bytes back, at a
+    /// character start, but not before `from`.
+    fn window_start(&self, from: usize, end: usize, span: usize) -> usize {
+        let mut start = from.max(end.saturating_sub(span));
+        while start > from && start < end && (self.bytes[start] & 0xc0) == 0x80 {
+            start -= 1;
+        }
+        start
+    }
+
     fn longest_stop_prefix(&self, cursor: usize, valid_end: usize) -> usize {
         if self.client_stops.is_empty() {
             return 0;
         }
-        let haystack = &self.bytes[cursor..valid_end];
+        // Only a proper prefix of a stop can be held, so the last bytes
+        // shorter than the longest stop are all that is read.
+        let start = self.window_start(cursor, valid_end, self.longest_stop() - 1);
+        let haystack = &self.bytes[start..valid_end];
         let decoded = String::from_utf8_lossy(haystack);
         let mut longest = 0;
         for stop in &self.client_stops {
@@ -676,7 +701,7 @@ impl CompletionDecoderV1 {
         longest
     }
 
-    fn next_client_stop(&self, cursor: usize, valid_end: usize) -> Option<(usize, usize)> {
+    fn next_client_stop(&mut self, cursor: usize, valid_end: usize) -> Option<(usize, usize)> {
         if self.tokens.len() <= self.minimum_new_tokens || self.client_stops.is_empty() {
             return None;
         }
@@ -684,9 +709,13 @@ impl CompletionDecoderV1 {
             .minimum_new_tokens
             .checked_sub(1)
             .map_or(self.prompt_context_bytes, |index| self.tokens[index].end);
-        let haystack = &self.bytes[cursor..valid_end];
+        // No stop begins before `stop_from` that these bytes complete.
+        let from = cursor.max(self.stop_from);
+        let from = self.window_start(cursor, valid_end, valid_end.saturating_sub(from));
+        let haystack = &self.bytes[from..valid_end];
         let decoded = String::from_utf8_lossy(haystack);
-        self.client_stops
+        let found = self
+            .client_stops
             .iter()
             .enumerate()
             .filter_map(|(index, stop)| {
@@ -694,13 +723,18 @@ impl CompletionDecoderV1 {
                     if !decoded.as_bytes()[relative..].starts_with(stop) {
                         return None;
                     }
-                    let start = cursor + source_offset(haystack, relative);
-                    let end = cursor + source_offset(haystack, relative + stop.len());
+                    let start = from + source_offset(haystack, relative);
+                    let end = from + source_offset(haystack, relative + stop.len());
                     (end > minimum_end).then_some((start, end - start, index))
                 })
             })
             .min_by_key(|(position, length, index)| (position + length, *index))
-            .map(|(position, length, _)| (position, length))
+            .map(|(position, length, _)| (position, length));
+        if found.is_none() {
+            let resume = valid_end.saturating_sub(self.longest_stop() - 1);
+            self.stop_from = self.stop_from.max(resume);
+        }
+        found
     }
 
     fn contributions(&self, start: usize, end: usize) -> Vec<TokenContributionV1> {

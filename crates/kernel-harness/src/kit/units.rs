@@ -30,7 +30,7 @@ use std::ops::Range;
 pub type Units = Vec<Vec<u8>>;
 
 /// The roles of a row op's case: each live input and output with its row
-/// bytes, and its in-place states.
+/// bytes, including in-place live rows, and its fixed-row states.
 #[derive(Clone, Debug, Default)]
 pub struct RowRoles {
     pub inputs: Vec<(String, usize)>,

@@ -177,6 +177,84 @@ pub fn query_pairing_regression<'a>() -> Required<'a> {
 mod pairing_tests {
     use super::*;
     #[test]
+    fn query_replay_moves_state_with_tables_and_preserves_signed_zero_bits() {
+        use crate::kit::{Outcome, properties};
+        use kernel_core::backend::Backend;
+        use kernel_core::properties::{Invariance, Property, Scope};
+        use kernels_sm120::backend::Sm120;
+        use kernels_sm120::latent::glue::{Entry, Kernel};
+        for heads in [1, 3, 64] {
+            let query = LatentQueryRope {
+                heads,
+                latent: 512,
+                rotary: 64,
+            };
+            let backend = Sm120::new().with_latent_glue(Entry {
+                kernel: Kernel::QueryRope,
+                capacity: 17,
+                symbol: "query".into(),
+            });
+            let case = query_case(
+                query,
+                17,
+                backend.latent_query_rope(&query, Need::rows(17)).unwrap(),
+            )
+            .unwrap();
+            let images = case.images();
+            let claims = Invariance::any_rows(17);
+            let run = |images: &Images, live| case.oracle_bits(images, live);
+            let written = |name: &str, images: &Images, live| case.state_ranges(name, images, live);
+            let checks = properties::check(
+                claims,
+                &claims.claims(),
+                &case.leaves,
+                &images,
+                17,
+                &run,
+                &written,
+            );
+            assert_eq!(checks.len(), 3);
+            assert!(
+                checks
+                    .iter()
+                    .all(|c| matches!(c.outcome, Outcome::Passed(_))),
+                "heads {heads}: {checks:?}"
+            );
+            let selected = case.select(&images, &[16, 1, 16]).unwrap();
+            let row_bytes = heads as usize * 512 * 4;
+            assert_eq!(
+                &selected.bytes("query").unwrap()[..row_bytes],
+                &images.bytes("query").unwrap()[16 * row_bytes..17 * row_bytes]
+            );
+            let roles = case.row_roles(Scope::Entry).unwrap();
+            assert!(roles.inputs.iter().any(|(name, _)| name == "query"));
+            assert!(roles.outputs.iter().any(|(name, _)| name == "query"));
+            let wrong_sign = |images: &Images, live| {
+                let mut result = run(images, live)?;
+                if live > 1 {
+                    result.get_mut("query").unwrap()[448 * 4 + 3] ^= 0x80;
+                }
+                Ok(result)
+            };
+            let checks = properties::check(
+                claims,
+                &[Property::Rows, Property::Chunk],
+                &case.leaves,
+                &images,
+                17,
+                &wrong_sign,
+                &written,
+            );
+            assert!(
+                checks
+                    .iter()
+                    .all(|c| matches!(c.outcome, Outcome::Failed(_))),
+                "signed-zero mutation escaped: {checks:?}"
+            );
+        }
+    }
+
+    #[test]
     fn quarter_turn_distinguishes_adjacent_and_split_half_pairs() {
         let query = LatentQueryRope {
             heads: 3,
@@ -454,7 +532,7 @@ fn write_case_impl<'a>(
     capacity: u32,
     first: i32,
     prepared: Prepared<LatentWindowWriteBuffers<View>>,
-    cos_sin: Vec<f32>,
+    mut cos_sin: Vec<f32>,
     fixture: WindowFixture,
 ) -> LabResult<OpCase<'a>> {
     if cos_sin.len() != capacity as usize * query.rotary as usize {
@@ -483,6 +561,20 @@ fn write_case_impl<'a>(
                 .unwrap_or(starts[b as usize])
         })
         .collect::<Vec<_>>();
+    // Put a retained row first so every nonempty live prefix exercises
+    // the store. Keep its table tied to the same absolute position. The
+    // displaced stale row remains in the full batch to test non-aliasing.
+    if !staged && i64::from(positions[0]) + slots as i64 <= i64::from(lasts[0]) {
+        let retained = positions
+            .iter()
+            .zip(&batches)
+            .position(|(&position, &batch)| batch == 0 && position == lasts[0])
+            .expect("the first sequence has a final row");
+        positions.swap(0, retained);
+        for channel in 0..tail {
+            cos_sin.swap(channel, retained * tail + channel);
+        }
+    }
     let (code_stride, scale_stride) = (slots * width + 66, slots * width / 32 + 7);
     let mut input = latent_values(capacity, width);
     // A tiny row exposes the norm epsilon; a zero row checks the quantizer's
@@ -572,7 +664,7 @@ fn write_case_impl<'a>(
         .ok_or("window write has no normalization stage")?
         .0
         .clone();
-    let mut case = OpCase::new(prepared, capacity, roles)?
+    let case = OpCase::new(prepared, capacity, roles)?
         .oracle(move |images, live| {
             let (mut latent, encoded) = oracle::window_rows(
                 query,
@@ -632,32 +724,6 @@ fn write_case_impl<'a>(
         })
         .omission_guard(&producer, "latent")
         .omission_guard(&quantizer, "quantized_codes");
-    if let WindowAddressing::Circular { slots } = query.addressing {
-        for live in crate::poison::live_counts(capacity)
-            .into_iter()
-            .filter(|&n| n > 0)
-        {
-            if positions[..live as usize]
-                .iter()
-                .zip(&batches)
-                .all(|(&p, &b)| {
-                    b < 0
-                        || b as usize >= lasts.len()
-                        || p < 0
-                        || p > lasts[b as usize]
-                        || i64::from(p) + i64::from(slots) <= i64::from(lasts[b as usize])
-                })
-            {
-                for plane in ["window.codes", "window.scales"] {
-                    case = case.no_write(
-                        plane,
-                        live,
-                        "all live rows precede the retained ring tail selected by last_positions",
-                    );
-                }
-            }
-        }
-    }
     Ok(case)
 }
 

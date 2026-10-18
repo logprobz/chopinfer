@@ -163,6 +163,46 @@ fn check(report: &kit::Report, expected: usize, gpu: bool) {
     }
 }
 #[test]
+fn retained_ring_store_is_observable_at_every_nonzero_live_count() {
+    use kernel_core::backend::{Backend, Need};
+    let query = LatentWindowWrite {
+        latent: 512,
+        rotary: 64,
+        epsilon_bits: 1e-20_f32.to_bits(),
+        addressing: WindowAddressing::Circular { slots: 136 },
+    };
+    let case = latent_glue::write_case(
+        query,
+        320,
+        0,
+        backend()
+            .latent_window_write(&query, Need::rows(320))
+            .unwrap(),
+    )
+    .unwrap();
+    let images = case.images();
+    for live in kernel_harness::poison::live_counts(320)
+        .into_iter()
+        .filter(|&n| n > 0)
+    {
+        for plane in ["window.codes", "window.scales"] {
+            assert!(
+                !case.state_ranges(plane, &images, live).unwrap().is_empty(),
+                "{plane} is inert at live {live}"
+            );
+        }
+    }
+    let expected = case.oracle_bits(&images, 1).unwrap();
+    for plane in ["window.codes", "window.scales"] {
+        assert_ne!(
+            expected[plane],
+            images.bytes(plane).unwrap(),
+            "omitting the store escapes at live one: {plane}"
+        );
+    }
+}
+
+#[test]
 fn all_latent_glue_cases_prepare_and_declare() {
     let modules = FamilyModules {
         directory: PathBuf::new(),

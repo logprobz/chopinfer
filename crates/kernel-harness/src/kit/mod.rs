@@ -242,7 +242,9 @@ impl<'a> Spec<'a> {
     /// `updated` gives, such as a recurrent slot a step advances in place:
     /// they keep the image before each launch (only `write` is poisoned),
     /// the oracle's whole state covers them, and the property checks
-    /// compare them with the bytes `write` names.
+    /// compare them with the bytes `write` names. Live-row states move with
+    /// the row inputs and compare their whole rows; fixed-row states retain
+    /// their physical addresses and compare only the written ranges.
     pub fn state_updating(
         dtype: DType,
         (rows, row_elements): (Rows, usize),
@@ -1860,7 +1862,7 @@ mod tests {
     }
 
     /// A state binds as in-place state: its image, a write map the oracle
-    /// covers, and no row property compares it.
+    /// covers, and live rows participate in the row property checks.
     #[test]
     fn a_state_role_declares_with_its_write_map() {
         let image = bf16_bytes(&bf16_values(3, 4 * WIDTH));

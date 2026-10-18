@@ -8518,28 +8518,34 @@ mod tests {
         let bf16 = manifest.kv_layout().clone();
         let native = BundleKvLayoutV1::new(
             id("fixture.kv-native.v1"),
-            u64::from(bf16.page_tokens()) * 24,
+            u64::from(bf16.page_tokens()) * 64,
             8,
             bf16.page_tokens(),
-            24,
+            64,
             1,
             bf16.maximum_sequence_tokens(),
             BundleRankPlacementV1::Replicated,
             BundleStateLifetimeV1::Transaction,
         )
         .expect("the native test layout is valid");
-        let scale = |format, block| Some(BundleKvScaleV1::new(format, block).unwrap());
+        let scale =
+            |format, block, offset| Some(BundleKvScaleV1::new(format, block, offset).unwrap());
+        // 32 FP8 values and their scale, then 32 FP4 values and their two.
         let planes = vec![
             BundleKvPlaneV1::new(
                 id("window"),
                 BundleKvCodeV1::Fp8E4m3,
-                scale(BundleKvScaleFormatV1::Ue8m0, 32),
+                32,
+                0,
+                scale(BundleKvScaleFormatV1::Ue8m0, 32, 32),
             )
             .unwrap(),
             BundleKvPlaneV1::new(
                 id("compressed"),
                 BundleKvCodeV1::Fp4E2m1,
-                scale(BundleKvScaleFormatV1::E4m3, 16),
+                32,
+                40,
+                scale(BundleKvScaleFormatV1::E4m3, 16, 56),
             )
             .unwrap(),
         ];

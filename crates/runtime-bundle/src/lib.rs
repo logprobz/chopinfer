@@ -622,17 +622,27 @@ impl BundleKvScaleFormatV1 {
     }
 }
 
-/// One scale for each `block` consecutive values of a plane.
+/// One scale for each `block` consecutive values of a plane, one byte each,
+/// stored from `offset` within each token's bytes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BundleKvScaleV1 {
     block: u32,
     format: BundleKvScaleFormatV1,
+    offset: u64,
 }
 
 impl BundleKvScaleV1 {
-    pub fn new(format: BundleKvScaleFormatV1, block: u32) -> Result<Self, BundleError> {
-        let scale = Self { block, format };
+    pub fn new(
+        format: BundleKvScaleFormatV1,
+        block: u32,
+        offset: u64,
+    ) -> Result<Self, BundleError> {
+        let scale = Self {
+            block,
+            format,
+            offset,
+        };
         scale.validate()?;
         Ok(scale)
     }
@@ -647,6 +657,12 @@ impl BundleKvScaleV1 {
         self.block
     }
 
+    /// Where the plane's scales start within each token's bytes.
+    #[must_use]
+    pub const fn offset(&self) -> u64 {
+        self.offset
+    }
+
     fn validate(&self) -> Result<(), BundleError> {
         if self.block == 0 {
             return Err(BundleError::validation(
@@ -657,24 +673,36 @@ impl BundleKvScaleV1 {
     }
 }
 
-/// One named plane of a mixed-plane KV element: the code its values are
-/// stored in and, for a scaled code, the format of its block scales.
+/// One named plane of a mixed-plane KV element: the `values` each token
+/// stores in it, the code they are stored in from `offset` within each
+/// token's bytes and, for a scaled code, the format and place of their block
+/// scales.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BundleKvPlaneV1 {
     code: BundleKvCodeV1,
     name: BundleOpaqueId,
+    offset: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     scale: Option<BundleKvScaleV1>,
+    values: u32,
 }
 
 impl BundleKvPlaneV1 {
     pub fn new(
         name: BundleOpaqueId,
         code: BundleKvCodeV1,
+        values: u32,
+        offset: u64,
         scale: Option<BundleKvScaleV1>,
     ) -> Result<Self, BundleError> {
-        let plane = Self { code, name, scale };
+        let plane = Self {
+            code,
+            name,
+            offset,
+            scale,
+            values,
+        };
         plane.validate()?;
         Ok(plane)
     }
@@ -694,6 +722,35 @@ impl BundleKvPlaneV1 {
         self.scale
     }
 
+    /// The values each token stores in this plane.
+    #[must_use]
+    pub const fn values(&self) -> u32 {
+        self.values
+    }
+
+    /// Where the plane's codes start within each token's bytes.
+    #[must_use]
+    pub const fn offset(&self) -> u64 {
+        self.offset
+    }
+
+    /// The byte ranges of each token's bytes this plane stores: its codes,
+    /// then its scales when it has them.
+    fn regions(&self) -> Option<Vec<(u64, u64)>> {
+        let bits = match self.code {
+            BundleKvCodeV1::Bf16 => 16,
+            BundleKvCodeV1::Fp8E4m3 => 8,
+            BundleKvCodeV1::Fp4E2m1 => 4,
+        };
+        let codes = u64::from(self.values) * bits / 8;
+        let mut regions = vec![(self.offset, self.offset.checked_add(codes)?)];
+        if let Some(scale) = self.scale {
+            let scales = u64::from(self.values / scale.block);
+            regions.push((scale.offset, scale.offset.checked_add(scales)?));
+        }
+        Some(regions)
+    }
+
     /// The plane as `code` or `code/scale x block`, for messages.
     #[must_use]
     pub fn describe(&self) -> String {
@@ -711,6 +768,18 @@ impl BundleKvPlaneV1 {
 
     fn validate(&self) -> Result<(), BundleError> {
         validate_opaque_id(self.name.as_str())?;
+        if self.values == 0
+            || self.code == BundleKvCodeV1::Fp4E2m1 && self.values % 2 != 0
+            || self
+                .scale
+                .is_some_and(|scale| scale.block != 0 && self.values % scale.block != 0)
+        {
+            return Err(BundleError::validation(format!(
+                "bundle KV plane {} must store a positive number of values in whole bytes \
+                 and whole scale blocks, not {}",
+                self.name, self.values
+            )));
+        }
         match (self.code, self.scale) {
             (BundleKvCodeV1::Bf16, Some(_)) => Err(BundleError::validation(format!(
                 "bundle KV plane {} stores BF16 and takes no scale",
@@ -752,7 +821,8 @@ impl BundleKvFormatV1 {
         }
     }
 
-    /// A mixed-plane format of `planes`, distinctly named.
+    /// A mixed-plane format of `planes`, distinctly named, whose codes and
+    /// scales fit apart within each token of `layout`.
     pub fn mixed_planes(
         planes: Vec<BundleKvPlaneV1>,
         layout: BundleKvLayoutV1,
@@ -801,6 +871,39 @@ impl BundleKvFormatV1 {
                 return Err(BundleError::validation(format!(
                     "bundle KV format {} declares plane {} twice",
                     self.layout.id, plane.name
+                )));
+            }
+        }
+        self.validate_plane_bytes()
+    }
+
+    /// Every plane's codes and scales lie within each token's
+    /// `bytes_per_token` and share no byte with another's, so the page the
+    /// layout allocates holds every plane it declares.
+    fn validate_plane_bytes(&self) -> Result<(), BundleError> {
+        let mut regions = Vec::new();
+        for plane in &self.planes {
+            let within = plane.regions().filter(|regions| {
+                regions
+                    .iter()
+                    .all(|&(_, end)| end <= self.layout.bytes_per_token)
+            });
+            let Some(within) = within else {
+                return Err(BundleError::validation(format!(
+                    "bundle KV plane {} of {} values does not fit the {} bytes per token \
+                     of KV layout {}",
+                    plane.name, plane.values, self.layout.bytes_per_token, self.layout.id
+                )));
+            };
+            regions.extend(within.into_iter().map(|region| (region, &plane.name)));
+        }
+        regions.sort();
+        for pair in regions.windows(2) {
+            let (((_, end), first), ((start, _), second)) = (pair[0], pair[1]);
+            if start < end {
+                return Err(BundleError::validation(format!(
+                    "bundle KV planes {first} and {second} of KV layout {} share bytes",
+                    self.layout.id
                 )));
             }
         }
@@ -5881,21 +5984,29 @@ mod tests {
         ]));
     }
 
+    /// A plane of `values` codes from `offset`, with its scales' format,
+    /// block and offset when it is scaled.
     fn plane(
         name: &str,
         code: BundleKvCodeV1,
-        scale: Option<(BundleKvScaleFormatV1, u32)>,
+        values: u32,
+        offset: u64,
+        scale: Option<(BundleKvScaleFormatV1, u32, u64)>,
     ) -> BundleKvPlaneV1 {
-        let scale = scale.map(|(format, block)| BundleKvScaleV1::new(format, block).unwrap());
-        BundleKvPlaneV1::new(id(name), code, scale).unwrap()
+        let scale = scale
+            .map(|(format, block, offset)| BundleKvScaleV1::new(format, block, offset).unwrap());
+        BundleKvPlaneV1::new(id(name), code, values, offset, scale).unwrap()
     }
 
+    /// Three planes in 98 of a token's 128 bytes: 32 FP8 values and their
+    /// scale, 32 FP4 values and their two scales, 64 FP4 values and their two.
     fn native_planes() -> Vec<BundleKvPlaneV1> {
+        use BundleKvCodeV1::{Fp4E2m1, Fp8E4m3};
         use BundleKvScaleFormatV1::{E4m3, Ue8m0};
         vec![
-            plane("window", BundleKvCodeV1::Fp8E4m3, Some((Ue8m0, 32))),
-            plane("compressed", BundleKvCodeV1::Fp4E2m1, Some((E4m3, 16))),
-            plane("index", BundleKvCodeV1::Fp4E2m1, Some((Ue8m0, 32))),
+            plane("window", Fp8E4m3, 32, 0, Some((Ue8m0, 32, 32))),
+            plane("compressed", Fp4E2m1, 32, 40, Some((E4m3, 16, 56))),
+            plane("index", Fp4E2m1, 64, 64, Some((Ue8m0, 32, 96))),
         ]
     }
 
@@ -5914,7 +6025,7 @@ mod tests {
     fn a_mixed_plane_kv_format_names_its_planes_and_its_capability() {
         let manifest = test_manifest();
         let primary = manifest.kv_layout().clone();
-        let native = kv_layout("fixture.kv-native.v1", 32, 1_024);
+        let native = kv_layout("fixture.kv-native.v1", 128, 1_024);
         let mixed = BundleKvFormatV1::mixed_planes(native_planes(), native.clone()).unwrap();
         let formats = vec![
             mixed.clone(),
@@ -5956,9 +6067,12 @@ mod tests {
         assert_eq!(
             value["kv_formats"][1]["planes"],
             serde_json::json!([
-                {"code": "fp8_e4m3", "name": "window", "scale": {"block": 32, "format": "ue8m0"}},
-                {"code": "fp4_e2m1", "name": "compressed", "scale": {"block": 16, "format": "e4m3"}},
-                {"code": "fp4_e2m1", "name": "index", "scale": {"block": 32, "format": "ue8m0"}},
+                {"code": "fp8_e4m3", "name": "window", "offset": 0, "values": 32,
+                 "scale": {"block": 32, "format": "ue8m0", "offset": 32}},
+                {"code": "fp4_e2m1", "name": "compressed", "offset": 40, "values": 32,
+                 "scale": {"block": 16, "format": "e4m3", "offset": 56}},
+                {"code": "fp4_e2m1", "name": "index", "offset": 64, "values": 64,
+                 "scale": {"block": 32, "format": "ue8m0", "offset": 96}},
             ])
         );
         assert_eq!(value["kv_formats"][1]["dtype"], "mixed_planes");
@@ -5968,7 +6082,7 @@ mod tests {
             both.declared_page_layout_for(&native, &id("tp1"))
                 .unwrap()
                 .bytes_per_token(),
-            32
+            128
         );
 
         // A host without the capability refuses the package by its name; a
@@ -5987,37 +6101,49 @@ mod tests {
     #[test]
     fn mixed_planes_are_declared_whole_and_never_on_another_element() {
         use BundleKvScaleFormatV1::{E4m3, Ue8m0};
-        let layout = kv_layout("fixture.kv-native.v1", 32, 1_024);
+        let layout = kv_layout("fixture.kv-native.v1", 128, 1_024);
         let refused = |planes: Vec<BundleKvPlaneV1>| {
             BundleKvFormatV1::mixed_planes(planes, layout.clone()).is_err()
         };
         assert!(refused(Vec::new()));
         let mut twice = native_planes();
-        twice.push(plane("window", BundleKvCodeV1::Bf16, None));
+        twice.push(plane("window", BundleKvCodeV1::Bf16, 8, 100, None));
         assert!(refused(twice));
         assert!(refused(
             (0..=MAX_KV_PLANES)
-                .map(|index| plane(&format!("plane{index}"), BundleKvCodeV1::Bf16, None))
+                .map(|index| {
+                    let offset = 2 * index as u64;
+                    plane(
+                        &format!("plane{index}"),
+                        BundleKvCodeV1::Bf16,
+                        1,
+                        offset,
+                        None,
+                    )
+                })
                 .collect()
         ));
         // FP4 codes carry their scale, BF16 takes none, and a block holds a value.
-        let fp4 = BundleKvPlaneV1::new(id("compressed"), BundleKvCodeV1::Fp4E2m1, None);
+        let fp4 = BundleKvPlaneV1::new(id("compressed"), BundleKvCodeV1::Fp4E2m1, 32, 0, None);
         assert!(fp4.is_err());
         let bf16 = BundleKvPlaneV1::new(
             id("window"),
             BundleKvCodeV1::Bf16,
-            Some(BundleKvScaleV1::new(E4m3, 16).unwrap()),
+            16,
+            0,
+            Some(BundleKvScaleV1::new(E4m3, 16, 32).unwrap()),
         );
         assert!(bf16.is_err());
-        assert!(BundleKvScaleV1::new(Ue8m0, 0).is_err());
+        assert!(BundleKvScaleV1::new(Ue8m0, 0, 0).is_err());
         assert_eq!(
-            plane("window", BundleKvCodeV1::Fp8E4m3, None).describe(),
+            plane("window", BundleKvCodeV1::Fp8E4m3, 32, 0, None).describe(),
             "window fp8_e4m3"
         );
         assert_eq!(native_planes()[1].describe(), "compressed fp4_e2m1/e4m3x16");
 
         // A decoded format is checked by the same rules: planes on a BF16
-        // element, a mixed-plane element without planes, an unscaled FP4 plane.
+        // element, a mixed-plane element without planes, an unscaled FP4 plane,
+        // and a plane wider than its layout's token.
         let bf16 =
             serde_json::to_value(BundleKvFormatV1::new(BundleKvDtypeV1::Bf16, layout.clone()))
                 .unwrap();
@@ -6029,15 +6155,68 @@ mod tests {
         with_planes["planes"] = mixed["planes"].clone();
         let mut without_planes = mixed.clone();
         without_planes.as_object_mut().unwrap().remove("planes");
-        let mut unscaled = mixed;
+        let mut unscaled = mixed.clone();
         unscaled["planes"][1]
             .as_object_mut()
             .unwrap()
             .remove("scale");
-        for value in [with_planes, without_planes, unscaled] {
+        let mut wide = mixed;
+        wide["planes"][2]["values"] = 1_024.into();
+        for value in [with_planes, without_planes, unscaled, wide] {
             let format: BundleKvFormatV1 = serde_json::from_value(value.clone()).unwrap();
             assert!(format.validate().is_err(), "{value}");
         }
+    }
+
+    #[test]
+    fn mixed_planes_fit_the_bytes_their_layout_allocates() {
+        use BundleKvCodeV1::{Bf16, Fp4E2m1, Fp8E4m3};
+        use BundleKvScaleFormatV1::Ue8m0;
+        // A plane states its width and place: one without them is refused.
+        let bare = serde_json::json!(
+            {"name": "p", "code": "fp4_e2m1", "scale": {"format": "ue8m0", "block": 32}}
+        );
+        assert!(serde_json::from_value::<BundleKvPlaneV1>(bare).is_err());
+
+        // One block of 32 FP4 values needs 16 code bytes and one scale byte
+        // per token: a page of one byte per token, or 16, cannot hold it.
+        let one_block = plane("p", Fp4E2m1, 32, 0, Some((Ue8m0, 32, 16)));
+        let format = |planes: Vec<BundleKvPlaneV1>, bytes: u64| {
+            BundleKvFormatV1::mixed_planes(planes, kv_layout("fixture.kv-planes.v1", bytes, 1_024))
+        };
+        for bytes in [1, 16] {
+            let error = format(vec![one_block.clone()], bytes)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("does not fit"), "{error}");
+        }
+        format(vec![one_block.clone()], 32).unwrap();
+
+        // Values come in whole bytes and whole scale blocks.
+        let scale = |offset| Some(BundleKvScaleV1::new(Ue8m0, 32, offset).unwrap());
+        for (code, values) in [(Fp4E2m1, 0), (Fp4E2m1, 31), (Fp8E4m3, 48), (Bf16, 0)] {
+            let scale = if code == Bf16 { None } else { scale(64) };
+            assert!(
+                BundleKvPlaneV1::new(id("p"), code, values, 0, scale).is_err(),
+                "{code:?} {values}"
+            );
+        }
+
+        // Codes and scales share no byte, within a plane or across planes,
+        // and an offset past u64 is refused rather than wrapped.
+        let overlap = |planes| format(planes, 64).unwrap_err().to_string();
+        let own = plane("p", Fp4E2m1, 32, 0, Some((Ue8m0, 32, 15)));
+        assert!(overlap(vec![own]).contains("share bytes"));
+        let other = plane("q", Fp8E4m3, 8, 16, None);
+        let error = overlap(vec![one_block.clone(), other]);
+        assert!(
+            error.contains("p and q") || error.contains("q and p"),
+            "{error}"
+        );
+        let past = plane("p", Fp8E4m3, 8, u64::MAX - 2, None);
+        assert!(format(vec![past], 64).is_err());
+        let beside = plane("q", Fp8E4m3, 8, 17, None);
+        format(vec![one_block, beside], 32).unwrap();
     }
 
     #[test]

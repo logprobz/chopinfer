@@ -620,7 +620,8 @@ pub trait Backend: Send + Sync {
     }
 
     /// The weighted stream collapse before the final norm (`Head` with
-    /// `SigmoidWeighted`), by the last lagged mix-collapse's `pre`.
+    /// `SigmoidWeighted` or `SigmoidWeightedF32`), by the last lagged
+    /// mix-collapse's `pre`. The mode determines the output dtype.
     ///
     /// Launches read `Counts::rows` alone.
     fn sinkhorn_weighted_head(

@@ -49,7 +49,8 @@ pub enum HyperConnectionPlacement {
     /// sublayer's streams: each sublayer collapses with the F32 `pre` the
     /// previous sublayer's mixer stored, the first with the one-hot `pre`
     /// `(1, 0, ..., 0)`, and the last sublayer's `pre` weights the head
-    /// ([`StreamHeadMode::SigmoidWeighted`]). Its mix-collapse stores `pre`,
+    /// ([`StreamHeadMode::SigmoidWeighted`] or
+    /// [`StreamHeadMode::SigmoidWeightedF32`]). Its mix-collapse stores `pre`,
     /// `post` and `comb` in F32 and pairs with
     /// [`SinkhornHyperConnectionQuery::ExpandF32`].
     LaggedSinglePass,
@@ -64,6 +65,10 @@ pub enum StreamHeadMode {
     /// order, with `pre` the F32 collapse weights (sigmoid plus eps) the
     /// last sublayer's lagged mixer stored.
     SigmoidWeighted,
+    /// `sum_i pre_i * f32(X_i)`, the same F32 FMA chain from zero in
+    /// stream order as `SigmoidWeighted`, stored as F32 without a final
+    /// BF16 rounding. `pre` is the last lagged mixer's F32 collapse weights.
+    SigmoidWeightedF32,
 }
 
 /// The mixer's parameters (4 streams, width 4096, 20 iterations, eps 1e-6,
@@ -207,9 +212,9 @@ pub enum SinkhornHyperConnectionQuery {
         width: u32,
         capacity: u32,
     },
-    /// The collapse before the final norm and model head, `[rows, H]` BF16,
-    /// as `mode` states it. `MeanOfStreams` reads the streams
-    /// ([`StreamHeadBuffers`]); `SigmoidWeighted` also reads the F32 `pre`
+    /// The collapse before the final norm and model head, `[rows, H]`,
+    /// BF16 or F32 as `mode` states it. `MeanOfStreams` reads the streams
+    /// ([`StreamHeadBuffers`]); both weighted modes also read the F32 `pre`
     /// `[rows, N]` the last lagged mix-collapse stored
     /// ([`WeightedStreamHeadBuffers`]).
     Head {
@@ -364,6 +369,10 @@ impl NumericalContract for SinkhornHyperConnectionQuery {
                 mode: StreamHeadMode::SigmoidWeighted,
                 ..
             } => "row.hc-stream-weighted-collapse.v1",
+            Self::Head {
+                mode: StreamHeadMode::SigmoidWeightedF32,
+                ..
+            } => "row.hc-stream-weighted-collapse-f32.v1",
             Self::AllReduceExpandMixNorm {
                 norm: RmsNormReduction::Ordered,
                 ..
@@ -491,9 +500,10 @@ crate::scratch_record! {
 
 crate::scratch_record! {
     /// A weighted stream head's buffers (`SinkhornHyperConnectionQuery::Head`
-    /// with `StreamHeadMode::SigmoidWeighted`): the BF16 streams `x`
+    /// with `StreamHeadMode::SigmoidWeighted` or `SigmoidWeightedF32`): the BF16 streams `x`
     /// `[rows, N * H]` and the F32 collapse weights `pre` `[rows, N]` it
-    /// reads, and the BF16 collapsed `output` `[rows, H]` it writes.
+    /// reads, and the collapsed `output` `[rows, H]` it writes, BF16 for
+    /// `SigmoidWeighted` and F32 for `SigmoidWeightedF32`.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct WeightedStreamHeadBuffers {
         pub x: value,
@@ -826,6 +836,10 @@ mod tests {
         assert_eq!(
             id(head(StreamHeadMode::SigmoidWeighted)),
             name("row.hc-stream-weighted-collapse.v1")
+        );
+        assert_eq!(
+            id(head(StreamHeadMode::SigmoidWeightedF32)),
+            name("row.hc-stream-weighted-collapse-f32.v1")
         );
         assert_eq!(
             id(head(StreamHeadMode::MeanOfStreams)),

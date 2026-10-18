@@ -19,7 +19,7 @@
 //! same `pre`, `post` and `comb` stored in F32, and its collapsed row is an
 //! exact function of the given `pre_in` ([`collapse`]). `ExpandF32` and the
 //! sigmoid-weighted head are exact functions of their BF16 and F32 operands
-//! ([`expand_f32`], [`weighted_head`]); [`expand_f32_reference`] and
+//! ([`expand_f32`], [`weighted_head`], [`weighted_head_f32`]); [`expand_f32_reference`] and
 //! [`weighted_head_reference`] are their f64 forms, which the exact forms
 //! lie within.
 //! `MixCollapseNorm`'s mix-collapse outputs are `MixCollapse`'s, and its
@@ -888,6 +888,7 @@ pub fn weighted_head(
     x: &[u16],
     pre: &[f32],
 ) -> Result<Vec<u16>, Refusal> {
+    require_head_mode(query, StreamHeadMode::SigmoidWeighted)?;
     let (n, h, rows) = weighted_head_shape(query, x.len(), pre.len())?;
     let mut out = vec![0; rows * h];
     for row in 0..rows {
@@ -902,10 +903,46 @@ pub fn weighted_head(
     Ok(out)
 }
 
-/// The sigmoid-weighted `Head` in f64 from the streams' values and the F32
+/// The F32-output sigmoid-weighted `Head` exactly: an F32 FMA chain from
+/// +0 in stream order with no BF16 rounding. `x` is `[rows, N, H]` BF16
+/// bits and `pre` is `[rows, N]` F32; the result is `[rows, H]` F32.
+/// Compare its bits, including signed zero, with the device output.
+pub fn weighted_head_f32(
+    query: SinkhornHyperConnectionQuery,
+    x: &[u16],
+    pre: &[f32],
+) -> Result<Vec<f32>, Refusal> {
+    require_head_mode(query, StreamHeadMode::SigmoidWeightedF32)?;
+    let (n, h, rows) = weighted_head_shape(query, x.len(), pre.len())?;
+    let mut out = vec![0.0; rows * h];
+    for row in 0..rows {
+        for col in 0..h {
+            let mut sum = 0.0_f32;
+            for i in 0..n {
+                sum = pre[row * n + i].mul_add(bf16_to_f32(x[(row * n + i) * h + col]), sum);
+            }
+            out[row * h + col] = sum;
+        }
+    }
+    Ok(out)
+}
+
+fn require_head_mode(
+    query: SinkhornHyperConnectionQuery,
+    expected: StreamHeadMode,
+) -> Result<(), Refusal> {
+    if !matches!(query, SinkhornHyperConnectionQuery::Head { mode, .. } if mode == expected) {
+        return Err(Refusal("weighted head output mode mismatch"));
+    }
+    Ok(())
+}
+
+/// Either sigmoid-weighted `Head` in f64 from the streams' values and the F32
 /// weights `pre`: `sum_i pre_i * X_i` within `N` roundings of its sum of
-/// absolute terms plus the BF16 rounding (K = 1). [`weighted_head`] lies
-/// within it.
+/// absolute terms, plus underflow slack (K = 1). The BF16 mode also
+/// includes its output rounding; the F32 mode has no BF16 allowance.
+/// [`weighted_head`] and [`weighted_head_f32`] lie within their bounds,
+/// checked with their respective output dtype. Exact bits remain required.
 pub fn weighted_head_reference(
     query: SinkhornHyperConnectionQuery,
     x: &[f64],
@@ -920,7 +957,18 @@ pub fn weighted_head_reference(
         for col in 0..h {
             let (value, far) = weighted_column(&given, streams, h, col);
             values.push(value);
-            bounds.push(stored_bound(value, value - far, value + far) / GATE);
+            let bound = if matches!(
+                query,
+                SinkhornHyperConnectionQuery::Head {
+                    mode: StreamHeadMode::SigmoidWeightedF32,
+                    ..
+                }
+            ) {
+                far + n as f64 * TINY
+            } else {
+                stored_bound(value, value - far, value + far)
+            };
+            bounds.push(bound / GATE);
         }
     }
     OracleOutput::new(values, bounds, 1)
@@ -935,7 +983,7 @@ fn weighted_head_shape(
     let SinkhornHyperConnectionQuery::Head {
         streams,
         width,
-        mode: StreamHeadMode::SigmoidWeighted,
+        mode: StreamHeadMode::SigmoidWeighted | StreamHeadMode::SigmoidWeightedF32,
         capacity,
     } = query
     else {
@@ -1990,6 +2038,101 @@ mod tests {
             expand(bf16_query, &x, &y, &round(&post), &round(&comb)).unwrap(),
             exact
         );
+    }
+
+    #[test]
+    fn weighted_head_f32_preserves_low_bits_and_stream_order() {
+        let q = SinkhornHyperConnectionQuery::Head {
+            streams: 4,
+            width: 3,
+            mode: StreamHeadMode::SigmoidWeightedF32,
+            capacity: 2,
+        };
+        // Column 0 loses 2^-24 before cancellation in stream order, but
+        // retains it in reverse order. Column 1 lies halfway between BF16
+        // values. Column 2 pins the +0 start for negative zero inputs.
+        let x = [
+            0x3f80, 0x3f80, 0x8000, 0x3380, 0x3b80, 0x8000, 0xbf80, 0x0000, 0x8000, 0x0000, 0x0000,
+            0x8000,
+        ];
+        let pre = [1.0; 4];
+        let out = weighted_head_f32(q, &x, &pre).unwrap();
+        let bits = |v: &[f32]| v.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(&out), [0, 1.00390625_f32.to_bits(), 0]);
+        let rounded = out
+            .iter()
+            .map(|&v| bf16_to_f32(f32_to_bf16(v)))
+            .collect::<Vec<_>>();
+        let reversed = (0..3)
+            .map(|col| {
+                (0..4).rev().fold(0.0_f32, |sum, i| {
+                    pre[i].mul_add(bf16_to_f32(x[i * 3 + col]), sum)
+                })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            crate::oracle::check_exact(&bits(&rounded), &bits(&out)),
+            Err(1)
+        );
+        assert_eq!(
+            crate::oracle::check_exact(&bits(&reversed), &bits(&out)),
+            Err(0)
+        );
+        let reference = weighted_head_reference(q, &values_of(&x), &pre).unwrap();
+        check_numeric(&widen(&out), &reference, DType::F32).unwrap();
+        assert!(check_numeric(&widen(&rounded), &reference, DType::F32).is_err());
+        // The f64 bound alone cannot pin the stream order.
+        check_numeric(&widen(&reversed), &reference, DType::F32).unwrap();
+        assert!(weighted_head(q, &x, &pre).is_err());
+        assert!(weighted_head_f32(q, &x[..11], &pre).is_err());
+        assert!(weighted_head_f32(q, &x, &pre[..3]).is_err());
+        assert!(weighted_head_f32(q, &x.repeat(3), &pre.repeat(3)).is_err());
+        for mode in [
+            StreamHeadMode::MeanOfStreams,
+            StreamHeadMode::SigmoidWeighted,
+        ] {
+            let wrong = SinkhornHyperConnectionQuery::Head {
+                streams: 4,
+                width: 3,
+                mode,
+                capacity: 2,
+            };
+            assert!(weighted_head_f32(wrong, &x, &pre).is_err());
+        }
+    }
+
+    #[test]
+    fn weighted_head_f32_at_5120_lies_within_its_f64_bound() {
+        let (rows, n, h) = (3, 4, 5120);
+        let q = SinkhornHyperConnectionQuery::Head {
+            streams: n as u32,
+            width: h as u32,
+            mode: StreamHeadMode::SigmoidWeightedF32,
+            capacity: 8,
+        };
+        let x = bits(&grid(rows * n * h, 63));
+        let pre = grid(rows * n, 64)
+            .iter()
+            .map(|&v| (0.5 + v / 2.0) as f32 + 1e-6)
+            .collect::<Vec<_>>();
+        let out = weighted_head_f32(q, &x, &pre).unwrap();
+        let reference = weighted_head_reference(q, &values_of(&x), &pre).unwrap();
+        check_numeric(&widen(&out), &reference, DType::F32).unwrap();
+        let bf16_query = SinkhornHyperConnectionQuery::Head {
+            streams: n as u32,
+            width: h as u32,
+            mode: StreamHeadMode::SigmoidWeighted,
+            capacity: 8,
+        };
+        assert_eq!(
+            out.iter().map(|&v| f32_to_bf16(v)).collect::<Vec<_>>(),
+            weighted_head(bf16_query, &x, &pre).unwrap()
+        );
+        let rounded = out
+            .iter()
+            .map(|&v| bf16_to_f32(f32_to_bf16(v)))
+            .collect::<Vec<_>>();
+        assert!(check_numeric(&widen(&rounded), &reference, DType::F32).is_err());
     }
 
     #[test]

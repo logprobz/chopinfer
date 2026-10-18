@@ -43,7 +43,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "latent_window_chain",
             "latent_glue",
         ][..],
-        "rmsnorm_f32" | "latent_staged_window_keys" => &["dependency_probes"][..],
+        "rmsnorm_f32" => &["dependency_probes", "rmsnorm_status_mutants"][..],
+        "latent_staged_window_keys" => &["dependency_probes"][..],
         _ => &[][..],
     };
     for (name, required) in kernel_lab_families::all() {

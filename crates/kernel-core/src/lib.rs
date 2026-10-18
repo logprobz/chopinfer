@@ -55,6 +55,7 @@ pub mod rank_shape;
 pub mod recurrent;
 pub mod recurrent_oracle;
 pub mod rmsnorm;
+pub mod rmsnorm_status;
 pub mod rope_kv;
 pub mod rotary;
 pub mod router;

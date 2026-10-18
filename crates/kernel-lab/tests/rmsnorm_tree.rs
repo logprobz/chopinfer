@@ -160,6 +160,8 @@ impl Fixture {
         plan.pdl = pdl;
         let args: ArgumentList = norm
             .arguments(RmsNormBuffers {
+                status: None,
+                status_row_offset: 0,
                 x: X,
                 weight: WEIGHT,
                 residual: None,

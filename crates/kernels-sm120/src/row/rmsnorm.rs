@@ -296,7 +296,7 @@ impl RmsNorm {
         };
         let body = if self.requirement.output == DType::F32 {
             format!(
-                "chop::row::rmsnorm_f32<{width}>(x,weight,y,live_rows,__uint_as_float(eps_bits));"
+                "chop::row::rmsnorm_f32<{width}>(x,weight,y,live_rows,__uint_as_float(eps_bits),status,status_row_offset);"
             )
         } else if self.tree {
             format!(
@@ -307,7 +307,7 @@ impl RmsNorm {
                 "chop::row::rmsnorm<{width},{head},{kind},{residual}>(x,weight,residual,residual_out,y,live_rows,__uint_as_float(eps_bits));"
             )
         };
-        EntrySpec::new(
+        let mut entry = EntrySpec::new(
             symbol.into(),
             vec![
                 ptr(
@@ -335,7 +335,16 @@ impl RmsNorm {
             body,
             256,
             1,
-        )
+        );
+        if self.requirement.output == DType::F32 {
+            entry.params.extend([
+                ptr("status", "uint32_t"),
+                kernel_build::EntryParam::U64 {
+                    name: "status_row_offset".into(),
+                },
+            ]);
+        }
+        entry
     }
 
     /// The `#include` lines a cubin holding this entry needs.
@@ -390,7 +399,7 @@ impl RmsNorm {
                 ));
             }
         };
-        let args = ArgumentList(vec![
+        let mut args = ArgumentList(vec![
             Argument::DeviceBuffer(buffers.x),
             Argument::DeviceBuffer(buffers.weight),
             residual,
@@ -399,6 +408,20 @@ impl RmsNorm {
             Argument::DeviceBuffer(buffers.live_rows),
             Argument::U32(self.requirement.epsilon_bits),
         ]);
+        if self.requirement.output == DType::F32 {
+            let status = buffers
+                .status
+                .ok_or(Refusal("F32 RMSNorm requires row status"))?;
+            if [buffers.x, buffers.weight, buffers.y, buffers.live_rows].contains(&status) {
+                return Err(Refusal("F32 RMSNorm status must not alias another role"));
+            }
+            args.0.extend([
+                Argument::DeviceBuffer(status),
+                Argument::U64(buffers.status_row_offset),
+            ]);
+        } else if buffers.status.is_some() || buffers.status_row_offset != 0 {
+            return Err(Refusal("legacy BF16 RMSNorm has no row status"));
+        }
         args.validate()?;
         Ok(args)
     }
@@ -422,6 +445,8 @@ mod tests {
 
     fn buffers() -> RmsNormBuffers<u64> {
         RmsNormBuffers {
+            status: None,
+            status_row_offset: 0,
             x: 1,
             weight: 2,
             residual: None,

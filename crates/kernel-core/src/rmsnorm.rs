@@ -309,6 +309,14 @@ crate::scratch_record! {
         pub residual: optional(FusedResidual),
         pub y: value,
         pub live_rows: value,
+        /// Required for the plain TREE_256 F32 output, absent for legacy entries. The
+        /// caller clears these U32 words once per step and checks them at
+        /// step end. Nonfinite input/weight sets NONFINITE_INPUT; nonfinite
+        /// arithmetic sets UNREPRESENTABLE_OUTPUT. Any prior or new flag
+        /// produces positive-zero F32 output. Inactive words are untouched.
+        pub status: option,
+        /// Offset in U32 words, checked together with the launch row count.
+        pub status_row_offset: scalar(u64),
     }
 }
 

@@ -97,11 +97,15 @@ impl RmsNormOp {
         } else {
             TREE_256
         };
-        let info = OpInfo::new(
+        let mut info = OpInfo::new(
             implementation,
             Invariance::any_rows(capacity),
             vec![(symbol.clone(), 0)],
         );
+        if requirement.output == DType::F32 {
+            info.bytes.push(("status".into(), u64::from(capacity) * 4));
+            info.implementation.push_str(".status-or-zero.v2");
+        }
         Ok(Self {
             norm,
             symbol,
@@ -166,6 +170,15 @@ impl PreparedOp<RmsNormBuffers<View>> for RmsNormOp {
                 "F32 RMSNorm output must not overlap its inputs or live count",
             ));
         }
+        if requirement.output == DType::F32 {
+            buffers
+                .status
+                .ok_or(Refusal("F32 RMSNorm requires row status"))?
+                .covers(kernel_core::precision::quantizer::status_extent(
+                    buffers.status_row_offset,
+                    counts.rows,
+                )?)?;
+        }
         buffers.weight.covers(row_bytes)?;
         buffers.live_rows.covers(4)?;
         if let Some(residual) = buffers.residual {
@@ -177,6 +190,8 @@ impl PreparedOp<RmsNormBuffers<View>> for RmsNormOp {
             rows: counts.rows,
             plan,
             arguments: self.norm.arguments(RmsNormBuffers {
+                status: buffers.status.map(|v| v.handle),
+                status_row_offset: buffers.status_row_offset,
                 x: buffers.x.handle,
                 weight: buffers.weight.handle,
                 residual: buffers.residual.map(|r| FusedResidual {
@@ -404,6 +419,9 @@ impl PreparedOp<RmsNormBuffers<View>> for HeadNormOp {
         _workspace: View,
         counts: Counts,
     ) -> Result<Vec<Launch>, Refusal> {
+        if buffers.status.is_some() || buffers.status_row_offset != 0 {
+            return Err(Refusal("legacy BF16 RMSNorm has no row status"));
+        }
         let rows = self.engine.rows(counts)?;
         if counts.padded_rows > self.capacity {
             return Err(Refusal("RMSNorm rows exceed the prepared capacity"));
@@ -454,11 +472,14 @@ mod tests {
         let req = RmsNormRequirement {
             input: DType::F32,
             output: DType::F32,
+            numerics: Some(RmsNormNumerics::TREE_256),
             ..RmsNormRequirement::bf16_backend_chosen(1280, 1e-20, RmsNormKind::Plain, false)
         };
         let backend = Sm120::new().with_rmsnorm(req, "plain_f32");
         let prepared = backend.rmsnorm(&req, Need::rows(4)).unwrap();
         let b = RmsNormBuffers {
+            status: Some(view(50, 16)),
+            status_row_offset: 0,
             x: view(1, 4 * 1280 * 4),
             weight: view(2, 1280 * 2),
             residual: None,
@@ -466,6 +487,46 @@ mod tests {
             live_rows: view(4, 4),
         };
         assert!(prepared.launches(&b, View::EMPTY, Counts::rows(4)).is_ok());
+        let mut shifted = b;
+        shifted.status_row_offset = (1u64 << 32) + 3;
+        shifted.status = Some(view(50, (shifted.status_row_offset + 4) * 4));
+        let launches = prepared
+            .launches(&shifted, View::EMPTY, Counts::rows(4))
+            .unwrap();
+        assert_eq!(
+            launches[0].arguments.0.last(),
+            Some(&Argument::U64(shifted.status_row_offset))
+        );
+        shifted.status.as_mut().unwrap().bytes -= 1;
+        assert!(
+            prepared
+                .launches(&shifted, View::EMPTY, Counts::rows(4))
+                .is_err()
+        );
+        shifted.status_row_offset = u64::MAX;
+        assert!(
+            prepared
+                .launches(&shifted, View::EMPTY, Counts::rows(4))
+                .is_err()
+        );
+        for status in [
+            None,
+            Some(b.x),
+            Some(b.weight),
+            Some(b.y),
+            Some(b.live_rows),
+        ] {
+            assert!(
+                prepared
+                    .launches(
+                        &RmsNormBuffers { status, ..b },
+                        View::EMPTY,
+                        Counts::rows(4)
+                    )
+                    .is_err()
+            );
+        }
+
         assert!(
             prepared
                 .launches(
@@ -496,6 +557,8 @@ mod tests {
         assert_eq!(prepared.info().guarantees, Invariance::any_rows(16));
         let rows = 16 * 4096 * 2;
         let buffers = RmsNormBuffers {
+            status: None,
+            status_row_offset: 0,
             x: view(1, rows),
             weight: view(2, 4096 * 2),
             residual: None,
@@ -514,6 +577,8 @@ mod tests {
                 plan: built.plan(16).unwrap(),
                 arguments: built
                     .arguments(RmsNormBuffers {
+                        status: None,
+                        status_row_offset: 0,
                         x: 1,
                         weight: 2,
                         residual: None,
@@ -570,6 +635,8 @@ mod tests {
             let chosen = RmsNormRequirement::bf16_backend_chosen(width, 1e-6, kind, fused);
             let rows = 16 * u64::from(width) * 2;
             let buffers = RmsNormBuffers {
+                status: None,
+                status_row_offset: 0,
                 x: view(1, rows),
                 weight: view(2, u64::from(width) * 2),
                 residual: fused.then_some(FusedResidual {
@@ -637,6 +704,8 @@ mod tests {
         let prepared = backend.rmsnorm(&requirement, Need::rows(8192)).unwrap();
         let rows = 8192 * 4096 * 2;
         let buffers = RmsNormBuffers {
+            status: None,
+            status_row_offset: 0,
             x: view(1, rows),
             weight: view(2, 4096 * 2),
             residual: None,
@@ -667,6 +736,8 @@ mod tests {
     fn rmsnorm_entries_prepare_alike_in_every_order() {
         let requirement = hf(4096);
         let buffers = RmsNormBuffers {
+            status: None,
+            status_row_offset: 0,
             x: view(1, 4096 * 2),
             weight: view(2, 4096 * 2),
             residual: None,
@@ -708,6 +779,8 @@ mod tests {
         let requirement = hf(4096);
         let rows = 16 * 4096 * 2;
         let buffers = RmsNormBuffers {
+            status: None,
+            status_row_offset: 0,
             x: view(1, rows),
             weight: view(2, 4096 * 2),
             residual: None,
@@ -796,6 +869,8 @@ mod tests {
 
     fn heads_buffers(rows: u64, input_stride: u64, output_stride: u64) -> RmsNormBuffers<View> {
         RmsNormBuffers {
+            status: None,
+            status_row_offset: 0,
             x: view(1, rows * input_stride * 2),
             weight: view(2, 128 * 2),
             residual: None,

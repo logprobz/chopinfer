@@ -14,7 +14,7 @@
     "defines": [],
     "entries": [
       {
-        "symbol": "chop_rmsnorm_f32_w512_v1",
+        "symbol": "chop_rmsnorm_f32_w512_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -49,6 +49,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 256,
@@ -56,7 +65,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_rmsnorm_f32_w1280_v1",
+        "symbol": "chop_rmsnorm_f32_w1280_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -91,6 +100,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 256,
@@ -98,7 +116,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_rmsnorm_f32_w1536_v1",
+        "symbol": "chop_rmsnorm_f32_w1536_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -133,6 +151,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 256,
@@ -140,30 +167,30 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "e76c94efb12b98ad335462a98afcbb7bba7d37a3653520ea223bcbeb9b801119",
+    "cubin_sha256": "2a1245fd6959aca75b4eedffe53df45b9feed9bc3bce0c74fa4b754bbe51f37d",
     "resources": [
       {
-        "symbol": "chop_rmsnorm_f32_w512_v1",
-        "registers": 48,
-        "shared_static_bytes": 1056,
+        "symbol": "chop_rmsnorm_f32_w512_v2",
+        "registers": 34,
+        "shared_static_bytes": 1060,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 256,
         "min_blocks": 1
       },
       {
-        "symbol": "chop_rmsnorm_f32_w1280_v1",
-        "registers": 48,
-        "shared_static_bytes": 1056,
+        "symbol": "chop_rmsnorm_f32_w1280_v2",
+        "registers": 38,
+        "shared_static_bytes": 1060,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 256,
         "min_blocks": 1
       },
       {
-        "symbol": "chop_rmsnorm_f32_w1536_v1",
-        "registers": 48,
-        "shared_static_bytes": 1056,
+        "symbol": "chop_rmsnorm_f32_w1536_v2",
+        "registers": 38,
+        "shared_static_bytes": 1060,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 256,

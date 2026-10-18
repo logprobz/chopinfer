@@ -83,6 +83,23 @@ pub fn rmsnorm_case<'a>(
     capacity: u32,
     op: Prepared<RmsNormBuffers<View>>,
 ) -> LabResult<OpCase<'a>> {
+    rmsnorm_case_impl(requirement, capacity, op, false)
+}
+
+pub fn rmsnorm_status_case<'a>(
+    requirement: RmsNormRequirement,
+    capacity: u32,
+    op: Prepared<RmsNormBuffers<View>>,
+) -> LabResult<OpCase<'a>> {
+    rmsnorm_case_impl(requirement, capacity, op, true)
+}
+
+fn rmsnorm_case_impl<'a>(
+    requirement: RmsNormRequirement,
+    capacity: u32,
+    op: Prepared<RmsNormBuffers<View>>,
+    invalid: bool,
+) -> LabResult<OpCase<'a>> {
     if !matches!(requirement.input, DType::Bf16 | DType::F32)
         || requirement.weight != DType::Bf16
         || (requirement.input == DType::F32 && requirement.fused_residual)
@@ -103,7 +120,14 @@ pub fn rmsnorm_case<'a>(
             *v = f32_to_bf16(bf16_to_f32(*v) / 256.0);
         }
     }
+    let mut initial = vec![0u32; capacity as usize];
+    if invalid && capacity > 4 {
+        initial[3] = 0x80;
+        initial[4] = 2;
+    }
     let roles = RmsNormBuffers {
+        status: (requirement.output == DType::F32).then(|| block_quantize::status_role(&initial)),
+        status_row_offset: 0,
         x: if requirement.input == DType::F32 {
             Spec::input(
                 DType::F32,
@@ -112,7 +136,16 @@ pub fn rmsnorm_case<'a>(
                     .iter()
                     .enumerate()
                     .flat_map(|(i, &v)| {
-                        (bf16_to_f32(v) + ((i % 13) as f32 + 0.25) * 1e-6).to_le_bytes()
+                        (if invalid && i == 0 {
+                            f32::NAN
+                        } else if invalid && i == width + 1 {
+                            f32::INFINITY
+                        } else if invalid && i == 2 * width + 2 {
+                            f32::MAX
+                        } else {
+                            bf16_to_f32(v) + ((i % 13) as f32 + 0.25) * 1e-6
+                        })
+                        .to_le_bytes()
                     })
                     .collect(),
             )
@@ -132,13 +165,42 @@ pub fn rmsnorm_case<'a>(
         live_rows: Spec::live(),
     };
     Ok(OpCase::new(op, capacity, roles)?
-        .oracle(move |images, _| rmsnorm_oracle(&requirement, images)))
+        .oracle(move |images, live| rmsnorm_oracle(&requirement, images, live)))
 }
 
 fn rmsnorm_oracle(
     requirement: &RmsNormRequirement,
     images: &Images,
+    live: u32,
 ) -> LabResult<Vec<(String, Expected)>> {
+    if requirement.output == DType::F32 {
+        let x = images.f32s("x")?;
+        let mut status = images
+            .bytes("status")?
+            .chunks_exact(4)
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+            .collect::<Vec<_>>();
+        let (mut reference, flags) = kernel_core::rmsnorm_status::oracle(
+            *requirement,
+            &x[..live as usize * requirement.width as usize],
+            &images.u16s("weight")?,
+            &status[..live as usize],
+        )
+        .map_err(|e| e.to_string())?;
+        status[..live as usize].copy_from_slice(&flags);
+        reference.values.resize(x.len(), 0.0);
+        reference.sum_abs_products.resize(x.len(), 0.0);
+        reference
+            .reduction_lengths
+            .resize(x.len(), requirement.width as usize);
+        return Ok(vec![
+            ("y".into(), Expected::Values(reference)),
+            (
+                "status".into(),
+                Expected::Bits(status.iter().flat_map(|v| v.to_le_bytes()).collect()),
+            ),
+        ]);
+    }
     let x = images.u16s("x")?;
     let mut results = Vec::new();
     let summed = if requirement.fused_residual {
@@ -1126,7 +1188,7 @@ mod tests {
                 false,
                 numerics,
             );
-            let results = rmsnorm_oracle(&requirement, &images).unwrap();
+            let results = rmsnorm_oracle(&requirement, &images, 1).unwrap();
             let [(name, Expected::Bits(bits))] = results.as_slice() else {
                 panic!("one exact output");
             };

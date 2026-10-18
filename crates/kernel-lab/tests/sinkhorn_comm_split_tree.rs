@@ -408,6 +408,8 @@ impl Fixture {
         let (norm, _) = rmsnorm_tree::lab_norm(H as u32, "");
         let args = norm
             .arguments(RmsNormBuffers {
+                status: None,
+                status_row_offset: 0,
                 x: REF + COLLAPSED,
                 weight: WEIGHT,
                 residual: None,

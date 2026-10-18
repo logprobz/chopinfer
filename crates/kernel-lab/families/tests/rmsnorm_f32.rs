@@ -20,7 +20,18 @@ fn backend() -> Sm120 {
 fn required() -> Vec<Required<'static>> {
     family::entries()
         .into_iter()
-        .map(|(q, _)| cases::rmsnorm(format!("plain F32 norm {}", q.width), q, Need::rows(32)))
+        .flat_map(|(q, _)| {
+            [
+                cases::rmsnorm(format!("plain F32 norm {}", q.width), q, Need::rows(32)),
+                Required::new(
+                    format!("F32 norm status {}", q.width),
+                    Need::rows(32),
+                    move |b, n| b.rmsnorm(&q, n),
+                    move |op| cases::rmsnorm_status_case(q, 32, op),
+                )
+                .required(),
+            ]
+        })
         .collect()
 }
 struct FamilyModules {
@@ -30,6 +41,7 @@ impl Modules for FamilyModules {
     fn load<'s>(&'s self, session: &'s Session) -> LabResult<Functions<'s>> {
         let lookup = family::cubins()
             .into_iter()
+            .chain(kernel_lab_families::rmsnorm_status_mutants::cubins())
             .flat_map(|spec| {
                 spec.entries
                     .into_iter()
@@ -73,7 +85,7 @@ impl Modules for FamilyModules {
     }
 }
 fn check(report: &kit::Report, gpu: bool) {
-    assert_eq!(report.prepared().len(), 3, "{:?}", report.ops);
+    assert_eq!(report.prepared().len(), 6, "{:?}", report.ops);
     assert!(report.failures().is_empty(), "{:?}", report.failures());
     if gpu {
         for op in &report.ops {
@@ -126,6 +138,39 @@ fn f32_norm_passes_f64_poison_graph_and_pdl_on_gpu() {
             BTreeMap::from([("report".into(), report.json())]),
         )?;
         check(&report, true);
+        for (q, symbol) in kernel_lab_families::rmsnorm_status_mutants::entries() {
+            let backend = Sm120::new().with_rmsnorm(q, symbol);
+            let case = Required::new(
+                "dropped norm flag",
+                Need::rows(32),
+                move |b, n| b.rmsnorm(&q, n),
+                move |op| cases::rmsnorm_status_case(q, 32, op),
+            )
+            .required();
+            let negative = kit::conform(
+                &backend,
+                &FamilyModules {
+                    directory: std::env::var_os("CHOPINFER_RMSNORM_F32_CUBINS")
+                        .unwrap()
+                        .into(),
+                },
+                Some(session),
+                &[case],
+            )?;
+            assert!(
+                negative.failures().iter().any(|e| e.contains("status")
+                    && e.contains("the reference")
+                    && !e.contains("CUDA")
+                    && !e.contains("trap")),
+                "{:?}",
+                negative.failures()
+            );
+            session.receipt(
+                &format!("rmsnorm-status-mutant-{}", q.width),
+                BTreeMap::from([("report".into(), negative.json())]),
+            )?;
+        }
+
         Ok(())
     })
     .unwrap();

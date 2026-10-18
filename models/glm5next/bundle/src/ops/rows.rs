@@ -139,6 +139,8 @@ impl RowOps {
             .ok_or(Refusal("GLM 5.3 Flash normalizes no rows of this width"))?;
         let mut bind = Bind::default();
         let buffers = RmsNormBuffers {
+            status: None,
+            status_row_offset: 0,
             x: bind.view(views.x),
             weight: bind.view(views.weight),
             residual: None,

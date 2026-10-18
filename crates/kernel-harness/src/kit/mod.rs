@@ -1546,6 +1546,8 @@ mod tests {
             )
         };
         let roles = RmsNormBuffers {
+            status: None,
+            status_row_offset: 0,
             x: rows(1),
             weight: Spec::input(
                 DType::Bf16,
@@ -1616,6 +1618,8 @@ mod tests {
     /// The fake op's case with `y` as its output role.
     fn declared_with_state(y: Spec<'static>) -> OpCase<'static> {
         let roles = RmsNormBuffers {
+            status: None,
+            status_row_offset: 0,
             x: Spec::input(
                 DType::Bf16,
                 (Rows::Live, WIDTH),
@@ -1816,6 +1820,8 @@ mod tests {
                 .map(|i| salt.wrapping_add(i as u8))
                 .collect();
             let roles = RmsNormBuffers {
+                status: None,
+                status_row_offset: 0,
                 x: Spec::state_updating(
                     DType::Bf16,
                     (Rows::Live, WIDTH),
@@ -1874,6 +1880,8 @@ mod tests {
             )
         };
         let roles = RmsNormBuffers {
+            status: None,
+            status_row_offset: 0,
             x: rows(1),
             weight: rows(2),
             residual: Some(kernel_core::rmsnorm::FusedResidual {
@@ -1907,6 +1915,8 @@ mod tests {
         assert_eq!(leaf.tag, Tag::State);
         // Without the state's result the oracle does not cover it.
         let roles = RmsNormBuffers {
+            status: None,
+            status_row_offset: 0,
             x: rows(1),
             weight: rows(2),
             residual: Some(kernel_core::rmsnorm::FusedResidual {
@@ -2020,6 +2030,8 @@ mod tests {
     #[test]
     fn a_case_without_a_live_count_runs_the_hosts_rows() {
         let roles = RmsNormBuffers {
+            status: None,
+            status_row_offset: 0,
             x: Spec::input(
                 DType::Bf16,
                 (Rows::Live, WIDTH),
@@ -2047,6 +2059,8 @@ mod tests {
             && matches!(&check.outcome, Outcome::NotExercised(reason) if reason.contains("takes no device live count"))));
         // Two live counts are refused.
         let roles = RmsNormBuffers {
+            status: None,
+            status_row_offset: 0,
             x: Spec::input(
                 DType::Bf16,
                 (Rows::Live, WIDTH),

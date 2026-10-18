@@ -300,6 +300,8 @@ pub fn ratio_one_case(
         .map(|i| f32_to_bf16(0.5 + (i % 7) as f32 / 4.0))
         .collect();
     let roles = RmsNormBuffers {
+        status: None,
+        status_row_offset: 0,
         x: Spec::input(DType::F32, (Rows::Live, width), f32_bytes(&x)),
         weight: Spec::input(DType::Bf16, (Rows::Fixed(1), width), bf16_bytes(&weights)),
         residual: None,

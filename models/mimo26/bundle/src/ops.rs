@@ -488,6 +488,8 @@ impl Ops {
         let op = self.norms.get(phase, bucket)?;
         let mut bind = Bind::default();
         let buffers = RmsNormBuffers {
+            status: None,
+            status_row_offset: 0,
             x: bind.view(input),
             weight: bind.view(weight),
             residual: None,

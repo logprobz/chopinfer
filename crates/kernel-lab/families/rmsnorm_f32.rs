@@ -10,11 +10,12 @@ pub fn requirement(width: u32) -> RmsNormRequirement {
     RmsNormRequirement {
         input: DType::F32,
         output: DType::F32,
+        numerics: Some(kernel_core::rmsnorm::RmsNormNumerics::TREE_256),
         ..RmsNormRequirement::bf16_backend_chosen(width, 1e-20, RmsNormKind::Plain, false)
     }
 }
 pub fn entries() -> Vec<(RmsNormRequirement, String)> {
-    WIDTHS.into_iter().map(|width| (requirement(width), format!("chop_rmsnorm_f32_w{width}_v1"))).collect()
+    WIDTHS.into_iter().map(|width| (requirement(width), format!("chop_rmsnorm_f32_w{width}_v2"))).collect()
 }
 pub fn cubins() -> Vec<CubinSpec> {
     let entries = entries();

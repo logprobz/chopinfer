@@ -757,6 +757,8 @@ impl Rank {
         };
         let args = norm
             .arguments(kernels_sm120::row::rmsnorm::RmsNormBuffers {
+                status: None,
+                status_row_offset: 0,
                 x: COLLAPSED_U,
                 weight: WEIGHT,
                 residual: None,

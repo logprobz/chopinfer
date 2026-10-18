@@ -423,6 +423,8 @@ impl Fixture {
         let (norm, _) = sinkhorn_epilogue::reference_norm();
         let args = norm
             .arguments(RmsNormBuffers {
+                status: None,
+                status_row_offset: 0,
                 x: REF_COLLAPSED,
                 weight: WEIGHT,
                 residual: None,

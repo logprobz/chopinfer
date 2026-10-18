@@ -6,6 +6,7 @@ use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVe
 
 pub(super) mod host;
 mod package;
+pub(super) use host::MappedHost;
 type Sink = RecordingSink<super::conformance::Limits>;
 
 pub(super) fn index(
@@ -79,17 +80,125 @@ pub(super) fn index(
 }
 
 fn create(shape: Shape) -> (Rc<Host>, BundleInstanceV1) {
+    create_with_limits(shape, 4, 32)
+}
+
+fn create_with_limits(
+    shape: Shape,
+    items: u32,
+    verify_tokens: u32,
+) -> (Rc<Host>, BundleInstanceV1) {
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
     host.drafter.set(true);
-    host.speculation.set(Some((5, 32)));
-    let record = crate::config::tests::record(&shape, host.kv, 4, false);
+    host.speculation.set(Some((5, verify_tokens)));
+    let record = crate::config::tests::record(&shape, host.kv, items, false);
     let instance = api()
         .create(
-            HostServicesTableV1::new(Rc::new(host::MappedHost(Rc::clone(&host)))),
+            HostServicesTableV1::new(Rc::new(MappedHost(Rc::clone(&host)))),
             &record,
         )
         .unwrap_or_else(|e| panic!("drafter create: {e:?} {:?}", host.logs.borrow()));
     (host, instance)
+}
+
+#[test]
+fn full_budget_prefill_then_maximum_dspark_verify() {
+    use model_deepseek41_contract::serving::{
+        DECODE_BATCH, DeepSeek, MAX_VERIFY_ROWS, PREFILL_TOKENS,
+    };
+
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    let verify_tokens = <DeepSeek as bundle_runtime::BundleGeometry>::VERIFY_TOKENS;
+    let (host, mut instance) = create_with_limits(shape, DECODE_BATCH, verify_tokens);
+    let prompt_rows = PREFILL_TOKENS / DECODE_BATCH;
+    let slots: Vec<_> = (0..u64::from(DECODE_BATCH)).collect();
+    let batch = |draft: bool, items: &[(u64, u64, u32)]| {
+        BatchRequestV1::new(
+            BatchWireVersionV1::V3,
+            items
+                .iter()
+                .map(|&(slot, _, rows)| {
+                    if draft {
+                        BatchItemV1::verify(slot + 1, rows, true, vec![7])
+                    } else {
+                        BatchItemV1::new(slot + 1, false, rows, true, (0..rows).collect())
+                    }
+                })
+                .collect(),
+            items
+                .iter()
+                .map(|&(slot, start, rows)| {
+                    let end = start + u64::from(rows);
+                    BatchAppendV1::new(
+                        start,
+                        u64::from(rows),
+                        end,
+                        (0..end.div_ceil(64)).map(|page| slot * 8 + page).collect(),
+                        None,
+                    )
+                })
+                .collect(),
+        )
+        .with_state_slots(items.iter().map(|&(slot, _, _)| slot).collect())
+        .encode()
+        .unwrap()
+    };
+    let prompts: Vec<_> = slots.iter().map(|&slot| (slot, 0, prompt_rows)).collect();
+    let prefill = execute(&mut instance, &host, &batch(false, &prompts));
+    assert_eq!(
+        prefill.views.iter().map(|v| v.raw().row_count).sum::<u32>(),
+        DECODE_BATCH
+    );
+    instance.commit().unwrap();
+    // The package admits 32 verify rows total, up to six per item. Fill
+    // that budget with maximum-length items, then with the most drafters
+    // it admits (16 two-row items). Both include the highest state slot.
+    let cases = [
+        vec![
+            (0, MAX_VERIFY_ROWS),
+            (6, MAX_VERIFY_ROWS),
+            (12, MAX_VERIFY_ROWS),
+            (18, MAX_VERIFY_ROWS),
+            (24, MAX_VERIFY_ROWS),
+            (31, 2),
+        ],
+        (0..16).map(|i| (i * 2 + 1, 2)).collect(),
+    ];
+    for case in cases {
+        assert_eq!(
+            case.iter().map(|&(_, rows)| rows).sum::<u32>(),
+            verify_tokens
+        );
+        let items: Vec<_> = case
+            .iter()
+            .map(|&(slot, rows)| (slot, state(&instance, slot + 1).end, rows))
+            .collect();
+        let verify = execute(&mut instance, &host, &batch(true, &items));
+        assert_eq!(
+            verify.draft_tokens(),
+            items
+                .iter()
+                .map(|&(slot, _, rows)| (slot + 1, vec![0; (rows - 1) as usize]))
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(
+            verify.views.iter().map(|v| v.raw().row_count).sum::<u32>(),
+            verify_tokens,
+        );
+        let accepted: Vec<_> = items
+            .iter()
+            .map(|&(slot, _, rows)| kept(slot + 1, rows))
+            .collect();
+        instance.commit_accepted(&accepted).unwrap();
+        for (slot, start, rows) in items {
+            assert_eq!(state(&instance, slot + 1).end, start + u64::from(rows));
+        }
+    }
+    for slot in slots {
+        instance.retire_request(slot + 1).unwrap();
+    }
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
 }
 
 fn verify(request: u64, slot: u64, start: u64, drafts: u32) -> Vec<u8> {

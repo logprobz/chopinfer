@@ -354,6 +354,8 @@ impl Prepared {
             self.ring_write.info().workspace,
             self.block_write.info().workspace,
             self.attention.info().workspace,
+            // The attention partials are a named role, beyond backend scratch.
+            self.attention.info().bytes_of("workspace").unwrap_or(0),
         ]
         .into_iter()
         .max()
@@ -536,5 +538,26 @@ impl Prepared {
             Counts::rows(phase.rows()),
         )
         .map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn full_budget_workspace_covers_draft_attention() {
+        for shape in crate::shape::topologies() {
+            let kernels = crate::Kernels::new(&shape).unwrap();
+            let prepared =
+                Prepared::prepare(kernels.backend.as_ref(), shape, DraftMode::Greedy).unwrap();
+            let required = prepared.attention.info().bytes_of("workspace").unwrap();
+            assert!(
+                prepared.workspace() >= required,
+                "{}: allocated {}, draft attention requires {required}",
+                shape.topology(),
+                prepared.workspace(),
+            );
+        }
     }
 }

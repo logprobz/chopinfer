@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use kernel_core::allocation::Traversal;
 use kernel_core::backend::{Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View};
 use kernel_core::contract::{
     ActivationFormat, ArgumentList, DType, LaunchPlan, Refusal, RuntimeCounts, StaticQuery,
@@ -771,6 +772,18 @@ impl PreparedOp<ProjectionBuffers<View>> for ProjectionOp {
             }
             let status = if q.status_bytes() > 0 {
                 let status = required(scratch.quantizer_status)?;
+                let mut others = *buffers;
+                others.scratch.quantizer_status = None;
+                let mut aliases = false;
+                let _ = others.map(|view| {
+                    aliases |= view.bytes != 0 && view.handle == status.handle;
+                    view
+                });
+                if aliases {
+                    return Err(Refusal(
+                        "projection quantizer status overlaps a projection role",
+                    ));
+                }
                 covers(
                     status,
                     scratch
@@ -1143,6 +1156,82 @@ mod tests {
             graph: false,
         };
         ProjectionOp::new(Arc::new(operation), None, usage, ActivationGlobal::Absent).unwrap()
+    }
+
+    #[test]
+    fn ceil_projection_status_cannot_alias_any_bound_role() {
+        use crate::row::precision::Nvfp4Global;
+        use kernel_core::contract::{DenseKernel, Epilogues, GemmQuery, Target};
+        use kernel_core::precision::{DynamicScale, ExecutionPhase};
+        let usage = OperationUse {
+            phase: ExecutionPhase::Decode,
+            capacity: 1,
+            graph: true,
+        };
+        let offer = KernelOffer::dense(
+            gemm::DenseRequest {
+                query: GemmQuery {
+                    m_capacity: 1,
+                    n: 256,
+                    k: 256,
+                    weight: WeightFormat::Mxfp8,
+                    activation: ActivationFormat::Mxfp8,
+                    output: DType::Bf16,
+                    epilogues: Epilogues {
+                        residual_add: true,
+                        ..Epilogues::default()
+                    },
+                    grouped: None,
+                },
+                kernel: DenseKernel::Tiled { splits: 1 },
+                target: Target::Sm120f,
+                symbol: "alias_compute_v1".into(),
+                knobs: None,
+            },
+            usage,
+            Nvfp4Global::Absent,
+            "alias_quant_v1",
+        )
+        .unwrap()
+        .with_dynamic_scale(DynamicScale::MXFP8_CEIL, "alias_ceil_v1")
+        .unwrap();
+        let op = ProjectionOp::new(
+            Arc::new(offer.handle),
+            None,
+            usage,
+            ActivationGlobal::Absent,
+        )
+        .unwrap();
+        let mut b = fragment_buffers(u64::MAX);
+        b.weights.local_scales = Some(view(8, u64::MAX));
+        b.scratch.codes = Some(view(9, u64::MAX));
+        b.scratch.scales = Some(view(10, u64::MAX));
+        b.scratch.quantizer_status = Some(view(11, u64::MAX));
+        b.residual = Some(view(12, u64::MAX));
+        assert_eq!(
+            op.launches(&b, View::EMPTY, Counts::rows(1)).unwrap().len(),
+            2
+        );
+        let mut handles = BTreeSet::new();
+        let mut others = b;
+        others.scratch.quantizer_status = None;
+        let _ = others.map(|v| {
+            if v.bytes > 0 {
+                handles.insert(v.handle);
+            }
+            v
+        });
+        assert!(handles.contains(&b.output.handle) && handles.contains(&b.weights.codes.handle));
+        assert!(handles.contains(&12) && handles.contains(&b.scratch.partial.handle));
+        for handle in handles {
+            let mut bad = b;
+            bad.scratch.quantizer_status = Some(view(handle, u64::MAX));
+            let error = op.launches(&bad, View::EMPTY, Counts::rows(1)).unwrap_err();
+            assert!(
+                error.0.contains("status overlaps a projection role"),
+                "{error:?}"
+            );
+        }
     }
 
     #[test]

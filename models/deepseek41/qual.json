@@ -1201,7 +1201,7 @@
           ],
           "op": "ge",
           "value": 16,
-          "source": "approved DeepSeek DSpark qualification plan, 16-request rule (operator:2026-10-18)"
+          "source": "models/deepseek41/README.md#dspark-qualification"
         },
         {
           "path": [
@@ -1211,7 +1211,7 @@
           ],
           "op": "ge",
           "value": 16,
-          "source": "approved DeepSeek DSpark qualification plan, 16-request rule (operator:2026-10-18)"
+          "source": "models/deepseek41/README.md#dspark-qualification"
         }
       ],
       "constants": {
@@ -1265,7 +1265,7 @@
             ],
             "op": "count_ge",
             "value": 16,
-            "source": "approved DeepSeek DSpark qualification plan, 16-request rule (operator:2026-10-18)"
+            "source": "models/deepseek41/README.md#dspark-qualification"
           },
           {
             "path": [
@@ -1275,7 +1275,7 @@
             ],
             "op": "count_ge",
             "value": 16,
-            "source": "approved DeepSeek DSpark qualification plan, 16-request rule (operator:2026-10-18)"
+            "source": "models/deepseek41/README.md#dspark-qualification"
           },
           {
             "path": [
@@ -1354,7 +1354,7 @@
             ],
             "op": "count_ge",
             "value": 16,
-            "source": "approved DeepSeek DSpark qualification plan, 16-request rule (operator:2026-10-18)"
+            "source": "models/deepseek41/README.md#dspark-qualification"
           },
           {
             "path": [
@@ -1364,7 +1364,7 @@
             ],
             "op": "count_ge",
             "value": 16,
-            "source": "approved DeepSeek DSpark qualification plan, 16-request rule (operator:2026-10-18)"
+            "source": "models/deepseek41/README.md#dspark-qualification"
           },
           {
             "path": [

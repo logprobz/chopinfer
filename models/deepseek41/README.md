@@ -178,9 +178,10 @@ is keyed by `tp4-dspark` and uses the same approved margins as `tp4-ar`.
 The speculative-verification copy set must have mean absolute logprob
 difference at most 0.15 and top-1 disagreement at most 0.08 against AR,
 as specified in [the serving qualification gates](../../docs/numerics.md#serving-qualification-gates).
-Each arm records at least 16 copy requests and 16 natural requests from
-the shared frozen teacher texts and GSM8K questions. Both arms must bind
-to the official checkpoint and the same package at TP4 with native KV.
+Each arm records at least 16 copy requests and 16 natural requests, each
+with at least one scored position, from the shared frozen teacher texts
+and GSM8K questions. Both arms must bind to the official checkpoint and
+the same package at TP4 with native KV.
 
 The approved DSpark qualification plan sets the GSM8K floor at 193/200 for
 both arms. This matches MiMo's floor and is one item looser than Qwen's

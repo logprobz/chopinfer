@@ -31,3 +31,6 @@ enabled = false
 stage = "contract"
 fixtures = ["synthetic-small"]
 architecture = "DeepseekV41GeometryRecipeForCausalLM"
+
+[checks]
+reference_tests = ["test_reference_kernel.py"]

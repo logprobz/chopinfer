@@ -1,4 +1,6 @@
 //! Bitwise retained-window staging through poisoned graph and PDL replay.
+#[path = "latent_window_bf16/boundary.rs"]
+mod boundary;
 #[path = "latent_window_stage/chain.rs"]
 mod chain;
 use kernel_core::backend::{Backend, Need};
@@ -138,6 +140,7 @@ fn required() -> Vec<kit::Required<'static>> {
         );
     }
     result.push(kit::cases::latent_staged_window_keys::required());
+    result.push(boundary::required());
     result
 }
 struct StoreMutant {
@@ -194,11 +197,12 @@ impl PreparedOp<LatentWindowStageBuffers<View>> for StageMutant {
         Ok(calls)
     }
 }
-fn controls() -> Vec<kit::Required<'static>> {
+fn controls() -> Vec<(&'static str, kit::Required<'static>)> {
     let mut result = Vec::new();
     for truncate in [true, false] {
         let q = query(WindowAddressing::Circular { slots: 136 });
-        result.push(
+        result.push((
+            "window.codes",
             kit::Required::new(
                 format!("BF16 store mutant truncate={truncate}"),
                 Need::rows(32),
@@ -221,9 +225,10 @@ fn controls() -> Vec<kit::Required<'static>> {
                 move |op| kit::cases::latent_glue::write_case(q, 32, 140, op),
             )
             .required(),
-        );
+        ));
     }
-    result.push(
+    result.push((
+        "staged.codes",
         kit::Required::new(
             "BF16 staging swapped plane",
             Need::rows(2),
@@ -243,11 +248,11 @@ fn controls() -> Vec<kit::Required<'static>> {
             move |op| cases::case_with_format(LatentKvFormat::Bf16, Scenario::Wrap, op),
         )
         .required(),
-    );
+    ));
     result
 }
 fn check(report: &kit::Report, gpu: bool) {
-    assert_eq!(report.prepared().len(), 22, "{:?}", report.ops);
+    assert_eq!(report.prepared().len(), 23, "{:?}", report.ops);
     assert!(report.failures().is_empty(), "{:?}", report.failures());
     if gpu {
         for op in &report.ops {
@@ -275,7 +280,11 @@ fn bf16_window_cases_prepare_and_mutants_change_expected_bits() {
         &kit::conform(&backend(), &modules, None, &required()).unwrap(),
         false,
     );
-    let controls = kit::conform(&backend(), &modules, None, &controls()).unwrap();
+    let controls = controls()
+        .into_iter()
+        .map(|(_, case)| case)
+        .collect::<Vec<_>>();
+    let controls = kit::conform(&backend(), &modules, None, &controls).unwrap();
     assert_eq!(controls.prepared().len(), 3);
     assert!(controls.failures().is_empty(), "{:?}", controls.failures());
     let q = query(WindowAddressing::Circular { slots: 136 });
@@ -334,7 +343,7 @@ fn bf16_window_passes_poison_graph_pdl_and_controls_on_gpu() {
             BTreeMap::from([("report".into(), report.json())]),
         )?;
         check(&report, true);
-        for control in controls() {
+        for (expected_role, control) in controls() {
             let report = kit::conform(&backend(), &modules, Some(session), &[control])?;
             session.receipt(
                 "window-bf16-control",
@@ -343,7 +352,11 @@ fn bf16_window_passes_poison_graph_pdl_and_controls_on_gpu() {
             let OpResult::Prepared { checks, .. } = &report.ops[0].result else {
                 panic!("mutant refused")
             };
-            assert!(checks.iter().any(|c|c.name=="conformance" && matches!(&c.outcome,Outcome::Failed(e) if e.contains("window.codes") || e.contains("staged.codes") || e.contains("status"))),"mutant escaped: {checks:?}");
+            assert!(
+                checks.iter().any(|c| c.name == "conformance"
+                    && matches!(&c.outcome,Outcome::Failed(e) if e.contains(expected_role))),
+                "mutant did not fail through {expected_role}: {checks:?}"
+            );
             for c in checks {
                 if let Outcome::Failed(e) = &c.outcome {
                     assert!(
@@ -395,6 +408,40 @@ fn bf16_window_first_use_on_gpu() {
         chain::first_use_bf16(session, &modules)?;
         session.receipt(
             "bf16-window-first-use",
+            BTreeMap::from([("report".into(), report.json())]),
+        )?;
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn bf16_raw_window_boundary_on_gpu() {
+    kernel_harness::gpu_test(64 << 20, |session| {
+        let directory = PathBuf::from(
+            std::env::var_os("CHOPINFER_WINDOW_BF16_CUBINS")
+                .ok_or("prebuilt BF16 window cubins required")?,
+        );
+        kernel_build::report::BuildReport::read(&directory.join("kernel-build-report.json"))
+            .and_then(|r| r.verify_current())
+            .map_err(|e| e.to_string())?;
+        let modules = FamilyModules { directory };
+        let report = kit::conform(&backend(), &modules, Some(session), &[boundary::required()])?;
+        assert_eq!(report.prepared().len(), 1);
+        assert!(report.failures().is_empty(), "{:?}", report.failures());
+        let OpResult::Prepared { checks, .. } = &report.ops[0].result else {
+            panic!("boundary refused")
+        };
+        for c in checks {
+            assert!(
+                matches!(c.outcome, Outcome::Passed(_)),
+                "{}: {:?}",
+                c.name,
+                c.outcome
+            );
+        }
+        session.receipt(
+            "window-bf16-raw-boundary",
             BTreeMap::from([("report".into(), report.json())]),
         )?;
         Ok(())

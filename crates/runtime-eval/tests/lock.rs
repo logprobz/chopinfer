@@ -38,8 +38,10 @@ fn the_shipped_inputs_read_as_their_lock_pins_them() {
                 continue;
             }
             *covered += 1;
-            let path = runtime_eval::references::input_path(&loaded, key, &|_| None)
-                .unwrap_or_else(|| panic!("{model} {key}: unresolved"));
+            let path = runtime_eval::references::input_path(&loaded, key, &|name| {
+                loaded.environment(name)
+            })
+            .unwrap_or_else(|| panic!("{model} {key}: unresolved"));
             if *key == "fixture_root" {
                 lock::read(&loaded, key, &path.join("teacher-texts.json")).unwrap();
                 continue;

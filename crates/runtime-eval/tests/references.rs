@@ -74,7 +74,24 @@ fn a_reference_with_other_bytes_or_elsewhere_is_refused() {
         .into_iter()
         .find(|loaded| !loaded.declaration.references.is_empty())
         .expect("no shipped declaration pins a reference");
-    let pin = loaded.declaration.references[0].clone();
+    let mut pin = loaded.declaration.references[0].clone();
+    let source =
+        references::declared_path(&pin.path, &loaded.root, &references::process_environment)
+            .unwrap();
+    let mut bytes = std::fs::read(&source).unwrap();
+    // An environment path ignores the alternate root. Re-home only this
+    // test's pin, while keeping its authenticated workload at the source.
+    if pin.workload.is_none() {
+        let stem = source.file_stem().unwrap().to_str().unwrap();
+        pin.workload = Some(Input::Path(
+            source
+                .with_file_name(format!("{stem}.workload.json"))
+                .to_str()
+                .unwrap()
+                .to_owned(),
+        ));
+    }
+    pin.path = Input::Path("reference.json".into());
     let scratch =
         std::env::temp_dir().join(format!("runtime-eval-references-{}", std::process::id()));
     let target =
@@ -84,11 +101,6 @@ fn a_reference_with_other_bytes_or_elsewhere_is_refused() {
         references::pinned(&loaded, &pin, Some(&scratch)),
         Err(ReferenceError::Missing(_))
     ));
-    let mut bytes = std::fs::read(
-        references::declared_path(&pin.path, &loaded.root, &references::process_environment)
-            .unwrap(),
-    )
-    .unwrap();
     bytes.push(b'\n');
     std::fs::write(&target, &bytes).unwrap();
     let refused = references::pinned(&loaded, &pin, Some(&scratch));
@@ -147,21 +159,23 @@ fn repinned(
     pin: &declaration::ReferencePin,
     value: &Value,
 ) -> Result<references::Verified, ReferenceError> {
-    let scratch = std::env::temp_dir().join(format!(
-        "runtime-eval-binding-{}-{}",
-        std::process::id(),
-        SCRATCH.fetch_add(1, Ordering::Relaxed)
-    ));
-    let target =
-        references::declared_path(&pin.path, &scratch, &references::process_environment).unwrap();
-    std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+    let source =
+        references::declared_path(&pin.path, &loaded.root, &references::process_environment)
+            .unwrap();
     let bytes = serde_json::to_vec(value).unwrap();
-    std::fs::write(&target, &bytes).unwrap();
     let mut edited = pin.clone();
     edited.sha256 = runtime_eval::json::sha256_hex(&bytes);
-    let result = references::pinned(loaded, &edited, Some(&scratch));
-    std::fs::remove_dir_all(&scratch).unwrap();
-    result
+    // Verify the edited bytes without writing through an environment-backed
+    // path into the shared reference store. Its workload stays unchanged.
+    references::verify_pinned(
+        &loaded.root,
+        &loaded.declaration.checkpoint,
+        &edited,
+        &source,
+        bytes,
+        &|| references::checkpoint_lock(loaded).map(|_| ()),
+        references::default_store(&references::process_environment).as_deref(),
+    )
 }
 
 static SCRATCH: AtomicUsize = AtomicUsize::new(0);

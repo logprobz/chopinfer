@@ -615,6 +615,8 @@ fn execute(
             row_amax: None,
             output_codes: None,
             output_scales: None,
+            quantizer_status: None,
+            quantizer_status_row_offset: 0,
         },
         row_offset: 0,
         shard_rows: model::VOCAB,

@@ -152,10 +152,23 @@ pub fn paged_kv_layout(
     page_tokens: u64,
     context_tokens: u64,
 ) -> Result<BundleKvLayoutV1, BundleError> {
+    paged_kv_layout_aligned(layout_id, page_bytes, page_tokens, context_tokens, 256)
+}
+
+/// [`paged_kv_layout`] with the layout's own `alignment_bytes`, a power of
+/// two that divides `page_bytes`: for a page that is not a whole number of
+/// 256-byte blocks and needs less.
+pub fn paged_kv_layout_aligned(
+    layout_id: &str,
+    page_bytes: u64,
+    page_tokens: u64,
+    context_tokens: u64,
+    alignment_bytes: u64,
+) -> Result<BundleKvLayoutV1, BundleError> {
     BundleKvLayoutV1::new(
         BundleOpaqueId::new(layout_id)?,
         page_bytes,
-        256,
+        alignment_bytes,
         u32::try_from(page_tokens).map_err(|_| BundleError::validation("KV page tokens"))?,
         page_bytes / page_tokens,
         1,
@@ -190,6 +203,26 @@ mod tests {
         assert_eq!(decode_buckets(1).collect::<Vec<_>>(), [1]);
         assert_eq!(decode_buckets(6).collect::<Vec<_>>(), [1, 2, 4]);
         assert_eq!(decode_buckets(u32::MAX).last(), Some(1 << 31));
+    }
+
+    /// The default layout keeps 256-byte alignment; a layout may declare
+    /// less when its pages need it, never an alignment its pages break.
+    #[test]
+    fn a_paged_layout_declares_its_own_alignment() {
+        let layout = paged_kv_layout("m.kv.v1", 1 << 16, 64, 4096).unwrap();
+        assert_eq!(layout.alignment_bytes(), 256);
+        assert!(paged_kv_layout("m.kv.v1", 56_960, 64, 4096).is_err());
+        let layout = paged_kv_layout_aligned("m.kv.v1", 56_960, 64, 4096, 128).unwrap();
+        assert_eq!(
+            (
+                layout.page_bytes(),
+                layout.alignment_bytes(),
+                layout.bytes_per_token()
+            ),
+            (56_960, 128, 890)
+        );
+        assert!(paged_kv_layout_aligned("m.kv.v1", 56_960, 64, 4096, 256).is_err());
+        assert!(paged_kv_layout_aligned("m.kv.v1", 56_960, 64, 4096, 96).is_err());
     }
 
     #[test]

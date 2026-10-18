@@ -378,6 +378,46 @@ class DataDiffTests(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, "pre-existing"):
                 assert_data_diff(tree, "fixture", before)
 
+    def test_lock_directory_families_grow_without_changing_records(self):
+        with tempfile.TemporaryDirectory() as temp:
+            tree = Path(temp)
+            def git(*args):
+                subprocess.run(["git", "-C", str(tree), *args], check=True,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            git("init")
+            directory = tree / "models/fixture/bundle/kernels.lock.d"
+            directory.mkdir(parents=True)
+            rows = json.dumps([{"name": "rows_old", "digest": "unchanged"}], indent=2)
+            own = json.dumps([{"name": "own_old"}], indent=2)
+            (directory / "rows.lock").write_text(rows)
+            (directory / "rows.provenance.json").write_text(rows)
+            (directory / "own.lock").write_text(own)
+            git("add", "models")
+            git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                "commit", "-m", "Create fixture")
+            before = model_geometry_recipe.lock_state(tree, "fixture")
+            self.assertEqual(set(before), {"rows.lock", "rows.provenance.json", "own.lock"})
+            grown = rows[:-2] + ',\n  {"name": "recipe_1_rows"}\n]'
+            def check():
+                with contextlib.redirect_stdout(io.StringIO()):
+                    assert_data_diff(tree, "fixture", before)
+            # Untouched families stay untouched; changed ones only gain records.
+            (directory / "rows.lock").write_text(grown)
+            (directory / "rows.provenance.json").write_text(grown)
+            check()
+            (directory / "rows.lock").write_text(grown.replace("unchanged", "changed"))
+            with self.assertRaisesRegex(AssertionError, "pre-existing"):
+                check()
+            (directory / "rows.lock").write_text(grown)
+            (directory / "added.lock").write_text('[{"name": "recipe_1_added"}]')
+            with self.assertRaisesRegex(AssertionError, "lock family file"):
+                check()
+            (directory / "added.lock").unlink()
+            (directory / "rows.lock").write_text(rows)
+            (directory / "rows.provenance.json").write_text(rows)
+            with self.assertRaisesRegex(AssertionError, "did not add lock records"):
+                check()
+
     def test_supported_changes_and_new_lock_tags_are_exact(self):
         with tempfile.TemporaryDirectory() as temp:
             tree = Path(temp)

@@ -31,12 +31,44 @@ FP8_LAYOUT = "mimo.ga-paged-fp8.v2." + hashlib.sha256(
     b"".join(struct.pack("<f", scale) for pair in FP8_SCALES for scale in pair)).hexdigest()
 
 
+def lock_state(tree, model):
+    """The bundle's kernel lock before a recipe build: the text of a
+    monolithic `kernels.lock`, or `{file name: text}` of a lock directory's
+    family files (`kernels.lock.d`, `*.lock` and `*.provenance.json`)."""
+    bundle = Path(tree) / f"models/{model}/bundle"
+    if (bundle / "kernels.lock").is_file():
+        return (bundle / "kernels.lock").read_text()
+    directory = bundle / "kernels.lock.d"
+    assert directory.is_dir(), f"models/{model}/bundle has no kernels.lock or kernels.lock.d"
+    return {path.name: path.read_text() for path in sorted(directory.iterdir()) if path.is_file()}
+
+
+def lock_growth(tree, model, before, paths):
+    """(lock paths, kept records, added records) of the lock rewrite: every
+    family file keeps its existing records' bytes and order, and a lock
+    directory gains no family file."""
+    if isinstance(before, str):
+        lock = f"models/{model}/bundle/kernels.lock"
+        assert lock in paths, "new geometry did not add lock records"
+        old, added = kept_lock_records(before, (Path(tree) / lock).read_text())
+        return {lock}, old, added
+    prefix = f"models/{model}/bundle/kernels.lock.d/"
+    changed = {p for p in paths if p.startswith(prefix)}
+    assert changed, "new geometry did not add lock records"
+    assert {p[len(prefix):] for p in changed} <= set(before), "a new geometry added a lock family file"
+    old, added = [], []
+    for path in sorted(changed):
+        kept, grown = kept_lock_records(before[path[len(prefix):]], (Path(tree) / path).read_text())
+        old += kept
+        added += grown
+    return changed, old, added
+
+
 def assert_data_diff(tree, model, before, checkpoint_data=None, *, supported_before=None, entry=None, alias=None):
     prefix = f"models/{model}/geometries/"
-    lock = f"models/{model}/bundle/kernels.lock"
     paths = changed_paths(tree)
-    assert lock in paths, "new geometry did not add lock records"
-    allowed = {lock, *(f"models/{model}/{name}" for name in checkpoint_data or {})}
+    locks, old, added = lock_growth(tree, model, before, paths)
+    allowed = {*locks, *(f"models/{model}/{name}" for name in checkpoint_data or {})}
     if entry is not None:
         geometry_file = prefix + entry["file"]
         allowed.update((prefix + "supported.json", geometry_file))
@@ -56,14 +88,13 @@ def assert_data_diff(tree, model, before, checkpoint_data=None, *, supported_bef
             actual, previous = actual["checkpoints"], previous["checkpoints"]
         assert all(actual.get(key) == value for key, value in previous.items()), name
         assert len(actual) > len(previous), "checkpoint data did not gain entries"
-    assert all(Path(p).suffix == ".json" or p == lock for p in paths), paths
+    assert all(Path(p).suffix == ".json" or p in locks for p in paths), paths
     if supported_before is not None:
         expected = copy.deepcopy(supported_before)
         expected["geometries"].append(entry)
         expected["aliases"]["architecture"].append(alias)
         actual = json.loads((tree / prefix / "supported.json").read_text())
         assert actual == expected, "supported.json changed beyond the appended geometry and alias"
-    old, added = kept_lock_records(before, (tree / lock).read_text())
     assert added, "lock did not gain records"
     if entry is not None:
         assert all(entry["kernel_tag"] in name for name in added), \
@@ -339,8 +370,7 @@ def recipe(model, fixture_name="synthetic-small", target_dir=None):
     with detached_worktree(ROOT, "chopinfer-geometry-", target_dir) as (scratch, tree, env):
         fixture = tree / f"fixtures/{model}/geometries/{fixture_name}"
         geometries = tree / f"models/{model}/geometries"
-        lock = tree / f"models/{model}/bundle/kernels.lock"
-        before = lock.read_text()
+        before = lock_state(tree, model)
         geometry_file = "geometry.json"
         shutil.copyfile(fixture / geometry_file, geometries / f"{fixture_name}.json")
         if model == "qwen38":

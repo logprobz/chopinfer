@@ -275,7 +275,7 @@ impl FakePackage for FakeHost {
 }
 
 pub(crate) fn api() -> BundleApiV1 {
-    BundleApiV1::new_with_prefix_state_slot(crate::BUNDLE_DEEPSEEK41_EXTENDED_API_V1)
+    BundleApiV1::new_with_prefix_state_slot(crate::api::BUNDLE_DEEPSEEK41_EXTENDED_API_V1)
         .expect("bundle API")
 }
 

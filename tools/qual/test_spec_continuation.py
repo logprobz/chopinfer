@@ -415,10 +415,17 @@ class ContinuationTests(unittest.TestCase):
             "names no install identity  ": lambda value: value["server"]["checkpoint"].pop("package_identity"),
             "disagrees with its own /health": lambda value: value["server"]["health"]["serving"].update(
                 package_identity="d" * 64)}
+        # spec_verify's server comparison requires one package first, so a
+        # control whose direct package differs, or names none, is refused
+        # there before the install comparison.
+        package_cases = {"different installs ", "names no install identity  "}
         for message, change in install_cases.items():
             control = copy.deepcopy(ar)
             change(control)
-            with self.subTest(message), self.assertRaisesRegex(ValueError, message.strip()):
+            expected = message.strip()
+            if message in package_cases:
+                expected = f"{expected}|the arms served different packages"
+            with self.subTest(message), self.assertRaisesRegex(ValueError, expected):
                 continuation.compare(continuation.score(spec, modes(spec), BINDING),
                                      continuation.score(control, modes(control), BINDING))
         unbound = [copy.deepcopy(value) for value in (spec, ar)]
@@ -885,7 +892,9 @@ class CheckRunTests(unittest.TestCase):
         code, result, _ = self.check_run(change=different_install)
         self.assertEqual((code, result["status"]), (1, "fail"))
         self.assertIn("check exited", result["row"]["error"])
-        self.assertIn("the arms come from different installs", result["log_text"])
+        # The arms' direct packages differ, which the shared server
+        # comparison refuses before the install comparison.
+        self.assertIn("the arms served different packages", result["log_text"])
 
     def test_a_live_check_cannot_run_offline(self):
         import checks

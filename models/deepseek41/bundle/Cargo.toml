@@ -29,5 +29,10 @@ model-deepseek41-contract.workspace = true
 bundle-runtime = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 
+# Tests that name SM120 items live under tests/sm120 and keep their names.
+[[test]]
+name = "encoder_catalog_stability"
+path = "tests/sm120/encoder_catalog_stability.rs"
+
 [lints]
 workspace = true

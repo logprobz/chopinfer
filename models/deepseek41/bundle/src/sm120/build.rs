@@ -11,6 +11,9 @@ use std::path::PathBuf;
 use kernel_build::{LockDir, ModelLock, Toolchain};
 use model_deepseek41_contract::geometry::GEOMETRIES;
 
+#[path = "encoder.rs"]
+#[allow(dead_code, reason = "the bundle registers the entries")]
+mod encoder;
 mod own_cubin;
 // The build compiles the entries; the bundle launches them.
 #[allow(dead_code)]
@@ -26,6 +29,7 @@ fn main() {
     // (family, cubin) pairs; one family per engine or own-op set.
     let mut specs = vec![(own_entries::FAMILY, own_cubin::cubin_spec(&manifest))];
     specs.extend(rows::cubins(GEOMETRIES).expect("deepseek41 row cubins"));
+    specs.extend(encoder::cubins().expect("deepseek41 encoder cubins"));
     let mut families: Vec<(&str, Vec<&str>)> = Vec::new();
     for (family, spec) in &specs {
         match families.iter_mut().find(|(name, _)| name == family) {

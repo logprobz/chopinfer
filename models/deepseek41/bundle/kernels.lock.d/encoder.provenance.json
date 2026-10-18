@@ -1,0 +1,10 @@
+[
+  {
+    "name": "multimodal_attention_sm120",
+    "source_closure_sha256": "1c602ba389e31812452ae263259c4367a56449ad8006dd3f95dae3ca538aec80"
+  },
+  {
+    "name": "multimodal_rows_gemm_sm120",
+    "source_closure_sha256": "c97f29acd4f7273aaae7a018f6df83bf799cac7c49b0b613316e0bba493c10a9"
+  }
+]

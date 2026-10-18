@@ -54,14 +54,28 @@ fn ranks(g: &Geometry) -> impl Iterator<Item = u32> + '_ {
         .filter(|&ranks| model_deepseek41_contract::admission::check_ranks(g, ranks).is_ok())
 }
 
+/// `g`'s norm widths (`rows::norm_widths`), each once, in their first
+/// order: two of them may be equal at any geometry, not only adjacent ones.
+fn norm_widths(g: &Geometry) -> Vec<u32> {
+    unique(&rows::norm_widths(g))
+}
+
+fn unique(widths: &[u32]) -> Vec<u32> {
+    let mut unique = Vec::with_capacity(widths.len());
+    for &width in widths {
+        if !unique.contains(&width) {
+            unique.push(width);
+        }
+    }
+    unique
+}
+
 /// `g`'s row cubin: its norms, planned at a prefill's rows, and the
 /// embedding gather of each rank count.
 pub fn cubin(g: &Geometry) -> Result<CubinSpec, String> {
     let mut entries = Vec::new();
     let mut headers = Vec::new();
-    let mut widths = rows::norm_widths(g).to_vec();
-    widths.dedup();
-    for width in widths {
+    for width in norm_widths(g) {
         let norm = RmsNorm::new(rows::norm(g, width), PREFILL_TOKENS, RmsNormTarget::SM120F)
             .map_err(|refusal| format!("RMSNorm of {width}: {refusal}"))?;
         for header in norm.headers() {
@@ -107,13 +121,34 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
 
 /// `sm120` with `g`'s row entries at `ranks` ranks registered.
 pub fn register(mut sm120: Sm120, g: &Geometry, ranks: u32) -> Sm120 {
-    let mut widths = rows::norm_widths(g).to_vec();
-    widths.dedup();
-    for width in widths {
+    for width in norm_widths(g) {
         sm120 = sm120.with_rmsnorm(rows::norm(g, width), norm_symbol(g, width));
     }
     sm120 = sm120.with_sharded_embedding(embedding(g, ranks));
     kernels_sm120::row::copy::entries()
         .into_iter()
         .fold(sm120, |sm120, entry| sm120.with_row_copy(entry))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use model_deepseek41_contract::geometry::{FLASH, GEOMETRIES};
+
+    /// Equal widths anywhere in the list register one norm, in first order;
+    /// Flash keeps its order, so its lock bytes stay.
+    #[test]
+    fn each_norm_width_registers_once_in_first_order() {
+        assert_eq!(unique(&[512, 256, 512]), [512, 256]);
+        assert_eq!(unique(&[512, 512, 256]), [512, 256]);
+        assert_eq!(norm_widths(&FLASH), [5120, 1280, 512]);
+        for g in GEOMETRIES {
+            let cubin = cubin(g).unwrap();
+            let mut symbols: Vec<&str> = cubin.entries.iter().map(|e| e.symbol.as_str()).collect();
+            let count = symbols.len();
+            symbols.sort_unstable();
+            symbols.dedup();
+            assert_eq!(symbols.len(), count, "{}", g.id);
+        }
+    }
 }

@@ -120,6 +120,14 @@ native KV layout, which `/health` reports as `mixed` (what
   through `frontend_cases.py` and the pinned checkpoint encoder. API reads
   the same `tools-00` conversation; the frontend gate requires equality
   for both the tokenizer and chat files.
+  From the repository root, with the configured checkpoint and reference
+  Python, regenerate and verify the chat fixture on CPU:
+
+  ```sh
+  CUDA_VISIBLE_DEVICES= "$CHOPINFER_REFRUN_PYTHON" -B fixtures/deepseek41/capture/chat_renders.py --output "$CHOPINFER_DATA/deepseek41/frontend-agentic/chat-renders.json"
+  cmp fixtures/deepseek41/frontend/chat-renders.json "$CHOPINFER_DATA/deepseek41/frontend-agentic/chat-renders.json"
+  ```
+
 - prefix_exact: the `deepseek41` policy uses the teacher reference's schema,
   64-token pages and a 64-token prefill granule from
   `contract/src/serving.rs`. It checks page and prompt-end anchors, image

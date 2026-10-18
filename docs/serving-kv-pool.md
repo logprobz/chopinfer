@@ -85,10 +85,15 @@ missing the cache.
 
 ## Formats, caching and offload
 
-The selected layout determines page bytes and format on every rank. BF16 and
-FP8 layouts have distinct identities; `--kv-cache-dtype auto` uses the package
-preference, currently BF16. FP8 quantizes only the declared KV regions, leaving
-other state exact. Prefix keys include token and media identity. Model and
+The selected layout determines page bytes and format on every rank. BF16, FP8
+and mixed-plane layouts have distinct identities; `--kv-cache-dtype auto` uses
+the package preference (BF16 for the GLM, MiMo and Qwen packages). FP8
+quantizes only the declared KV regions, leaving other state exact. A
+mixed-plane layout lists its planes, each with its own code (BF16, FP8 E4M3 or
+FP4 E2M1) and scale format, and the startup line names them; it requires
+`chop.kv-cache.mixed-planes.v1`. A layout may also size the per-request state
+for its element, and the host creates the bundle with that state when it
+serves the layout. Prefix keys include token and media identity. Model and
 layout identity are implicit in the cache's lifetime within one engine.
 Anchors restore bundle state as well as logical KV pages.
 

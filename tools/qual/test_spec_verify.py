@@ -163,12 +163,12 @@ class CoverageTests(unittest.TestCase):
                 kind.score(forged)
 
 
-def bound(record, identity="a" * 64, model="served", tokens=0, tensor_parallel_size=2):
+def bound(record, identity="a" * 64, model="served", tokens=0, tensor_parallel_size=2, kv="bf16"):
     """`record` as a bound arm: its server's pinned checkpoint and serving profile."""
     record = copy.deepcopy(record)
     nonce = "1" * 32 if record["arm"] == "chopinfer-spec" else "0" * 32
     record["server"] = {"model": model, "checkpoint": {"checkpoint_identity": identity, "startup_nonce": nonce}}
-    record["serving"] = {"tensor_parallel_size": tensor_parallel_size, "kv_cache_dtype": "bf16",
+    record["serving"] = {"tensor_parallel_size": tensor_parallel_size, "kv_cache_dtype": kv,
                          "speculation": {"mode": "adaptive" if tokens else "off", "tokens": tokens,
                                          "drafter": "mtp" if tokens else None}}
     return record
@@ -191,6 +191,18 @@ class IdentityTests(unittest.TestCase):
         self.assertEqual((result["bound"]["checkpoint_identity"], result["bound"]["model"]), ("a" * 64, "served"))
         self.assertEqual(result["bound"]["serving"]["spec"]["speculation"]["tokens"], 3)
         self.assertIsNone(spec_verify.compare_records(self.spec, self.ar)["bound"])
+
+    def test_every_served_kv_element_binds(self):
+        # The host labels its served element bf16, fp8 or mixed (a
+        # mixed-plane layout); both arms must serve the same one.
+        for kv in ("bf16", "fp8", "mixed"):
+            with self.subTest(kv):
+                result = spec_verify.compare_records(bound(self.spec, tokens=3, kv=kv), bound(self.ar, kv=kv))
+                self.assertEqual(result["bound"]["serving"]["ar"]["kv_cache_dtype"], kv)
+        with self.assertRaisesRegex(ValueError, "no KV cache dtype"):
+            spec_verify.compare_records(bound(self.spec, tokens=3, kv="fp4"), bound(self.ar, kv="fp4"))
+        with self.assertRaises(ValueError):
+            spec_verify.compare_records(bound(self.spec, tokens=3, kv="mixed"), bound(self.ar))
 
     def test_mismatched_arms_are_refused(self):
         for spec, ar, message in (

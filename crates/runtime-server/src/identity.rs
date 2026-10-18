@@ -49,7 +49,7 @@ pub struct ServingProfile {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_parallel_size: Option<usize>,
     pub speculation: ServingSpeculation,
-    /// The resolved KV cache element, `bf16` or `fp8`.
+    /// The resolved KV cache element, `bf16`, `fp8` or `mixed`.
     pub kv_cache_dtype: String,
     /// Whether prefixes are cached: enabled, and declared by the bundle.
     pub prefix_cache: bool,

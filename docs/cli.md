@@ -94,7 +94,7 @@ replaces them, for example with 32 sequences.
 | `--prefill-chunk-tokens N` | 2048 (at most the batch budget) | Prefill chunk size |
 | `--kv-memory-fraction F` | 0.9 | Fraction in (0, 1] of the tightest rank's free memory, after other allocations and a 1 GiB reserve, given to the KV pool |
 | `--kv-pages N` | none | Caps the KV pool in pages |
-| `--kv-cache-dtype auto\|bf16\|fp8` | `auto` | `auto` uses the package's preferred KV layout |
+| `--kv-cache-dtype auto\|bf16\|fp8\|mixed` | `auto` | `auto` uses the package's preferred KV layout; `mixed` its mixed-plane layout (each plane in its own code and scale format) |
 | `--prefix-cache on\|off` | `on` | Prefix reuse; `off` is a diagnostic escape hatch |
 | `--speculative-tokens N` | 0 (profiles set it) | Draft depth; 0 serves autoregressively and drops the profile's speculation |
 | `--speculation fixed\|adaptive` | `adaptive` | Adaptive drafts only when it pays; fixed always drafts N |

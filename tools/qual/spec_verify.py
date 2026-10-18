@@ -144,7 +144,9 @@ def bound_server(record):
     speculation = serving.get("speculation")
     if type(size) is not int or size < 1:
         raise ValueError(f"a bound record names no tensor parallel size: {size!r}")
-    if kv not in ("bf16", "fp8"):
+    # The host's served element (runtime-host kv_cache_dtype.rs): `mixed` is
+    # a mixed-plane layout such as a model's native trained KV formats.
+    if kv not in ("bf16", "fp8", "mixed"):
         raise ValueError(f"a bound record names no KV cache dtype: {kv!r}")
     if not (isinstance(speculation, dict) and speculation.get("mode") in ("off", "fixed", "adaptive")
             and type(speculation.get("tokens")) is int and speculation["tokens"] >= 0

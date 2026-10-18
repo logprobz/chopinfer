@@ -148,17 +148,20 @@ class GateTests(unittest.TestCase):
                         self.assertTrue((gate.ROOT / rule['source'].split('#')[0]).is_file(), rule['source'])
 
     @staticmethod
-    def teacher_declaration():
-        """The first shipped model declaration with a teacher check."""
+    def teacher_declaration(configured=False):
+        """The first shipped model declaration with a teacher check (and,
+        when `configured`, with a configuration that runs it)."""
         return next(path for path in declaration.shipped()[1:]
-                    if path.name == declaration.NAME and 'teacher' in json.loads(path.read_text())['checks'])
+                    if path.name == declaration.NAME and 'teacher' in json.loads(path.read_text())['checks']
+                    and (not configured or any('teacher' in spec.get('checks', []) for spec in
+                                               declaration.configurations(path.parent.name).values())))
 
     def eval_run(self, change=None, configuration=None):
         """Runs the teacher check of the first shipped model declaration with
         one (or of its `configuration`), full cohort, through run_check with
         a fake `chopinfer eval run`; the row, the eval commands it ran, the
         run directory and the model's directory."""
-        path = self.teacher_declaration()
+        path = self.teacher_declaration(configured=configuration is not None)
         config = declaration.load(path if configuration is None else
                                   declaration.named(f'{path.parent.name}.{configuration}'))
         check = next(check for check in config['checks'] if check['id'] == 'teacher')
@@ -199,7 +202,7 @@ class GateTests(unittest.TestCase):
         self.assertEqual(row['eval_report'], str(report / 'report.json'))
 
     def test_a_configuration_s_check_runs_under_its_variant(self):
-        model = self.teacher_declaration().parent.name
+        model = self.teacher_declaration(configured=True).parent.name
         configuration = next(name for name, spec in declaration.configurations(model).items()
                              if 'teacher' in spec.get('checks', []))
         row, commands, root, directory = self.eval_run(configuration=configuration)

@@ -8,8 +8,14 @@ pub const CUBIN: &str = "position_candidates_runtime_sm120";
 
 pub fn compiled() -> CandidateEntry {
     CandidateEntry {
-        name: "b8_k2048".into(),
-        query: CandidateBlocksQuery { block_size: 8, top_k_blocks: 2048, capacity: 8 },
+        // This comparison copy belongs to this lab family. The ordinary
+        // position_blocks family retains its b8_k2048 symbols and cubin.
+        name: "runtime_candidates_reference_b8_k2048".into(),
+        query: CandidateBlocksQuery {
+            block_size: 8,
+            top_k_blocks: 2048,
+            capacity: 8,
+        },
     }
 }
 
@@ -17,5 +23,8 @@ pub fn cubins() -> Vec<CubinSpec> {
     let entry = compiled();
     let mut specs = position_candidates_runtime::specs(&entry).unwrap();
     specs.extend(entry.specs().unwrap());
-    crate::declared(&[CUBIN], vec![position_candidates_runtime::cubin_spec(CUBIN, specs)])
+    crate::declared(
+        &[CUBIN],
+        vec![position_candidates_runtime::cubin_spec(CUBIN, specs)],
+    )
 }

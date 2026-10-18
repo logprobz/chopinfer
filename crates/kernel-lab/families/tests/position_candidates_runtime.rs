@@ -23,15 +23,15 @@ fn backend() -> Sm120 {
 fn runtime_candidates_prepare_with_a_fixed_output_stride() {
     let backend = backend();
     let q = family::compiled().query;
+    let runtime =
+        kernels_sm120::pooled_indexer::position_candidates_runtime::entry(&family::compiled());
     for kept in [1, 2, 65, 1024, 2048] {
         let op = backend
             .indexer_candidate_block_ids_runtime(&q, kept, 16385, Need::rows(8))
             .unwrap();
-        assert!(
-            op.info()
-                .symbols
-                .iter()
-                .all(|(s, _)| s.contains("_runtime_"))
+        assert_eq!(
+            op.info().symbols,
+            vec![(runtime.score_symbol(), 0), (runtime.gather_symbol(), 0)]
         );
         assert!(
             op.info()
@@ -49,12 +49,12 @@ fn runtime_candidates_prepare_with_a_fixed_output_stride() {
     let compiled = backend
         .indexer_candidate_block_ids(&q, 16385, Need::rows(8))
         .unwrap();
-    assert!(
-        compiled
-            .info()
-            .symbols
-            .iter()
-            .all(|(s, _)| !s.contains("_runtime_"))
+    assert_eq!(
+        compiled.info().symbols,
+        vec![
+            (family::compiled().score_symbol(), 0),
+            (family::compiled().gather_symbol(), 0)
+        ]
     );
 }
 

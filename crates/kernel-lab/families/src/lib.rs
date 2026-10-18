@@ -101,6 +101,26 @@ mod tests {
     }
 
     #[test]
+    fn family_entry_symbols_are_globally_unique() {
+        let mut owners = std::collections::BTreeMap::new();
+        for (family, specs) in all() {
+            for spec in specs {
+                for entry in spec.entries {
+                    let owner = format!("{family}:{}", spec.name);
+                    let previous = owners.insert(entry.symbol.clone(), owner.clone());
+                    assert!(
+                        previous.is_none(),
+                        "{} belongs to both {} and {owner}",
+                        entry.symbol,
+                        previous.unwrap()
+                    );
+                }
+            }
+        }
+        assert!(!owners.is_empty());
+    }
+
+    #[test]
     fn paired_lock_directory_passes() {
         let dir = lock_dir("paired", &["a.lock", "a.provenance.json"]);
         assert_eq!(unpaired(&dir, &["a"]).unwrap(), Vec::<String>::new());

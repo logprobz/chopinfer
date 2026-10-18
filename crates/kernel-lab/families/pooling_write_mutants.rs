@@ -129,7 +129,8 @@ impl Fault {
                     entry.body=format!("chop::pooling_write_tests::flag_saturation<{}>(key,live_rows,status,status_row_offset);{}",served.width(),entry.body);
                 }
                 Self::HoleStatus => {
-                    entry.body.push_str("chop::pooling_write_tests::mark_holes(live_rows,status,status_row_offset);");
+                    let served = crate::fp4_key_write::entries().into_iter().find(|e|e.symbol()==entry.symbol).unwrap();
+                    entry.body.push_str(&format!("chop::pooling_write_tests::mark_holes<{},{}>(positions,row_batch,live_rows,page_tables,items,pages,max_pages,table_rows,status,status_row_offset);",served.ratio(),served.page_size()));
                 }
                 _ => {}
             }

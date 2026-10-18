@@ -125,7 +125,15 @@ fn faulty_key_write_status_and_saturation_are_rejected_on_a_gpu() {
             assert_eq!(report.prepared().len(),count);
             for op in &report.ops {
                 let OpResult::Prepared {checks,..}=&op.result else {panic!("mutant refused")};
-                assert!(checks.iter().any(|c|c.name=="conformance" && matches!(&c.outcome,Outcome::Failed(e) if ["status","codes","scales"].iter().any(|s|e.contains(s)) && !e.contains("CUDA") && !e.contains("unbound"))),"{fault:?}: {checks:?}");
+                if fault == Fault::HoleStatus {
+                    // live=1 contains only valid row 0 and must pass. The
+                    // next prefix (live=3) first exposes the hole at row 1.
+                    // Pin its U32 status byte, so changing valid rows or
+                    // cache payloads cannot satisfy this negative control.
+                    assert!(checks.iter().any(|c|c.name=="conformance" && matches!(&c.outcome,Outcome::Failed(e) if e.ends_with(" live 3: status byte 4 is 0x01, the reference 0x00"))),"{fault:?}: {checks:?}");
+                } else {
+                    assert!(checks.iter().any(|c|c.name=="conformance" && matches!(&c.outcome,Outcome::Failed(e) if ["status","codes","scales"].iter().any(|s|e.contains(s)) && !e.contains("CUDA") && !e.contains("unbound"))),"{fault:?}: {checks:?}");
+                }
             }
             session.receipt("fp4-write-status-mutant",BTreeMap::from([("fault".into(),serde_json::json!(fault.tag())),("report".into(),report.json())]))?;
         }

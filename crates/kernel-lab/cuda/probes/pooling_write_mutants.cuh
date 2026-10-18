@@ -25,9 +25,25 @@ __device__ void flag_saturation(const float* key, const uint32_t* live,
     atomicOr(status+offset+blockIdx.x, uint32_t(2));
   __syncthreads();
 }
-__device__ void mark_holes(const uint32_t* live, uint32_t* status, uint64_t offset) {
+template<int Ratio, int Page>
+__device__ void mark_holes(const int32_t* positions, const int32_t* row_batch,
+    const uint32_t* live, const int32_t* tables, uint32_t items,
+    uint32_t pages, uint32_t max_pages, uint32_t table_rows,
+    uint32_t* status, uint64_t offset) {
   __syncthreads();
-  if (threadIdx.x == 0 && blockIdx.x < *live) atomicOr(status+offset+blockIdx.x,uint32_t(1));
+  const uint32_t row = blockIdx.x;
+  if (threadIdx.x != 0 || row >= *live) return;
+  const int32_t position = positions[row], item = row_batch[row];
+  bool hole = position < 0 || item < 0 || uint32_t(item) >= items;
+  if (!hole) {
+    const uint32_t logical_page = uint32_t(position) / Page;
+    hole = uint64_t(position) * Ratio >= table_rows || logical_page >= max_pages;
+    if (!hole) {
+      const int32_t page = tables[uint64_t(item) * max_pages + logical_page];
+      hole = page < 0 || uint32_t(page) >= pages;
+    }
+  }
+  if (hole) atomicOr(status+offset+row,uint32_t(1));
 }
 
 // Run the real prefill, but discard the tail carried out of its four-row

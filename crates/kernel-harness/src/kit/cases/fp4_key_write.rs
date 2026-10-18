@@ -793,7 +793,15 @@ mod tests {
                     ),
                     StatusCase::Holes => {
                         assert!(words.iter().all(|&v| v == 0));
-                        assert_eq!(slots(query, &images, CAPACITY, false).unwrap().len(), 1);
+                        let valid_rows = slots(query, &images, CAPACITY, false)
+                            .unwrap()
+                            .into_iter()
+                            .map(|(row, _)| row)
+                            .collect::<Vec<_>>();
+                        // The device control must pass live=1, then first
+                        // differ at row 1's status word (byte 4) at live=3.
+                        assert_eq!(valid_rows, [0]);
+                        assert_eq!(images.i32s("positions").unwrap()[1], i32::MAX);
                     }
                     StatusCase::PriorFlags => assert_eq!(bytes, images.bytes("status").unwrap()),
                     _ => assert_ne!(words[0] & NONFINITE_INPUT, 0, "{variant:?} {query:?}"),

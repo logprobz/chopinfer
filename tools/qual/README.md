@@ -1555,6 +1555,17 @@ bash tools/qual/release_preview.sh plan --model M --suite full  # the arms and s
   as the run ID of a check another run recorded, comes from `--input-value
   KEY=VALUE`, is given to the checks as written and is recorded in run.json's
   `input_values`; the check's own input rules still judge it.
+- A verification check can set
+  `constants.release_preview.RECORD_ARGUMENTS` to `{value, source}`, where
+  `value` maps its `verify_ar` and `verify_candidate` inputs to argument
+  lists, for example `["--concurrency", "4", "--row-capacity", "32"]`.
+  Only positive `--concurrency` (once) and `--row-capacity` (repeatable)
+  values are accepted. Per-bucket coverage needs multi-row verify steps;
+  concurrency supplies them and row capacity requires observed execution.
+  The report must also require the candidate and AR capacities. Use separate
+  configurations for checks that need different arguments for the same input.
+  With no option, records keep today's concurrency 1 and their existing
+  sampling, paths and format. This option changes no sampling or server flags.
 - A check module may bring its own arms and records as module-level
   `RUNNER_ARMS = {arm: [serve words]}` and
   `RUNNER_RECORDS = {input: (arm, script, arguments)}`; arguments may use

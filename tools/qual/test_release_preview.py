@@ -107,6 +107,58 @@ def check_rows(facts, arms, checks):
             else f'default/{arm}/{check}' for arm in arms for check in checks for store in runner.STORES}
 
 
+class RecordArgumentTests(unittest.TestCase):
+    def check(self, arguments=None):
+        check = {'module': 'verify_exact', 'files': ['verify_ar', 'verify_candidate']}
+        if arguments is not None:
+            check['constants'] = {'release_preview': {'RECORD_ARGUMENTS': {
+                'value': arguments, 'source': 'tools/qual/README.md#correctness-runner'}}}
+        return check
+
+    def test_absent_arguments_preserve_both_default_records(self):
+        for name in ('verify_ar', 'verify_candidate'):
+            self.assertEqual(runner.record_for(name, self.check()), runner.RECORDS[name])
+
+    def test_declared_arguments_select_concurrency_and_require_observed_capacity(self):
+        args = ['--concurrency', '4', '--row-capacity', '32']
+        base = list(runner.RECORDS['verify_candidate'][2])
+        check = self.check({'verify_candidate': args})
+        arm, script, actual = runner.record_for('verify_candidate', check)
+        self.assertEqual((arm, script), runner.RECORDS['verify_candidate'][:2])
+        self.assertEqual(actual, base + args)
+        self.assertEqual(runner.RECORDS['verify_candidate'][2], base)
+        self.assertEqual(runner.record_for('verify_ar', check), runner.RECORDS['verify_ar'])
+
+    def test_refuse_sampling_changes_invalid_values_and_unknown_inputs(self):
+        for args in (['--temperature', '1'], ['--concurrency', '0'], ['--concurrency'],
+                     ['--concurrency', '1', '--concurrency', '2'], ['--k', '3'],
+                     ['--row-capacity', '-1'], '4'):
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                runner.record_for('verify_candidate', self.check({'verify_candidate': args}))
+        with self.assertRaises(ValueError):
+            runner.record_for('verify_ar', self.check({'missing_input': ['--concurrency', '4']}))
+        check = self.check({'spec_candidate': ['--concurrency', '4']})
+        check['files'].append('spec_candidate')
+        with self.assertRaises(ValueError):
+            runner.record_for('spec_candidate', check)
+
+    def test_plan_keeps_the_declared_values_and_refuses_conflicting_inputs(self):
+        facts = dict(runner.model_facts(model()))
+        check = self.check({'verify_ar': ['--concurrency', '4'],
+                            'verify_candidate': ['--concurrency', '4', '--row-capacity', '32']})
+        facts.update(full=['verify_exact'], checks={'verify_exact': check})
+        config = {'screens': False, 'features': [], 'serve': []}
+        arms = runner.plan(facts, 'full', 'default', config)
+        records = {step['input']: step for arm in arms for step in arm['steps'] if step['kind'] == 'record'}
+        self.assertEqual(records['verify_ar']['arguments'][-2:], ['--concurrency', '4'])
+        self.assertEqual(records['verify_candidate']['arguments'][-4:],
+                         ['--concurrency', '4', '--row-capacity', '32'])
+        facts['full'].append('other_bucket')
+        facts['checks']['other_bucket'] = self.check({'verify_candidate': ['--concurrency', '2']})
+        with self.assertRaisesRegex(ValueError, 'conflicting record arguments'):
+            runner.plan(facts, 'full', 'default', config)
+
+
 class PlanTests(unittest.TestCase):
     def test_quick_starts_the_default_arms_with_determinism_first_and_checks_on_the_quick_arms(self):
         for model in MODELS:

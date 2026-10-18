@@ -351,6 +351,7 @@
    "PRODUCER": "list",
    "QUICK_PREFIX_SHARDS": "int",
    "RECORDS": "number",
+   "RECORD_ARGUMENTS": "dict",
    "ROOT": "number",
    "SHARD_INPUT": "number",
    "SHARED": "list",

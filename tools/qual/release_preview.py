@@ -133,6 +133,7 @@ PRODUCER = ['record', '--url', '{url}', '--server-log', '{server_log}', '--taps-
 # module may add its own arms and records in the same form, as module-level
 # RUNNER_ARMS and RUNNER_RECORDS, for inputs this table does not name
 # (README#correctness-runner).
+RECORD_ARGUMENTS = {}
 RECORDS = {
     'spec_ar': ('ar', 'spec_verify.py', ['record', *SHARED, '--arm', 'chopinfer-ar', '--run-id', '{run_id}',
                                          '--output-tokens', '64', '--server-log', '{server_log}']),
@@ -955,13 +956,26 @@ def stored_inputs(check):
 
 def record_for(name, check, model=None):
     """(arm, script, arguments) of the record a check's input names, or None."""
+    declared = check.get('constants', {}).get('release_preview', {}).get('RECORD_ARGUMENTS', {}).get('value', {})
+    require(isinstance(declared, dict), 'RECORD_ARGUMENTS must map inputs to argument lists')
+    for key, arguments in declared.items():
+        require(key in check.get('files', []) and key in ('verify_ar', 'verify_candidate'),
+                f'RECORD_ARGUMENTS: {key} is not a declared verification input')
+        require(isinstance(arguments, list) and all(isinstance(word, str) for word in arguments)
+                and len(arguments) % 2 == 0, f'RECORD_ARGUMENTS: {key} needs option/value pairs')
+        flags = arguments[::2]
+        require(all(flag in ('--concurrency', '--row-capacity') for flag in flags)
+                and flags.count('--concurrency') <= 1
+                and all(re.fullmatch(r'[1-9][0-9]*', word) for word in arguments[1::2]),
+                f'RECORD_ARGUMENTS: {key} accepts only positive concurrency and row capacities')
     shard = SHARD_INPUT.match(name)
     if shard:
         arm, script, arguments = RECORDS['prefix_record']
         count = len([key for key in check.get('files', []) if SHARD_INPUT.match(key)])
         return arm, script, [*arguments, '--shard', f'{shard.group(1)}/{count}']
     if name in RECORDS:
-        return RECORDS[name]
+        arm, script, arguments = RECORDS[name]
+        return arm, script, [*arguments, *declared.get(name, [])]
     return module_records(check['module'], model)[1].get(name)
 
 
@@ -1016,6 +1030,11 @@ def plan(facts, suite, config_name, config, inputs=()):
 
     def step(name, kind, **fields):
         steps = arm(name)['steps']
+        if kind == 'record':
+            previous = next((row for row in steps if row['id'] == fields['id']), None)
+            require(previous is None or all(previous.get(key) == fields.get(key)
+                                           for key in ('script', 'arguments')),
+                    f"conflicting record arguments for {fields['id']}")
         if not any(row['id'] == fields['id'] for row in steps):
             steps.append({'kind': kind, **fields})
 

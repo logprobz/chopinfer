@@ -104,5 +104,11 @@ class DeepseekInventory(ModelRequirements):
         self.assertEqual(self.model.geometry_recipe.architecture, 'DeepseekV41GeometryRecipeForCausalLM')
 
 
+def load_tests(loader, tests, pattern):
+    from models.deepseek41.tests.test_long_context_qualification import LongContextQualificationTests
+    tests.addTests(loader.loadTestsFromTestCase(LongContextQualificationTests))
+    return tests
+
+
 if __name__ == '__main__':
     unittest.main()

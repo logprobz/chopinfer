@@ -52,6 +52,7 @@
       "thinking"
     ],
     "effort_use": "when-thinking",
+    "switch": "thinking-object",
     "end_markers": [
       "</think>"
     ]
@@ -143,7 +144,8 @@
       "none_omits_tools": true,
       "named_renders_its_tool_only": true,
       "forced_prefill": "\n\n<｜DSML｜ calls>\n",
-      "forced_refused_in_thinking": true
+      "forced_refused_in_thinking": true,
+      "forced_without_tools_is_auto": true
     }
   },
   "vocabulary": {
@@ -209,7 +211,8 @@
     ]
   },
   "response": {
-    "reasoning_field": "reasoning_content"
+    "reasoning_field": "reasoning_content",
+    "constraint_scope": "strict-only"
   },
   "format": {
     "parser": {
@@ -226,6 +229,9 @@
       "parameter_name_close": "\" string=\"true\">",
       "parameter_json_name_close": "\" string=\"false\">",
       "parameter_close": "</｜DSML｜ parameter>\n",
+      "reserved_markers": [
+        "｜DSML｜"
+      ],
       "turn_open": [
         "<｜Assistant｜>",
         "<｜System｜>",

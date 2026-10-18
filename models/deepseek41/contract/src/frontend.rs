@@ -89,7 +89,9 @@ const THINKING_KEYWORDS: [&str; 2] = ["enable_thinking", "thinking"];
 /// parameters carry `string="true"` for a string written raw and
 /// `string="false"` for any other value written as JSON. The shared typed
 /// tool grammar reads exactly that, as `parse_message_from_completion_text`
-/// (lines 897-990) does.
+/// (lines 897-990) does. The DSML marker is reserved outside the calls
+/// block the blank line opens, as that parser refuses it in content or
+/// reasoning (lines 981-983).
 #[must_use]
 pub fn parser_declaration() -> FrontendParserDeclarationV1 {
     let text = |value: &str| value.to_owned();
@@ -111,7 +113,7 @@ pub fn parser_declaration() -> FrontendParserDeclarationV1 {
         parameter_value_open: String::new(),
         parameter_close: text("</｜DSML｜ parameter>\n"),
         drop_blank_tool_call_content: false,
-        reserved_markers: Vec::new(),
+        reserved_markers: vec![text(encoding::DSML)],
         turn_open: [encoding::ASSISTANT, encoding::SYSTEM, encoding::USER]
             .map(text)
             .to_vec(),

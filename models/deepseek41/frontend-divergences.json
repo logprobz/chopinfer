@@ -351,7 +351,7 @@
       "when": [
         "round-trip:delimiter"
       ],
-      "reason": "the encoder writes a string argument raw (lines 547-553), so one that spells a DSML parameter or invoke marker ends there when read back, by the vendor parser (lines 897-943) and the served one alike"
+      "reason": "the encoder writes a string argument raw (lines 547-553), and the vendor parser ends a raw value at the first DSML parameter close (lines 897-943), as the served one does; a string argument that spells it reads back cut there. Another parameter's open or the invoke close inside a raw value is text"
     },
     {
       "id": "special-token-in-turn",
@@ -398,11 +398,13 @@
     {
       "id": "R4-final-assistant-turn",
       "follows": "encoding.py",
-      "rule": "no generation header follows a final assistant turn, which ends with the end-of-sentence token, so such a request is refused (final-assistant-turn) unless continue_final_message renders the turn open; the recipe appends a header after every request",
-      "source": "plan V4; encoding.py lines 60, 695-706, 710-739; deepseek-recipe 8cadfede7 deepseek-recipe-encoding/src/v4/mod.rs lines 255-260",
+      "rule": "no generation header follows a final assistant turn, which ends with the end-of-sentence token, so such a request is refused (final-assistant-turn) unless continue_final_message renders the turn open; the recipe appends a header after every request. System messages alone render as the encoder renders them: a later system message is followed by the header, so two or more are served and match the encoder, and the recipe serves them too; only a lone system message, after R5 drops empty ones, has no header and is refused",
+      "source": "plan V4; encoding.py lines 60, 695-706, 710-739 (line 731: a system message after the first is followed by the header); deepseek-recipe 8cadfede7 deepseek-recipe-encoding/src/v4/mod.rs lines 245-260 (line 255 appends the header after every request)",
       "cases": [
         "final-assistant-turn",
-        "continued-final-assistant-turn"
+        "continued-final-assistant-turn",
+        "system-messages-only",
+        "system-messages-with-empty"
       ]
     },
     {
@@ -418,13 +420,15 @@
     {
       "id": "R6-tool-choice",
       "follows": "recipe",
-      "rule": "the declared tools.choice policy, which the host applies around the render: none renders without the offered tools; a named choice renders only its tool; required and a named choice end the prompt with the calls block's opening, which the completion's parser and the forced constraint read as its start, and are refused in thinking mode",
-      "source": "plan V4 (request mapping follows the recipe); deepseek-recipe 8cadfede7 deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 155-215, deepseek-recipe-encoding/src/v4/mod.rs lines 215-218, 261-266",
+      "rule": "the declared tools.choice policy, which the host applies around the render: none renders without the offered tools; a named choice renders only its tool; required and a named choice end the prompt with the calls block's opening, which the completion's parser and the forced constraint read as its start, and are refused in thinking mode; without offered tools, required and a named choice serve as auto (tools.choice forced_without_tools_is_auto), in thinking mode too, rather than the transport's refusal",
+      "source": "plan V4 (request mapping follows the recipe); deepseek-recipe 8cadfede7 deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 155-215 (lines 172-174: no tools is auto), deepseek-recipe-encoding/src/v4/mod.rs lines 215-218, 261-266",
       "cases": [
         "tool-choice-none",
         "tool-choice-required",
         "tool-choice-named",
-        "tool-choice-required-thinking"
+        "tool-choice-required-thinking",
+        "tool-choice-required-without-tools",
+        "tool-choice-named-without-tools"
       ]
     },
     {
@@ -434,7 +438,33 @@
       "source": "plan V6; deepseek-recipe 8cadfede7 deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 217-227",
       "cases": [
         "medium-effort",
-        "nested-xhigh-effort"
+        "minimal-effort",
+        "xhigh-effort"
+      ]
+    },
+    {
+      "id": "thinking-switch",
+      "follows": "recipe",
+      "rule": "thinking switches by the top-level thinking object (reasoning.switch thinking-object): type enabled or its alias adaptive thinks, disabled does not, and the object overrides the effort; without it, reasoning_effort none disables thinking and any other effort enables it, and with neither the request thinks (default_enabled). An enabled object over an effort of none thinks at the default effort, high. budget_tokens is checked and not read. The thinking keywords and the effort in chat_template_kwargs are ignored, as the recipe ignores that object; preserve_thinking there still renders earlier reasoning (R1). Other models keep the template keywords",
+      "source": "integration owner decision (follow the recipe for the thinking switch); deepseek-recipe 8cadfede7 deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 81-98, schema.rs lines 40-45, 205-226",
+      "cases": [
+        "thinking-object-disabled",
+        "thinking-object-adaptive-over-none",
+        "thinking-object-enabled-at-max",
+        "template-thinking-ignored",
+        "effort-none-disables"
+      ]
+    },
+    {
+      "id": "V7-constraint-scope",
+      "follows": "plan V7",
+      "rule": "decoding is constrained only for a json_schema response format with strict true, an explicit structured_outputs constraint, and a required or named tool choice (response.constraint_scope strict-only); a json_object or non-strict json_schema response format and a strict tool under auto render as the encoder renders them and leave decoding unconstrained, as the recipe leaves JSON Schema output and strict flags to the caller. The render cases show the prompts; model-deepseek41's frontend_goldens checks the constraints",
+      "source": "plan V7; deepseek-recipe 8cadfede7 deepseek-recipe/src/protocol/openai/chat_completion/request/mod.rs lines 10-13",
+      "cases": [
+        "response-format-json-object",
+        "response-format-with-tools",
+        "recipe-tool-schema",
+        "tool-choice-required"
       ]
     }
   ]

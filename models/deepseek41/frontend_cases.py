@@ -64,7 +64,9 @@ SPECIAL = ("<｜begin▁of▁sentence｜>", EOS, "<think>", "</think>", "｜DSML
 
 def thinking(keywords):
     """The mode the served frontend selects: the first declared thinking
-    keyword the request sets, else thinking (`default_enabled`)."""
+    keyword the request sets, else thinking (`default_enabled`). The
+    declaration switches by the top-level thinking object, which the HF
+    input carries as both keywords, and drops the client's own keywords."""
     for keyword in ("enable_thinking", "thinking"):
         if isinstance(keywords.get(keyword), bool):
             return keywords[keyword]
@@ -115,9 +117,13 @@ def encoder_render(namespace, messages, tools, add_generation_prompt, continue_f
     with the request mapped into messages as deepseek-recipe maps it (plan
     V4; `mapping` in frontend-divergences.json) and the served format
     serves it:
-    - the mode from the thinking keywords, and the effort (the keyword
-      `reasoning_effort`, which a top-level effort sets, with a protocol
-      alias read as the effort it names) in thinking mode only;
+    - the mode from the top-level thinking object, else the top-level
+      effort (`none` disables), as deepseek-recipe resolves it (convert.rs
+      lines 81-98) and the HF input carries it; the thinking keywords and
+      the effort in `chat_template_kwargs` are ignored, as the recipe
+      ignores that object; the effort, with a protocol alias read as the
+      effort it names, applies in thinking mode only, and an enabled object
+      over an effort of `none` thinks at the default effort;
     - `preserve_thinking` turns off `drop_thinking`;
     - each offered tool is the recipe's function object, and an empty
       system message is dropped;
@@ -129,6 +135,8 @@ def encoder_render(namespace, messages, tools, add_generation_prompt, continue_f
       with only its tool, and a required or named one ends the prompt with
       the calls block's opening and is refused in thinking mode, as the
       recipe maps it (convert.rs lines 155-215, v4/mod.rs lines 261-266);
+      without offered tools any choice but none is auto (convert.rs lines
+      172-174);
     - a continued final assistant turn renders without its end token
       (`wo_eos`); the encoder writes the generation header itself, so
       `add_generation_prompt` changes nothing."""
@@ -138,7 +146,7 @@ def encoder_render(namespace, messages, tools, add_generation_prompt, continue_f
     messages = [encoder_message(message) for message in messages if not empty_system(message)]
     tools = [recipe_tool(tool) for tool in tools or []]
     named = tool_choice.get("function", {}).get("name") if isinstance(tool_choice, dict) else None
-    forced = tool_choice == "required" or named is not None
+    forced = bool(tools) and (tool_choice == "required" or named is not None)
     if tool_choice == "none":
         tools = []
     elif named is not None:
@@ -320,10 +328,10 @@ def cases(declaration):
         {"role": "developer", "content": "Be terse."}, user("q1"),
         {"role": "assistant", "content": "a1"}, user("q2"),
     ]}, {"fixed:developer-before-last-user", "developer:present"}
-    # Protocol efforts the encoder does not name, top-level and nested.
+    # Protocol efforts the encoder does not name.
     yield "medium-effort", {"messages": [user("q")], "reasoning_effort": "medium"}, {"fixed:medium-effort"}
-    yield "nested-xhigh-effort", {"messages": [user("q")], "chat_template_kwargs": {"reasoning_effort": "xhigh"}}, {
-        "fixed:nested-xhigh-effort"}
+    yield "minimal-effort", {"messages": [user("q")], "reasoning_effort": "minimal"}, {"fixed:minimal-effort"}
+    yield "xhigh-effort", {"messages": [user("q")], "reasoning_effort": "xhigh"}, {"fixed:xhigh-effort"}
     # Argument text the encoder reads itself: spacing kept in a value it
     # reads once, a null, three JSON string layers, and a repeated key,
     # whose last value Python keeps.
@@ -362,6 +370,16 @@ def cases(declaration):
     yield "response-format-json-object", {"messages": [user("Answer in JSON.")],
                                           "response_format": RESPONSE_FORMATS["json-object"]}, {
         "fixed:response-format-json-object", "response-format:json-object"}
+    # R4: system messages alone render as the encoder renders them: a
+    # later system message is followed by the generation header (lines
+    # 713, 731-739), so two are served, and an empty one is dropped (R5).
+    yield "system-messages-only", {"messages": [
+        {"role": "system", "content": "Be brief."}, {"role": "system", "content": "Answer in French."},
+    ]}, {"fixed:system-messages-only", "system:late"}
+    yield "system-messages-with-empty", {"messages": [
+        {"role": "system", "content": "Be brief."}, {"role": "system", "content": "Answer in French."},
+        {"role": "system", "content": ""},
+    ]}, {"fixed:system-messages-with-empty", "system:late", "system:empty"}
     # R4: a final assistant turn ends with the end-of-sentence token and no
     # header follows, so it is refused unless continued.
     yield "final-assistant-turn", {"messages": [user("q"), {"role": "assistant", "content": "a"}]}, {
@@ -381,7 +399,7 @@ def cases(declaration):
     # R6: a tool choice of none renders no tools; required and a named
     # choice end the prompt with the calls block's opening (a named one
     # renders only its tool), and are refused in thinking mode.
-    chat = {"chat_template_kwargs": {"thinking": False}}
+    chat = {"thinking": {"type": "disabled"}}
     second = {"type": "function", "function": {"name": "get_time", "parameters": {"type": "object"}}}
     yield "tool-choice-none", {"messages": [user("q")], "tools": [WEATHER], "tool_choice": "none"}, {
         "fixed:tool-choice-none", "tools:wrapped"}
@@ -394,6 +412,28 @@ def cases(declaration):
     yield "tool-choice-required-thinking", {"messages": [user("Weather in Oslo?")], "tools": [WEATHER],
                                             "tool_choice": "required"}, {
         "fixed:tool-choice-required-thinking", "tools:wrapped"}
+    # Without offered tools, required and a named choice are auto, in
+    # thinking mode too.
+    yield "tool-choice-required-without-tools", {"messages": [user("q")], "tools": [], "tool_choice": "required"}, {
+        "fixed:tool-choice-required-without-tools"}
+    yield "tool-choice-named-without-tools", {"messages": [user("q")], "tool_choice": {
+        "type": "function", "function": {"name": "get_weather"}}}, {"fixed:tool-choice-named-without-tools"}
+    # The thinking switch: the top-level object, which overrides the
+    # effort, then the effort; the template keywords are ignored.
+    yield "thinking-object-disabled", {"messages": [user("q")], "thinking": {"type": "disabled"},
+                                       "chat_template_kwargs": {"enable_thinking": True, "thinking": True}}, {
+        "fixed:thinking-object-disabled", "thinking:object=disabled"}
+    yield "thinking-object-adaptive-over-none", {"messages": [user("q")], "thinking": {"type": "adaptive"},
+                                                 "reasoning_effort": "none"}, {
+        "fixed:thinking-object-adaptive-over-none", "thinking:object=adaptive"}
+    yield "thinking-object-enabled-at-max", {"messages": [user("q")],
+                                             "thinking": {"type": "enabled", "budget_tokens": 1024},
+                                             "reasoning_effort": "max"}, {
+        "fixed:thinking-object-enabled-at-max", "thinking:object=enabled"}
+    yield "template-thinking-ignored", {"messages": [user("q")], "chat_template_kwargs": {
+        "enable_thinking": False, "thinking": False, "reasoning_effort": "low"}}, {"fixed:template-thinking-ignored"}
+    yield "effort-none-disables", {"messages": [user("q")], "reasoning_effort": "none"}, {
+        "fixed:effort-none-disables"}
     # A namespace on a function object, which the encoder writes as
     # namespace::name and this format refuses until namespaces are served.
     yield "namespaced-function-object", {"messages": [user("q")], "tools": [

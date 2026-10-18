@@ -12,6 +12,7 @@ use model_deepseek41_contract::frontend::encoding::{
     Block, EOS, IMAGE_PLACEHOLDER, Message, ReasoningEffort, Role, ThinkingMode, ToolCall,
     encode_messages,
 };
+use runtime_frontend::PromptModeV1;
 use runtime_frontend::test_support::documents::PairedFrontendV1;
 use runtime_server::{
     FrontendChatRequestV1, FrontendContentPartV1, FrontendJsonV1, FrontendMediaPartKindV1,
@@ -548,5 +549,156 @@ fn a_tool_choice_changes_the_render_as_the_recipe_maps_it() {
         let error = chosen(choice, true).unwrap_err();
         assert_eq!(error.parameter.as_deref(), Some("tool_choice"));
         assert!(error.message.contains("thinking mode"), "{}", error.message);
+    }
+}
+
+/// The request mapping the declaration states, through the transport:
+/// constraints only on strict requests (`V7-constraint-scope` in
+/// frontend-divergences.json), a forced choice without tools served as
+/// auto (`R6-tool-choice`), and the thinking object (`thinking-switch`).
+#[test]
+fn the_transport_maps_requests_as_the_declaration_states() {
+    let frontend = PairedFrontendV1::chat_format::<DeepSeekV41Format>(descriptor()).unwrap();
+    let prepare = |extra: Value| {
+        let mut body = serde_json::json!({"messages": [{"role": "user", "content": "q"}]});
+        for (key, value) in extra.as_object().unwrap() {
+            body[key] = value.clone();
+        }
+        runtime_server::prepare_chat_request_v1(
+            &frontend,
+            1 << 20,
+            body.as_object().unwrap().clone(),
+            1024,
+        )
+    };
+    let constrained = |extra: Value| {
+        prepare(extra.clone())
+            .unwrap_or_else(|error| panic!("{extra}: {}", error.message))
+            .constraint
+            .is_some()
+    };
+    let schema = serde_json::json!({"type": "object", "properties": {"city": {"type": "string"}}});
+    let format = |strict: Value| {
+        let mut format = serde_json::json!({"name": "answer", "schema": schema});
+        if !strict.is_null() {
+            format["strict"] = strict;
+        }
+        serde_json::json!({"type": "json_schema", "json_schema": format})
+    };
+    let weather = serde_json::json!([{"type": "function", "function": {
+        "name": "get_weather", "strict": true,
+        "parameters": {"type": "object", "properties": {"city": {"type": "string"}}}}}]);
+    let chat = serde_json::json!({"type": "disabled"});
+    // V7: rendered, and unconstrained unless strict or forced.
+    for (extra, expected) in [
+        (
+            serde_json::json!({"response_format": {"type": "json_object"}}),
+            false,
+        ),
+        (
+            serde_json::json!({"response_format": format(Value::Null)}),
+            false,
+        ),
+        (
+            serde_json::json!({"response_format": format(false.into())}),
+            false,
+        ),
+        (
+            serde_json::json!({"response_format": format(true.into())}),
+            true,
+        ),
+        (
+            serde_json::json!({"structured_outputs": {"json": schema}}),
+            true,
+        ),
+        (serde_json::json!({"tools": weather}), false),
+        (
+            serde_json::json!({"tools": weather, "tool_choice": "auto"}),
+            false,
+        ),
+        (
+            serde_json::json!({"tools": weather, "tool_choice": "required", "thinking": chat}),
+            true,
+        ),
+        (
+            serde_json::json!({"tools": weather, "thinking": chat,
+                "tool_choice": {"type": "function", "function": {"name": "get_weather"}}}),
+            true,
+        ),
+    ] {
+        assert_eq!(constrained(extra.clone()), expected, "{extra}");
+    }
+    let prompt = |extra: Value| match prepare(extra.clone())
+        .unwrap_or_else(|error| panic!("{extra}: {}", error.message))
+        .prompt
+    {
+        runtime_server::PreparedPrompt::RenderedChat(prompt) => prompt,
+        other => panic!("{extra}: {other:?}"),
+    };
+    let json_object = prompt(serde_json::json!({"response_format": {"type": "json_object"}}));
+    assert!(json_object.contains("json_object"), "{json_object}");
+    // R6: a forced choice without tools is auto, in thinking mode too.
+    let plain = prompt(serde_json::json!({}));
+    for extra in [
+        serde_json::json!({"tools": [], "tool_choice": "required"}),
+        serde_json::json!({"tool_choice": {"type": "function", "function": {"name": "f"}}}),
+    ] {
+        assert_eq!(prompt(extra), plain);
+    }
+    // The thinking switch: the object, over the effort; the template
+    // keywords are ignored.
+    let thinking_prompt = "<｜User｜>q<｜Assistant｜><think>";
+    let chat_prompt = "<｜User｜>q<｜Assistant｜></think>";
+    for (extra, ending) in [
+        (serde_json::json!({}), thinking_prompt),
+        (serde_json::json!({"thinking": chat}), chat_prompt),
+        (serde_json::json!({"reasoning_effort": "none"}), chat_prompt),
+        (
+            serde_json::json!({"thinking": {"type": "adaptive"}, "reasoning_effort": "none"}),
+            thinking_prompt,
+        ),
+        (
+            serde_json::json!({"chat_template_kwargs": {"enable_thinking": false, "thinking": false}}),
+            thinking_prompt,
+        ),
+        (
+            serde_json::json!({"thinking": chat, "chat_template_kwargs": {"enable_thinking": true}}),
+            chat_prompt,
+        ),
+    ] {
+        let rendered = prompt(extra.clone());
+        assert!(rendered.ends_with(ending), "{extra}: {rendered}");
+    }
+    let high =
+        prompt(serde_json::json!({"thinking": {"type": "enabled"}, "reasoning_effort": "none"}));
+    assert!(high.contains("Reasoning Effort: 75 (range"), "{high}");
+    let nested = prompt(serde_json::json!({"chat_template_kwargs": {"reasoning_effort": "max"}}));
+    assert!(nested.contains("Reasoning Effort: 75 (range"), "{nested}");
+    let error = prepare(serde_json::json!({"thinking": {"type": "sometimes"}})).unwrap_err();
+    assert_eq!(error.parameter.as_deref(), Some("thinking"));
+}
+
+/// A DSML marker outside a calls block that the blank line opens is
+/// refused, as the vendor parser refuses it in content (encoding.py lines
+/// 981-983); inside one it is the call.
+#[test]
+fn a_dsml_marker_outside_a_calls_block_is_refused() {
+    let descriptor = descriptor();
+    let invoke = "<｜DSML｜ invoke name=\"f\">\n<｜DSML｜ parameter name=\"x\" string=\"true\">v</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n";
+    let parse = |text: String| {
+        runtime_frontend::parse_completion_v1(&descriptor, &text, PromptModeV1::Chat)
+    };
+    let called = parse(format!(
+        "a\n\n<｜DSML｜ calls>\n{invoke}</｜DSML｜ calls>{EOS}"
+    ))
+    .unwrap();
+    assert_eq!(called.content, "a");
+    assert_eq!(called.tool_calls.len(), 1);
+    assert_eq!(called.tool_calls[0].arguments, r#"{"x": "v"}"#);
+    for text in [
+        format!("a{invoke}{EOS}"),
+        format!("a<｜DSML｜ calls>\n{invoke}</｜DSML｜ calls>{EOS}"),
+    ] {
+        assert!(parse(text.clone()).is_err(), "{text:?}");
     }
 }

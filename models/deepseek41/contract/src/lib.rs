@@ -13,6 +13,7 @@ pub mod own_ops;
 pub mod rows;
 pub mod serving;
 pub mod state;
+pub mod weight_plan;
 
 /// The model's one bundle ID. Every rank count it supports is a topology of
 /// this bundle, never a bundle ID of its own.

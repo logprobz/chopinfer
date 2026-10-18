@@ -748,6 +748,7 @@ dependencies = [
  "kernel-core",
  "model-compiler-sdk",
  "projection-spec",
+ "runtime-bundle-abi",
  "serde_json",
  "sha2",
 ]

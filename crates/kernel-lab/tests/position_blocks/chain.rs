@@ -217,6 +217,47 @@ fn chain_with_fixture(
     chain_impl(session, entry, chunk, fixture, None)
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Rounding {
+    None,
+    Compact,
+    Dense { masked: bool },
+}
+
+/// Each dense entry runs independently against its unmutated source scores.
+/// The normal graph first supplies the mask for a masked entry.
+pub(super) fn dense_rounding_chain(
+    session: &Session,
+    entry: &kernels_sm120::pooled_indexer::position_blocks::Entry,
+    masked: bool,
+) -> LabResult<Vec<ResultRow>> {
+    chain_impl(
+        session,
+        entry,
+        1,
+        None,
+        Some((IndexerKeyFormat::Bf16, Rounding::Dense { masked })),
+    )
+}
+
+fn source_score_bits_match(expected: &[u8], actual: &[u8]) -> LabResult<()> {
+    if expected.len() != actual.len() || !expected.len().is_multiple_of(4) {
+        return Err("source score extent changed".into());
+    }
+    for (index, (expected, actual)) in expected
+        .chunks_exact(4)
+        .zip(actual.chunks_exact(4))
+        .enumerate()
+    {
+        if expected != actual {
+            return Err(format!(
+                "source score bits at {index}: {expected:02x?} versus {actual:02x?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn comparison_chain(
     session: &Session,
     entry: &kernels_sm120::pooled_indexer::position_blocks::Entry,
@@ -224,7 +265,20 @@ pub(super) fn comparison_chain(
     storage: IndexerKeyFormat,
     round: bool,
 ) -> LabResult<Vec<ResultRow>> {
-    chain_impl(session, entry, chunk, None, Some((storage, round)))
+    chain_impl(
+        session,
+        entry,
+        chunk,
+        None,
+        Some((
+            storage,
+            if round {
+                Rounding::Compact
+            } else {
+                Rounding::None
+            },
+        )),
+    )
 }
 
 fn chain_impl(
@@ -232,7 +286,7 @@ fn chain_impl(
     entry: &kernels_sm120::pooled_indexer::position_blocks::Entry,
     chunk: usize,
     fixture: Option<&std::path::Path>,
-    comparison: Option<(IndexerKeyFormat, bool)>,
+    comparison: Option<(IndexerKeyFormat, Rounding)>,
 ) -> LabResult<Vec<ResultRow>> {
     let backend = if comparison.is_some() {
         super::bf16::backend()
@@ -312,8 +366,8 @@ fn chain_impl(
                 View::EMPTY
             },
             pages: physical_pages as u32,
-            code_page_stride: code_page_stride,
-            scale_page_stride: scale_page_stride,
+            code_page_stride,
+            scale_page_stride,
             page_tables: BlockTables {
                 tables: arena.input(&i32s(&tables))?,
                 sequences: 1,
@@ -492,7 +546,7 @@ fn chain_impl(
         }
         // Poison every produced plane and both block workspaces; replay the
         // complete Full -> candidates -> four Reindex graph on the same storage.
-        if comparison.is_some_and(|v| v.1) {
+        if comparison.is_some_and(|v| v.1 == Rounding::Compact) {
             for launch in &mut launches {
                 if launch.symbol.starts_with("chop_position_blocks_")
                     && launch.symbol.ends_with("_bf16_scores_v3")
@@ -504,6 +558,53 @@ fn chain_impl(
             }
         }
         arena.run(&launches, chunk == 4)?;
+        if let Some((_, Rounding::Dense { masked })) = comparison {
+            let pass = usize::from(masked);
+            let b = &dense_buffers[pass];
+            let op = if masked { &dense } else { &full };
+            let mut source = op
+                .launches(b, View::EMPTY, Counts::rows(rows as u32))
+                .map_err(|e| e.0)?;
+            // Only score is replayed, so selection cannot sanitize a mismatch.
+            source.truncate(1);
+            let expected = arena.read(b.scores)?;
+            let native_buffers = PositionSelectBuffers {
+                keys: PositionKeyPages {
+                    codes: arena.input(&codes)?,
+                    scales: arena.input(&scales)?,
+                    code_page_stride: q.page_bytes().0,
+                    scale_page_stride: q.page_bytes().1,
+                    ..keys
+                },
+                ..*b
+            };
+            let native = backend
+                .position_indexer(
+                    if masked { &masked_q } else { &q },
+                    q.max_top_k,
+                    width,
+                    Need::rows(rows as u32),
+                )
+                .map_err(|e| e.to_string())?;
+            let mut native_source = native
+                .launches(&native_buffers, View::EMPTY, Counts::rows(rows as u32))
+                .map_err(|e| e.0)?;
+            native_source.truncate(1);
+            arena.run(&native_source, false)?;
+            source_score_bits_match(&expected, &arena.read(b.scores)?)
+                .map_err(|e| format!("native/BF16 source comparison: {e}"))?;
+            arena.run(&source, false)?;
+            source_score_bits_match(&expected, &arena.read(b.scores)?)
+                .map_err(|e| format!("unmutated dense score replay: {e}"))?;
+            assert!(
+                source[0].symbol.starts_with("chop_position_indexer_")
+                    && source[0].symbol.ends_with("_bf16_scores_v3")
+            );
+            source[0].symbol =
+                kernels_sm120::pooled_indexer::position_bf16::rounded_symbol(&source[0].symbol);
+            arena.run(&source, false)?;
+            source_score_bits_match(&expected, &arena.read(b.scores)?)?;
+        }
         let ids = indices(&arena.read(record.ids)?);
         let dense_mask = arena.read(mask)?;
         assert_eq!(arena.read(record.row_tags)?, tags);

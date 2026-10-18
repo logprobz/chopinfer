@@ -78,6 +78,34 @@ fn bf16_position_rounding_mutants_fail_on_a_gpu() {
     .expect("BF16 rounding controls");
 }
 #[test]
+fn bf16_position_dense_rounding_mutants_fail_on_a_gpu() {
+    kernel_lab::gpu_test(2 << 30, |session| {
+        let mut witnesses = 0;
+        for entry in family::compact() {
+            for masked in [false, true] {
+                let failure =
+                    super::chain::dense_rounding_chain(session, &entry, masked).unwrap_err();
+                assert!(
+                    failure.starts_with("source score bits at "),
+                    "wrong dense rounding-mutant failure: {failure}"
+                );
+                session.receipt(
+                    &format!(
+                        "position-bf16-dense-rounding-{}-masked-{masked}",
+                        entry.name
+                    ),
+                    BTreeMap::from([("failure".into(), serde_json::json!(failure))]),
+                )?;
+                witnesses += 1;
+            }
+        }
+        assert_eq!(witnesses, family::dense().len());
+        Ok(())
+    })
+    .expect("dense BF16 rounding controls");
+}
+
+#[test]
 fn bf16_position_cubin_has_no_traps_tf32_or_spills() {
     let toolchain = kernel_build::Toolchain::detect().unwrap();
     assert!(!toolchain.skipped);

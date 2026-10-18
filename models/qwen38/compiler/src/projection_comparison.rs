@@ -25,9 +25,25 @@ use projection_spec::derive::{
     GeometryMode, ImportedProjection, InstanceKey, ProjectionContext, SourceMatrix, Topology,
 };
 use std::collections::{BTreeMap, BTreeSet};
-use synthetic::{
-    SyntheticPayload, fill_source, selected_source_payload, synthetic_payload, synthetic_source,
-};
+use synthetic::{SyntheticPayload, selected_source_payload_with, synthetic_payload};
+
+fn fill_source(span: &TensorSpan, offset: u64, out: &mut [u8]) {
+    synthetic::fill_source(span, offset, out);
+    if span.dtype == DType::Ue8M0 {
+        // Qwen's A16 consumer requires exact BF16 scaled operands. Every
+        // finite E4M3 code is exact at UE8M0 scales 3..=246, so shift the
+        // offset-dependent ramp out of the underflowing scales 0..=2.
+        for byte in out {
+            *byte += 3;
+        }
+    }
+}
+
+fn synthetic_source(span: &TensorSpan) -> Vec<u8> {
+    let mut bytes = vec![0; span.byte_length as usize];
+    fill_source(span, 0, &mut bytes);
+    bytes
+}
 
 fn dtype(name: &str) -> DType {
     match name {
@@ -300,6 +316,49 @@ fn mxfp8_dense_tp4_served_dense_operations_and_rank_selections_match_the_current
         Ranks::TP4,
         (22800, 22800, 26448),
         &MXFP8_PAYLOADS,
+    );
+}
+
+#[test]
+fn mxfp8_dense_synthetic_scales_are_exact_but_underflow_is_refused() {
+    use kernel_core::contract::WeightFormat;
+    use kernel_core::mxfp8_gemm::admit_operand;
+    use kernel_core::precision::NibbleOrder;
+    use kernel_core::precision::packed::{MatrixView, ScaleBytes};
+
+    // The importer gives ModelOpt's U8 scale tensors their UE8M0 dtype.
+    let span = TensorSpan {
+        tensor: "matrix.weight_scale".into(),
+        dtype: DType::Ue8M0,
+        shape: vec![256, 1],
+        offset: 0,
+        byte_length: 256,
+    };
+    let mut scales = synthetic_source(&span);
+    // The smallest E4M3 subnormal exposes BF16 underflow at scales 0..=2.
+    let codes = vec![0x01; 256 * 32];
+    let admit = |scales: &[u8]| {
+        admit_operand(MatrixView {
+            tensor: "matrix.weight",
+            format: WeightFormat::Mxfp8,
+            rows: 256,
+            k: 32,
+            row_origin: 0,
+            k_origin: 0,
+            nibble_order: NibbleOrder::EvenLow,
+            codes: &codes,
+            local: Some(ScaleBytes {
+                dtype: DType::Ue8M0,
+                bytes: scales,
+            }),
+            global: None,
+        })
+    };
+    admit(&scales).unwrap();
+    scales[0] = 2;
+    assert_eq!(
+        admit(&scales).unwrap_err().to_string(),
+        "MXFP8 fold operands must be finite and exact in BF16"
     );
 }
 
@@ -1864,7 +1923,7 @@ fn derived_piece_bytes(
     section: kernel_core::weight_transform::PackedSection,
 ) -> Vec<u8> {
     use kernel_core::precision::packed::MatrixSlice;
-    let matrix = selected_source_payload(slice, section);
+    let matrix = selected_source_payload_with(slice, section, synthetic_source);
     let mut plan = packing.clone();
     plan.experts = 1;
     plan.projections = 1;

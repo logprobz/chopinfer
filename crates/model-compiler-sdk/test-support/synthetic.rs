@@ -48,26 +48,33 @@ pub fn synthetic_source(span: &TensorSpan) -> Vec<u8> {
 /// bytes are generated, the rest of the source is zero, and global scales
 /// are always generated.
 pub fn selected_source_payload(slice: &OperandSlice, section: PackedSection) -> PackedMatrix {
+    selected_source_payload_with(slice, section, synthetic_source)
+}
+
+/// Gather a section with a source generator that satisfies the consumer's
+/// numerical domain as well as the stored dtype.
+pub fn selected_source_payload_with(
+    slice: &OperandSlice,
+    section: PackedSection,
+    source: impl Fn(&TensorSpan) -> Vec<u8>,
+) -> PackedMatrix {
     use kernel_core::precision::packed::{MatrixView, ScaleBytes};
     let weight = &slice.source.weight;
     // Only the compared section needs position-dependent values. The other
     // buffers satisfy the repacker's shape contract without extra generation.
     let codes = if section == PackedSection::Codes {
-        synthetic_source(&weight.codes)
+        source(&weight.codes)
     } else {
         vec![0; weight.codes.byte_length as usize]
     };
     let local = weight.local_scale.as_ref().map(|s| {
         if section == PackedSection::LocalScales {
-            synthetic_source(&s.tensor)
+            source(&s.tensor)
         } else {
             vec![0; s.tensor.byte_length as usize]
         }
     });
-    let global = weight
-        .global_scale
-        .as_ref()
-        .map(|s| synthetic_source(&s.tensor));
+    let global = weight.global_scale.as_ref().map(|s| source(&s.tensor));
     let view = MatrixView {
         tensor: &weight.codes.tensor,
         format: weight.format,

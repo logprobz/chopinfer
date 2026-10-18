@@ -72,7 +72,7 @@ impl Entry {
                 ptr("live_rows", "const uint32_t"), u32_arg("heads"),
             ], format!("chop::latent::glue::rotate<{}>(values,native_q,cos_sin,live_rows,heads);", self.kernel == Kernel::QueryRope)),
             Kernel::WindowRotate => (vec![
-                ptr("input", "const uint16_t"), ptr("weight", "const uint16_t"),
+                ptr("input", "const float"), ptr("weight", "const uint16_t"),
                 ptr("values", "float"), ptr("cos_sin", "const float"),
                 ptr("live_rows", "const uint32_t"), u32_arg("eps_bits"),
             ], "chop::latent::glue::norm_rotate(input,weight,values,cos_sin,live_rows,__uint_as_float(eps_bits));".into()),
@@ -113,5 +113,48 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> CubinSpec {
         headers: vec!["#include \"latent/glue.cuh\"".into()],
         defines: vec![],
         entries: entries.iter().map(Entry::spec).collect(),
+    }
+}
+
+/// Lab controls. These symbols are never registered by a serving backend.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Mutation {
+    WrongTail,
+    ReversedPair,
+    DoubleRound,
+    WindowEdge,
+    InputRound,
+}
+impl Mutation {
+    pub const ALL: [Self; 5] = [
+        Self::WrongTail,
+        Self::ReversedPair,
+        Self::DoubleRound,
+        Self::WindowEdge,
+        Self::InputRound,
+    ];
+    pub fn symbol(self) -> String {
+        format!("chop_latent_glue_mutant_{self:?}_v1")
+    }
+    pub fn spec(self) -> EntrySpec {
+        let kernel = match self {
+            Self::WindowEdge => Kernel::WindowKeys,
+            Self::InputRound => Kernel::WindowRotate,
+            _ => Kernel::QueryRope,
+        };
+        let mut spec = Entry {
+            kernel,
+            capacity: 32,
+            symbol: self.symbol(),
+        }
+        .spec();
+        spec.body = match self {
+            Self::WrongTail => spec.body.replace("rotate<true>", "rotate<true,1>"),
+            Self::ReversedPair => spec.body.replace("rotate<true>", "rotate<true,2>"),
+            Self::DoubleRound => spec.body.replace("rotate<true>", "rotate<true,3>"),
+            Self::WindowEdge => spec.body.replace("::keys(", "::keys<true>("),
+            Self::InputRound => spec.body.replace("::norm_rotate(", "::norm_rotate<true>("),
+        };
+        spec
     }
 }

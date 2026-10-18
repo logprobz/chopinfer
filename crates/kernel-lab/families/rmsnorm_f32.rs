@@ -1,4 +1,4 @@
-//! Plain BF16-input RMSNorm with an F32 output boundary.
+//! Plain F32-input RMSNorm with an F32 output boundary.
 use kernel_build::CubinSpec;
 use kernel_core::contract::{DType, RmsNormKind};
 use kernel_core::rmsnorm::RmsNormRequirement;
@@ -8,6 +8,7 @@ pub const FAMILY: &str = "rmsnorm_f32";
 pub const WIDTHS: [u32; 3] = [512, 1280, 1536];
 pub fn requirement(width: u32) -> RmsNormRequirement {
     RmsNormRequirement {
+        input: DType::F32,
         output: DType::F32,
         ..RmsNormRequirement::bf16_backend_chosen(width, 1e-20, RmsNormKind::Plain, false)
     }

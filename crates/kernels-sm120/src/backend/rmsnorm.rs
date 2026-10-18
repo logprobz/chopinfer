@@ -137,7 +137,15 @@ impl PreparedOp<RmsNormBuffers<View>> for RmsNormOp {
         let requirement = self.norm.requirement();
         let row_bytes = u64::from(requirement.width) * 2;
         let rows = u64::from(counts.rows) * row_bytes;
-        buffers.x.covers(rows)?;
+        buffers.x.covers(
+            u64::from(counts.rows)
+                * u64::from(requirement.width)
+                * if requirement.input == DType::F32 {
+                    4
+                } else {
+                    2
+                },
+        )?;
         let output_bytes = if requirement.output == DType::F32 {
             4
         } else {
@@ -155,7 +163,7 @@ impl PreparedOp<RmsNormBuffers<View>> for RmsNormOp {
             .contains(&buffers.y.handle)
         {
             return Err(Refusal(
-                "F32 RMSNorm output must not overlap its BF16 inputs or live count",
+                "F32 RMSNorm output must not overlap its inputs or live count",
             ));
         }
         buffers.weight.covers(row_bytes)?;
@@ -444,19 +452,32 @@ mod tests {
     #[test]
     fn f32_norm_requires_full_output_bytes_and_separate_storage() {
         let req = RmsNormRequirement {
+            input: DType::F32,
             output: DType::F32,
             ..RmsNormRequirement::bf16_backend_chosen(1280, 1e-20, RmsNormKind::Plain, false)
         };
         let backend = Sm120::new().with_rmsnorm(req, "plain_f32");
         let prepared = backend.rmsnorm(&req, Need::rows(4)).unwrap();
         let b = RmsNormBuffers {
-            x: view(1, 4 * 1280 * 2),
+            x: view(1, 4 * 1280 * 4),
             weight: view(2, 1280 * 2),
             residual: None,
             y: view(3, 4 * 1280 * 4),
             live_rows: view(4, 4),
         };
         assert!(prepared.launches(&b, View::EMPTY, Counts::rows(4)).is_ok());
+        assert!(
+            prepared
+                .launches(
+                    &RmsNormBuffers {
+                        x: view(1, 4 * 1280 * 2),
+                        ..b
+                    },
+                    View::EMPTY,
+                    Counts::rows(4)
+                )
+                .is_err()
+        );
         for y in [view(3, 4 * 1280 * 2), view(1, 4 * 1280 * 4)] {
             assert!(
                 prepared

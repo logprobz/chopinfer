@@ -51,7 +51,7 @@
           {
             "kind": "DevicePointer",
             "name": "input",
-            "cxx_type": "const uint16_t"
+            "cxx_type": "const float"
           },
           {
             "kind": "DevicePointer",
@@ -205,7 +205,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "0276d6f3f392bcf26337fd680cefcaec2b64f27ca72fead53841c695be1d3deb",
+    "cubin_sha256": "5a9626671461fedc7775532e0a751e0a065b6ce14525f8ffd0d7c0ab91e75611",
     "resources": [
       {
         "symbol": "chop_latent_glue_query_rope_v1",
@@ -218,7 +218,7 @@
       },
       {
         "symbol": "chop_latent_glue_window_rope_v1",
-        "registers": 20,
+        "registers": 21,
         "shared_static_bytes": 1056,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -227,7 +227,7 @@
       },
       {
         "symbol": "chop_latent_glue_window_store_v1",
-        "registers": 18,
+        "registers": 16,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -236,7 +236,7 @@
       },
       {
         "symbol": "chop_latent_glue_window_keys_v1",
-        "registers": 24,
+        "registers": 26,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,

@@ -86,11 +86,14 @@ impl RmsNorm {
         target: RmsNormTarget,
     ) -> Result<Self, Refusal> {
         requirement.validate()?;
-        if [requirement.input, requirement.weight] != [DType::Bf16; 2]
-            || !matches!(requirement.output, DType::Bf16 | DType::F32)
+        if requirement.weight != DType::Bf16
+            || !matches!(
+                (requirement.input, requirement.output),
+                (DType::Bf16, DType::Bf16) | (DType::F32, DType::F32)
+            )
         {
             return Err(Refusal(
-                "RMSNorm requires BF16 input and weight formats, with BF16 or F32 output",
+                "RMSNorm requires BF16 weights and matching BF16 or F32 row formats",
             ));
         }
         if requirement.output == DType::F32
@@ -307,7 +310,14 @@ impl RmsNorm {
         EntrySpec::new(
             symbol.into(),
             vec![
-                ptr("x", "const uint16_t"),
+                ptr(
+                    "x",
+                    if self.requirement.input == DType::F32 {
+                        "const float"
+                    } else {
+                        "const uint16_t"
+                    },
+                ),
                 ptr("weight", "const uint16_t"),
                 ptr("residual", "const uint16_t"),
                 ptr("residual_out", "uint16_t"),
@@ -423,6 +433,7 @@ mod tests {
     #[test]
     fn f32_output_is_an_additive_plain_entry() {
         let req = RmsNormRequirement {
+            input: DType::F32,
             output: DType::F32,
             ..plain()
         };

@@ -19,7 +19,7 @@
           {
             "kind": "DevicePointer",
             "name": "x",
-            "cxx_type": "const uint16_t"
+            "cxx_type": "const float"
           },
           {
             "kind": "DevicePointer",
@@ -61,7 +61,7 @@
           {
             "kind": "DevicePointer",
             "name": "x",
-            "cxx_type": "const uint16_t"
+            "cxx_type": "const float"
           },
           {
             "kind": "DevicePointer",
@@ -103,7 +103,7 @@
           {
             "kind": "DevicePointer",
             "name": "x",
-            "cxx_type": "const uint16_t"
+            "cxx_type": "const float"
           },
           {
             "kind": "DevicePointer",
@@ -140,7 +140,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "c4677369d293612f50fb3b8bbe289bd0ccc1c0748e463c656098d8798c31b0a4",
+    "cubin_sha256": "e76c94efb12b98ad335462a98afcbb7bba7d37a3653520ea223bcbeb9b801119",
     "resources": [
       {
         "symbol": "chop_rmsnorm_f32_w512_v1",

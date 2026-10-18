@@ -194,11 +194,19 @@ fn key_case<'a>(
     capacity: u32,
     prepared: Prepared<LatentWindowKeyBuffers<View>>,
 ) -> LabResult<OpCase<'a>> {
+    key_case_data(query, capacity, prepared, false)
+}
+fn key_case_data<'a>(
+    query: LatentWindowKeys,
+    capacity: u32,
+    prepared: Prepared<LatentWindowKeyBuffers<View>>,
+    holes: bool,
+) -> LabResult<OpCase<'a>> {
     let staged = matches!(query.addressing, WindowAddressing::Staged { .. });
     let long = query.addressing.slots() >= query.window;
-    let firsts = if long { vec![128, 257] } else { vec![0, 0] };
-    let batches = (0..capacity).map(|r| (r % 2) as i32).collect::<Vec<_>>();
-    let positions = (0..capacity)
+    let mut firsts = if long { vec![128, 257] } else { vec![0, 0] };
+    let mut batches = (0..capacity).map(|r| (r % 2) as i32).collect::<Vec<_>>();
+    let mut positions = (0..capacity)
         .map(|row| {
             if !staged {
                 [0, 1, 127, 128, 135, 136, 257, i32::MAX][row as usize % 8]
@@ -210,14 +218,40 @@ fn key_case<'a>(
             }
         })
         .collect::<Vec<_>>();
+    if holes {
+        positions[2] = -2;
+        if staged {
+            batches[3] = 99;
+            batches[4] = -2;
+            firsts[1] = -2;
+        }
+    }
     let roles = LatentWindowKeyBuffers {
         positions: Spec::input(DType::I32, (Rows::Live, 1), i32_bytes(&positions)),
         row_batch: staged.then(|| Spec::input(DType::I32, (Rows::Live, 1), i32_bytes(&batches))),
         first_positions: staged
             .then(|| Spec::input(DType::I32, (Rows::Fixed(1), 2), i32_bytes(&firsts))),
         sequences: 2,
-        key_lists: Spec::output(DType::I32, (Rows::Live, query.window as usize))
-            .filled_with(&[0x80]),
+        key_lists: Spec::output_with(
+            DType::I32,
+            (Rows::Live, query.window as usize),
+            Write::Map(Box::new(move |images, live| {
+                let batches = if staged {
+                    i32s(images, "row_batch")?
+                } else {
+                    vec![0; capacity as usize]
+                };
+                WriteMap::of(DType::I32).byte_ranges(
+                    (0..live as usize)
+                        .filter(|&row| !staged || (0..2).contains(&batches[row]))
+                        .map(|row| {
+                            row * query.window as usize * 4..(row + 1) * query.window as usize * 4
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            })),
+        )
+        .filled_with(&[0x80]),
         live_rows: Spec::live(),
     };
     Ok(
@@ -236,6 +270,9 @@ fn key_case<'a>(
                         .map(|b| i32::from_le_bytes(b.try_into().unwrap()))
                         .collect::<Vec<_>>();
                     for row in 0..live as usize {
+                        if staged && !(0..2).contains(&batch[row]) {
+                            continue;
+                        }
                         let first = if !staged || positions[row] < 0 {
                             0
                         } else {
@@ -276,14 +313,17 @@ fn plane_map(
     let mut ranges = Vec::new();
     for row in 0..live as usize {
         let (p, b) = (positions[row], batches[row] as usize);
+        if b >= last.len() || p < 0 || p > last[b] {
+            continue;
+        }
         if matches!(query.addressing, WindowAddressing::Circular { slots } if i64::from(p) + i64::from(slots) <= i64::from(last[b]))
         {
             continue;
         }
-        let slot = query
-            .addressing
-            .slot(p, first[b])
-            .map_err(|e| e.to_string())? as usize;
+        let Ok(slot) = query.addressing.slot(p, first[b]) else {
+            continue;
+        };
+        let slot = slot as usize;
         let begin = b * stride + slot * width;
         ranges.push(begin..begin + width);
     }
@@ -325,6 +365,30 @@ pub fn write_case_with_table<'a>(
     prepared: Prepared<LatentWindowWriteBuffers<View>>,
     cos_sin: Vec<f32>,
 ) -> LabResult<OpCase<'a>> {
+    write_case_impl(
+        query,
+        capacity,
+        first,
+        prepared,
+        cos_sin,
+        WindowFixture::Varying,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum WindowFixture {
+    Varying,
+    F32Boundary,
+    InvalidData,
+}
+fn write_case_impl<'a>(
+    query: LatentWindowWrite,
+    capacity: u32,
+    first: i32,
+    prepared: Prepared<LatentWindowWriteBuffers<View>>,
+    cos_sin: Vec<f32>,
+    fixture: WindowFixture,
+) -> LabResult<OpCase<'a>> {
     if cos_sin.len() != capacity as usize * query.rotary as usize {
         return Err("window fixture table shape mismatch".into());
     }
@@ -335,10 +399,10 @@ pub fn write_case_with_table<'a>(
     );
     let staged = matches!(query.addressing, WindowAddressing::Staged { .. });
     let starts = [first, first + if staged { 257 } else { 0 }];
-    let batches = (0..capacity)
+    let mut batches = (0..capacity)
         .map(|row| (row % 2) as i32)
         .collect::<Vec<_>>();
-    let positions = (0..capacity)
+    let mut positions = (0..capacity)
         .map(|row| starts[row as usize % 2] + (row / 2) as i32)
         .collect::<Vec<_>>();
     let lasts = (0..2)
@@ -360,23 +424,29 @@ pub fn write_case_with_table<'a>(
         input[width..2 * width].fill(0.0);
     }
 
+    let mut weight = (0..width)
+        .map(|i| kernel_core::codec::f32_to_bf16(0.7 + (i % 19) as f32 / 23.0))
+        .collect::<Vec<_>>();
+    if matches!(fixture, WindowFixture::F32Boundary) {
+        input.fill(1.0);
+        input[0] = 1.00375;
+        weight.fill(kernel_core::codec::f32_to_bf16(1.0));
+        weight[0] = kernel_core::codec::f32_to_bf16(1.0625);
+    }
+    if matches!(fixture, WindowFixture::InvalidData) {
+        positions[2] = -2;
+        positions[3] = lasts[1] + 1;
+        batches[4] = 99;
+        batches[5] = -2;
+        positions[6] = starts[0] - 1;
+        positions[7] = starts[1] + slots as i32;
+    }
     let roles = LatentWindowWriteBuffers {
-        input: Spec::input(
-            DType::Bf16,
-            (Rows::Live, width),
-            input
-                .iter()
-                .flat_map(|&v| kernel_core::codec::f32_to_bf16(v).to_le_bytes())
-                .collect(),
-        ),
+        input: Spec::input(DType::F32, (Rows::Live, width), f32_bytes(&input)),
         weight: Spec::input(
             DType::Bf16,
             (Rows::Fixed(1), width),
-            (0..width)
-                .flat_map(|i| {
-                    kernel_core::codec::f32_to_bf16(0.7 + (i % 19) as f32 / 23.0).to_le_bytes()
-                })
-                .collect(),
+            weight.iter().flat_map(|v| v.to_le_bytes()).collect(),
         ),
         latent: Spec::output(DType::F32, (Rows::Live, width)),
         cos_sin: Spec::input(DType::F32, (Rows::Live, tail), f32_bytes(&cos_sin)),
@@ -427,15 +497,28 @@ pub fn write_case_with_table<'a>(
         .ok_or("window write has no shared quantizer stage")?
         .0
         .clone();
+    let producer = prepared
+        .info()
+        .symbols
+        .first()
+        .ok_or("window write has no normalization stage")?
+        .0
+        .clone();
     let mut case = OpCase::new(prepared, capacity, roles)?
         .oracle(move |images, live| {
             let (mut latent, encoded) = oracle::window_rows(
                 query,
-                &images.u16s("input")?[..live as usize * width],
+                &images.f32s("input")?[..live as usize * width],
                 &images.u16s("weight")?,
                 &images.f32s("cos_sin")?[..live as usize * tail],
             )
             .map_err(|e| e.to_string())?;
+            if live > 0 && matches!(fixture, WindowFixture::F32Boundary) {
+                assert_eq!(
+                    (encoded[0].values[0], encoded[0].scale_bytes[0]),
+                    (0x79, 119)
+                );
+            }
             latent.resize(capacity as usize * width, 0.0);
             let mut codes = images.bytes("window.codes")?.to_vec();
             let mut scales = images.bytes("window.scales")?.to_vec();
@@ -479,6 +562,7 @@ pub fn write_case_with_table<'a>(
                 ("quantized_scales".into(), Expected::Bits(qscales)),
             ])
         })
+        .omission_guard(&producer, "latent")
         .omission_guard(&quantizer, "quantized_codes");
     if let WindowAddressing::Circular { slots } = query.addressing {
         for live in crate::poison::live_counts(capacity)
@@ -488,7 +572,13 @@ pub fn write_case_with_table<'a>(
             if positions[..live as usize]
                 .iter()
                 .zip(&batches)
-                .all(|(&p, &b)| i64::from(p) + i64::from(slots) <= i64::from(lasts[b as usize]))
+                .all(|(&p, &b)| {
+                    b < 0
+                        || b as usize >= lasts.len()
+                        || p < 0
+                        || p > lasts[b as usize]
+                        || i64::from(p) + i64::from(slots) <= i64::from(lasts[b as usize])
+                })
             {
                 for plane in ["window.codes", "window.scales"] {
                     case = case.no_write(
@@ -501,4 +591,131 @@ pub fn write_case_with_table<'a>(
         }
     }
     Ok(case)
+}
+
+pub fn window_f32_regression<'a>(query: LatentWindowWrite) -> Required<'a> {
+    Required::new(
+        "F32 projection boundary",
+        Need::rows(1),
+        move |b, n| b.latent_window_write(&query, n),
+        move |op| {
+            write_case_impl(
+                query,
+                1,
+                0,
+                op,
+                [1.0, 0.0].repeat(32),
+                WindowFixture::F32Boundary,
+            )
+        },
+    )
+    .required()
+}
+pub fn window_invalid_data<'a>(query: LatentWindowWrite) -> Required<'a> {
+    Required::new(
+        "window invalid device metadata",
+        Need::rows(8),
+        move |b, n| b.latent_window_write(&query, n),
+        move |op| write_case_impl(query, 8, 130, op, table(8, 64), WindowFixture::InvalidData),
+    )
+    .required()
+}
+
+struct Mutant<B> {
+    inner: Prepared<B>,
+    info: OpInfo,
+    symbol: String,
+}
+impl<B> PreparedOp<B> for Mutant<B> {
+    fn info(&self) -> &OpInfo {
+        &self.info
+    }
+    fn launches(&self, b: &B, workspace: View, counts: Counts) -> Result<Vec<Launch>, Refusal> {
+        let mut launches = self.inner.launches(b, workspace, counts)?;
+        launches
+            .first_mut()
+            .ok_or(Refusal("mutant has no launch"))?
+            .symbol
+            .clone_from(&self.symbol);
+        Ok(launches)
+    }
+}
+fn mutant<B: 'static>(
+    inner: Prepared<B>,
+    mutation: kernels_sm120::latent::glue::Mutation,
+) -> Prepared<B> {
+    let symbol = mutation.symbol();
+    let mut info = inner.info().clone();
+    info.symbols[0].0.clone_from(&symbol);
+    Box::new(Mutant {
+        inner,
+        info,
+        symbol,
+    })
+}
+pub fn device_mutant<'a>(mutation: kernels_sm120::latent::glue::Mutation) -> Required<'a> {
+    use kernels_sm120::latent::glue::Mutation;
+    let q = LatentQueryRope {
+        heads: 3,
+        latent: 512,
+        rotary: 64,
+    };
+    let keys = LatentWindowKeys {
+        window: 128,
+        addressing: WindowAddressing::Circular { slots: 136 },
+    };
+    let write = LatentWindowWrite {
+        latent: 512,
+        rotary: 64,
+        epsilon_bits: 1e-20_f32.to_bits(),
+        addressing: keys.addressing,
+    };
+    match mutation {
+        Mutation::WindowEdge => Required::new(
+            format!("mutant {mutation:?}"),
+            Need::rows(17),
+            move |b, n| {
+                b.latent_window_keys(&keys, n)
+                    .map(|op| mutant(op, mutation))
+            },
+            move |op| key_case(keys, 17, op),
+        )
+        .required(),
+        Mutation::InputRound => Required::new(
+            format!("mutant {mutation:?}"),
+            Need::rows(1),
+            move |b, n| {
+                b.latent_window_write(&write, n)
+                    .map(|op| mutant(op, mutation))
+            },
+            move |op| {
+                write_case_impl(
+                    write,
+                    1,
+                    0,
+                    op,
+                    [1.0, 0.0].repeat(32),
+                    WindowFixture::F32Boundary,
+                )
+            },
+        )
+        .required(),
+        _ => Required::new(
+            format!("mutant {mutation:?}"),
+            Need::rows(17),
+            move |b, n| b.latent_query_rope(&q, n).map(|op| mutant(op, mutation)),
+            move |op| query_case(q, 17, op),
+        )
+        .required(),
+    }
+}
+
+pub fn key_invalid_data<'a>(query: LatentWindowKeys) -> Required<'a> {
+    Required::new(
+        "window key device holes",
+        Need::rows(8),
+        move |b, n| b.latent_window_keys(&query, n),
+        move |op| key_case_data(query, 8, op, true),
+    )
+    .required()
 }

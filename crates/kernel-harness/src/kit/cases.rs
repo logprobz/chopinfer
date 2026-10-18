@@ -70,7 +70,7 @@ fn widen(bits: &[u16]) -> Vec<f64> {
     bits.iter().map(|&b| f64::from(bf16_to_f32(b))).collect()
 }
 
-/// The case of an RMSNorm over `capacity` rows: BF16 rows and weight from
+/// The case of an RMSNorm over `capacity` rows: BF16 or F32 rows and BF16 weight from
 /// the kit's generators, a fused residual when the requirement has one, and
 /// the contract's oracle. The residual's rounded sum is exact bits (an F32
 /// add rounded to BF16, as the contract states); the output is exact bits
@@ -81,12 +81,14 @@ pub fn rmsnorm_case<'a>(
     capacity: u32,
     op: Prepared<RmsNormBuffers<View>>,
 ) -> LabResult<OpCase<'a>> {
-    if [requirement.input, requirement.weight] != [DType::Bf16; 2]
+    if !matches!(requirement.input, DType::Bf16 | DType::F32)
+        || requirement.weight != DType::Bf16
+        || (requirement.input == DType::F32 && requirement.fused_residual)
         || !matches!(requirement.output, DType::Bf16 | DType::F32)
         || requirement.output_quantization.is_some()
         || !matches!(requirement.layout, RmsNormLayout::ContiguousRows { .. })
     {
-        return Err("the kit's RMSNorm case covers contiguous unquantized BF16 inputs and BF16 or F32 output".into());
+        return Err("the kit's RMSNorm case covers contiguous unquantized BF16 or F32 rows with BF16 weights".into());
     }
     let width = requirement.width as usize;
     let elements = capacity as usize * width;
@@ -100,7 +102,21 @@ pub fn rmsnorm_case<'a>(
         }
     }
     let roles = RmsNormBuffers {
-        x: rows(input),
+        x: if requirement.input == DType::F32 {
+            Spec::input(
+                DType::F32,
+                (Rows::Live, width),
+                input
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(i, &v)| {
+                        (bf16_to_f32(v) + ((i % 13) as f32 + 0.25) * 1e-6).to_le_bytes()
+                    })
+                    .collect(),
+            )
+        } else {
+            rows(input)
+        },
         weight: Spec::input(
             DType::Bf16,
             (Rows::Fixed(1), width),
@@ -139,8 +155,13 @@ fn rmsnorm_oracle(
         x
     };
     // The HF kind's exact reference sums in the order its numerics name.
+    let decoded = if requirement.input == DType::F32 {
+        images.f32s("x")?.into_iter().map(f64::from).collect()
+    } else {
+        widen(&summed)
+    };
     let reference = oracle::rmsnorm_numerics(
-        &widen(&summed),
+        &decoded,
         requirement.width as usize,
         &widen(&images.u16s("weight")?),
         f64::from(f32::from_bits(requirement.epsilon_bits)),

@@ -10,6 +10,7 @@ use kernel_harness::poison::{CopyProducer, LiveProducer};
 use kernel_harness::{LabResult, Session};
 use kernel_lab_families::latent_glue as family;
 use kernels_sm120::backend::Sm120;
+use kernels_sm120::latent::glue::Mutation;
 use runtime_cuda::Module;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -72,6 +73,23 @@ fn required() -> Vec<Required<'static>> {
             first,
         ));
     }
+    let write = LatentWindowWrite {
+        latent: 512,
+        rotary: 64,
+        epsilon_bits: 1e-20_f32.to_bits(),
+        addressing: WindowAddressing::Circular { slots: 136 },
+    };
+    cases.push(latent_glue::window_f32_regression(write));
+    cases.push(latent_glue::window_invalid_data(write));
+    cases.push(latent_glue::window_invalid_data(LatentWindowWrite {
+        addressing: WindowAddressing::Staged { slots: 160 },
+        ..write
+    }));
+    cases.push(latent_glue::key_invalid_data(ring_keys()));
+    cases.push(latent_glue::key_invalid_data(LatentWindowKeys {
+        addressing: WindowAddressing::Staged { slots: 160 },
+        ..ring_keys()
+    }));
     cases
 }
 struct FamilyModules {
@@ -80,7 +98,10 @@ struct FamilyModules {
 impl Modules for FamilyModules {
     fn load<'s>(&'s self, session: &'s Session) -> LabResult<Functions<'s>> {
         let mut lookup = BTreeMap::new();
-        for spec in family::cubins() {
+        for spec in family::cubins()
+            .into_iter()
+            .chain(kernel_lab_families::latent_glue_mutants::cubins())
+        {
             for entry in spec.entries {
                 lookup.insert(entry.symbol, spec.name.clone());
             }
@@ -147,9 +168,22 @@ fn all_latent_glue_cases_prepare_and_declare() {
     };
     check(
         &kit::conform(&backend(), &modules, None, &required()).unwrap(),
-        9,
+        14,
         false,
     );
+    for mutation in Mutation::ALL {
+        check(
+            &kit::conform(
+                &backend(),
+                &modules,
+                None,
+                &[latent_glue::device_mutant(mutation)],
+            )
+            .unwrap(),
+            1,
+            false,
+        );
+    }
     for mutation in [KeyMutation::Outside, KeyMutation::Stale] {
         let case = latent_glue::window_key_control(ring_keys(), 17, mutation);
         check(
@@ -174,7 +208,7 @@ fn latent_glue_passes_poison_graph_pdl_and_controls_on_gpu() {
             "latent-glue",
             BTreeMap::from([("report".into(), report.json())]),
         )?;
-        check(&report, 9, true);
+        check(&report, 14, true);
         for (mutation, reason) in [
             (KeyMutation::Outside, "outside slot domain"),
             (KeyMutation::Stale, "visible positions or order differ"),
@@ -203,10 +237,120 @@ fn latent_glue_passes_poison_graph_pdl_and_controls_on_gpu() {
                 }
             }
         }
+        for mutation in Mutation::ALL {
+            let report = kit::conform(
+                &backend(),
+                &modules,
+                Some(session),
+                &[latent_glue::device_mutant(mutation)],
+            )?;
+            session.receipt(
+                &format!("latent-glue-device-control-{mutation:?}"),
+                BTreeMap::from([("report".into(), report.json())]),
+            )?;
+            assert_eq!(report.prepared().len(), 1);
+            let OpResult::Prepared { checks, .. } = &report.ops[0].result else {
+                panic!("mutant refused")
+            };
+            let numerical_failure = |error: &str| match mutation {
+                Mutation::WindowEdge => {
+                    error.contains("window-key oracle: visible positions or order differ")
+                }
+                Mutation::WrongTail => {
+                    error.contains("query")
+                        && (error.contains("outside the write map")
+                            || error.contains("the reference"))
+                }
+                Mutation::ReversedPair | Mutation::DoubleRound => {
+                    (error.contains("query byte") || error.contains("native_q byte"))
+                        && error.contains("the reference")
+                }
+                Mutation::InputRound => {
+                    error.contains("latent byte") && error.contains("the reference")
+                }
+            };
+            assert!(
+                checks.iter().any(|c| c.name == "conformance"
+                    && matches!(&c.outcome,Outcome::Failed(error) if numerical_failure(error))),
+                "mutant escaped: {checks:?}"
+            );
+            for c in checks {
+                if let Outcome::Failed(error) = &c.outcome {
+                    assert!(
+                        !error.contains("CUDA") && !error.contains("trap"),
+                        "device fault is not negative-control evidence: {error}"
+                    );
+                }
+            }
+        }
         Ok(())
     })
     .unwrap();
     if std::env::var_os("CHOPINFER_KERNEL_REQUIRE").is_some() {
         assert!(result.is_some(), "required latent glue test skipped");
+    }
+}
+
+/// The first window-write shape from the faulting suite, isolated for the
+/// operator's memcheck/racecheck gate. This includes stage omission replay.
+#[test]
+fn isolated_window_write_passes_poison_graph_and_pdl_on_gpu() {
+    let result = kernel_harness::gpu_test(256 << 20, |session| {
+        let directory = std::env::var_os("CHOPINFER_LATENT_GLUE_CUBINS")
+            .map(PathBuf::from)
+            .ok_or("prebuilt latent glue cubins required")?;
+        kernel_build::report::BuildReport::read(&directory.join("kernel-build-report.json"))
+            .and_then(|r| r.verify_current())
+            .map_err(|e| e.to_string())?;
+        let query = LatentWindowWrite {
+            latent: 512,
+            rotary: 64,
+            epsilon_bits: 1e-20_f32.to_bits(),
+            addressing: WindowAddressing::Circular { slots: 136 },
+        };
+        let report = kit::conform(
+            &backend(),
+            &FamilyModules { directory },
+            Some(session),
+            &[latent_glue::window_write(query, 17, 130)],
+        )?;
+        session.receipt(
+            "isolated-window-write",
+            BTreeMap::from([("report".into(), report.json())]),
+        )?;
+        check(&report, 1, true);
+        let OpResult::Prepared { checks, .. } = &report.ops[0].result else {
+            unreachable!()
+        };
+        let Outcome::Passed(evidence) = &checks
+            .iter()
+            .find(|c| c.name == "conformance")
+            .unwrap()
+            .outcome
+        else {
+            unreachable!()
+        };
+        for output in ["latent", "quantized_codes"] {
+            let guards = evidence["omission_guards"]
+                .as_object()
+                .expect("guard declarations");
+            let (producer, _) = guards
+                .iter()
+                .find(|(_, value)| value.as_str() == Some(output))
+                .expect("producer guard");
+            assert!(
+                evidence["guarded_omissions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|entry| entry["stage"].as_str() == Some(producer)),
+                "missing guarded omission of {output}"
+            );
+        }
+        Ok(())
+    })
+    .unwrap();
+    if std::env::var_os("CHOPINFER_KERNEL_REQUIRE").is_some() {
+        assert!(result.is_some(), "required isolated write skipped");
     }
 }

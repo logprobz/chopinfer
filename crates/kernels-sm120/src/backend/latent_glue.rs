@@ -274,7 +274,7 @@ pub(super) fn window_write(
     let r = u64::from(need.capacity);
     let slots = u64::from(op.addressing.slots());
     info.bytes = vec![
-        ("input".into(), r * 512 * 2),
+        ("input".into(), r * 512 * 4),
         ("weight".into(), 512 * 2),
         ("latent".into(), r * 512 * 4),
         ("cos_sin".into(), r * 64 * 4),
@@ -418,7 +418,7 @@ impl PreparedOp<LatentWindowWriteBuffers<View>> for WriteOp {
             counts,
             1,
             vec![
-                pointer(b.input, r * 512 * 2)?,
+                pointer(b.input, r * 512 * 4)?,
                 pointer(b.weight, 512 * 2)?,
                 pointer(b.latent, r * 512 * 4)?,
                 pointer(b.cos_sin, r * 64 * 4)?,
@@ -507,7 +507,7 @@ mod tests {
         let codes = 136 * 512;
         let scales = 136 * 16;
         let b = LatentWindowWriteBuffers {
-            input: view(1, 2 * 512 * 2),
+            input: view(1, 2 * 512 * 4),
             weight: view(2, 512 * 2),
             latent: view(3, 2 * 512 * 4),
             cos_sin: view(4, 2 * 64 * 4),
@@ -530,6 +530,17 @@ mod tests {
             quantized_scales: view(11, 2 * 16),
             live_rows: view(12, 4),
         };
+        assert!(
+            op.launches(
+                &LatentWindowWriteBuffers {
+                    input: view(1, 2 * 512 * 2),
+                    ..b
+                },
+                View::EMPTY,
+                Counts::rows(2)
+            )
+            .is_err()
+        );
         let launches = op.launches(&b, View::EMPTY, Counts::rows(2)).unwrap();
         assert_eq!(launches.len(), 3);
         assert_eq!(launches[1].symbol, "shared_quantize");

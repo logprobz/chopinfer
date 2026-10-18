@@ -103,7 +103,7 @@ impl Validate for WindowAddressing {
     }
 }
 
-/// BF16 projection rows and weights, F32 plain RMSNorm, F32 tail rotation,
+/// F32 projection rows and BF16 weights, F32 plain RMSNorm, F32 tail rotation,
 /// shared ceil E4M3/UE8M0 quantization per 32, then a write to separate code and scale
 /// planes. Every quantizer input rounds to BF16 before amax or code choice.
 /// Its result is bitwise `latent_attention_oracle::encode_latent_row` of
@@ -112,7 +112,9 @@ impl Validate for WindowAddressing {
 /// A circular write keeps only positions in the final `slots` positions
 /// ending at each sequence's supplied `last_position`. This makes prefill
 /// ring seeding race-free even when the chunk exceeds the ring. Staging
-/// writes every supplied position. Positions are unique within a sequence.
+/// writes every valid supplied position. Invalid sequence ids, negative
+/// positions, positions after the supplied last position, and positions
+/// outside staging write neither plane. Valid destinations are unique.
 /// The caller stages attention inputs or reserves enough circular headroom
 /// so a write cannot overwrite any key needed by another query in the step.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -155,7 +157,7 @@ impl NumericalContract for LatentWindowWrite {
     fn numerical_contract_id(&self) -> Result<NumericalContractId, Refusal> {
         self.validate()?;
         Ok(NumericalContractId::new(format!(
-            "latent.window-write.norm-f32.post-rope-bf16.ceil32.v1.d{}.r{}.{}.s{}.eps{:08x}",
+            "latent.window-write.input-f32.norm-f32.post-rope-bf16.ceil32.v1.d{}.r{}.{}.s{}.eps{:08x}",
             self.latent,
             self.rotary,
             self.addressing.tag(),
@@ -172,7 +174,8 @@ impl NumericalContract for LatentWindowWrite {
 /// is checked in absolute positions before modulo: stale or future positions
 /// never become live keys by wrapping, and an out-of-range physical index
 /// must never be reduced modulo the ring capacity.
-/// Query positions are nonnegative; the device live count excludes padding.
+/// A negative query position or an absent staged position is a -1 hole.
+/// An invalid staged sequence id writes no row. The live count excludes padding.
 /// This is ordinary causal visibility; bidirectional draft blocks use the
 /// separate `latent_visibility::WindowBlockVisibility` contract.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -237,7 +240,7 @@ crate::scratch_record! {
 }
 
 crate::scratch_record! {
-    /// BF16 `input` projection rows and BF16 `weight` of width latent.
+    /// F32 `input` projection rows and BF16 `weight` of width latent.
     /// F32 `latent` scratch receives the normalized, rotated rows.
     /// Quantized scratch is
     /// dense `[rows, latent]` codes and `[rows, latent/32]` UE8M0 scales.

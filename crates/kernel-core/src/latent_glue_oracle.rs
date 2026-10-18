@@ -90,18 +90,15 @@ pub fn query_rope_f32(
     Ok((rotated, bf16))
 }
 
-/// Independent f64 RMSNorm over the exact BF16 operands.
+/// Independent f64 RMSNorm over exact F32 projection rows and BF16 weights.
 pub fn window_norm_f64(
     query: LatentWindowWrite,
-    input: &[u16],
+    input: &[f32],
     weight: &[u16],
 ) -> Result<OracleOutput, Refusal> {
     query.validate()?;
     crate::oracle::rmsnorm(
-        &input
-            .iter()
-            .map(|&v| f64::from(bf16_to_f32(v)))
-            .collect::<Vec<_>>(),
+        &input.iter().map(|&v| f64::from(v)).collect::<Vec<_>>(),
         query.latent as usize,
         &weight
             .iter()
@@ -117,7 +114,7 @@ pub fn window_norm_f64(
 /// owns adjacent pairs, traversing later 512-column spans in order.
 pub fn window_norm_f32(
     query: LatentWindowWrite,
-    input: &[u16],
+    input: &[f32],
     weight: &[u16],
 ) -> Result<Vec<f32>, Refusal> {
     query.validate()?;
@@ -131,7 +128,6 @@ pub fn window_norm_f32(
         for (lane, sum) in lanes.iter_mut().enumerate() {
             for start in (2 * lane..width).step_by(512) {
                 for &v in &row[start..start + 2] {
-                    let v = bf16_to_f32(v);
                     *sum = v.mul_add(v, *sum);
                 }
             }
@@ -153,7 +149,7 @@ pub fn window_norm_f32(
         output.extend(
             row.iter()
                 .zip(weight)
-                .map(|(&x, &w)| (bf16_to_f32(x) * inv) * bf16_to_f32(w)),
+                .map(|(&x, &w)| (x * inv) * bf16_to_f32(w)),
         );
     }
     if output.iter().any(|v| !v.is_finite()) {
@@ -166,7 +162,7 @@ pub fn window_norm_f32(
 /// quantizer. It receives precisely the post-rotation BF16 values.
 pub fn window_rows(
     query: LatentWindowWrite,
-    input: &[u16],
+    input: &[f32],
     weight: &[u16],
     table: &[f32],
 ) -> Result<(Vec<f32>, Vec<EncodedLatent>), Refusal> {
@@ -188,8 +184,7 @@ pub fn window_rows(
 }
 
 /// One causal row, with absolute positions increasing before their storage
-/// mapping. Staging must contain the entire visible interval, including
-/// any retained prefix before a continuation chunk.
+/// mapping. Missing staged positions and negative query positions are holes.
 pub fn window_keys(
     query: LatentWindowKeys,
     position: i32,
@@ -197,13 +192,18 @@ pub fn window_keys(
 ) -> Result<Vec<i32>, Refusal> {
     query.validate()?;
     if position < 0 {
-        return Err(Refusal("window query positions must be nonnegative"));
+        return Ok(vec![-1; query.window as usize]);
     }
     let end = i64::from(position) + 1;
     let start = (end - i64::from(query.window)).max(0);
     let mut keys = (start..end)
-        .map(|p| query.addressing.slot(p as i32, first).map(|v| v as i32))
-        .collect::<Result<Vec<_>, _>>()?;
+        .map(|p| {
+            query
+                .addressing
+                .slot(p as i32, first)
+                .map_or(-1, |v| v as i32)
+        })
+        .collect::<Vec<_>>();
     keys.resize(query.window as usize, -1);
     Ok(keys)
 }
@@ -274,20 +274,21 @@ pub fn store_window_rows(
     let mut unique = std::collections::BTreeSet::new();
     for (row, (&position, &batch)) in positions.iter().zip(row_batch).enumerate() {
         let sequence = batch as usize;
-        if sequence >= sequences
-            || position < 0
-            || position > last_positions[sequence]
-            || encoded[row].values.len() != width
-            || encoded[row].scale_bytes.len() != width / 32
-        {
-            return Err(Refusal("native window write row lies outside its sequence"));
+        if sequence >= sequences || position < 0 || position > last_positions[sequence] {
+            continue;
+        }
+        if encoded[row].values.len() != width || encoded[row].scale_bytes.len() != width / 32 {
+            return Err(Refusal("native window encoded row shape mismatch"));
         }
         if matches!(query.addressing, WindowAddressing::Circular { .. })
             && i64::from(position) + slots as i64 <= i64::from(last_positions[sequence])
         {
             continue;
         }
-        let slot = query.addressing.slot(position, first_positions[sequence])? as usize;
+        let Ok(slot) = query.addressing.slot(position, first_positions[sequence]) else {
+            continue;
+        };
+        let slot = slot as usize;
         if !unique.insert((sequence, slot)) {
             return Err(Refusal("native window write repeats a destination"));
         }
@@ -368,6 +369,40 @@ mod tests {
     }
 
     #[test]
+    fn projection_stays_f32_until_the_trained_quantizer() {
+        let op = LatentWindowWrite {
+            latent: 512,
+            rotary: 64,
+            epsilon_bits: 1e-20_f32.to_bits(),
+            addressing: WindowAddressing::Circular { slots: 136 },
+        };
+        let mut input = vec![1.0; 512];
+        input[0] = 1.00375;
+        let mut weight = vec![f32_to_bf16(1.0); 512];
+        weight[0] = f32_to_bf16(1.0625);
+        let table = [1.0, 0.0].repeat(32);
+        let (_, kept) = window_rows(op, &input, &weight, &table).unwrap();
+        let narrowed = input
+            .iter()
+            .map(|&v| bf16_to_f32(f32_to_bf16(v)))
+            .collect::<Vec<_>>();
+        let (_, early) = window_rows(op, &narrowed, &weight, &table).unwrap();
+        assert_eq!((kept[0].values[0], kept[0].scale_bytes[0]), (0x79, 119));
+        assert_eq!((early[0].values[0], early[0].scale_bytes[0]), (0x78, 119));
+        let ideal = window_norm_f64(op, &input, &weight).unwrap();
+        crate::oracle::check_numeric(
+            &window_norm_f32(op, &input, &weight)
+                .unwrap()
+                .into_iter()
+                .map(f64::from)
+                .collect::<Vec<_>>(),
+            &ideal,
+            crate::contract::DType::F32,
+        )
+        .unwrap();
+    }
+
+    #[test]
     fn window_quantizer_matches_native_encoder_after_rotation() {
         let (input, table) = operands(1);
         let op = LatentWindowWrite {
@@ -376,18 +411,17 @@ mod tests {
             rotary: 64,
             addressing: WindowAddressing::Circular { slots: 136 },
         };
-        let bf16 = input.iter().map(|&v| f32_to_bf16(v)).collect::<Vec<_>>();
         let weight = (0..512)
             .map(|i| f32_to_bf16(0.7 + (i % 19) as f32 / 23.0))
             .collect::<Vec<_>>();
-        let normed = window_norm_f32(op, &bf16, &weight).unwrap();
+        let normed = window_norm_f32(op, &input, &weight).unwrap();
         crate::oracle::check_numeric(
             &normed.iter().map(|&v| f64::from(v)).collect::<Vec<_>>(),
-            &window_norm_f64(op, &bf16, &weight).unwrap(),
+            &window_norm_f64(op, &input, &weight).unwrap(),
             crate::contract::DType::F32,
         )
         .unwrap();
-        let (rotated, encoded) = window_rows(op, &bf16, &weight, &table).unwrap();
+        let (rotated, encoded) = window_rows(op, &input, &weight, &table).unwrap();
         let quantized = BlockQuantization::E4M3_CEIL32
             .apply(&rotated, 2, 512)
             .unwrap();
@@ -408,7 +442,7 @@ mod tests {
                 .flat_map(|r| r.scale_bytes.clone())
                 .collect::<Vec<_>>()
         );
-        let tiny = vec![f32_to_bf16(1e-11); 512];
+        let tiny = vec![1e-11; 512];
         let exact_eps = window_rows(op, &tiny, &weight, &table[..64]).unwrap().1;
         let wrong_eps = LatentWindowWrite {
             epsilon_bits: 1e-6_f32.to_bits(),
@@ -420,7 +454,9 @@ mod tests {
                 .unwrap()
                 .1
         );
-        let zero = window_rows(op, &[0; 512], &weight, &table[..64]).unwrap().1;
+        let zero = window_rows(op, &[0.0; 512], &weight, &table[..64])
+            .unwrap()
+            .1;
         let positive_zero =
             encode_latent_row(LatentKvFormat::Fp8E4M3Ue8M0Block32, &[0; 512]).unwrap();
         assert_eq!(zero[0].scale_bytes, positive_zero.scale_bytes);
@@ -454,7 +490,7 @@ mod tests {
             quantized.codes
         );
         assert_ne!(
-            window_rows(op, &bf16, &vec![f32_to_bf16(1.0); 512], &table)
+            window_rows(op, &input, &vec![f32_to_bf16(1.0); 512], &table)
                 .unwrap()
                 .1,
             encoded
@@ -476,7 +512,7 @@ mod tests {
             ..ring
         };
         assert_ne!(keys, window_keys(wrong, 136, 0).unwrap());
-        assert!(window_keys(ring, -1, 0).is_err());
+        assert_eq!(window_keys(ring, -1, 0).unwrap(), vec![-1; 128]);
         let staged = LatentWindowKeys {
             addressing: WindowAddressing::Staged { slots: 160 },
             ..ring
@@ -485,8 +521,8 @@ mod tests {
             window_keys(staged, 256, 128).unwrap(),
             (1..=128).collect::<Vec<_>>()
         );
-        assert!(window_keys(staged, 255, 129).is_err());
-        assert!(window_keys(ring, -2, 0).is_err());
+        assert_eq!(window_keys(staged, 255, 129).unwrap()[0], -1);
+        assert_eq!(window_keys(ring, -2, 0).unwrap(), vec![-1; 128]);
         assert_eq!(window_keys(ring, i32::MAX, 0).unwrap().len(), 128);
     }
 

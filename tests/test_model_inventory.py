@@ -43,11 +43,37 @@ DIRECT = re.compile(r'\bconformance::run\b|\bconformance::\{[^}]*\brun\b')
 EXPORTS_API = re.compile(r'\bexport_bundle_api_v1!')
 
 
+def test_module(source, path):
+    """Whether `path` under the crate source `source` is a module file whose
+    declaration, or an ancestor's, is `#[cfg(test)]`: `mod name;` right
+    after the attribute in its parent file (`lib.rs`, `<dir>.rs` or
+    `<dir>/mod.rs`). A file reached otherwise, as by `#[path]`, is not."""
+    relative = path.relative_to(source)
+    if relative.parts in (('lib.rs',), ('main.rs',)):
+        return False
+    name = relative.parent.name if relative.name == 'mod.rs' else relative.stem
+    directory = path.parent.parent if relative.name == 'mod.rs' else path.parent
+    if directory == source:
+        parents = [source / 'lib.rs', source / 'main.rs']
+    else:
+        parents = [directory.with_suffix('.rs'), directory / 'mod.rs']
+    declared = re.compile(r'#\[cfg\(test\)\]\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+' + re.escape(name) + r'\s*;')
+    for parent in parents:
+        if parent.is_file():
+            if declared.search(parent.read_text()):
+                return True
+            return test_module(source, parent)
+    return False
+
+
 def exports_bundle_api(root, model):
     """Whether `model`'s bundle exports the bundle API, so a host can serve
-    it. A skeleton bundle with no program yet exports nothing."""
-    bundle = pathlib.PurePosixPath(model.directory) / 'bundle/src'
-    return any(EXPORTS_API.search(path.read_text()) for path in sorted((root / bundle).rglob('*.rs')))
+    it. A skeleton bundle with no program yet exports nothing, and an export
+    confined to a `#[cfg(test)]` module file (`test_module`) serves only the
+    crate's own tests."""
+    source = root / pathlib.PurePosixPath(model.directory) / 'bundle/src'
+    return any(EXPORTS_API.search(path.read_text()) and not test_module(source, path)
+               for path in sorted(source.rglob('*.rs')))
 
 
 def tests_kernels_on_gpu(model):
@@ -583,7 +609,28 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(str(caught.exception), refused + '[]')
         # Only a bundle that exports the bundle API can be served.
         self.assertFalse(exports_bundle_api(self.root, model))
-        self.write('models/m3/bundle/src/lib.rs', 'runtime_bundle_abi::export_bundle_api_v1!(\n    Model,\n);\n')
+        export = 'runtime_bundle_abi::export_bundle_api_v1!(\n    Model,\n);\n'
+        # An export in a #[cfg(test)] module file serves only the crate's
+        # tests; one outside it, or reached by a module that is not test-only,
+        # is served and needs the suite.
+        self.write('models/m3/bundle/src/api.rs', export)
+        self.write('models/m3/bundle/src/lib.rs', '#[cfg(test)]\nmod api;\n')
+        self.assertFalse(exports_bundle_api(self.root, model))
+        self.write('models/m3/bundle/src/lib.rs', '#[cfg(test)]\nmod other;\nmod api;\n')
+        self.assertTrue(exports_bundle_api(self.root, model))
+        with self.assertRaises(AssertionError) as caught:
+            conformance_suite(self.root, model)
+        self.assertEqual(str(caught.exception), refused + '[]')
+        self.write('models/m3/bundle/src/lib.rs', '#[cfg(test)]\nmod tests;\n')
+        self.write('models/m3/bundle/src/tests.rs', 'mod api;\n')
+        self.write('models/m3/bundle/src/tests/api.rs', export)
+        (self.root / 'models/m3/bundle/src/api.rs').unlink()
+        self.assertFalse(exports_bundle_api(self.root, model))
+        self.write('models/m3/bundle/src/lib.rs', 'mod tests;\n')
+        self.assertTrue(exports_bundle_api(self.root, model))
+        (self.root / 'models/m3/bundle/src/tests/api.rs').unlink()
+        (self.root / 'models/m3/bundle/src/tests.rs').unlink()
+        self.write('models/m3/bundle/src/lib.rs', '#[cfg(test)]\nmod api {}\n' + export)
         self.assertTrue(exports_bundle_api(self.root, model))
         suite = 'conformance::suite! {\n    startup: Served {\n        tp4_ar: "tp4-ar",\n    }\n}\n'
         self.write('models/m3/bundle/src/tests/conformance.rs', suite)

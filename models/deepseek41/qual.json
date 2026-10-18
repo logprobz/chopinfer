@@ -3386,7 +3386,7 @@
             "sha256"
           ],
           "op": "eq",
-          "value": "483e5b44b727dfd5d497ef6fb4a1d24bfb4632d082b706a70128000394496578",
+          "value": "b360b5dcf5688c9ca6478249d535b2a814000d1f4589c7616c07ebb2e1d70528",
           "source": "docs/check-kinds.md"
         }
       ]
@@ -3508,7 +3508,7 @@
         "env": "CHOPINFER_DATA",
         "path": "refrun/deepseek41/media/image-probe-references.json"
       },
-      "sha256": "483e5b44b727dfd5d497ef6fb4a1d24bfb4632d082b706a70128000394496578",
+      "sha256": "b360b5dcf5688c9ca6478249d535b2a814000d1f4589c7616c07ebb2e1d70528",
       "schema": "chopinfer.deepseek41.image-probe-references.v1",
       "workload": {
         "env": "CHOPINFER_DATA",

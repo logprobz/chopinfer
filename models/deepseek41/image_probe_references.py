@@ -55,10 +55,13 @@ POSITIONS = ("entry i scores the token at score_from + i from the logits of the 
              "are ranked by logit")
 RULE = {"variants": ["bf16", "f64"], "mean_step": 0.05, "mean_floor": 0.15, "top1_floor": 0.08,
         "near_tie": 0.3,
-        "text": "free text: the F32-TQ answer teacher-forced as a served chat continues it, mean |dlogprob| <= "
-                "max(mean_floor, the worst variant rounded up to mean_step) and the share of positions whose "
-                "top-1 differs from the F32-TQ pass's <= max(top1_floor, the worst variant), over the BF16 and "
-                "F64-TQ runs scored against the F32-TQ run like a server"}
+        "text": "free text: the F32-TQ answer teacher-forced as a served chat continues it, against the BF16 and "
+                "F64-TQ runs scored like a server: mean |dlogprob| <= max(mean_floor, the worst variant rounded "
+                "up to mean_step). A top-1 that differs from the F32-TQ pass's is a near tie when the F32-TQ "
+                "logprob gap to it, in its stored top-k, is at most near_tie nats, and decisive otherwise; over "
+                "the positions, decisive flips <= max(top1_floor, the worst variant's rate), near ties <= "
+                "max(0.08, the worst variant's rate rounded up to 0.01) and all flips <= max(0.10, the worst "
+                "variant's rate)"}
 
 
 def sha256(data):

@@ -1621,8 +1621,70 @@ fn clamped_silu_mul_rounds_only_its_product_before_ceil_quantization() {
             .unwrap()
     );
     gate[0] = f32::NAN;
-    assert!(query.apply(&gate, &up, rows).is_err());
+    assert_eq!(query.row_status(&gate, &up, &vec![0; rows]).unwrap()[0], 1);
     assert!(query.oracle(&gate, &up, rows).is_err());
+}
+
+#[test]
+fn silu_mul_quantize_nonfinite_inputs_zero_the_entire_row() {
+    use kernel_core::gated_mlp::{SwigluClamp, quantized::SiluMulQuantizeQuery};
+    let query = SiluMulQuantizeQuery {
+        width: 64,
+        clamp: SwigluClamp::symmetric(10.0),
+        amax_floor_bits: 1e-4_f32.to_bits(),
+    };
+    for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        for in_gate in [true, false] {
+            let mut gate = vec![2.0; 128];
+            let mut up = vec![3.0; 128];
+            if in_gate {
+                gate[63] = bad;
+            } else {
+                up[63] = bad;
+            }
+            let result = query.apply(&gate, &up, 2).unwrap();
+            assert_eq!(query.row_status(&gate, &up, &[2, 0]).unwrap(), [3, 0]);
+            assert_eq!(result.codes[..64], [0; 64]);
+            let Scales::Ue8M0(scales) = result.scales else {
+                panic!("UE8M0 scales")
+            };
+            assert_eq!(scales[..2], [127; 2]);
+            let passing = query.apply(&gate[64..], &up[64..], 1).unwrap();
+            assert_eq!(result.codes[64..], passing.codes);
+        }
+    }
+}
+
+#[test]
+fn silu_mul_quantize_retains_status_across_launches_and_reports_overflow() {
+    use kernel_core::gated_mlp::{SwigluClamp, quantized::SiluMulQuantizeQuery};
+    let query = SiluMulQuantizeQuery {
+        width: 64,
+        clamp: SwigluClamp::symmetric(10.0),
+        amax_floor_bits: 1e-4_f32.to_bits(),
+    };
+    let mut gate = vec![2.0; 256];
+    let up = vec![3.0; 256];
+    gate[63] = f32::NEG_INFINITY;
+    let (_, first) = query
+        .apply_with_status(&gate, &up, &[0, 0, 2, 0x8000_0000])
+        .unwrap();
+    gate[63] = 2.0;
+    gate[127] = f32::INFINITY;
+    let (output, second) = query.apply_with_status(&gate, &up, &first).unwrap();
+    assert_eq!(second, [1, 1, 2, 0x8000_0000]);
+    assert_eq!(output.codes, vec![0; 256]);
+    assert_eq!(output.scales, Scales::Ue8M0(vec![127; 8]));
+    assert!(query.row_status(&gate, &up, &[0]).is_err());
+    let overflow = SiluMulQuantizeQuery {
+        clamp: SwigluClamp::symmetric(2e19),
+        ..query
+    };
+    let (output, flags) = overflow
+        .apply_with_status(&[2e19; 64], &[2e19; 64], &[2])
+        .unwrap();
+    assert_eq!(flags, [6]);
+    assert_eq!(output.codes, vec![0; 64]);
 }
 
 mod latent_parameters {

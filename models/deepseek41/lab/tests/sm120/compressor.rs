@@ -1,5 +1,6 @@
 //! Model-owned compressor cases and frozen artifacts. The CPU test builds
-//! and checks locks; GPU tests only read those artifacts, never compile.
+//! and checks locks; a GPU job only reads the artifacts its snapshot names,
+//! never compiles.
 
 #[path = "../../../bundle/src/sm120/compressor.rs"]
 #[allow(dead_code, reason = "the bundle consumes selection declarations")]
@@ -263,14 +264,30 @@ fn run(session: Option<&Session>, artifacts: &Artifacts) -> LabResult<()> {
     Ok(())
 }
 
-#[test]
-fn compressor_model_prepares_and_builds_required_cases() {
-    build_artifacts().unwrap();
-    run(None, &Artifacts::read().unwrap()).unwrap();
+/// Builds the artifacts once per test process, so a consumer in the same
+/// run reads them only after the producer finished, whichever test the
+/// harness starts first.
+fn built() -> LabResult<()> {
+    static BUILT: std::sync::OnceLock<LabResult<()>> = std::sync::OnceLock::new();
+    BUILT.get_or_init(build_artifacts).clone()
 }
 
 #[test]
+fn compressor_model_prepares_and_builds_required_cases() {
+    built().unwrap();
+    run(None, &Artifacts::read().unwrap()).unwrap();
+}
+
+/// Skips before reading anything when no GPU is selected. A GPU job reads
+/// the frozen artifacts its snapshot names in the artifacts variable; an
+/// in-tree run reads the ones this process builds.
+#[test]
 fn compressor_model_passes_on_a_gpu() {
-    let artifacts = Artifacts::read().unwrap();
-    kernel_harness::gpu_test(1 << 30, |session| run(Some(session), &artifacts)).unwrap();
+    kernel_harness::gpu_test(1 << 30, |session| {
+        if std::env::var_os(ARTIFACTS).is_none() {
+            built()?;
+        }
+        run(Some(session), &Artifacts::read()?)
+    })
+    .unwrap();
 }

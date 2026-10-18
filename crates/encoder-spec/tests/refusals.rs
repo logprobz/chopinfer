@@ -312,7 +312,7 @@ fn checked_arithmetic() {
     );
     refuses(
         DSV41,
-        |d| d["input"]["recipes"][0]["cell"] = 4294967295_u64.into(),
+        |d| d["input"]["recipes"][0]["downsample"] = 4294967295_u64.into(),
         "overflows",
     );
 }

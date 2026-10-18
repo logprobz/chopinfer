@@ -16,7 +16,7 @@ use serde_json::Value;
 
 const QWEN: &str = include_str!("../../../models/qwen38/contract/encoders/qwen38-vision.json");
 const DSV41: &str = include_str!("fixtures/dsv41-vision.json");
-const DSV41_DIGEST: &str = "957dd8a4b509ae01ce42fef13222cfad8fb9895ae8c8e2d63a1869579bec8c9d";
+const DSV41_DIGEST: &str = "00d72f6be3fd18c17b4b91e4700a9c897909687ac5862a2abecff4863237e489";
 /// `name dtype dims` from the safetensors headers of DeepSeek V4.1 Flash,
 /// snapshot fb2764a5cf321eaa5070ca8f9e892818f477c16d.
 const DSV41_TENSORS: &str = include_str!("fixtures/tensors/dsv41-vision.txt");
@@ -100,7 +100,7 @@ fn deepseek_places_learned_delimiters() {
 
     let declaration = dsv41();
     let geometry = declaration
-        .geometry("image.padded-fit-token-budget.v1", Media::Grid([1, 5, 7]))
+        .geometry("image.centered-pad.v1", Media::Grid([1, 5, 7]))
         .unwrap();
     let [run] = geometry.runs.as_slice() else {
         panic!("one image is one run");
@@ -148,14 +148,11 @@ fn deepseek_places_learned_delimiters() {
         ([1, 3, 3064], false),
         ([1, 4, 3063], false),
     ] {
-        let result = declaration.geometry("image.padded-fit-token-budget.v1", Media::Grid(grid));
+        let result = declaration.geometry("image.centered-pad.v1", Media::Grid(grid));
         assert_eq!(result.is_ok(), fits, "{grid:?}");
     }
     let widest = declaration
-        .geometry(
-            "image.padded-fit-token-budget.v1",
-            Media::Grid([1, 3, 3063]),
-        )
+        .geometry("image.centered-pad.v1", Media::Grid([1, 3, 3063]))
         .unwrap();
     assert_eq!(widest.rows.last().unwrap().rows, 1024);
 }

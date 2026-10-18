@@ -98,14 +98,15 @@ pub struct LogMel {
     pub maximum_frames: u64,
 }
 
-/// `image.padded-fit-token-budget.v1` limits: the image is fit so that its
-/// `cell x cell` patch cells, laid out with the delimiters, take at most
-/// `maximum_tokens` tokens (`h * (w + 1) + 2`).
+/// `image.centered-pad.v1` limits (`runtime_media::recipe`'s centered
+/// pad): the image is fit so that its `downsample x downsample` patch
+/// cells, laid out with the delimiters, take at most `maximum_tokens`
+/// tokens (`h * (w + 1) + 2`).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PaddedFit {
+pub struct CenteredPad {
     pub patch: u32,
-    pub cell: u32,
+    pub downsample: u32,
     pub maximum_tokens: u32,
 }
 
@@ -132,8 +133,8 @@ pub enum Recipe {
     VideoTimestampedGrids(VideoGrids),
     #[serde(rename = "audio.log-mel.v1")]
     AudioLogMel(LogMel),
-    #[serde(rename = "image.padded-fit-token-budget.v1")]
-    ImagePaddedFitTokenBudget(PaddedFit),
+    #[serde(rename = "image.centered-pad.v1")]
+    ImageCenteredPad(CenteredPad),
     #[serde(rename = "image.zero-padded-token-budget.v1")]
     ImageZeroPaddedTokenBudget(TokenBudgetGrid),
 }
@@ -157,7 +158,7 @@ impl Recipe {
             Recipe::ImagePatchGrid(_) => "image.patch-grid.v1",
             Recipe::VideoTimestampedGrids(_) => "video.timestamped-grids.v1",
             Recipe::AudioLogMel(_) => "audio.log-mel.v1",
-            Recipe::ImagePaddedFitTokenBudget(_) => "image.padded-fit-token-budget.v1",
+            Recipe::ImageCenteredPad(_) => "image.centered-pad.v1",
             Recipe::ImageZeroPaddedTokenBudget(_) => "image.zero-padded-token-budget.v1",
         }
     }
@@ -232,15 +233,18 @@ impl Recipe {
                     grid: r.maximum_frames,
                 })
             }
-            Recipe::ImagePaddedFitTokenBudget(r) => {
-                positive(&[r.patch.into(), r.cell.into()])?;
+            Recipe::ImageCenteredPad(r) => {
+                positive(&[r.patch.into(), r.downsample.into()])?;
                 if r.maximum_tokens < 4 {
                     return Err("a token budget below 4 holds no cell".into());
                 }
                 // h * (w + 1) + 2 <= budget gives at most budget - 3 cells
-                // (one row of cells); each cell holds cell^2 patches.
+                // (one row of cells); each cell holds downsample^2 patches.
                 let cells = u64::from(r.maximum_tokens) - 3;
-                let item = mul(cells, mul(u64::from(r.cell), u64::from(r.cell))?)?;
+                let item = mul(
+                    cells,
+                    mul(u64::from(r.downsample), u64::from(r.downsample))?,
+                )?;
                 Ok(RecipeRows {
                     columns: patch_columns(r.patch, 1)?,
                     patchify: Some(Patchify::RowMajor),
@@ -1013,7 +1017,7 @@ mod tests {
             r#"{"tag": "image.patch-grid.v1", "patch": 16, "temporal_patch": 2, "merge": 2, "maximum_pixels": 1}"#,
             r#"{"tag": "video.timestamped-grids.v1", "patch": 16, "temporal_patch": 2, "merge": 2, "maximum_pixels_per_frame": 1, "maximum_frames": 1}"#,
             r#"{"tag": "audio.log-mel.v1", "mel_bins": 1, "maximum_frames": 1}"#,
-            r#"{"tag": "image.padded-fit-token-budget.v1", "patch": 1, "cell": 1, "maximum_tokens": 4}"#,
+            r#"{"tag": "image.centered-pad.v1", "patch": 1, "downsample": 1, "maximum_tokens": 4}"#,
             r#"{"tag": "image.zero-padded-token-budget.v1", "patch": 14, "temporal_patch": 2, "merge": 2, "maximum_tokens": 1}"#,
         ];
         for text in recipes {

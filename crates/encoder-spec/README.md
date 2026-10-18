@@ -261,8 +261,8 @@ records and recipe limits.
   `models/qwen38/contract/src/encoder/views.rs`.
 - `tests/fixtures/dsv41-vision.json` is a test fixture only (DeepSeek V4.1
   Flash vision, not a served model). It exercises `norm.rms-f32.v1`,
-  `merge.space-to-depth.v1`, `layout.learned-delimiters.v1`, the padded-fit
-  recipe and row-major patchify, and `tests/declarations.rs` binds it to its
+  `merge.space-to-depth.v1`, `layout.learned-delimiters.v1`, the centered
+  pad recipe (`image.centered-pad.v1`) and row-major patchify, and `tests/declarations.rs` binds it to its
   checkpoint headers (`tests/fixtures/tensors/dsv41-vision.txt`).
 
 Generated kernel entries and their numerical contracts are described in the

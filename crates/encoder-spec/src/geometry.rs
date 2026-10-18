@@ -26,7 +26,7 @@ impl Recipe {
             Recipe::ImagePatchGrid(r) => r.merge,
             Recipe::ImageZeroPaddedTokenBudget(r) => r.merge,
             Recipe::VideoTimestampedGrids(r) => r.merge,
-            Recipe::AudioLogMel(_) | Recipe::ImagePaddedFitTokenBudget(_) => 1,
+            Recipe::AudioLogMel(_) | Recipe::ImageCenteredPad(_) => 1,
         }
     }
 
@@ -104,9 +104,9 @@ impl Recipe {
                 }
                 item([t, h, w])
             }
-            Recipe::ImagePaddedFitTokenBudget(r) => {
+            Recipe::ImageCenteredPad(r) => {
                 let [t, h, w] = grid(1)?;
-                let cell = u64::from(r.cell);
+                let cell = u64::from(r.downsample);
                 let tokens = mul(h.div_ceil(cell), w.div_ceil(cell) + 1)? + 2;
                 if t != 1 || tokens > u64::from(r.maximum_tokens) {
                     return Err(format!(

@@ -23,7 +23,7 @@
     ]
   },
   "input": {
-    "recipes": [{"tag": "image.padded-fit-token-budget.v1", "patch": 14, "cell": 3, "maximum_tokens": 1024}],
+    "recipes": [{"tag": "image.centered-pad.v1", "patch": 14, "downsample": 3, "maximum_tokens": 1024}],
     "patchify": "row-major.v1",
     "payload": "f32",
     "columns": 588,

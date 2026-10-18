@@ -62,7 +62,7 @@ fn qwen_costs_follow_the_declared_math() {
 #[test]
 fn deepseek_costs_count_its_space_to_depth_rows() {
     let dsv41 = parse(DSV41, &Environment::new("dsv41")).unwrap();
-    let costs = costs(&dsv41, "image.padded-fit-token-budget.v1", [1, 5, 7]);
+    let costs = costs(&dsv41, "image.centered-pad.v1", [1, 5, 7]);
     let (rows, cells) = (35, 6);
     let swiglu = 2 * rows * (1024 * 2 * 2816 + 2816 * 1024);
     let gemms = 2 * rows * 1024 * (3 * 1024 + 1024) + swiglu;

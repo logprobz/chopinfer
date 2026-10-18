@@ -211,7 +211,11 @@ pub enum LatentAttentionQuery {
         /// conjugate query rotation in F32, and round to BF16 again. A
         /// 512-wide query still uses scale 512^-0.5 and writes 512 channels.
         tail_rope_dims: u32,
-        /// Paged `Fp4E2M1E4M3Block16` keys alongside a native FP8 window.
+        /// Paged `Fp4E2M1E4M3Block16` values alongside the window. With
+        /// `kv = Bf16` in the source-aware engine, both sources store the
+        /// exact native code-times-scale operands as BF16 instead of codes.
+        /// This changes storage only; QK, BF16 P before PV, sink ownership
+        /// and inverse rotation keep the same arithmetic and order.
         second_fp4_keys: bool,
         capacity: u32,
     },
@@ -291,9 +295,14 @@ impl Validate for LatentAttentionQuery {
                         "latent attention tail RoPE supports 0 or 64 in-place dimensions",
                     ));
                 }
-                if second_fp4_keys && kv != LatentKvFormat::Fp8E4M3Ue8M0Block32 {
+                if second_fp4_keys
+                    && !matches!(
+                        kv,
+                        LatentKvFormat::Fp8E4M3Ue8M0Block32 | LatentKvFormat::Bf16
+                    )
+                {
                     return Err(Refusal(
-                        "latent attention second FP4 source requires the native FP8 window",
+                        "latent attention second source requires a native FP8 or BF16 window",
                     ));
                 }
             }
@@ -453,6 +462,10 @@ crate::scratch_record! {
     /// slots or staged rows, with `key_stride` entries and `budget` live.
     /// Producers supply in-range slots or -1. Readers mask every index
     /// outside `[0, slots)` as a hole, without reading either plane.
+    /// With `kv = Bf16`, `codes` holds `slots` rows of `2 * latent`
+    /// little-endian BF16 bytes in channel order. `scales` and `scale_stride`
+    /// are ignored and need no allocation. Stored values are the exact
+    /// finite native quantized operands, not the unquantized writer input.
     /// Code bases are two-byte aligned; pair-loading backends also require
     /// an even code stride. Scale bases and strides need only byte alignment.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -480,7 +493,10 @@ crate::scratch_record! {
     /// offset P*D/2 + (j%P)*D/16 within that physical page. A negative page
     /// entry, or an ID outside `cache.pages`, is a hole. The byte stride is at least P*(D/2+D/16), may include
     /// padding, and physical_page*page_stride uses checked 64-bit offsets.
-    /// The FP8 window instead uses its own slot count and separate planes.
+    /// For the BF16 comparison layout each page instead contains P rows of
+    /// `2 * D` little-endian BF16 bytes and no scales. Its base and stride
+    /// are two-byte aligned. It stores the exact decoded native FP4 values.
+    /// The window uses its own slot count, independent of this page size.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct LatentCompressedBuffers {
         pub cache: record(LatentKvCache),

@@ -2063,6 +2063,71 @@ mod latent_parameters {
     }
 
     #[test]
+    fn latent_bf16_sources_read_the_same_quantized_operands() {
+        let mut source = Sources::new();
+        for (i, q) in source.q.iter_mut().enumerate() {
+            *q = bf16(((i % 7) as f64 - 3.0) * 0.125);
+        }
+        let expand = |format: Format, page: usize, count: usize, bytes: &[u8]| {
+            let stride = format.page_bytes(D as u32, page as u32) as usize;
+            let mut out = Vec::new();
+            for p in 0..count {
+                for slot in 0..page {
+                    for value in decode_native_page(
+                        format,
+                        D,
+                        page,
+                        &bytes[p * stride..(p + 1) * stride],
+                        slot,
+                    )
+                    .unwrap()
+                    {
+                        out.extend_from_slice(&f32_to_bf16(value as f32).to_le_bytes());
+                    }
+                }
+            }
+            out
+        };
+        let window = expand(WINDOW, 128, 1, &source.window);
+        let compressed = expand(COMPRESSED, 2, 2, &source.compressed);
+        for output in [Output::Normalized, Output::Partial] {
+            let input = source.input(&[127, -1, 0], &[0, 2, -1, 3]);
+            let expected = latent_attention_with_sources(query(output), input).unwrap();
+            let mut stored = input;
+            stored.window.codes = &window;
+            stored.window.code_stride = 128 * D * 2;
+            stored.window.scales = &[];
+            stored.window.scale_stride = 0;
+            let c = stored.compressed.as_mut().unwrap();
+            c.pool = &compressed;
+            c.paging.page_stride = 2 * D * 2;
+            let mut q = query(output);
+            if let Query::Attention { kv, .. } = &mut q {
+                *kv = Format::Bf16;
+            }
+            let actual = latent_attention_with_sources(q, stored).unwrap();
+            match (actual, expected) {
+                (ResultRows::Normalized(a), ResultRows::Normalized(b)) => {
+                    assert_eq!(a.values, b.values)
+                }
+                (ResultRows::Partial(a), ResultRows::Partial(b)) => {
+                    assert_eq!(a.maximum.values, b.maximum.values);
+                    assert_eq!(a.denominator.values, b.denominator.values);
+                    assert_eq!(a.numerator.values, b.numerator.values);
+                }
+                _ => panic!("output mode"),
+            }
+            let mut invalid = window.clone();
+            invalid[..2].copy_from_slice(&0x7fc0_u16.to_le_bytes());
+            stored.window.codes = &invalid;
+            assert_eq!(
+                latent_attention_with_sources(q, stored).unwrap_err().0,
+                "latent BF16 stored operands must be finite"
+            );
+        }
+    }
+
+    #[test]
     fn latent_positive_page_ids_outside_admission_are_holes() {
         let source = Sources::new();
         for page in [32, 64] {
@@ -2540,9 +2605,13 @@ mod latent_parameters {
         if let Query::Attention { kv, .. } = &mut q {
             *kv = Format::Bf16;
         }
+        q.validate().unwrap();
+        if let Query::Attention { kv, .. } = &mut q {
+            *kv = Format::Fp8E4M3Block128;
+        }
         assert_eq!(
             q.validate().unwrap_err().0,
-            "latent attention second FP4 source requires the native FP8 window"
+            "latent attention second source requires a native FP8 or BF16 window"
         );
     }
 }

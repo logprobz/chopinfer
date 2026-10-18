@@ -301,9 +301,13 @@ pub fn latent_attention_with_sources(
     else {
         return Err(Refusal("expected a latent attention query"));
     };
-    if kv != LatentKvFormat::Fp8E4M3Ue8M0Block32 {
+    let bf16 = kv == LatentKvFormat::Bf16;
+    if !matches!(
+        kv,
+        LatentKvFormat::Fp8E4M3Ue8M0Block32 | LatentKvFormat::Bf16
+    ) {
         return Err(Refusal(
-            "source-aware latent oracle requires the native FP8 window",
+            "source-aware latent oracle requires native FP8 or BF16 storage",
         ));
     }
     let (heads, d, rows) = (heads as usize, latent as usize, input.row_batch.len());
@@ -336,8 +340,9 @@ pub fn latent_attention_with_sources(
         LatentWindowStorage::Ring128 => LATENT_WINDOW_SLOTS as usize,
         LatentWindowStorage::Staged { slots } => slots as usize,
     };
+    let row_bytes = d * if bf16 { 2 } else { 1 };
     let code_bytes = slots
-        .checked_mul(d)
+        .checked_mul(row_bytes)
         .ok_or(Refusal("latent window size overflows"))?;
     let scale_bytes = slots
         .checked_mul(d / 32)
@@ -345,13 +350,17 @@ pub fn latent_attention_with_sources(
     if slots == 0 || input.window.code_stride < code_bytes {
         return Err(Refusal("latent window code stride is too short"));
     }
-    if input.window.scale_stride < scale_bytes {
+    if !bf16 && input.window.scale_stride < scale_bytes {
         return Err(Refusal("latent window scale stride is too short"));
     }
     let layout = Layout {
         latent: d,
         page_size: page_size as usize,
-        kv: LatentKvFormat::Fp4E2M1E4M3Block16,
+        kv: if bf16 {
+            LatentKvFormat::Bf16
+        } else {
+            LatentKvFormat::Fp4E2M1E4M3Block16
+        },
     };
     if input.compressed.is_some_and(|s| s.pages == 0) {
         return Err(Refusal("latent compressed page count is zero"));
@@ -394,19 +403,28 @@ pub fn latent_attention_with_sources(
                 code_bytes,
                 "latent window codes outside storage",
             )?;
-            let scales = plane(
-                input.window.scales,
-                sequence,
-                input.window.scale_stride,
-                scale_bytes,
-                "latent window scales outside storage",
-            )?;
-            keys.push(decode_native_row(
-                kv,
-                d,
-                &codes[position * d..(position + 1) * d],
-                &scales[position * (d / 32)..(position + 1) * (d / 32)],
-            )?);
+            if bf16 {
+                keys.push(
+                    codes[position * row_bytes..(position + 1) * row_bytes]
+                        .chunks_exact(2)
+                        .map(|b| f64::from(bf16_to_f32(u16::from_le_bytes([b[0], b[1]]))))
+                        .collect(),
+                );
+            } else {
+                let scales = plane(
+                    input.window.scales,
+                    sequence,
+                    input.window.scale_stride,
+                    scale_bytes,
+                    "latent window scales outside storage",
+                )?;
+                keys.push(decode_native_row(
+                    kv,
+                    d,
+                    &codes[position * d..(position + 1) * d],
+                    &scales[position * (d / 32)..(position + 1) * (d / 32)],
+                )?);
+            }
         }
         if let Some(source) = input.compressed {
             for position in source.lists.row(row, None)? {
@@ -423,6 +441,9 @@ pub fn latent_attention_with_sources(
                 };
                 keys.push(layout.decode(&source.pool[base..base + layout.page_bytes()], slot)?);
             }
+        }
+        if bf16 && keys.iter().flatten().any(|v| !v.is_finite()) {
+            return Err(Refusal("latent BF16 stored operands must be finite"));
         }
         let n = keys.len();
         let spread = if n == 0 { 0.0 } else { d as f64 / n as f64 };

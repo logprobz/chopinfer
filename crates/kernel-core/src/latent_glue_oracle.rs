@@ -1,6 +1,6 @@
 //! Independent numerical and storage references for latent attention glue.
 
-use crate::codec::f32_to_bf16;
+use crate::codec::{bf16_to_f32, f32_to_bf16};
 use crate::contract::{Refusal, Validate};
 use crate::latent_attention::LatentKvFormat;
 use crate::latent_attention_oracle::{EncodedLatent, encode_latent_row};
@@ -90,11 +90,84 @@ pub fn query_rope_f32(
     Ok((rotated, bf16))
 }
 
+/// Independent f64 RMSNorm over the exact BF16 operands.
+pub fn window_norm_f64(
+    query: LatentWindowWrite,
+    input: &[u16],
+    weight: &[u16],
+) -> Result<OracleOutput, Refusal> {
+    query.validate()?;
+    crate::oracle::rmsnorm(
+        &input
+            .iter()
+            .map(|&v| f64::from(bf16_to_f32(v)))
+            .collect::<Vec<_>>(),
+        query.latent as usize,
+        &weight
+            .iter()
+            .map(|&v| f64::from(bf16_to_f32(v)))
+            .collect::<Vec<_>>(),
+        f64::from(f32::from_bits(query.epsilon_bits)),
+        crate::contract::RmsNormKind::Plain,
+        None,
+    )
+}
+
+/// The pinned F32 norm order for the bitwise cache boundary. Each lane
+/// owns adjacent pairs, traversing later 512-column spans in order.
+pub fn window_norm_f32(
+    query: LatentWindowWrite,
+    input: &[u16],
+    weight: &[u16],
+) -> Result<Vec<f32>, Refusal> {
+    query.validate()?;
+    let width = query.latent as usize;
+    if !input.len().is_multiple_of(width) || weight.len() != width {
+        return Err(Refusal("window norm operand shape mismatch"));
+    }
+    let mut output = Vec::with_capacity(input.len());
+    for row in input.chunks_exact(width) {
+        let mut lanes = [0.0_f32; 256];
+        for (lane, sum) in lanes.iter_mut().enumerate() {
+            for start in (2 * lane..width).step_by(512) {
+                for &v in &row[start..start + 2] {
+                    let v = bf16_to_f32(v);
+                    *sum = v.mul_add(v, *sum);
+                }
+            }
+        }
+        let reduce = |v: &mut [f32]| {
+            for d in [16, 8, 4, 2, 1] {
+                for i in 0..d {
+                    v[i] += v[i + d];
+                }
+            }
+            v[0]
+        };
+        let mut warps = [0.0_f32; 32];
+        for (i, warp) in lanes.chunks_exact_mut(32).enumerate() {
+            warps[i] = reduce(warp);
+        }
+        let mean = reduce(&mut warps) / width as f32;
+        let inv = 1.0 / (mean + f32::from_bits(query.epsilon_bits)).sqrt();
+        output.extend(
+            row.iter()
+                .zip(weight)
+                .map(|(&x, &w)| (bf16_to_f32(x) * inv) * bf16_to_f32(w)),
+        );
+    }
+    if output.iter().any(|v| !v.is_finite()) {
+        return Err(Refusal("window norm overflows F32"));
+    }
+    Ok(output)
+}
+
 /// The native cache encoder is the bitwise oracle for the shared row
 /// quantizer. It receives precisely the post-rotation BF16 values.
 pub fn window_rows(
     query: LatentWindowWrite,
-    input: &[f32],
+    input: &[u16],
+    weight: &[u16],
     table: &[f32],
 ) -> Result<(Vec<f32>, Vec<EncodedLatent>), Refusal> {
     query.validate()?;
@@ -104,7 +177,7 @@ pub fn window_rows(
             latent: query.latent,
             rotary: query.rotary,
         },
-        input,
+        &window_norm_f32(query, input, weight)?,
         table,
     )?;
     let encoded = rounded
@@ -123,11 +196,8 @@ pub fn window_keys(
     first: i32,
 ) -> Result<Vec<i32>, Refusal> {
     query.validate()?;
-    if position == -1 {
-        return Ok(vec![-1; query.window as usize]);
-    }
-    if position < -1 {
-        return Err(Refusal("window query position is below the hole sentinel"));
+    if position < 0 {
+        return Err(Refusal("window query positions must be nonnegative"));
     }
     let end = i64::from(position) + 1;
     let start = (end - i64::from(query.window)).max(0);
@@ -136,6 +206,31 @@ pub fn window_keys(
         .collect::<Result<Vec<_>, _>>()?;
     keys.resize(query.window as usize, -1);
     Ok(keys)
+}
+
+/// Strict builder gate. A reader may safely skip an out-of-range slot,
+/// but a builder emitting one is wrong. A valid stale slot is also wrong:
+/// range checks alone do not establish visibility or oldest-first order.
+pub fn check_window_keys(
+    query: LatentWindowKeys,
+    position: i32,
+    first: i32,
+    actual: &[i32],
+) -> Result<(), Refusal> {
+    query.validate()?;
+    if actual.len() != query.window as usize
+        || actual
+            .iter()
+            .any(|&slot| slot != -1 && (slot < 0 || slot as u32 >= query.addressing.slots()))
+    {
+        return Err(Refusal("window-key oracle: outside slot domain"));
+    }
+    if actual != window_keys(query, position, first)? {
+        return Err(Refusal(
+            "window-key oracle: visible positions or order differ",
+        ));
+    }
+    Ok(())
 }
 
 /// Write through independent code/scale sequence strides. The oracle
@@ -165,10 +260,12 @@ pub fn store_window_rows(
         || code_sequence_stride < slots * width
         || scale_sequence_stride < slots * width / 32
         || code_sequence_stride
-            .checked_mul(sequences)
+            .checked_mul(sequences.saturating_sub(1))
+            .and_then(|n| n.checked_add(slots * width))
             .is_none_or(|n| codes.len() < n)
         || scale_sequence_stride
-            .checked_mul(sequences)
+            .checked_mul(sequences.saturating_sub(1))
+            .and_then(|n| n.checked_add(slots * width / 32))
             .is_none_or(|n| scales.len() < n)
     {
         return Err(Refusal("native window write storage or row shape mismatch"));
@@ -274,11 +371,23 @@ mod tests {
     fn window_quantizer_matches_native_encoder_after_rotation() {
         let (input, table) = operands(1);
         let op = LatentWindowWrite {
+            epsilon_bits: 1e-20_f32.to_bits(),
             latent: 512,
             rotary: 64,
             addressing: WindowAddressing::Circular { slots: 136 },
         };
-        let (rotated, encoded) = window_rows(op, &input, &table).unwrap();
+        let bf16 = input.iter().map(|&v| f32_to_bf16(v)).collect::<Vec<_>>();
+        let weight = (0..512)
+            .map(|i| f32_to_bf16(0.7 + (i % 19) as f32 / 23.0))
+            .collect::<Vec<_>>();
+        let normed = window_norm_f32(op, &bf16, &weight).unwrap();
+        crate::oracle::check_numeric(
+            &normed.iter().map(|&v| f64::from(v)).collect::<Vec<_>>(),
+            &window_norm_f64(op, &bf16, &weight).unwrap(),
+            crate::contract::DType::F32,
+        )
+        .unwrap();
+        let (rotated, encoded) = window_rows(op, &bf16, &weight, &table).unwrap();
         let quantized = BlockQuantization::E4M3_CEIL32
             .apply(&rotated, 2, 512)
             .unwrap();
@@ -300,9 +409,37 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         let pre_rope = BlockQuantization::E4M3_CEIL32
-            .apply(&input, 2, 512)
+            .apply(&normed, 2, 512)
             .unwrap();
         assert_ne!(pre_rope.codes, quantized.codes);
+        let rounded = normed
+            .iter()
+            .map(|&v| bf16_to_f32(f32_to_bf16(v)))
+            .collect::<Vec<_>>();
+        let early = query_rope_f32(
+            LatentQueryRope {
+                heads: 1,
+                latent: 512,
+                rotary: 64,
+            },
+            &rounded,
+            &table,
+        )
+        .unwrap()
+        .0;
+        assert_ne!(
+            BlockQuantization::E4M3_CEIL32
+                .apply(&early, 2, 512)
+                .unwrap()
+                .codes,
+            quantized.codes
+        );
+        assert_ne!(
+            window_rows(op, &bf16, &vec![f32_to_bf16(1.0); 512], &table)
+                .unwrap()
+                .1,
+            encoded
+        );
     }
 
     #[test]
@@ -320,7 +457,7 @@ mod tests {
             ..ring
         };
         assert_ne!(keys, window_keys(wrong, 136, 0).unwrap());
-        assert_eq!(window_keys(ring, -1, i32::MIN).unwrap(), vec![-1; 128]);
+        assert!(window_keys(ring, -1, 0).is_err());
         let staged = LatentWindowKeys {
             addressing: WindowAddressing::Staged { slots: 160 },
             ..ring
@@ -335,8 +472,47 @@ mod tests {
     }
 
     #[test]
+    fn key_builder_rejects_out_of_range_and_stale_slots_without_wrapping_them() {
+        let query = LatentWindowKeys {
+            window: 128,
+            addressing: WindowAddressing::Circular { slots: 136 },
+        };
+        for p in [0, 1, 127, 128, 135, 136, 137, 272, 273, 70_001, i32::MAX] {
+            let keys = window_keys(query, p, 0).unwrap();
+            check_window_keys(query, p, 0, &keys).unwrap();
+            let valid = keys
+                .iter()
+                .copied()
+                .filter(|&v| v >= 0)
+                .collect::<std::collections::BTreeSet<_>>();
+            assert_eq!(valid.len(), keys.iter().filter(|&&v| v >= 0).count());
+            let mut outside = keys.clone();
+            outside[0] = 136;
+            assert!(
+                check_window_keys(query, p, 0, &outside)
+                    .unwrap_err()
+                    .0
+                    .contains("outside slot domain")
+            );
+            outside[0] = i32::MAX;
+            assert!(check_window_keys(query, p, 0, &outside).is_err());
+            let mut stale = keys;
+            // This physical cell's latest resident is just older than the
+            // visible window, or uninitialized while the sequence fills.
+            stale[0] = (i64::from(p) - 128).rem_euclid(136) as i32;
+            assert!(
+                check_window_keys(query, p, 0, &stale)
+                    .unwrap_err()
+                    .0
+                    .contains("visible positions")
+            );
+        }
+    }
+
+    #[test]
     fn ring_seeding_uses_independent_planes_and_preserves_poisoned_padding() {
         let op = LatentWindowWrite {
+            epsilon_bits: 1e-20_f32.to_bits(),
             latent: 512,
             rotary: 64,
             addressing: WindowAddressing::Circular { slots: 136 },

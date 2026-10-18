@@ -29,6 +29,7 @@
 //! independence. Every claim is between launches of equal launch scalars
 //! (the key budget, the softmax scale).
 
+pub mod glue;
 pub mod merge_columns;
 pub mod slices;
 pub mod sources;

@@ -16,6 +16,7 @@ pub mod fp4_key_write;
 pub mod gated_pooling;
 pub mod gated_sparse;
 pub mod latent;
+pub mod latent_glue;
 pub mod latent_sources;
 pub mod moe;
 pub mod moe_chained_quantized;

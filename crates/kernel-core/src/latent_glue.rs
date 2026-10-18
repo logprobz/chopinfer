@@ -8,6 +8,7 @@
 //! the shared trained quantizer's input, after its F32 rotation.
 
 use crate::contract::{NumericalContract, NumericalContractId, Refusal, Validate};
+use crate::latent_attention::LatentWindowBuffers;
 
 /// Adjacent pairs in the final `rotary` channels of each F32 head. Each
 /// product and the following sum or difference rounds separately to F32.
@@ -102,8 +103,8 @@ impl Validate for WindowAddressing {
     }
 }
 
-/// F32 kv_norm output, then in-place F32 tail rotation, shared ceil
-/// E4M3/UE8M0 quantization per 32, then a write to separate code and scale
+/// BF16 projection rows and weights, F32 plain RMSNorm, F32 tail rotation,
+/// shared ceil E4M3/UE8M0 quantization per 32, then a write to separate code and scale
 /// planes. Every quantizer input rounds to BF16 before amax or code choice.
 /// Its result is bitwise `latent_attention_oracle::encode_latent_row` of
 /// that BF16 input in `Fp8E4M3Ue8M0Block32` format.
@@ -119,6 +120,12 @@ pub struct LatentWindowWrite {
     pub latent: u32,
     pub rotary: u32,
     pub addressing: WindowAddressing,
+    /// Positive finite F32 epsilon. The norm computes two adjacent squares
+    /// per lane with F32 FMA, reduces 256 lanes in warp-down trees (16..1),
+    /// then the eight warp sums in the same tree padded with zeros. It uses
+    /// separate F32 mean and epsilon addition, sqrt then reciprocal, and
+    /// applies the weight after scaling, without a BF16 intermediate.
+    pub epsilon_bits: u32,
 }
 
 impl Validate for LatentWindowWrite {
@@ -134,6 +141,12 @@ impl Validate for LatentWindowWrite {
                 "native window rows require whole 128-channel latent blocks",
             ));
         }
+        let eps = f32::from_bits(self.epsilon_bits);
+        if !eps.is_finite() || eps <= 0.0 {
+            return Err(Refusal(
+                "window RMSNorm epsilon must be positive finite F32",
+            ));
+        }
         self.addressing.validate()
     }
 }
@@ -142,19 +155,24 @@ impl NumericalContract for LatentWindowWrite {
     fn numerical_contract_id(&self) -> Result<NumericalContractId, Refusal> {
         self.validate()?;
         Ok(NumericalContractId::new(format!(
-            "latent.window-write.post-rope-bf16.ceil32.v1.d{}.r{}.{}.s{}",
+            "latent.window-write.norm-f32.post-rope-bf16.ceil32.v1.d{}.r{}.{}.s{}.eps{:08x}",
             self.latent,
             self.rotary,
             self.addressing.tag(),
-            self.addressing.slots()
+            self.addressing.slots(),
+            self.epsilon_bits
         )))
     }
 }
 
 /// Each query at p sees absolute positions max(0, p+1-window)..=p, in
 /// increasing order, followed by -1 holes to the fixed `window` width.
-/// Indices name circular slots or staged rows, never compressed positions.
-/// A query position of -1 writes only holes without reading sequence data.
+/// Every output entry is either -1 or a valid slot in [0, slots). Indices
+/// name circular slots or staged rows, never compressed positions. Visibility
+/// is checked in absolute positions before modulo: stale or future positions
+/// never become live keys by wrapping, and an out-of-range physical index
+/// must never be reduced modulo the ring capacity.
+/// Query positions are nonnegative; the device live count excludes padding.
 /// This is ordinary causal visibility; bidirectional draft blocks use the
 /// separate `latent_visibility::WindowBlockVisibility` contract.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -214,6 +232,35 @@ crate::scratch_record! {
         pub first_positions: option,
         pub sequences: scalar(u32),
         pub key_lists: value,
+        pub live_rows: value,
+    }
+}
+
+crate::scratch_record! {
+    /// BF16 `input` projection rows and BF16 `weight` of width latent.
+    /// F32 `latent` scratch receives the normalized, rotated rows.
+    /// Quantized scratch is
+    /// dense `[rows, latent]` codes and `[rows, latent/32]` UE8M0 scales.
+    /// `window` is the attention reader's exact pair of independently
+    /// strided planes; its key-list fields are not read by this writer.
+    /// `positions` and `row_batch` are I32 per row. `last_positions` gives
+    /// each sequence's last position in the write batch. Staging also binds
+    /// its I32 first absolute positions; circular addressing binds None.
+    /// The storage descriptor supplies the physical extent: a 136-cell
+    /// circular writer uses `Staged { slots: 136 }` on that reader view.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct LatentWindowWriteBuffers {
+        pub input: value,
+        pub weight: value,
+        pub latent: value,
+        pub cos_sin: value,
+        pub positions: value,
+        pub row_batch: value,
+        pub first_positions: option,
+        pub last_positions: value,
+        pub window: record(LatentWindowBuffers),
+        pub quantized_codes: value,
+        pub quantized_scales: value,
         pub live_rows: value,
     }
 }

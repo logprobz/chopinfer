@@ -98,6 +98,7 @@ mod gated_sparse;
 mod gather;
 mod hc_all_reduce;
 mod latent;
+mod latent_glue;
 mod latent_sources;
 mod moe_chained;
 mod moe_experts;
@@ -174,6 +175,7 @@ pub struct Sm120 {
     rope_kv: Vec<RopeKvEntry>,
     attention: Option<Box<AttentionEntries>>,
     latent: latent::Selection,
+    latent_glue: Vec<crate::latent::glue::Entry>,
     latent_sources: Vec<crate::latent::sources::Entry>,
     recurrent: recurrent::Entries,
     experts: moe_experts::Selection,
@@ -256,6 +258,11 @@ impl Sm120 {
     /// amax floor at preparation.
     pub fn with_silu_mul_quantize(mut self, entry: crate::row::silu_mul_quantize::Entry) -> Self {
         self.silu_mul_quantizers.push(entry);
+        self
+    }
+
+    pub fn with_latent_glue(mut self, entry: crate::latent::glue::Entry) -> Self {
+        self.latent_glue.push(entry);
         self
     }
 
@@ -1294,6 +1301,30 @@ impl Backend for Sm120 {
     }
 
     // Latent attention.
+
+    fn latent_query_rope(
+        &self,
+        op: &kernel_core::latent_glue::LatentQueryRope,
+        need: Need,
+    ) -> Result<Prepared<kernel_core::latent_glue::LatentQueryRopeBuffers<View>>, Refused> {
+        latent_glue::query_rope(&self.latent_glue, op, need)
+    }
+
+    fn latent_window_write(
+        &self,
+        op: &kernel_core::latent_glue::LatentWindowWrite,
+        need: Need,
+    ) -> Result<Prepared<kernel_core::latent_glue::LatentWindowWriteBuffers<View>>, Refused> {
+        latent_glue::window_write(self, &self.latent_glue, op, need)
+    }
+
+    fn latent_window_keys(
+        &self,
+        op: &kernel_core::latent_glue::LatentWindowKeys,
+        need: Need,
+    ) -> Result<Prepared<kernel_core::latent_glue::LatentWindowKeyBuffers<View>>, Refused> {
+        latent_glue::window_keys(&self.latent_glue, op, need)
+    }
 
     fn latent_kv_write(
         &self,

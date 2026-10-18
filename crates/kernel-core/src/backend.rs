@@ -926,6 +926,18 @@ pub trait Backend: Send + Sync {
         Err(Refused::Unsupported)
     }
 
+    /// F32 tail rotation, the shared trained quantizer's BF16 input
+    /// boundary, then separate native window code and scale plane writes.
+    /// Launches read `Counts::rows`; device live rows select the input rows.
+    fn latent_window_write(
+        &self,
+        op: &crate::latent_glue::LatentWindowWrite,
+        need: Need,
+    ) -> Result<Prepared<crate::latent_glue::LatentWindowWriteBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
     /// Causal physical window slots in increasing absolute-position order.
     /// Launches read `Counts::rows`; the device live count selects written rows.
     fn latent_window_keys(
@@ -2221,6 +2233,9 @@ mod tests {
         );
         latent_query_rope: Empty.latent_query_rope(
             &crate::latent_glue::LatentQueryRope { heads: 2, latent: 512, rotary: 64 }, Need::rows(32)
+        );
+        latent_window_write: Empty.latent_window_write(
+            &crate::latent_glue::LatentWindowWrite { latent: 512, rotary: 64, epsilon_bits: 1e-20_f32.to_bits(), addressing: crate::latent_glue::WindowAddressing::Circular { slots: 136 } }, Need::rows(32)
         );
         latent_window_keys: Empty.latent_window_keys(
             &crate::latent_glue::LatentWindowKeys { window: 128, addressing: crate::latent_glue::WindowAddressing::Circular { slots: 136 } }, Need::rows(32)

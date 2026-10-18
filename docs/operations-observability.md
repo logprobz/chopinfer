@@ -118,6 +118,33 @@ count. Configure the limits before startup:
 Zero for either count stops on the first refusal. Invalid values prevent
 startup.
 
+## Weight-loading counters
+
+`startup direct_load` separates `preparation` (arena allocation and filled
+host views) from `upload` (device image production and transfer). Each has
+elapsed seconds and counter deltas. The legacy top-level counters and the
+`cumulative` object cover the image's lifetime; do not divide those totals
+by upload seconds when preparation also read weights. Directly mapped
+checkpoint views and optional prewarming are separate from filled host views.
+
+`requested_source_bytes` includes retained input hits; `source_bytes` counts
+requested ranges fetched from files, and `file_read_bytes` also includes
+direct-I/O alignment. Buffered reads may come from the page cache.
+`CHOPINFER_DIRECT_LOAD_TRACK_RANGES=1` enables exact fetched-range accounting
+for diagnostics. It takes a shared lock per source read and is off by default.
+`source_ranges_tracked` reports whether it is enabled; `unique_source_bytes`
+is zero when disabled. When enabled, phase deltas count newly encountered
+bytes, not visits to an earlier phase's ranges. Source-cache hits
+and shared-output reproductions distinguish input reuse from repeated packing.
+Read and production seconds sum worker time and overlap each other.
+
+Packed inputs share the configured retention budget across ranks. Idle
+packing buffers retain at most 64 MiB, capped further by that budget;
+`retained_peak_bytes` and `pooled_peak_bytes` report these separate lifetime
+high-water marks. Active worker temporaries and pinned upload buffers are
+additional memory. The loader releases retained inputs and idle buffers
+after upload.
+
 ## Watch running instances with chopinfer-top
 
 `chopinfer-top` is a terminal view of the `chopinfer serve` instances on a

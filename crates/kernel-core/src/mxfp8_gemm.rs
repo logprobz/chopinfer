@@ -12,6 +12,22 @@ use crate::quantize::{Quantized, ScaleFormat, Scales};
 
 pub const FOLD_K: u32 = 128;
 
+/// Shared row-status bit for non-finite or invalid quantized input.
+pub const NON_FINITE_INPUT: u32 = 1;
+
+/// Static weights are admitted on the host before their packed bytes can
+/// be uploaded. Native execution and exact decoding share this domain.
+pub fn admit_operand(matrix: MatrixView<'_>) -> Result<(), Refusal> {
+    if matrix.format != WeightFormat::Mxfp8 {
+        return Err(Refusal(
+            "MXFP8 fold weights require a lossless per-row repack",
+        ));
+    }
+    matrix
+        .validate_bf16_operands(DecodeOrder::ExactScaledOperand)
+        .map_err(|_| Refusal("MXFP8 fold operands must be finite and exact in BF16"))
+}
+
 /// Each output is a sum over the exact decoded operands. Accumulate at most
 /// 128 K from zero in F32, then add each partial to the outer F32 accumulator
 /// in increasing K order. The last partial may contain fewer than 128 values;
@@ -122,8 +138,7 @@ pub fn exact_bf16_values(matrix: &Quantized) -> Result<Vec<f64>, Refusal> {
         }),
         global: None,
     };
-    view.validate_bf16_operands(DecodeOrder::ExactScaledOperand)
-        .map_err(|_| Refusal("MXFP8 fold operands must be finite and exact in BF16"))?;
+    admit_operand(view)?;
     Ok(matrix.decoded())
 }
 
@@ -195,6 +210,11 @@ pub fn folded_dot(a: &[f32], b: &[f32]) -> Result<f32, Refusal> {
 crate::scratch_record! {
     /// E4M3 codes, UE8M0 scales and output rows in the query's layouts. The
     /// I32 device live count bounds all reads and writes of token rows.
+    /// The caller initializes one U32 status per row. Launches preserve its
+    /// bits and OR `NON_FINITE_INPUT` on an invalid activation code or scale.
+    /// A flagged row writes zeros across every group and output column.
+    /// `status_row_offset` addresses this launch's first row within the
+    /// caller's status allocation; dead rows and other status words stay intact.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct Mxfp8FoldGemmBuffers {
         pub activations: value,
@@ -203,5 +223,7 @@ crate::scratch_record! {
         pub weight_scales: value,
         pub output: value,
         pub live_rows: value,
+        pub status: value,
+        pub status_row_offset: scalar(u64),
     }
 }

@@ -320,3 +320,137 @@ fn mxfp4_admission_keeps_the_scale_253_and_254_overflow_exclusions() {
         }
     }
 }
+
+#[test]
+fn native_fold_payloads_are_admitted_before_whole_or_streamed_production() {
+    use kernel_core::contract::SwigluColumns;
+    use kernel_core::precision::WeightLayout;
+    use kernel_core::precision::layout::PackingPlan;
+    use kernel_core::weight_transform::{
+        PackedMatrixSource, PackedOperand, PackedSection, SourceTensor, WeightRecord,
+        WeightTransform,
+    };
+    let plan = |format, layout: &str, rows, k, local_scale_dtype| PackingPlan {
+        layout: WeightLayout {
+            id: layout.into(),
+            version: 1,
+        },
+        format,
+        experts: 1,
+        projections: 1,
+        rows,
+        k,
+        columns: SwigluColumns::ConcatenatedHalves,
+        local_scale_dtype,
+    };
+    let format = WeightFormat::Mxfp8;
+    for order in [
+        DecodeOrder::NativeBlockScaledMma,
+        DecodeOrder::ExactScaledOperand,
+    ] {
+        for (code, scale, valid) in [
+            (0x01, 2, false),
+            (0x01, 3, true),
+            (0x7e, 246, true),
+            (0x7e, 247, false),
+            (0x7f, 127, false),
+            (0xff, 127, false),
+            (0, 255, false),
+            (0x80, 254, true),
+            (0x38, 254, true),
+        ] {
+            let sources = [
+                vec![code; 64],
+                vec![scale; if format == WeightFormat::Mxfp8 { 2 } else { 1 }],
+            ];
+            for section in [PackedSection::Codes, PackedSection::LocalScales] {
+                let packed = PackedOperand {
+                    plan: plan(WeightFormat::Mxfp8, "row-major", 2, 32, Some(DType::Ue8M0)),
+                    section,
+                    decode_order: order,
+                    matrices: vec![PackedMatrixSource {
+                        expert: 0,
+                        projection: 0,
+                        format,
+                        rows: 2,
+                        k: 32,
+                        row_origin: 0,
+                        k_origin: 0,
+                        nibble_order: NibbleOrder::EvenLow,
+                        codes: 0,
+                        local: Some(1),
+                        local_dtype: Some(DType::Ue8M0),
+                        global: None,
+                        source_expert: 0,
+                        source_experts: 1,
+                        rows_kept: std::iter::once(0..2).collect(),
+                        k_kept: 0..32,
+                    }],
+                };
+                let record = WeightRecord {
+                    transform: WeightTransform::PackedOperand(Box::new(packed.clone())),
+                    sources: sources
+                        .iter()
+                        .map(|bytes| SourceTensor {
+                            dtype: "U8".into(),
+                            shape: vec![bytes.len() as u64],
+                            byte_length: bytes.len() as u64,
+                        })
+                        .collect(),
+                    axis: None,
+                    ranges: vec![],
+                    stored_shape: vec![],
+                };
+                let whole = packed.execute(
+                    &record,
+                    &sources.iter().map(Vec::as_slice).collect::<Vec<_>>(),
+                );
+                assert_eq!(
+                    whole.is_ok(),
+                    valid,
+                    "{format:?} {order:?} {section:?} {code} {scale}: {whole:?}"
+                );
+                if !valid && code & 127 != 127 && scale != 255 {
+                    assert!(
+                        whole
+                            .as_ref()
+                            .unwrap_err()
+                            .to_string()
+                            .contains("MXFP8 fold operands must be finite and exact in BF16")
+                    );
+                }
+                let bytes = record.output_bytes().unwrap();
+                let prepared = record.prepare(bytes).unwrap();
+                let take = if section == PackedSection::Codes {
+                    32
+                } else {
+                    1
+                };
+                let mut out = vec![0xa5; take];
+                let streamed = prepared.produce(
+                    0..take as u64,
+                    &mut out,
+                    &mut |index, at, dst| {
+                        dst.copy_from_slice(&sources[index][at as usize..at as usize + dst.len()]);
+                        Ok(())
+                    },
+                    &mut Vec::new(),
+                );
+                assert_eq!(
+                    streamed.is_ok(),
+                    valid,
+                    "{format:?} {order:?} {section:?} {code} {scale}: {streamed:?}"
+                );
+                if valid {
+                    assert_eq!(out, whole.unwrap()[..take]);
+                } else {
+                    assert_eq!(
+                        out,
+                        vec![0xa5; take],
+                        "a refused producer must publish no bytes"
+                    );
+                }
+            }
+        }
+    }
+}

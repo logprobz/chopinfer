@@ -102,6 +102,7 @@ mod moe_chained;
 mod moe_experts;
 mod moe_route;
 mod multimodal;
+mod mxfp8_fold;
 pub mod own;
 mod pooled_indexer;
 mod position_blocks;
@@ -196,9 +197,14 @@ pub struct Sm120 {
     row_rmsnorms: Vec<crate::row::RowInstantiation>,
     block_quantizers: Vec<crate::row::block_quantize::Entry>,
     silu_mul_quantizers: Vec<crate::row::silu_mul_quantize::Entry>,
+    mxfp8_folds: Vec<crate::gemm::mxfp8_fold::Entry>,
 }
 
 impl Sm120 {
+    pub fn with_mxfp8_fold(mut self, entry: crate::gemm::mxfp8_fold::Entry) -> Self {
+        self.mxfp8_folds.push(entry);
+        self
+    }
     /// Register a compiled block quantizer. The backend matches its complete
     /// input rounding, scale rule, output form and width at preparation.
     pub fn with_block_quantize(mut self, entry: crate::row::block_quantize::Entry) -> Self {
@@ -939,6 +945,14 @@ impl Sm120 {
 impl Backend for Sm120 {
     fn name(&self) -> &str {
         "sm120"
+    }
+
+    fn mxfp8_fold_gemm(
+        &self,
+        op: &kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery,
+        need: Need,
+    ) -> Result<Prepared<kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers<View>>, Refused> {
+        mxfp8_fold::prepare(&self.mxfp8_folds, op, need)
     }
 
     fn block_quantize(

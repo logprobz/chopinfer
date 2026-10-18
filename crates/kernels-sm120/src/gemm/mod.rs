@@ -4,6 +4,7 @@ pub mod cluster;
 mod construction;
 pub mod fused;
 pub mod mid;
+pub mod mxfp8_fold;
 pub mod prefetch;
 pub mod stacked;
 pub use construction::{DenseRequest, instantiate};

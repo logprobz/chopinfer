@@ -86,6 +86,26 @@ pub struct PackedOperand {
 }
 
 impl PackedOperand {
+    fn admit_fold_payload(
+        &self,
+        view: crate::precision::packed::MatrixView<'_>,
+    ) -> Result<(), WeightTransformError> {
+        if self.plan.format == WeightFormat::Mxfp8
+            && matches!(
+                self.plan.layout.id.as_str(),
+                "row-major" | "row-major-groups"
+            )
+            && matches!(
+                self.decode_order,
+                DecodeOrder::NativeBlockScaledMma | DecodeOrder::ExactScaledOperand
+            )
+        {
+            crate::mxfp8_gemm::admit_operand(view)
+                .map_err(|e| WeightTransformError(e.to_string()))?;
+        }
+        Ok(())
+    }
+
     pub fn encode(&self) -> Result<Vec<u8>, WeightTransformError> {
         #[cfg(feature = "precision-serde")]
         {
@@ -299,6 +319,7 @@ impl PackedOperand {
                 _ => return refuse("encoding differs from the prepared physical contract"),
             }
             .map_err(precision)?;
+            self.admit_fold_payload(packed.view("packed fold operand"))?;
             let (rn, rk) = plan.groups();
             if (rn != u32::MAX && packed.row_origin % rn as usize != 0)
                 || (rk != u32::MAX && packed.k_origin % rk as usize != 0)
@@ -659,6 +680,7 @@ impl PackedOperand {
                     nibble_order: NibbleOrder::EvenLow,
                 })
                 .map_err(precision)?;
+            self.admit_fold_payload(packed.view("streamed fold operand"))?;
             if k_groups != u32::MAX && packed.k_origin % k_groups as usize != 0 {
                 return refuse("implementation requires an aligned source scale-group origin");
             }

@@ -477,6 +477,12 @@ impl Occurrences {
         }
     }
 
+    /// Whether `encode` still has an arena page mapped: a later step may
+    /// read its rows.
+    pub fn resident(&self, encode: u64) -> bool {
+        self.encodes.contains_key(&encode)
+    }
+
     /// The rows kept for `encode`, in the order they were kept.
     pub fn kept(&self, encode: u64) -> &[(String, Vec<u8>)] {
         self.kept.get(&encode).map_or(&[], Vec::as_slice)
@@ -920,6 +926,7 @@ mod tests {
             ]
         );
         assert_eq!(occurrences.kept(1), [("blocks".to_owned(), vec![1, 2])]);
+        assert!((1..=3).all(|encode| occurrences.resident(encode)));
         // Request 7 decodes; a later prefill of it is not counted. Page 2
         // is rewritten, so encode 1's rows go.
         let media = BatchMediaSectionV3 {
@@ -938,6 +945,8 @@ mod tests {
             (vec![(None, "image", 0, 0, 1, true)], vec![4])
         );
         assert!(occurrences.kept(1).is_empty());
+        assert!(!occurrences.resident(1));
+        assert!((2..=4).all(|encode| occurrences.resident(encode)));
     }
 
     #[test]

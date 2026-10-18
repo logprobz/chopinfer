@@ -168,6 +168,12 @@ mod enabled {
         }
     }
 
+    /// Drops the grid of every encode no arena page maps any more: no later
+    /// step reads its rows.
+    pub(super) fn keep_resident(grids: &mut BTreeMap<u64, Grid>, occurrences: &Occurrences) {
+        grids.retain(|&encode, _| occurrences.resident(encode));
+    }
+
     /// The image cells of `reads`, the injects of the vision encoder's rows
     /// in tap order, each read's encode laid out as `grids` gives: one
     /// segment per run of consecutive cells, numbered as cells, and the
@@ -302,6 +308,7 @@ mod enabled {
                 self.grids
                     .insert(*serial, Grid::of(patches, self.side, record.output_rows)?);
             }
+            keep_resident(&mut self.grids, &self.occurrences);
             let mut rows = block_rows(
                 taps,
                 &self.specs,
@@ -562,7 +569,10 @@ mod tests {
     use bundle_runtime::media::{ArenaRun, OccurrenceRead};
     use runtime_bundle_sdk::taps::EncoderSegment;
 
-    use super::enabled::{Grid, cells};
+    use bundle_runtime::media::{OccurrenceItem, Occurrences};
+    use runtime_bundle_sdk::{BatchMediaEncodeV3, BatchMediaSectionV3};
+
+    use super::enabled::{Grid, cells, keep_resident};
 
     fn read(encode: u64, arena_row: u64, index: u32, rows: u32) -> OccurrenceRead {
         OccurrenceRead {
@@ -648,5 +658,44 @@ mod tests {
             [(0, 0, 2), (2, 2, 1), (3, 3, 3)]
         );
         assert!(cells(&[read(4, 0, 0, 10)], &grids).is_err());
+    }
+
+    /// A grid lasts while its encode has an arena page mapped: an encode
+    /// that rewrites the page drops the earlier one's.
+    #[test]
+    fn grids_follow_the_resident_encodes() {
+        let mut occurrences = Occurrences::default();
+        let mut grids = BTreeMap::new();
+        let grid = Grid {
+            rows: 2,
+            columns: 3,
+        };
+        for _ in 0..2 {
+            let media = BatchMediaSectionV3 {
+                encodes: vec![BatchMediaEncodeV3 {
+                    encoder: 0,
+                    geometry: [1, 6, 9, 0],
+                    output_rows: 10,
+                    pages: vec![2],
+                    payload_offset: 0,
+                    payload_bytes: 0,
+                }],
+                ..BatchMediaSectionV3::default()
+            };
+            let item = OccurrenceItem {
+                request: 7,
+                prefill: Some(0),
+                tokens: &[5],
+            };
+            let step = occurrences
+                .step(&crate::encoders::ARENA, &media, &[item], &[(1, "image")])
+                .unwrap();
+            occurrences.finish(true);
+            for &serial in &step.encodes {
+                grids.insert(serial, grid);
+            }
+            keep_resident(&mut grids, &occurrences);
+        }
+        assert_eq!(grids, BTreeMap::from([(2, grid)]));
     }
 }

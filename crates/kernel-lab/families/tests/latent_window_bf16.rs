@@ -392,6 +392,7 @@ fn bf16_window_first_use_on_gpu() {
                 );
             }
         }
+        chain::first_use_bf16(session, &modules)?;
         session.receipt(
             "bf16-window-first-use",
             BTreeMap::from([("report".into(), report.json())]),

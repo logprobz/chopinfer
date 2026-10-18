@@ -651,3 +651,9 @@ pub(super) fn compare_bf16(session: &Session, modules: &super::FamilyModules) ->
     );
     Ok(())
 }
+
+#[allow(dead_code)]
+pub(super) fn first_use_bf16(session: &Session, modules: &super::FamilyModules) -> LabResult<()> {
+    execute(session, modules, false, Fault::None, LatentKvFormat::Bf16)?;
+    Ok(())
+}

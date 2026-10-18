@@ -11,6 +11,10 @@
 //! count, and checks every view of every rank index against the rank's share
 //! of the checkpoint that the projection declaration selects, a mapped view
 //! as the host maps it.
+//!
+//! `a_fake_host_gathers_rows_of_every_planned_mapped_view` gathers rows of
+//! each Engram plane the plan maps through the shared fake host
+//! (`bundle_runtime::fake_host`), its mapped bytes those the host maps.
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -493,5 +497,209 @@ fn every_planned_view_is_the_checkpoint_s() {
         eprintln!("tp{ranks}: every planned view matches the checkpoint");
     }
     eprintln!("{} view groups: {groups:?}", groups.len());
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// A fake host package whose mapped views are the planned image's: the
+/// bytes the host maps for each, which the shared backend gathers rows of.
+/// It records every upload's bytes and serves nothing else.
+struct Mapped {
+    device: bundle_runtime::fake_host::FakeDevice,
+    image: PlannedImageV1,
+    uploads: std::cell::RefCell<Vec<Vec<u8>>>,
+}
+
+mod mapped_package {
+    use super::Mapped;
+    use bundle_runtime::fake_host::{FakeDevice, FakePackage, NoObserver};
+    use runtime_bundle_abi::*;
+
+    impl FakePackage for Mapped {
+        type Observer = NoObserver;
+
+        fn device(&self) -> &FakeDevice {
+            &self.device
+        }
+        fn cubins() -> impl IntoIterator<Item = (&'static str, &'static [u8])> {
+            []
+        }
+        fn open_compiled_image(
+            &self,
+            _role: &[u8],
+        ) -> HostServiceResultV1<BundleCompiledImageHandleV1> {
+            Err(BundleStatusV1::Unsupported)
+        }
+        fn upload_rank_arena(
+            &self,
+            _context: BundleContextHandleV1,
+            _pool: BundleMemoryPoolHandleV1,
+            _stream: BundleStreamHandleV1,
+            _image: BundleCompiledImageHandleV1,
+            _rank: u32,
+        ) -> HostServiceResultV1<BundleRankArenaHandleV1> {
+            Err(BundleStatusV1::Unsupported)
+        }
+        fn resolve_compiled_image_view(
+            &self,
+            _image: BundleCompiledImageHandleV1,
+            _arena: BundleRankArenaHandleV1,
+            _rank: u32,
+            _view_id: &[u8],
+        ) -> HostServiceResultV1<CompiledImageSpanV1> {
+            Err(BundleStatusV1::Unsupported)
+        }
+        fn open_authenticated_component(
+            &self,
+            _role: &[u8],
+        ) -> HostServiceResultV1<BundleAuthenticatedComponentHandleV1> {
+            Err(BundleStatusV1::NotFound)
+        }
+        fn component(&self, slot: u32) -> (String, Vec<u8>) {
+            unreachable!("no component {slot} was opened")
+        }
+        fn acquire_serving_kv(&self, _layout_id: &[u8]) -> HostServiceResultV1<u64> {
+            Err(BundleStatusV1::Unsupported)
+        }
+        fn resolve_serving_kv_pool(&self, _rank: u32) -> HostServiceResultV1<DeviceBufferSpanV1> {
+            Err(BundleStatusV1::Unsupported)
+        }
+        fn query_speculation(&self) -> HostServiceResultV1<BundleRawSpeculationV1> {
+            Ok(BundleRawSpeculationV1::disabled())
+        }
+        fn mapped_view(
+            &self,
+            _image: BundleCompiledImageHandleV1,
+            rank: u32,
+            view_id: &[u8],
+        ) -> HostServiceResultV1<Vec<u8>> {
+            self.image
+                .mapped_view(rank, view_id)
+                .map(|rows| rows.bytes().to_vec())
+                .ok_or(BundleStatusV1::NotFound)
+        }
+        fn allocate_state(
+            &self,
+            _request: &StateRequestV1,
+        ) -> HostServiceResultV1<BundleStateHandleV1> {
+            Err(BundleStatusV1::Unsupported)
+        }
+        fn resolve_state_view(
+            &self,
+            _state: BundleStateHandleV1,
+            _rank: u32,
+        ) -> HostServiceResultV1<DeviceBufferSpanV1> {
+            Err(BundleStatusV1::Unsupported)
+        }
+        fn read_back(
+            &self,
+            _destination: &mut [u8],
+            _source: DeviceBufferSpanV1,
+        ) -> HostServiceResultV1<()> {
+            Err(BundleStatusV1::Unsupported)
+        }
+        fn on_upload(
+            &self,
+            _stream: BundleStreamHandleV1,
+            _destination: DeviceBufferSpanV1,
+            source: &[u8],
+        ) -> HostServiceResultV1<()> {
+            self.uploads.borrow_mut().push(source.to_vec());
+            Ok(())
+        }
+    }
+}
+
+/// The shared fake host gathers rows of every mapped view the plan of each
+/// rank count declares, bit-exactly the checkpoint's rows of the plane:
+/// the last row, the first and one between, in that order. A view the plan
+/// does not map is not found. Runs when a synthetic geometry is compiled.
+#[test]
+fn a_fake_host_gathers_rows_of_every_planned_mapped_view() {
+    use bundle_runtime::fake_host::Backend;
+    use runtime_bundle_abi::{
+        BundleCompiledImageHandleV1, BundleStatusV1, DeviceBufferSpanV1, HostServicesBackendV1,
+        MappedRowGatherV1,
+    };
+    let Some(geometry) = GEOMETRIES.iter().find(|g| g.id != "flash") else {
+        eprintln!("no synthetic geometry is compiled: skipped");
+        return;
+    };
+    let root = varied_checkpoint(geometry, "gather");
+    let (header, data) = header(&root);
+    let file = std::fs::File::open(root.join(synthetic::FILE)).unwrap();
+    let mut gathered = 0;
+    for &ranks in SUPPORTED_RANKS {
+        if check_ranks(geometry, ranks).is_err() {
+            continue;
+        }
+        let (image, plans) = prepare(&root, ranks).unwrap();
+        let host = Backend::new(Mapped {
+            device: Default::default(),
+            image,
+            uploads: Default::default(),
+        });
+        let context = host.select_context(0, 0).unwrap();
+        let pool = host.select_memory_pool(context).unwrap();
+        let stream = host.create_stream(context, 0).unwrap();
+        let image = BundleCompiledImageHandleV1::from_parts(1, 1);
+        for plan in &plans {
+            assert!(
+                !plan.views.is_empty(),
+                "tp{ranks}: the plan maps the Engram planes"
+            );
+            for view in &plan.views {
+                let at = format!("tp{ranks} rank {} {}", plan.rank, view.id);
+                let entry = &header[&view.id];
+                let start = entry["data_offsets"][0].as_u64().unwrap();
+                let rows = entry["shape"][0].as_u64().unwrap();
+                let row_bytes = view.byte_length / rows;
+                let picked = [rows - 1, 0, rows / 2];
+                let length = picked.len() as u64 * row_bytes;
+                let buffer = host
+                    .allocate_device_buffer(pool, stream, length, 256)
+                    .unwrap();
+                let span = DeviceBufferSpanV1::new(buffer, 0, length);
+                let picked_rows = picked.map(|row| row as u32);
+                host.gather_mapped_rows(
+                    stream,
+                    span,
+                    MappedRowGatherV1 {
+                        image,
+                        rank: plan.rank,
+                        view_id: view.id.as_bytes(),
+                        row_bytes,
+                        rows: &picked_rows,
+                    },
+                )
+                .unwrap_or_else(|e| panic!("{at}: {e:?}"));
+                let mut expected = Vec::new();
+                for row in picked {
+                    let mut bytes = vec![0; row_bytes as usize];
+                    file.read_exact_at(&mut bytes, data + start + row * row_bytes)
+                        .unwrap();
+                    expected.extend(bytes);
+                }
+                let uploaded = host.uploads.borrow_mut().pop().unwrap();
+                same(&uploaded, &expected, &at);
+                gathered += 1;
+            }
+            let buffer = host.allocate_device_buffer(pool, stream, 256, 256).unwrap();
+            assert_eq!(
+                host.gather_mapped_rows(
+                    stream,
+                    DeviceBufferSpanV1::new(buffer, 0, 256),
+                    MappedRowGatherV1 {
+                        image,
+                        rank: plan.rank,
+                        view_id: b"embed.weight",
+                        row_bytes: 256,
+                        rows: &[0],
+                    },
+                ),
+                Err(BundleStatusV1::NotFound)
+            );
+        }
+    }
+    eprintln!("{gathered} mapped views gathered bit-exactly");
     std::fs::remove_dir_all(&root).unwrap();
 }

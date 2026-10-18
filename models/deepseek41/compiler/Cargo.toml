@@ -21,6 +21,7 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+bundle-runtime = { workspace = true, features = ["test-support"] }
 frontend-format.workspace = true
 runtime-frontend = { workspace = true, features = ["test-support"] }
 runtime-host = { workspace = true, features = ["test-support"] }

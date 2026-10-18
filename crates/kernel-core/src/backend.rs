@@ -2404,6 +2404,11 @@ mod tests {
             key_norm_eps_bits: 1e-20_f32.to_bits(), max_top_k: 2048, page_size: 64,
             candidates: crate::pooled_indexer::IndexerCandidates::All, capacity: 4,
         }, 2048, 16392, Need::rows(4));
+        position_indexer_with_storage: Empty.position_indexer_with_storage(&PositionIndexerQuery {
+            heads: 32, head_dim: 128, compression_ratio: 2, tail_rope_dims: 64,
+            key_norm_eps_bits: 1e-20_f32.to_bits(), max_top_k: 2048, page_size: 64,
+            candidates: crate::pooled_indexer::IndexerCandidates::All, capacity: 4,
+        }, IndexerKeyFormat::Bf16, 2048, 16392, Need::rows(4));
         indexer_candidate_blocks: Empty.indexer_candidate_blocks(&CandidateBlocksQuery {
             block_size: 8, top_k_blocks: 2048, capacity: 4,
         }, 16392, Need::rows(4));
@@ -2417,6 +2422,13 @@ mod tests {
                 candidates: crate::pooled_indexer::IndexerCandidates::All, capacity: 4,
             }, block_size: 8, top_k_blocks: 2048,
         }, 7, 1 << 20, Need::rows(4));
+        position_block_indexer_with_storage: Empty.position_block_indexer_with_storage(&PositionBlockIndexerQuery {
+            indexer: PositionIndexerQuery {
+                heads: 3, head_dim: 160, compression_ratio: 2, tail_rope_dims: 64,
+                key_norm_eps_bits: 1e-20_f32.to_bits(), max_top_k: 7, page_size: 64,
+                candidates: crate::pooled_indexer::IndexerCandidates::All, capacity: 4,
+            }, block_size: 8, top_k_blocks: 2048,
+        }, IndexerKeyFormat::Bf16, 7, 1 << 20, Need::rows(4));
         causal_conv1d: Empty.causal_conv1d(&recurrent(), 4, Need::rows(4));
         gated_delta_rule: Empty.gated_delta_rule(&recurrent(), 4, Need::rows(4));
         gated_rmsnorm: Empty.gated_rmsnorm(&recurrent(), Need::rows(4));

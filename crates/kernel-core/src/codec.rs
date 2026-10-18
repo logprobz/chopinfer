@@ -117,14 +117,18 @@ impl SmallFloat {
         if x == 0.0 {
             return sign_bit;
         }
-        if x.is_infinite() {
-            let magnitude_bits = self.total_bits() - u8::from(signed);
-            let max_code = (0..(1_u16 << magnitude_bits))
-                .find(|&code| self.decode_f64(code as u8) == self.max_finite())
-                .unwrap() as u8;
+        // Saturate before comparing distances. For very large finite x,
+        // f64 subtraction can erase every representable candidate. Positive
+        // finite codes are ordered, so finding the last one takes at most
+        // five probes, without a second exhaustive search for each value.
+        let magnitude_bits = self.total_bits() - u8::from(signed);
+        let max_code = (0..(1_u16 << magnitude_bits))
+            .rev()
+            .find(|&code| self.decode_f64(code as u8).is_finite())
+            .unwrap() as u8;
+        if x >= self.decode_f64(max_code) {
             return max_code | sign_bit;
         }
-        let magnitude_bits = self.total_bits() - u8::from(signed);
         let mut best = 0_u8;
         let mut best_error = f64::INFINITY;
         for code in 0..(1_u16 << magnitude_bits) {
@@ -299,6 +303,18 @@ mod tests {
                 format.decode_f64(format.encode_f32(f32::INFINITY)),
                 format.max_finite()
             );
+            for large in [2_f32.powi(80), f32::MAX] {
+                assert_eq!(
+                    format.decode_f64(format.encode_f32(large)),
+                    format.max_finite()
+                );
+                if format != SmallFloat::Ue4M3 {
+                    assert_eq!(
+                        format.decode_f64(format.encode_f32(-large)),
+                        -format.max_finite()
+                    );
+                }
+            }
         }
         assert_eq!(f32_to_bf16(f32::from_bits(0x3f80_8000)), 0x3f80);
         assert_eq!(f32_to_bf16(f32::from_bits(0x3f81_8000)), 0x3f82);

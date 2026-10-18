@@ -67,5 +67,22 @@ class DsparkEvidenceTests(unittest.TestCase):
             self.assertFalse(self.permits(spec, self.check['input_rules']['spec_candidate']))
 
 
+    def test_each_set_needs_sixteen_scored_positions_even_with_sixteen_requests(self):
+        for copy_positions, natural_positions in [(16, 16), (15, 16), (16, 15), (1, 1)]:
+            with self.subTest(copy=copy_positions, natural=natural_positions):
+                spec, ar = self.captures(positions=1)
+                for record in [spec, ar]:
+                    for group, positions in [('copy', copy_positions), ('natural', natural_positions)]:
+                        for request in record['sets'][group]['requests'][positions:]:
+                            request.update(tokens=[], logprobs=[], top=[])
+                scored = self.generic_score(spec, ar)
+                self.assertEqual(scored['sets']['copy']['scored_positions'], copy_positions)
+                self.assertEqual(scored['sets']['natural']['scored_positions'], natural_positions)
+                self.assertTrue(self.permits(spec, self.check['input_rules']['spec_candidate']))
+                self.assertTrue(self.permits(ar, self.check['input_rules']['spec_ar']))
+                self.assertEqual(self.permits(scored, self.check['rules']),
+                                 copy_positions >= 16 and natural_positions >= 16)
+
+
 if __name__ == '__main__':
     unittest.main()

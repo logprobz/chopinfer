@@ -486,3 +486,47 @@ fn comparison_key_pages_preserve_native_products_and_check_extents() {
             .is_err()
     );
 }
+
+#[test]
+fn comparison_key_readers_require_registration_in_both_formats() {
+    use kernel_core::backend::{Backend, Need, Refused};
+    use kernel_core::pooled_indexer::IndexerKeyFormat;
+    struct Empty;
+    impl Backend for Empty {
+        fn name(&self) -> &str {
+            "empty"
+        }
+    }
+    let q = PositionIndexerQuery {
+        heads: 32,
+        head_dim: 128,
+        compression_ratio: 2,
+        tail_rope_dims: 64,
+        key_norm_eps_bits: 1e-20_f32.to_bits(),
+        max_top_k: 512,
+        page_size: 32,
+        candidates: IndexerCandidates::All,
+        capacity: 4,
+    };
+    for storage in [IndexerKeyFormat::Fp4, IndexerKeyFormat::Bf16] {
+        assert!(matches!(
+            Empty.position_indexer_with_storage(&q, storage, 512, 1 << 20, Need::rows(4)),
+            Err(Refused::Unsupported)
+        ));
+        let compact = kernel_core::position_blocks::PositionBlockIndexerQuery {
+            indexer: q,
+            block_size: 8,
+            top_k_blocks: 2048,
+        };
+        assert!(matches!(
+            Empty.position_block_indexer_with_storage(
+                &compact,
+                storage,
+                512,
+                1 << 20,
+                Need::rows(4)
+            ),
+            Err(Refused::Unsupported)
+        ));
+    }
+}

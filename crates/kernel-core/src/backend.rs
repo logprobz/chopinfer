@@ -59,9 +59,9 @@ use crate::multimodal::{
 use crate::mxfp8_rows::{Mxfp8Rows, Mxfp8RowsBuffers};
 use crate::per_channel_decay_delta_rule::PerChannelDecayOp;
 use crate::pooled_indexer::{
-    CandidateBlocksBuffers, CandidateBlocksQuery, IndexerKeyWriteBuffers, IndexerMergeBuffers,
-    IndexerSelectBuffers, PooledIndexerQuery, PositionIndexerQuery, PositionKeyWriteBuffers,
-    PositionQueryBuffers, PositionSelectBuffers, SelectionCompactBuffers,
+    CandidateBlocksBuffers, CandidateBlocksQuery, IndexerKeyFormat, IndexerKeyWriteBuffers,
+    IndexerMergeBuffers, IndexerSelectBuffers, PooledIndexerQuery, PositionIndexerQuery,
+    PositionKeyWriteBuffers, PositionQueryBuffers, PositionSelectBuffers, SelectionCompactBuffers,
 };
 use crate::position_blocks::{
     CandidateBlockIdsBuffers, PositionBlockIndexerQuery, PositionBlockSelectBuffers,
@@ -1207,6 +1207,22 @@ pub trait Backend: Send + Sync {
         Err(Refused::Unsupported)
     }
 
+    /// Position v3 with an explicit key-storage layout. The native method
+    /// remains the default; BF16 requires a registered comparison reader.
+    fn position_indexer_with_storage(
+        &self,
+        op: &PositionIndexerQuery,
+        storage: IndexerKeyFormat,
+        top_k: u32,
+        position_capacity: u32,
+        need: Need,
+    ) -> Result<Prepared<PositionSelectBuffers<View>>, Refused> {
+        match storage {
+            IndexerKeyFormat::Fp4 => self.position_indexer(op, top_k, position_capacity, need),
+            IndexerKeyFormat::Bf16 => Err(Refused::Unsupported),
+        }
+    }
+
     /// Candidate block pre-filter over a row's F32 scores. Launches read
     /// `Counts::rows` alone. The host bounds each visible compressed count
     /// by `position_capacity`; zero visible positions emit an all-zero mask.
@@ -1247,6 +1263,23 @@ pub trait Backend: Send + Sync {
     ) -> Result<Prepared<PositionBlockSelectBuffers<View>>, Refused> {
         let _ = (op, top_k, position_capacity, need);
         Err(Refused::Unsupported)
+    }
+
+    /// Compact Position v3 with the same explicit key-storage choice.
+    fn position_block_indexer_with_storage(
+        &self,
+        op: &PositionBlockIndexerQuery,
+        storage: IndexerKeyFormat,
+        top_k: u32,
+        position_capacity: u32,
+        need: Need,
+    ) -> Result<Prepared<PositionBlockSelectBuffers<View>>, Refused> {
+        match storage {
+            IndexerKeyFormat::Fp4 => {
+                self.position_block_indexer(op, top_k, position_capacity, need)
+            }
+            IndexerKeyFormat::Bf16 => Err(Refused::Unsupported),
+        }
     }
 
     // Recurrent layers: convolution, gated delta rule, per-channel decay,

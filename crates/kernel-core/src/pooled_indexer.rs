@@ -103,6 +103,15 @@ pub enum IndexerGranularity {
 }
 
 /// Physical storage of pooled or position keys.
+///
+/// For Position v3, BF16 comparison storage holds the native E2M1 times
+/// UE8M0 product in native channel order, including signed zero. Writers
+/// retain the trained quantizer and native finite-product admission.
+/// The native reader decodes to BF16 then widens to F32 before scalar FMA;
+/// the BF16 reader widens the stored bits at that same point. Identical
+/// operands, 128-channel chains, reduction trees and head FMA order give
+/// identical F32 score bits. No MMA or re-encoding is involved. Storage
+/// does not change Position v3 selection, masks, compact IDs or status.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum IndexerKeyFormat {
     /// Pooled keys: `[page_size / group][head_dim]` BF16 per page.
@@ -255,7 +264,7 @@ impl PositionIndexerQuery {
             .checked_div(u64::from(self.compression_ratio))
     }
 
-    /// Physical bytes per position-key page for a writer's storage mode.
+    /// Physical bytes per position-key page for the shared writer/reader format.
     /// BF16 holds the exact native products and has no scale plane.
     pub fn storage_page_bytes(&self, storage: IndexerKeyFormat) -> Result<(u64, u64), Refusal> {
         match storage {
@@ -677,14 +686,16 @@ impl NumericalContract for PooledIndexerQuery {
 }
 
 crate::scratch_record! {
-    /// MXFP4 position keys with independent code and scale page strides in
-    /// bytes. Each page holds `[page_size][head_dim / 2]` code bytes and
-    /// `[page_size][head_dim / 32]` scale bytes. Page tables address compressed
-    /// positions. Page strides and their address products are 64-bit.
-    /// The explicit BF16 key writer instead uses `codes` for exact native
-    /// products, `[page_size][head_dim]` BF16. Its scales view is empty and
-    /// scale stride zero. The value stride is still a byte stride between
-    /// pages, so the stream can be embedded at an offset in a larger page.
+    /// Paged position keys in the selected IndexerKeyFormat. Fp4 pages hold
+    /// `[page_size][head_dim / 2]` E2M1 code bytes in `codes` and
+    /// `[page_size][head_dim / 32]` UE8M0 scale bytes in `scales`.
+    /// Bf16 pages use `codes` for exact native products,
+    /// `[page_size][head_dim]` BF16 in native channel order. The scales view
+    /// has zero bytes and `scale_page_stride` is zero; readers never bind or
+    /// read that plane. The BF16 value stride must be aligned to two bytes.
+    /// Page tables address compressed positions. Both page strides count
+    /// bytes, and their address products are 64-bit. Independent strides
+    /// let either stream occupy an offset within a larger shared page.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct PositionKeyPages {
         pub codes: value,

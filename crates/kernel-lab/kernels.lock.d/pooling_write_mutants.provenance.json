@@ -1,0 +1,26 @@
+[
+  {
+    "name": "pooling_write_drop_split_tail_v1",
+    "source_closure_sha256": "046f34c45780ca2a26590e5ac85997c8b22ef4b17d25ca1d50c610c061aacbc6"
+  },
+  {
+    "name": "pooling_write_narrow_codes_v1",
+    "source_closure_sha256": "f1bc0bd530bb9b02372657cfc1cc5d6c330290b5a72fb4d271059273b14c6f71"
+  },
+  {
+    "name": "pooling_write_narrow_scales_v1",
+    "source_closure_sha256": "4c05f6501037532c79b62e211150177479129adc7e4db46d235f8f275bb0f23f"
+  },
+  {
+    "name": "pooling_write_swap_nibbles_v1",
+    "source_closure_sha256": "3e4c99c7c6739a95b7b88afb9945df2a74a4a6452ba90d0014621d477bb4b608"
+  },
+  {
+    "name": "pooling_write_wrong_gate_v1",
+    "source_closure_sha256": "84c8061f7c4de851900198931e7a87d5d1eaf1aa1ef866912645436440c3dd27"
+  },
+  {
+    "name": "pooling_write_wrong_page_v1",
+    "source_closure_sha256": "c61b2dc4b55f73429be63eccfca910a663b1b6c417dfa813f2ecffd6c56120ce"
+  }
+]

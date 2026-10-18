@@ -5,10 +5,9 @@ use crate::gated_pooling::{GatedGroupPooling, GatedPoolingQuery};
 use crate::oracle::OracleOutput;
 
 /// F64 pool over the F32 key and gate values, with no position embedding.
-/// Compare the pool stage before its BF16 boundary using this output's S
-/// and K. Check RMSNorm separately on the actual BF16 intermediate with
-/// `norm_after_pool`, so an earlier rounding boundary is not hidden in a
-/// tolerance for a fused result.
+/// Compare the F32 pool stage using this output's S and K. Check RMSNorm
+/// separately on the actual F32 intermediate with `norm_after_pool`.
+/// Neither stage inserts a BF16 activation boundary.
 pub fn pool_without_position(
     query: GatedPoolingQuery,
     keys: &[f32],
@@ -26,9 +25,8 @@ pub fn pool_without_position(
     )
 }
 
-/// RMSNorm after the pool's BF16 boundary. The input is the pool stage's
-/// F32 output; its BF16 rounding precedes the mean square and weight.
-/// Returned values precede the final BF16 rounding.
+/// RMSNorm of the pool stage's F32 output with no BF16 rounding before or
+/// after normalization. The returned f64 values bound its F32 output.
 pub fn norm_after_pool(
     query: GatedPoolingQuery,
     pooled: &[f32],
@@ -38,12 +36,9 @@ pub fn norm_after_pool(
     if pooled.len() != query.width as usize || weight.len() != query.width as usize {
         return Err(Refusal("gated pooling RMSNorm operand shape mismatch"));
     }
-    let rounded = pooled
-        .iter()
-        .map(|&v| crate::oracle::bf16_round(f64::from(v)))
-        .collect::<Vec<_>>();
+    let values = pooled.iter().map(|&v| f64::from(v)).collect::<Vec<_>>();
     crate::oracle::rmsnorm(
-        &rounded,
+        &values,
         query.width as usize,
         weight,
         f64::from(f32::from_bits(query.norm_eps_bits)),

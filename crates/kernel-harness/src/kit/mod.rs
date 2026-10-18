@@ -35,6 +35,7 @@
 //! the buffers' device addresses, calls [`PreparedOp::launches`], loads
 //! each symbol through [`Modules`] and launches the plans in order.
 
+pub mod batch;
 pub mod cases;
 pub mod collective;
 pub mod decode;
@@ -430,6 +431,7 @@ pub struct OpCase<'a> {
     /// How its verify items map to decode launches, or why they do not
     /// ([`OpCase::decoded`]).
     decoded: Option<Result<Box<Decoded<'a>>, String>>,
+    batch_images: Option<batch::Mapping<'a>>,
     /// Whether the first launch waits on a PDL producer.
     pdl: bool,
 }
@@ -599,6 +601,7 @@ impl<'a> OpCase<'a> {
             excluded: std::collections::BTreeMap::new(),
             item_rows: None,
             decoded: None,
+            batch_images: None,
             pdl,
         })
     }
@@ -666,6 +669,17 @@ impl<'a> OpCase<'a> {
     pub fn item_rows(mut self, reason: &str) -> Self {
         self.item_rows = Some(reason.into());
         self.without_properties(&[Property::Chunk], reason)
+    }
+
+    /// Check batch independence by changing other items while retaining
+    /// the compared item's history. The generic row-copy probe cannot
+    /// preserve sequence positions and state routing for this case.
+    pub fn batch_images(
+        mut self,
+        mapping: impl Fn(&Images, u32) -> LabResult<Vec<batch::Comparison>> + 'a,
+    ) -> Self {
+        self.batch_images = Some(Box::new(mapping));
+        self
     }
 
     /// How the case's verify items map to one-row decode launches, or why
@@ -763,6 +777,9 @@ impl<'a> OpCase<'a> {
             );
         }
         self.case.validate()?;
+        if let Some(mapping) = &self.batch_images {
+            batch::validate(self, mapping.as_ref())?;
+        }
         let token = |path: &str| {
             self.leaves
                 .iter()
@@ -967,6 +984,17 @@ impl<'a> OpCase<'a> {
                 }
                 list.retain(|&property| property != Property::Rows);
                 checks.push(self.decode_check(session, functions, &images, rows));
+            }
+        }
+        if let Some(mapping) = &self.batch_images {
+            for list in [&mut claimed, &mut requested] {
+                if list.contains(&Property::Batch) {
+                    list.retain(|&property| property != Property::Batch);
+                    checks.push(Check::of(
+                        &properties::name(Property::Batch),
+                        batch::check(self, mapping.as_ref(), session, functions),
+                    ));
+                }
             }
         }
         let written =

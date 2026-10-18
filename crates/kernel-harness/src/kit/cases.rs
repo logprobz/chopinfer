@@ -11,6 +11,8 @@ pub mod attention;
 pub mod block_quantize;
 pub mod collectives;
 pub mod context_parallel;
+pub mod fp4_key_write;
+pub mod gated_pooling;
 pub mod gated_sparse;
 pub mod latent;
 pub mod latent_sources;

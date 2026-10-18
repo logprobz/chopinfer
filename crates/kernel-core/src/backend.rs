@@ -25,6 +25,7 @@ use crate::collective::{
     AllReduceBuffers, FusedAllReduceBuffers, GatherBuffers, HcAllReduceBuffers, ReduceInput,
     RowGatherBuffers, ShardedRows,
 };
+use crate::compressed_kv::{CompressedKvWriteBuffers, CompressedKvWriteQuery};
 use crate::context_parallel::{
     ContextParallelQuery, GroupTransferBuffers, GroupTransferOp, LocalizeKeysBuffers,
     OwnedKeyWriteOp, OwnedKvWriteOp, PagedPartialsBuffers, PagedPartialsOp, PartialMergeBuffers,
@@ -34,6 +35,7 @@ use crate::contract::{
     RecurrentQuery, Refusal, RowQuery, SigmoidMeanHyperConnectionQuery, SparseAttentionQuery,
 };
 use crate::gated_mlp::GatedMlpProjectionQuery;
+use crate::gated_pooling::{GatedPoolingBuffers, GatedPoolingQuery};
 use crate::gated_sparse::{
     BlockScoresBuffers, BlockScoresOp, BlockTopKBuffers, GatedKvWriteBuffers, GatedKvWriteOp,
     IndexQueryBuffers, OutputGateBuffers, OutputGateOp, SelectedPartialsBuffers,
@@ -56,8 +58,8 @@ use crate::multimodal::{
 use crate::per_channel_decay_delta_rule::PerChannelDecayOp;
 use crate::pooled_indexer::{
     CandidateBlocksBuffers, CandidateBlocksQuery, IndexerKeyWriteBuffers, IndexerMergeBuffers,
-    IndexerSelectBuffers, PooledIndexerQuery, PositionIndexerQuery, PositionQueryBuffers,
-    PositionSelectBuffers, SelectionCompactBuffers,
+    IndexerSelectBuffers, PooledIndexerQuery, PositionIndexerQuery, PositionKeyWriteBuffers,
+    PositionQueryBuffers, PositionSelectBuffers, SelectionCompactBuffers,
 };
 use crate::precision::buffers::ProjectionBuffers;
 use crate::precision::execution::Binding;
@@ -959,6 +961,54 @@ pub trait Backend: Send + Sync {
         op: &HeadBatchedGemmQuery,
         need: Need,
     ) -> Result<Prepared<HeadGemmBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
+    /// F32 gated pooling followed by F32 RMSNorm, with exact F32 tail state.
+    ///
+    /// Launches read `Counts::rows` and `Counts::items`. The host bounds
+    /// device live rows by `rows`, item IDs by `items`, and every source or
+    /// checkpoint ID by `tail.entries`. Each item has one consecutive run
+    /// of rows, with consecutive non-hole positions. Distinct items have
+    /// distinct source slots; checkpoints alias neither sources nor each
+    /// other. Verify runs hold at most `max_rows` rows per item.
+    fn gated_pooling(
+        &self,
+        op: &GatedPoolingQuery,
+        need: Need,
+    ) -> Result<Prepared<GatedPoolingBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
+    /// Normalize F32 projected index keys, rotate their tail in F32 at each
+    /// group's first token, then round once at the trained MXFP4 quantizer
+    /// input and write its codes and scales.
+    /// Launches read `Counts::rows` and `Counts::positions`. The host bounds
+    /// item IDs by the page tables' sequences, compressed positions by
+    /// `max_pages * page_size`, and their product with the compression ratio
+    /// by `Counts::positions`. Page IDs are below `keys.pages`; distinct
+    /// live rows address distinct slots. Negative positions/page IDs skip.
+    fn position_indexer_key_write(
+        &self,
+        op: &PositionIndexerQuery,
+        need: Need,
+    ) -> Result<Prepared<PositionKeyWriteBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
+    /// Rotate normalized F32 latent tails, round the quantizer input to
+    /// BF16 once, and write trained E2M1 values
+    /// with E4M3-per-16 scales, or their exact BF16 decoded representation.
+    /// Counts and table bounds are those of `position_indexer_key_write`,
+    /// with `cache.pages`. The input latent stays unmodified.
+    fn compressed_kv_write(
+        &self,
+        op: &CompressedKvWriteQuery,
+        need: Need,
+    ) -> Result<Prepared<CompressedKvWriteBuffers<View>>, Refused> {
         let _ = (op, need);
         Err(Refused::Unsupported)
     }
@@ -2063,6 +2113,24 @@ mod tests {
                 output: DType::Bf16,
                 m_capacity: 8,
             },
+            Need::rows(4),
+        );
+        gated_pooling: Empty.gated_pooling(
+            &GatedPoolingQuery {
+                group: 2, width: 512, norm_eps_bits: 1e-20f32.to_bits(),
+                phase: RecurrentPhase::Prefill, capacity: 4,
+            },
+            Need::rows(4),
+        );
+        position_indexer_key_write: Empty.position_indexer_key_write(
+            &PositionIndexerQuery { heads: 32, head_dim: 128, compression_ratio: 2,
+                tail_rope_dims: 64, key_norm_eps_bits: 1e-20f32.to_bits(), max_top_k: 512,
+                page_size: 64, candidates: crate::pooled_indexer::IndexerCandidates::All, capacity: 4 },
+            Need::rows(4),
+        );
+        compressed_kv_write: Empty.compressed_kv_write(
+            &CompressedKvWriteQuery { width: 512, tail_rope_dims: 64, compression_ratio: 2,
+                page_size: 64, storage: crate::compressed_kv::CompressedKvStorage::Packed, capacity: 4 },
             Need::rows(4),
         );
         indexer_key_write: Empty.indexer_key_write(&indexer(), 0, 1, Need::rows(4));

@@ -45,7 +45,7 @@ fn position_mxfp4_indexer_selects_individual_compressed_positions() {
 }
 
 #[test]
-fn f32_pool_without_position_rounds_before_post_pool_rmsnorm() {
+fn f32_pool_without_position_keeps_f32_through_post_pool_rmsnorm() {
     use kernel_core::contract::{RecurrentPhase, Validate};
     use kernel_core::gated_pooling::GatedPoolingQuery;
     use kernel_core::gated_pooling_oracle::{norm_after_pool, pool_without_position};
@@ -83,10 +83,11 @@ fn f32_pool_without_position_rounds_before_post_pool_rmsnorm() {
         .iter()
         .map(|&v| bf16(f64::from(v)))
         .collect::<Vec<_>>();
-    let inverse = (rounded.iter().map(|v| v * v).sum::<f64>() / 512.0 + 1e-20_f32 as f64)
+    let unrounded: Vec<f64> = pool_f32.iter().copied().map(f64::from).collect();
+    let inverse = (unrounded.iter().map(|v| v * v).sum::<f64>() / 512.0 + 1e-20_f32 as f64)
         .sqrt()
         .recip();
-    for (&actual, &x) in norm.values.iter().zip(&rounded) {
+    for (&actual, &x) in norm.values.iter().zip(&unrounded) {
         assert!((actual - x * inverse * 1.5).abs() < 1e-14);
     }
     let prematurely_rounded = keys
@@ -99,10 +100,10 @@ fn f32_pool_without_position_rounds_before_post_pool_rmsnorm() {
             .values,
         pooled.values
     );
-    let before_boundary = RmsNorm::f64(1e-20_f32 as f64, NormOffset::Plain)
-        .apply(&pooled.values, &weights, 512)
+    let early_boundary = RmsNorm::f64(1e-20_f32 as f64, NormOffset::Plain)
+        .apply(&rounded, &weights, 512)
         .unwrap();
-    assert_ne!(before_boundary.values, norm.values);
+    assert_ne!(early_boundary.values, norm.values);
 }
 
 #[test]

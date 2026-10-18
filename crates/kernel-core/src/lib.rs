@@ -7,6 +7,7 @@ pub mod attention;
 pub mod backend;
 pub mod codec;
 pub mod collective;
+pub mod compressed_kv;
 pub mod context_parallel;
 pub mod context_parallel_oracle;
 pub mod contract;

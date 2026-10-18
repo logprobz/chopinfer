@@ -88,6 +88,13 @@
 //! | GEMM weights | `u64(strip) * k_stages * strip_stage_bytes` | u64, bytes | 636 MB (Qwen TP2 head) | none needed |
 //! | GEMM outputs | `u64(row) * row_stride + column` | u64, elements | 8,192 x 124,160 F32: 4.07 GB | none needed |
 //!
+//! FP4 compressed-key writers (`kernels-sm120/cuda/gated_pooling/key_write.cuh`):
+//!
+//! | Kernel | Product | Width, unit | Maximum | Test |
+//! |---|---|---|---|---|
+//! | index and compressed code/value planes | `u64(page) * code_stride` | u64, bytes | allocated pool | `fp4_key_write_offsets::fp4_planes_cross_both_32_bit_boundaries` |
+//! | index and compressed scale planes | `u64(page) * scale_stride` | u64, bytes | allocated pool | same, independent code/scale strides and low-address sentinels |
+//!
 //! Sampling, comm and multimodal rows use u64 row products; their remaining
 //! 32-bit products are tile and route counters of at most 1,048,576.
 //!
@@ -113,6 +120,10 @@ use kernel_lab::{LabResult, Session};
 use runtime_cuda::DeviceBuffer;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+
+/// Real page-one strides used by the FP4 writer test. The extra 4096
+/// bytes leave a visible low-address target for unsigned truncation.
+pub const FP4_PLANE_STRIDES: [u64; 2] = [(1_u64 << 31) + 4096, (1_u64 << 32) + 4096];
 
 /// Every pool byte outside the live entries: NaN in BF16, FP8 E4M3 and F32.
 pub const SENTINEL: u8 = 0xff;
@@ -460,6 +471,15 @@ mod tests {
             // The head of the pool never holds a live id.
             assert!(ids.a[0] * stride >= head, "{name}");
         }
+    }
+
+    #[test]
+    fn fp4_plane_strides_cross_signed_and_unsigned_boundaries() {
+        let [signed, unsigned] = FP4_PLANE_STRIDES;
+        assert!(signed > i32::MAX as u64 && signed < u32::MAX as u64);
+        assert!((signed as u32 as i32) < 0);
+        assert!(unsigned > u32::MAX as u64);
+        assert_eq!(unsigned as u32, 4096);
     }
 
     #[test]

@@ -21,6 +21,7 @@ use kernel_core::collective::{
     AllReduceBuffers, FusedAllReduceBuffers, GatherBuffers, HcAllReduceBuffers, ReduceInput,
     RowGatherBuffers, ShardedRows,
 };
+use kernel_core::compressed_kv::{CompressedKvWriteBuffers, CompressedKvWriteQuery};
 use kernel_core::context_parallel::{
     ContextParallelQuery, GroupTransferBuffers, GroupTransferOp, LocalizeKeysBuffers,
     OwnedKeyWriteOp, OwnedKvWriteOp, PagedPartialsBuffers, PagedPartialsOp, PartialMergeBuffers,
@@ -30,6 +31,7 @@ use kernel_core::contract::{
     Refusal, RowQuery, SigmoidMeanHyperConnectionQuery, SparseAttentionQuery,
 };
 use kernel_core::gated_mlp::GatedMlpProjectionQuery;
+use kernel_core::gated_pooling::{GatedPoolingBuffers, GatedPoolingQuery};
 use kernel_core::gated_sparse::{
     BlockScoresBuffers, BlockScoresOp, BlockTopKBuffers, GatedKvWriteBuffers, GatedKvWriteOp,
     IndexQueryBuffers, OutputGateBuffers, OutputGateOp, SelectedPartialsBuffers,
@@ -53,8 +55,8 @@ use kernel_core::occupancy::EntryResources;
 use kernel_core::per_channel_decay_delta_rule::PerChannelDecayOp;
 use kernel_core::pooled_indexer::{
     CandidateBlocksBuffers, CandidateBlocksQuery, IndexerKeyWriteBuffers, IndexerMergeBuffers,
-    IndexerSelectBuffers, PooledIndexerQuery, PositionIndexerQuery, PositionQueryBuffers,
-    PositionSelectBuffers, SelectionCompactBuffers,
+    IndexerSelectBuffers, PooledIndexerQuery, PositionIndexerQuery, PositionKeyWriteBuffers,
+    PositionQueryBuffers, PositionSelectBuffers, SelectionCompactBuffers,
 };
 use kernel_core::precision::buffers::ProjectionBuffers;
 use kernel_core::precision::execution::Binding;
@@ -83,7 +85,9 @@ mod attention;
 mod bf16_all_reduce;
 mod block_quantize;
 mod context_parallel;
+mod fp4_key_write;
 mod fused_all_reduce;
+mod gated_pooling;
 mod gated_sparse;
 mod gather;
 mod hc_all_reduce;
@@ -147,6 +151,9 @@ pub fn check_plan(plan: &LaunchPlan) -> Result<(), Refusal> {
 /// The SM120 backend over a model's selection.
 #[derive(Default)]
 pub struct Sm120 {
+    fp4_writes: Vec<crate::gated_pooling::key_write::Entry>,
+    pooling: Vec<crate::gated_pooling::Entry>,
+    f32_norms: Vec<(crate::gated_pooling::F32Norm, String)>,
     rmsnorms: Vec<(RmsNormRequirement, String)>,
     projections: Option<Box<dyn ProjectionOffers>>,
     rows: rows::Selection,
@@ -185,8 +192,34 @@ impl Sm120 {
         self
     }
 
+    pub fn with_f32_rmsnorm(
+        mut self,
+        norm: crate::gated_pooling::F32Norm,
+        symbol: impl Into<String>,
+    ) -> Self {
+        self.f32_norms.push((norm, symbol.into()));
+        self
+    }
     pub fn new() -> Sm120 {
         Sm120::default()
+    }
+
+    /// The model's paged MXFP4 index and E2M1/E4M3 compressed-KV writes.
+    pub fn with_fp4_key_writes(
+        mut self,
+        entries: impl IntoIterator<Item = crate::gated_pooling::key_write::Entry>,
+    ) -> Self {
+        self.fp4_writes.extend(entries);
+        self
+    }
+
+    /// The model's F32 pair-pooling and masked RMSNorm entry pairs.
+    pub fn with_gated_pooling(
+        mut self,
+        entries: impl IntoIterator<Item = crate::gated_pooling::Entry>,
+    ) -> Self {
+        self.pooling.extend(entries);
+        self
     }
 
     /// The model's RMSNorm entry `symbol`, built for `requirement`.
@@ -855,6 +888,9 @@ impl Backend for Sm120 {
         op: &RmsNormRequirement,
         need: Need,
     ) -> Result<Prepared<RmsNormBuffers<View>>, Refused> {
+        if op.input == kernel_core::contract::DType::F32 {
+            return gated_pooling::norm(&self.f32_norms, op, need);
+        }
         match op.layout {
             RmsNormLayout::StridedHeads { .. } => {
                 rmsnorm::prepare_heads(&self.row_rmsnorms, op, need)
@@ -1175,6 +1211,30 @@ impl Backend for Sm120 {
     }
 
     // Pooled indexer.
+
+    fn position_indexer_key_write(
+        &self,
+        op: &PositionIndexerQuery,
+        need: Need,
+    ) -> Result<Prepared<PositionKeyWriteBuffers<View>>, Refused> {
+        fp4_key_write::index(&self.fp4_writes, op, need)
+    }
+
+    fn compressed_kv_write(
+        &self,
+        op: &CompressedKvWriteQuery,
+        need: Need,
+    ) -> Result<Prepared<CompressedKvWriteBuffers<View>>, Refused> {
+        fp4_key_write::compressed(&self.fp4_writes, op, need)
+    }
+
+    fn gated_pooling(
+        &self,
+        op: &GatedPoolingQuery,
+        need: Need,
+    ) -> Result<Prepared<GatedPoolingBuffers<View>>, Refused> {
+        gated_pooling::prepare(&self.pooling, *op, need)
+    }
 
     fn indexer_key_write(
         &self,

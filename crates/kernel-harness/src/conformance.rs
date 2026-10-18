@@ -1352,6 +1352,23 @@ impl<'a> Case<'a> {
         Ok(union(ranges))
     }
 
+    /// Bytes required to be written, excluding optional state updates.
+    pub(crate) fn required_writes(
+        &self,
+        name: &str,
+        images: &Images,
+        live: u32,
+    ) -> LabResult<Vec<Range<usize>>> {
+        let buffer = self
+            .buffers
+            .iter()
+            .find(|buffer| buffer.name == name)
+            .ok_or_else(|| format!("no buffer named {name}"))?;
+        self.written(buffer, images, live)?
+            .map(|map| map.ranges().to_vec())
+            .ok_or_else(|| format!("{name} is not an output or state"))
+    }
+
     fn map(
         &self,
         buffer: &Buffer<'_>,

@@ -28,9 +28,10 @@ use crate::contract::{
 ///
 /// Keys and gate logits are F32 `[rows][width]`. For a completed group,
 /// apply a per-channel softmax to its gate logits, then sum weighted keys
-/// in group order in F32. Round the pooled vector to BF16 before RMSNorm.
-/// RMSNorm accumulates in F32, uses BF16 weights and `norm_eps_bits`,
-/// multiplies the weight before rounding once to BF16. There is no bias,
+/// in group order in F32. Keep that F32 vector through RMSNorm.
+/// RMSNorm accumulates in F32, decodes BF16 weights exactly, uses
+/// `norm_eps_bits`, and writes F32. No BF16 activation rounding occurs
+/// until a later trained quantizer consumes the latent. There is no bias,
 /// mean subtraction, APE or RoPE. Width 512 and group 2 use this contract.
 /// A ratio-1 projection uses ordinary RMSNorm without a pooling op.
 ///
@@ -88,7 +89,7 @@ impl NumericalContract for GatedPoolingQuery {
             RecurrentPhase::Verify { .. } => "verify",
         };
         Ok(NumericalContractId::new(format!(
-            "gated-pooling-f32-no-position-bf16-rmsnorm.{phase}.v1"
+            "gated-pooling-f32-no-position-rmsnorm.{phase}.v2"
         )))
     }
 }
@@ -108,7 +109,7 @@ crate::scratch_record! {
 
 crate::scratch_record! {
     /// F32 key and gate rows, BF16 RMSNorm weight `[width]`, I32 item and
-    /// token positions, and a device live-row count. BF16 output is
+    /// token positions, and a device live-row count. F32 output is
     /// `[rows][width]`: only a completing row writes its row, with output
     /// position `position / group`; other rows write output position -1 and
     /// leave their output vector untouched. Negative input positions are

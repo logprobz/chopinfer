@@ -37,6 +37,8 @@
 - [Qwen3.8 Flash bundle](bundle-qwen38.md) and its [weight plan and package](model-qwen38.md)
 - [GLM 5.3 Flash: model, bundle and status](model-glm5next.md)
 - [Kernel library](kernel-library.md), including [adding a GPU backend](kernel-library.md#adding-a-gpu-backend)
+- [Trained block quantization and row status](block-quantization.md)
+- [Latent glue row status](latent-glue-status.md)
 - [Security boundary](security-boundary.md)
 - [Alpha release checklist](releasing.md)
 

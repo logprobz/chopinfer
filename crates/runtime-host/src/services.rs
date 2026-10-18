@@ -1129,6 +1129,77 @@ const HOST_VIEW_READ_BYTES_V1: usize = 64 << 20;
 
 type FileChunkReaderV1<'a> = Box<dyn FnMut(u64, &mut [u8]) -> bool + Send + 'a>;
 
+/// Snapshots separate arena preparation (including host views) from upload.
+struct DirectLoadTimingV1 {
+    images: Vec<(
+        Arc<crate::direct::PlannedImageV1>,
+        crate::direct::DirectLoadStatsV1,
+    )>,
+    prepared: Vec<crate::direct::DirectLoadStatsV1>,
+    started: std::time::Instant,
+    preparation_seconds: f64,
+}
+
+impl DirectLoadTimingV1 {
+    fn new<D: HostDeviceBackendV1>(state: &HostStateV1<D>, uploads: &[RankArenaUploadV1]) -> Self {
+        let mut images = Vec::new();
+        for upload in uploads {
+            let Ok(key) = slot_key_v1(upload.image.generation(), upload.image.slot()) else {
+                continue;
+            };
+            let Ok(record) = state.images.get(key) else {
+                continue;
+            };
+            if let ComponentStorageV1::Planned(image) = &record.storage
+                && !images.iter().any(|(seen, _)| Arc::ptr_eq(seen, image))
+            {
+                images.push((Arc::clone(image), image.stats()));
+            }
+        }
+        Self {
+            images,
+            prepared: Vec::new(),
+            started: std::time::Instant::now(),
+            preparation_seconds: 0.0,
+        }
+    }
+
+    fn prepared(&mut self) {
+        self.preparation_seconds = self.started.elapsed().as_secs_f64();
+        self.prepared = self.images.iter().map(|(image, _)| image.stats()).collect();
+    }
+
+    fn report(&self, upload_seconds: f64, digest_seconds: f64) {
+        for ((image, before), prepared) in self.images.iter().zip(&self.prepared) {
+            let stats = image.stats();
+            let mut line = serde_json::json!({
+                    "seconds": upload_seconds, "digest_seconds": digest_seconds,
+                    // Retain the existing fields, explicitly marked as cumulative.
+                    "counter_scope": "cumulative",
+                    "produced_bytes": stats.produced_bytes, "source_bytes": stats.source_bytes,
+                    "source_reads": stats.source_reads, "advised_bytes": stats.advised_bytes,
+                    "direct_bytes": stats.direct_bytes, "read_seconds": stats.read_seconds,
+                    "produce_seconds": stats.produce_seconds, "shared_seconds": stats.shared_seconds,
+                    "rank_seconds": stats.rank_seconds, "cumulative": stats,
+                    "retained_peak_bytes": stats.retained_peak_bytes,
+                    "pooled_peak_bytes": stats.pooled_peak_bytes,
+                    "preparation": {"seconds": self.preparation_seconds, "counters": prepared.since(*before)},
+                    "upload": {"seconds": upload_seconds, "counters": stats.since(*prepared)},
+                    "checkpoint_identity": image.checkpoint().identity_hex(),
+            });
+            if image.mapped_bytes() > 0 {
+                line["mapped_bytes"] = image.mapped_bytes().into();
+            }
+            if let Some(prewarm) = image.prewarm() {
+                line["prewarm_bytes"] = prewarm.bytes.into();
+                line["prewarm_seconds"] = prewarm.seconds.into();
+                line["prewarm_resident_bytes"] = prewarm.resident_bytes.into();
+            }
+            eprintln!("startup direct_load: {line}");
+        }
+    }
+}
+
 fn prepare_rank_upload_v1<D: HostDeviceBackendV1>(
     state: &mut HostStateV1<D>,
     upload: RankArenaUploadV1,
@@ -3146,16 +3217,16 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         rank: u32,
     ) -> HostServiceResultV1<BundleRankArenaHandleV1> {
         let mut state = self.state.borrow_mut();
-        let prepared = prepare_rank_upload_v1(
-            &mut state,
-            RankArenaUploadV1 {
-                context,
-                pool,
-                stream,
-                image,
-                rank,
-            },
-        )?;
+        let upload = RankArenaUploadV1 {
+            context,
+            pool,
+            stream,
+            image,
+            rank,
+        };
+        let mut timing = DirectLoadTimingV1::new(&state, &[upload]);
+        let prepared = prepare_rank_upload_v1(&mut state, upload)?;
+        timing.prepared();
         let started = std::time::Instant::now();
         let sparse = state.device.uses_sparse_probe_allocations();
         let result = if sparse {
@@ -3165,10 +3236,12 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                 .and_then(|()| state.device.synchronize_stream(prepared.stream))
                 .and_then(|()| verify_direct_sources_v1(&prepared.storage))
         };
+        let upload_seconds = started.elapsed().as_secs_f64();
+        timing.report(upload_seconds, 0.0);
         eprintln!(
             "startup weight_upload: {}",
             serde_json::json!({
-                "seconds":started.elapsed().as_secs_f64(), "status":if sparse {"sparse-probe"} else if result.is_ok() {"complete"} else {"failed"},
+                "seconds":upload_seconds, "status":if sparse {"sparse-probe"} else if result.is_ok() {"complete"} else {"failed"},
                 "planned_bytes":prepared.byte_length(), "uploaded_bytes":result.as_ref().ok().map(|_| if sparse {0} else {prepared.byte_length()}),
             })
         );
@@ -3185,6 +3258,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         uploads: &[RankArenaUploadV1],
     ) -> HostServiceResultV1<Vec<BundleRankArenaHandleV1>> {
         let mut state = self.state.borrow_mut();
+        let mut timing = DirectLoadTimingV1::new(&state, uploads);
         let mut prepared = Vec::with_capacity(uploads.len());
         let mut result = Ok(());
         for upload in uploads {
@@ -3196,6 +3270,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                 }
             }
         }
+        timing.prepared();
         let started = std::time::Instant::now();
         if result.is_ok() && !state.device.uses_sparse_probe_allocations() {
             let mut readers: Vec<FileChunkReaderV1<'_>> = prepared
@@ -3285,42 +3360,13 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         }
         let digest_seconds = digesting.elapsed().as_secs_f64();
         // A direct load's checkpoint must still be the one its plans read.
-        let mut images: Vec<&Arc<crate::direct::PlannedImageV1>> = Vec::new();
-        for rank in &prepared {
-            if let ComponentStorageV1::Planned(image) = &rank.storage
-                && !images.iter().any(|seen| Arc::ptr_eq(seen, image))
-            {
-                images.push(image);
-            }
-        }
-        for image in &images {
-            // The upload is over: the workers' buffers are not needed again.
+        for (image, _) in &timing.images {
             image.release_buffers();
-            let stats = image.stats();
             if result.is_ok() && !sparse {
                 result = verify_direct_sources_v1(&ComponentStorageV1::Planned(Arc::clone(image)));
             }
-            let mut line = serde_json::json!({
-                "seconds": upload_seconds, "digest_seconds": digest_seconds,
-                "produced_bytes": stats.produced_bytes, "source_bytes": stats.source_bytes, "source_reads": stats.source_reads,
-                "advised_bytes": stats.advised_bytes, "direct_bytes": stats.direct_bytes,
-                "read_seconds": stats.read_seconds, "produce_seconds": stats.produce_seconds,
-                "shared_seconds": stats.shared_seconds, "rank_seconds": stats.rank_seconds,
-                "checkpoint_identity": image.checkpoint().identity_hex(),
-            });
-            // Checkpoint bytes the mapped views map instead of uploading,
-            // each mapping once; stated only for images that map any.
-            if image.mapped_bytes() > 0 {
-                line["mapped_bytes"] = image.mapped_bytes().into();
-            }
-            // Stated only for images whose mapped views asked to be warmed.
-            if let Some(prewarm) = image.prewarm() {
-                line["prewarm_bytes"] = prewarm.bytes.into();
-                line["prewarm_seconds"] = prewarm.seconds.into();
-                line["prewarm_resident_bytes"] = prewarm.resident_bytes.into();
-            }
-            eprintln!("startup direct_load: {line}");
         }
+        timing.report(upload_seconds, digest_seconds);
         let planned: u64 = prepared.iter().map(PreparedRankUploadV1::byte_length).sum();
         eprintln!(
             "startup weight_upload: {}",

@@ -567,3 +567,39 @@ fn a_planned_component_serves_only_when_the_plan_supplies_it() {
         "{declined}"
     );
 }
+
+/// Exercise the real upload entry point and parse its phase report. The child
+/// selects exactly the existing host-view fixture, without a CUDA device.
+#[test]
+fn host_view_preparation_is_excluded_from_upload_counters() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "planned_ranks_upload_with_a_host_view_and_planned_components",
+            "--nocapture",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let log = String::from_utf8(output.stderr).unwrap();
+    let reports: Vec<serde_json::Value> = log
+        .lines()
+        .filter_map(|line| line.strip_prefix("startup direct_load: "))
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(reports.len(), 1, "{log}");
+    let report = &reports[0];
+    assert_eq!(report["counter_scope"], "cumulative");
+    assert_eq!(report["preparation"]["counters"]["source_bytes"], 16000);
+    assert_eq!(report["upload"]["counters"]["source_bytes"], 160);
+    assert_eq!(report["cumulative"]["source_bytes"], 16160);
+    assert_eq!(
+        report["preparation"]["counters"]["unique_source_bytes"],
+        16000
+    );
+    assert_eq!(report["upload"]["counters"]["unique_source_bytes"], 0);
+}

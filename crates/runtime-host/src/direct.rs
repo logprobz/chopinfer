@@ -26,6 +26,12 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, channel, sync_chan
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+mod packed_sources;
+mod stats;
+use packed_sources::{PackedBuffers, PackedSources};
+pub use stats::DirectLoadStatsV1;
+use stats::SourceRanges;
+
 use kernel_core::weight_transform::{
     PreparedRecord, SourceTensor, WeightRecord, WeightTransform, WeightTransformError,
 };
@@ -568,6 +574,8 @@ struct SourceAtV1 {
 }
 
 struct RecordV1 {
+    consumer: usize,
+    packed_sources: Vec<Option<usize>>,
     offset: u64,
     /// A bundle transform's parameters, passed through unread.
     bundle_params: Vec<u8>,
@@ -596,39 +604,52 @@ struct SharedSourceStateV1 {
 /// shared output's section. Tests count the bytes held until they are freed.
 struct RetainedBytesV1 {
     bytes: Vec<u8>,
+    charge: u64,
+    pool: Option<Arc<PackedBuffers>>,
     #[cfg(test)]
     held: Arc<HeldBytesV1>,
 }
 
 impl RetainedBytesV1 {
     fn new(inner: &InnerV1, bytes: Vec<u8>) -> Self {
+        Self::make(inner, bytes, false)
+    }
+
+    fn pooled(inner: &InnerV1, bytes: Vec<u8>) -> Self {
+        Self::make(inner, bytes, true)
+    }
+
+    fn make(inner: &InnerV1, bytes: Vec<u8>, pooled: bool) -> Self {
+        let charge = if pooled {
+            bytes.capacity()
+        } else {
+            bytes.len()
+        } as u64;
         #[cfg(test)]
         {
-            let now = inner
-                .retained_held
-                .now
-                .fetch_add(bytes.len() as u64, Ordering::AcqRel);
+            let now = inner.retained_held.now.fetch_add(charge, Ordering::AcqRel);
             inner
                 .retained_held
                 .peak
-                .fetch_max(now + bytes.len() as u64, Ordering::AcqRel);
+                .fetch_max(now + charge, Ordering::AcqRel);
         }
-        #[cfg(not(test))]
-        let _ = inner;
         Self {
             bytes,
+            charge,
+            pool: pooled.then(|| Arc::clone(&inner.packed_buffers)),
             #[cfg(test)]
             held: inner.retained_held.clone(),
         }
     }
 }
 
-#[cfg(test)]
 impl Drop for RetainedBytesV1 {
     fn drop(&mut self) {
-        self.held
-            .now
-            .fetch_sub(self.bytes.len() as u64, Ordering::AcqRel);
+        #[cfg(test)]
+        self.held.now.fetch_sub(self.charge, Ordering::AcqRel);
+        if let Some(pool) = &self.pool {
+            pool.give(std::mem::take(&mut self.bytes));
+        }
     }
 }
 
@@ -663,6 +684,7 @@ struct SharedV1 {
 struct SharedStateV1 {
     sections: [Option<Arc<RetainedBytesV1>>; 3],
     remaining: [u64; 3],
+    produced_sections: [bool; 3],
 }
 
 struct RankV1 {
@@ -676,11 +698,21 @@ struct InnerV1 {
     offsets: Vec<u64>,
     shared: Vec<SharedV1>,
     shared_sources: Vec<SharedSourceV1>,
+    packed_sources: PackedSources,
+    packed_buffers: Arc<PackedBuffers>,
     transform: Option<BundleWeightTransformFnV1>,
     options: DirectLoadOptionsV1,
     source_bytes: AtomicU64,
     /// Positional reads of the checkpoint.
     source_reads: AtomicU64,
+    file_read_bytes: AtomicU64,
+    unique_source_bytes: AtomicU64,
+    source_ranges: Mutex<SourceRanges>,
+    source_cache_hits: AtomicU64,
+    source_cache_bytes: AtomicU64,
+    shared_output_hits: AtomicU64,
+    shared_output_productions: AtomicU64,
+    shared_output_reproductions: AtomicU64,
     produced_bytes: AtomicU64,
     advised_bytes: AtomicU64,
     /// Set when the image is dropped: read-ahead threads advise nothing more.
@@ -705,26 +737,6 @@ struct InnerV1 {
     scratch: Mutex<Vec<Vec<u8>>>,
     /// Workers' aligned buffers for direct reads, kept the same way.
     direct_buffers: Mutex<Vec<Vec<u8>>>,
-}
-
-/// Counters of one planned image's production so far.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct DirectLoadStatsV1 {
-    pub produced_bytes: u64,
-    pub source_bytes: u64,
-    /// Positional reads of the checkpoint that produced `source_bytes`.
-    pub source_reads: u64,
-    pub advised_bytes: u64,
-    /// The part of `source_bytes` read with `O_DIRECT`.
-    pub direct_bytes: u64,
-    /// Thread-seconds in source reads, in production, in shared outputs and
-    /// in rank reads (wall time of each rank's reads, summed over ranks).
-    pub read_seconds: f64,
-    pub produce_seconds: f64,
-    pub shared_seconds: f64,
-    pub rank_seconds: f64,
-    /// The most bytes shared outputs held at once.
-    pub retained_peak_bytes: u64,
 }
 
 /// What warming the prewarmed mapped views at load did.
@@ -1080,6 +1092,7 @@ impl PlannedImageV1 {
                                     state: Mutex::new(SharedStateV1 {
                                         sections: [None, None, None],
                                         remaining: shared_users[group].0,
+                                        produced_sections: [false; 3],
                                     }),
                                 });
                                 shared.len() - 1
@@ -1091,7 +1104,8 @@ impl PlannedImageV1 {
                     .collect(),
             })
             .collect::<Vec<_>>();
-        let (ranks, shared_sources) = share_sources_v1(ranks);
+        let (mut ranks, shared_sources) = share_sources_v1(ranks);
+        let packed_sources = PackedSources::new(&mut ranks);
         let description = CompiledImageDescriptionV1::new(
             alignment,
             ranks
@@ -1144,10 +1158,20 @@ impl PlannedImageV1 {
             offsets,
             shared,
             shared_sources,
+            packed_sources,
+            packed_buffers: Arc::new(PackedBuffers::new(options.shared_bytes)),
             transform,
             options,
             source_bytes: AtomicU64::new(0),
             source_reads: AtomicU64::new(0),
+            file_read_bytes: AtomicU64::new(0),
+            unique_source_bytes: AtomicU64::new(0),
+            source_ranges: Mutex::default(),
+            source_cache_hits: AtomicU64::new(0),
+            source_cache_bytes: AtomicU64::new(0),
+            shared_output_hits: AtomicU64::new(0),
+            shared_output_productions: AtomicU64::new(0),
+            shared_output_reproductions: AtomicU64::new(0),
             produced_bytes: AtomicU64::new(0),
             advised_bytes: AtomicU64::new(0),
             read_ahead_stopped: AtomicBool::new(false),
@@ -1267,6 +1291,8 @@ impl PlannedImageV1 {
     /// Frees the workers' scratch and direct-read buffers kept between
     /// reads; a later read allocates them again.
     pub fn release_buffers(&self) {
+        self.inner.packed_sources.clear(&self.inner);
+        self.inner.packed_buffers.clear();
         for pool in [&self.inner.scratch, &self.inner.direct_buffers] {
             if let Ok(mut pool) = pool.lock() {
                 *pool = Vec::new();
@@ -1280,6 +1306,18 @@ impl PlannedImageV1 {
             produced_bytes: self.inner.produced_bytes.load(Ordering::Relaxed),
             source_bytes: self.inner.source_bytes.load(Ordering::Relaxed),
             source_reads: self.inner.source_reads.load(Ordering::Relaxed),
+            requested_source_bytes: self.inner.source_bytes.load(Ordering::Relaxed)
+                + self.inner.source_cache_bytes.load(Ordering::Relaxed),
+            file_read_bytes: self.inner.file_read_bytes.load(Ordering::Relaxed),
+            unique_source_bytes: self.inner.unique_source_bytes.load(Ordering::Relaxed),
+            source_cache_hits: self.inner.source_cache_hits.load(Ordering::Relaxed),
+            source_cache_bytes: self.inner.source_cache_bytes.load(Ordering::Relaxed),
+            shared_output_hits: self.inner.shared_output_hits.load(Ordering::Relaxed),
+            shared_output_productions: self.inner.shared_output_productions.load(Ordering::Relaxed),
+            shared_output_reproductions: self
+                .inner
+                .shared_output_reproductions
+                .load(Ordering::Relaxed),
             advised_bytes: self.inner.advised_bytes.load(Ordering::Relaxed),
             direct_bytes: self.inner.direct_bytes.load(Ordering::Relaxed),
             read_seconds: seconds(&self.inner.read_nanos),
@@ -1287,6 +1325,7 @@ impl PlannedImageV1 {
             shared_seconds: seconds(&self.inner.shared_nanos),
             rank_seconds: seconds(&self.inner.rank_nanos),
             retained_peak_bytes: self.inner.retained_peak.load(Ordering::Relaxed),
+            pooled_peak_bytes: self.inner.packed_buffers.peak(),
         }
     }
 
@@ -1363,7 +1402,8 @@ fn read_source_v1(
             .filter(|direct| cold && !direct.off.load(Ordering::Relaxed))
             .map(|direct| read_direct_v1(&inner.direct_buffers, direct, run_at, part));
         match read_direct {
-            Some(Ok(())) => {
+            Some(Ok(bytes)) => {
+                inner.file_read_bytes.fetch_add(bytes, Ordering::Relaxed);
                 inner.direct_bytes.fetch_add(length, Ordering::Relaxed);
             }
             // A file system may refuse a direct read it opened for (an
@@ -1383,6 +1423,7 @@ fn read_source_v1(
                     .file
                     .read_exact_at(part, run_at)
                     .map_err(|e| WeightTransformError(format!("read {}: {e}", shard.name)))?;
+                inner.file_read_bytes.fetch_add(length, Ordering::Relaxed);
             }
             Some(Err(error)) => {
                 return Err(WeightTransformError(format!(
@@ -1390,10 +1431,13 @@ fn read_source_v1(
                     shard.name
                 )));
             }
-            None => shard
-                .file
-                .read_exact_at(part, run_at)
-                .map_err(|e| WeightTransformError(format!("read {}: {e}", shard.name)))?,
+            None => {
+                shard
+                    .file
+                    .read_exact_at(part, run_at)
+                    .map_err(|e| WeightTransformError(format!("read {}: {e}", shard.name)))?;
+                inner.file_read_bytes.fetch_add(length, Ordering::Relaxed);
+            }
         }
         rest = tail;
         run_at += length;
@@ -1403,6 +1447,14 @@ fn read_source_v1(
         .source_bytes
         .fetch_add(buffer.len() as u64, Ordering::Relaxed);
     inner.source_reads.fetch_add(1, Ordering::Relaxed);
+    let unique = inner
+        .source_ranges
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(source.shard, at..at + buffer.len() as u64);
+    inner
+        .unique_source_bytes
+        .fetch_add(unique, Ordering::Relaxed);
     Ok(())
 }
 
@@ -1505,7 +1557,7 @@ fn read_direct_v1(
     direct: &DirectFileV1,
     at: u64,
     buffer: &mut [u8],
-) -> std::io::Result<()> {
+) -> std::io::Result<u64> {
     let (file, align) = (&direct.file, direct.alignment);
     let needed = (DIRECT_READ_BYTES + align) as usize;
     let mut aligned = buffers
@@ -1518,6 +1570,7 @@ fn read_direct_v1(
         let base = aligned.as_ptr().align_offset(align as usize);
         let end = at + buffer.len() as u64;
         let mut done = 0;
+        let mut read_bytes = 0;
         while done < buffer.len() {
             let from = at + done as u64;
             let start = from / align * align;
@@ -1529,6 +1582,7 @@ fn read_direct_v1(
             while filled < window.len() {
                 let count = file.read_at(&mut window[filled..], start + filled as u64)?;
                 filled += count;
+                read_bytes += count as u64;
                 if count == 0 || count as u64 % align != 0 {
                     break;
                 }
@@ -1541,7 +1595,7 @@ fn read_direct_v1(
             buffer[done..done + count].copy_from_slice(&window[skip..skip + count]);
             done += count;
         }
-        Ok(())
+        Ok(read_bytes)
     })();
     if let Ok(mut pool) = buffers.lock() {
         pool.push(aligned);
@@ -1573,6 +1627,36 @@ fn produce_sections_v1(inner: &InnerV1, record: &RecordV1) -> Result<Vec<Vec<u8>
             &mut out,
         )?;
         return Ok(vec![out]);
+    }
+    if let WeightTransform::PackedOperand(operand) = &record.prepared.record().transform {
+        let described = record.prepared.record();
+        if let Some(index) = operand.independent_scale_source(described) {
+            let input = inner
+                .packed_sources
+                .read(inner, record, index)
+                .map_err(&error)?;
+            let buffer = inner
+                .packed_buffers
+                .take(record.prepared.byte_length() as usize);
+            if let Some(scales) = operand
+                .independent_scales(described, input.bytes(), buffer)
+                .map_err(&error)?
+            {
+                return Ok(vec![Vec::new(), scales, Vec::new()]);
+            }
+        }
+        let inputs = (0..record.sources.len())
+            .map(|index| inner.packed_sources.read(inner, record, index))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(&error)?;
+        let views = inputs.iter().map(|input| input.bytes()).collect::<Vec<_>>();
+        let sizes = operand.plan.section_bytes().map_err(|e| e.to_string())?;
+        let buffers = [sizes.codes, sizes.local_scales, sizes.global_scales]
+            .map(|size| inner.packed_buffers.take(size as usize));
+        return operand
+            .execute_sections_reusing(described, &views, buffers)
+            .map(|sections| sections.into())
+            .map_err(error);
     }
     record.prepared.produce_sections(&mut read).map_err(error)
 }
@@ -1646,6 +1730,8 @@ fn prepare_record_v1(
     Ok((
         key,
         RecordV1 {
+            consumer: 0,
+            packed_sources: Vec::new(),
             offset: record.arena_offset,
             bundle_params: if bundle {
                 record.params.clone()
@@ -1784,7 +1870,7 @@ fn produce_from_shared_source_v1(
 /// counts less than the bytes held.
 fn release_retained_v1(inner: &InnerV1, bytes: Arc<RetainedBytesV1>) {
     if let Some(bytes) = Arc::into_inner(bytes) {
-        let length = bytes.bytes.len() as u64;
+        let length = bytes.charge;
         drop(bytes);
         inner.retained.fetch_sub(length, Ordering::AcqRel);
         #[cfg(test)]
@@ -1829,26 +1915,48 @@ fn copy_shared_v1(
             .lock()
             .map_err(|_| "shared output poisoned")?;
         let bytes = match state.sections[wanted].clone() {
-            Some(bytes) => SectionV1::Retained(bytes),
+            Some(bytes) => {
+                inner.shared_output_hits.fetch_add(1, Ordering::Relaxed);
+                SectionV1::Retained(bytes)
+            }
             None => {
                 let produced = produce_sections_v1(inner, record)?;
+                inner
+                    .shared_output_productions
+                    .fetch_add(1, Ordering::Relaxed);
+                if state.produced_sections[wanted] {
+                    inner
+                        .shared_output_reproductions
+                        .fetch_add(1, Ordering::Relaxed);
+                }
                 let mut wanted_bytes = None;
                 for (section, data) in produced.into_iter().enumerate().take(3) {
+                    if data.is_empty() {
+                        continue;
+                    }
+                    state.produced_sections[section] = true;
+                    let pooled = matches!(
+                        record.prepared.record().transform,
+                        WeightTransform::PackedOperand(_)
+                    );
+                    let charge = if pooled { data.capacity() } else { data.len() } as u64;
                     let owed = if section == wanted {
                         state.remaining[section] > length
                     } else {
                         state.remaining[section] > 0
                     };
-                    let data = if owed
-                        && state.sections[section].is_none()
-                        && reserve_v1(inner, data.len() as u64)
-                    {
-                        let held = Arc::new(RetainedBytesV1::new(inner, data));
-                        state.sections[section] = Some(Arc::clone(&held));
-                        SectionV1::Retained(held)
-                    } else {
-                        SectionV1::Own(data)
-                    };
+                    let data =
+                        if owed && state.sections[section].is_none() && reserve_v1(inner, charge) {
+                            let held = Arc::new(if pooled {
+                                RetainedBytesV1::pooled(inner, data)
+                            } else {
+                                RetainedBytesV1::new(inner, data)
+                            });
+                            state.sections[section] = Some(Arc::clone(&held));
+                            SectionV1::Retained(held)
+                        } else {
+                            SectionV1::Own(data)
+                        };
                     if section == wanted {
                         wanted_bytes = Some(data);
                     }
@@ -1874,8 +1982,17 @@ fn copy_shared_v1(
     };
     // A section the state gave up above is freed, and its reservation
     // returned, by whichever consumer drops the last reference.
-    if let SectionV1::Retained(held) = bytes {
-        release_retained_v1(inner, held);
+    match bytes {
+        SectionV1::Retained(held) => release_retained_v1(inner, held),
+        SectionV1::Own(bytes)
+            if matches!(
+                record.prepared.record().transform,
+                WeightTransform::PackedOperand(_)
+            ) =>
+        {
+            inner.packed_buffers.give(bytes)
+        }
+        SectionV1::Own(_) => {}
     }
     result
 }
@@ -2193,6 +2310,7 @@ pub(crate) fn selected_checkpoint_v1() -> Result<Option<Arc<DirectCheckpointV1>>
 #[cfg(test)]
 #[allow(clippy::single_range_in_vec_init)]
 mod tests {
+    mod packed;
     use super::*;
     use kernel_core::transform::Transform;
     use kernel_core::transform::fragment::{FragmentWeightFormat, FragmentWeightLayout};

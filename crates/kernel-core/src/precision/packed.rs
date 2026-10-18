@@ -461,6 +461,84 @@ impl MatrixView<'_> {
         Ok(())
     }
 
+    /// `slice` of a 32x32 UE8M0 matrix as its lossless MXFP8 rows, exactly
+    /// as the whole matrix's per-row expansion would repack it: each kept row
+    /// reads its own block's scales by its absolute source row, so a block
+    /// may straddle the slice's ends. The whole slice is checked before any
+    /// allocation, and only the requested K window and the scale columns it
+    /// intersects are read, straight into the padded result.
+    pub fn repack_block32_rows(self, slice: &MatrixSlice) -> Result<PackedMatrix, PrecisionError> {
+        if self.format != WeightFormat::Fp8Block32x32 {
+            return Err(self.error(
+                "repacking",
+                "row scale expansion requires E4M3/UE8M0 32x32 blocks",
+            ));
+        }
+        self.validate()?;
+        let local = self
+            .local
+            .ok_or_else(|| self.error("repacking", "missing block scales"))?;
+        if slice.rows.is_empty()
+            || slice.rows.iter().any(|&r| r >= self.rows)
+            || slice.k == 0
+            || slice
+                .k_start
+                .checked_add(slice.k)
+                .is_none_or(|k| k > self.k)
+            || slice.padded_rows < slice.rows.len()
+            || slice.padded_k < slice.k
+        {
+            return Err(self.error("repacking", "slice or padding exceeds matrix bounds"));
+        }
+        let k_origin = self
+            .k_origin
+            .checked_add(slice.k_start)
+            .ok_or_else(|| self.error("repacking", "origin overflow"))?;
+        let row_origin = self
+            .row_origin
+            .checked_add(slice.rows[0])
+            .ok_or_else(|| self.error("repacking", "row origin overflow"))?;
+        let columns = span_groups(k_origin, slice.padded_k, 32)
+            .ok_or_else(|| self.error("repacking", "scale grid overflow"))?;
+        let live_columns = span_groups(k_origin, slice.k, 32)
+            .ok_or_else(|| self.error("repacking", "scale grid overflow"))?;
+        let bytes = slice
+            .padded_rows
+            .checked_mul(slice.padded_k)
+            .filter(|&v| v as u64 <= super::MAX_TENSOR_BYTES)
+            .ok_or_else(|| self.error("repacking", "packed size overflow"))?;
+        let scale_bytes = slice
+            .padded_rows
+            .checked_mul(columns)
+            .filter(|&v| v as u64 <= super::MAX_TENSOR_BYTES)
+            .ok_or_else(|| self.error("repacking", "scale size overflow"))?;
+        let mut codes = vec![0; bytes];
+        let mut scales = vec![127; scale_bytes];
+        for (out_row, &row) in slice.rows.iter().enumerate() {
+            let src = row * self.k + slice.k_start;
+            let dst = out_row * slice.padded_k;
+            codes[dst..dst + slice.k].copy_from_slice(&self.codes[src..src + slice.k]);
+            let start = self.scale_index(row, slice.k_start)?;
+            let dst = out_row * columns;
+            scales[dst..dst + live_columns]
+                .copy_from_slice(&local.bytes[start..start + live_columns]);
+        }
+        Ok(PackedMatrix {
+            format: WeightFormat::Mxfp8,
+            rows: slice.padded_rows,
+            k: slice.padded_k,
+            k_origin,
+            row_origin,
+            logical_rows: slice.rows.len(),
+            logical_k: slice.k,
+            nibble_order: slice.nibble_order,
+            codes,
+            scale_dtype: DType::Ue8M0,
+            scales,
+            global: None,
+        })
+    }
+
     /// Lossless row selection and column slicing for supported encodings.
     /// Whole source scale groups are retained, including a partial first group.
     /// Physical padding gets zero codes; no calibration or requantization runs.

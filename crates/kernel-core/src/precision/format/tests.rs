@@ -396,6 +396,7 @@ fn block32_row_slices_equal_the_sliced_whole_expansion() {
         ((24..72).collect::<Vec<_>>(), 0, 64, 48, 64),
         (vec![3, 40, 41, 90], 0, 64, 8, 64),
         ((30..34).collect(), 32, 32, 16, 64),
+        (vec![95, 0, 33, 33], 16, 24, 6, 40),
     ] {
         let slice = MatrixSlice {
             rows: kept,
@@ -407,10 +408,7 @@ fn block32_row_slices_equal_the_sliced_whole_expansion() {
         };
         let direct = plugin.repack_mxfp8_rows_slice(matrix, &slice).unwrap();
         let expected = whole.view("block32").repack(&slice).unwrap();
-        assert_eq!(
-            (direct.codes, direct.scales, direct.format),
-            (expected.codes, expected.scales, expected.format)
-        );
+        assert_eq!(direct, expected);
     }
     let outside = MatrixSlice {
         rows: vec![rows],

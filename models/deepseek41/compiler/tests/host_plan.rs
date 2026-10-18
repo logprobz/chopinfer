@@ -13,7 +13,9 @@
 //! vocabulary shard of the embedding, and each dense block-32 FP8 matrix
 //! resident as MXFP8 rows, its E4M3 codes unchanged and each 32x32 block
 //! scale repeated on its 32 rows, for the replicated, column-split and
-//! row-split (K-split) matrices on every rank.
+//! row-split (K-split) matrices on every rank, the shared expert's three
+//! matrices (w1 and w3 each its own view) and the attention sinks of each
+//! rank's heads.
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -59,7 +61,6 @@ fn prepare(root: &Path, ranks: u32) -> Result<(PlannedImageV1, Vec<WeightPlanV1>
 }
 
 #[test]
-#[ignore = "the grouped dense output LoRA awaits its row-major-groups derivation (C1)"]
 fn every_rank_prepares_from_the_headers() {
     for geometry in GEOMETRIES {
         let root = sparse(geometry);
@@ -148,7 +149,6 @@ fn mxfp8_rows(
 }
 
 #[test]
-#[ignore = "the grouped dense output LoRA awaits its row-major-groups derivation (C1)"]
 fn planned_bytes_are_the_checkpoint_s() {
     let Some(root) = std::env::var_os("CHOPINFER_DEEPSEEK41_SYNTHETIC_CHECKPOINT") else {
         eprintln!("CHOPINFER_DEEPSEEK41_SYNTHETIC_CHECKPOINT is unset: skipped");
@@ -273,6 +273,38 @@ fn planned_bytes_are_the_checkpoint_s() {
                 &read("layers.0.attn.wo_a.scale"),
                 &expected.1,
                 &format!("{at} wo_a scales"),
+            );
+            // The shared expert: w1 and w3 split by rows, each its own
+            // view, and w2 by K.
+            for (matrix, by_rows) in [("w1", true), ("w3", true), ("w2", false)] {
+                let stem = format!("layers.0.ffn.shared_experts.{matrix}");
+                let (codes, scales) = matrices(&stem);
+                let (rows, k) = (codes.shape[0], codes.shape[1]);
+                let expected = if by_rows {
+                    let rows = rows / n;
+                    mxfp8_rows(&codes, &scales, r * rows..(r + 1) * rows, 0..k)
+                } else {
+                    let k = k / n;
+                    mxfp8_rows(&codes, &scales, 0..rows, r * k..(r + 1) * k)
+                };
+                same(
+                    &read(&format!("{stem}.weight")),
+                    &expected.0,
+                    &format!("{at} {matrix} codes"),
+                );
+                same(
+                    &read(&format!("{stem}.scale")),
+                    &expected.1,
+                    &format!("{at} {matrix} scales"),
+                );
+            }
+            // The attention sinks of the rank's heads.
+            let sink = tensor("layers.0.attn.attn_sink");
+            let heads = sink.bytes.len() / ranks as usize;
+            same(
+                &read("layers.0.attn.attn_sink"),
+                &sink.bytes[rank * heads..(rank + 1) * heads],
+                &format!("{at} attn_sink"),
             );
             start += plan.arena_bytes;
         }

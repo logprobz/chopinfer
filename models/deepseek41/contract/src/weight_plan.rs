@@ -9,10 +9,11 @@
 //! - every projection's resident sections, under the record policy of its
 //!   family ([`policy`]): a dense or grouped dense projection is one packed
 //!   operand per section (block-32 FP8 resident as MXFP8 rows, E4M3 codes
-//!   with one UE8M0 scale per row and 32 K), an expert bank expert-major
-//!   packed pieces, a lookup table its rows;
+//!   with one UE8M0 scale per row and 32 K), fused dense operands one
+//!   packed piece each, an expert bank expert-major packed pieces, a lookup
+//!   table its rows;
 //! - every side tensor's rank copy (norms, the mixers, the router biases,
-//!   the attention sinks).
+//!   and the attention sinks of the rank's heads).
 //!
 //! The Engram tables are not in the image: the host gathers their rows
 //! from the mapped checkpoint (F1). The vision tower and aligner belong to
@@ -96,13 +97,16 @@ pub struct View {
     pieces: Vec<Piece>,
 }
 
-/// The record policy of a derived operation's family: expert banks as
-/// expert-major packed pieces (a whole bank's sources would pass the 64
-/// sources one record may name), lookup tables as rows, every other
-/// projection one packed operand per resident section.
-pub fn policy(family: KernelFamily) -> Option<RecordPolicy> {
+/// The record policy of a derived operation of `family` reading `operands`
+/// source tensors: expert banks as expert-major packed pieces (a whole
+/// bank's sources would pass the 64 sources one record may name), fused
+/// dense operands (the shared expert's w1 and w3) as one packed piece per
+/// operand, which the bundle binds as its own view, lookup tables as rows,
+/// every other projection one packed operand per resident section.
+pub fn policy(family: KernelFamily, operands: u32) -> Option<RecordPolicy> {
     match family {
         KernelFamily::GroupedExpert => Some(RecordPolicy::PackedPieces),
+        KernelFamily::Dense if operands > 1 => Some(RecordPolicy::PackedPieces),
         KernelFamily::Lookup => Some(RecordPolicy::Sections(
             model_compiler_sdk::quantization::format::RecordLayout::Rows,
         )),
@@ -112,8 +116,9 @@ pub fn policy(family: KernelFamily) -> Option<RecordPolicy> {
 
 /// The view the bundle binds for `section` of the projection read from
 /// `tensor` (a source tensor of the record): a weight's codes keep its
-/// tensor name and its scales the companion name (`{stem}.scale`); an
-/// expert bank is one view of every expert the rank holds,
+/// tensor name and its scales the companion name (`{stem}.scale`), fused
+/// operands each their own; an expert bank is one view of every expert the
+/// rank holds,
 /// `{stem}.ffn.experts.{gate_up|down}.{weight|scale}`.
 pub fn view_name(
     kind: &ProjectionKind,
@@ -138,13 +143,8 @@ pub fn view_name(
         let bank = if operands == 2 { "gate_up" } else { "down" };
         return Ok(format!("{prefix}.experts.{bank}.{part}"));
     }
-    // Fused operands (the shared expert's w1 and w3) share the gate-up view.
-    if operands == 2 {
-        let (prefix, _) = stem
-            .rsplit_once('.')
-            .ok_or_else(|| format!("{tensor}: an operand source has a module"))?;
-        return Ok(format!("{prefix}.gate_up.{part}"));
-    }
+    // Fused dense operands (the shared expert's w1 and w3) are each their
+    // own view.
     Ok(format!("{stem}.{part}"))
 }
 
@@ -282,7 +282,7 @@ impl Checkpoint {
                 .find(|p| p.id == *projection)
                 .ok_or_else(|| format!("{projection}: derived without a declaration"))?;
             let at = |e: model_compiler_sdk::CompilerError| format!("{projection}: {e}");
-            let operation = match policy(operation.family) {
+            let operation = match policy(operation.family, declared.operand_count()) {
                 Some(policy) => bind_record_policy(operation.clone(), policy).map_err(at)?,
                 None => operation.clone(),
             };
@@ -333,6 +333,12 @@ impl Checkpoint {
         }
         for view in views.values_mut() {
             view.pieces.sort_by_key(|p| p.offset);
+            // A view of one operand of a fused operation starts where its
+            // piece does in the operation's section.
+            let start = view.pieces.first().map_or(0, |p| p.offset);
+            for piece in &mut view.pieces {
+                piece.offset -= start;
+            }
             let mut end = 0;
             for piece in &view.pieces {
                 if piece.offset != end {

@@ -100,12 +100,16 @@ fn bound_views(geometry: &Geometry, layer: u32) -> Vec<String> {
         "ffn.experts.gate_up.scale",
         "ffn.experts.down.weight",
         "ffn.experts.down.scale",
+        "attn.attn_sink",
     ] {
         views.push(format!("{l}{name}"));
     }
-    for matrix in ["wq_a", "wq_b", "wkv", "wo_a", "wo_b"] {
-        for part in ["weight", "scale"] {
+    for part in ["weight", "scale"] {
+        for matrix in ["wq_a", "wq_b", "wkv", "wo_a", "wo_b"] {
             views.push(format!("{l}attn.{matrix}.{part}"));
+        }
+        for matrix in ["w1", "w3", "w2"] {
+            views.push(format!("{l}ffn.shared_experts.{matrix}.{part}"));
         }
     }
     let _ = geometry;
@@ -167,7 +171,6 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 #[test]
-#[ignore = "the grouped dense output LoRA awaits its row-major-groups derivation (C1)"]
 fn every_compiled_geometry_plans_every_rank() {
     for geometry in GEOMETRIES {
         for &ranks in SUPPORTED_RANKS {

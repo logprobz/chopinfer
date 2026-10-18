@@ -2372,7 +2372,29 @@ async fn a_declared_vendor_mapping_shapes_constraints_choices_and_thinking() {
         (
             r#""structured_outputs":{"json_object":true}"#.to_owned(),
             Some(object_grammar.clone()),
-            Some(object_grammar),
+            Some(object_grammar.clone()),
+        ),
+        // An explicit constraint stands beside a response format that
+        // constrains nothing under the mapping.
+        (
+            r#""structured_outputs":{"json_object":true},"response_format":{"type":"json_object"}"#
+                .to_owned(),
+            Some(object_grammar.clone()),
+            Some(object_grammar.clone()),
+        ),
+        (
+            format!(
+                r#""structured_outputs":{{"json":{{"type":"object"}}}},{}"#,
+                format("")
+            ),
+            Some(schema_grammar.clone()),
+            Some(
+                runtime_grammar::json_schema_grammar(
+                    &serde_json::json!({"type": "object"}),
+                    Default::default(),
+                )
+                .unwrap(),
+            ),
         ),
         (tools.to_owned(), Some(tool_grammar()), None),
         (

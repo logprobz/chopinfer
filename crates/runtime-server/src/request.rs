@@ -791,6 +791,7 @@ fn prepare_completion(
         request.structured_outputs.as_ref(),
         request.response_format.as_ref(),
         max_string_bytes,
+        false,
     )?
     .map(|requested| requested.grammar())
     .transpose()?;
@@ -943,11 +944,14 @@ fn prepare_chat(
     } else {
         None
     };
+    // A frontend that constrains only strict requests renders the other
+    // response formats and leaves their decoding as its vendor API does.
     let strict_only = frontend.constrains_strict_only();
     let requested = requested_output_constraint(
         request.structured_outputs.as_ref(),
         request.response_format.as_ref(),
         max_string_bytes,
+        strict_only,
     )?;
     if matches!(tool_choice, FrontendToolChoiceV1::Named(_))
         && requested
@@ -959,9 +963,6 @@ fn prepare_chat(
             Some("structured_outputs"),
         ));
     }
-    // A frontend that constrains only strict requests renders the rest
-    // and leaves their decoding as its vendor API does.
-    let requested = requested.filter(|requested| !strict_only || requested.applies_when_strict());
     let messages = convert_messages(
         request.messages,
         frontend,
@@ -1891,6 +1892,7 @@ fn requested_output_constraint(
     structured_outputs: Option<&FrontendJsonV1>,
     response_format: Option<&FrontendJsonV1>,
     max_string_bytes: usize,
+    strict_only: bool,
 ) -> Result<Option<RequestedConstraint>, ApiError> {
     if let Some(format) = response_format {
         validate_json_strings(format, "response_format", max_string_bytes)?;
@@ -1898,7 +1900,7 @@ fn requested_output_constraint(
     if let Some(outputs) = structured_outputs {
         validate_json_strings(outputs, "structured_outputs", max_string_bytes)?;
     }
-    requested_constraint(structured_outputs, response_format)
+    requested_constraint(structured_outputs, response_format, strict_only)
 }
 
 fn frontend_error(error: FrontendErrorV1, fallback: &'static str) -> ApiError {

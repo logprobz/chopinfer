@@ -407,21 +407,23 @@
       ],
       "constants": {
         "paired_teacher": {
-          "POLICY": {
+          "PROFILE_POLICIES": {
             "source": "docs/paired-accuracy.md#activation-and-calibration",
             "value": {
-              "schema": "paired-teacher-margins/v1",
-              "approval": "operator:2026-10-18:reviewed-neutral-margins",
-              "rationale": "The accepted arm is the first stored teacher receipt of a served candidate against the F32-TQ teacher reference fcbd248b, so the policy activates once one exists. Retain the standard reviewed neutral margins of MiMo's and Qwen's tp4-ar policy: 0.005-nat pooled upper CI95, 0.01-nat category point mean, 1% pooled top-one upper CI95, Holm alpha 0.05, eight clusters for a CI and two net tail positions above 0.5 nats; sparse pooled sets are refused. One policy covers every DeepSeek profile. The approval line records the review of these margins on 2026-10-18.",
-              "reference_sha256": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
-              "mean_margin": 0.005,
-              "category_mean_margin": 0.01,
-              "top1_delta": 0.01,
-              "category_alpha": 0.05,
-              "min_clusters": 8,
-              "tail_growth_nats": 0.5,
-              "tail_net_allowance": 2,
-              "allow_sparse_pooled": false
+              "tp4-ar": {
+                "schema": "paired-teacher-margins/v1",
+                "approval": "operator:2026-10-18:reviewed-neutral-margins",
+                "rationale": "The accepted arm is the first stored teacher receipt of a served candidate against the F32-TQ teacher reference fcbd248b, so the policy activates once one exists. Retain the standard reviewed neutral margins of MiMo's and Qwen's tp4-ar policy: 0.005-nat pooled upper CI95, 0.01-nat category point mean, 1% pooled top-one upper CI95, Holm alpha 0.05, eight clusters for a CI and two net tail positions above 0.5 nats; sparse pooled sets are refused. The approval line records the review of these margins on 2026-10-18.",
+                "reference_sha256": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
+                "mean_margin": 0.005,
+                "category_mean_margin": 0.01,
+                "top1_delta": 0.01,
+                "category_alpha": 0.05,
+                "min_clusters": 8,
+                "tail_growth_nats": 0.5,
+                "tail_net_allowance": 2,
+                "allow_sparse_pooled": false
+              }
             }
           }
         }

@@ -4,7 +4,7 @@
 use crate::CompilerError;
 use kernel_core::contract::DType;
 use kernel_core::precision::DecodeOrder;
-use kernel_core::precision::format::{FormatId, FormatPlugin};
+use kernel_core::precision::format::{FormatId, FormatPlugin, KernelFamily};
 use kernel_core::precision::layout::PackingPlan;
 use kernel_core::transform::fragment::FragmentWeightFormat;
 use kernel_core::weight_transform::{
@@ -27,7 +27,14 @@ pub fn packed_records(
     sources: Vec<SourceTensor>,
 ) -> Result<Vec<WeightRecord>, CompilerError> {
     plan.validate()?;
-    if !plugin.accepts(plan.format) || matrices.iter().any(|m| m.format != plan.format) {
+    // A matrix packs in its own encoding, or a dense 32x32 UE8M0 one as its
+    // resident MXFP8 rows.
+    let resident = |format| {
+        plugin.accepts(format)
+            && (format == plan.format
+                || plugin.resident_format(format, KernelFamily::Dense) == plan.format)
+    };
+    if matrices.iter().any(|m| !resident(m.format)) {
         return Err(error(
             "plug-in disagrees with packing plan or source matrices",
         ));

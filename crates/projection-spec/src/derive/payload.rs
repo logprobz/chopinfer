@@ -101,7 +101,8 @@ pub struct ActivationBuffer<'a> {
     pub bytes: &'a [u8],
 }
 
-/// Gather activation columns bit-for-bit and zero the target padding.
+/// Gather activation columns bit-for-bit and zero the target padding,
+/// including any gap between segments.
 pub fn input(
     input: &super::DerivedInput,
     sources: &std::collections::BTreeMap<String, ActivationBuffer<'_>>,
@@ -137,7 +138,9 @@ pub fn input(
             || source.rows != view.shape[0]
             || segment.columns.is_empty()
             || segment.columns.end > source.columns
-            || segment.target_columns.start != end
+            // In order without overlap; a gap is zero padding, as between
+            // the K-wide slots of a grouped input's groups.
+            || segment.target_columns.start < end
             || segment.target_columns.end > view.shape[1]
             || segment.columns.end - segment.columns.start
                 != segment.target_columns.end - segment.target_columns.start

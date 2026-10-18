@@ -3,7 +3,7 @@
 use kernel_core::contract::{DType, SwigluColumns};
 use kernel_core::precision::format::{KernelFamily, LayoutVariant, registry as formats};
 use kernel_core::precision::layout::PackingPlan;
-use kernel_core::precision::{OperationSpec, OperationUse};
+use kernel_core::precision::{OperationKind, OperationSpec, OperationUse};
 use std::collections::BTreeSet;
 
 use super::selection::{self, Selection};
@@ -850,7 +850,19 @@ pub(super) fn ordinary(
         ));
     }
     let experts = selection.experts.end - selection.experts.start;
-    let kind = p.operation_kind(g, selection)?;
+    // Each group of a grouped dense operation is a dense matrix; this spec
+    // stays internal to the derivation, which never exports it as one.
+    let kind = match p.kind {
+        ProjectionKind::GroupedDense { .. } => OperationKind::Dense,
+        _ => p.operation_kind(g, selection)?,
+    };
+    // Several groups stack as independent row-major matrices.
+    if matches!(p.kind, ProjectionKind::GroupedDense { .. })
+        && experts > 1
+        && layout.weight.id == "row-major"
+    {
+        layout.weight.id = "row-major-groups".into();
+    }
     let output_name = match arithmetic.output {
         DType::Bf16 => "bf16",
         DType::F32 => "f32",
@@ -874,7 +886,7 @@ pub(super) fn ordinary(
     operation.validate().map_err(|e| Error(e.to_string()))?;
     let packing = PackingPlan {
         layout: layout.weight.clone(),
-        format: first.format,
+        format: plugin.resident_format(first.format, family),
         experts,
         projections: p.operand_count(),
         rows: u32_dim(selection.physical.rows, "packed rows")?,
@@ -1677,9 +1689,17 @@ impl DerivedOperation {
         execution: kernel_core::precision::execution::BlockScaledExecution,
     ) -> Result<kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery, Error> {
         use kernel_core::contract::Validate;
-        if self.family != KernelFamily::Dense {
+        // The contract reads E4M3 rows with one UE8M0 scale per row and 32 K,
+        // one matrix per group.
+        let packing = &self.packing;
+        if self.family != KernelFamily::Dense
+            || packing.format != kernel_core::contract::WeightFormat::Mxfp8
+            || packing.local_scale_dtype != Some(DType::Ue8M0)
+            || packing.projections != 1
+            || !matches!(packing.layout.id.as_str(), "row-major" | "row-major-groups")
+        {
             return Err(Error(format!(
-                "operation `{}` is not a dense or grouped dense operation",
+                "operation `{}` does not pack the fold GEMM's MXFP8 rows",
                 self.operation.id
             )));
         }

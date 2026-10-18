@@ -34,6 +34,18 @@ pub fn bind_record_policy(
             "record policy cannot replace provider-owned preparation or records",
         ));
     }
+    // A resident operand in another encoding than its source (a dense 32x32
+    // UE8M0 operand's MXFP8 rows) is produced only by the packed operand,
+    // which expands it; a section copy would store the source grid.
+    let expanded = operation
+        .slices
+        .iter()
+        .any(|s| s.source.weight.format != operation.packing.format);
+    if expanded && !matches!(policy, RecordPolicy::Packed | RecordPolicy::PackedPieces) {
+        return Err(error(
+            "a row-expanded operand is recorded as packed operands, not section copies",
+        ));
+    }
     if policy == RecordPolicy::Packed {
         operation.variant_records = records(&operation)?;
     } else {
@@ -190,7 +202,9 @@ fn pieces(operation: &DerivedOperation) -> Result<Vec<OperandSlice>, CompilerErr
         if tile && slice.geometry.rows != operation.logical_geometry.rows {
             return Err(error("a tiled destination cannot carry padding rows"));
         }
-        if slice.source.weight.format != operation.packing.format
+        if registry::by_id(slice.format)?
+            .resident_format(slice.source.weight.format, operation.family)
+            != operation.packing.format
             || slice.geometry.rows != u64::from(operation.packing.rows)
             || slice.geometry.k != u64::from(operation.packing.k)
             || slice.target_k != (0..operation.logical_geometry.k)

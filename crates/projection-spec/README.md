@@ -60,7 +60,9 @@ independent `shape` matrices stacked along the source's rows, without routing
 or a sum across groups: group `g` reads its own K-wide input slice and writes
 its own output columns, a rank owns whole groups (`expert_owned`), and the
 derived operation maps onto the grouped fold GEMM contract
-(`kernel_core::mxfp8_gemm`) rather than a dense kernel. `operands` names fused operands such as gate and up; without `{operand}` or
+(`kernel_core::mxfp8_gemm`) rather than a dense kernel: several local groups
+have no dense operation kind or spec. Its activation bindings address every
+group's K side by side, and a rank reads its own groups' columns. `operands` names fused operands such as gate and up; without `{operand}` or
 `{expert}` in the source name, one tensor stacks operands along rows and
 experts along its leading axis. `parts` are row chunks that keep their own
 scale-grid origin. `format` optionally pins a format plug-in; without it the

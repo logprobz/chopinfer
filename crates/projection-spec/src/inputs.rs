@@ -103,10 +103,18 @@ impl ActivationSegment {
                     .ok_or_else(|| {
                         Error("activation segment names an unknown projection".into())
                     })?;
-                if p.operand_index(operand).is_none() {
+                let Some(index) = p.operand_index(operand) else {
                     return Err(Error("activation segment names an unknown operand".into()));
-                }
+                };
                 let k = p.shape[1].resolve(geometry)?;
+                // A grouped dense input is every group's K side by side; a
+                // rank reads its own groups' columns.
+                if let crate::ProjectionKind::GroupedDense { .. } = p.kind {
+                    let groups =
+                        crate::derive::selection::select(p, geometry, topology, index as u32)?
+                            .experts;
+                    return Ok(u64::from(groups.start) * k..u64::from(groups.end) * k);
+                }
                 let tile: Option<&Dim> =
                     if let Some(split) = p.operand_splits.iter().find(|s| s.operand == *operand) {
                         (split.axis == SliceAxis::K).then_some(&split.tile)

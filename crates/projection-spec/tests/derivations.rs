@@ -327,28 +327,20 @@ fn grouped_dense_ranks_own_whole_groups_and_map_onto_the_fold_contract() {
                     "{role:?} {shape:?}"
                 );
             }
-            let query = op
+            // BF16 fragments are not the fold GEMM's MXFP8 rows.
+            let refusal = op
                 .fold_gemm_query(
                     kernel_core::precision::execution::BlockScaledExecution::ExactDecodedBf16Mma,
                 )
-                .unwrap();
+                .unwrap_err()
+                .0;
+            assert!(refusal.contains("MXFP8 rows"), "{refusal}");
+            // Several groups have no public dense operation kind.
+            let selection =
+                derive::rank_selection(&d.projections[0], &g, Topology { ranks, rank }, 0).unwrap();
             assert_eq!(
-                (
-                    query.groups,
-                    query.n,
-                    query.k,
-                    query.activation_row_stride,
-                    query.activation_group_stride,
-                    query.m_capacity,
-                ),
-                (
-                    local,
-                    op.packing.rows,
-                    op.packing.k,
-                    local * op.packing.k,
-                    op.packing.k,
-                    128
-                )
+                d.projections[0].operation_kind(&g, &selection).is_err(),
+                groups.is_some()
             );
             // One group is the dense matrix it is; more never lower to a
             // dense kernel.
@@ -1087,6 +1079,85 @@ fn activation_segments_materialize_rank_k_columns_with_exact_bits_and_zero_paddi
             .unwrap_err()
             .0
             .contains("weight K ownership")
+    );
+}
+
+/// Two local groups of a grouped dense input read their own K columns of
+/// the whole grouped activation, each into its packed K-wide slot.
+#[test]
+fn grouped_activation_bindings_cover_every_local_group() {
+    use projection_spec::inputs::{ActivationInput, ActivationSegment, ActivationSelection};
+    let (mut d, b, g, i) = fixture(
+        SplitClass::ExpertOwned {
+            tile: Dim::Literal(1),
+        },
+        4,
+        8,
+        ProjectionKind::GroupedDense {
+            groups: Dim::Literal(4),
+        },
+    );
+    d.projections[0].inputs = vec![ActivationInput {
+        operand: "weight".into(),
+        binding: "grouped".into(),
+        segments: vec![ActivationSegment {
+            origin: None,
+            length: None,
+            source: "heads".into(),
+            selection: ActivationSelection::RankK {
+                projection: "matrix".into(),
+                operand: "weight".into(),
+            },
+        }],
+    }];
+    let r = run(&d, &b, &g, &i, Topology { ranks: 2, rank: 1 }).unwrap();
+    let op = &r.operations[0];
+    // BF16 fragments pad K 8 to 16: each group's slot ends in zeros.
+    assert_eq!(op.packing.k, 16);
+    let input = &op.inputs[0];
+    assert_eq!(input.view.shape, vec![128, 32]);
+    assert_eq!(
+        input
+            .segments
+            .iter()
+            .map(|s| (s.columns.clone(), s.target_columns.clone()))
+            .collect::<Vec<_>>(),
+        vec![(16..24, 0..8), (24..32, 16..24)]
+    );
+    let bytes = (0..128 * 32u16)
+        .flat_map(u16::to_le_bytes)
+        .collect::<Vec<_>>();
+    let buffers = std::collections::BTreeMap::from([(
+        "heads".into(),
+        derive::payload::ActivationBuffer {
+            dtype: DType::Bf16,
+            rows: 128,
+            columns: 32,
+            bytes: &bytes,
+        },
+    )]);
+    let packed = derive::payload::input(input, &buffers).unwrap();
+    let expected = (0..128)
+        .flat_map(|row| {
+            let group =
+                |g: usize| bytes[(row * 32 + g * 8) * 2..(row * 32 + g * 8 + 8) * 2].to_vec();
+            [group(2), vec![0; 16], group(3), vec![0; 16]].concat()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(packed, expected);
+    // A binding that covers only the first group's columns leaves the
+    // second uncovered.
+    d.projections[0].inputs[0].segments[0].selection = ActivationSelection::Rows {
+        rows: projection_spec::contracts::RowRange {
+            start: Dim::Literal(16),
+            length: Dim::Literal(8),
+        },
+    };
+    assert!(
+        run(&d, &b, &g, &i, Topology { ranks: 2, rank: 1 })
+            .unwrap_err()
+            .0
+            .contains("cover live K")
     );
 }
 

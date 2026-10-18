@@ -2,6 +2,88 @@
 use super::{DerivedInput, DerivedOperation, InputSegment, ProjectionContext, ViewRole};
 use crate::Error;
 
+/// A grouped dense input's segments: local group `j` reads its global
+/// group's K columns of each source segment, placed at `j` times the packed
+/// K in the view. Every local group's live K is covered exactly once.
+fn grouped(
+    ctx: &ProjectionContext<'_>,
+    operation: &DerivedOperation,
+    input: &crate::inputs::ActivationInput,
+    operand: usize,
+    width: u64,
+) -> Result<Vec<InputSegment>, Error> {
+    let selected = match ctx.selections {
+        Some(selections) => selections
+            .get(operand)
+            .ok_or_else(|| Error("activation operand has no assembly selection".into()))?
+            .clone(),
+        None => {
+            super::selection::select(ctx.projection, ctx.geometry, ctx.topology, operand as u32)?
+        }
+    };
+    let k = selected.logical.k;
+    let packed = u64::from(operation.packing.k);
+    let first = u64::from(selected.experts.start);
+    let local = u64::from(selected.experts.end) - first;
+    if width
+        != packed
+            .checked_mul(local)
+            .ok_or_else(|| Error("activation width overflows".into()))?
+    {
+        return Err(Error(
+            "activation view disagrees with its storage/geometry contract".into(),
+        ));
+    }
+    let mut segments = Vec::new();
+    for segment in &input.segments {
+        let global = segment.global_range(ctx.declaration, ctx.geometry, ctx.topology)?;
+        let origin = segment
+            .origin
+            .as_ref()
+            .map(|d| d.resolve_offset(ctx.geometry))
+            .transpose()?
+            .unwrap_or(0);
+        let source_columns = segment
+            .length
+            .as_ref()
+            .map(|d| d.resolve(ctx.geometry))
+            .transpose()?;
+        for j in 0..local {
+            let start = (first + j) * k;
+            let (lo, hi) = (global.start.max(start), global.end.min(start + k));
+            if lo >= hi {
+                continue;
+            }
+            segments.push(InputSegment {
+                source: segment.source.clone(),
+                source_columns,
+                columns: lo - origin..hi - origin,
+                target_columns: j * packed + lo - start..j * packed + hi - start,
+            });
+        }
+    }
+    segments.sort_by_key(|s| s.target_columns.start);
+    for pair in segments.windows(2) {
+        if pair[0].target_columns.end > pair[1].target_columns.start {
+            return Err(Error("activation owner domains overlap".into()));
+        }
+    }
+    for j in 0..local {
+        let slot = j * packed..j * packed + k;
+        let covered: u64 = segments
+            .iter()
+            .filter(|s| slot.contains(&s.target_columns.start))
+            .map(|s| s.target_columns.end - s.target_columns.start)
+            .sum();
+        if covered != k {
+            return Err(Error(
+                "activation segments do not cover live K exactly".into(),
+            ));
+        }
+    }
+    Ok(segments)
+}
+
 pub(super) fn lower(
     ctx: &ProjectionContext<'_>,
     operation: &mut DerivedOperation,
@@ -23,6 +105,21 @@ pub(super) fn lower(
             .activations
             .get(operand)
             .ok_or_else(|| Error("activation binding has no storage recipe".into()))?;
+        if let crate::ProjectionKind::GroupedDense { .. } = ctx.projection.kind {
+            if view.dtype != activation.storage || view.shape.len() != 2 {
+                return Err(Error(
+                    "activation view disagrees with its storage/geometry contract".into(),
+                ));
+            }
+            let segments = grouped(ctx, operation, input, operand, view.shape[1])?;
+            operation.inputs.push(DerivedInput {
+                operand: operand as u32,
+                binding: input.binding.clone(),
+                view,
+                segments,
+            });
+            continue;
+        }
         if view.dtype != activation.storage
             || view.shape.len() != 2
             || view.shape[1] != u64::from(operation.packing.k)

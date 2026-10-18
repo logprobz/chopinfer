@@ -1,7 +1,6 @@
 //! Shared conformance scenarios over the deepseek41 fake host, one served
 //! item over the native KV layout, at every topology Flash serves: without
-//! speculation, and with verify rows the host drafts (no drafter loads
-//! yet). The BF16 layout's create refuses until its writers land.
+//! speculation, and with host-supplied verify rows retained by DSpark.
 //!
 //! Without speculation the instance takes no verify rows, so the scenarios
 //! that open a verify step (malformed commits and two of the poisoned-client
@@ -98,7 +97,7 @@ fn step(items: &[(u64, u64, u64, &[u32], Phase)]) -> Vec<u8> {
 
 /// Checks that every acquisition through `observed` was released and that
 /// no buffer `host` allocated is still live.
-fn assert_host_released(observed: &ObservedHost<Host>, host: &FakeHost, label: &str) {
+fn assert_host_released<B>(observed: &ObservedHost<B>, host: &FakeHost, label: &str) {
     observed.accounting.assert_released();
     for id in host.device.buffer_order.borrow().iter() {
         assert!(
@@ -112,7 +111,7 @@ fn assert_host_released(observed: &ObservedHost<Host>, host: &FakeHost, label: &
 /// scenario created (cancellation's fault needs it).
 struct Model<const CASE: usize> {
     host: Rc<Host>,
-    observed: Rc<ObservedHost<Host>>,
+    observed: Rc<ObservedHost<dspark::host::MappedHost>>,
     handle: Cell<Option<BundleHandleV1>>,
     /// Whether the next cancel finds its step committed behind the
     /// client's back.
@@ -123,14 +122,17 @@ impl<const CASE: usize> Adapter for Model<CASE> {
     type Startup = Served;
     type Observer = NoObserver;
     type Limits = Limits;
-    type Host = ObservedHost<Host>;
+    type Host = ObservedHost<dspark::host::MappedHost>;
 
     fn new() -> Self {
         let case = &CASES[CASE];
         let host = FakeHost::new(Shape::new(&FLASH, case.ranks).unwrap(), KV_LAYOUTS[0]);
         host.speculation.set(case.speculation);
+        host.drafter.set(case.speculation.is_some());
         Self {
-            observed: Rc::new(ObservedHost::new(Rc::clone(&host))),
+            observed: Rc::new(ObservedHost::new(Rc::new(dspark::host::MappedHost(
+                Rc::clone(&host),
+            )))),
             host,
             handle: Cell::new(None),
             cancel_armed: Cell::new(false),

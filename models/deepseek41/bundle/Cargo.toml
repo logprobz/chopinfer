@@ -36,6 +36,9 @@ projection-spec.workspace = true
 [dev-dependencies]
 bundle-runtime = { workspace = true, features = ["test-support"] }
 encoder-spec.workspace = true
+model-compiler-sdk.workspace = true
+model-deepseek41 = { path = "../compiler" }
+runtime-bundle.workspace = true
 serde_json.workspace = true
 
 # Tests that include the build script's registration files live under

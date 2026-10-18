@@ -188,11 +188,9 @@ pub fn decode(bytes: &[u8], log: impl Fn(&str)) -> Result<Configuration, BundleS
     }
     let k = &create.kv;
     let s = &create.state;
-    // The host allocates the per-item state of every bucket item, with or
-    // without the drafter's.
+    // The host allocates target state; enabled drafters reserve their own.
     let slots = u64::from(create.items.capacity());
-    let state_bytes =
-        [false, true].map(|dspark| slots * slot_state_bytes(&shape, kv.storage, dspark));
+    let state_bytes = slots * slot_state_bytes(&shape, kv.storage, false);
     if k.page_bytes != page_bytes
         || k.page_tokens != PAGE_TOKENS
         || k.ranks != u64::from(shape.ranks())
@@ -201,7 +199,7 @@ pub fn decode(bytes: &[u8], log: impl Fn(&str)) -> Result<Configuration, BundleS
         || k.alignment < model_deepseek41_contract::state::PAGE_ACCESS_ALIGNMENT
         || !page_bytes.is_multiple_of(k.alignment)
         || s.state_id != REQUEST_STATE_ID.as_bytes()
-        || !state_bytes.contains(&s.bytes)
+        || s.bytes != state_bytes
         || s.alignment < 256
         || !s.alignment.is_power_of_two()
         || !has_roles

@@ -538,9 +538,17 @@ pub(crate) fn api() -> BundleApiV1 {
 /// Creates an instance serving `items` with only its lowered stages
 /// (`crate::instance::PARTIAL`).
 pub(crate) fn create(host: &Rc<Host>, items: u32) -> BundleInstanceV1 {
+    if host.speculation.get().is_some_and(|(drafts, _)| drafts > 0) {
+        host.drafter.set(true);
+    }
     let record = crate::config::tests::record(&host.shape, host.kv, items, false);
     crate::instance::PARTIAL.with(|partial| partial.set(true));
-    let created = api().create(HostServicesTableV1::new(Rc::clone(host)), &record);
+    let services = if host.drafter.get() {
+        HostServicesTableV1::new(Rc::new(dspark::host::MappedHost(Rc::clone(host))))
+    } else {
+        HostServicesTableV1::new(Rc::clone(host))
+    };
+    let created = api().create(services, &record);
     crate::instance::PARTIAL.with(|partial| partial.set(false));
     created.unwrap_or_else(|error| panic!("fake-host create: {error:?} {:?}", host.logs.borrow()))
 }

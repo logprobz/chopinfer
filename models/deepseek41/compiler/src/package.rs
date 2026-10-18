@@ -154,15 +154,15 @@ pub fn topology_id(geometry: &Geometry, ranks: u32) -> String {
 }
 
 /// The per-item state bytes of one state slot of `geometry` in `storage`
-/// including the native drafter rings and retained features, in whole
-/// 256-byte blocks: what create checks against the served item count.
+/// in whole 256-byte blocks. The bundle allocates drafter rings and
+/// retained features separately when speculation is enabled.
 pub fn slot_state_bytes(geometry: &Geometry, storage: KvStorage) -> u64 {
     let slot = bundle_runtime::state::Extent {
         served: 1,
         bucket: 1,
         verify_rows: 0,
     };
-    request_state(geometry, storage, storage == KvStorage::Native)
+    request_state(geometry, storage, false)
         .buffers
         .iter()
         .map(|buffer| buffer.bytes(slot))

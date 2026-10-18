@@ -4,7 +4,8 @@ use super::*;
 use bundle_runtime::fake_host::RecordingSink;
 use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
 
-mod host;
+pub(super) mod host;
+mod package;
 type Sink = RecordingSink<super::conformance::Limits>;
 
 pub(super) fn index(
@@ -81,7 +82,7 @@ fn create(shape: Shape) -> (Rc<Host>, BundleInstanceV1) {
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
     host.drafter.set(true);
     host.speculation.set(Some((5, 32)));
-    let record = crate::config::tests::record(&shape, host.kv, 4, true);
+    let record = crate::config::tests::record(&shape, host.kv, 4, false);
     let instance = api()
         .create(
             HostServicesTableV1::new(Rc::new(host::MappedHost(Rc::clone(&host)))),

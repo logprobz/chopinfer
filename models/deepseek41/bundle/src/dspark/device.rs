@@ -23,7 +23,7 @@ use super::execution::Runtime;
 use super::features::Layout;
 use super::staging::Staging;
 use super::state::{BLOCK_ROWS, Config, State};
-use crate::buffers::{RankBuffers, Scratch};
+use crate::buffers::{RankBuffers, Scratch, StateSpans};
 use crate::engram_rows::Destination;
 use crate::lower::dspark::heads::Heads;
 use crate::lower::dspark::{DraftMode, Prepared, Window};
@@ -170,6 +170,28 @@ impl Device {
             *most = (*most).max(*shared);
         }
         bytes
+    }
+
+    pub fn extend_state(
+        &self,
+        services: &HostServicesV1,
+        pool: BundleMemoryPoolHandleV1,
+        stream: BundleStreamHandleV1,
+        extent: bundle_runtime::state::Extent,
+        target: &mut StateSpans,
+        held: &mut Vec<Held>,
+    ) -> Result<(), BundleAbiError> {
+        let state = model_deepseek41_contract::state::request_state(
+            self.shape.geometry,
+            KvStorage::Native,
+            true,
+        );
+        for buffer in state.buffers.iter().filter(|buffer| buffer.drafter) {
+            let span = allocate_span(services, pool, stream, buffer.bytes(extent), held)?;
+            services.zero_device_buffer(stream, span)?;
+            target.buffers.push((buffer.name, span));
+        }
+        Ok(())
     }
 
     pub fn bind_stages(&mut self, buffers: &[RankBuffers]) -> Result<(), String> {

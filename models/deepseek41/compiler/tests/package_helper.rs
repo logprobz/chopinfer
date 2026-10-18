@@ -385,7 +385,7 @@ fn the_manifest_declares_each_topology_s_resources() {
         let state = topology.state_layout();
         assert_eq!(state.id().as_str(), REQUEST_STATE_ID);
         assert_eq!(state.bytes(), slot_state_bytes(geometry, KvStorage::Native));
-        assert_eq!(state.bytes(), 7_289_856);
+        assert_eq!(state.bytes(), 2_970_624);
         let formats = topology.kv_formats();
         assert_eq!(
             formats.iter().map(|f| f.dtype()).collect::<Vec<_>>(),
@@ -419,7 +419,7 @@ fn the_manifest_declares_each_topology_s_resources() {
 /// snapshots into it. Create allocates every slot's state before the
 /// serving KV pool, so the host's slot pool reserves nothing beside it, and
 /// the state the host creates the bundle with in either KV format fits the
-/// declared slots, the native state including the drafter exactly.
+/// declared slots. The bundle reserves drafter state only when enabled.
 #[test]
 fn each_topology_keeps_its_request_state_in_host_slots() {
     use runtime_bundle_abi::{
@@ -438,8 +438,8 @@ fn each_topology_keeps_its_request_state_in_host_slots() {
             layout.lifetime(),
             runtime_bundle::BundleStateLifetimeV1::Request
         );
-        assert_eq!(layout.bytes(), slot_state_bytes(&FLASH, KvStorage::Native));
-        assert_eq!(layout.bytes(), 7_289_856);
+        assert_eq!(layout.bytes(), slot_state_bytes(&FLASH, KvStorage::Bf16));
+        assert_eq!(layout.bytes(), 5_668_864);
         assert_eq!(
             topology.recurrent_state_bytes_per_slot().unwrap(),
             layout.bytes()

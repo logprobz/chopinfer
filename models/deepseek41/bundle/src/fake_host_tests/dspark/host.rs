@@ -2,7 +2,7 @@
 //! All other services use the ordinary fake host, including span checks.
 use super::*;
 
-pub(super) struct MappedHost(pub Rc<Host>);
+pub(in crate::fake_host_tests) struct MappedHost(pub Rc<Host>);
 macro_rules! forward {
     ($name:ident($($arg:ident: $ty:ty),*) -> $result:ty) => {
         fn $name(&self, $($arg: $ty),*) -> HostServiceResultV1<$result> {

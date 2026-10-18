@@ -368,6 +368,22 @@ impl Instance {
             held,
         )?;
         let extent = self.extent;
+        let target = model_deepseek41_contract::state::request_state(
+            shape.geometry,
+            self.config.kv.storage,
+            false,
+        );
+        let state_views = state_views
+            .into_iter()
+            .zip(&ranks)
+            .map(|(view, &(_, pool, stream))| {
+                let mut bound = StateSpans::new(&target, extent, view)?;
+                if let Some(drafter) = &self.dspark {
+                    drafter.extend_state(services, pool, stream, extent, &mut bound, held)?;
+                }
+                Ok(bound)
+            })
+            .collect::<Result<Vec<_>, BundleAbiError>>()?;
         let mut shared = self.ops.shared_bytes();
         if let Some(drafter) = &self.dspark {
             for (entry, bytes) in drafter.shared_bytes() {
@@ -467,7 +483,7 @@ impl Instance {
         {
             self.buffers.push(RankBuffers {
                 scratch,
-                state: StateSpans::new(&self.state, extent, state)?,
+                state,
                 views,
                 kv_pool,
                 comm,
@@ -509,10 +525,9 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         model_deepseek41_contract::serving::SCORED_ROWS,
     )?;
     let shape = config.shape;
-    let has_drafter = shape.geometry.dspark_stages() > 0
-        && config.create.state.bytes
-            == u64::from(items.capacity())
-                * crate::config::slot_state_bytes(&shape, config.kv.storage, true);
+    let has_drafter = verify_rows > 0
+        && config.kv.storage == model_deepseek41_contract::state::KvStorage::Native
+        && shape.geometry.dspark_stages() > 0;
     let state = model_deepseek41_contract::state::request_state(
         shape.geometry,
         config.kv.storage,
@@ -520,7 +535,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
     );
     if config.create.state.bytes
         != u64::from(items.capacity())
-            * crate::config::slot_state_bytes(&shape, config.kv.storage, has_drafter)
+            * crate::config::slot_state_bytes(&shape, config.kv.storage, false)
     {
         log("the per-item state bytes differ from the model's state declaration");
         return Err(BundleStatusV1::Unsupported.into());
@@ -538,10 +553,6 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
     })?;
     let ops = Ops::prepare(&kernels, &shape, config.kv.storage);
     let dspark = if has_drafter {
-        if config.kv.storage != model_deepseek41_contract::state::KvStorage::Native {
-            log("DSpark requires the native KV layout");
-            return Err(BundleStatusV1::Unsupported.into());
-        }
         Some(
             crate::dspark::device::Device::new(
                 &kernels,

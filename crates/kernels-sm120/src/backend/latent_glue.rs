@@ -516,6 +516,8 @@ mod tests {
             first_positions: None,
             last_positions: view(7, 8),
             window: kernel_core::latent_attention::LatentWindowBuffers {
+                item_slots: View::EMPTY,
+                items: 0,
                 codes: view(8, codes * 2 + 66),
                 scales: view(9, scales * 2 + 7),
                 sequences: 2,

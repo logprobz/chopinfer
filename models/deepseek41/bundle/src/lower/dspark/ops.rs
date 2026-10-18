@@ -331,6 +331,25 @@ impl Prepared {
         Ok(result)
     }
 
+    /// The entries the drafter's ops launch, each with the dynamic shared
+    /// memory its op states, for loading their modules in the tests.
+    #[cfg(test)]
+    pub(crate) fn symbols(&self) -> impl Iterator<Item = &(String, u32)> {
+        [
+            self.feature.info(),
+            self.feature_pack.info(),
+            self.main_quantize.info(),
+            self.main_project.info(),
+            self.main_norm.info(),
+            self.hidden_quantize.info(),
+            self.ring_write.info(),
+            self.block_write.info(),
+            self.attention.info(),
+        ]
+        .into_iter()
+        .flat_map(|info| &info.symbols)
+    }
+
     pub fn workspace(&self) -> u64 {
         [
             self.ring_write.info().workspace,

@@ -52,6 +52,12 @@ fn dspark_full_block_journal_at_each_synthetic_topology() {
         let ops = Ops::prepare(&kernels, &shape, KvStorage::Native);
         assert!(ops.glue.is_some(), "{:?}", ops.missing);
         let draft = Prepared::prepare(kernels.backend.as_ref(), shape, DraftMode::Greedy).unwrap();
+        let mut shared = ops.shared_bytes();
+        for (symbol, bytes) in draft.symbols() {
+            let most = shared.entry(symbol.clone()).or_insert(0);
+            *most = (*most).max(*bytes);
+        }
+        let mut held = Vec::new();
         let host = FakeHost::new(shape, KV_LAYOUTS[0]);
         let table = HostServicesTableV1::new(Rc::clone(&host));
         let services = table.caller();
@@ -135,17 +141,24 @@ fn dspark_full_block_journal_at_each_synthetic_topology() {
                 })
                 .collect();
             let mix = ops.hc.as_ref().unwrap().scratch();
+            // Each entry loads with the dynamic shared memory its op states,
+            // the drafter's ops' as well as the instance's, as create loads
+            // the program's.
             let mut names = BTreeMap::new();
             for cubin in crate::CUBINS.iter().filter(|c| crate::serves(c.name, g.id)) {
-                let module = services.load_cuda_module(context, cubin.bytes).unwrap();
-                for symbol in cubin.symbols {
-                    names.insert(
-                        (*symbol).into(),
-                        services
-                            .resolve_cuda_symbol(module, symbol.as_bytes())
-                            .unwrap(),
-                    );
-                }
+                bundle_runtime::acquire::load_module(
+                    bundle_runtime::acquire::Log {
+                        services,
+                        bundle: "DeepSeek V4.1 drafter journal",
+                    },
+                    context,
+                    (cubin.name, cubin.bytes),
+                    cubin.symbols.iter().copied(),
+                    |symbol| Ok(shared.get(symbol).copied().unwrap_or(0)),
+                    &mut names,
+                    &mut held,
+                )
+                .unwrap();
             }
             symbols.push(names);
             let layout = InputLayout::new::<DeepSeek>(PREFILL_TOKENS, PREFILL_TOKENS);

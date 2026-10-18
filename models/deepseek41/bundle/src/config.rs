@@ -283,13 +283,18 @@ pub(crate) mod tests {
         );
     }
 
-    /// A record naming the whole encoder serves images; one naming part of
-    /// it is refused.
+    /// A record naming the whole encoder serves images, at a geometry whose
+    /// vision tower the declaration pins, and is refused at any other; one
+    /// naming part of it is refused.
     #[test]
     fn the_encoder_roles_come_whole_or_not_at_all() {
         for shape in crate::shape::topologies() {
-            let media = decode(&media_record(&shape, KV_LAYOUTS[0], 4), |_| {}).unwrap();
-            assert!(media.media);
+            let media = decode(&media_record(&shape, KV_LAYOUTS[0], 4), |_| {});
+            if crate::encoders::serves(shape.geometry) {
+                assert!(media.unwrap().media);
+            } else {
+                assert_eq!(media.unwrap_err(), BundleStatusV1::Unsupported);
+            }
             assert!(
                 !decode(&record(&shape, KV_LAYOUTS[0], 4, false), |_| {})
                     .unwrap()

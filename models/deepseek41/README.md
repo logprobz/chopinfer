@@ -67,19 +67,54 @@ variant); F64 widens the vendor code except its RoPE angle lines.
 
 ## Qualification
 
-The model is not qualified. `qual.json` is a skeleton: its checks carry
-only their pass and exactness rules, and every numerical limit is pinned from the spread
-of the refrun references of the pinned vendor code before the first
-candidate run, never moved after a result:
+The model is not qualified yet. Every numerical limit in `qual.json` is
+pinned from the spread of the refrun references of the pinned vendor code
+before the first candidate run, and never moved after a result. The served
+checks pin checkpoint identity 2273a3d9..., tensor parallel size 4 and the
+native KV layout, which `/health` reports as `mixed` (what
+`--kv-cache-dtype auto` resolves to).
 
-- teacher, chat and long_context (131,072 tokens): gated against the
-  F32 run with BF16-rounded quantizer inputs (F32-TQ); mean |dlogprob|
-  and top-1 limits from the BF16 versus F32-TQ and F32-TQ versus F64-TQ
-  spreads, with complete scores for the same items;
+- teacher and chat: gated against the F32 run with BF16-rounded quantizer
+  inputs (F32-TQ), `$CHOPINFER_DATA/refrun/deepseek41/m1/teacher-reference.json`
+  (sha256 fcbd248b..., 35 texts, 3,974 scored positions) and
+  `chat-reference.json` (03c03237..., 17 texts, 5,270 positions), with
+  BF16 and F64-TQ as spread variants. The limits follow spread rule
+  variant-spread.v2 with mean factor 1 (`m1/spread-limits.json`, sha256
+  b275dea1...). teacher: mean |dlogprob| at most 0.15 (the 0.10 floor of a
+  set of at least 1,000 positions, raised to the pooled BF16 spread 0.120
+  and rounded up), top-1 decisive and near-tie at most 8%, disagreement at
+  most 10%, no failed category and at least 3,974 positions scored; the
+  gate computes each category's limits from its own spread (prose-frozen
+  mean 0.20 and total 10.79%, prose mean 0.20, chat mean 0.40, the others
+  at the floors). chat: mean |dlogprob| at most 0.30 (pooled BF16 spread
+  0.292), the same top-1 limits and at least 5,270 positions. The teacher
+  check reads the reference's frozen texts from
+  `$CHOPINFER_DATA/deepseek41/m1/fixtures-text/teacher-texts.json`.
+- paired_teacher: the candidate's teacher receipt against a stored one on
+  the same reference, with the standard reviewed margins
+  (paired-teacher-margins/v1: 0.005-nat pooled and 0.01-nat category mean
+  margins, 1% top-one delta, Holm alpha 0.05, eight clusters, two net tail
+  positions above 0.5 nats), reviewed on 2026-10-18 (its approval line is
+  in `qual.json`). It activates once a stored teacher receipt exists.
+- long_context (131,072 tokens), pending its F32-TQ and BF16 references:
+  the teacher rule over the last 1,024 positions with BF16 the only spread
+  variant; its values follow those references by that rule.
 - per-layer taps (`taps.json`) within the same spread;
+- evals_gsm8k: the 1,319 GSM8K items, workload sha256
+  6ea6ef1611f1d9121f83a0c9292ef39850a4cb1253418cfb539d2a455667ea11 (the
+  frontend enables thinking with `enable_thinking`, so the request bodies
+  equal GLM's); gsm8k_regression compares it with the stored run at
+  significance 0.05 and reports no baseline until one exists.
+- frontend_goldens: the served tokenizer agrees with
+  `fixtures/deepseek41/frontend/tokenizer-golden.json`; chat renders join
+  with their captures.
+- determinism: the AR and DSpark records of one run are identical; it runs
+  once the DSpark profile is declared.
+- kv_offload_plain and kv_offload_pressure: native-KV offload with a 16 GiB
+  budget, a swap every 16 steps and 32,768 pressure tokens.
 - the `kv-bf16` comparison configuration (`serve --kv-cache-dtype bf16`):
   the BF16 KV layout holds the same values as the native trained formats,
-  and native versus BF16 served bits must be equal. It runs prefix_exact
+  and native (mixed) versus BF16 served bits must be equal. It runs prefix_exact
   and kv_layout_equality, which records the determinism request set on a
   native server and on the configuration's BF16 server in one run and
   requires every request's tokens and logprobs to be bit-identical, naming

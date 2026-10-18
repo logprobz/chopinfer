@@ -4,35 +4,60 @@
   "cohorts": {
     "quick": {
       "checks": [
+        "teacher",
+        "chat",
         "api",
         "structured",
-        "soak"
+        "frontend_goldens",
+        "soak",
+        "paired_teacher"
       ]
     },
     "full": {
       "checks": [
+        "teacher",
+        "chat",
+        "paired_teacher",
+        "evals_gsm8k",
+        "gsm8k_regression",
+        "needle",
         "api",
         "structured",
+        "frontend_goldens",
         "soak",
         "prefix_exact",
         "preemption_exact",
-        "needle"
+        "determinism",
+        "kv_offload_plain",
+        "kv_offload_pressure"
       ]
     }
   },
   "change_classes": {
     "frontend": [
-      "api",
-      "structured"
-    ],
-    "quality": [
+      "teacher",
+      "chat",
       "api",
       "structured",
-      "needle"
+      "frontend_goldens"
+    ],
+    "quality": [
+      "teacher",
+      "chat",
+      "paired_teacher",
+      "evals_gsm8k",
+      "needle",
+      "api",
+      "structured",
+      "frontend_goldens",
+      "gsm8k_regression"
     ],
     "service": [
       "soak",
-      "preemption_exact"
+      "preemption_exact",
+      "determinism",
+      "kv_offload_plain",
+      "kv_offload_pressure"
     ],
     "speculation": [],
     "prefix": [
@@ -40,6 +65,368 @@
     ]
   },
   "checks": {
+    "teacher": {
+      "module": "teacher",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--server-log",
+        "{server_log}"
+      ],
+      "cohort_args": {
+        "full": [
+          "--capture-out",
+          "{raw}/teacher-capture.json"
+        ]
+      },
+      "timeout_seconds": 7200,
+      "receipt": "*-teacher.json",
+      "constants": {
+        "teacher": {
+          "MAX_MEAN": {
+            "value": 0.15,
+            "source": "models/deepseek41/README.md#qualification"
+          },
+          "LARGE_SET_MEAN": {
+            "value": 0.1,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "LARGE_SET_POSITIONS": {
+            "value": 1000,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MAX_TOP1": {
+            "value": 0.08,
+            "source": "models/deepseek41/README.md#qualification"
+          },
+          "MEAN_STEP": {
+            "value": 0.05,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MEAN_MARGIN": {
+            "value": 0.02,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          "TOP1_SIGMAS": {
+            "value": 2.0,
+            "source": "tools/qual/README.md#release-gates"
+          }
+        }
+      },
+      "files": [
+        "server_log"
+      ],
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "mean_abs_dlogprob"
+          ],
+          "op": "le",
+          "value": 0.15,
+          "source": "models/deepseek41/README.md#qualification"
+        },
+        {
+          "path": [
+            "top1_decisive"
+          ],
+          "op": "le",
+          "value": 0.08,
+          "source": "models/deepseek41/README.md#qualification"
+        },
+        {
+          "path": [
+            "top1_near_tie"
+          ],
+          "op": "le",
+          "value": 0.08,
+          "source": "models/deepseek41/README.md#qualification"
+        },
+        {
+          "path": [
+            "top1_disagreement"
+          ],
+          "op": "le",
+          "value": 0.1,
+          "source": "models/deepseek41/README.md#qualification"
+        },
+        {
+          "path": [
+            "failed_categories"
+          ],
+          "op": "eq",
+          "value": [],
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "scored"
+          ],
+          "op": "ge",
+          "value": 3974,
+          "source": "models/deepseek41/README.md#qualification"
+        },
+        {
+          "path": [
+            "reference_sha256"
+          ],
+          "op": "eq",
+          "value": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
+          "source": "models/deepseek41/README.md#qualification"
+        },
+        {
+          "path": [
+            "server",
+            "checkpoint",
+            "checkpoint_identity"
+          ],
+          "op": "eq",
+          "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
+          "source": "models/deepseek41/README.md#qualification"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "tensor_parallel_size"
+          ],
+          "op": "eq",
+          "value": 4,
+          "source": "models/deepseek41/README.md#qualification"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "kv_cache_dtype"
+          ],
+          "op": "eq",
+          "value": "mixed",
+          "source": "models/deepseek41/README.md#qualification"
+        }
+      ]
+    },
+    "chat": {
+      "module": "teacher",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--server-log",
+        "{server_log}",
+        "--reference-name",
+        "chat",
+        "--receipt",
+        "chat"
+      ],
+      "cohort_args": {
+        "full": [
+          "--capture-out",
+          "{raw}/chat-capture.json"
+        ]
+      },
+      "timeout_seconds": 7200,
+      "receipt": "*-chat.json",
+      "constants": {
+        "teacher": {
+          "MAX_MEAN": {
+            "value": 0.3,
+            "source": "models/deepseek41/README.md#qualification"
+          },
+          "LARGE_SET_MEAN": {
+            "value": 0.1,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "LARGE_SET_POSITIONS": {
+            "value": 1000,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MAX_TOP1": {
+            "value": 0.08,
+            "source": "models/deepseek41/README.md#qualification"
+          },
+          "MEAN_STEP": {
+            "value": 0.05,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MEAN_MARGIN": {
+            "value": 0.02,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          "TOP1_SIGMAS": {
+            "value": 2.0,
+            "source": "tools/qual/README.md#release-gates"
+          }
+        }
+      },
+      "files": [
+        "server_log"
+      ],
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "mean_abs_dlogprob"
+          ],
+          "op": "le",
+          "value": 0.3,
+          "source": "models/deepseek41/README.md#qualification"
+        },
+        {
+          "path": [
+            "top1_decisive"
+          ],
+          "op": "le",
+          "value": 0.08,
+          "source": "models/deepseek41/README.md#qualification"
+        },
+        {
+          "path": [
+            "top1_near_tie"
+          ],
+          "op": "le",
+          "value": 0.08,
+          "source": "models/deepseek41/README.md#qualification"
+        },
+        {
+          "path": [
+            "top1_disagreement"
+          ],
+          "op": "le",
+          "value": 0.1,
+          "source": "models/deepseek41/README.md#qualification"
+        },
+        {
+          "path": [
+            "failed_categories"
+          ],
+          "op": "eq",
+          "value": [],
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "scored"
+          ],
+          "op": "ge",
+          "value": 5270,
+          "source": "models/deepseek41/README.md#qualification"
+        },
+        {
+          "path": [
+            "reference_sha256"
+          ],
+          "op": "eq",
+          "value": "03c032377355616844f7910fe1cb38ca6cbe9ead8bf6a90028ef0ad162eb8e5a",
+          "source": "models/deepseek41/README.md#qualification"
+        },
+        {
+          "path": [
+            "server",
+            "checkpoint",
+            "checkpoint_identity"
+          ],
+          "op": "eq",
+          "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
+          "source": "models/deepseek41/README.md#qualification"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "tensor_parallel_size"
+          ],
+          "op": "eq",
+          "value": 4,
+          "source": "models/deepseek41/README.md#qualification"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "kv_cache_dtype"
+          ],
+          "op": "eq",
+          "value": "mixed",
+          "source": "models/deepseek41/README.md#qualification"
+        }
+      ]
+    },
+    "paired_teacher": {
+      "module": "paired_teacher",
+      "args": [
+        "--accepted",
+        "{stored_teacher}",
+        "--candidate",
+        "{teacher}",
+        "--url",
+        "{url}",
+        "--model",
+        "{model}"
+      ],
+      "files": [
+        "stored_teacher",
+        "teacher"
+      ],
+      "timeout_seconds": 900,
+      "receipt": "*-paired_teacher.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/paired-accuracy.md"
+        }
+      ],
+      "constants": {
+        "paired_teacher": {
+          "POLICY": {
+            "source": "docs/paired-accuracy.md#activation-and-calibration",
+            "value": {
+              "schema": "paired-teacher-margins/v1",
+              "approval": "operator:2026-10-18:reviewed-neutral-margins",
+              "rationale": "The accepted arm is the first stored teacher receipt of a served candidate against the F32-TQ teacher reference fcbd248b, so the policy activates once one exists. Retain the standard reviewed neutral margins of MiMo's and Qwen's tp4-ar policy: 0.005-nat pooled upper CI95, 0.01-nat category point mean, 1% pooled top-one upper CI95, Holm alpha 0.05, eight clusters for a CI and two net tail positions above 0.5 nats; sparse pooled sets are refused. One policy covers every DeepSeek profile. The approval line records the review of these margins on 2026-10-18.",
+              "reference_sha256": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
+              "mean_margin": 0.005,
+              "category_mean_margin": 0.01,
+              "top1_delta": 0.01,
+              "category_alpha": 0.05,
+              "min_clusters": 8,
+              "tail_growth_nats": 0.5,
+              "tail_net_allowance": 2,
+              "allow_sparse_pooled": false
+            }
+          }
+        }
+      }
+    },
     "api": {
       "module": "api",
       "args": [
@@ -248,7 +635,7 @@
           ],
           "op": "eq",
           "value": [
-            "auto",
+            "mixed",
             "bf16"
           ],
           "source": "models/deepseek41/README.md#qualification"
@@ -302,6 +689,418 @@
           }
         ]
       }
+    },
+    "determinism": {
+      "module": "determinism",
+      "args": [
+        "compare",
+        "{determinism_ar}",
+        "{determinism_spec}"
+      ],
+      "timeout_seconds": 600,
+      "json_file": "{determinism_spec}",
+      "reference_file": "{determinism_ar}",
+      "reference_equal": [
+        [
+          "run_id"
+        ],
+        [
+          "server",
+          "checkpoint",
+          "checkpoint_identity"
+        ],
+        [
+          "server",
+          "health",
+          "serving",
+          "package_identity"
+        ],
+        [
+          "server",
+          "health",
+          "serving",
+          "version"
+        ],
+        [
+          "server",
+          "health",
+          "serving",
+          "source_commit"
+        ]
+      ],
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/check-kinds.md#determinism-determinismv1"
+        }
+      ],
+      "files": [
+        "determinism_ar",
+        "determinism_spec"
+      ],
+      "input_rules": {
+        "determinism_ar": [
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "checkpoint_identity"
+            ],
+            "op": "eq",
+            "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
+            "source": "models/deepseek41/README.md#qualification"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "tensor_parallel_size"
+            ],
+            "op": "eq",
+            "value": 4,
+            "source": "models/deepseek41/README.md#qualification"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "kv_cache_dtype"
+            ],
+            "op": "eq",
+            "value": "mixed",
+            "source": "models/deepseek41/README.md#qualification"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "speculation",
+              "tokens"
+            ],
+            "op": "eq",
+            "value": 0,
+            "source": "docs/check-kinds.md#determinism-determinismv1"
+          }
+        ],
+        "determinism_spec": [
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "checkpoint_identity"
+            ],
+            "op": "eq",
+            "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
+            "source": "models/deepseek41/README.md#qualification"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "tensor_parallel_size"
+            ],
+            "op": "eq",
+            "value": 4,
+            "source": "models/deepseek41/README.md#qualification"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "kv_cache_dtype"
+            ],
+            "op": "eq",
+            "value": "mixed",
+            "source": "models/deepseek41/README.md#qualification"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "speculation",
+              "tokens"
+            ],
+            "op": "ge",
+            "value": 1,
+            "source": "docs/check-kinds.md#determinism-determinismv1"
+          }
+        ]
+      }
+    },
+    "frontend_goldens": {
+      "module": "frontend_goldens",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--capture-out",
+        "{run}/capture",
+        "--required-file",
+        "tokenizer-golden.json",
+        "--json",
+        "{run}/frontend.json"
+      ],
+      "timeout_seconds": 600,
+      "stdout_json": true,
+      "json_file": "{run}/frontend.json",
+      "rules": [
+        {
+          "path": [
+            "tokenizer-golden.json",
+            "agrees"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/check-kinds.md"
+        }
+      ]
+    },
+    "evals_gsm8k": {
+      "module": "evals",
+      "args": [
+        "run",
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--arm",
+        "native",
+        "--run-id",
+        "{run_id}",
+        "--suites",
+        "gsm8k",
+        "--server-log",
+        "{server_log}"
+      ],
+      "timeout_seconds": 7200,
+      "receipt": "*-evals-native.json",
+      "files": [
+        "server_log"
+      ],
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "items"
+          ],
+          "op": "ge",
+          "value": 1319,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "suites",
+            "gsm8k",
+            "count"
+          ],
+          "op": "eq",
+          "value": 1319,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "workload_sha256"
+          ],
+          "op": "eq",
+          "value": "6ea6ef1611f1d9121f83a0c9292ef39850a4cb1253418cfb539d2a455667ea11",
+          "source": "models/deepseek41/README.md#qualification"
+        },
+        {
+          "path": [
+            "server",
+            "checkpoint",
+            "checkpoint_identity"
+          ],
+          "op": "eq",
+          "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
+          "source": "models/deepseek41/README.md#qualification"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "tensor_parallel_size"
+          ],
+          "op": "eq",
+          "value": 4,
+          "source": "models/deepseek41/README.md#qualification"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "kv_cache_dtype"
+          ],
+          "op": "eq",
+          "value": "mixed",
+          "source": "models/deepseek41/README.md#qualification"
+        }
+      ]
+    },
+    "gsm8k_regression": {
+      "module": "evals",
+      "args": [
+        "compare",
+        "--run-id",
+        "{run_id}",
+        "--arms",
+        "candidate",
+        "reference"
+      ],
+      "cohort_args": {
+        "full": [
+          "--stored",
+          "candidate={evals_gsm8k}",
+          "--stored",
+          "reference={stored_evals_gsm8k}"
+        ]
+      },
+      "timeout_seconds": 600,
+      "receipt": "*-evals-compare.json",
+      "constants": {
+        "evals": {
+          "SIGNIFICANCE": {
+            "value": 0.05,
+            "source": "tools/qual/README.md#release-gates"
+          }
+        }
+      },
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#correctness-runner"
+        },
+        {
+          "path": [
+            "unpaired_items",
+            "candidate"
+          ],
+          "op": "eq",
+          "value": 0,
+          "source": "tools/qual/README.md#correctness-runner"
+        },
+        {
+          "path": [
+            "unpaired_items",
+            "reference"
+          ],
+          "op": "eq",
+          "value": 0,
+          "source": "tools/qual/README.md#correctness-runner"
+        },
+        {
+          "path": [
+            "suites",
+            "gsm8k",
+            "count"
+          ],
+          "op": "eq",
+          "value": 1319,
+          "source": "tools/qual/README.md#correctness-runner"
+        }
+      ]
+    },
+    "kv_offload_plain": {
+      "module": "kv_offload",
+      "args": [
+        "report",
+        "--off",
+        "{kv_offload_plain_off}",
+        "--swap",
+        "{kv_offload_plain_swap}"
+      ],
+      "timeout_seconds": 600,
+      "receipt": "*-kv-offload-plain.json",
+      "files": [
+        "kv_offload_plain_off",
+        "kv_offload_plain_swap"
+      ],
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/serving-kv-pool.md"
+        }
+      ]
+    },
+    "kv_offload_pressure": {
+      "module": "kv_offload",
+      "args": [
+        "report",
+        "--off",
+        "{kv_offload_pressure_off}",
+        "--swap",
+        "{kv_offload_pressure_swap}"
+      ],
+      "timeout_seconds": 600,
+      "receipt": "*-kv-offload-pressure.json",
+      "files": [
+        "kv_offload_pressure_off",
+        "kv_offload_pressure_swap"
+      ],
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/serving-kv-pool.md"
+        }
+      ]
     }
   },
   "inputs": {
@@ -309,6 +1108,67 @@
     "needle": {
       "env": "CHOPINFER_DATA",
       "path": "deepseek41/needle/prompts.json"
+    },
+    "fixture_root": {
+      "env": "CHOPINFER_DATA",
+      "path": "deepseek41/m1/fixtures-text"
+    },
+    "exact": {
+      "env": "CHOPINFER_DATA",
+      "path": "refrun/deepseek41/m1/teacher-reference.json"
+    },
+    "teacher_reference": {
+      "env": "CHOPINFER_DATA",
+      "path": "refrun/deepseek41/m1/teacher-reference.json"
+    },
+    "frontend": "models/deepseek41/compiler/src/frontend.json",
+    "frontend_capture": "fixtures/deepseek41/frontend",
+    "gsm8k": {
+      "env": "CHOPINFER_MIMO_FIXTURES",
+      "default": "fixtures/mimo26",
+      "path": "gsm8k"
+    }
+  },
+  "references": {
+    "teacher": {
+      "path": {
+        "env": "CHOPINFER_DATA",
+        "path": "refrun/deepseek41/m1/teacher-reference.json"
+      },
+      "sha256": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
+      "schema": "chopinfer.deepseek41.teacher-reference.v1",
+      "workload_sha256": "cffb11fb163846c1613e71f87dcd0720d48042f5ebe93546eac67e7cc4552776",
+      "variants": [
+        "exact",
+        "bf16",
+        "f64"
+      ],
+      "checkpoint_keys": [
+        "repository",
+        "revision",
+        "served_model_name",
+        "source_lock_sha256"
+      ]
+    },
+    "chat": {
+      "path": {
+        "env": "CHOPINFER_DATA",
+        "path": "refrun/deepseek41/m1/chat-reference.json"
+      },
+      "sha256": "03c032377355616844f7910fe1cb38ca6cbe9ead8bf6a90028ef0ad162eb8e5a",
+      "schema": "chopinfer.deepseek41.teacher-reference.v1",
+      "workload_sha256": "8ee4ad6968d16d7884c33b9f744080e341243a984a3d782031f29805b8044231",
+      "variants": [
+        "exact",
+        "bf16",
+        "f64"
+      ],
+      "checkpoint_keys": [
+        "repository",
+        "revision",
+        "served_model_name",
+        "source_lock_sha256"
+      ]
     }
   },
   "qualification": {
@@ -349,11 +1209,11 @@
     "path": "qual/deepseek41"
   },
   "limitations": [
-    "Skeleton, not a qualification: deepseek41 is unreleased and serves nothing yet. The checks declared here carry only their pass and exactness rules; no numerical limit is set before the references that bound it exist.",
-    "Pending checks, each added with its references and limits pinned from the reference spread before any candidate run, never moved after a result (models/deepseek41/README.md#qualification): teacher, chat and long_context (131,072 tokens) against the refrun F32-TQ reference of the pinned vendor code, with mean |dlogprob| and top-1 limits from the BF16 versus F32-TQ and F32-TQ versus F64-TQ spreads; paired_teacher once a stored teacher exists; determinism, verify_exact and spec_verify with DSpark; evals_gsm8k and gsm8k_regression; frontend_goldens with the chat frontend; multimodal, media_preprocessing and encoder_parity with the vision encoder; kv_offload_plain and kv_offload_pressure.",
+    "Unreleased, not yet a qualification: deepseek41 serves nothing released until the release preview's full suite passes. Every numerical limit declared here was pinned from the spread of the refrun references of the pinned vendor code before any candidate run and is never moved after a result (models/deepseek41/README.md#qualification).",
+    "Pending checks, each added with its references and limits pinned before any candidate run (models/deepseek41/README.md#qualification): long_context (131,072 tokens), whose rule is the teacher rule over the last 1,024 positions with BF16 the only spread variant and whose values follow its F32-TQ reference; verify_exact and spec_verify with DSpark; frontend_goldens' chat renders with their captures; multimodal, media_preprocessing and encoder_parity with the vision encoder. determinism compares the AR record with the DSpark record, so it runs once the DSpark profile is declared. paired_teacher and gsm8k_regression compare against a stored passing run and report no baseline until one exists.",
     "The needle check runs frozen token-ID prompts at total contexts of 8,192, 131,072, 262,144 and 1,048,576 tokens and needs no reference (models/deepseek41/README.md#qualification).",
     "Pending sections, deferred from the skeleton by a revision of its acceptance scope (integration owner, 2026-10-17): preview (profile tp4-ar, quick_arms [\"ar\"]) lands with the chopinfer-model-deepseek41 helper of the geometry recipe.",
-    "kv-bf16 is a comparison configuration, never a served default: --kv-cache-dtype bf16 serves the BF16 KV layout, which stores the same values as the native trained formats, and its served bits must equal the native layout's bit for bit. Its pages are about 3.6 times larger (3,200 bytes against 890 per token), and capacity, offload and pressure behavior follow page size, so it is not qualified for capacity, preemption under pressure or offload. Its checks are prefix_exact and kv_layout_equality (native versus BF16 served bits, bit for bit, on the determinism request set) now; teacher, teacher_arms and chat join with their references."
+    "kv-bf16 is a comparison configuration, never a served default: --kv-cache-dtype bf16 serves the BF16 KV layout, which stores the same values as the native trained formats, and its served bits must equal the native layout's bit for bit. Its pages are about 3.6 times larger (3,200 bytes against 890 per token), and capacity, offload and pressure behavior follow page size, so it is not qualified for capacity, preemption under pressure or offload. Its checks are prefix_exact and kv_layout_equality (native mixed versus BF16 served bits, bit for bit, on the determinism request set) now; teacher, teacher_arms and chat join with their references."
   ],
   "configurations": {
     "kv-bf16": {
@@ -431,5 +1291,12 @@
         }
       }
     }
+  },
+  "kv_offload": {
+    "budget_gib": 16,
+    "swap_every": 16,
+    "max_preemptions": 3,
+    "min_gated": 18,
+    "pressure_tokens": 32768
   }
 }

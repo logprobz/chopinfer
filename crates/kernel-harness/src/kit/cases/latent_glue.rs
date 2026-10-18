@@ -1048,3 +1048,99 @@ pub fn key_invalid_data<'a>(query: LatentWindowKeys) -> Required<'a> {
     )
     .required()
 }
+
+#[cfg(test)]
+mod window_status_control_tests {
+    use super::*;
+    use kernel_core::backend::Backend;
+    use kernel_core::precision::quantizer::{
+        BlockQuantization, BlockQuantizeQuery, QuantizeOutput,
+    };
+    use kernels_sm120::{
+        backend::Sm120,
+        latent::glue::{Entry, Kernel},
+        row::block_quantize,
+    };
+
+    #[test]
+    fn dropped_window_flags_survive_as_a_status_mismatch_after_shared_quantization() {
+        let query = LatentWindowWrite {
+            latent: 512,
+            rotary: 64,
+            epsilon_bits: 1e-20_f32.to_bits(),
+            addressing: WindowAddressing::Circular { slots: 136 },
+        };
+        let quantizer = BlockQuantizeQuery {
+            width: 512,
+            input: DType::F32,
+            format: BlockQuantization::E4M3_CEIL32,
+            output: QuantizeOutput::Codes,
+        };
+        let backend = [Kernel::WindowRotate, Kernel::WindowStore]
+            .into_iter()
+            .fold(
+                Sm120::new().with_block_quantize(
+                    block_quantize::Entry::new(quantizer, 8, "quantize").unwrap(),
+                ),
+                |b, kernel| {
+                    b.with_latent_glue(Entry {
+                        kernel,
+                        capacity: 8,
+                        symbol: format!("{kernel:?}"),
+                    })
+                },
+            );
+        // Use the same status fixture as the dropped-window-flag device control.
+        let case = write_case_impl(
+            query,
+            8,
+            0,
+            backend.latent_window_write(&query, Need::rows(8)).unwrap(),
+            table(8, 64),
+            WindowFixture::Status,
+        )
+        .unwrap();
+        let images = case.images();
+        let expected = case.oracle_bits(&images, 8).unwrap();
+        let words = |bytes: &[u8]| {
+            bytes
+                .chunks_exact(4)
+                .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+                .collect::<Vec<_>>()
+        };
+        let prior = words(images.bytes("status").unwrap());
+        let status = words(&expected["status"]);
+        assert_eq!(status, [0, 1, 1, 1, 0x80, 2, 0, 0]);
+        assert_eq!(i32s(&images, "positions").unwrap()[2], -1);
+        let latent = expected["latent"]
+            .chunks_exact(4)
+            .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+            .collect::<Vec<_>>();
+        assert!(latent[512..4 * 512].iter().all(|v| v.to_bits() == 0));
+        // DropFlags loses only the status OR. The normalizer still emits safe
+        // zero rows, so the real shared quantizer cannot rediscover their NaNs.
+        let (codes, _, dropped) =
+            crate::kit::cases::block_quantize::expected_rows(quantizer, &latent, &prior, 8)
+                .unwrap();
+        assert_eq!(dropped, [0, 0, 0, 0, 0x80, 2, 0, 0]);
+        assert_ne!(dropped, status);
+        assert!(codes[512..4 * 512].iter().all(|&v| v == 0));
+        // Row one has a valid destination in the second sequence. Without its
+        // flag the store writes zero over this protected previous cell.
+        assert_eq!(i32s(&images, "row_batch").unwrap()[1], 1);
+        assert_eq!(i32s(&images, "positions").unwrap()[1], 0);
+        let destination = 136 * 512 + 66;
+        assert_eq!(expected["window.codes"][destination], 0xa5);
+        assert_ne!(expected["window.codes"][destination], codes[512]);
+        let mut mutant = expected.clone();
+        mutant.insert(
+            "status".into(),
+            dropped.iter().flat_map(|v| v.to_le_bytes()).collect(),
+        );
+        let error = case.judge_outputs(&images, 8, &mutant).unwrap_err();
+        assert!(
+            error.contains("status") && error.contains("the reference"),
+            "{error}"
+        );
+    }
+}

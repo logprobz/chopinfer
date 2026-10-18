@@ -274,9 +274,12 @@ fn numerical_failure(mutation: Mutation, error: &str) -> bool {
         return false;
     }
     match mutation {
-        Mutation::DropQueryFlag | Mutation::DropWindowFlag => {
+        Mutation::DropQueryFlag => error.contains("status") && error.contains("the reference"),
+        Mutation::DropWindowFlag => {
             (error.contains("status") && error.contains("the reference"))
-                || (error.contains("window.codes") && error.contains("outside the write"))
+                || ((error.contains("window.codes") || error.contains("window.scales"))
+                    && (error.contains("outside the write map")
+                        || error.contains("outside the written state changed")))
         }
         Mutation::WindowEdge => {
             error.contains("window-key oracle: visible positions or order differ")
@@ -305,6 +308,26 @@ fn wrong_tail_accepts_state_write_rejection_but_never_device_faults() {
             &format!("{error}: {fault}")
         ));
     }
+}
+
+#[test]
+fn dropped_window_flag_accepts_protected_cell_rejection_but_never_device_faults() {
+    for plane in ["window.codes", "window.scales"] {
+        let error = format!(
+            "{plane} eager: byte 69698 outside the written state changed from 0xa5 to 0x00"
+        );
+        assert!(numerical_failure(Mutation::DropWindowFlag, &error));
+        for fault in ["CUDA", "trap"] {
+            assert!(!numerical_failure(
+                Mutation::DropWindowFlag,
+                &format!("{error}: {fault}")
+            ));
+        }
+    }
+    assert!(!numerical_failure(
+        Mutation::DropWindowFlag,
+        "unrelated state write"
+    ));
 }
 
 #[test]

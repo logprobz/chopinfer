@@ -209,11 +209,16 @@ pub fn head_case<'a>(
     let SinkhornHyperConnectionQuery::Head {
         streams,
         width,
-        mode: StreamHeadMode::SigmoidWeighted,
+        mode,
         ..
     } = op
     else {
         return Err("a weighted head case needs a sigmoid-weighted head".into());
+    };
+    let dtype = match mode {
+        StreamHeadMode::SigmoidWeighted => DType::Bf16,
+        StreamHeadMode::SigmoidWeightedF32 => DType::F32,
+        StreamHeadMode::MeanOfStreams => return Err("a weighted head case needs weights".into()),
     };
     let (n, h, rows) = (streams as usize, width as usize, capacity as usize);
     let roles = WeightedStreamHeadBuffers {
@@ -227,19 +232,28 @@ pub fn head_case<'a>(
             (Rows::Live, n),
             f32_bytes(&ranged_f32(49, rows * n, 0.0625, 1.25)),
         ),
-        output: Spec::output(DType::Bf16, (Rows::Live, h)),
+        output: Spec::output(dtype, (Rows::Live, h)),
         live_rows: Spec::live(),
     };
     let query = SinkhornHyperConnectionQuery::Head {
         streams,
         width,
-        mode: StreamHeadMode::SigmoidWeighted,
+        mode,
         capacity,
     };
     let oracle = move |images: &Images, _: u32| -> LabResult<Vec<(String, Expected)>> {
-        let output = hc::weighted_head(query, &images.u16s("x")?, &images.f32s("pre")?)
-            .map_err(|e| e.0.to_string())?;
-        Ok(vec![("output".into(), Expected::Bits(bf16_bytes(&output)))])
+        let x = images.u16s("x")?;
+        let pre = images.f32s("pre")?;
+        let output = match mode {
+            StreamHeadMode::SigmoidWeighted => {
+                bf16_bytes(&hc::weighted_head(query, &x, &pre).map_err(|e| e.0.to_string())?)
+            }
+            StreamHeadMode::SigmoidWeightedF32 => {
+                f32_bytes(&hc::weighted_head_f32(query, &x, &pre).map_err(|e| e.0.to_string())?)
+            }
+            StreamHeadMode::MeanOfStreams => unreachable!("refused above"),
+        };
+        Ok(vec![("output".into(), Expected::Bits(output))])
     };
     Ok(OpCase::new(prepared, capacity, roles)?.oracle(oracle))
 }
@@ -269,6 +283,7 @@ pub fn required<'a>() -> Vec<Required<'a>> {
         mode: StreamHeadMode::SigmoidWeighted,
         capacity: LAB.capacity,
     };
+    let head_f32 = lagged::head_f32_entry(lagged::LAB_PROFILE, LAB).query;
     let shape = format!("{} streams width {}", mix.streams, mix.width);
     vec![
         Required::new(
@@ -292,13 +307,76 @@ pub fn required<'a>() -> Vec<Required<'a>> {
             move |prepared| head_case(head, need.capacity, prepared),
         )
         .required(),
+        Required::new(
+            format!("sinkhorn F32 weighted head {shape}"),
+            need,
+            move |backend, need| backend.sinkhorn_weighted_head(&head_f32, need),
+            move |prepared| head_case(head_f32, need.capacity, prepared),
+        )
+        .required(),
     ]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernel_core::backend::Backend;
     use kernel_core::codec::f32_to_bf16;
+
+    #[test]
+    fn f32_head_case_has_rounding_and_stream_order_witnesses() {
+        let query = lagged::head_f32_entry(lagged::LAB_PROFILE, LAB).query;
+        let prepared = sm120()
+            .sinkhorn_weighted_head(&query, Need::rows(8))
+            .unwrap();
+        let case = head_case(query, 8, prepared).unwrap();
+        case.validate().unwrap();
+        // Three live rows selected from a larger capacity retain the same
+        // row data used by the device case and its property checks.
+        let images = case.select(&case.images(), &[0, 3, 7]).unwrap();
+        let (n, h) = (LAB.mix.streams as usize, LAB.mix.width as usize);
+        let x = &images.u16s("x").unwrap()[..3 * n * h];
+        let pre = &images.f32s("pre").unwrap()[..3 * n];
+        let exact = hc::weighted_head_f32(query, x, pre).unwrap();
+        let expected = case.oracle_bits(&images, 3).unwrap();
+        case.judge_outputs(&images, 3, &expected).unwrap();
+        let reversed = (0..exact.len())
+            .map(|e| {
+                let (row, col) = (e / h, e % h);
+                (0..n).rev().fold(0.0_f32, |sum, i| {
+                    pre[row * n + i].mul_add(bf16_to_f32(x[(row * n + i) * h + col]), sum)
+                })
+            })
+            .collect::<Vec<_>>();
+        let rounded = exact
+            .iter()
+            .map(|&v| bf16_to_f32(f32_to_bf16(v)))
+            .collect::<Vec<_>>();
+        for (name, mutant) in [("round_bf16", rounded), ("reverse_streams", reversed)] {
+            let differing = mutant
+                .iter()
+                .zip(&exact)
+                .filter(|(a, b)| a.to_bits() != b.to_bits())
+                .count();
+            assert!(differing > 0, "{name} escaped the head case");
+            let mut outputs = expected.clone();
+            outputs.get_mut("output").unwrap()[..mutant.len() * 4]
+                .copy_from_slice(&f32_bytes(&mutant));
+            let failure = case.judge_outputs(&images, 3, &outputs).unwrap_err();
+            assert!(failure.contains("output byte"), "{failure}");
+            eprintln!(
+                "F32 head {name}: {differing} of {} elements differ",
+                exact.len()
+            );
+        }
+        let reference = hc::weighted_head_reference(query, &widen(x), pre).unwrap();
+        kernel_core::oracle::check_numeric(
+            &exact.iter().copied().map(f64::from).collect::<Vec<_>>(),
+            &reference,
+            DType::F32,
+        )
+        .unwrap();
+    }
 
     #[test]
     fn f32_inputs_stay_in_range_and_off_the_bf16_grid() {

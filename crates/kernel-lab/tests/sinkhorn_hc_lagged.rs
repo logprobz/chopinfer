@@ -2,7 +2,12 @@
 //! (`kernels_sm120::sinkhorn_hc::lagged`) at the lab's 4 x 5120 lagged
 //! mixer, on the GPU. Run with `CHOPINFER_KERNEL_GPU=<ordinal> cargo test
 //! -p kernel-lab --release --test sinkhorn_hc_lagged -- --test-threads=1`;
-//! without a GPU only the CPU contract test runs.
+//! without a GPU only the CPU contract tests run.
+//!
+//! The F32-output weighted head is also checked at 4 x 5120: exact FMA
+//! bits, an f64 bound, live rows below capacity, poisoned unwritten rows,
+//! eager/graph/PDL replay and chunk/rows/batch properties. Device mutants
+//! that round to BF16 or reverse the stream order must fail its exact gate.
 //!
 //! One unit is the chain F32 expand -> lagged mix-collapse -> F32 expand ->
 //! weighted head, as a sublayer boundary and the model head run it, at
@@ -28,6 +33,7 @@
 //!   PDL) at every live count `poison::live_counts` lists, also on the
 //!   extreme common-offset input (comb bases at 1e8, zero comb scale).
 
+use kernel_core::backend::{Backend, Need};
 use kernel_core::codec::{bf16_to_f32, f32_to_bf16};
 use kernel_core::contract::{Argument, DType, LaunchPlan};
 use kernel_core::oracle::{OracleOutput, check_numeric};
@@ -35,9 +41,11 @@ use kernel_core::sinkhorn_hyper_connection::{
     SinkhornHyperConnectionQuery as Query, StreamHeadMode,
 };
 use kernel_core::sinkhorn_hyper_connection_oracle::{self as oracle, MixWeights};
+use kernel_lab::kit::{LabModules, Modules, OpCase, Outcome, cases::sinkhorn_lagged as kit};
 use kernel_lab::launch::{self, Bindings};
 use kernel_lab::poison::{self, Replay, WriteMap};
 use kernel_lab::{LabResult, Session};
+use kernels_sm120::backend::Sm120;
 use kernels_sm120::sinkhorn_hc::lagged::{self, Entry, LAB, Op};
 use runtime_cuda::{DeviceBuffer, Function, Module};
 use serde_json::{Value, json};
@@ -49,6 +57,164 @@ const FLAT: usize = N * H;
 const MIXES: usize = (2 + N) * N;
 const CELLS: usize = N * N;
 const BUCKETS: [usize; 4] = [1, 32, 6 * 32, 8192];
+
+fn f32_head_case(entry: Entry, capacity: u32) -> LabResult<OpCase<'static>> {
+    let query = entry.query;
+    let prepared = Sm120::new()
+        .with_sinkhorn_lagged([entry])
+        .sinkhorn_weighted_head(&query, Need::rows(capacity))
+        .map_err(err)?;
+    Ok(kit::head_case(query, capacity, prepared)?.live_counts(vec![
+        0,
+        1,
+        3,
+        capacity - 1,
+        capacity,
+    ]))
+}
+
+fn f32_head_reference(
+    query: Query,
+    images: &kernel_lab::conformance::Images,
+    live: usize,
+) -> LabResult<OracleOutput> {
+    oracle::weighted_head_reference(
+        query,
+        &decode(&images.u16s("x")?[..live * FLAT]),
+        &images.f32s("pre")?[..live * N],
+    )
+    .map_err(err)
+}
+
+#[test]
+fn weighted_head_f32_cpu_contract() {
+    let entry = lagged::head_f32_entry(lagged::LAB_PROFILE, LAB);
+    for (cubin, entry) in std::iter::once((lagged::head_f32_cubin(), entry)).chain(
+        lagged::HEAD_F32_MUTANTS.map(|(suffix, _)| {
+            (
+                lagged::head_f32_mutant_cubin(suffix),
+                lagged::head_f32_mutant(suffix),
+            )
+        }),
+    ) {
+        assert!(
+            kernel_lab::cubin_entries(&cubin)
+                .unwrap()
+                .contains(&entry.symbol.as_str())
+        );
+        kernel_lab::cubin(&cubin).unwrap();
+        let case = f32_head_case(entry, 8).unwrap();
+        case.validate().unwrap();
+        let images = case.select(&case.images(), &[0, 3, 7]).unwrap();
+        let query = lagged::head_f32_entry(lagged::LAB_PROFILE, LAB).query;
+        assert_eq!(
+            f32_head_reference(query, &images, 3).unwrap().values.len(),
+            3 * H
+        );
+        assert_eq!(
+            case.row_roles(kernel_core::properties::Scope::Entry)
+                .unwrap()
+                .outputs,
+            vec![("output".into(), H * 4)]
+        );
+    }
+}
+
+#[test]
+fn weighted_head_f32_matches_bits_bound_poison_and_properties() {
+    kernel_lab::gpu_test(1 << 30, |session| {
+        let entry = lagged::head_f32_entry(lagged::LAB_PROFILE, LAB);
+        let query = entry.query;
+        let case = f32_head_case(entry, 8)?;
+        let functions = LabModules.load(session)?;
+        let probes = LabModules.probes(session)?;
+        let checks = case.checks(
+            Need::rows(8),
+            Some(session),
+            Some(&*functions),
+            probes.as_ref(),
+        );
+        let mut receipt = BTreeMap::new();
+        for check in checks {
+            match check.outcome {
+                Outcome::Passed(value) => {
+                    receipt.insert(check.name, value);
+                }
+                other => return Err(format!("F32 weighted head {}: {other:?}", check.name)),
+            }
+        }
+        // Inspect actual F32 device values against the independent f64
+        // bound as well as the pinned chain, using three rows in eight.
+        let images = case.select(&case.images(), &[0, 3, 7])?;
+        let outputs = case.launch(session, &*functions, &images, 3)?;
+        case.judge_outputs(&images, 3, &outputs)?;
+        let actual = outputs["output"]
+            .chunks_exact(4)
+            .map(|b| f64::from(f32::from_le_bytes(b.try_into().unwrap())))
+            .collect::<Vec<_>>();
+        let reference = f32_head_reference(query, &images, 3)?;
+        gate(
+            "F32 weighted head",
+            &actual[..3 * H],
+            &reference,
+            DType::F32,
+        )?;
+        receipt.insert(
+            "f64_worst_over_bound".into(),
+            json!(worst_ratio(&actual[..3 * H], &reference, DType::F32)),
+        );
+        session.receipt("sinkhorn_weighted_head_f32", receipt)?;
+        Ok(())
+    })
+    .expect(
+        "F32 weighted head bits, f64 bound, poisoned live rows and chunk/rows/batch properties",
+    );
+}
+
+#[test]
+fn weighted_head_f32_rejects_device_rounding_and_order_mutants() {
+    kernel_lab::gpu_test(1 << 30, |session| {
+        let functions = LabModules.load(session)?;
+        let good = f32_head_case(lagged::head_f32_entry(lagged::LAB_PROFILE, LAB), 8)?;
+        let images = good.select(&good.images(), &[0, 3, 7])?;
+        let expected = good.launch(session, &*functions, &images, 3)?;
+        good.judge_outputs(&images, 3, &expected)?;
+        let mut receipt = BTreeMap::new();
+        for (suffix, _) in lagged::HEAD_F32_MUTANTS {
+            let case = f32_head_case(lagged::head_f32_mutant(suffix), 8)?;
+            // Launch checks all writes, finite values and unwritten poison
+            // before the exact oracle judges the mutant's output.
+            let actual = case.launch(session, &*functions, &images, 3)?;
+            let failure = case
+                .judge_outputs(&images, 3, &actual)
+                .expect_err("a device head mutant must fail its exact oracle");
+            if !failure.contains("output byte") || !failure.contains("the reference") {
+                return Err(format!(
+                    "{suffix} failed outside the exact oracle: {failure}"
+                ));
+            }
+            let differing = actual["output"][..3 * H * 4]
+                .chunks_exact(4)
+                .zip(expected["output"][..3 * H * 4].chunks_exact(4))
+                .filter(|(a, b)| a != b)
+                .count();
+            if differing == 0 {
+                return Err(format!("{suffix} has no device witness"));
+            }
+            eprintln!(
+                "F32 head {suffix}: {differing} of {} device elements differ",
+                3 * H
+            );
+            receipt.insert(
+                suffix.into(),
+                json!({"differing": differing, "failure": failure}),
+            );
+        }
+        session.receipt("sinkhorn_weighted_head_f32_mutants", receipt)?;
+        Ok(())
+    })
+    .expect("F32 weighted head device negative controls");
+}
 
 // Buffer handles. The chain is
 //   X1 = expand_f32(X0, Y0, POST0, COMB0)

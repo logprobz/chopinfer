@@ -1,11 +1,23 @@
 [
   {
+    "name": "sinkhorn_hc_hcl4x5120_head_f32_reverse_streams_sm120",
+    "source_closure_sha256": "c56a8e35217c6c4d065a4fccd1a771b375b3058b8c64da3a31ab079e9c77067f"
+  },
+  {
+    "name": "sinkhorn_hc_hcl4x5120_head_f32_round_bf16_sm120",
+    "source_closure_sha256": "d81e02c127b9f91cb03683f5a6089b8432e8ccd93e037481aadd4bccf9ce210c"
+  },
+  {
+    "name": "sinkhorn_hc_hcl4x5120_head_f32_sm120",
+    "source_closure_sha256": "4650e9f3fc6e3ea7bf0fa10cd68aef66fbebeb65456c0e43be42bc3ce5f57535"
+  },
+  {
     "name": "sinkhorn_hc_hcl4x5120_probe_sm120",
-    "source_closure_sha256": "c90a1469f7215fc303d50fe0e40776bac677f07c3dc401381eaf9671dba34d2c"
+    "source_closure_sha256": "04986fcd051a54617055bd3bd18bb3d67e774f56e0f6ed07fab18f27d2f5024d"
   },
   {
     "name": "sinkhorn_hc_hcl4x5120_sm120",
-    "source_closure_sha256": "234b399164e9007a0e64200e08b842d7bb360b7b6d8b0b6d4290d9ee83de5893"
+    "source_closure_sha256": "1456e4cdeb1d6f2d2132a1cbefb1938a6c7c7a6570a6e084f1e5563f710137e1"
   },
   {
     "name": "sinkhorn_hc_hclt4x5120_probe_sm120",

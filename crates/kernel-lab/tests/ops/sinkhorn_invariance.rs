@@ -40,7 +40,7 @@ enum Form {
     Split,
     Tiled(u32),
     MixNorm,
-    Lagged(lagged::Op),
+    Lagged(lagged::Op, Query),
 }
 
 /// Every declared entry of the family (`kernel_lab::declared::sinkhorn`),
@@ -62,7 +62,7 @@ fn entries() -> Vec<(Declared, Form)> {
             let lagged = lagged::catalog()
                 .into_iter()
                 .find(|entry| entry.symbol == declared.symbol)
-                .map(|entry| Form::Lagged(entry.op));
+                .map(|entry| Form::Lagged(entry.op, entry.query));
             let form = one_cta
                 .or(lagged)
                 .or(tile)
@@ -148,7 +148,7 @@ impl Family for Sinkhorn {
                     .map_err(err)?;
                 kit::mix_collapse_norm_case(op, capacity, prepared)
             }
-            Form::Lagged(op) => {
+            Form::Lagged(op, query) => {
                 let lab = lagged::LAB;
                 let (streams, width) = (lab.mix.streams, lab.mix.width);
                 let backend = lagged_kit::sm120();
@@ -173,14 +173,8 @@ impl Family for Sinkhorn {
                         lagged_kit::expand_case(op, capacity, prepared)
                     }
                     lagged::Op::Head => {
-                        let op = Query::Head {
-                            streams,
-                            width,
-                            mode: StreamHeadMode::SigmoidWeighted,
-                            capacity: lab.capacity,
-                        };
-                        let prepared = backend.sinkhorn_weighted_head(&op, need).map_err(err)?;
-                        lagged_kit::head_case(op, capacity, prepared)
+                        let prepared = backend.sinkhorn_weighted_head(&query, need).map_err(err)?;
+                        lagged_kit::head_case(query, capacity, prepared)
                     }
                 }
             }
@@ -223,6 +217,16 @@ impl Family for Sinkhorn {
 /// row counts, and each case prepares and launches its entry (no GPU).
 #[test]
 fn sinkhorn_cases_launch_their_entries() {
+    assert!(entries().iter().any(|(_, form)| matches!(
+        form,
+        Form::Lagged(
+            lagged::Op::Head,
+            Query::Head {
+                mode: StreamHeadMode::SigmoidWeightedF32,
+                ..
+            }
+        )
+    )));
     for (entry, form) in entries() {
         assert_ne!(
             entry.invariance,

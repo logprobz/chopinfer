@@ -29,6 +29,9 @@ use super::{FakeDevice, JournalObserver, SnapshotOp, fnv1a};
 /// device.
 const DYNAMIC_SHARED_BYTES: u32 = 101_376;
 
+/// CUDA's maximum dynamic shared memory before a symbol opts in.
+const DEFAULT_DYNAMIC_SHARED_BYTES: u32 = 48 * 1024;
+
 /// A host handle the backend acquired or releases, by slot.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Handle {
@@ -752,6 +755,20 @@ impl<P: FakePackage> HostServicesBackendV1 for Backend<P> {
         let device = self.0.device();
         let name = device.symbol_name(symbol, BundleStatusV1::NotFound)?;
         device.check_launch(config);
+        let configured = device
+            .symbol_dynamic_shared_bytes
+            .borrow()
+            .get(&symbol.slot())
+            .copied()
+            .unwrap_or(DEFAULT_DYNAMIC_SHARED_BYTES);
+        if config.shared_memory_bytes > configured.min(DYNAMIC_SHARED_BYTES) {
+            eprintln!(
+                "fake host launch_cuda_symbol {name}: requested {} dynamic shared bytes exceeds symbol limit {configured} bytes or device opt-in limit {DYNAMIC_SHARED_BYTES} bytes",
+                config.shared_memory_bytes
+            );
+            // runtime-host maps CUDA_ERROR_INVALID_VALUE from the driver to HostError.
+            return Err(BundleStatusV1::HostError);
+        }
         self.0.admit_launch(stream, &name, config, arguments)?;
         if device.fail_launch.fails() {
             return Err(BundleStatusV1::HostError);
@@ -970,6 +987,91 @@ mod tests {
         let stream = host.create_stream(context, 0).unwrap();
         let buffer = host.allocate_device_buffer(pool, stream, 64, 16).unwrap();
         (host, stream, buffer)
+    }
+
+    fn host_with_symbol() -> (
+        Backend<Empty>,
+        BundleStreamHandleV1,
+        BundleCudaSymbolHandleV1,
+    ) {
+        let (host, stream, _) = host();
+        let module = host
+            .load_cuda_module(BundleContextHandleV1::from_parts(1, 1), b"module")
+            .unwrap();
+        let symbol = host.resolve_cuda_symbol(module, b"shared_kernel").unwrap();
+        (host, stream, symbol)
+    }
+
+    fn shared_launch(bytes: u32) -> LaunchConfigV1 {
+        LaunchConfigV1 {
+            grid_x: 1,
+            grid_y: 1,
+            grid_z: 1,
+            block_x: 32,
+            block_y: 1,
+            block_z: 1,
+            shared_memory_bytes: bytes,
+            flags: runtime_bundle_abi::BUNDLE_LAUNCH_FLAG_V1_PROGRAMMATIC_STREAM_SERIALIZATION,
+            cluster: runtime_bundle_abi::LaunchClusterV1::NONE,
+        }
+    }
+
+    #[test]
+    fn dynamic_shared_memory_above_default_requires_symbol_configuration() {
+        let (host, stream, symbol) = host_with_symbol();
+        let config = shared_launch(48 * 1024 + 1);
+        let lines = host.device().journal.borrow().len();
+        assert_eq!(
+            host.launch_cuda_symbol(stream, symbol, config, &[]),
+            Err(BundleStatusV1::HostError)
+        );
+        assert_eq!(host.device().journal.borrow().len(), lines);
+        host.configure_cuda_symbol(symbol, config.shared_memory_bytes)
+            .unwrap();
+        host.launch_cuda_symbol(stream, symbol, config, &[])
+            .unwrap();
+
+        // Configuring one module's symbol leaves another's default intact.
+        let module = host
+            .load_cuda_module(BundleContextHandleV1::from_parts(1, 1), b"other module")
+            .unwrap();
+        let other = host.resolve_cuda_symbol(module, b"shared_kernel").unwrap();
+        assert_eq!(
+            host.launch_cuda_symbol(stream, other, config, &[]),
+            Err(BundleStatusV1::HostError)
+        );
+    }
+
+    #[test]
+    fn dynamic_shared_memory_above_opt_in_ceiling_is_refused_during_capture() {
+        let (host, stream, symbol) = host_with_symbol();
+        host.configure_cuda_symbol(symbol, DYNAMIC_SHARED_BYTES)
+            .unwrap();
+        host.begin_graph_capture(stream).unwrap();
+        let lines = host.device().journal.borrow().len();
+        assert_eq!(
+            host.launch_cuda_symbol(stream, symbol, shared_launch(DYNAMIC_SHARED_BYTES + 1), &[]),
+            Err(BundleStatusV1::HostError)
+        );
+        assert_eq!(host.device().journal.borrow().len(), lines);
+        let graph = host.end_graph_capture(stream).unwrap();
+        assert_eq!(host.device().graph_nodes.borrow()[&graph.slot()], 0);
+    }
+
+    #[test]
+    fn dynamic_shared_memory_exactly_at_each_limit_passes() {
+        let (host, stream, symbol) = host_with_symbol();
+        host.launch_cuda_symbol(stream, symbol, shared_launch(48 * 1024), &[])
+            .unwrap();
+        for limit in [DYNAMIC_SHARED_BYTES, 48 * 1024 + 1, 0] {
+            host.configure_cuda_symbol(symbol, limit).unwrap();
+            host.launch_cuda_symbol(stream, symbol, shared_launch(limit), &[])
+                .unwrap();
+            assert_eq!(
+                host.launch_cuda_symbol(stream, symbol, shared_launch(limit + 1), &[]),
+                Err(BundleStatusV1::HostError)
+            );
+        }
     }
 
     /// A gather uploads the named rows of the package's mapped view, checked

@@ -188,6 +188,8 @@ pub struct FakeDevice<O = NoObserver> {
     /// Every message the bundle logged, in order.
     pub logs: RefCell<Vec<String>>,
     pub symbol_names: RefCell<BTreeMap<u32, String>>,
+    /// The configured maximum dynamic shared bytes, by symbol slot.
+    symbol_dynamic_shared_bytes: RefCell<BTreeMap<u32, u32>>,
     /// The module of each symbol, and the cubin of each loaded module.
     pub symbol_modules: RefCell<BTreeMap<u32, u32>>,
     pub module_cubins: RefCell<BTreeMap<u32, &'static str>>,
@@ -446,6 +448,9 @@ impl<O: JournalObserver> FakeDevice<O> {
     }
 
     pub fn configure_symbol(&self, symbol: BundleCudaSymbolHandleV1, dynamic_shared_bytes: u32) {
+        self.symbol_dynamic_shared_bytes
+            .borrow_mut()
+            .insert(symbol.slot(), dynamic_shared_bytes);
         self.note(format!(
             "configure {} {dynamic_shared_bytes}",
             symbol.slot()

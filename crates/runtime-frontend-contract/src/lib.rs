@@ -1,8 +1,10 @@
 #![forbid(unsafe_code)]
 
+mod centered_pad;
 mod descriptor;
 mod tokenizer;
 
+pub use centered_pad::MAXIMUM_DECODED_IMAGE_PIXELS_V1;
 pub use descriptor::*;
 pub use tokenizer::*;
 

@@ -860,7 +860,11 @@ impl FrontendDescriptorV1 {
             let (kind, tags, allowed) = match modality.kind {
                 FrontendMediaKindV1::Image => (
                     "image",
-                    &["image.patch-grid.v1", "image.zero-padded-token-budget.v1"][..],
+                    &[
+                        "image.patch-grid.v1",
+                        "image.zero-padded-token-budget.v1",
+                        "image.centered-pad.v1",
+                    ][..],
                     &["image_url"][..],
                 ),
                 FrontendMediaKindV1::Audio => (
@@ -891,6 +895,16 @@ impl FrontendDescriptorV1 {
                 || !modality.recipe.parameters.is_object()
             {
                 return Err(invalid(format!("invalid {kind} modality declaration")));
+            }
+            if modality.recipe.tag == "image.centered-pad.v1" {
+                modality.validate_centered_pad_v1().map_err(invalid)?;
+                if media
+                    .modalities
+                    .iter()
+                    .any(|m| m.kind == FrontendMediaKindV1::Video)
+                {
+                    return Err(invalid("image.centered-pad.v1 has no video form"));
+                }
             }
             let pad = &modality.render.pad;
             bounded_marker(pad, "media marker")?;

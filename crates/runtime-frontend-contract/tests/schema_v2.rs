@@ -345,6 +345,112 @@ fn media_render_holds_only_what_the_host_expands() {
     );
 }
 
+fn centered_pad_declaration() -> Value {
+    let mut value = declaration();
+    value["context"]["maximum_total_tokens"] = 1024.into();
+    value["tokenizer"]["model_max_length"] = 1024.into();
+    value["multimodal"] = json!({
+        "arena": {"rows": 1024, "page_rows": 64, "hidden": 8, "element": "bf16"},
+        "encoders": [{"name": "image", "payload_element": "bf16", "payload_columns": 588,
+            "maximum_payload_bytes": 1 << 24, "cost_per_row_milli": 1}],
+        "modalities": [{"kind": "image", "part_types": ["image_url"], "maximum_items": 1,
+            "maximum_bytes": 1 << 20, "maximum_tokens": 1024, "encoder": 0,
+            "recipe": {"tag": "image.centered-pad.v1", "parameters": {
+                "patch": 14, "downsample": 3, "minimum_pixels": 295936, "maximum_tokens": 1024,
+                "pad": [127, 127, 127], "value_divisor": 255.0,
+                "mean": [0.5, 0.5, 0.5], "std": [0.5, 0.5, 0.5], "alpha_background": "none"
+            }},
+            "layout": "learned-delimiters.v1", "render": {"pad": "[EOS]"}}]
+    });
+    value
+}
+
+#[test]
+fn centered_pad_loads_through_the_complete_descriptor() {
+    let descriptor = read(&centered_pad_declaration()).unwrap();
+    assert_eq!(
+        descriptor.multimodal.unwrap().modalities[0].recipe.tag,
+        "image.centered-pad.v1"
+    );
+}
+
+#[test]
+fn centered_pad_descriptor_refuses_unusable_parameters_and_layouts() {
+    let valid = centered_pad_declaration();
+    let parameters = "/multimodal/modalities/0/recipe/parameters";
+    for (key, bad) in [
+        ("patch", json!(0)),
+        ("patch", json!(1_u64 << 32)),
+        ("patch", json!(1.5)),
+        ("downsample", json!(0)),
+        ("downsample", json!(u32::MAX)),
+        ("minimum_pixels", json!((1_u64 << 53) + 1)),
+        ("maximum_tokens", json!(3)),
+        ("maximum_tokens", json!(1025)),
+        ("pad", json!([127, 127, 256])),
+        ("pad", json!([127, 127])),
+        ("value_divisor", json!(0)),
+        ("value_divisor", json!(1e100)),
+        ("value_divisor", json!(1e-100)),
+        ("mean", json!([0, 0, 1e100])),
+        ("std", json!([0.5, 0, 0.5])),
+        ("std", json!([0.5, 1e-100, 0.5])),
+        ("alpha_background", json!("black")),
+        ("maximum_aspect_ratio", json!(0.5)),
+        ("maximum_aspect_ratio", Value::Null),
+        ("interpolation", json!("bicubic")),
+    ] {
+        let mut value = valid.clone();
+        value.pointer_mut(parameters).unwrap()[key] = bad;
+        assert!(
+            matches!(read(&value), Err(FrontendComponentErrorV1::Invalid(_))),
+            "{key}: {value}"
+        );
+    }
+    for key in valid
+        .pointer(parameters)
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .keys()
+    {
+        let mut value = valid.clone();
+        value
+            .pointer_mut(parameters)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove(key);
+        assert!(read(&value).is_err(), "missing {key}");
+    }
+    for (path, bad) in [
+        ("/multimodal/modalities/0/layout", Value::Null),
+        ("/multimodal/modalities/0/maximum_tokens", json!(1000)),
+        (
+            "/multimodal/modalities/0/recipe/parameters/patch",
+            json!(1000),
+        ),
+    ] {
+        let mut value = valid.clone();
+        *value.pointer_mut(path).unwrap() = bad;
+        assert!(read(&value).is_err(), "{path}");
+    }
+    for (key, accepted) in [
+        ("patch", json!(14.0)),
+        ("downsample", json!(3.0)),
+        ("minimum_pixels", json!(295936.0)),
+        ("maximum_tokens", json!(1024.0)),
+        ("alpha_background", json!("white")),
+        ("minimum_pixels", json!(0)),
+        ("maximum_aspect_ratio", json!(1)),
+        ("std", json!([-0.5, 0.5, 0.5])),
+    ] {
+        let mut value = valid.clone();
+        value.pointer_mut(parameters).unwrap()[key] = accepted;
+        read(&value).unwrap();
+    }
+}
+
 /// `declaration()` with `section` in place of the format, serialized, then
 /// with `from` replaced by `to` in its text: JSON a `Value` cannot hold.
 fn raw(section: &str, value: Value, from: &str, to: &str) -> Vec<u8> {

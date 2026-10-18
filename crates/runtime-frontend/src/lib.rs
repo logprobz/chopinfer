@@ -55,7 +55,7 @@ pub use descriptor::{
     FrontendReasoningEffortV1, FrontendReasoningFieldV1, FrontendReasoningPolicyV1,
     FrontendResponseV1, FrontendTokenizerNormalizerV1, FrontendTokenizerPolicyV1,
     FrontendTokenizerV1, FrontendToolArgumentsV1, FrontendToolPolicyV1, FrontendVocabularyV1,
-    TOKENIZER_CONFIGURATION_ROLE_V1, TOKENIZER_DEFINITION_ROLE_V1,
+    MAXIMUM_DECODED_IMAGE_PIXELS_V1, TOKENIZER_CONFIGURATION_ROLE_V1, TOKENIZER_DEFINITION_ROLE_V1,
     audio_log_mel_v1_fixed_parameters,
 };
 #[cfg(any(test, feature = "test-support"))]

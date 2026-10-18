@@ -96,7 +96,7 @@ def recorded(image=True, arm='spec', client=None, server_log=None):
     args = SimpleNamespace(url='http://127.0.0.1:39001' if server_log else 'http://fake', timeout=10, model=None,
                            arm=arm, run_id='run', image=image, image_reason=None, server_log=server_log)
     with patch.object(determinism, 'Client', return_value=client), \
-         patch.object(determinism, 'answer_kwargs', return_value={'enable_thinking': False}), \
+         patch.object(determinism, 'answer_control', return_value={'chat_template_kwargs': {'enable_thinking': False}}), \
          patch.object(determinism, 'receipt', side_effect=lambda check, server, value, mechanics: written.append(
              dict(value, check=check, server=server, mechanics_only=mechanics))):
         determinism.record(args)
@@ -149,7 +149,7 @@ class RequestSetTests(unittest.TestCase):
         self.assertEqual(prompts[:4], ['The capital of France is', 'Write a haiku about the ocean.',
                                        'def fibonacci(n):', 'Question: What is 17 multiplied by 23? Answer:'])
         self.assertEqual(prompts[4], prompts[5])
-        for name, path, body in determinism.request_set(True, {'enable_thinking': False}):
+        for name, path, body in determinism.request_set(True, {'chat_template_kwargs': {'enable_thinking': False}}):
             self.assertEqual((body['temperature'], body['max_tokens'], body['return_token_ids']), (0, 48, True))
             if name == 'image':
                 self.assertEqual(path, '/v1/chat/completions')
@@ -206,7 +206,7 @@ class RecordTests(unittest.TestCase):
                              row(value, f'long-primer-{anchor}')['cache_salt'])
         self.assertTrue(all(body['model'] == 'served' for body in sends))
         self.assertEqual(value['request_set']['sha256'], determinism.request_digest(
-            determinism.request_set(True, {'enable_thinking': False}) + determinism.hit_requests(LONG_IDS)))
+            determinism.request_set(True, {'chat_template_kwargs': {'enable_thinking': False}}) + determinism.hit_requests(LONG_IDS)))
         self.assertEqual(value['request_set']['long_prompt_tokens'], 2800)
         self.assertEqual(value['request_set']['long_prompt_token_ids_sha256'],
                          hashlib.sha256(json.dumps(LONG_IDS, separators=(',', ':')).encode()).hexdigest())

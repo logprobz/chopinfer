@@ -84,6 +84,7 @@ class ServedCapture(unittest.TestCase):
             url = f'http://127.0.0.1:{served.server_address[1]}'
             try:
                 with fixture_lock(config), patch.object(frontend_goldens, 'qualification_config', return_value=config), \
+                     patch.object(common, 'qualification_config', return_value=config), \
                      patch.object(frontend_goldens, 'resolve_input',
                                   side_effect=lambda name, **kwargs: common.resolve_input(name, config=config)), \
                      patch('sys.argv', ['frontend', '--url', url, '--capture-out', str(root / 'capture'),

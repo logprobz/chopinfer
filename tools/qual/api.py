@@ -18,7 +18,7 @@ import json
 import math
 import urllib.request
 
-from common import thinking_kwargs, Client, arguments, receipt, response_text
+from common import thinking_control, Client, arguments, receipt, response_text
 
 # The tool round trip's final answer, after the model's default reasoning:
 # a constant a model declaration's api check may set, which `chopinfer eval`
@@ -109,7 +109,7 @@ def main():
                                         "max_tokens": 1, "add_generation_prompt": False, "temperature": 0},
           lambda value: require(bool(value.get("choices")), "generation prefix control failed"))
     check("hidden_reasoning", {"model": model, "messages": [{"role": "user", "content": "What is 17 times 23?"}],
-                                "chat_template_kwargs": thinking_kwargs(True), "include_reasoning": False,
+                                **thinking_control(True), "include_reasoning": False,
                                 "max_tokens": 8, "temperature": 0},
           lambda value: require(not (value["choices"][0]["message"].get("reasoning") or
                                     value["choices"][0]["message"].get("reasoning_content")), "reasoning was not suppressed"))
@@ -146,7 +146,7 @@ def main():
     # message without judging the model's reasoning.
     for thinking in (True, False):
         check(f"reasoning_{thinking}", {"model": model, "messages": [{"role": "user", "content": "What is 17 times 23?"}],
-                                        "chat_template_kwargs": thinking_kwargs(thinking), "max_tokens": 8,
+                                        **thinking_control(thinking), "max_tokens": 8,
                                         "temperature": 0}, lambda value: value["choices"][0]["message"])
     tools = [{"type": "function", "function": {"name": "get_weather", "parameters": {"type": "object"}}}]
     messages = [{"role": "user", "content": "Paris?"}]

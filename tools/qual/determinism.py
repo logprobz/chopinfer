@@ -53,7 +53,7 @@ import sys
 import uuid
 import zlib
 
-from common import Client, answer_kwargs, arguments, bind_checkpoint, confirm_live, receipt
+from common import Client, answer_control, arguments, bind_checkpoint, confirm_live, receipt
 
 SHORT_PROMPTS = {
     "capital": "The capital of France is",
@@ -126,7 +126,7 @@ def request_names(image):
     return [*SHORT_PROMPTS, LONG, LONG_REPEAT] + ([IMAGE] if image else []) + hit_names()
 
 
-def request_set(image, chat_template_kwargs=None):
+def request_set(image, control=None):
     """(name, path, body) of every text request, without model and cache salt."""
     requests = [(name, "/v1/completions", dict(COMPLETION, prompt=prompt))
                 for name, prompt in SHORT_PROMPTS.items()]
@@ -139,8 +139,8 @@ def request_set(image, chat_template_kwargs=None):
                     {"type": "text", "text": IMAGE_QUESTION}]}],
                 "temperature": 0, "top_p": 1, "max_tokens": MAX_TOKENS, "logprobs": True,
                 "top_logprobs": TOP_LOGPROBS, "return_token_ids": True}
-        if chat_template_kwargs:
-            body["chat_template_kwargs"] = chat_template_kwargs
+        if control:
+            body.update({key: value for key, value in control.items() if value})
         requests.append((IMAGE, "/v1/chat/completions", body))
     return requests
 
@@ -226,7 +226,7 @@ def record(args):
     server = client.identity(args.model)
     if getattr(args, "server_log", None):
         bind_checkpoint(server, args.server_log, args.url)
-    requests = request_set(args.image, answer_kwargs() if args.image else None)
+    requests = request_set(args.image, answer_control() if args.image else None)
     # One request at a time: C1.
     rows = [send(client, server["model"], name, path, body) for name, path, body in requests]
     token_ids = tokenize(client, server["model"], long_prompt())

@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 import sys
 
-from common import ROOT, resolve_input, qualification_config
+from common import template_control, ROOT, resolve_input, qualification_config
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -83,7 +83,7 @@ def capture_bodies(model, renders, texts):
         if row.get("tools"):
             body["tools"] = row["tools"]
         if row.get("chat_template_kwargs"):
-            body["chat_template_kwargs"] = row["chat_template_kwargs"]
+            body.update(template_control(row["chat_template_kwargs"]))
         chats.append(body)
     tokens = [{"model": model, "prompt": row["text"], "add_special_tokens": False} for row in texts]
     return chats, tokens

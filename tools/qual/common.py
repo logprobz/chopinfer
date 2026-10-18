@@ -115,7 +115,7 @@ def startup(model_facts=False, directory=None):
         if not isinstance(config.get("inputs"), dict) or not isinstance(config.get("qualification"), dict):
             raise ValueError("gate config needs inputs and qualification")
     if model_facts:
-        thinking_kwargs(False)
+        thinking_control(False)
     directory = receipt_root() if directory is None else Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryFile(dir=directory) as probe:
@@ -149,6 +149,64 @@ def thinking_kwargs(enabled):
     if not keywords:
         raise ValueError("frontend has no thinking switch keyword")
     return {keywords[0]: enabled}
+
+
+def thinking_switch():
+    """The declared request transport, including the legacy default."""
+    switch = frontend_reasoning().get("switch", "template-keywords")
+    if switch not in ("template-keywords", "thinking-object"):
+        raise ValueError("frontend has an unsupported thinking switch")
+    return switch
+
+
+def thinking_control(enabled):
+    """Request members for the frontend's declared thinking switch."""
+    if thinking_switch() == "thinking-object":
+        return {"thinking": {"type": "enabled" if enabled else "disabled"}}
+    return {"chat_template_kwargs": thinking_kwargs(enabled)}
+
+
+def answer_control():
+    """Disable thinking when allowed, otherwise keep the frontend default.
+
+    Keep the empty template options object on legacy requests so their
+    serialized bodies stay unchanged.
+    """
+    switch = thinking_switch()
+    if thinking_can_be_disabled():
+        return thinking_control(False)
+    return {"chat_template_kwargs": {}} if switch == "template-keywords" else {}
+
+
+def template_control(kwargs):
+    """Route captured template controls through the declared API switch.
+
+    Other template options keep their values. An object switch reads effort
+    at the top level, and the first declared thinking keyword wins.
+    """
+    if thinking_switch() == "template-keywords":
+        return {"chat_template_kwargs": kwargs}
+    keywords = frontend_reasoning()["thinking_keywords"]
+    options = {key: value for key, value in kwargs.items()
+               if key not in keywords and key != "reasoning_effort"}
+    control = {"chat_template_kwargs": options} if options else {}
+    for keyword in keywords:
+        if keyword in kwargs:
+            if not isinstance(kwargs[keyword], bool):
+                raise ValueError("captured thinking keyword must be boolean")
+            control.update(thinking_control(kwargs[keyword]))
+            break
+    if "reasoning_effort" in kwargs:
+        control["reasoning_effort"] = kwargs["reasoning_effort"]
+    return control
+
+
+def reasoning_field():
+    """The declared response field, or the legacy reasoning field."""
+    field = frontend().get("response", {}).get("reasoning_field", "reasoning")
+    if field not in ("reasoning", "reasoning_content"):
+        raise ValueError("frontend has an unsupported reasoning response field")
+    return field
 
 
 def thinking_can_be_disabled():

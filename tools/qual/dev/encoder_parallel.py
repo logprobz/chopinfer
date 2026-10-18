@@ -36,10 +36,15 @@ import socket
 import subprocess
 import time
 
-from common import input_path, Client, ROOT, qualification_config
+from common import thinking_control, input_path, Client, ROOT, qualification_config
 import encoder_declarations
 from kvo_resume import prepare_direct
 from multimodal import cases, messages, load_reference
+
+
+def chat_body(model, prompt):
+    return {"model": model, "messages": prompt, **thinking_control(False),
+            "temperature": 0, "max_tokens": 32, "return_token_ids": True}
 
 
 def compare_arenas(left, right, expected_records=None, ranks=4):
@@ -342,9 +347,7 @@ def main():
                         workload = capture_work if capture else timing_work
                         for entry in workload:
                             key, prompt = entry[:2]
-                            body = {"model": model, "messages": prompt,
-                                    "chat_template_kwargs": {"enable_thinking": False},
-                                    "temperature": 0, "max_tokens": 32, "return_token_ids": True}
+                            body = chat_body(model, prompt)
                             before = (run / "server.log").stat().st_size
                             previous_files = set((run / "arenas").rglob("*.bin")) if capture else set()
                             client.timeout = min(180, budget())

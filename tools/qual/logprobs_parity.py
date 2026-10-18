@@ -17,7 +17,7 @@ import math
 from pathlib import Path
 import sys
 
-from common import startup, answer_kwargs, bind_checkpoint, confirm_live, Client, receipt
+from common import startup, answer_control, bind_checkpoint, confirm_live, Client, receipt
 
 
 QUESTION = "What is 17 + 25? Reply with the number only."
@@ -30,7 +30,7 @@ TOOLS = [{"type": "function", "function": {
 def cases():
     """Each case runs non-streaming, streaming, and streaming with token IDs."""
     # Thinking off, or the frontend's default where it refuses that.
-    no_thinking = {"chat_template_kwargs": answer_kwargs()}
+    no_thinking = answer_control()
     user = [{"role": "user", "content": QUESTION}]
     chat = {"messages": user, "max_tokens": 1024, "temperature": 0, "seed": 1,
             "logprobs": True, "top_logprobs": 3}

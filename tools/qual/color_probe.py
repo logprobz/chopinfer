@@ -24,7 +24,7 @@ from pathlib import Path
 import struct
 import zlib
 
-from common import (answer_budget, answer_kwargs, frontend, thinking_can_be_disabled, Client, arguments,
+from common import (answer_budget, answer_control, frontend, thinking_can_be_disabled, Client, arguments,
                     receipt)
 
 
@@ -247,7 +247,7 @@ def answer_start(tokens):
 def ask(client, model, content):
     body = {"model": model, "messages": content, "temperature": 0, "max_tokens": answer_budget(8),
             "logprobs": True, "top_logprobs": 20,
-            "chat_template_kwargs": answer_kwargs()}
+            **answer_control()}
     response, _ = client.request("/v1/chat/completions", body)
     choice = response["choices"][0]
     tokens = (choice.get("logprobs") or {}).get("content") or []

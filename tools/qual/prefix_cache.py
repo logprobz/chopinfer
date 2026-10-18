@@ -30,7 +30,7 @@ import statistics
 import sys
 import time
 
-from common import answer_kwargs, Client, arguments, compared_timing, host_load_sample, receipt
+from common import reasoning_field, answer_control, Client, arguments, compared_timing, host_load_sample, receipt
 
 WORDS = ("amber", "basalt", "cedar", "delta", "ember", "fjord", "garnet", "harbor",
          "indigo", "juniper", "kelp", "lagoon", "meadow", "nimbus", "onyx", "prairie")
@@ -76,7 +76,8 @@ def stream_chat(client, model, messages, answer_tokens):
             "stream": True, "stream_options": {"include_usage": True},
             # Reasoning would spend the answer budget before any content; a
             # frontend that refuses disabled thinking compares its reasoning.
-            "chat_template_kwargs": answer_kwargs()}
+            **answer_control()}
+    field = reasoning_field()
     started = time.monotonic()
     events, _ = client.request("/v1/chat/completions", body, stream=True)
     first, tokens, logprobs, content, usage = None, [], [], [], None
@@ -85,7 +86,7 @@ def stream_chat(client, model, messages, answer_tokens):
             usage = event["usage"]
         for choice in event.get("choices", []):
             delta = choice.get("delta", {})
-            if first is None and (delta.get("content") or delta.get("reasoning")):
+            if first is None and (delta.get("content") or delta.get(field)):
                 first = at
             for entry in (choice.get("logprobs") or {}).get("content") or []:
                 tokens.append(entry["token"])

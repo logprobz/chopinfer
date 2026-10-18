@@ -26,7 +26,7 @@ import os
 import re
 import sys
 
-from common import (input_path, Client, ROOT, arguments, bind_checkpoint, confirm_live, qualification_config, receipt,
+from common import (template_control, input_path, Client, ROOT, arguments, bind_checkpoint, confirm_live, qualification_config, receipt,
                     serving_profile)
 import declaration
 
@@ -183,7 +183,7 @@ def main():
             {"role": "user", "content": "1+1?" if args.mechanics_only else example["question"]}],
             "temperature": manifest["temperature"], "top_p": 1, "seed": manifest["seed"],
             "max_tokens": 1 if args.mechanics_only else manifest["max_tokens"],
-            "chat_template_kwargs": manifest["chat_template_kwargs"],
+            **template_control(manifest["chat_template_kwargs"]),
             # Retained responses carry their token IDs for gsm8k_branches.py.
             "return_token_ids": True}
         try:

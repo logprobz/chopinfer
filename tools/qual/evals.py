@@ -60,7 +60,7 @@ import time
 import urllib.parse
 import urllib.request
 
-from common import (startup, thinking_kwargs, qualification_config, receipt_root, Client, receipt, bind_checkpoint,
+from common import (startup, thinking_control, qualification_config, receipt_root, Client, receipt, bind_checkpoint,
                     checkpoint_pin, confirm_live)
 
 SIGNIFICANCE = 0.05
@@ -153,7 +153,7 @@ def chat(messages, max_tokens, thinking):
     if unknown := sorted(set(SAMPLING) - {"temperature", "top_p", "max_tokens"}):
         raise ValueError(f"evals SAMPLING sets {unknown}: only temperature, top_p and max_tokens")
     return {"messages": messages, "temperature": 0, "max_tokens": max_tokens, **SAMPLING,
-            "chat_template_kwargs": thinking_kwargs(thinking)}
+            **thinking_control(thinking)}
 
 
 def gsm8k_items(rows):

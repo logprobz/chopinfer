@@ -14,7 +14,7 @@ import statistics
 import tempfile
 from functools import lru_cache
 
-from common import (answer_budget, answer_kwargs, thinking_kwargs, Client, arguments, bind_checkpoint, confirm_live,
+from common import (answer_budget, answer_control, thinking_control, Client, arguments, bind_checkpoint, confirm_live,
                     entries_top1, not_applicable, pinned_binding, pinned_reference, pinned_bytes, qualification_config, input_path, resolve_input, read_config,
                     reference_path, receipt, rows_digest, served_entries)
 from exact_reference import check_scores, gap_top, top
@@ -248,7 +248,7 @@ def ordered_clauses(answer, clauses):
 def evaluate_case(client, model, case, expected, fixture_dir, fixture_manifest, *, media_bytes=None):
     prompt = messages(case, fixture_dir, media_bytes=media_bytes)
     body = {"model": model, "messages": prompt,
-            "chat_template_kwargs": answer_kwargs(),
+            **answer_control(),
             "temperature": 0, "max_tokens": answer_budget(256), "return_token_ids": True}
     answer, latency = client.request("/v1/chat/completions", body)
     text = answer["choices"][0]["message"].get("content") or ""
@@ -551,7 +551,7 @@ def evaluate_probe(client, model, probe, images, reference, near_tie):
     body = {"model": model, "messages": probe_messages(probe, images),
             "max_tokens": budget if thinking else answer_budget(budget),
             "temperature": 0, "logprobs": True, "top_logprobs": 5,
-            "chat_template_kwargs": thinking_kwargs(True) if thinking else answer_kwargs()}
+            **(thinking_control(True) if thinking else answer_control())}
     response, latency = client.request("/v1/chat/completions", body)
     choice = response["choices"][0]
     text = choice["message"].get("content") or ""

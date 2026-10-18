@@ -18,7 +18,7 @@ from pathlib import Path
 import struct
 import zlib
 
-from common import answer_budget, answer_kwargs, Client, arguments, not_applicable, receipt
+from common import answer_budget, answer_control, Client, arguments, not_applicable, receipt
 
 
 SQUARE = "What color is the square? Answer with one color word."
@@ -66,7 +66,7 @@ class Probe:
 
     def body(self, messages, **extra):
         return {"model": self.model, "messages": messages, "temperature": 0,
-                "chat_template_kwargs": answer_kwargs(), **extra}
+                **answer_control(), **extra}
 
     def answer(self, messages, max_tokens):
         response, _ = self.client.request("/v1/chat/completions",

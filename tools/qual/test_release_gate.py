@@ -504,7 +504,7 @@ class GateTests(unittest.TestCase):
         with patch('sys.argv', ['soak.py', '--remote-only', '--media-mix', '--duration', '1',
                                 '--concurrency', '1']), \
              patch.object(common, 'startup'), \
-             patch.object(soak, 'answer_kwargs', return_value={}), \
+             patch.object(soak, 'answer_control', return_value={'chat_template_kwargs': {}}), \
              patch.object(soak, 'thinking_can_be_disabled', return_value=True), \
              patch.object(soak, 'media_requests', side_effect=media), \
              patch.object(soak.Client, 'identity', return_value={'model': 'fixture', 'health': health}), \

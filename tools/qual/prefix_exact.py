@@ -113,7 +113,7 @@ import struct
 import sys
 import zlib
 
-from common import (qualification_config, input_path, answer_kwargs, Client, arguments, bind_checkpoint,
+from common import (qualification_config, input_path, answer_control, Client, arguments, bind_checkpoint,
                     bound_live, confirm_live, receipt)
 import limits as rules
 from prefix_cache import TOKENS_PER_RECORD, text as record_text
@@ -518,7 +518,7 @@ def media_messages(image, question, run_id, text_tokens=MEDIA_TEXT_TOKENS):
 def chat(client, model, messages, salt):
     body = {"model": model, "messages": messages, "temperature": 0, "max_tokens": 8,
             "logprobs": True, "top_logprobs": 2, "cache_salt": salt,
-            "chat_template_kwargs": answer_kwargs()}
+            **answer_control()}
     response, _ = client.request("/v1/chat/completions", body)
     choice = response["choices"][0]
     entries = (choice.get("logprobs") or {}).get("content") or []
@@ -532,7 +532,7 @@ def chat(client, model, messages, salt):
 def tokenize(client, model, messages):
     response, _ = client.request("/tokenize", {
         "model": model, "messages": messages,
-        "chat_template_kwargs": answer_kwargs()})
+        **answer_control()})
     return response["tokens"]
 
 

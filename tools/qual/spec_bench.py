@@ -9,7 +9,7 @@ import re
 import statistics
 import time
 
-from common import input_path, thinking_kwargs, Client, arguments, host_load_sample, receipt
+from common import input_path, thinking_control, Client, arguments, host_load_sample, receipt
 from concurrency import add_arguments, validate
 from spec_metrics import difference, metrics_text, snapshot, within_output
 from step_overlap_ab import step_lines, summarize_steps
@@ -58,7 +58,7 @@ def workload(model, run_id, category, concurrency, index, question, instruction,
                  + instruction},
                 {"role": "user", "content": question}],
             "temperature": 0, "top_p": 1, "max_tokens": output_tokens,
-            "chat_template_kwargs": thinking_kwargs(True),
+            **thinking_control(True),
             "stream": True, "stream_options": {"include_usage": True}}
     if ignore_eos:
         body["ignore_eos"] = True

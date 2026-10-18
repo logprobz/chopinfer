@@ -20,7 +20,7 @@ Validity is valid / (valid + invalid).
 import json
 import re
 
-from common import answer_kwargs, thinking_can_be_disabled, thinking_kwargs, Client, arguments, receipt
+from common import answer_control, thinking_can_be_disabled, thinking_control, Client, arguments, receipt
 
 
 PERSON = {
@@ -149,7 +149,7 @@ def cases(args):
             # The frontend always reasons: the answer follows its reasoning.
             extra.setdefault("max_tokens", args.reasoning_max_tokens)
         return {"messages": [{"role": "user", "content": prompt}],
-                "chat_template_kwargs": thinking_kwargs(True) if thinking else answer_kwargs(), **extra}
+                **(thinking_control(True) if thinking else answer_control()), **extra}
 
     def schema_format(strict):
         return {"type": "json_schema", "json_schema": {"name": "person", "schema": PERSON, "strict": strict}}

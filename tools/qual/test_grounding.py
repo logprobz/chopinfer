@@ -79,7 +79,7 @@ class GroundingTests(unittest.TestCase):
         import grounding
         server = {"model": "M", "health": {"status": "ready", "modalities": ["text", "audio"]}}
         with patch("sys.argv", ["grounding.py", "--url", "http://unused"]), \
-             patch.object(grounding, "answer_kwargs", return_value={}), \
+             patch.object(grounding, "answer_control", return_value={"chat_template_kwargs": {}}), \
              patch.object(grounding.Client, "identity", return_value=server), \
              patch.object(grounding.Client, "request", side_effect=AssertionError("sent an image")), \
              patch.object(grounding, "receipt") as receipt:

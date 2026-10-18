@@ -44,7 +44,7 @@ from pathlib import Path
 import importlib.util
 import uuid
 
-from common import (REASONING_TOKENS, answer_kwargs, host_load_sample, input_path, thinking_can_be_disabled,
+from common import (REASONING_TOKENS, answer_control, host_load_sample, input_path, thinking_can_be_disabled,
                     Client, arguments, not_applicable, receipt)
 from prefix_exact import BLOCK_TOKENS, primer, tokenize
 from spec_metrics import metrics_text
@@ -237,7 +237,8 @@ def kept_structured(worker_id, turn, elapsed, latency, body, value, reason):
             "reason": reason, "request": body, "response_id": value.get("id"),
             "finish_reason": choice.get("finish_reason"),
             "completion_tokens": (value.get("usage") or {}).get("completion_tokens"),
-            "content": answer.get("content"), "reasoning_content": answer.get("reasoning_content")}
+            "content": answer.get("content"),
+            "reasoning_content": answer.get("reasoning_content") or answer.get("reasoning")}
 
 
 def check_structured(choice):
@@ -354,7 +355,7 @@ def main():
     # Media and structured answers come without reasoning, or after it when
     # the frontend refuses disabled thinking.
     mixed_reasoning = (args.media_mix or args.structured_mix) and not thinking_can_be_disabled()
-    no_thinking = answer_kwargs() if args.media_mix or args.structured_mix else {}
+    no_thinking = answer_control() if args.media_mix or args.structured_mix else {}
     client = Client(args.url, args.timeout)
     server = client.identity(args.model)
     root_pid = None if args.mechanics_only or args.remote_only else (args.server_pid or serving_pid(args.url))
@@ -415,12 +416,12 @@ def main():
                 case_id, messages = media[(worker_id + turn) // 8 % len(media)]
                 body = {"model": server["model"], "messages": messages, "temperature": 0,
                         "max_tokens": REASONING_TOKENS if mixed_reasoning else 48,
-                        "chat_template_kwargs": no_thinking}
+                        **no_thinking}
             elif args.structured_mix and (worker_id + turn) % 8 == 4:
                 kind = "structured"
                 body = {"model": server["model"], "max_tokens": REASONING_TOKENS if mixed_reasoning else 512,
                         "messages": [{"role": "user", "content": PERSON_PROMPT}],
-                        "chat_template_kwargs": no_thinking,
+                        **no_thinking,
                         "response_format": STRUCTURED_FORMAT}
             try:
                 value, latency = client.request("/v1/chat/completions", body)

@@ -81,7 +81,7 @@ class EvalsTests(unittest.TestCase):
 
     def test_declared_sampling_replaces_the_greedy_settings_of_every_body(self):
         rows = [{"question": "What is 1 + 1?", "answer": "1 + 1 = 2\n#### 2"}]
-        with patch.object(evals, "thinking_kwargs", lambda thinking: {"enable_thinking": thinking}):
+        with patch.object(evals, "thinking_control", lambda thinking: {"chat_template_kwargs": {"enable_thinking": thinking}}):
             greedy = evals.gsm8k_items(rows)[0]
             # Without a declaration the body is the greedy one, key for key.
             self.assertEqual(greedy["body"], {

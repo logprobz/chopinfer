@@ -13,6 +13,8 @@ use crate::precision::layout::PackingPlan;
 use crate::precision::{DecodeOrder, NibbleOrder};
 use std::ops::Range;
 
+mod scales;
+
 /// Which packed section the record stores.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(
@@ -207,6 +209,17 @@ impl PackedOperand {
         record: &WeightRecord,
         sources: &[&[u8]],
     ) -> Result<[Vec<u8>; 3], WeightTransformError> {
+        self.execute_sections_reusing(record, sources, std::array::from_fn(|_| Vec::new()))
+    }
+
+    /// The same materialization with reusable section storage. Every padding
+    /// byte is initialized on each call, including reused allocations.
+    pub fn execute_sections_reusing(
+        &self,
+        record: &WeightRecord,
+        sources: &[&[u8]],
+        buffers: [Vec<u8>; 3],
+    ) -> Result<[Vec<u8>; 3], WeightTransformError> {
         use crate::contract::SwigluColumns;
         use crate::precision::packed::{MatrixSlice, MatrixView, ScaleBytes};
         use crate::transform::fragment::FragmentWeightLayout;
@@ -218,30 +231,30 @@ impl PackedOperand {
         }
         let plan = &self.plan;
         let (scale_rows, scale_columns) = plan.scale_shape();
-        let mut codes = vec![0_u8; (plan.total_rows() * plan.code_bytes()) as usize];
-        let mut scales = vec![
-            if matches!(
-                plan.format,
-                WeightFormat::Fp8Block32x32 | WeightFormat::Mxfp4 | WeightFormat::Mxfp8
-            ) {
-                127
+        let [mut codes, mut scales, mut globals] = buffers;
+        codes.resize((plan.total_rows() * plan.code_bytes()) as usize, 0);
+        codes.fill(0);
+        let scale_zero = if matches!(
+            plan.format,
+            WeightFormat::Fp8Block32x32 | WeightFormat::Mxfp4 | WeightFormat::Mxfp8
+        ) {
+            127
+        } else {
+            0
+        };
+        scales.resize(scale_rows * scale_columns * plan.scale_width(), scale_zero);
+        scales.fill(scale_zero);
+        let global_bytes = if plan.format == WeightFormat::Nvfp4 {
+            if plan.per_expert_global() {
+                (plan.experts * plan.projections * 4) as usize
             } else {
-                0
-            };
-            scale_rows * scale_columns * plan.scale_width()
-        ];
-        let mut globals = vec![
-            0_u8;
-            if plan.format == WeightFormat::Nvfp4 {
-                if plan.per_expert_global() {
-                    (plan.experts * plan.projections * 4) as usize
-                } else {
-                    4
-                }
-            } else {
-                0
+                4
             }
-        ];
+        } else {
+            0
+        };
+        globals.resize(global_bytes, 0);
+        globals.fill(0);
         let mut scalar_local: Option<Vec<u8>> = None;
         let mut scalar_global: Option<Vec<u8>> = None;
         for matrix in &self.matrices {

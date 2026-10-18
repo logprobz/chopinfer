@@ -146,6 +146,9 @@
       "forced_prefill": "\n\n<｜DSML｜ calls>\n",
       "forced_refused_in_thinking": true,
       "forced_without_tools_is_auto": true
+    },
+    "namespaces": {
+      "separator": "::"
     }
   },
   "vocabulary": {

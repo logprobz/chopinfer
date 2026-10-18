@@ -49,7 +49,7 @@ pub mod encoding;
 
 use frontend_format::toolkit::{
     field_v1, media_kind_v1, media_placeholder_v1, resource_v1, screen_media_text_v1,
-    select_mode_v1, split_media_segments_v1, validate_name_v1,
+    select_mode_v1, split_media_segments_v1, validate_function_name_v1,
 };
 use frontend_format::{
     ChatFormatV1, ChatRenderV1, FormatDescriptorV1, FormatRenderRequestV1, FormatRenderedV1,
@@ -322,7 +322,7 @@ impl DeepSeekV41Format {
         )?;
         let mut names = std::collections::BTreeSet::new();
         for tool in request.tools {
-            validate_name_v1(descriptor, &tool.name, "tool")?;
+            validate_function_name_v1(descriptor, &tool.name, "tool")?;
             if !names.insert(tool.name.as_str()) {
                 return Err(field_v1(format!("duplicate tool name '{}'", tool.name)));
             }
@@ -445,7 +445,7 @@ impl DeepSeekV41Format {
             return Err(resource_v1("too many tool calls"));
         }
         for call in &message.tool_calls {
-            validate_name_v1(descriptor, &call.name, "tool call")?;
+            validate_function_name_v1(descriptor, &call.name, "tool call")?;
             if call.arguments.len() > limits.maximum_json_bytes {
                 return Err(resource_v1("JSON input exceeds the byte limit"));
             }
@@ -468,8 +468,10 @@ impl DeepSeekV41Format {
 /// The offered tools as the recipe maps them (convert.rs lines 178-192,
 /// v4/mod.rs lines 284-293): each a tool object around its name, its
 /// description or "", and its parameters or `{}`; every other field of the
-/// client's function object is dropped. A function object that names a
-/// namespace is refused until namespaces are served.
+/// client's function object is dropped. The transport has already named a
+/// tool in a namespace `namespace::name`, as the encoder names it (lines
+/// 84-121), with the namespace description first, and removed the
+/// namespace; a function object that still names one is refused.
 fn tool_objects(
     tools: &[FrontendToolV1],
     objects: &[FrontendJsonV1],
@@ -495,10 +497,9 @@ const FINAL_ASSISTANT_UNSERVED: &str =
 /// The refusal of a request of system messages alone.
 const SYSTEM_ONLY_UNSERVED: &str = "a request of system messages alone has no turn to answer";
 
-/// The refusal of a tool object or function object that names a namespace.
-/// The encoder writes such a tool as `namespace::name` (lines 86-121), a
-/// name neither the offered tools nor the declared parser know.
-const NAMESPACES_UNSERVED: &str = "tool namespaces are not served";
+/// The refusal of a function object that still names a namespace, which
+/// only a caller that bypassed the transport's qualification sends.
+const NAMESPACES_UNSERVED: &str = "tool namespaces are qualified by the transport";
 
 /// Whether a tool or function object carries a `namespace` key.
 fn namespaced(object: &FrontendJsonV1) -> bool {

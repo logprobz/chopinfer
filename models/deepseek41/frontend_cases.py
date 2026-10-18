@@ -88,14 +88,26 @@ def encoder_message(message):
     return message
 
 
-def recipe_tool(tool):
+def recipe_tool(tool, encoder):
     """An offered tool as deepseek-recipe maps it (convert.rs lines 178-192,
     v4/mod.rs lines 284-293): its name, its description or "", and its
-    parameters or `{}`, every other field dropped."""
-    function = tool.get("function") or {}
-    parameters = function.get("parameters")
+    parameters or `{}`, every other field dropped. A tool in a namespace
+    (on the tool, else on its function) is named and described as the
+    encoder's `tools_from_openai_format` (lines 84-98) names it, the
+    transport's qualified name (`namespace` in frontend-divergences.json),
+    and then mapped the same way."""
+    sent = tool.get("function") or {}
+    parameters = sent.get("parameters")
+    function = {"name": sent.get("name"), "description": sent.get("description") or ""}
+    wrapped = {"type": "function", "function": function}
+    if tool.get("namespace") is not None:
+        wrapped["namespace"] = tool["namespace"]
+    elif sent.get("namespace") is not None:
+        function["namespace"] = sent["namespace"]
+    if "namespace" in wrapped or "namespace" in function:
+        function = encoder["tools_from_openai_format"]([wrapped])[0]
     return {"type": "function", "function": {
-        "name": function.get("name"), "description": function.get("description") or "",
+        "name": function["name"], "description": function.get("description") or "",
         "parameters": {} if parameters is None else parameters}}
 
 
@@ -144,7 +156,7 @@ def encoder_render(namespace, messages, tools, add_generation_prompt, continue_f
     effort = keywords.get("reasoning_effort") if mode == "thinking" else None
     effort = EFFORT_ALIASES.get(effort, effort) if isinstance(effort, str) else effort
     messages = [encoder_message(message) for message in messages if not empty_system(message)]
-    tools = [recipe_tool(tool) for tool in tools or []]
+    tools = [recipe_tool(tool, namespace) for tool in tools or []]
     named = tool_choice.get("function", {}).get("name") if isinstance(tool_choice, dict) else None
     forced = bool(tools) and (tool_choice == "required" or named is not None)
     if tool_choice == "none":
@@ -434,12 +446,41 @@ def cases(declaration):
         "enable_thinking": False, "thinking": False, "reasoning_effort": "low"}}, {"fixed:template-thinking-ignored"}
     yield "effort-none-disables", {"messages": [user("q")], "reasoning_effort": "none"}, {
         "fixed:effort-none-disables"}
-    # A namespace on a function object, which the encoder writes as
-    # namespace::name and this format refuses until namespaces are served.
-    yield "namespaced-function-object", {"messages": [user("q")], "tools": [
-        {"type": "function", "function": {"name": "f", "namespace": {"name": "ns", "description": "Tools of ns."},
-                                          "description": "F.", "parameters": {"type": "object"}}}]}, {
-        "fixed:namespaced-function-object", "tool-namespace:present"}
+    # Namespaces (`namespace` in frontend-divergences.json): on a function
+    # object, as an object with a description or as a name; on the tool
+    # object; spelled in the name; a call by its qualified name in history;
+    # and a named choice of a qualified tool.
+    namespaced = {"type": "function", "function": {
+        "name": "f", "namespace": {"name": "ns", "description": "Tools of ns."},
+        "description": "F.", "parameters": {"type": "object"}}}
+    yield "namespaced-function-object", {"messages": [user("q")], "tools": [namespaced]}, {
+        "fixed:namespaced-function-object", "tools:wrapped"}
+    yield "namespace-name-on-function", {"messages": [user("q")], "tools": [
+        {"type": "function", "function": {"name": "f", "namespace": "ns", "parameters": {"type": "object"}}}]}, {
+        "fixed:namespace-name-on-function", "tools:wrapped"}
+    yield "namespace-on-tool-object", {"messages": [user("q")], "tools": [
+        {"type": "function", "namespace": {"name": "ns", "description": "Tools of ns."},
+         "function": {"name": "f", "description": "F.", "parameters": {"type": "object"}}}]}, {
+        "fixed:namespace-on-tool-object", "tools:wrapped"}
+    yield "qualified-tool-name", {"messages": [user("q")], "tools": [
+        {"type": "function", "function": {"name": "ns::f", "parameters": {"type": "object"}}}]}, {
+        "fixed:qualified-tool-name", "tools:wrapped"}
+    yield "qualified-call-in-history", {"messages": [
+        user("Go."),
+        {"role": "assistant", "content": "", "tool_calls": [call("call_q", "ns::f", {"x": "v"})]},
+        {"role": "tool", "tool_call_id": "call_q", "content": "ok"}, user("Again."),
+    ], "tools": [namespaced]}, {"fixed:qualified-call-in-history", "tools:wrapped"}
+    # Refused by the encoder's assertions and here by name: a namespace
+    # other than the one the name spells, and a separator inside a part.
+    yield "conflicting-namespace", {"messages": [user("q")], "tools": [
+        {"type": "function", "namespace": "b", "function": {"name": "a::f", "parameters": {"type": "object"}}}]}, {
+        "fixed:conflicting-namespace", "tools:wrapped"}
+    yield "separator-in-namespace", {"messages": [user("q")], "tools": [
+        {"type": "function", "function": {"name": "f", "namespace": "a::b", "parameters": {"type": "object"}}}]}, {
+        "fixed:separator-in-namespace", "tools:wrapped"}
+    yield "named-choice-of-qualified-tool", {"messages": [user("q")], "tools": [namespaced, second],
+                                             "tool_choice": {"type": "function", "function": {"name": "ns::f"}},
+                                             **chat}, {"fixed:named-choice-of-qualified-tool", "tools:wrapped"}
     # A system message's own tools, which the recipe's request messages do
     # not carry and this format refuses.
     yield "system-message-tools", {"messages": [

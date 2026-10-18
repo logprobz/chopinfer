@@ -160,22 +160,6 @@
       "reason": "parse_tagged_text, load_cases and encode_case read the vendor's text and JSON case files, and the media records encode_messages returns with return_multi_modal_data are the host's to collect"
     },
     {
-      "id": "namespaces",
-      "lines": [
-        90,
-        94,
-        95,
-        105,
-        106,
-        108,
-        111,
-        119,
-        134
-      ],
-      "blocked_by": "request mapping drops a namespace key (the recipe's function definition has none), the format refuses one (tool-namespaces), tool and call names admit no '::' and calls carry no namespace",
-      "reason": "a namespace on a tool or call, a qualified name and their conflicts need namespace transport, which this declaration does not serve yet"
-    },
-    {
       "id": "effort-names",
       "lines": [
         464,
@@ -265,18 +249,6 @@
       },
       "reason": "mapping R4: the encoder ends a final assistant turn with the end-of-sentence token and writes no generation header after it (encoding.py lines 60, 695-706, 710-739), so the prompt leaves nothing to answer; the format refuses it rather than add the recipe's header; the refusal concerns the final turn alone, so the conversation's round trip still runs",
       "ending_only": true
-    },
-    {
-      "id": "tool-namespaces",
-      "kind": "refused",
-      "when": [
-        "tool-namespace:present"
-      ],
-      "outcome": {
-        "message": "invalid conversation field: tool namespaces are not served",
-        "parameter": "messages"
-      },
-      "reason": "the recipe's function definition has no namespace (deepseek-recipe/src/protocol/openai/chat_completion/request/schema.rs lines 168-176) and the encoder writes a namespaced tool as namespace::name (encoding.py lines 86-121); the format refuses the namespace key by name until namespace transport is served"
     },
     {
       "id": "missing-call-id",
@@ -465,6 +437,20 @@
         "response-format-with-tools",
         "recipe-tool-schema",
         "tool-choice-required"
+      ]
+    },
+    {
+      "id": "namespace",
+      "follows": "encoding.py",
+      "rule": "a tool in a namespace (tools.namespaces separator \"::\") is named namespace::name as the encoder names it: the namespace on the tool object, else on its function, as a name or an object with a name and an optional description, which goes before the function's on its own line; a name already spelled ns::f keeps its namespace, and a different given one is refused, as is a second separator or a namespace without a name. Calls and a named tool_choice use the qualified name, and Chat Completions returns it whole in function.name; the recipe's Chat Completions has no namespaces and refuses ':' in a name, so this is an extension, while its Responses API flattens a namespace tool to ns::f and returns a call's name and namespace apart, as /v1/responses does here",
+      "source": "integration owner decision (D-ns: follow the recipe's returned calls, else ns::f in function.name); encoding.py lines 84-136; deepseek-recipe 8cadfede7 deepseek-recipe/src/protocol/validation.rs lines 88-100, deepseek-recipe/src/protocol/openai/responses/request/tools.rs lines 37-90, 113-136, deepseek-recipe/src/protocol/openai/responses/response/chunk_generator.rs lines 338-350",
+      "cases": [
+        "namespaced-function-object",
+        "namespace-name-on-function",
+        "namespace-on-tool-object",
+        "qualified-tool-name",
+        "qualified-call-in-history",
+        "named-choice-of-qualified-tool"
       ]
     }
   ]

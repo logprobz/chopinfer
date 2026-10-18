@@ -469,15 +469,15 @@ fn the_served_format_reads_tool_objects_and_arguments_as_the_encoder_does() {
         ),
         "{prompt}"
     );
-    // A namespace on a function object, and a message's own tools, are
-    // refused by name.
+    // A namespace the transport did not qualify, and a message's own tools,
+    // are refused by name.
     let refused = render(
         serde_json::json!({"name": "f", "namespace": {"name": "ns", "description": "N"}}),
         "{}",
     )
     .unwrap_err();
     assert!(
-        refused.contains("tool namespaces are not served"),
+        refused.contains("tool namespaces are qualified by the transport"),
         "{refused}"
     );
     let mut system = message(FrontendRoleV1::System, "s");
@@ -736,4 +736,120 @@ fn a_cut_calls_opening_is_not_content() {
             .collect();
         assert_eq!(text, content, "{generated:?}");
     }
+}
+
+/// A tool in a namespace, through the transport: named `namespace::name` as
+/// the encoder names it (lines 84-121), with the namespace description on
+/// the line before the function's, offered, forced, called in history and
+/// read back by that name.
+#[test]
+fn a_namespaced_tool_is_named_as_the_encoder_names_it() {
+    let frontend = PairedFrontendV1::chat_format::<DeepSeekV41Format>(descriptor()).unwrap();
+    let prepare = |extra: Value| {
+        let mut body = serde_json::json!({"messages": [{"role": "user", "content": "q"}],
+                                          "thinking": {"type": "disabled"}});
+        for (key, value) in extra.as_object().unwrap() {
+            body[key] = value.clone();
+        }
+        runtime_server::prepare_chat_request_v1(
+            &frontend,
+            1 << 20,
+            body.as_object().unwrap().clone(),
+            1024,
+        )
+    };
+    let prompt = |extra: Value| match prepare(extra.clone())
+        .unwrap_or_else(|error| panic!("{extra}: {}", error.message))
+        .prompt
+    {
+        runtime_server::PreparedPrompt::RenderedChat(prompt) => prompt,
+        other => panic!("{extra}: {other:?}"),
+    };
+    let parameters = serde_json::json!({"type": "object", "properties": {"x": {"type": "string"}}});
+    let qualified = r#"{"name": "ns::f", "description": "Tools of ns.\nF.", "parameters": "#;
+    for tools in [
+        serde_json::json!([{"type": "function", "namespace": {"name": "ns", "description": "Tools of ns."},
+                            "function": {"name": "f", "description": "F.", "parameters": parameters}}]),
+        serde_json::json!([{"type": "function", "function": {
+            "name": "f", "description": "F.", "parameters": parameters,
+            "namespace": {"name": "ns", "description": "Tools of ns."}}}]),
+        serde_json::json!([{"type": "function", "function": {
+            "name": "ns::f", "description": "F.", "parameters": parameters,
+            "namespace": {"name": "ns", "description": "Tools of ns."}}}]),
+    ] {
+        let rendered = prompt(serde_json::json!({"tools": tools}));
+        assert!(rendered.contains(qualified), "{tools}: {rendered}");
+    }
+    let plain = prompt(
+        serde_json::json!({"tools": [{"type": "function", "function": {
+        "name": "ns::f", "parameters": parameters}}]}),
+    );
+    assert!(
+        plain.contains(r#"{"name": "ns::f", "description": "", "#),
+        "{plain}"
+    );
+    let string = prompt(
+        serde_json::json!({"tools": [{"type": "function", "function": {
+        "name": "f", "namespace": "ns", "parameters": parameters}}]}),
+    );
+    assert_eq!(string, plain);
+    // A named choice names the qualified tool, and the forced grammar
+    // writes it.
+    let tools = serde_json::json!([{"type": "function", "function": {
+        "name": "f", "namespace": "ns", "parameters": parameters}}]);
+    let forced = prepare(serde_json::json!({"tools": tools,
+        "tool_choice": {"type": "function", "function": {"name": "ns::f"}}}))
+    .unwrap();
+    assert!(forced.constraint.is_some());
+    // A history call by its qualified name.
+    let history = prompt(serde_json::json!({"tools": tools, "messages": [
+        {"role": "user", "content": "q"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "c", "type": "function",
+            "function": {"name": "ns::f", "arguments": "{\"x\": \"v\"}"}}]},
+        {"role": "tool", "tool_call_id": "c", "content": "ok"},
+        {"role": "user", "content": "again"}]}));
+    assert!(
+        history.contains("<｜DSML｜ invoke name=\"ns::f\">"),
+        "{history}"
+    );
+    // Refused: a conflicting namespace, and a namespace that is neither a
+    // name nor an object with one, by the transport; a second separator by
+    // the format's name check.
+    for tools in [
+        serde_json::json!([{"type": "function", "namespace": "b", "function": {"name": "a::f"}}]),
+        serde_json::json!([{"type": "function", "function": {"name": "f", "namespace": 1}}]),
+        serde_json::json!([{"type": "function", "function": {"name": "f", "namespace": {"description": "d"}}}]),
+    ] {
+        let error = prepare(serde_json::json!({"tools": tools})).unwrap_err();
+        assert_eq!(
+            error.parameter.as_deref(),
+            Some("tools"),
+            "{tools}: {}",
+            error.message
+        );
+    }
+    let error = prepare(serde_json::json!({"tools": [
+        {"type": "function", "function": {"name": "a::b::f"}}]}))
+    .unwrap_err();
+    assert!(
+        error.message.contains("tool name must match"),
+        "{}",
+        error.message
+    );
+    // A generated call reads back by its qualified name.
+    let completion = format!(
+        "\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"ns::f\">\n\
+         <｜DSML｜ parameter name=\"x\" string=\"true\">v</｜DSML｜ parameter>\n\
+         </｜DSML｜ invoke>\n</｜DSML｜ calls>{EOS}"
+    );
+    let parsed =
+        runtime_frontend::parse_completion_v1(&descriptor(), &completion, PromptModeV1::Chat)
+            .unwrap();
+    assert_eq!(parsed.tool_calls[0].name, "ns::f");
+    assert!(
+        frontend
+            .validate_tool_call("ns::f", r#"{"x": "v"}"#)
+            .is_ok()
+    );
+    assert!(frontend.validate_tool_call("ns::a::f", "{}").is_err());
 }

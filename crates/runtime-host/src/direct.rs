@@ -1322,9 +1322,29 @@ impl PlannedImageV1 {
         self.inner.ranks[rank].arena_bytes
     }
 
-    /// Frees the workers' scratch and direct-read buffers kept between
-    /// reads; a later read allocates them again.
+    /// Frees retained inputs, output sections and idle worker buffers.
+    /// Call after readers have joined; later reads reproduce the same bytes.
     pub fn release_buffers(&self) {
+        for shared in &self.inner.shared {
+            let mut state = shared
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for section in &mut state.sections {
+                if let Some(bytes) = section.take() {
+                    release_retained_v1(&self.inner, bytes);
+                }
+            }
+        }
+        for source in &self.inner.shared_sources {
+            let mut state = source
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(bytes) = state.bytes.take() {
+                release_retained_v1(&self.inner, bytes);
+            }
+        }
         self.inner.packed_sources.clear(&self.inner);
         self.inner.packed_buffers.clear();
         for pool in [&self.inner.scratch, &self.inner.direct_buffers] {

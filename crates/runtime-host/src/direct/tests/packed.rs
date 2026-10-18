@@ -330,11 +330,29 @@ fn scale_only_plans_refuse_unreadable_code_payloads() {
 
 #[test]
 fn failed_single_rank_upload_releases_packed_inputs_before_image_teardown() {
+    failed_upload_releases_retained_bytes(false);
+}
+
+#[test]
+fn failed_single_rank_upload_releases_replicated_outputs_before_image_teardown() {
+    failed_upload_releases_retained_bytes(true);
+}
+
+fn failed_upload_releases_retained_bytes(replicated: bool) {
     use crate::fake::{FakeHostDeviceV1, FakeRefusalV1};
     use crate::{HostInstanceConfigV1, HostServicesV1Backend, HostTopologyV1};
     use runtime_bundle_abi::HostServicesTableV1;
     use std::rc::Rc;
-    let (root, plans, _, _) = fixture(2);
+    let (root, mut plans, expected, _) = fixture(2);
+    if replicated {
+        let first = plans[0].clone();
+        for plan in &mut plans {
+            *plan = WeightPlanV1 {
+                rank: plan.rank,
+                ..first.clone()
+            };
+        }
+    }
     let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
     let image = Arc::new(sharing_image(&checkpoint, &plans, 2, 128 << 10));
     let config = HostInstanceConfigV1::new(HostTopologyV1::new(vec![0, 1, 2, 3]).unwrap())
@@ -356,6 +374,13 @@ fn failed_single_rank_upload_releases_packed_inputs_before_image_teardown() {
     assert!(image.stats().retained_peak_bytes > 0);
     assert_eq!(image.inner.retained.load(Ordering::Acquire), 0);
     assert_eq!(image.inner.retained_held.now.load(Ordering::Acquire), 0);
+    // Cleanup does not consume the image. A later reader still gets the
+    // same bytes, even when the first upload left section consumers pending.
+    let mut retry = vec![0; expected[0].len()];
+    image.read(0, &mut retry).unwrap();
+    assert_eq!(retry, expected[0]);
+    image.release_buffers();
+    assert_eq!(image.inner.retained.load(Ordering::Acquire), 0);
     host.release_compiled_image(compiled).unwrap();
     host.release_stream(stream).unwrap();
     host.release_memory_pool(pool).unwrap();

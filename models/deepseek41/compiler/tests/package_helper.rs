@@ -119,6 +119,10 @@ fn host_admits(document: &str, name: &str) -> Result<(), String> {
 fn the_profile_follows_the_geometry_and_rank_count() {
     let document = profiles(&FLASH, &[4]).unwrap();
     let file: serde_json::Value = serde_json::from_str(&document).unwrap();
+    assert_eq!(
+        file,
+        serde_json::from_str::<serde_json::Value>(model_deepseek41::package::PROFILES).unwrap()
+    );
     let name = if file["profiles"].get("tp4-dspark").is_some() {
         "tp4-dspark"
     } else {
@@ -789,8 +793,8 @@ fn native_packages_advertise_full_block_drafting_and_bounded_verify_rows() {
             bucket: 1,
             verify_rows: 0,
         };
-        let raw = request_state(&FLASH, KvStorage::Native, true);
-        let declared = raw
+        let target = request_state(&FLASH, KvStorage::Native, false);
+        let declared = target
             .buffers
             .iter()
             .map(|buffer| buffer.bytes(slot))

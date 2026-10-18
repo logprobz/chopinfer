@@ -67,9 +67,9 @@ impl SinkLimits for Limits {
 }
 
 /// The encoded step of `items`, `(request, slot, start, tokens, phase)`,
-/// each slot's KV pages eight from `slot * 8`. Verify rows are the host's
-/// drafts after the bonus token.
-fn step(items: &[(u64, u64, u64, &[u32], Phase)]) -> Vec<u8> {
+/// each slot's KV pages eight from `slot * 8`. A bundle-drafted verify
+/// item supplies only its bonus token; host-drafted items supply every row.
+fn step(items: &[(u64, u64, u64, &[u32], Phase)], bundle_drafts: bool) -> Vec<u8> {
     let mut batch = Vec::new();
     let mut appends = Vec::new();
     let mut slots = Vec::new();
@@ -77,7 +77,12 @@ fn step(items: &[(u64, u64, u64, &[u32], Phase)]) -> Vec<u8> {
         let rows = tokens.len() as u32;
         let end = start + u64::from(rows);
         batch.push(match phase {
-            Phase::Verify => BatchItemV1::verify(request, rows, false, tokens.to_vec()),
+            Phase::Verify => BatchItemV1::verify(
+                request,
+                rows,
+                bundle_drafts,
+                if bundle_drafts { &tokens[..1] } else { tokens }.to_vec(),
+            ),
             phase => BatchItemV1::new(request, phase == Phase::Decode, rows, true, tokens.to_vec()),
         });
         appends.push(BatchAppendV1::new(
@@ -163,7 +168,7 @@ impl<const CASE: usize> Adapter for Model<CASE> {
             (false, 1) if start > 0 => Phase::Decode,
             (false, _) => Phase::Prefill,
         };
-        step(&[(request, 0, start, tokens, phase)])
+        step(&[(request, 0, start, tokens, phase)], false)
     }
     fn raw_commit(&self, handle: BundleHandleV1, records: &[BundleKeptRowsV1]) -> BundleStatusV1 {
         bundle_runtime::entry::commit_accepted::<crate::instance::Instance>(handle, records)
@@ -227,6 +232,7 @@ impl<const CASE: usize> Adapter for Model<CASE> {
 conformance::suite! {
     startup: Served {
         tp4_ar: "tp4-ar",
+        tp4_dspark: "tp4-dspark",
     }
     mod ar_tp1 {
         allocation_release: Model<AR_TP1> => AllocationRelease;
@@ -294,7 +300,7 @@ fn an_autoregressive_instance_refuses_verify_items() {
 /// `auto` selects, with the host's speculation when the profile drafts.
 struct Served {
     host: Rc<Host>,
-    observed: Rc<ObservedHost<Host>>,
+    observed: Rc<ObservedHost<dspark::host::MappedHost>>,
     serving: conformance::Serving,
 }
 
@@ -305,30 +311,43 @@ impl conformance::Startup for Served {
         include_str!("../../../profiles.json")
     }
     fn servings() -> Vec<conformance::Serving> {
-        vec![conformance::Serving {
-            profile: "tp4-ar".to_owned(),
+        let serving = |profile: &str, draft_tokens: u32| {
+            conformance::Serving {
+            profile: profile.to_owned(),
             tensor_parallel: Ranks::TP4.get(),
             context_parallel: 1,
             sequences: DECODE_BATCH,
-            drafter: "none".to_owned(),
-            draft_tokens: 0,
+            drafter: if draft_tokens > 0 { "dspark" } else { "none" }.to_owned(),
+            draft_tokens,
             prefix_cache: true,
             model_options: Default::default(),
             // The package serves text alone: no encoder loads.
             provides: vec!["text".to_owned()],
             selection: None,
-            package: None,
-        }]
+            package: Some(conformance::PackageSpeculation {
+                maximum_draft_tokens: model_deepseek41_contract::serving::MAX_DRAFT_TOKENS,
+                bundle_drafter: true,
+                maximum_verify_tokens: <model_deepseek41_contract::serving::DeepSeek as bundle_runtime::BundleGeometry>::VERIFY_TOKENS,
+                row_buckets: (2..=model_deepseek41_contract::serving::MAX_VERIFY_ROWS).collect(),
+                maximum_draft_items: None,
+                narrow_rows: false,
+            }),
+        }
+        };
+        vec![serving("tp4-ar", 0), serving("tp4-dspark", 5)]
     }
     fn new(serving: &conformance::Serving) -> Self {
         let ranks = Ranks::new(serving.tensor_parallel).expect("a supported rank count");
         let host = FakeHost::new(Shape::new(&FLASH, ranks).unwrap(), KV_LAYOUTS[0]);
         if serving.draft_tokens > 0 {
+            host.drafter.set(true);
             host.speculation
                 .set(Some((serving.draft_tokens, serving.verify_rows())));
         }
         Self {
-            observed: Rc::new(ObservedHost::new(Rc::clone(&host))),
+            observed: Rc::new(ObservedHost::new(Rc::new(dspark::host::MappedHost(
+                Rc::clone(&host),
+            )))),
             host,
             serving: serving.clone(),
         }
@@ -355,7 +374,7 @@ impl conformance::Startup for Served {
                 )
             })
             .collect();
-        step(&items)
+        step(&items, self.serving.bundle_drafts())
     }
     fn token(&self, position: u64) -> u32 {
         position as u32 + 1

@@ -32,6 +32,7 @@ pub extern "C" fn chop_bundle_get_api_v1() -> *const core::ffi::c_void {
         ];
         let draft = model_deepseek41::package::draft(
             &FLASH,
+            FLASH.runtime_defaults(),
             &[(4, 1 << 30)],
             components,
             StagedContentV1::file(module),
@@ -39,6 +40,19 @@ pub extern "C" fn chop_bundle_get_api_v1() -> *const core::ffi::c_void {
         .unwrap();
         let emitted =
             model_compiler_sdk::emit_bundle_directory_v1(&draft, &root.join("package")).unwrap();
+        let profiles: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(
+                emitted
+                    .root()
+                    .join(runtime_bundle::deployment::SERVE_PROFILES_PATH_V1),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            profiles,
+            serde_json::from_str::<serde_json::Value>(model_deepseek41::package::PROFILES).unwrap()
+        );
         Self { emitted, root }
     }
 
@@ -90,6 +104,11 @@ pub extern "C" fn chop_bundle_get_api_v1() -> *const core::ffi::c_void {
             Some(4),
         );
         record.extend_from_slice(&kv.maximum_sequence_tokens().to_le_bytes());
+        let options = manifest.resolve_model_options(&Default::default()).unwrap();
+        let options = serde_json::to_vec(&options).unwrap();
+        record.extend_from_slice(runtime_bundle_abi::MODEL_OPTIONS_TAG_V1);
+        record.extend_from_slice(&(options.len() as u32).to_le_bytes());
+        record.extend_from_slice(&options);
         record
     }
 }

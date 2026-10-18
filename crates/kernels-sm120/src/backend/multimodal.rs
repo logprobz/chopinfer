@@ -366,6 +366,9 @@ impl PreparedOp<EncoderRowBuffers<View>> for EncoderOp {
             MultimodalQuery::PadColumnsF32 { input, output, .. } => {
                 (f32_rows(input)?, f32_rows(output)?, "live_rows")
             }
+            MultimodalQuery::CastBf16F32 { width, .. } => {
+                (f32_rows(width)?, span(rows, width.into(), 2)?, "live_rows")
+            }
             MultimodalQuery::Im2col1dF32 {
                 channels,
                 kernel,

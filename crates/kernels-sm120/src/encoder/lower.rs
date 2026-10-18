@@ -4,8 +4,8 @@
 use encoder_spec::components::attention::{Mask, Sink};
 use encoder_spec::components::rotary::RotaryComponent as _;
 use encoder_spec::components::{
-    Boundary, Conv1d, Data, Element, Gelu, Layout, Linear, Merge, Mlp, Norm, Position, RotarySlot,
-    StageOp, Transformer, Variant,
+    Boundary, Cast, Conv1d, Data, Element, Gelu, Layout, Linear, Merge, Mlp, Norm, Position,
+    RotarySlot, StageOp, Transformer, Variant,
 };
 use encoder_spec::policy::Precision;
 use kernel_core::contract::{
@@ -240,9 +240,33 @@ impl Lowering<'_> {
                 );
                 Ok(())
             }
-            StageOp::Cast(_) | StageOp::Unresolved(_) => {
-                Err(format!("`{}` has no encoder kernel yet", op.id()))
+            StageOp::Cast(Cast::Bf16(_)) => {
+                if self.precision != Precision::F32Pairs
+                    || !matches!(
+                        input.data,
+                        Data::Rows {
+                            element: Element::F32,
+                            ..
+                        }
+                    )
+                {
+                    return Err(format!(
+                        "`{}` rounds F32 rows under f32-pairs.v1 only",
+                        op.id()
+                    ));
+                }
+                self.at("cast", None);
+                self.push(
+                    &op.id(),
+                    None,
+                    MultimodalQuery::CastBf16F32 {
+                        width: width()?,
+                        capacity: self.capacity,
+                    },
+                );
+                Ok(())
             }
+            StageOp::Unresolved(_) => Err(format!("`{}` has no encoder kernel yet", op.id())),
         }
     }
 

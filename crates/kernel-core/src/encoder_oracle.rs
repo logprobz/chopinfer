@@ -1,6 +1,6 @@
 //! F64 references for the encoder row passes `multimodal_oracle` lacks: the
-//! per-head q and k RMSNorm of fused q/k/v rows, the clamped SwiGLU and the
-//! F32 GELU row pass.
+//! per-head q and k RMSNorm of fused q/k/v rows, the clamped SwiGLU, the
+//! F32 GELU row pass and the BF16 cast.
 //! Inputs are decoded operands, in row-major order.
 
 use crate::contract::{GeluMode, Refusal};
@@ -102,6 +102,24 @@ pub fn pad_columns(input: &[f64], width: usize, columns: usize) -> Result<Oracle
         .collect();
     let bounds = values.iter().map(|x| x.abs()).collect();
     OracleOutput::new(values, bounds, 1)
+}
+
+/// The BF16 bits of F32 rows rounded once to nearest even
+/// (`CastBf16F32`): each value's exact nearest BF16, ties to the even
+/// code, magnitudes from halfway past the largest finite BF16 to infinity,
+/// and every NaN the canonical `0x7fff`. A cast is exact arithmetic on its
+/// input, so the check compares bits.
+pub fn cast_bf16_rows(input: &[f32]) -> Vec<u16> {
+    input
+        .iter()
+        .map(|&x| {
+            if x.is_nan() {
+                0x7fff
+            } else {
+                crate::codec::f64_to_bf16(f64::from(x))
+            }
+        })
+        .collect()
 }
 
 /// Exact-erf GELU of F32 rows, as an F32 row pass computes it
@@ -581,6 +599,35 @@ mod tests {
         assert_eq!(bits(&wide.values), bits(&plain.values));
         assert_eq!(bits(&wide.sum_abs_products), bits(&plain.sum_abs_products));
         assert!(pad_columns(&x, patch, patch).is_err());
+    }
+
+    /// The cast rounds ties to the even code, at normal and subnormal
+    /// magnitudes alike, overflows to infinity from halfway past the
+    /// largest finite BF16, keeps infinities and signed zeros, and gives
+    /// every NaN the canonical code.
+    #[test]
+    fn the_bf16_cast_rounds_once_to_nearest_even() {
+        let cases: [(u32, u16); 16] = [
+            (0x3f80_0000, 0x3f80),
+            (0x3f80_8000, 0x3f80),
+            (0x3f81_8000, 0x3f82),
+            (0x3f80_8001, 0x3f81),
+            (0xbf81_8000, 0xbf82),
+            (0x0000_8000, 0x0000),
+            (0x0001_8000, 0x0002),
+            (0x8000_0000, 0x8000),
+            (0x7f7f_7fff, 0x7f7f),
+            (0x7f7f_8000, 0x7f80),
+            (0xff7f_ffff, 0xff80),
+            (0x7f80_0000, 0x7f80),
+            (0xff80_0000, 0xff80),
+            (0x7fc0_0001, 0x7fff),
+            (0xff80_0001, 0x7fff),
+            (0x7f80_0001, 0x7fff),
+        ];
+        let input: Vec<f32> = cases.iter().map(|&(x, _)| f32::from_bits(x)).collect();
+        let expected: Vec<u16> = cases.iter().map(|&(_, code)| code).collect();
+        assert_eq!(cast_bf16_rows(&input), expected);
     }
 
     /// The reference downsample: rows of `m x m` blocks viewed as `[n, m,

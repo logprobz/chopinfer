@@ -137,7 +137,8 @@ fn tags(query: MultimodalQuery) -> Vec<String> {
         | MultimodalQuery::RmsNormF32 { width: w, .. }
         | MultimodalQuery::PermuteF32 { width: w, .. }
         | MultimodalQuery::ResidualAddF32 { width: w, .. }
-        | MultimodalQuery::GeluRowsF32 { width: w, .. } => width(w),
+        | MultimodalQuery::GeluRowsF32 { width: w, .. }
+        | MultimodalQuery::CastBf16F32 { width: w, .. } => width(w),
         MultimodalQuery::GatherRowsF32 { width, group, .. } => {
             vec![format!("w{width}"), format!("g{group}")]
         }

@@ -294,3 +294,56 @@ fn the_tower_cubins_compile_and_audit() {
     }
     eprintln!("SASS in {}", root.display());
 }
+
+/// The BF16 cast's entry alone (`cast.bf16.v1` over 5120-wide rows): PDL,
+/// one conversion an element and no other arithmetic, no trap, atomic,
+/// spill or stack.
+#[test]
+fn the_bf16_cast_compiles_to_conversions_alone() {
+    let toolchain = Toolchain::detect().expect("CUDA 13.2 is available");
+    assert!(!toolchain.skipped, "SM120 compilation is required on Linux");
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = PathBuf::from(std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".into()))
+        .join(format!("encoder-cast-cubin-{}-{stamp}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let entry = encoder::Kernel::new(
+        "cast.bf16.v1",
+        None,
+        MultimodalQuery::CastBf16F32 {
+            width: 5120,
+            capacity: 1024,
+        },
+    )
+    .entry()
+    .unwrap();
+    let [rows, _] = encoder::cubin_specs(std::slice::from_ref(&entry)).unwrap();
+    let cubins = build(
+        &toolchain,
+        &[rows],
+        &root.join("out"),
+        &root.join("kernels.lock"),
+        BuildOptions {
+            lock_update: true,
+            emit_cargo_directives: false,
+            profile_line_info: false,
+        },
+    )
+    .expect("the cast cubin builds and audits");
+    let [cubin] = cubins.as_slice() else {
+        panic!("one cubin");
+    };
+    for report in &cubin.entries {
+        assert_eq!((report.local_bytes, report.stack_bytes), (0, 0));
+    }
+    let sass = sass_of(&cubin.path, &entry.symbol);
+    assert!(sass.contains(&entry.symbol));
+    for opcode in ["ACQBULK", "PREEXIT", "F2FP.BF16.F32"] {
+        assert!(sass.contains(opcode), "{} lacks {opcode}", entry.symbol);
+    }
+    for opcode in ["BPT.TRAP", "ATOM", "RED.", "FADD", "FMUL", "FFMA", "HMMA"] {
+        assert!(!sass.contains(opcode), "{} has {opcode}", entry.symbol);
+    }
+}

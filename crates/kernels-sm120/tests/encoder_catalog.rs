@@ -266,19 +266,50 @@ fn a_declaration_never_changes_another_models_entries() {
     assert!(example_symbols.iter().all(|entry| both.contains(entry)));
 }
 
+/// A last GEMM that writes F32 rows, then `cast.bf16.v1`: the GEMM's
+/// entry writes F32 and one cast entry rounds its rows to BF16 for the
+/// layout, in place of the GEMM's BF16 epilogue.
 #[test]
-fn variants_without_kernels_and_conflicting_symbols_are_refused() {
+fn a_cast_after_an_f32_gemm_is_one_cast_entry() {
+    let fused = catalog(&declaration(&tower("example", 512)), &Shared).unwrap();
     let mut value = tower("example", 512);
     value["stages"][6].as_object_mut().unwrap().remove("output");
     value["stages"]
         .as_array_mut()
         .unwrap()
         .push(json!({"op": "cast.bf16.v1"}));
-    let error = catalog(&declaration(&value), &Shared).unwrap_err();
+    let cast = catalog(&declaration(&value), &Shared).unwrap();
+    let casts: Vec<&MultimodalQuery> = cast
+        .iter()
+        .map(|entry| &entry.query)
+        .filter(|query| matches!(query, MultimodalQuery::CastBf16F32 { .. }))
+        .collect();
     assert!(
-        error.0.contains("cast.bf16.v1` has no encoder kernel yet"),
-        "{error}"
+        matches!(casts[..], [MultimodalQuery::CastBf16F32 { width: 512, .. }]),
+        "{casts:?}"
     );
+    assert!(
+        fused
+            .iter()
+            .all(|entry| !matches!(entry.query, MultimodalQuery::CastBf16F32 { .. }))
+    );
+    let output = |entries: &[Entry]| {
+        entries
+            .iter()
+            .filter_map(|entry| match entry.query {
+                MultimodalQuery::GemmPairs(query) if (query.n, query.k) == (512, 1024) => {
+                    Some(query.output)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(output(&fused), [kernel_core::contract::DType::Bf16]);
+    assert_eq!(output(&cast), [kernel_core::contract::DType::F32]);
+}
+
+#[test]
+fn conflicting_symbols_are_refused() {
     let entry = |capacity| Entry {
         symbol: "chop_enc_norm_layer_f32_w256_v1".into(),
         query: MultimodalQuery::LayerNormF32 {

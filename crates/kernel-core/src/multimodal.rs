@@ -34,6 +34,7 @@
 //! | `SwigluF32 { hidden }`, `SwigluClampedF32 { hidden }` | `input` r F32 `[T, 2 hidden]`, gate half first; `output` w F32 `[T, hidden]` |
 //! | `GeluRowsF32 { width }` | `input` r F32 `[T, width]`; `output` w F32 `[T, width]`, which may alias `input` |
 //! | `PadColumnsF32 { input, output }` | `input` r F32 `[T, input]`; `output` w F32 `[T, output]` |
+//! | `CastBf16F32 { width }` | `input` r F32 `[T, width]`; `output` w BF16 `[T, width]`, each element rounded once to nearest even |
 //! | `Im2col1dF32 { channels, kernel, stride, pad_left, pad_right }` | `input` r F32 frames `[T, channels]` (`live_rows` counts frames); `output` w F32 `[U, kernel * channels]`, `U = (T + pad_left + pad_right - kernel) / stride + 1` |
 //!
 //! Heads (`EncoderHeadBuffers`, `Backend::encoder_heads`), each over
@@ -104,6 +105,7 @@ impl EncoderStage {
             | Q::SwigluClampedF32 { .. }
             | Q::GeluRowsF32 { .. }
             | Q::PadColumnsF32 { .. }
+            | Q::CastBf16F32 { .. }
             | Q::Im2col1dF32 { .. } => Ok(EncoderStage::Rows),
             Q::RopeQkvPairs { .. } | Q::QkRmsNormF32 { .. } => Ok(EncoderStage::Heads),
             Q::ContiguousAttentionPairs { .. } => Ok(EncoderStage::Attention),

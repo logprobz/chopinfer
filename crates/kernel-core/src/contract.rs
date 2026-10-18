@@ -388,6 +388,15 @@ pub enum MultimodalQuery {
         output: u32,
         capacity: u32,
     },
+    /// F32 rows `[T, width]` rounded to BF16 rows `[T, width]`, each element
+    /// once, to nearest even, with no other arithmetic (`cast.bf16.v1`):
+    /// where an encoder's F32 rows become the language model's BF16 rows.
+    /// Infinities and overflow round as RNE defines them; every NaN becomes
+    /// the canonical BF16 NaN, `0x7fff`.
+    CastBf16F32 {
+        width: u32,
+        capacity: u32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -1420,6 +1429,9 @@ impl Validate for MultimodalQuery {
             Self::GeluRowsF32 { width, capacity } if width == 0 || capacity == 0 => {
                 Err(Refusal("invalid GELU row width or capacity"))
             }
+            Self::CastBf16F32 { width, capacity } if width == 0 || capacity == 0 => {
+                Err(Refusal("invalid cast row width or capacity"))
+            }
             Self::PadColumnsF32 {
                 input,
                 output,
@@ -2176,6 +2188,7 @@ impl NumericalContract for MultimodalQuery {
             Self::SwigluClampedF32 { .. } => "row.swiglu-clamped-f32.v1".to_owned(),
             Self::GeluRowsF32 { .. } => "row.gelu-erf-f32.v1".to_owned(),
             Self::PadColumnsF32 { .. } => "row.pad-zero-columns-f32.v1".to_owned(),
+            Self::CastBf16F32 { .. } => "row.cast-bf16-rne-f32.v1".to_owned(),
         };
         Ok(NumericalContractId(name))
     }

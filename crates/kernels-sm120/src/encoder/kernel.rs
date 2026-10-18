@@ -131,7 +131,8 @@ pub fn capacity(query: MultimodalQuery) -> u32 {
         | MultimodalQuery::QkRmsNormF32 { capacity, .. }
         | MultimodalQuery::SwigluClampedF32 { capacity, .. }
         | MultimodalQuery::GeluRowsF32 { capacity, .. }
-        | MultimodalQuery::PadColumnsF32 { capacity, .. } => capacity,
+        | MultimodalQuery::PadColumnsF32 { capacity, .. }
+        | MultimodalQuery::CastBf16F32 { capacity, .. } => capacity,
         MultimodalQuery::Gemm(query)
         | MultimodalQuery::GemmBf16(query)
         | MultimodalQuery::GemmPairs(query) => query.m_capacity,
@@ -168,7 +169,8 @@ pub fn with_capacity(query: MultimodalQuery, rows: u32) -> MultimodalQuery {
         | MultimodalQuery::QkRmsNormF32 { capacity, .. }
         | MultimodalQuery::SwigluClampedF32 { capacity, .. }
         | MultimodalQuery::GeluRowsF32 { capacity, .. }
-        | MultimodalQuery::PadColumnsF32 { capacity, .. } => *capacity = rows,
+        | MultimodalQuery::PadColumnsF32 { capacity, .. }
+        | MultimodalQuery::CastBf16F32 { capacity, .. } => *capacity = rows,
         MultimodalQuery::Gemm(query)
         | MultimodalQuery::GemmBf16(query)
         | MultimodalQuery::GemmPairs(query) => query.m_capacity = rows,
@@ -307,6 +309,7 @@ pub fn header(query: MultimodalQuery) -> Result<&'static str, Refusal> {
         }
         MultimodalQuery::GeluRowsF32 { .. } => "#include \"encoder/rows/gelu_f32.cuh\"",
         MultimodalQuery::PadColumnsF32 { .. } => "#include \"encoder/rows/pad_columns_f32.cuh\"",
+        MultimodalQuery::CastBf16F32 { .. } => "#include \"encoder/rows/cast_bf16_f32.cuh\"",
         _ => return Err(Refusal("BF16-legacy encoder kernels are retired")),
     })
 }
@@ -437,6 +440,9 @@ pub fn body(query: MultimodalQuery) -> Result<String, Refusal> {
         MultimodalQuery::PadColumnsF32 { input, output, .. } => {
             format!("chop::multimodal::pad_columns_f32<{input},{output}>(input,output,live_rows);")
         }
+        MultimodalQuery::CastBf16F32 { width, .. } => {
+            format!("chop::multimodal::cast_bf16_f32<{width}>(input,output,live_rows);")
+        }
         _ => return Err(Refusal("BF16-legacy encoder kernels are retired")),
     })
 }
@@ -532,6 +538,13 @@ pub fn params(query: MultimodalQuery) -> Vec<EntryParam> {
         ],
         MultimodalQuery::GeluRowsF32 { .. } | MultimodalQuery::PadColumnsF32 { .. } => {
             vec![ptr("input", "const float"), ptr("output", "float"), live()]
+        }
+        MultimodalQuery::CastBf16F32 { .. } => {
+            vec![
+                ptr("input", "const float"),
+                ptr("output", "uint16_t"),
+                live(),
+            ]
         }
         MultimodalQuery::GemmPairs(query) => vec![
             ptr("activation", "const float"),

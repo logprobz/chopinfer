@@ -804,6 +804,75 @@ pub fn rows(session: &Session, case: &Case) -> LabResult<()> {
             check_exact(&widen(&actual), &expected.values)
                 .map_err(|index| format!("{name} differs at {index}"))?;
         }
+        MultimodalQuery::CastBf16F32 { width, .. } => {
+            let width = width as usize;
+            // Values with every mantissa bit populated at subnormal, small,
+            // unit and near-overflow magnitudes; the first live elements
+            // are the edges: ties to even at normal and subnormal
+            // magnitudes, the largest values that stay finite and the
+            // smallest that overflow, infinities, signed zeros and NaNs of
+            // either sign and kind. One row past the live rows must keep
+            // its poison.
+            let mut rows = seeded_f32((m + 1) * width, 0x770e ^ width as u64, 4.0);
+            for (index, value) in rows.iter_mut().enumerate() {
+                *value *= [1e-41, 1e-3, 1.0, 8.4e37][index % 4];
+            }
+            let edges: [u32; 18] = [
+                0x3f80_8000,
+                0x3f81_8000,
+                0xbf80_8000,
+                0x0000_8000,
+                0x0001_8000,
+                0x8001_8000,
+                0x7f7f_7fff,
+                0x7f7f_8000,
+                0xff7f_ffff,
+                0x7f80_0000,
+                0xff80_0000,
+                0x0000_0000,
+                0x8000_0000,
+                0x7fc0_0000,
+                0xffc0_0001,
+                0x7f80_0001,
+                0xff80_0001,
+                0x7fff_ffff,
+            ];
+            if m * width < edges.len() {
+                return Err(format!("{name}: too few live elements for the edges"));
+            }
+            for (value, &bits) in rows.iter_mut().zip(&edges) {
+                *value = f32::from_bits(bits);
+            }
+            let input_buffer = lab.f32(&rows)?;
+            let output = lab.output((m + 1) * width, 2)?;
+            let launch = |_: &runtime_cuda::Stream| {
+                lab.run(
+                    name,
+                    m as u32,
+                    &[
+                        ("input", &input_buffer),
+                        ("output", &output),
+                        ("live_rows", &live),
+                    ],
+                    &[],
+                )
+            };
+            let replay = Replay::new(session).output(
+                "bf16 rows",
+                &output,
+                WriteMap::of(DType::Bf16).prefix(m * width)?,
+            );
+            replayed_bf16(session, replay, &launch, &output, m * width)?;
+            // The cast is exact on its input: every code is the oracle's,
+            // and past the live rows the poison's exact bits remain.
+            let actual = lab.read(&output, (m + 1) * width)?;
+            let (written, past) = actual.split_at(m * width);
+            check_exact(written, &vision::cast_bf16_rows(&rows[..m * width]))
+                .map_err(|index| format!("{name} differs at {index}"))?;
+            if let Some(index) = past.iter().position(|&code| code != u16::MAX) {
+                return Err(format!("{name}: wrote past its live rows at {index}"));
+            }
+        }
         MultimodalQuery::SwigluClampedF32 {
             hidden, limit_bits, ..
         } => {
@@ -891,6 +960,29 @@ fn replayed(
     let graph = session.capture(launch)?;
     replay.graph(&graph)?;
     same_bits(&session.download_f32(output, len)?, &eager)?;
+    let mut fields = BTreeMap::new();
+    replay.record(&mut fields);
+    session.receipt("encoder-rows-replay", fields)?;
+    Ok(eager)
+}
+
+/// [`replayed`] for an output of BF16 codes: the eager result's first `len`
+/// codes, which every replay must equal.
+fn replayed_bf16(
+    session: &Session,
+    mut replay: Replay<'_>,
+    launch: &dyn Fn(&runtime_cuda::Stream) -> LabResult<()>,
+    output: &DeviceBuffer,
+    len: usize,
+) -> LabResult<Vec<u16>> {
+    let differs = |i| format!("graph replay differs at {i}");
+    replay.eager(|| launch(&session.stream))?;
+    let eager = session.download_bf16(output, len)?;
+    replay.relaunch(|| launch(&session.stream))?;
+    check_exact(&session.download_bf16(output, len)?, &eager).map_err(differs)?;
+    let graph = session.capture(launch)?;
+    replay.graph(&graph)?;
+    check_exact(&session.download_bf16(output, len)?, &eager).map_err(differs)?;
     let mut fields = BTreeMap::new();
     replay.record(&mut fields);
     session.receipt("encoder-rows-replay", fields)?;

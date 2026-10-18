@@ -829,7 +829,8 @@ fn full_rows(declaration: &Declaration) -> Result<Vec<[u64; 2]>, String> {
             | StageOp::Norm(_)
             | StageOp::Transformer(_)
             | StageOp::Projector(_)
-            | StageOp::Pad(_) => rows,
+            | StageOp::Pad(_)
+            | StageOp::Cast(_) => rows,
             StageOp::Conv1d(_) | StageOp::Registered(_) | StageOp::Group(_) => {
                 let component = stage.op.component()?;
                 // Runs after a joining stage start again at capacity.
@@ -974,6 +975,18 @@ fn lower_pairs(
                     ("live_rows", builder.count(index)),
                 ];
                 builder.launch(index, "pad", None, named).map_err(fail)?;
+                place = Operand::Region(out);
+            }
+            StageOp::Cast(_) => {
+                // The one rounding to BF16, after a last GEMM that writes
+                // F32 rows.
+                let out = writes(&id)?;
+                let named = vec![
+                    ("input", place),
+                    ("output", target(out)),
+                    ("live_rows", builder.count(index)),
+                ];
+                builder.launch(index, "cast", None, named).map_err(fail)?;
                 place = Operand::Region(out);
             }
             StageOp::Projector(projector) => {
@@ -1575,7 +1588,7 @@ mod tests {
             ],
             "norm" => vec!["input", "weight", "bias", "output", "live_rows"],
             "qk_norm" => vec!["rows", "q_weight", "k_weight", "live_rows"],
-            "swiglu" | "gelu" | "pad" => vec!["input", "output", "live_rows"],
+            "swiglu" | "gelu" | "pad" | "cast" => vec!["input", "output", "live_rows"],
             "gather" => vec!["input", "indices", "output", "live_rows"],
             "rotary" => vec!["rows", "cos", "sin", "live_rows"],
             "attention" => vec!["qkv", "cu_seqlens", "sinks", "output", "live_tokens"],
@@ -1924,6 +1937,36 @@ mod tests {
         );
         assert_eq!(operands(1)[0], Operand::Region("a"));
         assert_eq!(operands(1)[3], Operand::Region("stream"));
+    }
+
+    /// A last GEMM that writes F32 rows, then the BF16 cast: the GEMM writes
+    /// a region and the cast reads it and writes the output rows.
+    #[test]
+    fn a_cast_after_the_last_gemm_writes_the_output_rows() {
+        let mut value: serde_json::Value = serde_json::from_str(TOWER).unwrap();
+        let stages = value["stages"].as_array_mut().unwrap();
+        stages[6].as_object_mut().unwrap().remove("output");
+        stages.push(serde_json::json!({"op": "cast.bf16.v1"}));
+        let tower = parse(&value.to_string(), &Environment::new("alpha")).unwrap();
+        let serving = Serving {
+            arena_rows: 1024,
+            prefill_rows: 64,
+            staging_bytes: 0,
+        };
+        let plan = buffers::plan(&[&tower], 4096, serving).unwrap();
+        let lowered = lower(&tower, &plan, kernel_params, &Shared).unwrap();
+        let last = lowered.launches.len() - 1;
+        assert_eq!(
+            (symbol(&lowered, last - 1), symbol(&lowered, last)),
+            ("linear6", "cast7")
+        );
+        let gemm = arguments(&lowered, last - 1, kernel_params);
+        let cast = arguments(&lowered, last, kernel_params);
+        let Operand::Region(rows) = gemm[3] else {
+            panic!("the last GEMM writes {:?}", gemm[3]);
+        };
+        assert_eq!(cast[0], Operand::Region(rows));
+        assert_eq!(cast[1], Operand::Output);
     }
 
     /// The tower with per-head q/k norms, a clamped SwiGLU MLP and a

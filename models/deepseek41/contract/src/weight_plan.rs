@@ -15,13 +15,20 @@
 //! - every side tensor's rank copy (norms, the mixers, the router biases,
 //!   and the attention sinks of the rank's heads).
 //!
-//! The Engram tables are not in the image: the host gathers their rows
-//! from the mapped checkpoint (F1). The vision tower and aligner belong to
-//! the encoder image.
+//! The Engram tables' code and scale planes are host-mapped views
+//! (`chop.host-mapped-gather.v1`): each is one plain copy of its whole
+//! checkpoint tensor, which the host maps instead of producing and cuts out
+//! of the arena, and whose rows the bundle gathers as it uploads them. They
+//! are not prewarmed: the tables are far larger than a page cache should
+//! hold, and a cold read per gathered row is the design. The vision tower
+//! and aligner belong to the encoder image.
 //!
 //! Views are named as the bundle binds them ([`view_name`]) and ordered by
-//! name; each starts on [`VIEW_ALIGNMENT`]. Each record is one derived
-//! section or piece. A planned rank has no image file: the rank index each
+//! name, the device views first and the mapped views after them, so that
+//! cutting the mapped views out moves no device view; each starts on
+//! [`VIEW_ALIGNMENT`]. A mapped view states the image alignment, as the
+//! host requires of a plan it cuts. Each record is one derived section or
+//! piece. A planned rank has no image file: the rank index each
 //! plan carries names the plan's identity (`direct_identity`) instead of an
 //! image digest, and the bundle checks it as it checks a rank file's digest.
 
@@ -41,7 +48,7 @@ use projection_spec::bind::{BoundDeclaration, CheckpointMetadata};
 use projection_spec::derive::{DerivationInput, Topology, hooks::VariantDeriver};
 use projection_spec::registry::Registry;
 use runtime_bundle_abi::weight_plan::{
-    NamedBytesV1, WeightPlanRequestV1, WeightPlanV1, WeightRecordV1,
+    NamedBytesV1, PlannedViewV1, ViewPlacementV1, WeightPlanRequestV1, WeightPlanV1, WeightRecordV1,
 };
 use serde_json::{Value, json};
 
@@ -58,7 +65,7 @@ const CONFIG: &str = "config.json";
 const INDEX: &str = "model.safetensors.index.json";
 
 /// The projections whose rows the host gathers from the mapped checkpoint
-/// instead of the image.
+/// instead of the image: their views are mapped.
 const HOST_GATHERED: [&str; 2] = ["engram.table_0", "engram.table_1"];
 
 /// The owner that validates the vision tower's and aligner's tensors. Until
@@ -94,6 +101,9 @@ pub struct View {
     pub dtype: String,
     pub shape: Vec<u64>,
     pub layout_id: String,
+    /// Whether the host maps the view from the checkpoint instead of the
+    /// arena holding it.
+    pub mapped: bool,
     pieces: Vec<Piece>,
 }
 
@@ -272,9 +282,7 @@ impl Checkpoint {
         let mut views = BTreeMap::<String, View>::new();
         for operation in graph.selected_operations() {
             let projection = &operation.instance.projection;
-            if HOST_GATHERED.contains(&projection.as_str()) {
-                continue;
-            }
+            let mapped = HOST_GATHERED.contains(&projection.as_str());
             let declared = self
                 .declaration
                 .projections
@@ -292,12 +300,17 @@ impl Checkpoint {
                 .map(|view| (view.id.clone(), view.layout.clone()))
                 .collect();
             for record in records(&operation).map_err(at)? {
-                let name = view_name(
-                    &declared.kind,
-                    declared.operand_count(),
-                    &record.tensors[0],
-                    record.section,
-                )?;
+                // A mapped plane is its checkpoint tensor, named as it.
+                let name = if mapped {
+                    record.tensors[0].clone()
+                } else {
+                    view_name(
+                        &declared.kind,
+                        declared.operand_count(),
+                        &record.tensors[0],
+                        record.section,
+                    )?
+                };
                 let codes = record
                     .record
                     .sources
@@ -314,6 +327,7 @@ impl Checkpoint {
                     dtype,
                     shape: Vec::new(),
                     layout_id: layouts.get(&record.view).cloned().unwrap_or_default(),
+                    mapped,
                     pieces: Vec::new(),
                 });
                 if view.pieces.iter().any(|p| p.offset == record.view_offset) {
@@ -351,6 +365,9 @@ impl Checkpoint {
             }
             view.bytes = end;
             view.shape = vec![end / element_bytes(&view.dtype)?];
+            if view.mapped {
+                check_mapped(view)?;
+            }
         }
         let sides = model_compiler_sdk::quantization::projection::side_records(
             &self.declaration,
@@ -386,6 +403,7 @@ impl Checkpoint {
                     bytes,
                     dtype: info.dtype.clone(),
                     shape: stored_shape.clone(),
+                    mapped: false,
                     pieces: vec![Piece {
                         offset: 0,
                         bytes,
@@ -401,7 +419,27 @@ impl Checkpoint {
                 return Err(format!("{name}: a side view named as a projection view"));
             }
         }
-        Ok(views.into_values().collect())
+        let (mapped, device): (Vec<_>, Vec<_>) = views.into_values().partition(|v| v.mapped);
+        Ok(device.into_iter().chain(mapped).collect())
+    }
+}
+
+/// Refuse a mapped view the host could not map: it must be one plain copy
+/// of one tensor, whole or one range of its leading axis (as a replicated
+/// table's rows derive), stored unchanged.
+fn check_mapped(view: &View) -> Result<(), String> {
+    match &view.pieces[..] {
+        [piece]
+            if piece.transform == WeightTransform::Copy
+                && piece.sources.len() == 1
+                && matches!((piece.axis, &piece.ranges[..]), (None, []) | (Some(0), [_])) =>
+        {
+            Ok(())
+        }
+        _ => Err(format!(
+            "{}: a mapped view is one plain copy of one tensor's rows",
+            view.name
+        )),
     }
 }
 
@@ -483,6 +521,22 @@ fn offsets(views: &[View]) -> (Vec<u64>, u64) {
     (offsets, end.next_multiple_of(VIEW_ALIGNMENT))
 }
 
+/// The bytes of `plan`'s arena the device holds: the arena less each mapped
+/// view as the host cuts it out, its end rounded up to the image alignment
+/// and clipped to the arena.
+pub fn device_bytes(plan: &WeightPlanV1) -> u64 {
+    let cut: u64 = plan
+        .views
+        .iter()
+        .filter(|view| matches!(view.placement, ViewPlacementV1::Mapped { .. }))
+        .map(|view| {
+            let end = (view.offset + view.byte_length).next_multiple_of(plan.alignment);
+            end.min(plan.arena_bytes) - view.offset
+        })
+        .sum();
+    plan.arena_bytes - cut
+}
+
 /// The rank index of `views` at `offsets`, naming the plan's identity.
 fn index(
     rank: u32,
@@ -533,6 +587,19 @@ pub fn plan(request: &WeightPlanRequestV1) -> Result<Option<WeightPlanV1>, Strin
     let (offsets, arena_bytes) = offsets(views);
     let files = RequestFiles::new(request);
     let mut records = Vec::new();
+    // The prewarm is off: see the module documentation.
+    let mapped = views
+        .iter()
+        .zip(&offsets)
+        .filter(|(view, _)| view.mapped)
+        .map(|(view, &offset)| PlannedViewV1 {
+            id: view.name.clone(),
+            alignment: IMAGE_ALIGNMENT,
+            placement: ViewPlacementV1::Mapped { prewarm: false },
+            offset,
+            byte_length: view.bytes,
+        })
+        .collect();
     for (view, offset) in views.iter().zip(&offsets) {
         for piece in &view.pieces {
             let sources = piece
@@ -564,7 +631,7 @@ pub fn plan(request: &WeightPlanRequestV1) -> Result<Option<WeightPlanV1>, Strin
         image_role: RANK_IMAGE_ROLE.into(),
         alignment: IMAGE_ALIGNMENT,
         arena_bytes,
-        views: Vec::new(),
+        views: mapped,
         components: Vec::new(),
         records,
     };

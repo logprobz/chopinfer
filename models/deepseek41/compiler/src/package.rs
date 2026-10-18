@@ -110,9 +110,10 @@ pub fn profiles(geometry: &Geometry, ranks: &[u32]) -> Result<String, BundleErro
 
 /// What the package requires of the host, from what the module exports:
 /// paged serving KV with per-item state, request retirement, scored prompt
-/// rows, prefix snapshots restored into the state slot, and the planned
-/// text image.
-pub const CAPABILITIES: [&str; 9] = [
+/// rows, prefix snapshots restored into the state slot, the planned text
+/// image and the rows it gathers from the views it maps (the Engram
+/// tables).
+pub const CAPABILITIES: [&str; 10] = [
     runtime_bundle_abi::SERVING_KV_CAPABILITY_V1,
     runtime_bundle_abi::REQUEST_RETIREMENT_CAPABILITY_V1,
     runtime_bundle_abi::PROMPT_ROWS_CAPABILITY_V2,
@@ -122,6 +123,7 @@ pub const CAPABILITIES: [&str; 9] = [
     runtime_bundle_abi::SERVED_CONTEXT_CAPABILITY_V1,
     runtime_bundle_abi::STATE_PER_ITEM_CAPABILITY_V1,
     runtime_bundle_abi::weight_plan::WEIGHT_PLAN_CAPABILITY_V1,
+    runtime_bundle_abi::HOST_MAPPED_GATHER_CAPABILITY_V1,
 ];
 
 fn id(value: impl Into<String>) -> Result<BundleOpaqueId, BundleError> {

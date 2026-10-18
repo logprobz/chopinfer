@@ -3,14 +3,17 @@
 //! name every tensor of the official export: every rank of every supported
 //! rank count of each compiled geometry plans its text image, with the
 //! views the bundle binds, aligned and disjoint records and a rank index
-//! that names the plan's identity.
+//! that names the plan's identity. The Engram tables' code and scale planes
+//! are the plan's mapped views, each its checkpoint tensor as the headers
+//! state it.
 use model_deepseek41::synthetic;
 use model_deepseek41_contract::admission::{SUPPORTED_RANKS, admit, check_ranks};
 use model_deepseek41_contract::geometry::{FLASH, GEOMETRIES, Geometry};
 use model_deepseek41_contract::serving::{INDEX_SCHEMA, RANK_IMAGE_ROLE, index_role};
-use model_deepseek41_contract::weight_plan::{VIEW_ALIGNMENT, plan};
+use model_deepseek41_contract::weight_plan::{IMAGE_ALIGNMENT, VIEW_ALIGNMENT, device_bytes, plan};
 use runtime_bundle_abi::weight_plan::{
-    CheckpointFileV1, NamedBytesV1, WeightPlanImplementationV1, WeightPlanRequestV1,
+    CheckpointFileV1, NamedBytesV1, ViewPlacementV1, WeightPlanImplementationV1,
+    WeightPlanRequestV1, WeightPlanV1,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -143,12 +146,15 @@ fn check(geometry: &Geometry, ranks: u32) {
                 geometry.id
             );
         }
-        // The Engram tables are gathered from the mapped checkpoint.
-        assert!(!names.iter().any(|name| name.contains("engram.embed")));
-        let identity = hex(&Sha256::digest(
-            plan.identity_document(&request.checkpoint_identity, &request.implementation),
-        ));
-        assert_eq!(index.direct_identity.as_deref(), Some(identity.as_str()));
+        check_mapped(geometry, &request, &plan, &index);
+        let planned = identity(&request, &plan);
+        assert_eq!(index.direct_identity.as_deref(), Some(planned.as_str()));
+        // The mapped views are part of what the identity names.
+        let unmapped = WeightPlanV1 {
+            views: Vec::new(),
+            ..plan.clone()
+        };
+        assert_ne!(identity(&request, &unmapped), planned);
         if rank == 0 {
             eprintln!(
                 "{} tp{ranks}: {} views, {} records, {} arena bytes",
@@ -168,6 +174,125 @@ fn check(geometry: &Geometry, ranks: u32) {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The planned image identity of `plan` for `request`, as host and bundle
+/// take it.
+fn identity(request: &WeightPlanRequestV1, plan: &WeightPlanV1) -> String {
+    hex(&Sha256::digest(plan.identity_document(
+        &request.checkpoint_identity,
+        &request.implementation,
+    )))
+}
+
+/// The plan's mapped views are exactly the Engram tables' code and scale
+/// planes, unprewarmed, each at its rank index offset and as long as its
+/// checkpoint tensor; one plain copy of the whole tensor covers each and
+/// nothing else does; they follow every device view, and the device holds
+/// the arena less their cuts.
+fn check_mapped(
+    geometry: &Geometry,
+    request: &WeightPlanRequestV1,
+    plan: &WeightPlanV1,
+    index: &bundle_runtime::index::RankIndex,
+) {
+    let header: Value = serde_json::from_slice(&request.files[0].header).unwrap();
+    let planes: std::collections::BTreeSet<&str> = header
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .filter(|name| {
+            name.ends_with(".engram.embed.weight") || name.ends_with(".engram.embed.scale")
+        })
+        .collect();
+    assert_eq!(planes.len() as u32, 2 * geometry.engram_layers());
+    for plane in &planes {
+        let layer: u32 = plane.split('.').nth(1).unwrap().parse().unwrap();
+        assert!(geometry.is_engram_layer(layer), "{plane}");
+    }
+    let mapped: std::collections::BTreeSet<&str> =
+        plan.views.iter().map(|view| view.id.as_str()).collect();
+    assert_eq!(mapped, planes, "the mapped views are the Engram planes");
+    let mut cut = 0;
+    for view in &plan.views {
+        let at = format!(
+            "{} tp{} rank {} {}",
+            geometry.id, plan.ranks, plan.rank, view.id
+        );
+        assert_eq!(
+            view.placement,
+            ViewPlacementV1::Mapped { prewarm: false },
+            "{at}"
+        );
+        assert_eq!(view.alignment, IMAGE_ALIGNMENT, "{at}");
+        let entry = &header[&view.id];
+        let [start, end] = [0, 1].map(|i| entry["data_offsets"][i].as_u64().unwrap());
+        let shape: Vec<u64> = entry["shape"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| d.as_u64().unwrap())
+            .collect();
+        assert_eq!(view.byte_length, end - start, "{at}: the tensor's bytes");
+        let listed = &index.views[&view.id];
+        let (layout, dtype) = if view.id.ends_with(".weight") {
+            ("mxfp8_e4m3_rows_v1", "F8_E4M3")
+        } else {
+            ("mxfp8_ue8m0_scale_rows_v1", "F8_E8M0")
+        };
+        assert_eq!(
+            (listed.layout_id.as_str(), listed.dtype.as_str()),
+            (layout, dtype),
+            "{at}"
+        );
+        assert_eq!(
+            (listed.offset, listed.bytes),
+            (view.offset, view.byte_length),
+            "{at}"
+        );
+        let span = view.offset..view.offset + view.byte_length;
+        let covering: Vec<_> = plan
+            .records
+            .iter()
+            .filter(|r| r.arena_offset < span.end && span.start < r.arena_offset + r.byte_length)
+            .collect();
+        let [record] = covering[..] else {
+            panic!("{at}: {} records cover it", covering.len());
+        };
+        assert_eq!(
+            (record.arena_offset, record.byte_length),
+            (view.offset, view.byte_length),
+            "{at}"
+        );
+        assert_eq!(
+            record.transform,
+            kernel_core::weight_transform::WeightTransform::Copy.id(),
+            "{at}"
+        );
+        let [source] = &record.sources[..] else {
+            panic!("{at}: one source");
+        };
+        assert_eq!(source.tensor, view.id, "{at}");
+        assert!(
+            matches!(
+                (record.axis, &record.ranges[..]),
+                (None, []) | (Some(0), [_])
+            ) && record.ranges.iter().all(|rows| *rows == (0..shape[0])),
+            "{at}: the whole tensor"
+        );
+        assert_eq!(record.stored_shape, shape, "{at}");
+        for (name, other) in &index.views {
+            if !mapped.contains(name.as_str()) {
+                assert!(
+                    other.offset + other.bytes <= view.offset,
+                    "{at}: {name} after it"
+                );
+            }
+        }
+        cut += (span.end.next_multiple_of(plan.alignment)).min(plan.arena_bytes) - span.start;
+    }
+    assert_eq!(device_bytes(plan), plan.arena_bytes - cut);
 }
 
 #[test]

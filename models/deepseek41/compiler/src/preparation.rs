@@ -63,13 +63,14 @@ pub fn select_profile(geometry: &Geometry, ranks: u32) -> Result<DirectProfile> 
 }
 
 /// The most weight bytes one rank of `ranks` holds of the checkpoint at
-/// `root`: the arena of the plan the host executes.
+/// `root` on its device: the arena of the plan the host executes, less the
+/// mapped views the host cuts out of it.
 pub fn weight_bytes(root: &Path, ranks: u32) -> Result<u64> {
     let mut most = 0;
     for rank in 0..ranks {
         let request = crate::checkpoint::request(root, ranks, rank)?;
         let plan = weight_plan::plan(&request)?.ok_or("the text image has no weight plan")?;
-        most = most.max(plan.arena_bytes);
+        most = most.max(weight_plan::device_bytes(&plan));
     }
     Ok(most)
 }

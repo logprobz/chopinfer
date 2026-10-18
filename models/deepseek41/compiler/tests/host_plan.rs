@@ -9,7 +9,8 @@
 //! `every_planned_view_is_the_checkpoint_s` writes the synthetic geometry's
 //! checkpoint with block scales that vary, prepares every rank at every rank
 //! count, and checks every view of every rank index against the rank's share
-//! of the checkpoint that the projection declaration selects.
+//! of the checkpoint that the projection declaration selects, a mapped view
+//! as the host maps it.
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -236,12 +237,27 @@ fn block(
     out
 }
 
-/// A new directory holding `geometry`'s synthetic checkpoint with UE8M0
-/// scales that vary per block (so a misplaced block or slice shows), and
-/// its config.
-fn varied_checkpoint(geometry: &model_deepseek41_contract::geometry::Geometry) -> PathBuf {
+/// The safetensors header of the synthetic checkpoint at `root` and the
+/// file offset of its data.
+fn header(root: &Path) -> (Value, u64) {
+    let file = std::fs::File::open(root.join(synthetic::FILE)).unwrap();
+    let mut prefix = [0_u8; 8];
+    file.read_exact_at(&mut prefix, 0).unwrap();
+    let header_bytes = u64::from_le_bytes(prefix);
+    let mut header = vec![0; header_bytes as usize];
+    file.read_exact_at(&mut header, 8).unwrap();
+    (serde_json::from_slice(&header).unwrap(), 8 + header_bytes)
+}
+
+/// A new directory, named for the test `test`, holding `geometry`'s
+/// synthetic checkpoint with UE8M0 scales that vary per block (so a
+/// misplaced block or slice shows), and its config.
+fn varied_checkpoint(
+    geometry: &model_deepseek41_contract::geometry::Geometry,
+    test: &str,
+) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
-        "deepseek41-payload-{}-{}",
+        "deepseek41-{test}-{}-{}",
         geometry.id,
         std::process::id()
     ));
@@ -285,21 +301,9 @@ fn every_planned_view_is_the_checkpoint_s() {
         eprintln!("no synthetic geometry is compiled: skipped");
         return;
     };
-    let root = varied_checkpoint(geometry);
+    let root = varied_checkpoint(geometry, "payload");
     let splits = declared_splits();
-    let mut prefix = [0_u8; 8];
-    std::fs::File::open(root.join(synthetic::FILE))
-        .unwrap()
-        .read_exact_at(&mut prefix, 0)
-        .unwrap();
-    let header_bytes = u64::from_le_bytes(prefix);
-    let mut header = vec![0; header_bytes as usize];
-    std::fs::File::open(root.join(synthetic::FILE))
-        .unwrap()
-        .read_exact_at(&mut header, 8)
-        .unwrap();
-    let header: Value = serde_json::from_slice(&header).unwrap();
-    let data = 8 + header_bytes;
+    let (header, data) = header(&root);
     let tensor = |name: &str| source(&root, &header, data, name);
     let mut groups = std::collections::BTreeSet::new();
     for &ranks in SUPPORTED_RANKS {
@@ -315,9 +319,16 @@ fn every_planned_view_is_the_checkpoint_s() {
                 bundle_runtime::index::parse(&plan.components[0].bytes, rank as u32, INDEX_SCHEMA)
                     .unwrap();
             for (name, view) in &index.views {
+                let at = format!("tp{ranks} rank {rank} {name}");
+                // A mapped view is its whole checkpoint tensor, which the
+                // host maps instead of producing.
+                if let Some(mapped) = image.mapped_view(rank as u32, name.as_bytes()) {
+                    groups.insert(format!("{name} (mapped)"));
+                    same(mapped.bytes(), &tensor(name).bytes, &at);
+                    continue;
+                }
                 let mut got = vec![0; view.bytes as usize];
                 image.read(start + view.offset, &mut got).unwrap();
-                let at = format!("tp{ranks} rank {rank} {name}");
                 let generic: Vec<_> = name
                     .split('.')
                     .map(|part| {

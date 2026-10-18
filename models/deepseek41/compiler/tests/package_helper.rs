@@ -22,6 +22,7 @@ use model_deepseek41_contract::serving::{
     REQUEST_STATE_ID, SCORED_ROWS,
 };
 use model_deepseek41_contract::state::{KvStorage, request_state};
+use model_deepseek41_contract::weight_plan;
 use runtime_bundle::BundleKvDtypeV1;
 use runtime_bundle::preparation::PrepareDirectRequest;
 use runtime_host::direct::{DirectCheckpointV1, implementation_v1};
@@ -296,7 +297,9 @@ fn the_manifest_declares_each_topology_s_resources() {
 }
 
 /// Flash's weights fit a device at four ranks only: the package of its
-/// checkpoint serves TP4, and a TP2 request is refused by capacity.
+/// checkpoint serves TP4, and a TP2 request is refused by capacity. A
+/// rank's weights are its arena less the mapped Engram planes, which stay
+/// in the checkpoint.
 #[test]
 fn flash_fits_at_four_ranks_alone() {
     let root = sparse(&FLASH);
@@ -305,6 +308,19 @@ fn flash_fits_at_four_ranks_alone() {
         served.iter().map(|&(ranks, _)| ranks).collect::<Vec<_>>(),
         [4]
     );
+    let plans: Vec<_> = (0..4)
+        .map(|rank| {
+            let request = model_deepseek41::checkpoint::request(&root, 4, rank).unwrap();
+            weight_plan::plan(&request).unwrap().unwrap()
+        })
+        .collect();
+    let device = plans.iter().map(weight_plan::device_bytes).max().unwrap();
+    assert_eq!(served[0].1, device);
+    for plan in &plans {
+        let mapped: u64 = plan.views.iter().map(|view| view.byte_length).sum();
+        assert!(mapped > 200_000_000_000, "the Engram planes are mapped");
+        assert!(weight_plan::device_bytes(plan) + mapped <= plan.arena_bytes);
+    }
     eprintln!("flash tp4: {} weight bytes a rank", served[0].1);
     let error = served_topologies(&root, &FLASH, 2).unwrap_err().to_string();
     assert!(error.contains("does not fit at 2 ranks"), "{error}");

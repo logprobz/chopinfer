@@ -8,6 +8,8 @@ pub mod dspark;
 #[allow(dead_code, reason = "the build compiles the drafter auxiliary entries")]
 mod dspark_aux;
 pub mod dspark_entries;
+#[allow(dead_code, reason = "the build compiles the drafter router")]
+mod dspark_router;
 pub mod latent;
 pub mod mxfp8_fold;
 use kernels_sm120::backend::{F32ProjectionOffers, Sm120};
@@ -103,10 +105,12 @@ pub fn register_f32_projections(
     ranks: u32,
 ) -> Result<Sm120, String> {
     let mut entries = f32_dense::entries(geometry)?;
+    entries.extend(dspark_router::entries(geometry)?);
     entries.push(f32_head::entry(geometry, ranks)?);
     let cubins = [
         f32_head::cubin_name(geometry),
         f32_dense::cubin_name(geometry),
+        dspark_router::cubin_name(geometry),
     ];
     let available = crate::CUBINS
         .iter()
@@ -141,6 +145,7 @@ impl crate::Kernels {
         let sm120 = compressor_bf16::register(sm120, shape.geometry)?;
         let sm120 = moe::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = routed_sum::register(sm120, shape.geometry);
+        let sm120 = dspark_router::register(sm120, shape.geometry);
         let sm120 = dense::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = shared::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = mxfp8_fold::register(sm120, shape.geometry, shape.ranks())?;

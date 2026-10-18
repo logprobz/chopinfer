@@ -15,6 +15,9 @@ use model_deepseek41_contract::geometry::GEOMETRIES;
 mod dspark_aux;
 mod dspark_cubin;
 mod dspark_entries;
+#[path = "dspark_router.rs"]
+#[allow(dead_code)]
+mod dspark_router;
 #[path = "encoder.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod encoder;
@@ -87,6 +90,7 @@ pub fn selection(
     let mut specs = vec![(own_entries::FAMILY, own_cubin::rope_cubin_spec(manifest))];
     specs.push((dspark_entries::FAMILY, dspark_cubin::cubin_spec(manifest)));
     specs.extend(dspark_aux::cubins(geometries).expect("DSpark auxiliary cubins"));
+    specs.extend(dspark_router::cubins(geometries).expect("DSpark router cubins"));
     let mut owners = Vec::new();
     for geometry in geometries.iter().filter(|g| own_entries::has_gates(g)) {
         let spec = own_cubin::gate_cubin_spec(manifest, geometry);
@@ -95,6 +99,8 @@ pub fn selection(
     }
     for geometry in geometries {
         owners.extend(dspark_aux::geometry_cubins(geometry).map(|name| (name, geometry.id)));
+        owners.push((dspark_router::cubin_name(geometry), geometry.id));
+        owners.extend(dspark_router::sum_cubins(geometry).map(|name| (name, geometry.id)));
         owners.push((rows::cubin_name(geometry), geometry.id));
         owners.push((rows::final_norm_cubin_name(geometry), geometry.id));
         owners.push((reduce::rounding_cubin(geometry), geometry.id));
@@ -205,7 +211,9 @@ fn main() {
         .iter()
         .filter(|cubin| {
             GEOMETRIES.iter().any(|g| {
-                cubin.name == f32_head::cubin_name(g) || cubin.name == f32_dense::cubin_name(g)
+                cubin.name == f32_head::cubin_name(g)
+                    || cubin.name == f32_dense::cubin_name(g)
+                    || cubin.name == dspark_router::cubin_name(g)
             })
         })
         .map(|cubin| {

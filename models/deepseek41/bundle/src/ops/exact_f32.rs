@@ -246,6 +246,7 @@ impl ExactF32Ops {
         own: &dyn OwnOps,
         shape: &Shape,
         asks: &Asks,
+        experts: u32,
     ) -> Result<ExactF32Ops, Refused> {
         let every = exact::need(PREFILL_TOKENS, exact::every_phase(super::verify_rows()));
         let widen = asks.ask("f32.widen", every, |need| {
@@ -258,7 +259,10 @@ impl ExactF32Ops {
         })?;
         let projections = projections(shape.geometry)
             .into_iter()
-            .map(|dense| {
+            .map(|mut dense| {
+                if dense.id == "moe.router" {
+                    dense.n = experts;
+                }
                 let op = operation(dense.id, dense.tensor, query(dense.n, dense.k))?;
                 let prepared = backend.projection(&op, USE, every)?.handle;
                 asks.record(format!("f32.{}", dense.id), every, prepared.info());

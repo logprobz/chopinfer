@@ -43,13 +43,18 @@ fn launch(
 }
 
 #[test]
-fn dspark_full_block_journal_at_each_synthetic_topology() {
-    for shape in crate::shape::topologies()
-        .into_iter()
-        .filter(|shape| !shape.geometry.base)
-    {
+fn dspark_full_block_journal_at_each_topology() {
+    for shape in crate::shape::topologies() {
         let kernels = crate::Kernels::new(&shape).unwrap();
-        let ops = Ops::prepare(&kernels, &shape, KvStorage::Native);
+        let ops = Ops::prepare_set(
+            &kernels,
+            &shape,
+            KvStorage::Native,
+            model_deepseek41_contract::moe::Experts {
+                count: shape.geometry.shape.dspark.experts,
+                top_k: shape.geometry.shape.dspark.top_k,
+            },
+        );
         assert!(ops.glue.is_some(), "{:?}", ops.missing);
         let draft = Prepared::prepare(kernels.backend.as_ref(), shape, DraftMode::Greedy).unwrap();
         let mut shared = ops.shared_bytes();

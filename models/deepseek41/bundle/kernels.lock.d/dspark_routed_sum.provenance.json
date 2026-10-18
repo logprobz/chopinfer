@@ -1,0 +1,10 @@
+[
+  {
+    "name": "chop_deepseek41_dspark_moe_route",
+    "source_closure_sha256": "cdc95793b5e721de4a48f737acc7e5a5ddd6a1d5d45f5b4c460be930d7d536b7"
+  },
+  {
+    "name": "chop_deepseek41_dspark_moe_sum_add",
+    "source_closure_sha256": "08276abe28b0640d22b9d343844ace313afb572a03c1be30c337d962ff772782"
+  }
+]

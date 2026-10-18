@@ -156,18 +156,15 @@ pub(crate) struct SumViews {
 }
 
 impl MoeOps {
-    /// The routed MoE ops of the backbone's experts on `backend`.
+    /// The routed MoE ops of the declared expert bank on `backend`.
     pub(crate) fn prepare(
         backend: &dyn Backend,
         shape: &Shape,
         asks: &Asks,
+        set: Experts,
     ) -> Result<MoeOps, Refused> {
         let g = shape.geometry;
         let ranks = shape.ranks();
-        let set = Experts {
-            count: g.shape.moe.experts,
-            top_k: g.shape.moe.top_k,
-        };
         let refused = |error: String| Refused::Rule(error);
         let every = exact::need(PREFILL_TOKENS, exact::every_phase(super::verify_rows()));
         let quantize = asks.ask("moe.quantize", every, |need| {

@@ -50,6 +50,7 @@ pub(crate) const NAME: &str = "DeepSeek V4.1";
 /// absent and named in `missing`: create refuses such an instance, except
 /// the fake-host tests that run the lowered stages alone.
 pub struct Ops {
+    pub(crate) expert_set: model_deepseek41_contract::moe::Experts,
     pub(crate) rows: Option<rows::RowOps>,
     pub(crate) reduce: Option<reduce::ReduceOps>,
     pub(crate) hc: Option<hc::HcOps>,
@@ -79,6 +80,25 @@ impl Ops {
     /// Prepares every op of an instance of `shape` on `kernels` over KV
     /// pages in `storage`, recording each family they refuse.
     pub(crate) fn prepare(kernels: &Kernels, shape: &Shape, storage: KvStorage) -> Ops {
+        Self::prepare_set(
+            kernels,
+            shape,
+            storage,
+            model_deepseek41_contract::moe::Experts {
+                count: shape.geometry.shape.moe.experts,
+                top_k: shape.geometry.shape.moe.top_k,
+            },
+        )
+    }
+
+    /// Prepare the same backbone operations for one declared expert bank.
+    /// The target and drafter retain separate operation sets and router widths.
+    pub(crate) fn prepare_set(
+        kernels: &Kernels,
+        shape: &Shape,
+        storage: KvStorage,
+        expert_set: model_deepseek41_contract::moe::Experts,
+    ) -> Ops {
         let asks = Asks::default();
         let mut missing = Vec::new();
         let names = [kernels.backend.name(), kernels.own.name()].join(" and ");
@@ -109,7 +129,7 @@ impl Ops {
             &mut missing,
             &names,
             "routed MoE",
-            moe::MoeOps::prepare(kernels.backend.as_ref(), shape, &asks),
+            moe::MoeOps::prepare(kernels.backend.as_ref(), shape, &asks, expert_set),
         );
         let compressor = family(
             &mut missing,
@@ -196,6 +216,7 @@ impl Ops {
                 kernels.own.as_ref(),
                 shape,
                 &asks,
+                expert_set.count,
             ),
         );
         let mut ratios: Vec<u32> = shape.geometry.shape.compress_ratios.to_vec();
@@ -219,6 +240,7 @@ impl Ops {
             })
             .collect();
         Ops {
+            expert_set,
             rows,
             reduce,
             hc,

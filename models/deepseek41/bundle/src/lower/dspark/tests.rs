@@ -73,6 +73,24 @@ fn every_compiled_topology_prepares_the_drafter_primitives() {
             prepared.err()
         );
         tested += 1;
+        let ops = crate::ops::Ops::prepare_set(
+            &kernels,
+            &shape,
+            model_deepseek41_contract::state::KvStorage::Native,
+            model_deepseek41_contract::moe::Experts {
+                count: shape.geometry.shape.dspark.experts,
+                top_k: shape.geometry.shape.dspark.top_k,
+            },
+        );
+        assert!(ops.missing.is_empty(), "{:?}", ops.missing);
+        assert_eq!(ops.expert_set.count, shape.geometry.shape.dspark.experts);
+        let (router, _) = ops
+            .exact_f32
+            .as_ref()
+            .unwrap()
+            .projection("moe.router")
+            .unwrap();
+        assert_eq!(router.n, shape.geometry.shape.dspark.experts);
     }
     assert!(tested >= 3);
 }
@@ -157,17 +175,9 @@ fn feature_packing_preserves_full_prefill_capacity_and_row_order() {
 }
 
 #[test]
-fn synthetic_blocks_use_the_complete_ratio_zero_attention_and_expert_stage() {
+fn draft_blocks_use_the_complete_ratio_zero_attention_and_expert_stage() {
     for g in GEOMETRIES {
         let phase = Phase::Verify { rows: 10, items: 2 };
-        if g.shape.moe.experts != g.shape.dspark.experts {
-            assert!(
-                block_stages(g, 0, phase)
-                    .unwrap_err()
-                    .contains("expert set")
-            );
-            continue;
-        }
         for stage in 0..g.dspark_stages() {
             let layer = g.layers() + stage;
             let stages = block_stages(g, stage, phase).unwrap();

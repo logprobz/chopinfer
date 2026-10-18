@@ -143,9 +143,6 @@ pub fn block_stages(g: &Geometry, stage: u32, phase: Phase) -> Result<Vec<Stage>
     if stage >= g.dspark_stages() || g.compress_ratio(g.layers() + stage) != 0 {
         return Err("DSpark requires a ratio-zero stage".into());
     }
-    if g.shape.moe.experts != g.shape.dspark.experts || g.shape.moe.top_k != g.shape.dspark.top_k {
-        return Err("DSpark expert set differs from the prepared backbone set".into());
-    }
     if !matches!(phase, Phase::Verify { rows, items } if items > 0 && items <= model_deepseek41_contract::serving::DECODE_BATCH && items.checked_mul(BLOCK_ROWS) == Some(rows))
     {
         return Err("DSpark always lowers a full five-position block".into());
@@ -213,6 +210,12 @@ pub fn block(
 ) -> Result<Vec<Lowered>, String> {
     if base.shape != &prepared.shape() || base.kv.storage != KvStorage::Native {
         return Err("DSpark block geometry or native KV binding differs".into());
+    }
+    let g = base.shape.geometry;
+    if base.ops.expert_set.count != g.shape.dspark.experts
+        || base.ops.expert_set.top_k != g.shape.dspark.top_k
+    {
+        return Err("DSpark expert set differs from the prepared operations".into());
     }
     let mut result = Vec::new();
     for operation in block_stages(base.shape.geometry, stage, phase)? {

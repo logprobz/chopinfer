@@ -14,7 +14,7 @@
     "defines": [],
     "entries": [
       {
-        "symbol": "chop_latent_sources_latent_native_controls_h4_d512_mixed_normalized_s1_r64_prefill_v1",
+        "symbol": "chop_latent_sources_latent_native_controls_h4_d512_mixed_normalized_s1_r64_prefill_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -33,7 +33,12 @@
           },
           {
             "kind": "DevicePointer",
-            "name": "window_pool",
+            "name": "window_codes",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "window_scales",
             "cxx_type": "const uint8_t"
           },
           {
@@ -48,7 +53,11 @@
           },
           {
             "kind": "U64",
-            "name": "window_stride"
+            "name": "window_code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "window_scale_stride"
           },
           {
             "kind": "U32",
@@ -148,7 +157,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_sources_latent_native_controls_h4_d512_mixed_normalized_s1_r64_decode_v1",
+        "symbol": "chop_latent_sources_latent_native_controls_h4_d512_mixed_normalized_s1_r64_decode_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -167,7 +176,12 @@
           },
           {
             "kind": "DevicePointer",
-            "name": "window_pool",
+            "name": "window_codes",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "window_scales",
             "cxx_type": "const uint8_t"
           },
           {
@@ -182,7 +196,11 @@
           },
           {
             "kind": "U64",
-            "name": "window_stride"
+            "name": "window_code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "window_scale_stride"
           },
           {
             "kind": "U32",
@@ -315,11 +333,11 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "7e4fc9485b54dc731b3b14a42cb62eae559d83d24149121a893b05c79caeba5c",
+    "cubin_sha256": "2c7470f176662f0e62d45457f4b20b746e59a95304fa6f4e935e1eedfce51de6",
     "resources": [
       {
-        "symbol": "chop_latent_sources_latent_native_controls_h4_d512_mixed_normalized_s1_r64_prefill_v1",
-        "registers": 171,
+        "symbol": "chop_latent_sources_latent_native_controls_h4_d512_mixed_normalized_s1_r64_prefill_v2",
+        "registers": 174,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -336,8 +354,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_sources_latent_native_controls_h4_d512_mixed_normalized_s1_r64_decode_v1",
-        "registers": 173,
+        "symbol": "chop_latent_sources_latent_native_controls_h4_d512_mixed_normalized_s1_r64_decode_v2",
+        "registers": 176,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,

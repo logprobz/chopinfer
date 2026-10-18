@@ -188,6 +188,8 @@ fn with_queries<'a>(
     }
     let slots = if nonzero && phase == AttentionPhase::Prefill {
         window_budget + 17
+    } else if nonzero {
+        window_budget.max(136)
     } else {
         window_budget.max(128)
     };
@@ -201,8 +203,21 @@ fn with_queries<'a>(
     let pages_per_sequence = compressed_budget.max(1).div_ceil(page);
     let visible_pages = pages_per_sequence * SEQUENCES;
     let pages = visible_pages + 1;
-    let (window, window_stride) =
+    let (window, packed_stride) =
         pool(LatentKvFormat::Fp8E4M3Ue8M0Block32, width, slots, SEQUENCES);
+    let window_code_stride = slots * width + PAD;
+    let window_scale_stride = slots * (width / 32) + PAD + 1;
+    let mut window_codes = vec![0xa5; SEQUENCES * window_code_stride];
+    let mut window_scales = vec![0xa5; SEQUENCES * window_scale_stride];
+    for seq in 0..SEQUENCES {
+        window_codes[seq * window_code_stride..seq * window_code_stride + slots * width]
+            .copy_from_slice(&window[seq * packed_stride..seq * packed_stride + slots * width]);
+        window_scales[seq * window_scale_stride..seq * window_scale_stride + slots * (width / 32)]
+            .copy_from_slice(
+                &window[seq * packed_stride + slots * width
+                    ..seq * packed_stride + slots * (width + width / 32)],
+            );
+    }
     let (compressed, page_stride) = pool(LatentKvFormat::Fp4E2M1E4M3Block16, width, page, pages);
     let tables = (0..visible_pages as i32).rev().collect::<Vec<_>>();
     let mut window_keys = vec![-1; rows * window_budget];
@@ -252,9 +267,19 @@ fn with_queries<'a>(
             i32_bytes(&(0..rows).map(|r| (r % 2) as i32).collect::<Vec<_>>()),
         ),
         window: LatentWindowBuffers {
-            pool: Spec::input(DType::U8, (Rows::Fixed(SEQUENCES), window_stride), window),
+            codes: Spec::input(
+                DType::U8,
+                (Rows::Fixed(SEQUENCES), window_code_stride),
+                window_codes,
+            ),
+            scales: Spec::input(
+                DType::U8,
+                (Rows::Fixed(SEQUENCES), window_scale_stride),
+                window_scales,
+            ),
             sequences: SEQUENCES as u32,
-            sequence_stride: window_stride as u64,
+            code_stride: window_code_stride as u64,
+            scale_stride: window_scale_stride as u64,
             storage,
             key_lists: Spec::input(
                 DType::I32,
@@ -355,8 +380,10 @@ fn with_queries<'a>(
                 q: &q,
                 row_batch: &batch,
                 window: LatentWindowInput {
-                    pool: images.bytes("window.pool")?,
-                    sequence_stride: window_stride,
+                    codes: images.bytes("window.codes")?,
+                    scales: images.bytes("window.scales")?,
+                    code_stride: window_code_stride,
+                    scale_stride: window_scale_stride,
                     storage,
                     lists: LatentKeyLists {
                         indices: &window_list,
@@ -532,15 +559,17 @@ mod tests {
             .unwrap();
         let case = numerical_case(query, CAPACITY, prepared).unwrap();
         let mut images = case.images();
-        let stride = images.bytes("window.pool").unwrap().len() / SEQUENCES;
-        let slots = (stride - PAD) / (width + width / 32);
-        let mut pool = vec![0; stride * SEQUENCES];
+        let code_stride = images.bytes("window.codes").unwrap().len() / SEQUENCES;
+        let scale_stride = images.bytes("window.scales").unwrap().len() / SEQUENCES;
+        let slots = (code_stride - PAD) / width;
+        let mut codes = vec![0; code_stride * SEQUENCES];
+        let mut scales = vec![0; scale_stride * SEQUENCES];
         for seq in 0..SEQUENCES {
-            let start = seq * stride + slots * width;
-            pool[start..start + slots * width / 32].fill(127);
+            let start = seq * scale_stride;
+            scales[start..start + slots * width / 32].fill(127);
         }
         for at in [0, 128, 256, width + 1] {
-            pool[at] = 0x38;
+            codes[at] = 0x38;
         }
         let mut q = vec![0; CAPACITY as usize * heads * width];
         for head in 0..heads {
@@ -551,7 +580,8 @@ mod tests {
         let mut ids = vec![-1; CAPACITY as usize * budget];
         ids[..2].copy_from_slice(&[0, 1]);
         images = images
-            .with("window.pool", pool)
+            .with("window.codes", codes)
+            .with("window.scales", scales)
             .with("q", bf16_bytes(&q))
             .with("row_batch", i32_bytes(&[0; CAPACITY as usize]))
             .with("window.key_lists", i32_bytes(&ids));

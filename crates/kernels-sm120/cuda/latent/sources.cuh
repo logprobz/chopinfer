@@ -48,10 +48,11 @@ __device__ __forceinline__ uint64_t partial_index(uint32_t row, uint32_t split, 
 template<class T>
 __device__ void attention(
     const uint16_t* q, const int32_t* row_batch, const uint32_t* live_rows,
-    const uint8_t* window_pool, const int32_t* window_keys,
+    const uint8_t* window_codes, const uint8_t* window_scales, const int32_t* window_keys,
     const uint8_t* compressed_pool, const int32_t* compressed_keys,
     const int32_t* block_tables, float* workspace,
-    uint64_t window_stride, uint32_t window_slots, uint32_t window_sequences,
+    uint64_t window_code_stride, uint64_t window_scale_stride,
+    uint32_t window_slots, uint32_t window_sequences,
     uint32_t window_key_stride, uint32_t window_budget,
     uint64_t page_stride, uint32_t max_pages, uint32_t compressed_pages,
     uint32_t compressed_sequences, uint32_t compressed_key_stride,
@@ -120,9 +121,8 @@ __device__ void attention(
       if (j < window_budget && batch >= 0 && uint32_t(batch) < window_sequences) {
         const int32_t position = window_keys[uint64_t(row) * window_key_stride + j];
         if (position >= 0 && uint32_t(position) < window_slots) {
-          const uint8_t* base = window_pool + uint64_t(batch) * window_stride;
-          codes = base + uint64_t(position) * T::latent;
-          scales = base + uint64_t(window_slots) * T::latent + uint64_t(position) * (T::latent / 32);
+          codes = window_codes + uint64_t(batch) * window_code_stride + uint64_t(position) * T::latent;
+          scales = window_scales + uint64_t(batch) * window_scale_stride + uint64_t(position) * (T::latent / 32);
           kind = 1;
         }
       } else if constexpr (T::second) {

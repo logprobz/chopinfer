@@ -19,16 +19,23 @@ fn native_sources_preserve_wide_strides_and_page_offsets() {
     kernel_lab::gpu_test(5_u64 << 30, |session| {
         let functions = LabModules.load(session)?;
         let (width, heads) = (512_usize, 4_usize);
-        let window_bytes = LatentKvFormat::Fp8E4M3Ue8M0Block32.page_bytes(512, 128) as usize;
+        let code_bytes = 128 * width;
+        let scale_bytes = 128 * width / 32;
         let page_bytes = LatentKvFormat::Fp4E2M1E4M3Block16.page_bytes(512, 16) as usize;
         let mut receipts = Vec::new();
         for entry in family::catalog() {
-            for wide_window in [true, false] {
+            for wide in ["codes", "scales", "compressed"] {
+                let wide_window = wide != "compressed";
                 let sequences = if wide_window { 2 } else { 1 };
-                let window_stride = if wide_window {
+                let code_stride = if wide == "codes" {
                     (1_usize << 32) + 64
                 } else {
-                    window_bytes
+                    code_bytes
+                };
+                let scale_stride = if wide == "scales" {
+                    (1_usize << 32) + 3
+                } else {
+                    scale_bytes + 3
                 };
                 let page_stride = if wide_window { page_bytes } else { 65536 };
                 let page_id = if wide_window { 0_usize } else { 65537 };
@@ -50,9 +57,12 @@ fn native_sources_preserve_wide_strides_and_page_offsets() {
                     ("row_batch", upload(&u32::from(wide_window).to_le_bytes())?),
                     ("live", upload(&1_u32.to_le_bytes())?),
                     (
-                        "window",
-                        session
-                            .allocate((sequences - 1) as usize * window_stride + window_bytes)?,
+                        "window_codes",
+                        session.allocate((sequences - 1) as usize * code_stride + code_bytes)?,
+                    ),
+                    (
+                        "window_scales",
+                        session.allocate((sequences - 1) as usize * scale_stride + scale_bytes)?,
                     ),
                     ("window_keys", upload(&0_u32.to_le_bytes())?),
                     ("compressed", session.allocate(page_offset + page_bytes)?),
@@ -80,17 +90,27 @@ fn native_sources_preserve_wide_strides_and_page_offsets() {
                         .copy_from_bytes_at(offset, data, &session.stream)
                         .map_err(|e| e.to_string())
                 };
-                if wide_window {
-                    assert!(window_stride > u32::MAX as usize);
-                    for (offset, value) in
-                        [(window_stride, 2.0), (window_stride as u32 as usize, 1.0)]
+                if wide == "codes" {
+                    assert!(code_stride > u32::MAX as usize);
+                    for (offset, value) in [(code_stride, 2.0), (code_stride as u32 as usize, 1.0)]
                     {
                         write(
-                            "window",
+                            "window_codes",
                             offset,
                             &vec![SmallFloat::E4M3.encode_f32(value); width],
                         )?;
-                        write("window", offset + 128 * width, &vec![127; width / 32])?;
+                    }
+                    write("window_scales", scale_stride, &vec![127; width / 32])?;
+                } else if wide == "scales" {
+                    assert!(scale_stride > u32::MAX as usize);
+                    write(
+                        "window_codes",
+                        code_stride,
+                        &vec![SmallFloat::E4M3.encode_f32(1.0); width],
+                    )?;
+                    for (offset, code) in [(scale_stride, 128), (scale_stride as u32 as usize, 127)]
+                    {
+                        write("window_scales", offset, &vec![code; width / 32])?;
                     }
                 } else {
                     assert!(page_id > u16::MAX as usize && page_offset > u32::MAX as usize);
@@ -118,9 +138,11 @@ fn native_sources_preserve_wide_strides_and_page_offsets() {
                     row_batch: view("row_batch"),
                     live_rows: view("live"),
                     window: LatentWindowBuffers {
-                        pool: view("window"),
+                        codes: view("window_codes"),
+                        scales: view("window_scales"),
                         sequences,
-                        sequence_stride: window_stride as u64,
+                        code_stride: code_stride as u64,
+                        scale_stride: scale_stride as u64,
                         storage: LatentWindowStorage::Ring128,
                         key_lists: view("window_keys"),
                         key_stride: 1,
@@ -204,13 +226,17 @@ fn native_sources_preserve_wide_strides_and_page_offsets() {
                 replay.graph(&session.capture(run)?)?;
                 let mut receipt = BTreeMap::new();
                 replay.record(&mut receipt);
-                receipt.insert("window_stride".into(), serde_json::json!(window_stride));
+                receipt.insert("window_code_stride".into(), serde_json::json!(code_stride));
+                receipt.insert(
+                    "window_scale_stride".into(),
+                    serde_json::json!(scale_stride),
+                );
                 receipt.insert("page_id".into(), serde_json::json!(page_id));
                 receipt.insert("page_offset".into(), serde_json::json!(page_offset));
                 receipts.push(receipt);
             }
         }
-        assert_eq!(receipts.len(), 4);
+        assert_eq!(receipts.len(), 6);
         session.receipt(
             "native-latent-wide-addresses",
             BTreeMap::from([("cases".into(), serde_json::json!(receipts))]),

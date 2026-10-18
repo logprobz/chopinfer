@@ -116,28 +116,46 @@ impl PreparedOp<LatentSourcesBuffers<View>> for Sources {
             LatentWindowStorage::Ring128 => LATENT_WINDOW_SLOTS,
             LatentWindowStorage::Staged { slots } => slots,
         };
-        let window_bytes = LatentKvFormat::Fp8E4M3Ue8M0Block32.page_bytes(s.latent, slots);
-        if slots == 0
-            || b.window.sequences == 0
-            || b.window.sequence_stride < window_bytes
-            || b.window.budget > b.window.key_stride
-        {
+        let code_bytes = bytes(&[u64::from(slots), width])?;
+        let scale_bytes = bytes(&[u64::from(slots), width / 32])?;
+        if slots == 0 || b.window.sequences == 0 || b.window.budget > b.window.key_stride {
             return Err(Refusal("native latent window geometry or budget mismatch"));
         }
-        // The FP8 pair load needs two-byte alignment. Pool bases have the
+        if b.window.code_stride < code_bytes {
+            return Err(Refusal("native latent window code stride is too short"));
+        }
+        if b.window.scale_stride < scale_bytes {
+            return Err(Refusal("native latent window scale stride is too short"));
+        }
+        // The FP8 pair load needs two-byte alignment. Code bases have the
         // role's alignment, and slot * latent and the pair's channel offset
         // are even. FP4 codes and both scale planes use byte loads; I32 key
         // strides count elements and preserve their own alignment.
-        if !b.window.sequence_stride.is_multiple_of(2) {
+        if !b.window.code_stride.is_multiple_of(2) {
             return Err(Refusal(
-                "native latent window sequence stride must preserve 2-byte alignment",
+                "native latent window code stride must preserve 2-byte alignment",
             ));
         }
-        let last = bytes(&[u64::from(b.window.sequences - 1), b.window.sequence_stride])?;
-        b.window.pool.covers(
-            last.checked_add(window_bytes)
-                .ok_or(Refusal("native latent window bytes overflow"))?,
-        )?;
+        for (view, stride, plane_bytes, short) in [
+            (
+                b.window.codes,
+                b.window.code_stride,
+                code_bytes,
+                "native latent window codes view is too short",
+            ),
+            (
+                b.window.scales,
+                b.window.scale_stride,
+                scale_bytes,
+                "native latent window scales view is too short",
+            ),
+        ] {
+            let last = bytes(&[u64::from(b.window.sequences - 1), stride])?;
+            let end = last
+                .checked_add(plane_bytes)
+                .ok_or(Refusal("native latent window bytes overflow"))?;
+            view.covers(end).map_err(|_| Refusal(short))?;
+        }
         b.window
             .key_lists
             .covers(bytes(&[r, u64::from(b.window.key_stride), 4])?)?;
@@ -173,10 +191,12 @@ impl PreparedOp<LatentSourcesBuffers<View>> for Sources {
             ("q", buffer(b.q)),
             ("row_batch", buffer(b.row_batch)),
             ("live_rows", buffer(b.live_rows)),
-            ("window_pool", buffer(b.window.pool)),
+            ("window_codes", buffer(b.window.codes)),
+            ("window_scales", buffer(b.window.scales)),
             ("window_keys", buffer(b.window.key_lists)),
             ("workspace", buffer(b.workspace)),
-            ("window_stride", Argument::U64(b.window.sequence_stride)),
+            ("window_code_stride", Argument::U64(b.window.code_stride)),
+            ("window_scale_stride", Argument::U64(b.window.scale_stride)),
             ("window_slots", Argument::U32(slots)),
             ("window_sequences", Argument::U32(b.window.sequences)),
             ("window_key_stride", Argument::U32(b.window.key_stride)),
@@ -320,15 +340,18 @@ mod tests {
     }
     fn buffers() -> LatentSourcesBuffers<View> {
         let e = entry();
-        let stride = LatentKvFormat::Fp8E4M3Ue8M0Block32.page_bytes(128, 128);
+        let code_stride = 128 * 128;
+        let scale_stride = 128 * 4;
         let page = LatentKvFormat::Fp4E2M1E4M3Block16.page_bytes(128, 16);
         LatentSourcesBuffers {
             q: view(1, 8 * 4 * 128 * 2),
             row_batch: view(2, 8 * 4),
             window: LatentWindowBuffers {
-                pool: view(3, stride * 2),
+                codes: view(3, code_stride * 2),
+                scales: view(16, scale_stride * 2),
                 sequences: 2,
-                sequence_stride: stride,
+                code_stride,
+                scale_stride,
                 storage: LatentWindowStorage::Ring128,
                 key_lists: view(4, 8 * 128 * 4),
                 key_stride: 128,
@@ -393,8 +416,9 @@ mod tests {
             .latent_attention_sources(&e.query, Need::rows(1))
             .unwrap();
         let mut b = buffers();
-        let window = LatentKvFormat::Fp8E4M3Ue8M0Block32.page_bytes(512, 128);
-        assert_eq!(window, 67584);
+        let window = 128 * 512;
+        b.window.scale_stride = 128 * 16 + 3;
+        b.window.scales.bytes = b.window.scale_stride + 128 * 16;
         b.q.bytes = 4 * 512 * 2;
         b.output.as_mut().unwrap().bytes = 4 * 512 * 2;
         b.workspace.bytes = e.workspace_bytes(1);
@@ -407,19 +431,76 @@ mod tests {
         b.window.key_stride = 127;
         c.budget = 31;
         c.key_stride = 31;
-        b.window.sequence_stride = window + 1;
-        b.window.pool.bytes = 2 * window + 1;
-        assert_eq!(b.window.pool.bytes, 135169);
+        b.window.code_stride = window + 1;
+        b.window.codes.bytes = 2 * window + 1;
+        assert_eq!(b.window.codes.bytes, 131073);
         let error = op
             .launches(&b, View::default(), Counts::rows(1))
             .unwrap_err();
         assert_eq!(
             error.0,
-            "native latent window sequence stride must preserve 2-byte alignment"
+            "native latent window code stride must preserve 2-byte alignment"
         );
-        b.window.sequence_stride += 1;
-        b.window.pool.bytes += 1;
+        b.window.code_stride += 1;
+        b.window.codes.bytes += 1;
         assert!(op.launches(&b, View::default(), Counts::rows(1)).is_ok());
+    }
+
+    #[test]
+    fn native_sources_bind_independent_planes_with_136_slots() {
+        for phase in [AttentionPhase::Decode, AttentionPhase::Verify] {
+            let mut e = entry();
+            if let LatentAttentionQuery::Attention { phase: p, .. } = &mut e.query {
+                *p = phase;
+            }
+            let query = e.query;
+            let op = Sm120::new()
+                .with_latent_sources(e)
+                .latent_attention_sources(&query, Need::rows(1))
+                .unwrap();
+            let mut b = buffers();
+            b.window.storage = LatentWindowStorage::Staged { slots: 136 };
+            b.window.code_stride = 136 * 128 + 64;
+            b.window.scale_stride = 136 * 4 + 3;
+            b.window.codes.bytes = b.window.code_stride + 136 * 128;
+            b.window.scales.bytes = b.window.scale_stride + 136 * 4;
+            let calls = op.launches(&b, View::default(), Counts::rows(1)).unwrap();
+            assert!(calls[0].arguments.0.contains(&Argument::DeviceBuffer(3)));
+            assert!(calls[0].arguments.0.contains(&Argument::DeviceBuffer(16)));
+            assert!(
+                calls[0]
+                    .arguments
+                    .0
+                    .contains(&Argument::U64(b.window.code_stride))
+            );
+            assert!(
+                calls[0]
+                    .arguments
+                    .0
+                    .contains(&Argument::U64(b.window.scale_stride))
+            );
+            assert!(calls[0].arguments.0.contains(&Argument::U32(136)));
+            for (mutation, expected) in [
+                (0, "native latent window codes view is too short"),
+                (1, "native latent window scales view is too short"),
+                (2, "native latent window code stride is too short"),
+                (3, "native latent window scale stride is too short"),
+            ] {
+                let mut bad = b;
+                match mutation {
+                    0 => bad.window.codes.bytes -= 1,
+                    1 => bad.window.scales.bytes -= 1,
+                    2 => bad.window.code_stride = 136 * 128 - 1,
+                    _ => bad.window.scale_stride = 136 * 4 - 1,
+                }
+                assert_eq!(
+                    op.launches(&bad, View::default(), Counts::rows(1))
+                        .unwrap_err()
+                        .0,
+                    expected
+                );
+            }
+        }
     }
 
     #[test]
@@ -438,8 +519,10 @@ mod tests {
         };
         push(|b| b.q.bytes -= 1);
         push(|b| b.row_batch.bytes -= 1);
-        push(|b| b.window.pool.bytes -= 1);
-        push(|b| b.window.sequence_stride -= 1);
+        push(|b| b.window.codes.bytes -= 1);
+        push(|b| b.window.scales.bytes -= 1);
+        push(|b| b.window.scale_stride -= 1);
+        push(|b| b.window.code_stride -= 1);
         push(|b| b.window.sequences = 0);
         push(|b| b.window.key_lists.bytes -= 1);
         push(|b| b.window.budget += 1);
@@ -474,8 +557,8 @@ mod tests {
         }
         let mut overflow = base;
         overflow.window.sequences = u32::MAX;
-        overflow.window.sequence_stride = u64::MAX;
-        overflow.window.pool.bytes = u64::MAX;
+        overflow.window.code_stride = u64::MAX;
+        overflow.window.codes.bytes = u64::MAX;
         assert!(
             op.launches(&overflow, View::default(), Counts::rows(8))
                 .is_err()

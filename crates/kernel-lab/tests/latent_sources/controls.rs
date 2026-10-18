@@ -35,7 +35,6 @@ struct Fixture {
     width: usize,
     heads: usize,
     slots: usize,
-    window_stride: usize,
     page: usize,
     page_stride: usize,
 }
@@ -58,22 +57,20 @@ impl Fixture {
         let case = cases::latent_sources::numerical_case(entry.query, ROWS as u32, prepared)?;
         let mut images = case.images();
         let (width, heads, page) = (latent as usize, heads as usize, page_size as usize);
-        let window_stride = images.bytes("window.pool")?.len() / 2;
-        let slots = (window_stride - PAD) / (width + width / 32);
+        let window_code_stride = images.bytes("window.codes")?.len() / 2;
+        let slots = (window_code_stride - PAD) / width;
         let page_stride =
             LatentKvFormat::Fp4E2M1E4M3Block16.page_bytes(latent, page_size) as usize + PAD;
-        let mut window = vec![0; images.bytes("window.pool")?.len()];
-        for sequence in 0..2 {
-            let first = sequence * window_stride + slots * width;
-            window[first..first + slots * width / 32].fill(127);
-        }
+        let window_codes = vec![0; images.bytes("window.codes")?.len()];
+        let window_scales = vec![127; images.bytes("window.scales")?.len()];
         let mut compressed = vec![0; images.bytes("compressed.cache.pool")?.len()];
         for physical in 0..compressed.len() / page_stride {
             let first = physical * page_stride + page * width / 2;
             compressed[first..first + page * width / 16].fill(0x38);
         }
         images = images
-            .with("window.pool", window)
+            .with("window.codes", window_codes)
+            .with("window.scales", window_scales)
             .with("compressed.cache.pool", compressed)
             .with("q", vec![0; ROWS * heads * width * 2])
             .with("row_batch", i32_bytes(&[0; ROWS]))
@@ -87,7 +84,6 @@ impl Fixture {
             width,
             heads,
             slots,
-            window_stride,
             page,
             page_stride,
         })
@@ -134,11 +130,15 @@ impl Fixture {
 
     fn window_raw(&mut self, slot: usize, codes: &[u8], scales: &[u8]) -> LabResult<()> {
         assert_eq!((codes.len(), scales.len()), (self.width, self.width / 32));
-        let mut pool = self.images.bytes("window.pool")?.to_vec();
-        pool[slot * self.width..(slot + 1) * self.width].copy_from_slice(codes);
-        let at = self.slots * self.width + slot * (self.width / 32);
-        pool[at..at + scales.len()].copy_from_slice(scales);
-        self.images = self.images.with("window.pool", pool);
+        let mut code_plane = self.images.bytes("window.codes")?.to_vec();
+        code_plane[slot * self.width..(slot + 1) * self.width].copy_from_slice(codes);
+        let mut scale_plane = self.images.bytes("window.scales")?.to_vec();
+        let at = slot * (self.width / 32);
+        scale_plane[at..at + scales.len()].copy_from_slice(scales);
+        self.images = self
+            .images
+            .with("window.codes", code_plane)
+            .with("window.scales", scale_plane);
         Ok(())
     }
 
@@ -369,7 +369,11 @@ fn native_code_scale_products_reach_the_bf16_tile_exactly() {
                                 LatentKvFormat::Fp8E4M3Ue8M0Block32,
                                 f.width,
                                 f.slots,
-                                &f.images.bytes("window.pool")?[..f.window_stride],
+                                &[
+                                    &f.images.bytes("window.codes")?[..f.slots * f.width],
+                                    &f.images.bytes("window.scales")?[..f.slots * f.width / 32],
+                                ]
+                                .concat(),
                                 row,
                             )
                             .map_err(|e| e.to_string())?,

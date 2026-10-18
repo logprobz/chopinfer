@@ -74,6 +74,37 @@ class Workloads(unittest.TestCase):
                 self.assertLessEqual(len(sequence.token_ids), workloads.F64_TOKENS)
 
 
+PROBES = Path(os.environ.get("CHOPINFER_DATA", "/nonexistent")) / "refrun/deepseek41/workloads-20261018-probes"
+GREEDY = (Path(os.environ.get("CHOPINFER_DATA", "/nonexistent"))
+          / "refrun/deepseek41/43-b1-ref-probes-2-20261018T015515/probes/f32.json")
+
+
+@unittest.skipIf(not (PROBES / "probes.json").exists() or not GREEDY.exists(),
+                 "needs the probe workload and its F32 greedy run under CHOPINFER_DATA")
+class ServedAnswers(unittest.TestCase):
+    def test_served_answers_drop_the_stop_token(self):
+        import reference_workloads as workloads
+        import shutil
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "probes"
+            shutil.copytree(PROBES, output)
+            forced = workloads.answered(output, GREEDY)
+            served = workloads.answered(output, GREEDY, served=True)
+            self.assertEqual(forced, json.loads((PROBES / "probes.json").read_text())["sequences"])
+            for full, cut in zip(forced, served, strict=True):
+                self.assertEqual(full["answer"]["ids"][-1:], list(workloads.STOP_IDS))
+                self.assertEqual(cut, full | {"answer": {"policy": "forced", "ids": full["answer"]["ids"][:-1]}})
+            # An answer that did not stop has no served form.
+            run = json.loads(GREEDY.read_text())
+            for entry in run["entries"]:
+                if entry["key"]["sequence"]["answer"]["policy"] == "greedy":
+                    entry["scores"]["answer"] = entry["scores"]["answer"][:-1]
+            cut_run = Path(directory) / "cut.json"
+            cut_run.write_text(json.dumps(run))
+            with self.assertRaisesRegex(ValueError, "did not stop"):
+                workloads.answered(output, cut_run, served=True)
+
+
 class ExtendedChats(unittest.TestCase):
     def test_specs_take_the_encoding_form(self):
         import reference_workloads as workloads

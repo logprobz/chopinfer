@@ -4,7 +4,7 @@ long-context texts and image probes.
     CUDA_VISIBLE_DEVICES= $CHOPINFER_REFRUN_PYTHON -B models/deepseek41/reference_workloads.py \\
         --output DIR [--checkpoint CK] [--evals DIR] [--long-tokens 131072]
     CUDA_VISIBLE_DEVICES= $CHOPINFER_REFRUN_PYTHON -B models/deepseek41/reference_workloads.py \\
-        --answers RUN/f32.json --output DIR [--lock LOCK]
+        --answers RUN/f32.json --output DIR [--lock LOCK] [--served]
     CUDA_VISIBLE_DEVICES= $CHOPINFER_REFRUN_PYTHON -B models/deepseek41/reference_workloads.py --chat --output DIR
 
 Runs on CPU in the runner environment: the checkpoint's tokenizer.json
@@ -44,7 +44,11 @@ model. Writes, in DIR (refused if it exists):
 
 With `--answers RUN/f32.json`, DIR already holds those files and gains
 `probes.json`: the probes forcing the F32 run's greedy answers (checked to
-be this workload's sequences, model and checkpoint lock).
+be this workload's sequences, model and checkpoint lock). With `--served`
+it gains `probes-served.json` instead, each answer forced as a served chat
+continues it (`continue_final_message`, which renders the final assistant
+turn without its end-of-sentence token): the greedy answer without its
+stop token, the form the media gate teacher-forces through a server.
 """
 
 import argparse
@@ -522,9 +526,10 @@ def probes(tok, renderer, checkpoint, output):
     return sequences, digests
 
 
-def answered(output, run, lock=LOCK):
+def answered(output, run, lock=LOCK, served=False):
     """`probes-greedy.json` with each probe forcing the F32 run's greedy
-    answer, checked to be this workload's sequence, model and lock."""
+    answer, checked to be this workload's sequence, model and lock; with
+    `served`, the answer without its stop token."""
     from tools.model_sdk.diagnostic import canonical
     from tools.refrun import keys, workload
     model, records = workload.load(output / "probes-greedy.json")
@@ -544,7 +549,12 @@ def answered(output, run, lock=LOCK):
             raise ValueError(f"{record.name}: the run read another checkpoint lock")
         if key["sequence"] != keys.sequence(record):
             raise ValueError(f"{record.name}: the run scored another sequence")
-        sequences.append(spec | {"answer": {"policy": "forced", "ids": entries[record.name]["scores"]["answer"]}})
+        ids = entries[record.name]["scores"]["answer"]
+        if served:
+            if not ids or ids[-1] not in STOP_IDS:
+                raise ValueError(f"{record.name}: the greedy answer did not stop")
+            ids = ids[:-1]
+        sequences.append(spec | {"answer": {"policy": "forced", "ids": ids}})
     for sequence in sequences:
         workload.sequence(sequence, output)
     return sequences
@@ -624,6 +634,8 @@ def main():
     parser.add_argument("--answers", type=Path, help="the runner's f32.json of probes-greedy.json; "
                                                      "writes probes.json into the existing --output")
     parser.add_argument("--lock", type=Path, default=LOCK, help="the checkpoint lock the run read")
+    parser.add_argument("--served", action="store_true",
+                        help="with --answers: write probes-served.json, each answer without its stop token")
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--chat", action="store_true",
                         help="write only the chat reference's workload: chat.json and its manifest")
@@ -635,7 +647,8 @@ def main():
         print(json.dumps([(s["name"], s["tokens"]) for s in manifest["sequences"]["chat"]]))
         return
     if args.answers:
-        write(args.output / "probes.json", answered(args.output, args.answers, args.lock))
+        name = "probes-served.json" if args.served else "probes.json"
+        write(args.output / name, answered(args.output, args.answers, args.lock, args.served))
         return
     if not args.checkpoint:
         parser.error("set CHOPINFER_DEEPSEEK_CHECKPOINT or --checkpoint")

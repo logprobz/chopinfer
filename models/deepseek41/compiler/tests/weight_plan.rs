@@ -309,6 +309,51 @@ fn every_compiled_geometry_plans_every_rank() {
 #[test]
 fn other_image_roles_are_declined() {
     let mut request = request(&FLASH, 4, 0);
-    request.image_role = "deepseek41.encoder-rank-images.v1".into();
+    request.image_role = "deepseek41.other-images.v1".into();
     assert!(plan(&request).unwrap().is_none());
+}
+
+/// The encoder image of the flash checkpoint plans alike on every rank:
+/// every view of the layout whole at its offset, the patch weight's 588
+/// columns zero-padded to 640, the aligner's first weight through the
+/// bundle's column permutation, and an index naming the plan's identity.
+#[test]
+fn the_encoder_image_plans_every_view_on_every_rank() {
+    use model_deepseek41_contract::encoder::views;
+    use model_deepseek41_contract::encoder_plan::SPACE_TO_DEPTH_COLUMNS;
+    let layout = views::layout().unwrap();
+    let mut first = None;
+    for rank in 0..4 {
+        let mut request = request(&FLASH, 4, rank);
+        request.image_role = std::str::from_utf8(views::IMAGE_ROLE).unwrap().into();
+        let plan = plan(&request)
+            .unwrap()
+            .expect("the encoder image is planned");
+        assert_eq!(plan.arena_bytes, views::image_bytes().unwrap());
+        assert_eq!(plan.records.len(), layout.len());
+        for (record, view) in plan.records.iter().zip(&layout) {
+            assert_eq!(record.arena_offset, view.offset);
+            assert_eq!(record.byte_length, view.bytes());
+            assert_eq!(record.stored_shape, view.shape);
+            assert_eq!(record.sources[0].tensor, view.name);
+            let expected = if view.name == "aligner.w1.weight" {
+                SPACE_TO_DEPTH_COLUMNS
+            } else {
+                1
+            };
+            assert_eq!(record.transform, expected, "{}", view.name);
+        }
+        let [component] = &plan.components[..] else {
+            panic!("one encoder index");
+        };
+        assert_eq!(component.name, views::index_role(rank));
+        let index = views::parse(&component.bytes, rank).unwrap();
+        let identity = hex(&Sha256::digest(
+            plan.identity_document(&request.checkpoint_identity, &request.implementation),
+        ));
+        assert_eq!(index.direct_identity.as_deref(), Some(identity.as_str()));
+        // Every rank stores the same records.
+        let records = format!("{:?}", plan.records);
+        assert_eq!(first.get_or_insert(records.clone()), &records);
+    }
 }

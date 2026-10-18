@@ -44,9 +44,12 @@ pub use model_deepseek41_contract::BUNDLE_ID;
 
 include!(concat!(env!("OUT_DIR"), "/embedded.rs"));
 
-// Direct checkpoint loading: each rank's text image planned from the
-// checkpoint's headers (`model_deepseek41_contract::weight_plan`).
+// Direct checkpoint loading: each rank's text image and the replicated
+// encoder image planned from the checkpoint's headers
+// (`model_deepseek41_contract::weight_plan`, `encoder_plan`), the encoder's
+// column permutation as the bundle's own transform.
 runtime_bundle_abi::export_weight_plan_v1!(model_deepseek41_contract::weight_plan::plan);
+runtime_bundle_abi::export_weight_transform_v1!(model_deepseek41_contract::encoder_plan::transform);
 
 /// The kernels an instance prepares its ops on: a backend of the shared
 /// contracts and one of the model's own ops. The target's module supplies

@@ -4,7 +4,7 @@
 //! (`runtime_weights::checkpoint::CheckpointFile`).
 use model_compiler_sdk::quantization::projection::metadata::HeaderCompanionRules;
 use model_deepseek41_contract::serving::RANK_IMAGE_ROLE;
-use model_deepseek41_contract::{admission, projections};
+use model_deepseek41_contract::{admission, encoder_plan, projections};
 use projection_spec::bind::{BoundDeclaration, CheckpointMetadata};
 use projection_spec::registry::Registry;
 use runtime_bundle_abi::weight_plan::{CheckpointFileV1, NamedBytesV1, WeightPlanRequestV1};
@@ -150,8 +150,9 @@ pub fn metadata(root: &Path) -> Result<CheckpointMetadata, String> {
 
 /// Admit the checkpoint's config, then bind every tensor its headers name
 /// to the projection declaration ([`bind_metadata`]). `encoder` holds the
-/// vision and aligner tensors the encoder declaration validated; the
-/// declaration names them as that owner's (`external_tensors`).
+/// vision and aligner tensors the encoder declaration validated
+/// (`encoder_plan::owned`); the declaration names them as that owner's
+/// (`external_tensors`).
 pub fn bind(
     root: &Path,
     encoder: std::collections::BTreeSet<String>,
@@ -160,7 +161,7 @@ pub fn bind(
     let mut metadata = metadata(root)?;
     metadata
         .validated_owners
-        .insert("encoder-spec".into(), encoder);
+        .insert(encoder_plan::OWNER.into(), encoder);
     bind_metadata(&config, &metadata)
 }
 

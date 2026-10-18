@@ -3,6 +3,7 @@
 //! (`checkpoint-files.json`), not an admission list.
 use kernel_core::contract::WeightFormat;
 use model_deepseek41::checkpoint;
+use model_deepseek41_contract::encoder_plan;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[test]
@@ -16,20 +17,28 @@ fn the_official_headers_bind_every_tensor() {
     let mut metadata = checkpoint::metadata(&root).unwrap();
     assert_eq!(metadata.tensors.len(), 96_085);
     // The encoder declaration (contract/encoders) attests the vision and
-    // aligner tensors; until it lands, their names stand in for it.
-    let encoder: BTreeSet<_> = metadata
-        .tensors
-        .keys()
-        .filter(|name| {
-            name.starts_with("vision.")
-                || name.starts_with("aligner.")
-                || name.starts_with("image_")
+    // aligner tensors: each one it reads, at its shape and dtype.
+    let encoder = encoder_plan::owned(&config, metadata.tensors.keys(), &|name| {
+        metadata
+            .tensors
+            .get(name)
+            .map(|tensor| (tensor.dtype.clone(), tensor.shape.clone()))
+    })
+    .unwrap();
+    assert_eq!(
+        encoder,
+        encoder_plan::validated(&|name| {
+            metadata
+                .tensors
+                .get(name)
+                .map(|tensor| (tensor.dtype.clone(), tensor.shape.clone()))
         })
-        .cloned()
-        .collect();
+        .unwrap()
+    );
+    assert_eq!(encoder.len(), 2 + 32 * 8 + 1 + 4 + 3);
     metadata
         .validated_owners
-        .insert("encoder-spec".into(), encoder.clone());
+        .insert(encoder_plan::OWNER.into(), encoder.clone());
     let bound = checkpoint::bind_metadata(&config, &metadata).unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(
         checkpoint::bind(&root, encoder).unwrap(),

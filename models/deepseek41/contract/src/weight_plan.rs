@@ -21,7 +21,8 @@
 //! of the arena, and whose rows the bundle gathers as it uploads them. They
 //! are not prewarmed: the tables are far larger than a page cache should
 //! hold, and a cold read per gathered row is the design. The vision tower
-//! and aligner belong to the encoder image.
+//! and aligner belong to the encoder image, whose declaration validates them
+//! for the binding and whose plan is `encoder_plan`'s.
 //!
 //! Views are named as the bundle binds them ([`view_name`]) and ordered by
 //! name, the device views first and the mapped views after them, so that
@@ -32,7 +33,7 @@
 //! plan carries names the plan's identity (`direct_identity`) instead of an
 //! image digest, and the bundle checks it as it checks a rank file's digest.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -54,7 +55,7 @@ use serde_json::{Value, json};
 
 use crate::geometry::Geometry;
 use crate::serving::{INDEX_SCHEMA, RANK_IMAGE_ROLE, index_role};
-use crate::{admission, projections};
+use crate::{admission, encoder_plan, projections};
 
 /// The alignment of a planned arena, which a CUDA allocation guarantees.
 pub const IMAGE_ALIGNMENT: u64 = 256;
@@ -67,15 +68,6 @@ const INDEX: &str = "model.safetensors.index.json";
 /// The projections whose rows the host gathers from the mapped checkpoint
 /// instead of the image: their views are mapped.
 const HOST_GATHERED: [&str; 2] = ["engram.table_0", "engram.table_1"];
-
-/// The owner that validates the vision tower's and aligner's tensors. Until
-/// the encoder declaration lands, their names stand in for its validation
-/// (as the checkpoint binding test does).
-const ENCODER_OWNER: &str = "encoder-spec";
-
-fn encoder_tensor(name: &str) -> bool {
-    name.starts_with("vision.") || name.starts_with("aligner.") || name.starts_with("image_")
-}
 
 /// The declaration registers no variants.
 struct NoVariants;
@@ -199,15 +191,16 @@ impl Checkpoint {
             .unwrap_or(Value::Null);
         let mut metadata = CheckpointMetadata::from_headers(&headers, Some(&index), quantization)
             .map_err(|e| e.0)?;
-        let encoder: BTreeSet<_> = metadata
-            .tensors
-            .keys()
-            .filter(|name| encoder_tensor(name))
-            .cloned()
-            .collect();
+        // The encoder declaration validates the tensors it owns.
+        let encoder = encoder_plan::owned(&config, metadata.tensors.keys(), &|name| {
+            metadata
+                .tensors
+                .get(name)
+                .map(|tensor| (tensor.dtype.clone(), tensor.shape.clone()))
+        })?;
         metadata
             .validated_owners
-            .insert(ENCODER_OWNER.into(), encoder);
+            .insert(encoder_plan::OWNER.into(), encoder);
         let mut files = BTreeMap::new();
         for (file, header) in &headers {
             let Value::Object(tensors) = header else {
@@ -570,9 +563,13 @@ fn index(
     .map_err(|e| e.to_string())
 }
 
-/// The text image's plan for the request's rank, or `None` for another
-/// image role. The primary image (an empty role) is the text image.
+/// The text image's plan for the request's rank, the encoder image's
+/// (`encoder_plan`), or `None` for another image role. The primary image
+/// (an empty role) is the text image.
 pub fn plan(request: &WeightPlanRequestV1) -> Result<Option<WeightPlanV1>, String> {
+    if request.image_role.as_bytes() == crate::encoder::views::IMAGE_ROLE {
+        return encoder_plan::plan(request).map(Some);
+    }
     if !(request.image_role.is_empty() || request.image_role == RANK_IMAGE_ROLE) {
         return Ok(None);
     }

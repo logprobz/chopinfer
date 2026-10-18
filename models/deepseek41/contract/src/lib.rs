@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 pub mod admission;
 pub mod encoder;
+pub mod encoder_plan;
 pub mod frontend;
 pub mod geometry;
 pub mod projections;

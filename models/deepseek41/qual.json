@@ -3486,6 +3486,10 @@
         "env": "CHOPINFER_DATA",
         "path": "refrun/deepseek41/long-context-floor-only/long-context-reference.json"
       },
+      "workload": {
+        "env": "CHOPINFER_DATA",
+        "path": "refrun/deepseek41/long-context-floor-only/long-context-reference.workload.json"
+      },
       "sha256": "d91ef4f3f69e0a09c5aed19841d6aa1b30287c22eaabdb7d3a2e0bb6c7bf474d",
       "schema": "chopinfer.deepseek41.teacher-reference.v1",
       "workload_sha256": "1a2666ac6e46953be1a293d300a69a9e3430789f7c266b9c69e1a1c37b4f2ace",

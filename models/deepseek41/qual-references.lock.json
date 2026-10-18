@@ -147,6 +147,26 @@
         "path": "refrun/deepseek41/m1/teacher-reference.workload.json"
       }
     },
+    "reference:long_context": {
+      "directory": false,
+      "members": {
+        ".": "d91ef4f3f69e0a09c5aed19841d6aa1b30287c22eaabdb7d3a2e0bb6c7bf474d"
+      },
+      "path": {
+        "env": "CHOPINFER_DATA",
+        "path": "refrun/deepseek41/long-context-floor-only/long-context-reference.json"
+      }
+    },
+    "workload:long_context": {
+      "directory": false,
+      "members": {
+        ".": "ea03fd0ced1ffe8a3bd8b1eef67444acf7d9b126836abe15e22ecc1cbfc29148"
+      },
+      "path": {
+        "env": "CHOPINFER_DATA",
+        "path": "refrun/deepseek41/long-context-floor-only/long-context-reference.workload.json"
+      }
+    },
     "spec_teacher": {
       "directory": false,
       "members": {
@@ -289,6 +309,23 @@
     },
     "fd985cda88e8640b8e2404d8e659f7006cad204eb41f73c9e6662b1f218c01aa": {
       "schema": "legacy-json-array"
+    },
+    "d91ef4f3f69e0a09c5aed19841d6aa1b30287c22eaabdb7d3a2e0bb6c7bf474d": {
+      "production": {
+        "assembled_fixture_sha256": "155638e33948303a30cd4f641d3bea3eb3f036d3296d6c1f740607edccb8f738",
+        "producer": "runner-binding",
+        "refset_sha256": "e0981b822dbf61dd420060c305229eccad7482be7e8999524858e5199bf469aa",
+        "workload_sha256": "313922588c8829aca70e2fcdc93e5e763c95cd0a9d2e9f7b5f44be69036341fa"
+      },
+      "schema": "chopinfer.deepseek41.teacher-reference.v1"
+    },
+    "ea03fd0ced1ffe8a3bd8b1eef67444acf7d9b126836abe15e22ecc1cbfc29148": {
+      "production": {
+        "producer": "runner-workload",
+        "refset_sha256": "e0981b822dbf61dd420060c305229eccad7482be7e8999524858e5199bf469aa",
+        "workload_sha256": "313922588c8829aca70e2fcdc93e5e763c95cd0a9d2e9f7b5f44be69036341fa"
+      },
+      "schema": "chopinfer.refrun.workload.v1"
     },
     "ac501d23dcd7a5e32afa726e36efa70c44e465fd81b055b5784ba96487bcf4cc": {
       "schema": "chopinfer.mimo26.teacher-texts.v1"

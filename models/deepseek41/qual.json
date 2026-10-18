@@ -17,6 +17,7 @@
       "checks": [
         "teacher",
         "chat",
+        "long_context",
         "paired_teacher",
         "evals_gsm8k",
         "gsm8k_regression",
@@ -47,6 +48,7 @@
     "quality": [
       "teacher",
       "chat",
+      "long_context",
       "paired_teacher",
       "evals_gsm8k",
       "needle",
@@ -1166,6 +1168,168 @@
           "op": "eq",
           "value": true,
           "source": "docs/serving-kv-pool.md"
+        }
+      ]
+    },
+    "long_context": {
+      "module": "teacher",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--server-log",
+        "{server_log}",
+        "--reference-name",
+        "long_context",
+        "--receipt",
+        "long-context"
+      ],
+      "cohort_args": {
+        "full": [
+          "--capture-out",
+          "{raw}/long-context-capture.json"
+        ]
+      },
+      "timeout_seconds": 7200,
+      "receipt": "*-long-context.json",
+      "constants": {
+        "teacher": {
+          "MAX_MEAN": {
+            "value": 0.15,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "LARGE_SET_MEAN": {
+            "value": 0.1,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "LARGE_SET_POSITIONS": {
+            "value": 1000,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MAX_TOP1": {
+            "value": 0.08,
+            "source": "models/deepseek41/README.md#qualification"
+          },
+          "MEAN_STEP": {
+            "value": 0.05,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "MEAN_MARGIN": {
+            "value": 0.02,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          "TOP1_SIGMAS": {
+            "value": 2.0,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          "ALLOW_FLOOR_ONLY": {
+            "value": true,
+            "source": "docs/check-kinds.md#teacher_forced-teacher_forcedv1"
+          }
+        }
+      },
+      "files": [
+        "server_log"
+      ],
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/check-kinds.md#teacher_forced-teacher_forcedv1"
+        },
+        {
+          "path": [
+            "mean_abs_dlogprob"
+          ],
+          "op": "le",
+          "value": 0.1,
+          "source": "docs/check-kinds.md#teacher_forced-teacher_forcedv1"
+        },
+        {
+          "path": [
+            "top1_decisive"
+          ],
+          "op": "le",
+          "value": 0.08,
+          "source": "docs/check-kinds.md#teacher_forced-teacher_forcedv1"
+        },
+        {
+          "path": [
+            "top1_near_tie"
+          ],
+          "op": "le",
+          "value": 0.08,
+          "source": "docs/check-kinds.md#teacher_forced-teacher_forcedv1"
+        },
+        {
+          "path": [
+            "top1_disagreement"
+          ],
+          "op": "le",
+          "value": 0.1,
+          "source": "docs/check-kinds.md#teacher_forced-teacher_forcedv1"
+        },
+        {
+          "path": [
+            "failed_categories"
+          ],
+          "op": "eq",
+          "value": [],
+          "source": "docs/check-kinds.md#teacher_forced-teacher_forcedv1"
+        },
+        {
+          "path": [
+            "scored"
+          ],
+          "op": "ge",
+          "value": 1000,
+          "source": "docs/check-kinds.md#teacher_forced-teacher_forcedv1"
+        },
+        {
+          "path": [
+            "reference_sha256"
+          ],
+          "op": "eq",
+          "value": "d91ef4f3f69e0a09c5aed19841d6aa1b30287c22eaabdb7d3a2e0bb6c7bf474d",
+          "source": "tools/refrun/emit.py"
+        },
+        {
+          "path": [
+            "server",
+            "checkpoint",
+            "checkpoint_identity"
+          ],
+          "op": "eq",
+          "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
+          "source": "models/deepseek41/README.md#qualification"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "tensor_parallel_size"
+          ],
+          "op": "eq",
+          "value": 4,
+          "source": "models/deepseek41/README.md#qualification"
+        },
+        {
+          "path": [
+            "server",
+            "health",
+            "serving",
+            "profile",
+            "kv_cache_dtype"
+          ],
+          "op": "eq",
+          "value": "mixed",
+          "source": "models/deepseek41/README.md#qualification"
         }
       ]
     },
@@ -3309,6 +3473,24 @@
         "source_lock_sha256"
       ]
     },
+    "long_context": {
+      "path": {
+        "env": "CHOPINFER_DATA",
+        "path": "refrun/deepseek41/long-context-floor-only/long-context-reference.json"
+      },
+      "sha256": "d91ef4f3f69e0a09c5aed19841d6aa1b30287c22eaabdb7d3a2e0bb6c7bf474d",
+      "schema": "chopinfer.deepseek41.teacher-reference.v1",
+      "workload_sha256": "1a2666ac6e46953be1a293d300a69a9e3430789f7c266b9c69e1a1c37b4f2ace",
+      "variants": [
+        "exact"
+      ],
+      "checkpoint_keys": [
+        "repository",
+        "revision",
+        "served_model_name",
+        "source_lock_sha256"
+      ]
+    },
     "image_probes": {
       "path": {
         "env": "CHOPINFER_DATA",
@@ -3391,8 +3573,8 @@
     "path": "qual/deepseek41"
   },
   "limitations": [
-    "Experimental declaration, not a qualification result. DSpark bounds are pinned before candidate results; other numerical gates retain their separately pinned reference spreads.",
-    "Pending checks, each added with its references and limits pinned before any candidate run (models/deepseek41/README.md#qualification): long_context (131,072 tokens), whose rule is the teacher rule over the last 1,024 positions with BF16 the only spread variant and whose values follow its F32-TQ reference; media_preprocessing and encoder_parity with the vision encoder. frontend_goldens' tokenizer and chat renders are pinned CPU fixtures; their served equality remains to be qualified. paired_teacher and gsm8k_regression compare against a stored passing run and report no baseline until one exists.",
+    "Unreleased, not yet a qualification: deepseek41 serves nothing released until the release preview's full suite passes. Numerical limits are fixed before any candidate run and never moved after a result (docs/check-kinds.md#teacher_forced-teacher_forcedv1).",
+    "Pending checks, each added with its references and limits pinned before any candidate run (models/deepseek41/README.md#qualification): media_preprocessing and encoder_parity with the vision encoder. frontend_goldens' tokenizer and chat renders are pinned CPU fixtures; their served equality remains to be qualified. paired_teacher and gsm8k_regression compare against a stored passing run and report no baseline until one exists.",
     "multimodal teacher-forces the six image probes of models/deepseek41/probe_images.py (one image and the probe question in a chat turn, thinking disabled) on their F32-TQ greedy answers as a served chat continues them, against the image_probes reference (F32-TQ gate, BF16 and F64-TQ spread variants, the image-probe rule: mean floor 0.15, top-1 floor 0.08, mean step 0.05, near tie 0.3 nats). Its limits, derived from the reference's own spread before any served result, are the floors for every probe (mean |dlogprob| 0.15, decisive and near-tie top-1 0.08, all top-1 flips 0.10) except wide-1000x40's all-flips limit, 7/69 (BF16). The BF16 and F64-TQ spreads over the 487 positions are mean |dlogprob| 0.074 and 0.065 with 28 and 25 top-1 flips (models/deepseek41/README.md#qualification).",
     "The needle check runs frozen token-ID prompts at total contexts of 8,192, 131,072, 262,144 and 1,048,576 tokens and needs no reference (models/deepseek41/README.md#qualification).",
     "kv-bf16 is a comparison configuration, never a served default: --kv-cache-dtype bf16 serves the BF16 KV layout, which stores the same values as the native trained formats, and its served bits must equal the native layout's bit for bit. Its pages are about 3.6 times larger (3,200 bytes against 890 per token), and capacity, offload and pressure behavior follow page size, so it is not qualified for capacity, preemption under pressure or offload. Its checks are prefix_exact and kv_layout_equality (native mixed versus BF16 served bits, bit for bit, on the determinism request set) now; teacher, teacher_arms and chat join with their references."

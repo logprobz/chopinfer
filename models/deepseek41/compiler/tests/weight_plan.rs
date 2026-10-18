@@ -121,6 +121,11 @@ fn bound_views(geometry: &Geometry, layer: u32) -> Vec<String> {
 
 fn check(geometry: &Geometry, ranks: u32) {
     let started = std::time::Instant::now();
+    let tensors: std::collections::BTreeMap<_, _> = synthetic::tensors(geometry)
+        .unwrap()
+        .into_iter()
+        .map(|tensor| (tensor.name.clone(), tensor))
+        .collect();
     for rank in 0..ranks {
         let request = request(geometry, ranks, rank);
         let plan = plan(&request).unwrap().expect("the text image is planned");
@@ -144,6 +149,41 @@ fn check(geometry: &Geometry, ranks: u32) {
                 names.contains(&name),
                 "{} rank {rank}: no view {name}",
                 geometry.id
+            );
+        }
+        // The exact F32 projection reads every BF16 dense weight (the
+        // routers, the compressors' and indexers' projections, the head)
+        // as row-major rows; none is packed in MMA fragment order.
+        for (name, view) in &index.views {
+            assert_ne!(
+                view.layout_id, "bf16_mma_fragments_16x16_v1",
+                "{} rank {rank}: {name}",
+                geometry.id
+            );
+        }
+        for name in ["layers.0.ffn.gate.weight", "head.weight"] {
+            assert_eq!(
+                index.views[name].layout_id, "bf16_row_major_v1",
+                "{} rank {rank}: {name}",
+                geometry.id
+            );
+        }
+        // A row-major view holds its tensor's rows, or one rank's share of
+        // them, and no padding to the fragment packing's row tiles (a
+        // single-row confidence head, a 32-expert router).
+        for (name, view) in &index.views {
+            if view.layout_id != "bf16_row_major_v1" {
+                continue;
+            }
+            let Some(tensor) = tensors.get(name.as_str()) else {
+                continue;
+            };
+            assert!(
+                [tensor.bytes(), tensor.bytes() / u64::from(ranks)].contains(&view.bytes),
+                "{} rank {rank}: {name} is {} bytes for a {:?} tensor",
+                geometry.id,
+                view.bytes,
+                tensor.shape
             );
         }
         check_mapped(geometry, &request, &plan, &index);

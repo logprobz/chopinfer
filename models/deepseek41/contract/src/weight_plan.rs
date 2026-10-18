@@ -130,19 +130,37 @@ pub fn policy(family: KernelFamily, operands: u32, format: WeightFormat) -> Opti
 /// Bind the records to this model's consumers. Chained experts decode
 /// row-major codes and scales; the standard grouped format instead tiles
 /// scales for block-scaled MMA. Keep packed pieces so code/scale admission
-/// and the source K slice remain checked together.
+/// and the source K slice remain checked together. A BF16 dense projection
+/// read as rows is sized as rows too, not padded to the fragment packing's
+/// row tiles.
 pub fn bind_policy(
     mut operation: DerivedOperation,
     operands: u32,
 ) -> Result<DerivedOperation, String> {
-    if operation.family == KernelFamily::GroupedExpert {
+    let rows = match operation.family {
+        KernelFamily::GroupedExpert => true,
+        KernelFamily::Dense => operands == 1 && operation.packing.format == WeightFormat::Bf16,
+        _ => false,
+    };
+    if rows {
         let layout = registry::by_format(operation.packing.format)
             .map_err(|e| e.to_string())?
             .layout(KernelFamily::Row, None)
             .map_err(|e| e.to_string())?;
         operation.packing.layout = layout.weight;
-        // One row-major matrix per expert and operand, placed by PackedPieces.
-        operation.packing.layout.id = "row-major-groups".into();
+        if operation.family == KernelFamily::GroupedExpert {
+            // One row-major matrix per expert and operand, placed by PackedPieces.
+            operation.packing.layout.id = "row-major-groups".into();
+        } else {
+            // The live matrix the slices fill, without the MMA tile padding
+            // the dense derivation added to its destination.
+            let live = operation.logical_geometry;
+            operation.packing.rows = u32::try_from(live.rows).map_err(|e| e.to_string())?;
+            operation.packing.k = u32::try_from(live.k).map_err(|e| e.to_string())?;
+            for slice in &mut operation.slices {
+                slice.geometry = live;
+            }
+        }
         operation.packing.validate().map_err(|e| e.to_string())?;
         let sizes = operation
             .packing
@@ -160,7 +178,7 @@ pub fn bind_policy(
             let width = kernel_core::precision::dtype_bits(view.dtype) / 8;
             view.bytes = bytes;
             view.shape = vec![bytes / width];
-            view.layout = id.ok_or("expert section has no row layout")?.into();
+            view.layout = id.ok_or("weight section has no row layout")?.into();
         }
     }
     match policy(operation.family, operands, operation.packing.format) {

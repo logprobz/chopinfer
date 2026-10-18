@@ -147,6 +147,13 @@
         "path": "refrun/deepseek41/m1/teacher-reference.workload.json"
       }
     },
+    "spec_teacher": {
+      "directory": false,
+      "members": {
+        ".": "ac501d23dcd7a5e32afa726e36efa70c44e465fd81b055b5784ba96487bcf4cc"
+      },
+      "path": "fixtures/mimo26/teacher-texts.json"
+    },
     "media_capture": {
       "directory": false,
       "members": {
@@ -282,6 +289,9 @@
     },
     "fd985cda88e8640b8e2404d8e659f7006cad204eb41f73c9e6662b1f218c01aa": {
       "schema": "legacy-json-array"
+    },
+    "ac501d23dcd7a5e32afa726e36efa70c44e465fd81b055b5784ba96487bcf4cc": {
+      "schema": "chopinfer.mimo26.teacher-texts.v1"
     },
     "32f5d64d7c74e562b91d0bb0e761d146e86094264f6551c64bf068db6242e76e": {
       "schema": "legacy-json-array"

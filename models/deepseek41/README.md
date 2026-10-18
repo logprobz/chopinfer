@@ -69,7 +69,7 @@ variant); F64 widens the vendor code except its RoPE angle lines.
 
 ## Qualification
 
-The model is not qualified yet. Every numerical limit in `qual.json` is
+The model is not qualified yet. Reference-based numerical limits in `qual.json` are
 pinned from the spread of the refrun references of the pinned vendor code
 before the first candidate run, and never moved after a result. The served
 checks pin checkpoint identity 2273a3d9..., tensor parallel size 4 and the
@@ -139,8 +139,7 @@ native KV layout, which `/health` reports as `mixed` (what
   (`geometries/flash.json`); `bundle/src/instance/prefix.rs` captures and
   restores those rings and compressor tails. These settings describe the
   source contract, not a served result.
-- determinism: the AR and DSpark records of one run are identical; it runs
-  once the DSpark profile is declared.
+- determinism: the AR and DSpark records of one run are identical.
 - kv_offload_plain and kv_offload_pressure: native-KV offload with a 16 GiB
   budget, a swap every 16 steps and 32,768 pressure tokens.
 - the `kv-bf16` comparison configuration (`serve --kv-cache-dtype bf16`):
@@ -173,42 +172,44 @@ qualification evidence.
 The preview selects `tp4-dspark`, with both AR and speculative quick arms
 and exact greedy equality. DSpark computes all five proposals per block;
 scheduler budgets select the emitted prefix. Its profile uses the shared
-`per-block` draft-cost model and native KV at TP4.
+`per-block` draft-cost model and native KV at TP4. Its paired-teacher policy
+is keyed by `tp4-dspark` and uses the same approved margins as `tp4-ar`.
 
 The speculative-verification copy set must have mean absolute logprob
-difference at most 0.15 and top-1 disagreement at most 0.08 against AR.
-Both arms must score at least 193 of 200 on the GSM8K screen. These bounds
-are declared before speculative candidate results. Verification captures
-use recipe sampling, temperature 1.0 and top_p 1.0. The generic recorder
-and preview validator need recipe-aware capture before the full suite runs.
+difference at most 0.15 and top-1 disagreement at most 0.08 against AR,
+as specified in [the serving qualification gates](../../docs/numerics.md#serving-qualification-gates).
+Each arm records at least 16 copy requests and 16 natural requests from
+the shared frozen teacher texts and GSM8K questions. Both arms must bind
+to the official checkpoint and the same package at TP4 with native KV.
 
-The preview context follows the planned needle lengths, 8K, 128K, 256K and
-1M tokens. The frozen digest manifest and external token-ID prompts remain
-pending. This declaration supplies no needle or speculative GPU evidence.
+The approved DSpark qualification plan sets the GSM8K floor at 193/200 for
+both arms. This matches MiMo's floor and is one item looser than Qwen's
+model-specific 194/200. These limits are declared before candidate results.
 
-### M0 synthetic bring-up
+Recipe sampling (temperature 1.0, top_p 1.0) applies to serving and every
+sampled check, while spec_verify, spec_greedy, greedy equality to AR and
+determinism compare greedy paths by definition. Spec_verify inputs record
+`{temperature: 0, top_p: 1, logprobs: 5}` as the shared tool emits them.
 
-`qual.m0.json` declares the teacher check of M0: the bundle serving the
-synthetic-small checkpoint (12 layers, random weights, seed 0; lock
-`m0-checkpoint-files.json`) at TP2, autoregressive, native KV, teacher-forced
-against the pinned vendor code's F32-TQ run with its BF16 and F64-TQ runs as
-spread. On random weights F32 is chaotic: the reference's own exact against
-BF16 spread is a mean of 1.68 nats with top-1 agreement 0.28. Its limits
-(mean |dlogprob| at most 2.0 nats, top-1 disagreement at most 0.8) catch only
-gross failures, so M0's verdict is tapdiff's over the early layers' taps;
-the teacher record is kept beside it. It is a bring-up declaration, never a
-qualification.
+`verify_exact` compares target verification rows with paired AR rows against
+the pinned F32-TQ teacher reference. It requires complete observed row
+shapes, the same checkpoint, bound package identities and coverage of every
+forced position. The relative mean margin is 0.005 and the excess top-one
+bound is two standard deviations, from the serving qualification gates.
+The full preview runs a separate `verify-bN` configuration for every prepared
+capacity. Each records AR and speculative arms at the same concurrency,
+requires the listed executed capacities in both capture and report, and
+judges its own pair without pooling numerical errors across configurations:
 
-### M1 teacher check
+| Configuration | Draft budget | Concurrency | Verify capacity | AR capacity |
+| --- | ---: | ---: | ---: | ---: |
+| `verify-b2` | 1 | 1 | 2 | 1 |
+| `verify-b4` | 3 | 1 | 4 | 1 |
+| `verify-b8` | 5 | 1 | 8 | 1 |
+| `verify-b16` | 5 | 2 | 16 | 2 |
+| `verify-b32` | 5 | 4 | 32 | 4 |
 
-`qual.m1.json` declares the teacher check of M1: the official checkpoint
-(lock `checkpoint-files.json`) served at TP4, autoregressive, native KV,
-teacher-forced against the pinned vendor code's F32-TQ run over 35 texts
-(3,974 scored positions), with its BF16 and F64-TQ runs as spread. Its
-limits were pinned from that spread before any served result (variant-spread.v2):
-mean |dlogprob| at most 0.15, top-1 decisive and near-tie each at most 8%,
-total top-1 disagreement at most 10%, no failed category. It is a bring-up
-declaration, never a qualification.
-Its frozen texts are `teacher-texts.json` under `$CHOPINFER_DATA/deepseek41/m1/fixtures-text`
-(`inputs.fixture_root`): the reference's 35 texts in its order, with the token IDs
-and `score_from` whose workload digest the reference pins.
+These configurations fix the draft budget so adaptive scheduling cannot
+avoid a required capacity. The default full cohort also runs the C1 pair.
+A missing capacity or dropped trace observation fails the check. No
+speculative GPU evidence is claimed by this declaration.

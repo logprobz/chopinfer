@@ -3,12 +3,11 @@
 //! checkpoint, loads its tokenizer against the pinned contract, plans every
 //! rank of every rank count from the checkpoint's headers (the weight plan
 //! the host later executes) and writes the package (`crate::package`): the
-//! tokenizer, the planned rank images, the serving profiles and the
-//! installed native module. A rank count whose weights do not fit is left
-//! out, and refused when it is the one requested.
-//!
-//! The package carries no frontend yet: the frontend declaration and the
-//! module's frontend export join it when they land.
+//! tokenizer, the geometry's frontend, the planned rank images, the serving
+//! profiles and the installed native module, which exports the chat format.
+//! A package serving images also carries the planned encoder image and the
+//! image frontend. A rank count whose weights do not fit is left out, and
+//! refused when it is the one requested.
 use model_compiler_sdk::files::Result;
 use model_compiler_sdk::preparation::direct::{DirectEmission, default_profile};
 use model_compiler_sdk::preparation::helper::Provider;
@@ -34,10 +33,27 @@ fn admit(root: &Path, ranks: u32) -> Result<&'static Geometry> {
     Ok(geometry)
 }
 
-/// Refuse a request this package cannot serve: an activation policy other
-/// than the checkpoint's own (`auto`), or a modality selection without text
-/// or with another modality, as the package serves text only.
-fn check_request(request: &PrepareDirectRequest) -> Result<()> {
+/// The modalities the checkpoint at `root` of `geometry` provides: text,
+/// and images when it stores the vision tower the encoder declaration pins
+/// (`encoder_image::has_tower`).
+pub fn provided_modalities(root: &Path, geometry: &Geometry) -> Result<BTreeSet<Modality>> {
+    let mut provided = BTreeSet::from([Modality::Text]);
+    if crate::encoder_image::has_tower(root, geometry)? {
+        provided.insert(Modality::Image);
+    }
+    Ok(provided)
+}
+
+/// The modalities a package of the checkpoint at `root` of `geometry`
+/// serves for `request`, refusing what it cannot serve: an activation
+/// policy other than the checkpoint's own (`auto`), or a modality
+/// selection without text or naming one the checkpoint does not provide.
+/// `auto` and `all` serve text and, with the vision tower, images.
+fn served_modalities(
+    root: &Path,
+    geometry: &Geometry,
+    request: &PrepareDirectRequest,
+) -> Result<BTreeSet<Modality>> {
     if let Some(policy) = request.activation_policy.as_deref()
         && policy != "auto"
     {
@@ -47,11 +63,11 @@ fn check_request(request: &PrepareDirectRequest) -> Result<()> {
         )
         .into());
     }
-    let served = request.served_modalities(&BTreeSet::from([Modality::Text]))?;
+    let served = request.served_modalities(&provided_modalities(root, geometry)?)?;
     if !served.contains(&Modality::Text) {
         return Err("--modalities must include text, which every deepseek41 package serves".into());
     }
-    Ok(())
+    Ok(served)
 }
 
 /// The serving profile of `geometry` at `ranks`: the autoregressive entry
@@ -76,13 +92,15 @@ pub fn weight_bytes(root: &Path, ranks: u32) -> Result<u64> {
 }
 
 /// The rank counts the package of the checkpoint at `root` of `geometry`
-/// serves, each with the most weight bytes one of its ranks holds: every
-/// supported count the geometry divides over and the weights fit, which
-/// must include `required`.
+/// serves, each with the most text weight bytes one of its ranks holds:
+/// every supported count the geometry divides over and the weights fit,
+/// with `extra` bytes a rank holds beyond them (the encoder's, for a
+/// package serving images), which must include `required`.
 pub fn served_topologies(
     root: &Path,
     geometry: &'static Geometry,
     required: u32,
+    extra: u64,
 ) -> Result<Vec<(u32, u64)>> {
     let mut served = Vec::new();
     for &ranks in SUPPORTED_RANKS {
@@ -90,7 +108,7 @@ pub fn served_topologies(
             continue;
         }
         let bytes = weight_bytes(root, ranks)?;
-        match check_fit(ranks, bytes) {
+        match check_fit(ranks, bytes + extra) {
             Ok(()) => served.push((ranks, bytes)),
             Err(refusal) if ranks == required => return Err(refusal.into()),
             Err(_) => {}
@@ -131,10 +149,13 @@ pub fn emit(
 ) -> Result<DirectEmission> {
     let ranks = request.tensor_parallel_size;
     let geometry = admit(root, ranks)?;
-    check_request(request)?;
+    let media = served_modalities(root, geometry, request)?.contains(&Modality::Image);
     let profile = select_profile(geometry, ranks)?;
-    let components = tokenizer_components(root)?;
-    let topologies = served_topologies(root, geometry, ranks)?;
+    let mut components = tokenizer_components(root)?;
+    if media {
+        components.push(crate::encoder_image::planned(root, ranks)?);
+    }
+    let topologies = served_topologies(root, geometry, ranks, crate::package::media_bytes(media)?)?;
     let draft = crate::package::draft(
         geometry,
         &topologies,
@@ -178,9 +199,19 @@ impl Provider for DeepSeek41Family {
     fn names_direct_profile(&self) -> bool {
         true
     }
+    /// The set the emission serves, so `auto`, `all` and the list they
+    /// resolve to share a published package.
+    fn direct_modalities(
+        &self,
+        root: &Path,
+        request: &PrepareDirectRequest,
+    ) -> Result<Option<BTreeSet<Modality>>> {
+        let geometry = admit(root, request.tensor_parallel_size)?;
+        served_modalities(root, geometry, request).map(Some)
+    }
     fn direct_profile(&self, root: &Path, request: &PrepareDirectRequest) -> Result<DirectProfile> {
         let geometry = admit(root, request.tensor_parallel_size)?;
-        check_request(request)?;
+        served_modalities(root, geometry, request)?;
         select_profile(geometry, request.tensor_parallel_size)
     }
 }

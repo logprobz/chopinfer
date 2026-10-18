@@ -9,408 +9,7 @@
     },
     {
      "role": "user",
-     "content": [
-      {
-       "type": "text",
-       "text": "Look at this "
-      },
-      {
-       "type": "text",
-       "text": " and say what it is."
-      }
-     ]
-    }
-   ],
-   "tools": [
-    {
-     "type": "function",
-     "function": {
-      "name": "get_weather",
-      "description": "The get_weather tool."
-     }
-    },
-    {
-     "type": "function",
-     "function": {
-      "name": "convert",
-      "description": "The convert tool.",
-      "parameters": {
-       "type": "object",
-       "properties": {
-        "value": {
-         "type": "integer"
-        }
-       }
-      }
-     }
-    },
-    {
-     "type": "function",
-     "function": {
-      "name": "ping",
-      "description": "The ping tool.",
-      "parameters": {
-       "type": "object",
-       "properties": {
-        "value": {
-         "type": "number"
-        }
-       }
-      }
-     }
-    },
-    {
-     "type": "function",
-     "function": {
-      "name": "clock",
-      "description": "The time.",
-      "parameters": {
-       "type": "object",
-       "properties": {}
-      },
-      "defer_loading": "true"
-     }
-    }
-   ],
-   "thinking": {
-    "type": "enabled"
-   },
-   "chat_template_kwargs": {
-    "reasoning_effort": "low",
-    "preserve_thinking": false
-   },
-   "response_format": {
-    "type": "json_schema",
-    "json_schema": {
-     "name": "answer",
-     "strict": true,
-     "schema": {
-      "type": "object",
-      "properties": {
-       "city": {
-        "type": "string"
-       },
-       "days": {
-        "type": "integer"
-       }
-      },
-      "required": [
-       "city"
-      ],
-      "additionalProperties": false
-     }
-    }
-   }
-  },
-  "token_ids": [
-   8824,
-   270,
-   7130,
-   16,
-   223,
-   128822,
-   271,
-   30,
-   128825,
-   10699,
-   1018,
-   30,
-   128825,
-   34756,
-   2329,
-   1281,
-   1133,
-   65,
-   50219,
-   3816,
-   30,
-   128825,
-   10767,
-   2329,
-   1281,
-   5197,
-   4,
-   3418,
-   1281,
-   19836,
-   3320,
-   61,
-   19,
-   14,
-   582,
-   23315,
-   1760,
-   223,
-   21,
-   16,
-   23,
-   14,
-   5100,
-   63,
-   1718,
-   128825,
-   10767,
-   1018,
-   30,
-   128825,
-   10767,
-   2329,
-   1281,
-   37399,
-   4,
-   3418,
-   1281,
-   11476,
-   3320,
-   51119,
-   1718,
-   128825,
-   10767,
-   1018,
-   1718,
-   128825,
-   34756,
-   1018,
-   30,
-   128825,
-   34756,
-   2329,
-   1281,
-   54276,
-   3816,
-   30,
-   128825,
-   10767,
-   2329,
-   1281,
-   5197,
-   4,
-   3418,
-   1281,
-   19836,
-   3320,
-   21,
-   1718,
-   128825,
-   10767,
-   1018,
-   1718,
-   128825,
-   34756,
-   1018,
-   30,
-   128825,
-   34756,
-   2329,
-   1281,
-   22153,
-   3816,
-   30,
-   128825,
-   10767,
-   2329,
-   1281,
-   5197,
-   4,
-   3418,
-   1281,
-   19836,
-   3320,
-   19,
-   71,
-   15,
-   2642,
-   1718,
-   128825,
-   10767,
-   1018,
-   1718,
-   128825,
-   34756,
-   1018,
-   1718,
-   128825,
-   10699,
-   32,
-   1
-  ],
-  "expect": {
-   "reasoning": " Check the units. ",
-   "tool_calls": [
-    {
-     "name": "get_weather",
-     "arguments": "{\"value\": [1, \"two\", 3.5, null], \"city\": \"Paris\"}"
-    },
-    {
-     "name": "convert",
-     "arguments": "{\"value\": 3}"
-    },
-    {
-     "name": "ping",
-     "arguments": "{\"value\": 1e-05}"
-    }
-   ],
-   "finish_reason": "tool_calls"
-  },
-  "separator": ""
- },
- {
-  "id": "g0004-round-endofsentence",
-  "request": {
-   "messages": [
-    {
-     "role": "system",
-     "content": "You are terse."
-    },
-    {
-     "role": "user",
      "content": ""
-    }
-   ],
-   "chat_template_kwargs": {
-    "reasoning_effort": "max",
-    "thinking": false,
-    "clear_thinking": false,
-    "preserve_thinking": true
-   },
-   "response_format": {
-    "type": "json_object"
-   }
-  },
-  "token_ids": [
-   128822,
-   539,
-   223,
-   1
-  ],
-  "expect": {
-   "content": " \n ",
-   "finish_reason": "stop"
-  },
-  "separator": ""
- },
- {
-  "id": "g0008-round-endofsentence",
-  "request": {
-   "messages": [
-    {
-     "role": "system",
-     "content": ""
-    },
-    {
-     "role": "user",
-     "content": "  Weather?  \n"
-    }
-   ],
-   "tools": [
-    {
-     "type": "function",
-     "function": {
-      "name": "clock",
-      "description": "The time.",
-      "parameters": {
-       "type": "object",
-       "properties": {}
-      },
-      "defer_loading": false
-     }
-    }
-   ],
-   "chat_template_kwargs": {
-    "reasoning_effort": "max",
-    "thinking": true,
-    "preserve_thinking": false
-   }
-  },
-  "token_ids": [
-   128822,
-   1
-  ],
-  "expect": {
-   "finish_reason": "stop"
-  },
-  "separator": ""
- },
- {
-  "id": "g0016-round-endofsentence",
-  "request": {
-   "messages": [
-    {
-     "role": "system",
-     "content": ""
-    },
-    {
-     "role": "user",
-     "content": ""
-    }
-   ],
-   "reasoning_effort": "low",
-   "thinking": {
-    "type": "disabled"
-   },
-   "chat_template_kwargs": {
-    "clear_thinking": true
-   },
-   "response_format": {
-    "type": "json_schema",
-    "json_schema": {
-     "name": "answer",
-     "strict": true,
-     "schema": {
-      "type": "object",
-      "properties": {
-       "city": {
-        "type": "string"
-       },
-       "days": {
-        "type": "integer"
-       }
-      },
-      "required": [
-       "city"
-      ],
-      "additionalProperties": false
-     }
-    }
-   }
-  },
-  "token_ids": [
-   223,
-   983,
-   344,
-   223,
-   864,
-   8490,
-   37,
-   16,
-   262,
-   1
-  ],
-  "expect": {
-   "content": "  It is 18 °C.  ",
-   "finish_reason": "stop"
-  },
-  "separator": ""
- },
- {
-  "id": "g0021-round-endofsentence",
-  "request": {
-   "messages": [
-    {
-     "role": "user",
-     "content": "天气怎么样？ Ünïcödé ½"
-    },
-    {
-     "role": "assistant",
-     "content": "One moment."
-    },
-    {
-     "role": "system",
-     "content": "Now answer in French."
-    },
-    {
-     "role": "user",
-     "content": "Go on."
     }
    ],
    "tools": [
@@ -429,8 +28,7 @@
          "type": "string"
         }
        }
-      },
-      "strict": true
+      }
      }
     },
     {
@@ -441,8 +39,7 @@
       "parameters": {
        "type": "object",
        "properties": {}
-      },
-      "defer_loading": "true"
+      }
      }
     }
    ],
@@ -450,11 +47,9 @@
     "type": "adaptive"
    },
    "chat_template_kwargs": {
-    "reasoning_effort": "max",
-    "preserve_thinking": true
-   },
-   "response_format": {
-    "type": "json_object"
+    "reasoning_effort": "low",
+    "clear_thinking": true,
+    "preserve_thinking": false
    }
   },
   "token_ids": [
@@ -529,249 +124,57 @@
   "separator": ""
  },
  {
-  "id": "g0032-round-endofsentence",
+  "id": "g0009-round-endofsentence",
   "request": {
    "messages": [
     {
      "role": "system",
-     "content": "  \n "
+     "content": ""
     },
     {
      "role": "user",
-     "content": "  Weather?  \n"
+     "content": "What is the weather in Paris?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": null,
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "number"
+        },
+        "city": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      },
+      "defer_loading": true
+     }
     }
    ],
    "chat_template_kwargs": {
+    "reasoning_effort": "high",
     "enable_thinking": false,
-    "clear_thinking": true
+    "preserve_thinking": true
    },
    "response_format": {
     "type": "json_object"
-   }
-  },
-  "token_ids": [
-   8824,
-   270,
-   7130,
-   16,
-   223,
-   128822,
-   1
-  ],
-  "expect": {
-   "reasoning": " Check the units. ",
-   "finish_reason": "stop"
-  },
-  "separator": ""
- },
- {
-  "id": "g0046-round-endofsentence",
-  "request": {
-   "messages": [
-    {
-     "role": "system",
-     "content": "  \n "
-    },
-    {
-     "role": "user",
-     "content": [
-      {
-       "type": "text",
-       "text": "Look at this "
-      },
-      {
-       "type": "text",
-       "text": " and say what it is."
-      }
-     ]
-    }
-   ],
-   "tools": [
-    {
-     "type": "function",
-     "function": {
-      "name": "get_weather",
-      "description": "The get_weather tool.",
-      "parameters": {
-       "type": "object",
-       "properties": {
-        "value": {
-         "type": "boolean"
-        },
-        "city": {
-         "type": "string"
-        }
-       }
-      },
-      "strict": true
-     }
-    },
-    {
-     "type": "function",
-     "function": {
-      "name": "clock",
-      "description": "The time.",
-      "parameters": {
-       "type": "object",
-       "properties": {}
-      },
-      "defer_loading": false
-     }
-    }
-   ],
-   "chat_template_kwargs": {
-    "reasoning_effort": "low",
-    "enable_thinking": false,
-    "clear_thinking": true,
-    "preserve_thinking": false
-   }
-  },
-  "token_ids": [
-   128822,
-   223,
-   983,
-   344,
-   223,
-   864,
-   8490,
-   37,
-   16,
-   6776,
-   30,
-   128825,
-   10699,
-   1018,
-   30,
-   128825,
-   34756,
-   2329,
-   1281,
-   1133,
-   65,
-   50219,
-   3816,
-   30,
-   128825,
-   10767,
-   2329,
-   1281,
-   5197,
-   4,
-   3418,
-   1281,
-   19836,
-   3320,
-   11476,
-   1718,
-   128825,
-   10767,
-   1018,
-   30,
-   128825,
-   10767,
-   2329,
-   1281,
-   37399,
-   4,
-   3418,
-   1281,
-   11476,
-   3320,
-   51119,
-   1718,
-   128825,
-   10767,
-   1018,
-   1718,
-   128825,
-   34756,
-   1018,
-   1718,
-   128825,
-   10699,
-   32,
-   1
-  ],
-  "expect": {
-   "content": "  It is 18 °C.  ",
-   "tool_calls": [
-    {
-     "name": "get_weather",
-     "arguments": "{\"value\": true, \"city\": \"Paris\"}"
-    }
-   ],
-   "finish_reason": "tool_calls"
-  },
-  "separator": ""
- },
- {
-  "id": "g0048-round-endofsentence",
-  "request": {
-   "messages": [
-    {
-     "role": "system",
-     "content": ""
-    },
-    {
-     "role": "user",
-     "content": ""
-    }
-   ],
-   "tools": [
-    {
-     "type": "function",
-     "function": {
-      "name": "get_weather",
-      "parameters": {
-       "type": "object",
-       "properties": {
-        "value": {
-         "type": "integer"
-        },
-        "city": {
-         "type": "string"
-        }
-       }
-      }
-     }
-    },
-    {
-     "type": "function",
-     "function": {
-      "name": "clock",
-      "description": "The time.",
-      "parameters": {
-       "type": "object",
-       "properties": {}
-      },
-      "defer_loading": "true"
-     }
-    }
-   ],
-   "chat_template_kwargs": {
-    "reasoning_effort": "high"
-   },
-   "response_format": {
-    "type": "json_schema",
-    "json_schema": {
-     "name": "answer",
-     "strict": true,
-     "schema": {
-      "type": "object",
-      "properties": {
-       "city": {
-        "type": "string"
-       },
-       "days": {
-        "type": "integer"
-       }
-      },
-      "required": [
-       "city"
-      ],
-      "additionalProperties": false
-     }
-    }
    }
   },
   "token_ids": [
@@ -807,7 +210,10 @@
    1281,
    19836,
    3320,
-   21,
+   19,
+   71,
+   15,
+   2642,
    1718,
    128825,
    10767,
@@ -844,7 +250,7 @@
    "tool_calls": [
     {
      "name": "get_weather",
-     "arguments": "{\"value\": 3, \"city\": \"Paris\"}"
+     "arguments": "{\"value\": 1e-05, \"city\": \"Paris\"}"
     }
    ],
    "finish_reason": "tool_calls"
@@ -852,12 +258,16 @@
   "separator": ""
  },
  {
-  "id": "g0072-round-endofsentence",
+  "id": "g0014-round-endofsentence",
   "request": {
    "messages": [
     {
+     "role": "system",
+     "content": ""
+    },
+    {
      "role": "user",
-     "content": "What is the weather in Paris?"
+     "content": "  Weather?  \n"
     }
    ],
    "tools": [
@@ -865,7 +275,17 @@
      "type": "function",
      "function": {
       "name": "get_weather",
-      "description": "The get_weather tool."
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "number"
+        },
+        "city": {
+         "type": "string"
+        }
+       }
+      }
      }
     },
     {
@@ -892,7 +312,7 @@
        "type": "object",
        "properties": {
         "value": {
-         "type": "object"
+         "type": "string"
         }
        }
       }
@@ -911,12 +331,13 @@
      }
     }
    ],
-   "thinking": {
-    "type": "enabled"
-   },
    "chat_template_kwargs": {
-    "clear_thinking": false,
-    "preserve_thinking": true
+    "reasoning_effort": "max",
+    "thinking": false,
+    "clear_thinking": false
+   },
+   "response_format": {
+    "type": "json_object"
    }
   },
   "token_ids": [
@@ -926,8 +347,15 @@
    16,
    223,
    128822,
-   539,
-   1004,
+   223,
+   983,
+   344,
+   223,
+   864,
+   8490,
+   37,
+   16,
+   6776,
    30,
    128825,
    10699,
@@ -952,7 +380,10 @@
    1281,
    19836,
    3320,
-   21,
+   19,
+   71,
+   13,
+   926,
    1718,
    128825,
    10767,
@@ -996,8 +427,9 @@
    19836,
    3320,
    19,
-   16,
-   18,
+   71,
+   15,
+   2642,
    1718,
    128825,
    10767,
@@ -1012,6 +444,331 @@
    2329,
    1281,
    22153,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   5197,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   51119,
+   818,
+   8,
+   7339,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "reasoning": " Check the units. ",
+   "content": "  It is 18 °C.  ",
+   "tool_calls": [
+    {
+     "name": "get_weather",
+     "arguments": "{\"value\": 1e+16, \"city\": \"Paris\"}"
+    },
+    {
+     "name": "convert",
+     "arguments": "{\"value\": 1e-05}"
+    },
+    {
+     "name": "ping",
+     "arguments": "{\"value\": \"Paris <&>\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "g0028-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "system",
+     "content": ""
+    },
+    {
+     "role": "user",
+     "content": ""
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      },
+      "defer_loading": "true",
+      "strict": true
+     }
+    }
+   ],
+   "thinking": {
+    "type": "enabled"
+   },
+   "chat_template_kwargs": {
+    "reasoning_effort": "max",
+    "clear_thinking": true,
+    "preserve_thinking": false
+   }
+  },
+  "token_ids": [
+   128822,
+   223,
+   983,
+   344,
+   223,
+   864,
+   8490,
+   37,
+   16,
+   262,
+   1
+  ],
+  "expect": {
+   "content": "  It is 18 °C.  ",
+   "finish_reason": "stop"
+  },
+  "separator": ""
+ },
+ {
+  "id": "g0036-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "You are terse."
+    },
+    {
+     "role": "user",
+     "content": "  Weather?  \n"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      },
+      "defer_loading": false
+     }
+    }
+   ],
+   "response_format": {
+    "type": "json_object"
+   }
+  },
+  "token_ids": [
+   8824,
+   270,
+   7130,
+   16,
+   223,
+   128822,
+   1
+  ],
+  "expect": {
+   "reasoning": " Check the units. ",
+   "finish_reason": "stop"
+  },
+  "separator": ""
+ },
+ {
+  "id": "g0064-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "You are terse."
+    },
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "Look at this "
+      },
+      {
+       "type": "text",
+       "text": " and say what it is."
+      }
+     ]
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": null,
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "object"
+        },
+        "city": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "convert",
+      "description": "The convert tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "object"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "ping",
+      "description": "The ping tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "number"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      },
+      "defer_loading": false
+     }
+    }
+   ],
+   "reasoning_effort": "max",
+   "chat_template_kwargs": {
+    "thinking": false,
+    "clear_thinking": true
+   },
+   "response_format": {
+    "type": "text"
+   }
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   1133,
+   65,
+   50219,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   5197,
+   4,
+   3418,
+   1281,
+   19836,
+   3320,
+   24313,
+   15165,
+   3362,
+   582,
+   69,
+   1760,
+   582,
+   63324,
+   3362,
+   764,
+   19,
+   14,
+   223,
+   20,
+   16,
+   23,
+   14,
+   5100,
+   3031,
+   582,
+   633,
+   3362,
+   5062,
+   24568,
+   128825,
+   10767,
+   1018,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   37399,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   51119,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   54276,
    3816,
    30,
    128825,
@@ -1055,369 +812,6 @@
    128825,
    34756,
    1018,
-   1718,
-   128825,
-   10699,
-   32,
-   1
-  ],
-  "expect": {
-   "reasoning": " Check the units. ",
-   "content": " \n ",
-   "tool_calls": [
-    {
-     "name": "get_weather",
-     "arguments": "{\"value\": 3, \"city\": \"Paris\"}"
-    },
-    {
-     "name": "convert",
-     "arguments": "{\"value\": 1.0}"
-    },
-    {
-     "name": "ping",
-     "arguments": "{\"value\": {\"unit\": \"c\", \"hours\": [1, 2.5, null], \"ok\": false}}"
-    }
-   ],
-   "finish_reason": "tool_calls"
-  },
-  "separator": ""
- },
- {
-  "id": "g0074-round-endofsentence",
-  "request": {
-   "messages": [
-    {
-     "role": "system",
-     "content": "  \n "
-    },
-    {
-     "role": "user",
-     "content": [
-      {
-       "type": "text",
-       "text": "Look at this "
-      },
-      {
-       "type": "text",
-       "text": " and say what it is."
-      }
-     ]
-    }
-   ],
-   "tools": [
-    {
-     "type": "function",
-     "function": {
-      "name": "get_weather",
-      "parameters": {
-       "type": "object",
-       "properties": {
-        "value": {
-         "type": "number"
-        },
-        "city": {
-         "type": "string"
-        }
-       }
-      }
-     }
-    },
-    {
-     "type": "function",
-     "function": {
-      "name": "clock",
-      "description": "The time.",
-      "parameters": {
-       "type": "object",
-       "properties": {}
-      },
-      "defer_loading": true
-     }
-    }
-   ],
-   "reasoning_effort": "max",
-   "thinking": {
-    "type": "disabled"
-   },
-   "chat_template_kwargs": {
-    "preserve_thinking": true
-   },
-   "response_format": {
-    "type": "text"
-   }
-  },
-  "token_ids": [
-   271,
-   30,
-   128825,
-   10699,
-   1018,
-   30,
-   128825,
-   34756,
-   2329,
-   1281,
-   1133,
-   65,
-   50219,
-   3816,
-   30,
-   128825,
-   10767,
-   2329,
-   1281,
-   5197,
-   4,
-   3418,
-   1281,
-   19836,
-   3320,
-   19,
-   71,
-   15,
-   2642,
-   1718,
-   128825,
-   10767,
-   1018,
-   30,
-   128825,
-   10767,
-   2329,
-   1281,
-   37399,
-   4,
-   3418,
-   1281,
-   11476,
-   3320,
-   51119,
-   1718,
-   128825,
-   10767,
-   1018,
-   1718,
-   128825,
-   34756,
-   1018,
-   1718,
-   128825,
-   10699,
-   32,
-   1
-  ],
-  "expect": {
-   "tool_calls": [
-    {
-     "name": "get_weather",
-     "arguments": "{\"value\": 1e-05, \"city\": \"Paris\"}"
-    }
-   ],
-   "finish_reason": "tool_calls"
-  },
-  "separator": ""
- },
- {
-  "id": "g0088-round-endofsentence",
-  "request": {
-   "messages": [
-    {
-     "role": "user",
-     "content": "  Weather?  \n"
-    }
-   ],
-   "chat_template_kwargs": {
-    "reasoning_effort": "low",
-    "thinking": false,
-    "preserve_thinking": true
-   },
-   "response_format": {
-    "type": "json_object"
-   }
-  },
-  "token_ids": [
-   8824,
-   270,
-   7130,
-   16,
-   223,
-   128822,
-   539,
-   223,
-   1
-  ],
-  "expect": {
-   "reasoning": " Check the units. ",
-   "content": " \n ",
-   "finish_reason": "stop"
-  },
-  "separator": ""
- },
- {
-  "id": "g0120-round-endofsentence",
-  "request": {
-   "messages": [
-    {
-     "role": "system",
-     "content": "  \n "
-    },
-    {
-     "role": "user",
-     "content": "What is the weather in Paris?"
-    }
-   ],
-   "tools": [
-    {
-     "type": "function",
-     "function": {
-      "name": "get_weather",
-      "description": "The get_weather tool.",
-      "parameters": {
-       "type": "object",
-       "properties": {
-        "value": {
-         "type": "number"
-        },
-        "city": {
-         "type": "string"
-        }
-       }
-      }
-     }
-    },
-    {
-     "type": "function",
-     "function": {
-      "name": "convert",
-      "description": "The convert tool.",
-      "parameters": {
-       "type": "object",
-       "properties": {
-        "value": {
-         "type": "number"
-        }
-       }
-      }
-     }
-    },
-    {
-     "type": "function",
-     "function": {
-      "name": "ping",
-      "description": "The ping tool.",
-      "parameters": {
-       "type": "object",
-       "properties": {
-        "value": {
-         "type": "string"
-        }
-       }
-      }
-     }
-    },
-    {
-     "type": "function",
-     "function": {
-      "name": "clock",
-      "description": "The time.",
-      "parameters": {
-       "type": "object",
-       "properties": {}
-      },
-      "defer_loading": true
-     }
-    }
-   ],
-   "chat_template_kwargs": {
-    "clear_thinking": false,
-    "preserve_thinking": true
-   }
-  },
-  "token_ids": [
-   128822,
-   271,
-   30,
-   128825,
-   10699,
-   1018,
-   30,
-   128825,
-   34756,
-   2329,
-   1281,
-   1133,
-   65,
-   50219,
-   3816,
-   30,
-   128825,
-   10767,
-   2329,
-   1281,
-   5197,
-   4,
-   3418,
-   1281,
-   19836,
-   3320,
-   19,
-   71,
-   15,
-   2642,
-   1718,
-   128825,
-   10767,
-   1018,
-   30,
-   128825,
-   10767,
-   2329,
-   1281,
-   37399,
-   4,
-   3418,
-   1281,
-   11476,
-   3320,
-   51119,
-   1718,
-   128825,
-   10767,
-   1018,
-   1718,
-   128825,
-   34756,
-   1018,
-   30,
-   128825,
-   34756,
-   2329,
-   1281,
-   54276,
-   3816,
-   30,
-   128825,
-   10767,
-   2329,
-   1281,
-   5197,
-   4,
-   3418,
-   1281,
-   19836,
-   3320,
-   19,
-   71,
-   15,
-   2642,
-   1718,
-   128825,
-   10767,
-   1018,
-   1718,
-   128825,
-   34756,
-   1018,
    30,
    128825,
    34756,
@@ -1434,12 +828,11 @@
    4,
    3418,
    1281,
-   11476,
+   19836,
    3320,
-   6127,
-   8490,
-   37,
-   10943,
+   18,
+   16,
+   1069,
    1718,
    128825,
    10767,
@@ -1458,15 +851,15 @@
    "tool_calls": [
     {
      "name": "get_weather",
-     "arguments": "{\"value\": 1e-05, \"city\": \"Paris\"}"
+     "arguments": "{\"value\": {\"unit\": \"c\", \"hours\": [1, 2.5, null], \"ok\": false}, \"city\": \"Paris\"}"
     },
     {
      "name": "convert",
-     "arguments": "{\"value\": 1e-05}"
+     "arguments": "{\"value\": {\"unit\": \"c\", \"hours\": [1, 2.5, null], \"ok\": false}}"
     },
     {
      "name": "ping",
-     "arguments": "{\"value\": \"北京 °C ü\"}"
+     "arguments": "{\"value\": 0.25}"
     }
    ],
    "finish_reason": "tool_calls"
@@ -1474,76 +867,18 @@
   "separator": ""
  },
  {
-  "id": "g0121-round-endofsentence",
+  "id": "g0088-round-endofsentence",
   "request": {
    "messages": [
     {
      "role": "user",
-     "content": "What is the weather in Paris?"
-    }
-   ],
-   "tools": [
-    {
-     "type": "function",
-     "function": {
-      "name": "get_weather",
-      "description": "The get_weather tool.",
-      "parameters": {
-       "type": "object",
-       "properties": {
-        "value": {
-         "type": "null"
-        },
-        "city": {
-         "type": "string"
-        }
-       }
-      }
-     }
-    },
-    {
-     "type": "function",
-     "function": {
-      "name": "convert",
-      "description": "The convert tool.",
-      "parameters": {
-       "type": "object",
-       "properties": {
-        "value": {
-         "type": "array"
-        }
-       }
-      }
-     }
-    },
-    {
-     "type": "function",
-     "function": {
-      "name": "ping",
-      "description": "The ping tool.",
-      "parameters": {
-       "type": "object",
-       "properties": {
-        "value": {
-         "type": "number"
-        }
-       }
-      }
-     }
-    },
-    {
-     "type": "function",
-     "function": {
-      "name": "clock",
-      "description": "The time.",
-      "parameters": {
-       "type": "object",
-       "properties": {}
-      }
-     }
+     "content": "  Weather?  \n"
     }
    ],
    "chat_template_kwargs": {
+    "reasoning_effort": "max",
+    "thinking": true,
+    "clear_thinking": false,
     "preserve_thinking": true
    },
    "response_format": {
@@ -1567,6 +902,119 @@
       "additionalProperties": false
      }
     }
+   }
+  },
+  "token_ids": [
+   8824,
+   270,
+   7130,
+   16,
+   223,
+   128822,
+   539,
+   223,
+   1
+  ],
+  "expect": {
+   "reasoning": " Check the units. ",
+   "content": " \n ",
+   "finish_reason": "stop"
+  },
+  "separator": ""
+ },
+ {
+  "id": "g0110-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "  \n "
+    },
+    {
+     "role": "user",
+     "content": "What is the weather in Paris?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      }
+     }
+    }
+   ],
+   "chat_template_kwargs": {
+    "clear_thinking": true,
+    "preserve_thinking": false
+   },
+   "response_format": {
+    "type": "text"
+   }
+  },
+  "token_ids": [
+   128822,
+   1
+  ],
+  "expect": {
+   "finish_reason": "stop"
+  },
+  "separator": ""
+ },
+ {
+  "id": "g0115-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "system",
+     "content": ""
+    },
+    {
+     "role": "user",
+     "content": "What is the weather in Paris?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "The get_weather tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "number"
+        },
+        "city": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      }
+     }
+    }
+   ],
+   "chat_template_kwargs": {
+    "clear_thinking": false,
+    "preserve_thinking": true
+   },
+   "response_format": {
+    "type": "text"
    }
   },
   "token_ids": [
@@ -1604,7 +1052,171 @@
    1281,
    19836,
    3320,
-   16042,
+   19,
+   71,
+   15,
+   2642,
+   1718,
+   128825,
+   10767,
+   1018,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   37399,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   51119,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "content": "  It is 18 °C.  ",
+   "tool_calls": [
+    {
+     "name": "get_weather",
+     "arguments": "{\"value\": 1e-05, \"city\": \"Paris\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
+  "id": "g0119-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "You are terse."
+    },
+    {
+     "role": "user",
+     "content": "What is the weather in Paris?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "The get_weather tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "number"
+        },
+        "city": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "convert",
+      "description": "The convert tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "object"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "ping",
+      "description": "The ping tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "number"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      }
+     }
+    }
+   ],
+   "chat_template_kwargs": {
+    "clear_thinking": true
+   },
+   "response_format": {
+    "type": "json_object"
+   }
+  },
+  "token_ids": [
+   128822,
+   223,
+   983,
+   344,
+   223,
+   864,
+   8490,
+   37,
+   16,
+   6776,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   1133,
+   65,
+   50219,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   5197,
+   4,
+   3418,
+   1281,
+   19836,
+   3320,
+   18,
+   16,
+   1069,
    1718,
    128825,
    10767,
@@ -1647,20 +1259,30 @@
    1281,
    19836,
    3320,
-   61,
+   24313,
+   15165,
+   3362,
+   582,
+   69,
+   1760,
+   582,
+   63324,
+   3362,
+   764,
    19,
    14,
-   582,
-   23315,
-   1760,
    223,
-   21,
+   20,
    16,
    23,
    14,
    5100,
-   63,
-   1718,
+   3031,
+   582,
+   633,
+   3362,
+   5062,
+   24568,
    128825,
    10767,
    1018,
@@ -1686,9 +1308,9 @@
    1281,
    19836,
    3320,
-   19,
-   16,
    18,
+   16,
+   1069,
    1718,
    128825,
    10767,
@@ -1708,15 +1330,15 @@
    "tool_calls": [
     {
      "name": "get_weather",
-     "arguments": "{\"value\": null, \"city\": \"Paris\"}"
+     "arguments": "{\"value\": 0.25, \"city\": \"Paris\"}"
     },
     {
      "name": "convert",
-     "arguments": "{\"value\": [1, \"two\", 3.5, null]}"
+     "arguments": "{\"value\": {\"unit\": \"c\", \"hours\": [1, 2.5, null], \"ok\": false}}"
     },
     {
      "name": "ping",
-     "arguments": "{\"value\": 1.0}"
+     "arguments": "{\"value\": 0.25}"
     }
    ],
    "finish_reason": "tool_calls"

@@ -52,6 +52,16 @@ pub fn declarations() -> Result<&'static [Declaration; 1], Error> {
         .map_err(Clone::clone)
 }
 
+/// Whether an instance of `geometry` can serve the encoder: its config
+/// holds the vision tower the declaration pins.
+pub fn serves(geometry: &crate::geometry::Geometry) -> bool {
+    let Ok([vision]) = declarations() else {
+        return false;
+    };
+    serde_json::from_str::<serde_json::Value>(geometry.document)
+        .is_ok_and(|config| vision.check_config("config.json", &config).is_ok())
+}
+
 /// The names of the checkpoint tensors the declaration reads: the vision
 /// tower, the aligner and the three learned delimiter rows.
 pub fn tensors() -> Result<std::collections::BTreeSet<String>, Error> {
@@ -270,6 +280,11 @@ mod tests {
         assert_eq!(trace[4].rows, 1021);
         assert_eq!(trace.last().unwrap().rows, 1024);
         assert_eq!(MAX_PAYLOAD_BYTES, 9189 * 588 * 4);
+    }
+
+    #[test]
+    fn the_flash_geometry_serves_the_encoder() {
+        assert!(serves(&crate::geometry::FLASH));
     }
 
     #[test]

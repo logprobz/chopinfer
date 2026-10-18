@@ -13,16 +13,19 @@
 
 use std::path::Path;
 
-use model_deepseek41::frontend::COMPONENT;
+use model_deepseek41::frontend::multimodal_component_for;
 use model_deepseek41_contract::frontend::DeepSeekV41Format;
+use model_deepseek41_contract::geometry::FLASH;
 use runtime_host::frontend_corpus::{FrontendCorpusV1, directory_from_env_v1};
 
-/// The package's own export over its component.
+/// The package's own export over flash's image component, since the
+/// corpus sends images: it differs from the text component only in its
+/// `multimodal` member.
 fn corpus() -> FrontendCorpusV1 {
     FrontendCorpusV1 {
         model: "DeepSeek V4.1 Flash",
         export: frontend_format::chat_format_export_v1::<DeepSeekV41Format>(),
-        component: COMPONENT.to_vec(),
+        component: multimodal_component_for(&FLASH).expect("flash serves the image declaration"),
         committed: Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../../fixtures/deepseek41/frontend"),
         tokenizer_dir: directory_from_env_v1(&[

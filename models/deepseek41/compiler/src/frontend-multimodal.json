@@ -1,0 +1,61 @@
+{
+  "multimodal": {
+    "arena": {
+      "rows": 16384,
+      "page_rows": 64,
+      "hidden": 5120,
+      "element": "bf16"
+    },
+    "encoders": [
+      {
+        "name": "deepseek41-vision",
+        "payload_element": "f32",
+        "payload_columns": 588,
+        "maximum_payload_bytes": 21612528,
+        "cost_per_row_milli": 1000
+      }
+    ],
+    "modalities": [
+      {
+        "kind": "image",
+        "part_types": [
+          "image_url"
+        ],
+        "maximum_items": 16,
+        "maximum_bytes": 67108864,
+        "maximum_tokens": 1024,
+        "encoder": 0,
+        "recipe": {
+          "tag": "image.centered-pad.v1",
+          "parameters": {
+            "patch": 14,
+            "downsample": 3,
+            "minimum_pixels": 295936,
+            "maximum_tokens": 1024,
+            "pad": [
+              127,
+              127,
+              127
+            ],
+            "value_divisor": 255.0,
+            "mean": [
+              0.5,
+              0.5,
+              0.5
+            ],
+            "std": [
+              0.5,
+              0.5,
+              0.5
+            ],
+            "alpha_background": "none"
+          }
+        },
+        "layout": "learned-delimiters.v1",
+        "render": {
+          "pad": "<｜deepseek_image｜>"
+        }
+      }
+    ]
+  }
+}

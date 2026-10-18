@@ -3,6 +3,7 @@
 //! `chopinfer-model-deepseek41` helper serves.
 #![forbid(unsafe_code)]
 pub mod checkpoint;
+pub mod encoder_image;
 pub mod frontend;
 pub mod kv;
 pub mod package;

@@ -200,6 +200,26 @@ fn the_plan_request_is_the_host_s() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
+/// Flash's topologies in the manifest tests: each rank count and the most
+/// weight bytes one of its ranks holds.
+const FLASH_TOPOLOGIES: [(u32, u64); 3] = [(1, 3 << 30), (2, 2 << 30), (4, 1 << 30)];
+
+/// The manifest of a flash package of [`FLASH_TOPOLOGIES`].
+fn flash_manifest() -> runtime_bundle::BundleManifestV1 {
+    let components = vec![
+        package_draft::tokenizer_definition(StagedContentV1::bytes(b"{}".to_vec())).unwrap(),
+        package_draft::tokenizer_configuration(StagedContentV1::bytes(b"{}".to_vec())).unwrap(),
+    ];
+    let draft = draft(
+        &FLASH,
+        &FLASH_TOPOLOGIES,
+        components,
+        StagedContentV1::bytes(b"module".to_vec()),
+    )
+    .unwrap();
+    model_compiler_sdk::plan_bundle_manifest_v1(&draft).unwrap()
+}
+
 /// Each topology declares the native mixed-plane pages (890 bytes a token
 /// at flash, 56,960 a page) with the native per-item state, and the BF16
 /// pages with the BF16 state; the manifest requires the mixed-plane
@@ -207,19 +227,8 @@ fn the_plan_request_is_the_host_s() {
 #[test]
 fn the_manifest_declares_each_topology_s_resources() {
     let geometry = &FLASH;
-    let topologies = [(1, 3 << 30), (2, 2 << 30), (4, 1 << 30)];
-    let components = vec![
-        package_draft::tokenizer_definition(StagedContentV1::bytes(b"{}".to_vec())).unwrap(),
-        package_draft::tokenizer_configuration(StagedContentV1::bytes(b"{}".to_vec())).unwrap(),
-    ];
-    let draft = draft(
-        geometry,
-        &topologies,
-        components,
-        StagedContentV1::bytes(b"module".to_vec()),
-    )
-    .unwrap();
-    let manifest = model_compiler_sdk::plan_bundle_manifest_v1(&draft).unwrap();
+    let topologies = FLASH_TOPOLOGIES;
+    let manifest = flash_manifest();
     assert_eq!(manifest.id().as_str(), model_deepseek41::BUNDLE_ID);
     let declared: Vec<_> = manifest
         .target()
@@ -240,6 +249,12 @@ fn the_manifest_declares_each_topology_s_resources() {
         .find(|component| component.id().as_str() == RANK_IMAGE_COMPONENT)
         .unwrap();
     assert_eq!(planned.role().as_str(), RANK_IMAGE_ROLE);
+    assert!(
+        manifest
+            .components()
+            .iter()
+            .any(|component| component.role().as_str() == "chop.frontend.openai.v1")
+    );
     let page_bytes = request_state(geometry, KvStorage::Native, false).page_bytes();
     for (ranks, weight_bytes) in topologies {
         let topology = manifest
@@ -296,6 +311,88 @@ fn the_manifest_declares_each_topology_s_resources() {
     }
 }
 
+/// Each topology declares its per-item state as its one recurrent state
+/// layout, sized for the BF16 rings, the larger state: the host then gives
+/// every request a state slot, names it in each batch and restores prefix
+/// snapshots into it. Create allocates every slot's state before the
+/// serving KV pool, so the host's slot pool reserves nothing beside it, and
+/// the state the host creates the bundle with in either KV format fits the
+/// declared slots, the BF16 state exactly.
+#[test]
+fn each_topology_keeps_its_request_state_in_host_slots() {
+    use runtime_bundle_abi::{
+        PREFIX_CACHE_CAPABILITY_V1, PREFIX_CACHE_STATE_SLOT_CAPABILITY_V1,
+        RECURRENT_STATE_CAPABILITY_V1, RECURRENT_STATE_IN_PLACE_CAPABILITY_V1,
+        RECURRENT_STATE_PREALLOCATED_CAPABILITY_V1,
+    };
+    let manifest = flash_manifest();
+    for (ranks, _) in FLASH_TOPOLOGIES {
+        let topology = manifest.for_topology(&topology_id(&FLASH, ranks)).unwrap();
+        let layouts = topology.recurrent_state_layouts();
+        assert_eq!(layouts.len(), 1);
+        let layout = &layouts[0];
+        assert_eq!(layout.id().as_str(), REQUEST_STATE_ID);
+        assert_eq!(
+            layout.lifetime(),
+            runtime_bundle::BundleStateLifetimeV1::Request
+        );
+        assert_eq!(layout.bytes(), slot_state_bytes(&FLASH, KvStorage::Bf16));
+        assert_eq!(layout.bytes(), 5_668_864);
+        assert_eq!(
+            topology.recurrent_state_bytes_per_slot().unwrap(),
+            layout.bytes()
+        );
+        // The host's state-slot restore needs the prefix cache and request
+        // state slots beside its own capability; a cancelled step's slots
+        // are invalid (`Cancel::Invalidate`), so the host retires its items.
+        let requires = |capability: &str| {
+            topology
+                .resource_requirements()
+                .required_capabilities()
+                .iter()
+                .any(|required| required.as_str() == capability)
+        };
+        for capability in [
+            PREFIX_CACHE_CAPABILITY_V1,
+            PREFIX_CACHE_STATE_SLOT_CAPABILITY_V1,
+            RECURRENT_STATE_CAPABILITY_V1,
+            RECURRENT_STATE_PREALLOCATED_CAPABILITY_V1,
+            RECURRENT_STATE_IN_PLACE_CAPABILITY_V1,
+        ] {
+            assert!(requires(capability), "{capability}");
+        }
+        // With or without verify rows: the state rolls back by position.
+        for verify_rows in [1, 7] {
+            let pool = runtime_host::recurrent::StateSlotPoolV1::new(
+                &topology,
+                DECODE_BATCH as usize,
+                verify_rows,
+            )
+            .unwrap();
+            assert_eq!(pool.reserved_bytes_per_rank(), 0);
+        }
+        let bf16 = topology
+            .kv_formats()
+            .iter()
+            .find(|format| format.dtype() == BundleKvDtypeV1::Bf16)
+            .unwrap()
+            .layout();
+        for served in [1, 3, DECODE_BATCH] {
+            let slots = runtime_bundle::state_slots_v1(served);
+            for format in topology.kv_formats() {
+                let created = topology
+                    .state_bytes_for_v1(format.layout(), Some(served))
+                    .unwrap();
+                assert!(created <= layout.bytes() * slots, "{:?}", format.dtype());
+            }
+            assert_eq!(
+                topology.state_bytes_for_v1(bf16, Some(served)).unwrap(),
+                layout.bytes() * slots
+            );
+        }
+    }
+}
+
 /// Flash's weights fit a device at four ranks only: the package of its
 /// checkpoint serves TP4, and a TP2 request is refused by capacity. A
 /// rank's weights are its arena less the mapped Engram planes, which stay
@@ -303,7 +400,7 @@ fn the_manifest_declares_each_topology_s_resources() {
 #[test]
 fn flash_fits_at_four_ranks_alone() {
     let root = sparse(&FLASH);
-    let served = served_topologies(&root, &FLASH, 4).unwrap();
+    let served = served_topologies(&root, &FLASH, 4, 0).unwrap();
     assert_eq!(
         served.iter().map(|&(ranks, _)| ranks).collect::<Vec<_>>(),
         [4]
@@ -322,14 +419,16 @@ fn flash_fits_at_four_ranks_alone() {
         assert!(weight_plan::device_bytes(plan) + mapped <= plan.arena_bytes);
     }
     eprintln!("flash tp4: {} weight bytes a rank", served[0].1);
-    let error = served_topologies(&root, &FLASH, 2).unwrap_err().to_string();
+    let error = served_topologies(&root, &FLASH, 2, 0)
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("does not fit at 2 ranks"), "{error}");
     std::fs::remove_dir_all(&root).unwrap();
     let Some(geometry) = synthetic() else {
         return;
     };
     let small = sparse(geometry);
-    let served = served_topologies(&small, geometry, 2).unwrap();
+    let served = served_topologies(&small, geometry, 2, 0).unwrap();
     assert_eq!(
         served.iter().map(|&(ranks, _)| ranks).collect::<Vec<_>>(),
         [1, 2, 4]
@@ -389,6 +488,7 @@ fn the_helper_emits_the_synthetic_package() {
     for role in [
         "chop.tokenizer.definition.v1",
         "chop.tokenizer.configuration.v1",
+        "chop.frontend.openai.v1",
     ] {
         assert!(
             manifest
@@ -398,6 +498,11 @@ fn the_helper_emits_the_synthetic_package() {
             "{role}"
         );
     }
+    // The frontend states the geometry's logits width and context.
+    assert_eq!(
+        std::fs::read(emitted.package.root().join("components/frontend.json")).unwrap(),
+        model_deepseek41::frontend::component_for(geometry).unwrap()
+    );
     assert!(
         manifest
             .planned_components()
@@ -412,4 +517,140 @@ fn the_helper_emits_the_synthetic_package() {
     let error = error.to_string();
     assert!(error.contains("--activation-policy"), "{error}");
     std::fs::remove_dir_all(&out).unwrap();
+}
+
+/// Flash's checkpoint stores the vision tower the declaration pins, so it
+/// provides images, which `auto` and `all` serve and a text list leaves
+/// out; a synthetic geometry's smaller tower provides text alone.
+#[test]
+fn a_checkpoint_with_the_tower_provides_images() {
+    use model_deepseek41::preparation::provided_modalities;
+    use runtime_bundle::preparation::{Modality, ModalitySelection};
+    use std::collections::BTreeSet;
+    let root = sparse(&FLASH);
+    assert_eq!(
+        provided_modalities(&root, &FLASH).unwrap(),
+        BTreeSet::from([Modality::Text, Modality::Image])
+    );
+    let request = |modalities| PrepareDirectRequest {
+        path: root.clone(),
+        cache_root: root.join("cache"),
+        tensor_parallel_size: 4,
+        activation_policy: None,
+        modalities,
+    };
+    let served = |modalities| {
+        DeepSeek41Family
+            .direct_modalities(&root, &request(modalities))
+            .map(Option::unwrap)
+    };
+    let both = BTreeSet::from([Modality::Text, Modality::Image]);
+    assert_eq!(served(ModalitySelection::Auto).unwrap(), both);
+    assert_eq!(served(ModalitySelection::All).unwrap(), both);
+    let text = BTreeSet::from([Modality::Text]);
+    assert_eq!(served(ModalitySelection::Only(text.clone())).unwrap(), text);
+    let images = BTreeSet::from([Modality::Image]);
+    assert!(served(ModalitySelection::Only(images)).is_err());
+    std::fs::remove_dir_all(&root).unwrap();
+    let Some(geometry) = synthetic() else {
+        return;
+    };
+    let small = sparse(geometry);
+    assert_eq!(provided_modalities(&small, geometry).unwrap(), text);
+    std::fs::remove_dir_all(&small).unwrap();
+}
+
+/// A package with the planned encoder image serves images: the encoder
+/// image is planned beside the text image, every topology requires the
+/// media capability and holds the encoder's image and buffers, and the
+/// frontend is the image one. The text package has none of them.
+#[test]
+fn an_image_package_plans_the_encoder_and_requires_media_inputs() {
+    use model_deepseek41::encoder_image::{IMAGE_COMPONENT, IMAGE_FORMAT, planned};
+    use model_deepseek41::package::media_bytes;
+    use model_deepseek41_contract::encoder::{MEDIA_CAPABILITY, views::IMAGE_ROLE};
+    use sha2::{Digest, Sha256};
+    let root = sparse(&FLASH);
+    let manifest = |media: bool| {
+        let mut components = vec![
+            package_draft::tokenizer_definition(StagedContentV1::bytes(b"{}".to_vec())).unwrap(),
+        ];
+        if media {
+            components.push(planned(&root, 4).unwrap());
+        }
+        let draft = draft(
+            &FLASH,
+            &FLASH_TOPOLOGIES,
+            components,
+            StagedContentV1::bytes(b"module".to_vec()),
+        )
+        .unwrap();
+        model_compiler_sdk::plan_bundle_manifest_v1(&draft).unwrap()
+    };
+    let hex = |bytes: &[u8]| -> String {
+        Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    };
+    let encoder_bytes = media_bytes(true).unwrap();
+    for media in [false, true] {
+        let manifest = manifest(media);
+        let encoder = manifest
+            .planned_components()
+            .iter()
+            .find(|component| component.id().as_str() == IMAGE_COMPONENT);
+        assert_eq!(encoder.is_some(), media);
+        if let Some(encoder) = encoder {
+            assert_eq!(encoder.role().as_str().as_bytes(), IMAGE_ROLE);
+            assert_eq!(encoder.format().as_str(), IMAGE_FORMAT);
+        }
+        assert!(
+            manifest
+                .planned_components()
+                .iter()
+                .any(|component| component.id().as_str() == RANK_IMAGE_COMPONENT)
+        );
+        assert_eq!(
+            runtime_host::video::media_inputs_required_v1(&manifest),
+            media
+        );
+        let frontend = manifest
+            .components()
+            .iter()
+            .find(|component| component.role().as_str() == "chop.frontend.openai.v1")
+            .unwrap();
+        let expected = if media {
+            model_deepseek41::frontend::multimodal_component_for(&FLASH).unwrap()
+        } else {
+            model_deepseek41::frontend::COMPONENT.to_vec()
+        };
+        assert_eq!(frontend.sha256(), hex(&expected));
+        for (ranks, weight_bytes) in FLASH_TOPOLOGIES {
+            let requirements = manifest
+                .for_topology(&topology_id(&FLASH, ranks))
+                .unwrap()
+                .resource_requirements()
+                .clone();
+            let capabilities: Vec<_> = requirements
+                .required_capabilities()
+                .iter()
+                .map(|capability| capability.as_str())
+                .collect();
+            assert_eq!(capabilities.contains(&MEDIA_CAPABILITY), media);
+            let extra = if media { encoder_bytes } else { 0 };
+            assert_eq!(
+                requirements.minimum_device_memory_bytes(),
+                device_bytes(weight_bytes + extra)
+            );
+        }
+    }
+    // Flash still fits at four ranks with the encoder's bytes.
+    let served = served_topologies(&root, &FLASH, 4, encoder_bytes).unwrap();
+    assert_eq!(
+        served.iter().map(|&(ranks, _)| ranks).collect::<Vec<_>>(),
+        [4]
+    );
+    eprintln!("encoder: {encoder_bytes} bytes a rank");
+    std::fs::remove_dir_all(&root).unwrap();
 }

@@ -9,6 +9,15 @@
 //! with the manifest's per-item state, and the BF16 comparison pages with
 //! the larger state of BF16 window rings. The package serves
 //! autoregressively; the DSpark drafter's state joins with the drafter.
+//!
+//! The per-item state is also the topology's recurrent state layout, so the
+//! host gives every request a state slot, names it in each batch and
+//! restores prefix snapshots into it ([`recurrent_state_layout`]).
+//!
+//! With the planned encoder image (`crate::encoder_image`) the package also
+//! takes image inputs: its frontend declares them, it requires the media
+//! capability, and each rank's device memory also holds the encoder's image
+//! and buffers.
 
 use model_compiler_sdk::{BundleDraftV1, ComponentDraftV1, StagedContentV1, package_draft};
 use model_deepseek41_contract::geometry::Geometry;
@@ -109,12 +118,18 @@ pub fn profiles(geometry: &Geometry, ranks: &[u32]) -> Result<String, BundleErro
 }
 
 /// What the package requires of the host, from what the module exports:
-/// paged serving KV with per-item state, request retirement, scored prompt
-/// rows, prefix snapshots restored into the state slot, the planned text
-/// image and the rows it gathers from the views it maps (the Engram
-/// tables).
-pub const CAPABILITIES: [&str; 10] = [
+/// paged serving KV with per-item state, request state in host slots that
+/// create allocates before the serving KV pool and a cancelled step leaves
+/// invalid (the state advances in place, so the host retires every item of
+/// a step it cancels), request retirement, scored prompt rows, prefix
+/// snapshots restored into the state slot, the planned text image and the
+/// rows it gathers from the views it maps (the Engram tables), and the chat
+/// frontend.
+pub const CAPABILITIES: [&str; 14] = [
     runtime_bundle_abi::SERVING_KV_CAPABILITY_V1,
+    runtime_bundle_abi::RECURRENT_STATE_CAPABILITY_V1,
+    runtime_bundle_abi::RECURRENT_STATE_PREALLOCATED_CAPABILITY_V1,
+    runtime_bundle_abi::RECURRENT_STATE_IN_PLACE_CAPABILITY_V1,
     runtime_bundle_abi::REQUEST_RETIREMENT_CAPABILITY_V1,
     runtime_bundle_abi::PROMPT_ROWS_CAPABILITY_V2,
     runtime_bundle_abi::PREFIX_CACHE_CAPABILITY_V1,
@@ -124,6 +139,7 @@ pub const CAPABILITIES: [&str; 10] = [
     runtime_bundle_abi::STATE_PER_ITEM_CAPABILITY_V1,
     runtime_bundle_abi::weight_plan::WEIGHT_PLAN_CAPABILITY_V1,
     runtime_bundle_abi::HOST_MAPPED_GATHER_CAPABILITY_V1,
+    runtime_bundle_abi::frontend::FRONTEND_CAPABILITY_V1,
 ];
 
 fn id(value: impl Into<String>) -> Result<BundleOpaqueId, BundleError> {
@@ -159,6 +175,16 @@ pub fn device_bytes(weight_bytes: u64) -> u64 {
     weight_bytes + model_compiler_sdk::device::HOST_RESERVE_BYTES
 }
 
+/// The device bytes a rank of a package serving images, or not, holds
+/// beyond its text weights: the encoder's image and buffers
+/// (`encoder_image::device_bytes`), or none.
+pub fn media_bytes(media: bool) -> Result<u64, BundleError> {
+    if !media {
+        return Ok(0);
+    }
+    crate::encoder_image::device_bytes().map_err(BundleError::validation)
+}
+
 /// Refuse `ranks` when the most weight bytes one of its ranks holds,
 /// `weight_bytes`, leave no room on the device.
 pub fn check_fit(ranks: u32, weight_bytes: u64) -> Result<(), String> {
@@ -174,8 +200,12 @@ pub fn check_fit(ranks: u32, weight_bytes: u64) -> Result<(), String> {
 }
 
 /// The draft of the package of `geometry` at each of `topologies` (a rank
-/// count and the most weight bytes one of its ranks holds), with its
-/// tokenizer `components` and its native module.
+/// count and the most text weight bytes one of its ranks holds), with its
+/// tokenizer `components`, the geometry's frontend and its native module.
+/// Components holding the planned encoder image make it a package of image
+/// inputs: the frontend declares images, it requires the media capability,
+/// and each rank's device memory also holds the encoder
+/// ([`media_bytes`]).
 pub fn draft(
     geometry: &'static Geometry,
     topologies: &[(u32, u64)],
@@ -183,6 +213,16 @@ pub fn draft(
     native_module: StagedContentV1,
 ) -> Result<BundleDraftV1, BundleError> {
     let mut components = components;
+    let media = components
+        .iter()
+        .any(|component| component.id().as_str() == crate::encoder_image::IMAGE_COMPONENT);
+    let frontend = if media {
+        crate::frontend::multimodal_component_for(geometry)
+    } else {
+        crate::frontend::component_for(geometry)
+    }
+    .map_err(BundleError::validation)?;
+    components.push(package_draft::frontend(StagedContentV1::bytes(frontend))?);
     components.push(ComponentDraftV1::planned(
         id(RANK_IMAGE_COMPONENT)?,
         id(RANK_IMAGE_ROLE)?,
@@ -200,6 +240,7 @@ pub fn draft(
                 geometry,
                 ranks,
                 weight_bytes,
+                media,
                 components.clone(),
                 native_module.clone(),
             )
@@ -216,6 +257,28 @@ fn state_layout(
     BundleStateLayoutV1::new(
         id(REQUEST_STATE_ID)?,
         slot_state_bytes(geometry, storage),
+        256,
+        BundleStateLifetimeV1::Request,
+    )
+}
+
+/// The topology's recurrent state layout: the per-item state, sized for
+/// the most a slot holds in either KV format (the BF16 rings). The host
+/// names a slot of it for every request in each batch, which the bundle
+/// places the request's state in (`Placement::Host`), and restores prefix
+/// snapshots into it. Create allocates every slot's state before the
+/// serving KV pool (`chop.recurrent-state.preallocated.v1`), so the host
+/// reserves nothing more for it: the pool is sized from what the state
+/// leaves. The state rolls back by position, so a verify row needs no
+/// copy of it.
+pub fn recurrent_state_layout(geometry: &Geometry) -> Result<BundleStateLayoutV1, BundleError> {
+    BundleStateLayoutV1::new(
+        id(REQUEST_STATE_ID)?,
+        [KvStorage::Native, KvStorage::Bf16]
+            .map(|storage| slot_state_bytes(geometry, storage))
+            .into_iter()
+            .max()
+            .unwrap_or_default(),
         256,
         BundleStateLifetimeV1::Request,
     )
@@ -244,10 +307,12 @@ fn topology_draft(
     geometry: &'static Geometry,
     ranks: u32,
     weight_bytes: u64,
+    media: bool,
     components: Vec<ComponentDraftV1>,
     native_module: StagedContentV1,
 ) -> Result<BundleDraftV1, BundleError> {
     admission::check_ranks(geometry, ranks).map_err(BundleError::validation)?;
+    let weight_bytes = weight_bytes + media_bytes(media)?;
     check_fit(ranks, weight_bytes).map_err(BundleError::validation)?;
     let native = native_layout(geometry)?;
     let bf16 = package_draft::paged_kv_layout(
@@ -262,10 +327,13 @@ fn topology_draft(
         bf16,
         state_layout(geometry, KvStorage::Bf16)?,
     )?;
-    let capabilities = CAPABILITIES
+    let mut capabilities = CAPABILITIES
         .iter()
         .map(|capability| id(*capability))
         .collect::<Result<Vec<_>, _>>()?;
+    if media {
+        capabilities.push(id(model_deepseek41_contract::encoder::MEDIA_CAPABILITY)?);
+    }
     let buckets = package_draft::graph_buckets(
         &components,
         DECODE_BATCH,
@@ -286,6 +354,7 @@ fn topology_draft(
         state_layout(geometry, KvStorage::Native)?,
     )
     .with_kv_formats(formats)
+    .with_recurrent_state_layouts(vec![recurrent_state_layout(geometry)?])
     .with_batch_limits(
         BundleBatchLimitsV1::new(DECODE_BATCH, PREFILL_TOKENS)?
             .with_prefill_granule(PREFILL_GRANULE)?

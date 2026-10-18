@@ -342,6 +342,23 @@ fn the_served_format_renders_the_pairs_it_serves() {
     );
 }
 
+/// With the image declaration, pair 5 renders as the vendor encodes it:
+/// each image at its placeholder, which the host expands into the image's
+/// span.
+#[test]
+fn the_image_frontend_renders_the_image_pair() {
+    let frontend = PairedFrontendV1::chat_format::<DeepSeekV41Format>(
+        model_deepseek41::frontend::multimodal_descriptor(),
+    )
+    .unwrap();
+    let rendered = frontend
+        .render_chat(served_request(5))
+        .unwrap_or_else(|error| panic!("pair 5: {}", error.message));
+    let expected = String::from_utf8(read("test_output_5.txt")).unwrap();
+    assert_eq!(rendered.prompt, expected);
+    assert_eq!(rendered.media.len(), 2);
+}
+
 #[test]
 fn the_default_request_thinks_at_high_effort() {
     let frontend = PairedFrontendV1::chat_format::<DeepSeekV41Format>(descriptor()).unwrap();

@@ -419,6 +419,23 @@ class InventoryTests(unittest.TestCase):
                 self.write('models/outside', 'exists')
                 self.refused(VALID + text, f"{LABEL}.{section}.{key}[0]: invalid path '../outside'")
 
+    def test_the_publisher_owns_every_repository_the_model_names(self):
+        text = VALID.replace('checkpoint_env = "M3"\n', 'checkpoint_env = "M3"\npublisher = "m3-org"\n')
+        self.write("models/m3/frontend.json", json.dumps({"tokenizer": {"repository": "m3-org/M3"}}))
+        self.write("fixtures/m3/source.json", json.dumps([{"repository": "https://github.com/m3-org/code"}]))
+        self.write("models/m3/notes.json", "not JSON")
+        models = self.load(text)
+        self.assertEqual(models[0].publisher, "m3-org")
+        inventory.check_files(models, self.root)
+        self.write("fixtures/m3/export.json", json.dumps({"pin": {"repository": "someone/M3-FP4"}}))
+        self.refused(text, "fixtures/m3/export.json: repository 'someone/M3-FP4' is not m3-org's, the "
+                           "publisher models/m3/model.toml declares", files=True)
+        self.write("fixtures/m3/export.json", json.dumps({"repository": "m3-org-mirror/M3"}))
+        self.refused(text, "fixtures/m3/export.json: repository 'm3-org-mirror/M3' is not m3-org's, the "
+                           "publisher models/m3/model.toml declares", files=True)
+        self.refused(VALID.replace('checkpoint_env = "M3"\n', 'checkpoint_env = "M3"\npublisher = "m3 org"\n'),
+                     f"{LABEL}: publisher must be a Hugging Face organization name")
+
     def test_unknown_top_and_role_keys_are_closed(self):
         self.refused('extra = 1\n' + VALID, f"{LABEL}: unknown keys ['extra']")
         self.refused(VALID + 'unknown = true\n', f"{LABEL}: unknown keys in [compiler] ['unknown']")
@@ -540,6 +557,9 @@ class InventoryTests(unittest.TestCase):
         inventory.check_files(models, root)
         for model in models:
             conformance_suite(root, model)
+        # Each in-tree model names its author, whose checkpoints alone its JSON names.
+        for model in models:
+            self.assertIsNotNone(model.publisher, f'{model.directory}/model.toml: declare its publisher')
         self.assertEqual(inventory.shipped(root), tuple(model.name for model in models))
         self.assertEqual(inventory.released(root), tuple(model.name for model in models if model.release.enabled))
         # An unreleased model says so explicitly until it qualifies.

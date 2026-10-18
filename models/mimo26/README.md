@@ -14,7 +14,10 @@ live in `crates/kernels-sm120`, fixtures in `fixtures/mimo26`. Run `nice -n 19
 bash ci/cpu.sh` from the workspace root.
 
 `checkpoints.json` names the pinned checkpoints (MOPD, the default, and RL);
-registration does not imply numerical qualification. `checkpoint-files.json`
+registration does not imply numerical qualification. A checkpoint whose
+metadata matches no registered lock is served under a local identity with
+BF16 KV only
+([compatible checkpoints](../../docs/compatible-checkpoints.md#mimo-v26-flash-checkpoints)). `checkpoint-files.json`
 records each source file's size and SHA-256, taken from the Hugging Face tree
 API at the pinned revision (for ordinary Git blobs, after checking the local
 bytes against the Git blob ID). Do not refresh it from an unverified local

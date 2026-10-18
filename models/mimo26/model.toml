@@ -4,6 +4,9 @@
 schema = "chopinfer-model-inventory-v1"
 # CPU CI reads CHOPINFER_MIMO_CHECKPOINT and CHOPINFER_MIMO_TOKENIZER_DIR.
 checkpoint_env = "MIMO"
+# The model author: the only publisher whose checkpoints the model's JSON
+# names (check_publishers in tools/model_sdk/inventory.py).
+publisher = "XiaomiMiMo"
 
 [bundle]
 package = "bundle-mimo26"

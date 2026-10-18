@@ -16,7 +16,7 @@ weights: the bundle's weight plan (`models/qwen38/contract/src/weight_plan.rs`,
 built from the same placement) produces every arena from the checkpoint on
 each load ([direct weight loading](direct-loading.md)). One package serves
 every topology the checkpoint's precision serves (the FP8 checkpoint and both
-mixed NVFP4 exports serve TP2 and TP4); at TP2 the n-gram table is kept in
+mixed NVFP4 layouts serve TP2 and TP4); at TP2 the n-gram table is kept in
 host memory by the device capacity rule. Vision tensors form a separate encoder image; the MTP
 drafter's tensors are placed with the main layers.
 
@@ -132,8 +132,8 @@ tests pin its digest (`contract/tests/fixtures/projections/declaration.sha256`).
   lookup launcher (`projections::legacy_lookup`).
 
 The port onto the declaration was byte-identical (2026-10-06): `kernels.lock`,
-the fake-host journals and snapshots for the FP8 checkpoint and NVIDIA's
-mixed export at TP4, and the `qwen38-load-direct digest` ledgers did not
+the fake-host journals and snapshots for the FP8 checkpoint and the
+`nvfp4-routed-fp8-mtp` layout at TP4, and the `qwen38-load-direct digest` ledgers did not
 change.
 
 An unused format mix inside the declared offers is data only, as the
@@ -144,10 +144,10 @@ versions (`prepared::admitted`). For each operation port and each generated
 or registered capability of the native inventory that binding can match to
 it, the table holds the views of the port's operation without a static
 activation scale and, where binding accepts one, with it; it also holds the
-F32 form of each norm an export may store in F32. A change to any of these,
+F32 form of each norm a checkpoint may store in F32. A change to any of these,
 a layout version alone included, changes the weight contract, and an edit
 that changes none of them leaves it unchanged. Tests check the table
-against both mixed exports and crafted components, not against every
+against both mixed layouts and crafted components, not against every
 component create admits. The drafter's expert operations, their ports and
 the MTP layer's BF16-only dense compositions are declaration data. Model
 code still holds the view derivation and binding checks in
@@ -160,9 +160,11 @@ declaration does not. CPU tests generate MXFP8 grouped and NVFP4 dense
 offers from a declaration that offers them; neither has lock records,
 adoptions or GPU evidence.
 
-Both mixed NVFP4 exports serve at TP2 and TP4 with MTP. Their formats,
-F32 norm weights and qualification results are in
-[quantized checkpoints](quantized-checkpoints.md#qwen-coverage).
+Both mixed NVFP4 layouts serve at TP2 and TP4 with MTP. Their formats and
+F32 norm weights are in
+[quantized checkpoints](quantized-checkpoints.md#qwen-coverage); a mixed
+checkpoint is qualified as an
+[external variant](../tools/qual/README.md#external-variants).
 
 ## Packaging
 
@@ -232,7 +234,7 @@ and ring also hold the drafter's layer, and the bundle as drafter with the
 drafter component `rank-images` (the drafter's weights are views of the text
 image). Mixed precision runs the drafter when its MTP layer has a composition
 for every format it stores, BF16 dense projections and experts the main
-layers' grouped compositions bind, as both mixed NVFP4 exports do. Otherwise
+layers' grouped compositions bind, as both mixed NVFP4 layouts do. Otherwise
 `--drafter mtp` is refused, naming the tensor and its format, and
 `chopinfer-model-qwen38` selects the autoregressive profile. The bundle
 checks the drafter's views at create (`views::validate_drafter`).

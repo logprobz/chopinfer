@@ -203,15 +203,16 @@ def mimo_registration(tree, checkpoint, config, supported, scratch, geometry_id)
 
 
 def mimo_refusals(helper, declarations, refusals, env):
+    # The local identity's refusal follows the registered ones'.
     names = [declarations["default"], *sorted(name for name in declarations["checkpoints"]
-                                             if name != declarations["default"])]
+                                             if name != declarations["default"]), "local"]
     for name, root, expected in refusals:
         assert not list(root.rglob("*.safetensors")), "refusal checkpoint contains tensor headers"
         for ranks in (2, 4):
             reply = probe(helper, root, ranks, env)
             assert reply["result"] == "probe" and not reply["compatible"], reply
             reason = reply["reason"]
-            assert reason.startswith("not a pinned MiMo V2.6 Flash checkpoint ("), reason
+            assert reason.startswith("not a supported MiMo V2.6 Flash checkpoint ("), reason
             start = reason.index(name + ": ") + len(name) + 2
             end = min([reason.find("; " + other + ": ", start) for other in names
                        if reason.find("; " + other + ": ", start) >= 0] or [len(reason) - 1])

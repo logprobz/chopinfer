@@ -17,10 +17,10 @@ const F32_DECODE: [&str; 2] = [
 ];
 const F32_WIDE: &str = "chop_comm_qwen38_allreduce_hc_f32_wide_r4_v1";
 
-/// The norm weights the local-inference-lab export stores in F32: every
-/// main layer's two hyper-connection norms, the final mixer's and the three
-/// PLE norms. Its MTP norms are BF16.
-pub(super) fn local_lab_norms(shape: Shape) -> BTreeSet<String> {
+/// The norm weights the MXFP8-dense layout stores in F32: every main
+/// layer's two hyper-connection norms, the final mixer's and the three PLE
+/// norms. Its MTP norms are BF16.
+pub(super) fn mxfp8_dense_norms(shape: Shape) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     for layer in 0..shape.layers() {
         for sublayer in ["attn", "mlp"] {
@@ -40,7 +40,7 @@ pub(super) fn local_lab_norms(shape: Shape) -> BTreeSet<String> {
 }
 
 /// A TP4 host serving `served` sequences with MXFP8 dense projections and
-/// NVFP4 experts and lookup, as local-lab's export prepares, whose rank views
+/// NVFP4 experts and lookup, as the MXFP8-dense layout prepares, whose rank views
 /// store `f32_norms` as F32.
 fn prepared(served: u32, f32_norms: BTreeSet<String>) -> Rc<FakeHost> {
     let host = Rc::new(FakeHost::default());
@@ -94,13 +94,13 @@ fn bf16_comm() -> Vec<&'static str> {
     symbols
 }
 
-/// Local-lab's image binds every main-layer and PLE norm consumer to its
+/// The MXFP8-dense image binds every main-layer and PLE norm consumer to its
 /// F32 form: the grouped norm rows, the one-shot and phased prefill
 /// all-reduces, and the decode and wide all-reduces of graph buckets.
 #[test]
-fn local_lab_f32_norms_launch_their_f32_forms_at_tp4() {
+fn mxfp8_dense_f32_norms_launch_their_f32_forms_at_tp4() {
     let shape = Shape::TP4;
-    let host = prepared(100, local_lab_norms(shape));
+    let host = prepared(100, mxfp8_dense_norms(shape));
     let mut instance = create(&host);
     let names = resolved(&host);
     for symbol in [F32_NORM, F32_WIDE]
@@ -157,9 +157,9 @@ fn local_lab_f32_norms_launch_their_f32_forms_at_tp4() {
 
 /// Graph buckets above 32 rows reduce through the F32 wide entry.
 #[test]
-fn local_lab_f32_norms_take_the_f32_wide_entry() {
+fn mxfp8_dense_f32_norms_take_the_f32_wide_entry() {
     let shape = Shape::TP4;
-    let host = prepared(100, local_lab_norms(shape));
+    let host = prepared(100, mxfp8_dense_norms(shape));
     let mut instance = create(&host);
     let prompts = (0..40_u32)
         .map(|slot| [slot % 50 + 7, 9])
@@ -294,7 +294,7 @@ fn f32_views_without_an_f32_consumer_fail_create() {
 /// Norm weights are replicated: ranks storing different dtypes fail create.
 #[test]
 fn ranks_storing_different_norm_dtypes_fail_create() {
-    let host = prepared(SERVED, local_lab_norms(Shape::TP4));
+    let host = prepared(SERVED, mxfp8_dense_norms(Shape::TP4));
     host.f32_norm_rank.set(Some(1));
     let config = configuration_with(
         false,

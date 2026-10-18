@@ -1,4 +1,4 @@
-use super::{fixtures, prototype};
+use super::{MIXED, fixtures, prototype};
 use projection_spec::derive::{DerivationInput, ImportedProjections, InstanceKey, Topology};
 use projection_spec::{Declaration, Dim, Geometry, LayerIndices};
 use std::collections::{BTreeMap, BTreeSet};
@@ -177,40 +177,35 @@ fn payload_recipe(record: &kernel_core::weight_transform::WeightRecord) -> Strin
 
 #[test]
 fn fp8_tp2_served_graph_matches_native_variant_specs_records_and_stages() {
-    assert_eq!(served_graph("fp8", 2, Layers::Representative, 1805), 14);
+    assert_eq!(served_graph(false, 2, Layers::Representative, 1805), 14);
 }
 
 #[test]
 fn fp8_tp4_served_graph_matches_native_variant_specs_records_and_stages() {
-    assert_eq!(served_graph("fp8", 4, Layers::Representative, 1805), 14);
+    assert_eq!(served_graph(false, 4, Layers::Representative, 1805), 14);
 }
 
 #[test]
-fn nvidia_tp4_served_graph_matches_native_variant_specs_records_and_stages() {
-    assert_eq!(served_graph("nvidia", 4, Layers::Representative, 1406), 10);
+fn nvfp4_routed_tp4_served_graph_matches_native_variant_specs_records_and_stages() {
+    assert_eq!(served_graph(true, 4, Layers::Representative, 1406), 10);
 }
 
 #[test]
 #[ignore = "every layer of every served graph; about 50 minutes, run with --ignored"]
 fn complete_served_graphs_match_native_variant_specs_records_and_stages() {
-    served_graph("fp8", 2, Layers::Every, 16055);
-    served_graph("fp8", 4, Layers::Every, 16055);
-    served_graph("nvidia", 4, Layers::Every, 15656);
+    served_graph(false, 2, Layers::Every, 16055);
+    served_graph(false, 4, Layers::Every, 16055);
+    served_graph(true, 4, Layers::Every, 15656);
 }
 
-/// Derive and compare one served graph; returns the number of record recipes
-/// whose whole payload bytes it compared.
-fn served_graph(export: &str, ranks: u32, layers: Layers, operations: usize) -> usize {
-    let text = match export {
-        "fp8" => include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/projections/fp8.json"
-        )),
-        "nvidia" => include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/projections/nvidia.json"
-        )),
-        _ => unreachable!(),
+/// Derive and compare one served graph, of the FP8 export or the `mixed`
+/// layout; returns the number of record recipes whose whole payload bytes
+/// it compared.
+fn served_graph(mixed: bool, ranks: u32, layers: Layers, operations: usize) -> usize {
+    let (export, text) = if mixed {
+        (MIXED.name(), MIXED.text())
+    } else {
+        ("fp8", fixtures::exports::FP8)
     };
     let mut metadata = fixtures::fixture(text);
     fixtures::owner_scope(&crate::projections::declaration(4).unwrap(), &mut metadata);
@@ -226,7 +221,7 @@ fn served_graph(export: &str, ranks: u32, layers: Layers, operations: usize) -> 
     let mut bound = fixtures::bind(&d, &g, &metadata).unwrap();
     let mut graph = d.clone();
     graph.projections.sort_by_key(|p| p.assembly.is_empty());
-    if export == "nvidia" {
+    if mixed {
         for drafter in d.drafters.iter() {
             graph.omit_drafter(&drafter.id).unwrap();
         }
@@ -437,7 +432,7 @@ fn served_graph(export: &str, ranks: u32, layers: Layers, operations: usize) -> 
         assert!(variants.contains("qwen38/legacy-fused-dense.v1"));
         assert_eq!(
             variants.contains("qwen38/legacy-fragment-experts.v1"),
-            export == "fp8"
+            !mixed
         );
     }
     payloads.len()

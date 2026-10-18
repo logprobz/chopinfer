@@ -49,7 +49,7 @@ class GlmInventory(ModelRequirements):
         self.assertEqual(self.model.contributor.roots, ('model-glm5next',))
         self.assertEqual(self.model.contributor.fixtures, tuple(
             f'models/glm5next/contract/fixtures/{name}' for name in
-            ('config.json', 'nvfp4-config.json', 'nvidia-nvfp4-config.json')))
+            ('config.json',)))
 
     def test_cpu_checks(self):
         self.assert_references('test_reference.py', 'test_encoder_reference.py', 'test_nvfp4_reference.py')

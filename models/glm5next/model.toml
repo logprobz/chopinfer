@@ -4,13 +4,12 @@
 schema = "chopinfer-model-inventory-v1"
 # CPU CI reads CHOPINFER_GLM5NEXT_CHECKPOINT: zai-org/GLM-5.3-Flash at
 # revision eb9eb208eb0d988989d07a6a12d0fdeb5f52574a (checkpoint-files.json).
-# CHOPINFER_GLM5NEXT_NVFP4_CHECKPOINT is a second checkpoint of the same
-# geometry: local-inference-lab/GLM-5.3-Flash-NVFP4 at revision
-# 175ae8ce3b5af842b0d0140dbeb43e9cfc557c49 (checkpoint-files-nvfp4.json).
-# CHOPINFER_GLM5NEXT_NVIDIA_NVFP4_CHECKPOINT is a third:
-# nvidia/GLM-5.3-Flash-NVFP4 at revision
-# da920bb0b9f4a06727223a349e55468e38352348 (checkpoint-files-nvidia-nvfp4.json).
+# CHOPINFER_GLM5NEXT_EXTRA_CHECKPOINTS names further checkpoints of the same
+# geometry in any admitted layout (`:` separated) for the header checks.
 checkpoint_env = "GLM5NEXT"
+# The model author: the only publisher whose checkpoints the model's JSON
+# names (check_publishers in tools/model_sdk/inventory.py).
+publisher = "zai-org"
 
 [bundle]
 package = "bundle-glm5next"
@@ -37,8 +36,6 @@ cdylibs = ["bundle_glm5next"]
 roots = ["model-glm5next"]
 fixtures = [
   "models/glm5next/contract/fixtures/config.json",
-  "models/glm5next/contract/fixtures/nvfp4-config.json",
-  "models/glm5next/contract/fixtures/nvidia-nvfp4-config.json",
 ]
 
 [[contributor.tests]]
@@ -55,7 +52,7 @@ lib = true
 cases = [
   { name = "pinned config routes at TP4", case = "preparation::tests::probe_routes_the_pinned_config_at_tp4" },
   { name = "another family and unlisted geometry refused", case = "preparation::tests::probe_refuses_another_family_and_an_unlisted_geometry_before_headers" },
-  { name = "layout selects its serving profile", case = "preparation::tests::the_checkpoint_layout_selects_its_serving_profile" },
+  { name = "every layout selects the MTP profile", case = "preparation::tests::every_layout_selects_the_mtp_profile" },
 ]
 
 [[contributor.tests]]

@@ -214,8 +214,8 @@ fn configured_fixture() -> Value {
     base["configurations"] = json!({
         "kv-bf16": {"checks": ["teacher_arms", "prefix_exact"], "quick": ["teacher_arms"],
                     "serving": {"kv_cache_dtype": "bf16"}, "from_default": ["fp8_teacher"]},
-        "nvfp4": {"checks": ["teacher", "paired_teacher"], "quick": ["teacher"],
-                  "serving": {"checkpoint_identity": "e".repeat(64), "profile_name": "tp4-mtp-nvfp4"},
+        "requant": {"checks": ["teacher", "paired_teacher"], "quick": ["teacher"],
+                  "serving": {"checkpoint_identity": "e".repeat(64), "profile_name": "tp4-mtp-requant"},
                   "references": {"teacher": reference}},
         "dcp2": {"checks": ["teacher", "api", "media"], "quick": ["teacher", "api"],
                  "serving": {"context_parallel_size": 2}}
@@ -284,24 +284,73 @@ fn a_configuration_expands_its_serving_facts_onto_the_base() {
     );
     // A checkpoint configuration names its own checkpoint wherever a rule
     // pinned the base's, and its profile.
-    let nvfp4 = declaration::expand(&base, "nvfp4").unwrap();
-    let identity = &base["configurations"]["nvfp4"]["serving"]["checkpoint_identity"];
+    let requant = declaration::expand(&base, "requant").unwrap();
+    let identity = &base["configurations"]["requant"]["serving"]["checkpoint_identity"];
     let old = &base["qualification"]["checkpoint"]["checkpoint_identity"];
-    let teacher = rules(&nvfp4["checks"]["teacher"]);
+    let teacher = rules(&requant["checks"]["teacher"]);
     assert!(teacher.iter().any(|(_, rule)| rule["value"] == *identity));
     assert!(!teacher.iter().any(|(_, rule)| rule["value"] == *old));
     assert!(teacher.iter().any(|(_, rule)| rule["path"]
         == json!([PROFILE[0], PROFILE[1], PROFILE[2], PROFILE[3], "name"])
-        && rule["value"] == "tp4-mtp-nvfp4"));
+        && rule["value"] == "tp4-mtp-requant"));
     // The paired margins name the reference they apply to: its own.
-    let pin = &nvfp4["references"]["teacher"]["sha256"];
+    let pin = &requant["references"]["teacher"]["sha256"];
     assert_ne!(pin, &base["references"]["teacher"]["sha256"]);
-    let margins = &nvfp4["checks"]["paired_teacher"]["constants"]["paired_teacher"]["PROFILE_POLICIES"]
+    let margins = &requant["checks"]["paired_teacher"]["constants"]["paired_teacher"]["PROFILE_POLICIES"]
         ["value"];
     assert!(!margins.as_object().unwrap().is_empty());
     for policy in margins.as_object().unwrap().values() {
         assert_eq!(&policy["reference_sha256"], pin);
     }
+}
+
+#[test]
+fn an_external_variant_repins_as_a_checkpoint_configuration_does() {
+    let mut base = configured_fixture();
+    let configured = base["configurations"]["requant"].clone();
+    base.as_object_mut().unwrap().shift_remove("configurations");
+    let mut reference = configured["references"]["teacher"].clone();
+    reference["path"] = json!("teacher.json");
+    let mut pin = base["qualification"]["checkpoint"].clone();
+    pin["lock"] = json!("checkpoint-files.json");
+    pin["checkpoint_identity"] = configured["serving"]["checkpoint_identity"].clone();
+    let overlay = json!({"schema": "chopinfer-qual-variant/v1", "model": "example",
+                         "checkpoint": "EXAMPLE_REQUANT", "checks": configured["checks"],
+                         "quick": configured["quick"],
+                         "serving": {"profile_name": "tp4-mtp-requant"},
+                         "references": {"teacher": reference}, "qualification": {"checkpoint": pin}});
+    let expanded = declaration::external(&base, "requant", &overlay, &"1".repeat(64)).unwrap();
+    declaration::validate(&expanded, &modules()).unwrap();
+    assert_eq!(expanded["variant"], "requant");
+    assert_eq!(
+        expanded["variant_source"],
+        json!({"overlay": "example/requant.json", "sha256": "1".repeat(64)})
+    );
+    // The serving identity defaults to the pin's, which every rule that
+    // held the base's now holds, beside the variant's profile.
+    let identity = &configured["serving"]["checkpoint_identity"];
+    let teacher = rules(&expanded["checks"]["teacher"]);
+    assert!(teacher.iter().any(|(_, rule)| rule["value"] == *identity));
+    assert!(!teacher.iter().any(
+        |(_, rule)| rule["value"] == base["qualification"]["checkpoint"]["checkpoint_identity"]
+    ));
+    assert!(teacher.iter().any(|(_, rule)| rule["path"]
+        == json!([PROFILE[0], PROFILE[1], PROFILE[2], PROFILE[3], "name"])
+        && rule["value"] == "tp4-mtp-requant"));
+    let sha256 = &configured["references"]["teacher"]["sha256"];
+    let margins = &expanded["checks"]["paired_teacher"]["constants"]["paired_teacher"]["PROFILE_POLICIES"]
+        ["value"];
+    for policy in margins.as_object().unwrap().values() {
+        assert_eq!(&policy["reference_sha256"], sha256);
+    }
+    // What it owns resolves under the variant root; it keeps no base reference.
+    let mut owned = configured["references"]["teacher"].clone();
+    owned["path"] = json!({"env": declaration::VARIANTS_ENV, "path": "example/teacher.json"});
+    assert_eq!(expanded["references"], json!({"teacher": owned}));
+    assert_eq!(
+        expanded["qualification"]["checkpoint"]["lock"],
+        "example/checkpoint-files.json"
+    );
 }
 
 #[test]

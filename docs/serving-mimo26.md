@@ -26,9 +26,12 @@ references of the MOPD checkpoint and requires GSM8K of at least 193/200 in
 each arm. In 34 stability runs MOPD
 scored 193 or 194; the extra misses were near-tie flips (items 85 and 87).
 
-The family helper accepts either pinned checkpoint (MOPD or RL) whose config,
-index and tokenizer files match `models/mimo26/checkpoint-files.json`, and
-serves it under that checkpoint's name. The DFlash drafter is
+The family helper serves either pinned checkpoint (MOPD or RL) whose config,
+index and tokenizer files match `models/mimo26/checkpoint-files.json` under
+that checkpoint's name. It serves any other MiMo V2.6 Flash checkpoint in the
+encodings MiMo serves under a local identity, `local-<digest>`, with BF16 KV
+only ([MiMo checkpoints](compatible-checkpoints.md#mimo-v26-flash-checkpoints)).
+The DFlash drafter is
 `dflash/dflash_draft_model.safetensors` inside the checkpoint. Serving checks
 safetensors headers and lengths; only `chopinfer verify --model` checks tensor
 payloads (see
@@ -200,8 +203,9 @@ A checkpoint added through the
   `models/mimo26/geometries/v26-flash.json`. The `engine_domain` section of
   `models/mimo26/geometries/supported.json` records MiMo's current engine
   restrictions.
-- Its identity in `models/mimo26/checkpoints.json`. To serve FP8 KV, add
-  `fp8_kv_scales`: one `[K, V]` pair of finite positive f32 scales per
+- For an official release, its identity in `models/mimo26/checkpoints.json`,
+  which serves it under its own name; without one it is served under a local
+  identity with BF16 KV only. To serve FP8 KV, add `fp8_kv_scales`: one `[K, V]` pair of finite positive f32 scales per
   global-attention layer, in layer order. Compute them with
   `kernel_core::kv_fp8::calibrated_scale` on 16 times the per-layer K/V amax
   from an f64 oracle over representative teacher texts. The shipped MOPD/RL

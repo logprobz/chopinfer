@@ -36,13 +36,14 @@ pub fn layout(shape: Shape, quantization: &Layout, rank: u32) -> Computed {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use model_glm5next_contract::quantization::LAYOUTS as QUANTIZATIONS;
+    use model_glm5next_contract::quantization::representative_layouts;
 
-    /// For every rank and checkpoint layout, the cached layout is the one
-    /// computed fresh, and later requests return that same computation.
+    /// For every rank and representative checkpoint layout, the cached layout
+    /// is the one computed fresh, and later requests return that same
+    /// computation.
     #[test]
     fn cached_layouts_equal_fresh_ones() {
-        for quantization in QUANTIZATIONS {
+        for quantization in representative_layouts() {
             for rank in 0..Shape::TP4.ranks() {
                 let fresh = checkpoint_layout(Shape::TP4, quantization, rank);
                 let cached = layout(Shape::TP4, quantization, rank);

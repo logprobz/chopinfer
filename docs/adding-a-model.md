@@ -74,6 +74,7 @@ its directory; `model.toml` records role targets and operational selections:
 ```toml
 schema = "chopinfer-model-inventory-v1"
 checkpoint_env = "M3"        # optional: CHOPINFER_M3_CHECKPOINT in CPU CI
+publisher = "m3-org"         # optional: the only owner of repositories its JSON names
 
 [bundle]
 package = "bundle-m3"
@@ -86,6 +87,13 @@ bin = ["chopinfer-model-m3", "m3-package"]
 [contract]
 package = "model-m3-contract"
 ```
+
+`publisher` names the model's author. Every `repository` value in the
+model's JSON (under its directory and its fixture root) must then be one of
+that publisher's repositories, so the tree names only the author's
+checkpoints; another checkpoint is admitted by its layout and qualified as an
+[external variant](../tools/qual/README.md#external-variants). Each in-tree
+model declares one.
 
 Operational sections are optional and reject unknown keys. Declare them when
 the model participates in the corresponding workflow:
@@ -255,8 +263,8 @@ and a test pins its digest. From that one file:
 Register a variant only for arithmetic the shared schema cannot express,
 such as a source transform, a stateful stage or an existing fused entry kept
 for byte identity, and list the model's variants in its own guide. What a
-new export or rank count needs, and when model code is still required, is in
-[quantized checkpoints](quantized-checkpoints.md#adding-a-family-or-exporter);
+new layout or rank count needs, and when model code is still required, is in
+[quantized checkpoints](quantized-checkpoints.md#adding-a-family-or-layout);
 [the external example](../examples/external-model/README.md) shows a
 declaration with no registered variants.
 

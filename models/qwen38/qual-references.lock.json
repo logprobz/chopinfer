@@ -1992,15 +1992,6 @@
       },
       "schema": "chopinfer.greedy-baseline-rebinding.v1"
     },
-    "306f40834bf15bcdaddd3c1ef338483feb3047f2af0ad7521c921ec9e06a7d05": {
-      "production": {
-        "assembled_fixture_sha256": "126eba2ba6c4755c594c73c80d8f15d567fd5ecf3d09307e3599c7e4e5a6c5e8",
-        "producer": "runner-binding",
-        "refset_sha256": "b1e33b56a9454a48f898b18ca84c5a3f92dbe5fd1541835d14be866142292b48",
-        "workload_sha256": "af1524c8b37e179ed41229bb4e9b390fbba2493b99c6164c49486035812b6354"
-      },
-      "schema": "chopinfer.qwen38.teacher-reference.v2"
-    },
     "3135d002787bc6f7be70ab3e4a4648b2ab1b14ad584058c70aa6d53646da2e3d": {
       "production": {
         "adoption_commit": "b9b610dc73be867ac76e4e8a3b79b4534e2bae89",
@@ -2212,15 +2203,6 @@
         "reference_sha256": "fdc594fd35f668b78f3c490823905c6d22cbbca1de2389f08c21e0e93bbaa4b1"
       },
       "schema": "legacy-integer"
-    },
-    "c21c3ac2468822dad990333cb9e5cf147d8e49e4423e597a433d28cf3de22530": {
-      "production": {
-        "assembled_fixture_sha256": "d66c2dd929198a2d9f63c39c169e867ef27dadb427dfe1bbd9032ae075bed89a",
-        "producer": "runner-binding",
-        "refset_sha256": "6999bea466ffb0e5ecb76cd16215508eb07a8b97c288b39c67fcf24b8dc21006",
-        "workload_sha256": "af1524c8b37e179ed41229bb4e9b390fbba2493b99c6164c49486035812b6354"
-      },
-      "schema": "chopinfer.qwen38.teacher-reference.v2"
     },
     "c53ab8cbca2d52f2ab219137352a1aa970662efd4c85c076cb705461f6cdd5ed": {
       "production": {
@@ -11214,71 +11196,5 @@
       "schema": "chopinfer.refrun.preprocessing.v1"
     }
   },
-  "schema": "chopinfer-qual-references/v1",
-  "configurations": {
-    "local-lab-nvfp4": {
-      "entries": {
-        "exact": {
-          "directory": false,
-          "members": {
-            ".": "c21c3ac2468822dad990333cb9e5cf147d8e49e4423e597a433d28cf3de22530"
-          },
-          "path": "fixtures/qwen38/exports/local-lab-nvfp4/teacher-reference.json"
-        },
-        "reference:teacher": {
-          "directory": false,
-          "members": {
-            ".": "c21c3ac2468822dad990333cb9e5cf147d8e49e4423e597a433d28cf3de22530"
-          },
-          "path": "fixtures/qwen38/exports/local-lab-nvfp4/teacher-reference.json"
-        },
-        "teacher_reference": {
-          "directory": false,
-          "members": {
-            ".": "c21c3ac2468822dad990333cb9e5cf147d8e49e4423e597a433d28cf3de22530"
-          },
-          "path": "fixtures/qwen38/exports/local-lab-nvfp4/teacher-reference.json"
-        },
-        "workload:teacher": {
-          "directory": false,
-          "members": {
-            ".": "c53ab8cbca2d52f2ab219137352a1aa970662efd4c85c076cb705461f6cdd5ed"
-          },
-          "path": "fixtures/qwen38/exports/local-lab-nvfp4/teacher-reference.workload.json"
-        }
-      }
-    },
-    "nvidia-nvfp4": {
-      "entries": {
-        "exact": {
-          "directory": false,
-          "members": {
-            ".": "306f40834bf15bcdaddd3c1ef338483feb3047f2af0ad7521c921ec9e06a7d05"
-          },
-          "path": "fixtures/qwen38/exports/nvidia-nvfp4/teacher-reference.json"
-        },
-        "reference:teacher": {
-          "directory": false,
-          "members": {
-            ".": "306f40834bf15bcdaddd3c1ef338483feb3047f2af0ad7521c921ec9e06a7d05"
-          },
-          "path": "fixtures/qwen38/exports/nvidia-nvfp4/teacher-reference.json"
-        },
-        "teacher_reference": {
-          "directory": false,
-          "members": {
-            ".": "306f40834bf15bcdaddd3c1ef338483feb3047f2af0ad7521c921ec9e06a7d05"
-          },
-          "path": "fixtures/qwen38/exports/nvidia-nvfp4/teacher-reference.json"
-        },
-        "workload:teacher": {
-          "directory": false,
-          "members": {
-            ".": "c53ab8cbca2d52f2ab219137352a1aa970662efd4c85c076cb705461f6cdd5ed"
-          },
-          "path": "fixtures/qwen38/exports/nvidia-nvfp4/teacher-reference.workload.json"
-        }
-      }
-    }
-  }
+  "schema": "chopinfer-qual-references/v1"
 }

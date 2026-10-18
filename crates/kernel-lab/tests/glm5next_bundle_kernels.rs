@@ -3045,15 +3045,15 @@ impl kernel_lab::lab_entry::LabEntry for SumAdd {
 type SharedDownEntries =
     BTreeMap<(String, u32), (kernel_core::contract::InstantiationSpec, Vec<String>)>;
 
-/// The NVFP4 exports' BF16 shared down entries at each graph use (target
-/// and drafter), once per symbol and bucket rows, with the uses sharing
-/// one.
+/// The BF16 shared down entries of the layouts that store the shared
+/// experts in BF16, at each graph use (target and drafter), once per symbol
+/// and bucket rows, with the uses sharing one.
 fn bf16_shared_down_entries(shape: Shape) -> LabResult<SharedDownEntries> {
     use kernel_core::contract::WeightFormat;
     use kernel_core::precision::ExecutionPhase;
     use kernels_sm120::precision::Compute;
     let mut entries = BTreeMap::new();
-    for layout in quantization::LAYOUTS {
+    for &layout in quantization::covering_layouts() {
         let formats = precision::layout_formats(shape, layout)?;
         for id in ["moe.shared.down", "mtp.moe.shared.down"] {
             let &(_, weight) = formats
@@ -3561,7 +3561,7 @@ fn claimed_dense_uses() -> Vec<(
     kernels_sm120::backend::ProjectionOffer,
 )> {
     let mut claimed = Vec::new();
-    for layout in quantization::LAYOUTS {
+    for &layout in quantization::covering_layouts() {
         for (id, weight) in precision::layout_formats(Shape::TP4, layout).unwrap() {
             for (usage, _) in precision::uses(id).unwrap_or_default() {
                 let Some(offer) = plain_offer(id, weight, usage) else {
@@ -3596,7 +3596,7 @@ fn dense_representatives() -> Vec<(
     kernels_sm120::backend::ProjectionOffer,
 )> {
     let mut chosen = BTreeMap::new();
-    for layout in quantization::LAYOUTS {
+    for &layout in quantization::covering_layouts() {
         for (id, weight) in precision::layout_formats(Shape::TP4, layout).unwrap() {
             let Some(decode) = dense_use(id, ExecutionPhase::Decode, 1)
                 .and_then(|usage| plain_offer(id, weight, usage))

@@ -251,16 +251,25 @@ class Client:
                 "health": health}
 
 
+def lock_root(config):
+    """The root a config's checkpoint lock (and the lock a reference's runner
+    binding names) resolves under: an external variant's root, which holds
+    the lock beside its overlay, else the checkout."""
+    return declaration.require_variant_root(config) if declaration.external(config) else ROOT
+
+
 def checkpoint_pin(config=None):
     """The gate's checkpoint pin (`qualification.checkpoint`), checked against
     the repository's checkpoint registry and source lock it names. A model
     with one checkpoint has no registry: its lock is that checkpoint's file
-    list and the pin itself names the repository and revision."""
+    list and the pin itself names the repository and revision. An external
+    variant's lock is under its variant root (`lock_root`)."""
     config = qualification_config() if config is None else config
     pin = config["qualification"]["checkpoint"]
-    files = json.loads((ROOT / pin["lock"]).read_text())
+    root = lock_root(config)
+    files = json.loads((root / pin["lock"]).read_text())
     if "registry" in pin:
-        registry = json.loads((ROOT / pin["registry"]).read_text())
+        registry = json.loads((root / pin["registry"]).read_text())
         files = files[pin["pin"]]
         entry = registry["checkpoints"][pin["pin"]]
         if registry["default"] != pin["pin"] or any(
@@ -401,6 +410,8 @@ def verified_binding(kind, value, config=None, checkpoint=None, *, authenticate_
     spec = config["qualification"]["references"][kind]
     if value.get("binding") is None:
         return reference_binding(value, checkpoint)
+    if declaration.external(config):
+        declaration.require_variant_root(config)
     cache = refcache()
     workload = declared_path(spec["workload"]) if "workload" in spec else reference_workload(reference_path(kind, config, ROOT))
     if workload is None:
@@ -411,7 +422,7 @@ def verified_binding(kind, value, config=None, checkpoint=None, *, authenticate_
     from refs import verify_input
     if authenticate_workload:
         verify_input(config, "workload:" + kind, workload, reference_root())
-    return reference_binding(value, checkpoint, workload)
+    return reference_binding(value, checkpoint, workload, lock_root(config))
 
 
 def reference_workload(path):
@@ -429,7 +440,7 @@ def refcache():
     return cache
 
 
-def reference_binding(value, checkpoint=None, workload=None):
+def reference_binding(value, checkpoint=None, workload=None, locks=None):
     """The reference cache binding of a reference fixture. A fixture without
     a binding block (every tracked fixture until the runner re-emits it)
     keeps its other checks and is reported {"status": "unbound"}. A binding
@@ -438,11 +449,12 @@ def reference_binding(value, checkpoint=None, workload=None):
     cache under
     $CHOPINFER_DATA/refcache/v1 when present (scores); a difference raises
     StaleReference, a ValueError whose message starts with stale_reference
-    and the differing field."""
+    and the differing field. The checkpoint lock the binding names is read
+    under `locks` (an external variant's root), else the working tree."""
     cache = refcache()
     root = cache.default_root()
     store = cache.Store(root) if root is not None and root.is_dir() else None
-    return cache.verify(value, ROOT, checkpoint, store, workload)
+    return cache.verify(value, ROOT, checkpoint, store, workload, lock_root=locks)
 
 
 PINNED_CHECKPOINT_KEYS = ("repository", "revision", "served_model_name", "source_lock_sha256",

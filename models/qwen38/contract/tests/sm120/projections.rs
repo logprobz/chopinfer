@@ -7,6 +7,7 @@ use model_qwen38_contract as model_contract;
 use projection_spec::bind::TensorInfo;
 use projection_spec::{Declaration, Geometry};
 use projections_support::checkpoint::{assert_header_facts, checkpoint_headers};
+use projections_support::exports::{FP8, Layout};
 use projections_support::{bind, fixture, owner_scope};
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -96,21 +97,17 @@ fn digest() -> &'static str {
 }
 
 #[test]
-fn binds_all_three_exports_and_keeps_f32_norm_sources() {
+fn binds_the_fp8_export_and_both_mixed_layouts_and_keeps_f32_norm_sources() {
     for (name, text, count) in [
+        ("fp8", FP8, 152089),
         (
-            "fp8",
-            include_str!("../fixtures/projections/fp8.json"),
-            152089,
-        ),
-        (
-            "nvidia",
-            include_str!("../fixtures/projections/nvidia.json"),
+            Layout::Nvfp4RoutedFp8Mtp.name(),
+            Layout::Nvfp4RoutedFp8Mtp.text(),
             299212,
         ),
         (
-            "local-lab",
-            include_str!("../fixtures/projections/local-lab.json"),
+            Layout::Mxfp8DenseNvfp4.name(),
+            Layout::Mxfp8DenseNvfp4.text(),
             301593,
         ),
     ] {
@@ -140,12 +137,12 @@ fn binds_all_three_exports_and_keeps_f32_norm_sources() {
                     format: FormatId::Bf16,
                 },
             );
-            // Every export binds TP2, TP4 and MTP: the declaration keeps
+            // Every layout binds TP2, TP4 and MTP: the declaration keeps
             // no checkpoint-conditioned refusal.
             assert!(admission.is_ok(), "{name}: {projection}/TP{ranks}");
         }
 
-        if name == "local-lab" {
+        if name == Layout::Mxfp8DenseNvfp4.name() {
             assert_eq!(
                 b.side_tensors
                     .iter()
@@ -172,13 +169,13 @@ fn binds_all_three_exports_and_keeps_f32_norm_sources() {
 }
 #[test]
 fn refuses_unknown_missing_companions_and_partial_encoder_owner() {
-    let mut m = fixture(include_str!("../fixtures/projections/local-lab.json"));
+    let mut m = fixture(Layout::Mxfp8DenseNvfp4.text());
     let d = owner_scope(&projections::declaration(4).unwrap(), &mut m);
     let g = projections::geometry(4).unwrap();
     let name = "model.language_model.layers.0.linear_attn.in_proj_a.weight_scale";
     m.tensors.remove(name);
     assert!(bind(&d, &g, &m).unwrap_err().0.contains(name));
-    let mut m = fixture(include_str!("../fixtures/projections/fp8.json"));
+    let mut m = fixture(FP8);
     let d = owner_scope(&projections::declaration(4).unwrap(), &mut m);
     m.tensors.insert(
         "unexpected.weight".into(),
@@ -223,64 +220,59 @@ fn mixed_topologies_need_no_checkpoint_condition() {
         }
     }
 }
+/// The headers of each checkpoint `CHOPINFER_PROJECTION_HEADERS_QWEN38`
+/// selects (one checkpoint, or a directory whose children are checkpoints)
+/// bind closed coverage. The FP8 export's headers and quantization_config
+/// equal its capture. A checkpoint with a synthesized layout's tensor count
+/// holds exactly that layout's tensors, dtypes and shapes; its own
+/// quantization_config stands for the synthesized rules.
 #[test]
 fn opt_in_full_headers() {
     let Ok(root) = std::env::var("CHOPINFER_PROJECTION_HEADERS_QWEN38") else {
         eprintln!("SKIP: CHOPINFER_PROJECTION_HEADERS_QWEN38 is unset");
         return;
     };
-    // Each variable may select one checkpoint, or a directory with named export children.
     let root = Path::new(&root);
     let roots = if root.join("config.json").is_file() {
         vec![root.to_path_buf()]
     } else {
-        ["fp8", "nvidia", "local-lab"]
-            .map(|n| root.join(n))
-            .to_vec()
+        let mut children: Vec<_> = std::fs::read_dir(root)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.join("config.json").is_file())
+            .collect();
+        children.sort();
+        children
     };
+    assert!(!roots.is_empty(), "{} holds no checkpoint", root.display());
     for root in roots {
         let mut metadata = checkpoint_headers(&root);
-        let text = match metadata.tensors.len() {
-            152089 => include_str!("../fixtures/projections/fp8.json"),
-            299212 => include_str!("../fixtures/projections/nvidia.json"),
-            301593 => include_str!("../fixtures/projections/local-lab.json"),
-            count => panic!("unrecognized export tensor count {count}"),
-        };
-        assert_header_facts(&metadata, &fixture(text));
+        let count = metadata.tensors.len();
+        let fp8 = fixture(FP8);
+        if count == fp8.tensors.len() {
+            assert_header_facts(&metadata, &fp8);
+        } else if let Some(mut expected) = Layout::ALL
+            .into_iter()
+            .map(|layout| fixture(layout.text()))
+            .find(|layout| layout.tensors.len() == count)
+        {
+            expected.quantization_config = metadata.quantization_config.clone();
+            assert_header_facts(&metadata, &expected);
+        } else {
+            eprintln!(
+                "{}: {count} tensors match no captured or synthesized layout; binding only",
+                root.display()
+            );
+        }
         let d = owner_scope(&projections::declaration(4).unwrap(), &mut metadata);
-        bind(&d, &projections::geometry(4).unwrap(), &metadata).unwrap();
+        bind(&d, &projections::geometry(4).unwrap(), &metadata)
+            .unwrap_or_else(|e| panic!("{}: {e}", root.display()));
     }
 }
 
 #[test]
-fn compact_fixtures_preserve_existing_mixed_header_examples() {
-    for (fixture_text, examples) in [
-        (
-            include_str!("../fixtures/projections/nvidia.json"),
-            include_str!("../../../compiler/fixtures/mixed/nvidia/tensors.json"),
-        ),
-        (
-            include_str!("../fixtures/projections/local-lab.json"),
-            include_str!("../../../compiler/fixtures/mixed/local-lab/tensors.json"),
-        ),
-    ] {
-        let m = fixture(fixture_text);
-        let rows: Vec<Value> = serde_json::from_str(examples).unwrap();
-        for row in rows {
-            let name = row["name"].as_str().unwrap();
-            let info = &m.tensors[name];
-            assert_eq!(info.dtype, row["dtype"].as_str().unwrap(), "{name}");
-            assert_eq!(
-                serde_json::to_value(&info.shape).unwrap(),
-                row["shape"],
-                "{name}"
-            );
-        }
-    }
-}
-#[test]
 fn a_partial_encoder_owner_cannot_be_omitted() {
-    let mut m = fixture(include_str!("../fixtures/projections/local-lab.json"));
+    let mut m = fixture(Layout::Mxfp8DenseNvfp4.text());
     m.tensors.remove("model.visual.pos_embed.weight");
     let d = projections::declaration(4).unwrap();
     assert!(
@@ -368,7 +360,7 @@ fn per_stream_norm_parameters_preserve_separate_affine_slices() {
 }
 #[test]
 fn fp8_metadata_binds_at_tp2() {
-    let mut metadata = fixture(include_str!("../fixtures/projections/fp8.json"));
+    let mut metadata = fixture(FP8);
     let d = owner_scope(&projections::declaration(2).unwrap(), &mut metadata);
     bind(&d, &projections::geometry(2).unwrap(), &metadata).unwrap();
 }
@@ -614,10 +606,7 @@ fn ordinary_declaration_specs_reproduce_mixed_offer_bodies() {
         serde_json::from_str(include_str!("../../../bundle/projection-adoptions.json")).unwrap();
     let mut padded_linear = BTreeSet::new();
     let mut comparisons = 0;
-    for text in [
-        include_str!("../fixtures/projections/fp8.json"),
-        include_str!("../fixtures/projections/local-lab.json"),
-    ] {
+    for text in [FP8, Layout::Mxfp8DenseNvfp4.text()] {
         let mut m = fixture(text);
         let ranks = model_contract::contract::TOPOLOGY.ranks;
         let g = projections::geometry(ranks.get()).unwrap();

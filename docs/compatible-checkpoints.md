@@ -24,9 +24,9 @@ the [command reference](cli.md#local-checkpoint-serving).
 
 | Family | Checkpoints | Topologies | Default profile | Served name |
 | --- | --- | --- | --- | --- |
-| Qwen (`chopinfer-model-qwen38`) | Complete FP8 Qwen3.8 Flash exports, including revisions and fine-tunes; the mixed NVFP4/BF16 domain of [quantized checkpoints](quantized-checkpoints.md) | TP2, TP4 (mixed NVFP4: TP4) | `tp4-mtp`, `tp2-mtp`; mixed NVFP4 autoregressive; vision encoders when the checkpoint has a vision tower | `local-<checkpoint identity>`, the pinned revision included |
-| MiMo (`chopinfer-model-mimo26`) | The pinned MOPD and RL checkpoints, or exports whose config, index and tokenizer files match their source lock | TP2, TP4 | `tp4-dflash` with the DFlash drafter (MOPD), else `tp4-mtp`; `tp2-ar`; vision and audio encoders | The pinned checkpoint's name |
-| GLM (`chopinfer-model-glm5next`) | The pinned `zai-org/GLM-5.3-Flash` FP8 checkpoint and the pinned local-inference-lab and NVIDIA NVFP4 exports ([deploy GLM](deploy-glm5next.md#checkpoints)) | TP4 | `tp4-mtp`, `tp4-mtp-nvfp4` or `tp4-mtp-nvfp4-nvidia` by checkpoint layout; vision encoder | `GLM-5.3-Flash` |
+| Qwen (`chopinfer-model-qwen38`) | Complete Qwen3.8 Flash checkpoints in a layout the family serves: the official FP8 export, its revisions and fine-tunes, and the mixed NVFP4, MXFP8 and BF16 domain of [quantized checkpoints](quantized-checkpoints.md#qwen-coverage) | TP2, TP4 | `tp4-mtp`, `tp2-mtp`; autoregressive when the MTP layer stores a format it has no composition for; vision encoders when the checkpoint has a vision tower | `local-<checkpoint identity>`, the pinned revision included |
+| MiMo (`chopinfer-model-mimo26`) | The pinned MOPD and RL checkpoints, and any other MiMo V2.6 Flash checkpoint in the encodings MiMo serves ([MiMo checkpoints](#mimo-v26-flash-checkpoints)) | TP2, TP4 | `tp4-dflash` when the checkpoint's DFlash drafter checks (MOPD), else `tp4-mtp`; `tp2-ar`; vision and audio encoders | The pinned checkpoint's name, else `local-<metadata identity>` |
+| GLM (`chopinfer-model-glm5next`) | Any GLM-5.3 Flash checkpoint whose formats the projection declaration serves for each projection class, the official `zai-org/GLM-5.3-Flash` FP8 checkpoint included ([deploy GLM](deploy-glm5next.md#checkpoints)) | TP4 | `tp4-mtp` for every layout; vision encoder | `GLM-5.3-Flash` |
 
 Sizes come from `config.json` and must match a compiled geometry in
 `models/<m>/geometries/supported.json`. Runtime geometry selection uses
@@ -34,9 +34,10 @@ Sizes come from `config.json` and must match a compiled geometry in
 Tensor formats, semantics, vocabulary, special tokens and chat rendering
 must match the family. Add another geometry with the
 [same-architecture recipe](adding-a-model.md#same-architecture-checkpoints).
-LoRA adapters, new architectures, other quantizations and checkpoint code are not loaded. A checkpoint no helper
-accepts is refused with each helper's reason. A Qwen vision tower that fails
-the BF16 shape check refuses the start.
+LoRA adapters, new architectures, encodings outside the family's declaration
+and checkpoint code are not loaded. A checkpoint no helper accepts is refused
+with each helper's reason. A Qwen vision tower that fails the BF16 shape check
+refuses the start.
 
 `serve --model` does not run Cargo, nvcc, evaluations or qualification.
 Packages report `compatible-not-evaluated`; `--served-model-name` changes
@@ -75,6 +76,49 @@ during the run fails it. It reports every mismatch, missing shard and file
 without a recorded digest, and exits nonzero unless every file verifies;
 `--allow-unrecorded` accepts unrecorded files other than safetensors files and
 their indexes (MiMo's lock omits the README, images and Python files).
+
+## Serve your own checkpoint
+
+Another checkpoint of a supported model (a fine-tune, another revision or
+another quantization) needs no JSON and no change to the repository. The
+family helper reads the checkpoint's `config.json`, its quantization metadata
+and its safetensors headers, and admits it by its layout when:
+
+- its sizes match a compiled geometry;
+- every tensor the family declares is present with a dtype, shape and
+  encoding that the family's projection declaration
+  (`models/<m>/contract/projections.json`) serves for that tensor's role, and
+  a supplied kernel serves it at the requested rank count;
+- its tokenizer configuration and chat template state the official
+  release's. The excerpt each family checks against is
+  `models/<m>/compiler/fixtures/tokenizer-semantics.json`. Keys that record
+  provenance (`name_or_path`, `_name_or_path`, `transformers_version`,
+  `is_local`) are ignored, and the files may be serialized differently.
+
+Each family then names the checkpoint by what it read:
+
+- Qwen serves every checkpoint as `local-<checkpoint identity>` with its own
+  tokenizer files, and refuses a generation config that asks for behavior it
+  does not implement.
+- MiMo serves a checkpoint that matches a registered source lock under that
+  checkpoint's name and FP8 KV calibration. It serves any other checkpoint
+  under a local identity with BF16 KV only, and with its DFlash drafter only
+  when that drafter checks ([MiMo checkpoints](#mimo-v26-flash-checkpoints)).
+- GLM derives the checkpoint's layout from the formats its
+  `quantization_config` gives each projection class and from the dtypes of
+  its KDA convolution and mHC vector tensors. Every layout serves with
+  `tp4-mtp`. Tokenizer files other than the pinned revision's are packaged
+  under a frontend that names their content (tokenizer repository `local`).
+
+A refused checkpoint is refused before any weight is read. The reason names
+the tensor, its format and the formats the family serves for its role, or
+the tokenizer key or chat template that differs.
+
+Admission is not qualification. To gate a checkpoint against the model's own
+checks and limits, declare it as an
+[external variant](../tools/qual/README.md#external-variants) in a directory
+outside the tree, such as `$CHOPINFER_DATA/qual-variants`. The repository
+declares only the model authors' checkpoints.
 
 ## Install the implementation once
 
@@ -152,27 +196,43 @@ crates; helper code is installed trusted code. The
 
 ## MiMo V2.6 Flash checkpoints
 
-`chopinfer-model-mimo26` accepts a checkpoint whose `config.json`,
-`model.safetensors.index.json`, `tokenizer.json` and `tokenizer_config.json`
-match the MOPD or RL source lock (`models/mimo26/checkpoint-files.json`), such
-as a fine-tune that keeps those files. The weight plan admits only encodings
-MiMo's kernels serve: BF16, FP8 E4M3 128x128 blocks with F32 inverse scales,
-and MXFP4 routed experts; the DFlash drafter and encoders stay BF16. Other
-quantizations, including NVFP4 or MXFP8 experts, are refused before any weight
-is read, naming the tensor and the formats MiMo serves (see
+`chopinfer-model-mimo26` serves the pinned MOPD and RL checkpoints, matched
+by the source lock (`models/mimo26/checkpoint-files.json`) of their
+`config.json`, `model.safetensors.index.json`, `tokenizer.json` and
+`tokenizer_config.json`. A checkpoint that matches no lock is served under a
+local identity, named by the SHA-256 of a lock of those four files measured
+at preparation: repository `local`, the digest's first 40 hex digits as its
+revision, and `local-<digest>` as its served name. Its tokenizer
+configuration must state the MOPD release's, and its tokenizer files must
+build the declared tokenizer. Its DFlash drafter is served only when the
+drafter's config matches the geometry and its mask archive is the checked
+one; otherwise its packages draft with MTP at TP4.
+
+The weight plan admits only encodings MiMo's kernels serve: BF16, FP8 E4M3
+128x128 blocks with F32 inverse scales, and MXFP4 routed experts; the DFlash
+drafter and encoders stay BF16. Other quantizations, including NVFP4 or MXFP8
+experts, are refused before any weight is read, naming the tensor and the
+formats MiMo serves (see
 [MiMo coverage](quantized-checkpoints.md#mimo-v26-flash-coverage)).
 
 FP8 KV calibration belongs to the authenticated checkpoint, not its execution
 geometry. Its `checkpoints.json` entry must declare `fp8_kv_scales` matching
-the compiled FP8 layout. A newly registered checkpoint without calibration
-advertises BF16 KV only, even when it shares `v26-flash`. An explicit
-`--kv-cache-dtype fp8` request is refused with the package's supported KV
-formats. The existing MOPD and RL scale tables are preserved; registering a
-checkpoint does not establish calibration or qualification.
+the compiled FP8 layout. A registered checkpoint without calibration, and
+every local identity, advertise BF16 KV only, even when they share
+`v26-flash`. An explicit `--kv-cache-dtype fp8` request is refused with the
+package's supported KV formats. The existing MOPD and RL scale tables are
+preserved; registering a checkpoint does not establish calibration or
+qualification.
 
-A MiMo package carries the matched pinned checkpoint's served name; pass
-`--served-model-name` to name a different directory. Only the released MOPD
-checkpoint has been checked on this path; a fine-tune is
+Preparation authenticates metadata and headers, not weight payloads. A
+fine-tune that keeps all four metadata files byte-identical to MOPD's or RL's
+therefore matches that lock, and keeps its served name and FP8 KV
+calibration. `chopinfer verify` with the source lock as its manifest (above)
+tells the released weights apart.
+
+A MiMo package carries the matched checkpoint's served name or its local
+name; `--served-model-name` changes the display name. Only the released MOPD
+checkpoint has been checked on this path; any other checkpoint is
 compatible-not-evaluated.
 
 For MiMo geometries without encoder kernels, `--modalities auto` serves text.

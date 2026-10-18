@@ -795,8 +795,8 @@ fn binds_the_checkpoint_headers() {
     bind(&m).unwrap();
 }
 
-/// A metadata-only stand-in for the local-inference-lab NVFP4 export, shaped
-/// as the plan read its headers: NVFP4 routed experts (E2M1 pairs, an E4M3
+/// A metadata-only checkpoint of the NVFP4-routed mix, shaped as the plan
+/// reads its headers: NVFP4 routed experts (E2M1 pairs, an E4M3
 /// scale per 16 and an F32 global, with an ignored input scale), MXFP8 MTP
 /// experts (an E8M0 scale per 32) and BF16 everywhere else. The real headers
 /// are checked when the export is admitted.

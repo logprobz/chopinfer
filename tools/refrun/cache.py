@@ -350,11 +350,13 @@ def unbound():
     return {"status": "unbound", "refset_sha256": None}
 
 
-def verify(value, root=keys.ROOT, checkpoint=None, store=None, workload=None):
+def verify(value, root=keys.ROOT, checkpoint=None, store=None, workload=None, lock_root=None):
     """Check a fixture's binding against itself, the working tree under
     `root`, the checkpoint directory (reference code, when given), the
     workload file it scored (when given) and the cache `store` (scores, when
-    given). Returns the binding's status:
+    given). The checkpoint lock it names is read under `lock_root` (default
+    `root`): an external variant keeps its lock outside the tree. Returns
+    the binding's status:
     "unbound" for a fixture without one, else "bound" with the refset digest
     and the cache comparison. The most specific difference is named first:
     the binding itself, then the working tree, the sequences, the cached
@@ -387,7 +389,7 @@ def verify(value, root=keys.ROOT, checkpoint=None, store=None, workload=None):
         raise StaleReference("refset_sha256", "the bound entries do not form the bound refset")
 
     # The working tree still produces the bound inputs.
-    lock = keys.read_lock(Path(root) / binding["lock"]["path"])
+    lock = keys.read_lock(Path(root if lock_root is None else lock_root) / binding["lock"]["path"])
     if binding["lock"]["variant"] is not None:
         lock = lock[binding["lock"]["variant"]]
     if keys.checkpoint(lock, [])["source_lock_sha256"] != digests["lock"]:

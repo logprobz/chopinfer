@@ -171,7 +171,11 @@ def arguments(parser):
     parser.add_argument("--skeleton", required=True, type=Path, help="the fixture without scores")
     parser.add_argument("--runs", required=True, nargs="+", type=Path, help="runner output directories")
     parser.add_argument("--workload", required=True, type=Path, help="the workload the runs scored")
-    parser.add_argument("--lock", required=True, type=Path, help="the checkpoint lock, in the repository")
+    parser.add_argument("--lock", required=True, type=Path,
+                        help="the checkpoint lock, in the repository or under --lock-root")
+    parser.add_argument("--lock-root", type=Path, default=keys.ROOT,
+                        help="the root the binding names the lock under (default the repository; an external "
+                             "variant's root, tools/qual/README.md#external-variants)")
     parser.add_argument("--lock-variant", help="the lock's checkpoint variant")
     parser.add_argument("--modes", required=True, help="run labels to bind, each LABEL or LABEL=VARIANT")
     parser.add_argument("--fields", default=",".join(FIELDS), help="score columns each variant copies")
@@ -189,7 +193,8 @@ def main(argv=None):
                                      description="Assemble a bound gate fixture from reference runs.")
     arguments(parser)
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
-    lock = args.lock.resolve().relative_to(keys.ROOT).as_posix() if args.lock.is_absolute() else args.lock.as_posix()
+    lock_root = args.lock_root.resolve()
+    lock = args.lock.resolve().relative_to(lock_root).as_posix() if args.lock.is_absolute() else args.lock.as_posix()
     report = emit(decode_json(args.skeleton.read_bytes()), args.runs, args.workload, args.output, lock,
                   args.lock_variant, args.modes.split(","), tuple(args.fields.split(",")), args.topk,
                   tuple(args.greedy_fields.split(",")) if args.greedy_fields else (),

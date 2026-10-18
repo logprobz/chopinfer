@@ -75,6 +75,13 @@ impl Catalog {
     ) -> MimoResult<Self> {
         if kind == DrafterKind::Dflash {
             validate_dflash_config(root, config.geometry()?)?;
+            // The load-time plan reads only the checked mask archive.
+            let archive = crate::checkpoint::read_metadata(
+                root,
+                model_mimo26_contract::weight_plan::MASK_ARCHIVE,
+                16 * 1024,
+            )?;
+            model_mimo26_contract::weight_plan::mask_embedding(&archive)?;
         }
         let file_name = kind.source();
         let path = root.join(file_name);

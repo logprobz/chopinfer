@@ -1,9 +1,31 @@
 //! Checkpoint identities for preparation. Registration is not qualification.
+//! A checkpoint no registered lock matches is served under a local identity
+//! named by its own metadata ([`Registry::with_local`]).
+use model_compiler_sdk::preparation::tokenizer::TokenizerSemantics;
 use model_compiler_sdk::provenance::SourceLock;
 use runtime_bundle::checkpoint_binding::FileDigest;
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
+use std::os::unix::fs::FileExt;
+use std::path::Path;
 use std::sync::OnceLock;
+
+/// The registry name and repository of a local identity, and the prefix of
+/// its served name.
+pub const LOCAL: &str = "local";
+
+/// The metadata a verifier authenticates before it reads a tensor header,
+/// with the most bytes a local identity measures of each.
+pub const METADATA: [(&str, u64); 4] = [
+    ("config.json", 1 << 20),
+    ("model.safetensors.index.json", 64 << 20),
+    ("tokenizer.json", 64 << 20),
+    ("tokenizer_config.json", 1 << 20),
+];
+
+/// The official release's tokenizer configuration, which a local identity's
+/// must state ([`TokenizerSemantics`]).
+const TOKENIZER_SEMANTICS: &[u8] = include_bytes!("../fixtures/tokenizer-semantics.json");
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -19,6 +41,13 @@ pub struct Identity {
     pub frontend: Option<serde_json::Value>,
 }
 
+impl Identity {
+    /// Whether this is a local identity ([`Registry::with_local`]).
+    pub fn is_local(&self) -> bool {
+        self.repository == LOCAL
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RegistryData {
@@ -31,6 +60,8 @@ pub struct Registry {
     default: String,
     checkpoints: BTreeMap<String, Identity>,
     locks: BTreeMap<String, BTreeMap<String, FileDigest>>,
+    /// The tokenizer configuration a local identity's must state.
+    tokenizer: TokenizerSemantics,
 }
 
 pub fn registry() -> &'static Registry {
@@ -55,10 +86,16 @@ impl Registry {
             default: data.default,
             checkpoints: data.checkpoints,
             locks: serde_json::from_str(locks)?,
+            tokenizer: TokenizerSemantics::parse(TOKENIZER_SEMANTICS)?,
         };
         registry.identity(&registry.default)?;
         let mut triples = BTreeSet::new();
         for (name, identity) in &registry.checkpoints {
+            if name == LOCAL || identity.is_local() {
+                return Err(
+                    format!("checkpoint {name}: {LOCAL} names an unregistered checkpoint").into(),
+                );
+            }
             if !triples.insert((
                 &identity.repository,
                 &identity.revision,
@@ -182,9 +219,20 @@ impl Registry {
         ))
     }
 
+    /// This registry, with local identities checked against `semantics`
+    /// instead of the official release's tokenizer configuration.
+    #[must_use]
+    pub fn with_tokenizer_semantics(mut self, semantics: TokenizerSemantics) -> Self {
+        self.tokenizer = semantics;
+        self
+    }
+
+    /// The verifier of the checkpoint at `root`: under the first registered
+    /// identity whose lock its metadata matches, else under its local
+    /// identity ([`Registry::with_local`]).
     pub fn verifier(
         &self,
-        root: &std::path::Path,
+        root: &Path,
     ) -> crate::MimoResult<crate::checkpoint_provenance::Verifier> {
         let mut refusals = Vec::new();
         for (name, identity) in self.identities() {
@@ -193,12 +241,85 @@ impl Registry {
                 Err(error) => refusals.push(format!("{name}: {error}")),
             }
         }
-        Err(format!(
-            "not a pinned MiMo V2.6 Flash checkpoint ({})",
-            refusals.join("; ")
-        )
-        .into())
+        let local = self.with_local(root).and_then(|registry| {
+            crate::checkpoint_provenance::Verifier::with_registry(
+                root,
+                registry.identity(LOCAL)?,
+                &registry,
+            )
+        });
+        local.map_err(|error| {
+            refusals.push(format!("{LOCAL}: {error}"));
+            format!(
+                "not a supported MiMo V2.6 Flash checkpoint ({})",
+                refusals.join("; ")
+            )
+            .into()
+        })
     }
+
+    /// This registry with the local identity of the checkpoint at `root`,
+    /// for a checkpoint no registered lock matches: a lock of its own
+    /// [`METADATA`], measured here and authenticated again by its verifier,
+    /// once its tokenizer configuration states the official one's
+    /// ([`TokenizerSemantics`]). The identity is named by that lock's
+    /// SHA-256: repository [`LOCAL`], the digest's first 40 hex digits as
+    /// its revision, and `local-<digest>` as its served name. It has no FP8
+    /// KV calibration, so it serves BF16 KV only.
+    pub fn with_local(&self, root: &Path) -> crate::MimoResult<Self> {
+        let mut pins = BTreeMap::new();
+        let mut configuration = Vec::new();
+        for (name, limit) in METADATA {
+            let bytes = read_metadata(root, name, limit)?;
+            pins.insert(
+                name.to_owned(),
+                FileDigest {
+                    byte_length: bytes.len() as u64,
+                    sha256: runtime_weights::sha256_bytes(&bytes),
+                },
+            );
+            if name == "tokenizer_config.json" {
+                configuration = bytes;
+            }
+        }
+        let template = match root.join("chat_template.jinja").try_exists()? {
+            true => Some(read_metadata(root, "chat_template.jinja", 1 << 20)?),
+            false => None,
+        };
+        self.tokenizer.check(
+            &serde_json::from_slice(&configuration)?,
+            template.as_deref(),
+        )?;
+        let digest = SourceLock::new(pins.clone()).sha256();
+        let mut registry = self.clone();
+        registry.checkpoints.insert(
+            LOCAL.into(),
+            Identity {
+                repository: LOCAL.into(),
+                revision: digest[..40].into(),
+                served_model_name: format!("{LOCAL}-{digest}"),
+                fp8_kv_scales: None,
+                fp8_kv_geometry: None,
+                frontend: None,
+            },
+        );
+        registry.locks.insert(LOCAL.into(), pins);
+        Ok(registry)
+    }
+}
+
+/// The bytes of the checkpoint file `name`, refused past `limit` bytes or
+/// when the file changes while it is read.
+pub(crate) fn read_metadata(root: &Path, name: &str, limit: u64) -> crate::MimoResult<Vec<u8>> {
+    let source = crate::catalog::open_source(&root.join(name))?;
+    let length = source.metadata()?.len();
+    if length > limit {
+        return Err(format!("{name} exceeds {limit} bytes").into());
+    }
+    let mut bytes = vec![0; usize::try_from(length)?];
+    source.read_exact_at(&mut bytes, 0)?;
+    source.verify()?;
+    Ok(bytes)
 }
 
 pub fn identities() -> impl Iterator<Item = (&'static str, &'static Identity)> {

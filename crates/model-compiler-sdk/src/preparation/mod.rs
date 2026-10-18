@@ -5,5 +5,6 @@ pub mod cache;
 pub mod direct;
 pub mod helper;
 mod prune;
+pub mod tokenizer;
 pub use cache::default_cache_root;
 pub use prune::{list, prune};

@@ -255,7 +255,8 @@ fn options(
 mod tests {
     use super::*;
     use model_glm5next_contract::quantization::{
-        FP8_BLOCK128, LAYOUT_OPTION, LAYOUTS, NVFP4_DENSE_ROUTED, NVFP4_ROUTED,
+        FP8_BLOCK128, FP8_NVFP4_ROUTED, LAYOUT_OPTION, NVFP4_DENSE_ROUTED, NVFP4_ROUTED,
+        representative_layouts,
     };
     use serde_json::Value;
 
@@ -307,6 +308,7 @@ mod tests {
         assert_eq!(minimum(&FP8_BLOCK128), 83_370_801_144 + (1 << 30));
         assert_eq!(minimum(&NVFP4_ROUTED), 50_875_242_744 + (1 << 30));
         assert_eq!(minimum(&NVFP4_DENSE_ROUTED), 52_469_433_888 + (1 << 30));
+        assert!(minimum(&FP8_NVFP4_ROUTED) < minimum(&FP8_BLOCK128));
     }
 
     #[test]
@@ -487,18 +489,17 @@ mod tests {
         assert!(plan(MAX_DRAFT_TOKENS, true).is_err());
     }
 
-    /// Each serving profile asserts its checkpoint layout as a model option.
-    /// Through the host's own parser (`serve --bundle --profile`) and the
-    /// manifest resolution startup runs on the parsed options, a profile is
-    /// admitted only by a package of its layout, with no explicit option or
-    /// with the package's value; an explicit option naming the package's
-    /// layout does not admit a profile of the other one.
+    /// No serving profile asserts a checkpoint layout, so through the host's
+    /// own parser (`serve --bundle --profile`) and the manifest resolution
+    /// startup runs on the parsed options, every profile is admitted by a
+    /// package of every layout, with no explicit option or with the
+    /// package's own value; an explicit option naming another layout is
+    /// refused, since the package allows only its own.
     #[test]
-    fn profiles_resolve_only_against_a_package_of_their_layout() {
+    fn every_profile_resolves_against_a_package_of_any_layout() {
         let profiles = concat!(env!("CARGO_MANIFEST_DIR"), "/../profiles.json");
         let file: Value = serde_json::from_str(include_str!("../../profiles.json")).unwrap();
-        let mut served = std::collections::BTreeMap::new();
-        for layout in LAYOUTS {
+        for layout in representative_layouts() {
             let planned = manifest_of(layout, Drafter::default());
             let manifest: runtime_bundle::BundleManifestV1 =
                 serde_json::from_value(planned.clone()).unwrap();
@@ -513,9 +514,10 @@ mod tests {
                 serde_json::to_vec(&planned).unwrap(),
             )
             .unwrap();
-            for (name, profile) in file["profiles"].as_object().unwrap() {
-                let own = profile["model_options"][LAYOUT_OPTION] == layout.id;
-                for explicit in std::iter::once(None).chain(LAYOUTS.iter().map(Some)) {
+            for name in file["profiles"].as_object().unwrap().keys() {
+                for explicit in
+                    std::iter::once(None).chain(representative_layouts().into_iter().map(Some))
+                {
                     let mut words = vec![
                         "serve".to_owned(),
                         "--bundle".into(),
@@ -536,17 +538,13 @@ mod tests {
                         Ok(_) => panic!("{name}: not a serve command"),
                         Err(_) => false,
                     };
-                    let expected = own && explicit.is_none_or(|explicit| explicit == layout);
                     assert_eq!(
                         admitted,
-                        expected,
+                        explicit.is_none_or(|explicit| explicit == layout),
                         "{name} on {} with {:?}",
                         layout.id,
                         explicit.map(|layout| layout.id)
                     );
-                }
-                if own {
-                    served.insert(name.as_str(), layout.id);
                 }
             }
             std::fs::remove_dir_all(&package).unwrap();
@@ -554,18 +552,6 @@ mod tests {
             let defaults = manifest.resolve_model_options(&Default::default()).unwrap();
             assert_eq!(defaults[LAYOUT_OPTION], layout.id);
         }
-        assert_eq!(
-            served,
-            std::collections::BTreeMap::from([
-                ("tp4-ar", FP8_BLOCK128.id),
-                ("tp4-mtp", FP8_BLOCK128.id),
-                ("tp4-mtp-dcp2", FP8_BLOCK128.id),
-                ("tp4-mtp-dcp4", FP8_BLOCK128.id),
-                ("tp4-mtp-k5", FP8_BLOCK128.id),
-                ("tp4-mtp-nvfp4", NVFP4_ROUTED.id),
-                ("tp4-mtp-nvfp4-nvidia", NVFP4_DENSE_ROUTED.id),
-            ])
-        );
     }
 
     /// The block-FP8 package carries the precision component whole, under

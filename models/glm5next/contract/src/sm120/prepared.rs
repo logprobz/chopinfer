@@ -337,8 +337,8 @@ mod tests {
             );
         }
     }
-    /// A binding that runs an entry the NVFP4 layouts add depends on that
-    /// cubin's lock too: NVIDIA's NVFP4 dense down binds under both locks,
+    /// A binding that runs an entry the mixed layouts add depends on that
+    /// cubin's lock too: an NVFP4 dense down projection binds under both locks,
     /// so another projection_formats lock gives another identity and the
     /// component's recorded binding no longer matches; a binding of the
     /// block-FP8 projections alone keeps their dependency.
@@ -346,9 +346,10 @@ mod tests {
     fn bindings_of_added_entries_depend_on_their_lock() {
         use crate::quantization::NVFP4_DENSE_ROUTED;
         use kernel_core::contract::WeightFormat;
-        let config: serde_json::Value =
-            serde_json::from_slice(include_bytes!("../../fixtures/nvidia-nvfp4-config.json"))
-                .unwrap();
+        let config: serde_json::Value = serde_json::from_slice(
+            &crate::quantization::synthetic::config_of(&NVFP4_DENSE_ROUTED),
+        )
+        .unwrap();
         let component = checkpoint_component(&NVFP4_DENSE_ROUTED, &config).unwrap();
         let document = decode_for(&component, &NVFP4_DENSE_ROUTED).unwrap();
         let selection = document

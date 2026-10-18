@@ -179,6 +179,7 @@ pub(crate) mod tests {
     use super::*;
     use bundle_runtime::config::{KvLayout, StateLayout, test_support::encode};
     use model_glm5next_contract::contract::DECODE_BATCH;
+    use model_glm5next_contract::quantization::FP8_BLOCK128;
 
     /// A record for the FP8 layout serving `items`, with `tail` appended
     /// after the served context.
@@ -238,7 +239,7 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn options(top_k: u32) -> Vec<u8> {
-        options_of("fp8-block128", top_k)
+        options_of(FP8_BLOCK128.id, top_k)
     }
 
     /// Model options naming the layout `layout`.
@@ -252,8 +253,9 @@ pub(crate) mod tests {
     /// (a JSON value).
     pub(crate) fn options_comm_epilogue(top_k: u32, value: &str) -> Vec<u8> {
         encoded(&format!(
-            "{{\"{LAYOUT_OPTION}\":\"fp8-block128\",\"{COMM_EPILOGUE_OPTION}\":{value},\
-             \"text_config.index_topk\":{top_k}}}"
+            "{{\"{LAYOUT_OPTION}\":\"{}\",\"{COMM_EPILOGUE_OPTION}\":{value},\
+             \"text_config.index_topk\":{top_k}}}",
+            FP8_BLOCK128.id
         ))
     }
 
@@ -384,10 +386,14 @@ pub(crate) mod tests {
 
     #[test]
     fn records_read_the_checkpoint_layout() {
-        use model_glm5next_contract::quantization::{FP8_BLOCK128, NVFP4_ROUTED};
-        for layout in [FP8_BLOCK128, NVFP4_ROUTED] {
+        for layout in model_glm5next_contract::quantization::layouts() {
             let config = decode(&record(8, &options_of(layout.id, 2048)), |_| {}).unwrap();
-            assert_eq!(*config.layout, layout);
+            assert_eq!(config.layout, layout);
         }
+        // An id of the earlier fixed layouts names none.
+        assert_eq!(
+            decode(&record(8, &options_of("fp8-block128", 2048)), |_| {}).unwrap_err(),
+            BundleStatusV1::InvalidArgument
+        );
     }
 }

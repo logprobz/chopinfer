@@ -1,6 +1,6 @@
 //! Freeze comparisons use full served header shapes and the existing compiler.
-#[path = "../../contract/tests/projections_support/mod.rs"]
-mod headers;
+use crate::mixed_layouts::headers;
+use headers::exports::Layout;
 
 // The synthetic projection payloads every model shares, from the SDK's
 // test support sources (outside its module tree).
@@ -151,9 +151,17 @@ fn payload_class(operation: &projection_spec::derive::DerivedOperation) -> Strin
     )
 }
 
-const FP8: &str = include_str!("../../contract/tests/fixtures/projections/fp8.json");
-const NVIDIA: &str = include_str!("../../contract/tests/fixtures/projections/nvidia.json");
-const LOCAL_LAB: &str = include_str!("../../contract/tests/fixtures/projections/local-lab.json");
+const FP8: &str = headers::exports::FP8;
+
+/// The NVFP4-routed layout's header fixture.
+fn nvfp4_routed() -> &'static str {
+    Layout::Nvfp4RoutedFp8Mtp.text()
+}
+
+/// The MXFP8-dense layout's header fixture.
+fn mxfp8_dense() -> &'static str {
+    Layout::Mxfp8DenseNvfp4.text()
+}
 
 /// What a served comparison covered: every (layer, projection, rank, use) it
 /// derived, its OperationSpec and source selection counts, and the payloads
@@ -220,8 +228,8 @@ const DENSE: [&str; 11] = [
 /// gate/up, whose payload bytes the dense comparisons produce.
 const DENSE_PAYLOADS: [&str; 3] = ["full.k", "main.shared.down", "main.shared.gate-up"];
 
-/// Local-lab's smallest MXFP8 projection is `linear.a`.
-const LOCAL_LAB_PAYLOADS: [&str; 3] = ["linear.a", "main.shared.down", "main.shared.gate-up"];
+/// The MXFP8-dense layout's smallest MXFP8 projection is `linear.a`.
+const MXFP8_PAYLOADS: [&str; 3] = ["linear.a", "main.shared.down", "main.shared.gate-up"];
 
 /// Check one default dense comparison against its declared keys, exact
 /// counts and the payloads it samples on the first and last rank.
@@ -253,47 +261,56 @@ fn fp8_tp4_served_dense_operations_and_rank_selections_match_the_current_compile
 }
 
 #[test]
-fn nvidia_tp4_served_dense_operations_and_rank_selections_match_the_current_compiler() {
-    dense(NVIDIA, Ranks::TP4, (22800, 14592, 26448), &DENSE_PAYLOADS);
-}
-
-#[test]
-fn nvidia_tp2_served_dense_operations_and_rank_selections_match_the_current_compiler() {
-    dense(NVIDIA, Ranks::TP2, (11400, 7296, 13224), &DENSE_PAYLOADS);
-}
-
-/// Local-lab's MXFP8 dense ports split by rows (column-split projections)
-/// and by K (row-split outputs) at TP2 and TP4.
-#[test]
-fn local_lab_tp2_served_dense_operations_and_rank_selections_match_the_current_compiler() {
-    // No input fusion is all BF16, so every port resolves its own spec.
+fn nvfp4_routed_tp4_served_dense_operations_and_rank_selections_match_the_current_compiler() {
     dense(
-        LOCAL_LAB,
-        Ranks::TP2,
-        (11400, 11400, 13224),
-        &LOCAL_LAB_PAYLOADS,
+        nvfp4_routed(),
+        Ranks::TP4,
+        (22800, 14592, 26448),
+        &DENSE_PAYLOADS,
     );
 }
 
 #[test]
-fn local_lab_tp4_served_dense_operations_and_rank_selections_match_the_current_compiler() {
+fn nvfp4_routed_tp2_served_dense_operations_and_rank_selections_match_the_current_compiler() {
     dense(
-        LOCAL_LAB,
+        nvfp4_routed(),
+        Ranks::TP2,
+        (11400, 7296, 13224),
+        &DENSE_PAYLOADS,
+    );
+}
+
+/// The MXFP8-dense layout's dense ports split by rows (column-split
+/// projections) and by K (row-split outputs) at TP2 and TP4.
+#[test]
+fn mxfp8_dense_tp2_served_dense_operations_and_rank_selections_match_the_current_compiler() {
+    // No input fusion is all BF16, so every port resolves its own spec.
+    dense(
+        mxfp8_dense(),
+        Ranks::TP2,
+        (11400, 11400, 13224),
+        &MXFP8_PAYLOADS,
+    );
+}
+
+#[test]
+fn mxfp8_dense_tp4_served_dense_operations_and_rank_selections_match_the_current_compiler() {
+    dense(
+        mxfp8_dense(),
         Ranks::TP4,
         (22800, 22800, 26448),
-        &LOCAL_LAB_PAYLOADS,
+        &MXFP8_PAYLOADS,
     );
 }
 
 /// A header-only checkpoint of `text`'s served shapes in a fresh directory:
 /// its configuration with the export's quantization rules, one index and
 /// one sparse zero shard, so capture, import and placement run as they do
-/// on the export without reading a weight. The NVIDIA fixture records no
-/// vision tower; both exports ship the same BF16 tower (names, dtypes and
-/// shapes are equal in their headers), so local-lab's supplies it.
+/// on the export without reading a weight. A layout without a vision tower
+/// takes the FP8 export's BF16 tower.
 fn sparse_checkpoint(text: &str, name: &str) -> std::path::PathBuf {
     let mut m = headers::fixture(text);
-    for (tensor, info) in headers::fixture(LOCAL_LAB).tensors {
+    for (tensor, info) in headers::fixture(FP8).tensors {
         if tensor.starts_with("model.visual.") {
             m.tensors.entry(tensor).or_insert(info);
         }
@@ -348,14 +365,15 @@ fn sparse_checkpoint(text: &str, name: &str) -> std::path::PathBuf {
 /// resolved against the published capabilities, passes the view validation
 /// the bundle runs at create, the MTP drafter's included. The fake host
 /// builds its indexes from the same contract, so only this placement output
-/// shows a view the contract names differently (local-lab's MXFP8 scales
-/// were planned as `U8`, which the contract reads as `F8_E8M0`).
+/// shows a view the contract names differently (MXFP8 scales were once
+/// planned as `U8`, which the contract reads as `F8_E8M0`).
 #[test]
 fn planned_mixed_rank_indexes_pass_the_bundles_view_validation() {
     let published = precision::capabilities().unwrap();
     let inventory =
         CapabilityInventory::new(published.clone(), published.entries(), "0".repeat(64)).unwrap();
-    for (name, text) in [("nvidia", NVIDIA), ("local-lab", LOCAL_LAB)] {
+    for layout in Layout::ALL {
+        let (name, text) = (layout.name(), layout.text());
         let root = sparse_checkpoint(text, name);
         let files = catalog::capture(&root).unwrap();
         let source = SourcePrecision::from_captured(&files).unwrap();
@@ -468,19 +486,20 @@ fn uncovered(
 
 /// The prepared identity's admitted table covers every packed layout and
 /// every view create requires of each rank index the placement plans for a whole mixed
-/// export, its MTP drafter's included, at TP2 and TP4: NVIDIA's
-/// statically calibrated NVFP4 experts need the `input_scale` rows and
-/// local-lab's F32 hyper-connection norm the F32 norm rows.
+/// export, its MTP drafter's included, at TP2 and TP4: statically
+/// calibrated NVFP4 experts need the `input_scale` rows and F32
+/// hyper-connection norms the F32 norm rows.
 #[test]
 fn admitted_views_cover_every_view_create_requires_of_mixed_exports() {
     use model_qwen38_contract::prepared::{self, ViewKey};
     let published = precision::capabilities().unwrap();
     let inventory =
         CapabilityInventory::new(published.clone(), published.entries(), "0".repeat(64)).unwrap();
-    for (name, text, needs) in [
-        ("nvidia", NVIDIA, "input_scale"),
-        ("local-lab", LOCAL_LAB, "F32 norm"),
+    for (layout, needs) in [
+        (Layout::Nvfp4RoutedFp8Mtp, "input_scale"),
+        (Layout::Mxfp8DenseNvfp4, "F32 norm"),
     ] {
+        let (name, text) = (layout.name(), layout.text());
         let root = sparse_checkpoint(text, name);
         let files = catalog::capture(&root).unwrap();
         let source = SourcePrecision::from_captured(&files).unwrap();
@@ -581,7 +600,7 @@ fn exact_index(
 }
 
 /// Components create admits that no importer produces are covered too: in
-/// NVIDIA's component, each MTP expert bank keeps its registered FP8 block
+/// the NVFP4-routed layout's component, each MTP expert bank keeps its registered FP8 block
 /// weights under BF16 weight reuse but records the main experts' static
 /// NVFP4 source activation. Binding, the MTP admission and both view
 /// validators accept it at TP2 and TP4, and the `input_scale` view it
@@ -592,7 +611,7 @@ fn admitted_views_cover_static_scales_on_registered_fp8_mtp_experts() {
     let published = precision::capabilities().unwrap();
     let inventory =
         CapabilityInventory::new(published.clone(), published.entries(), "0".repeat(64)).unwrap();
-    let root = sparse_checkpoint(NVIDIA, "nvidia-static-mtp");
+    let root = sparse_checkpoint(nvfp4_routed(), "nvfp4-routed-static-mtp");
     let source = SourcePrecision::from_captured(&catalog::capture(&root).unwrap()).unwrap();
     std::fs::remove_dir_all(&root).unwrap();
     for (ranks, gate_up, down) in [(Ranks::TP2, 2048, 1024), (Ranks::TP4, 1024, 512)] {
@@ -666,16 +685,16 @@ fn admitted_views_cover_static_scales_on_registered_fp8_mtp_experts() {
     }
 }
 
-/// The local-lab export's whole precision component at TP4, its MTP layer
-/// recorded, and the inventory it binds.
-fn local_lab_document() -> (
+/// The MXFP8-dense layout's whole precision component at TP4, its MTP
+/// layer recorded, and the inventory it binds.
+fn mxfp8_dense_document() -> (
     kernel_core::precision::execution::PrecisionDocument,
     CapabilityInventory,
 ) {
     let published = precision::capabilities().unwrap();
     let inventory =
         CapabilityInventory::new(published.clone(), published.entries(), "0".repeat(64)).unwrap();
-    let root = sparse_checkpoint(LOCAL_LAB, "local-lab-mtp-bind");
+    let root = sparse_checkpoint(mxfp8_dense(), "mxfp8-dense-mtp-bind");
     let source = SourcePrecision::from_captured(&catalog::capture(&root).unwrap()).unwrap();
     std::fs::remove_dir_all(&root).unwrap();
     let document = projection_program::SourceProgram::new(&source, Shape::TP4)
@@ -693,7 +712,7 @@ fn local_lab_document() -> (
 #[test]
 fn bind_refuses_non_bf16_mtp_dense_ports_through_their_compositions() {
     let shape = Shape::TP4;
-    let (document, inventory) = local_lab_document();
+    let (document, inventory) = mxfp8_dense_document();
     let ports = projections::ports::get(shape).unwrap();
     let mxfp8 = document
         .operations
@@ -727,7 +746,7 @@ fn bind_refuses_non_bf16_mtp_dense_ports_through_their_compositions() {
 #[test]
 fn bind_refuses_a_bf16_mtp_dense_port_with_a_quantized_activation() {
     let shape = Shape::TP4;
-    let (document, inventory) = local_lab_document();
+    let (document, inventory) = mxfp8_dense_document();
     let quantized = document
         .operations
         .iter()
@@ -774,10 +793,10 @@ fn served_dense_operations_and_rank_selections_match_the_current_compiler() {
     for (text, ranks) in [
         (FP8, Ranks::TP2),
         (FP8, Ranks::TP4),
-        (NVIDIA, Ranks::TP2),
-        (NVIDIA, Ranks::TP4),
-        (LOCAL_LAB, Ranks::TP2),
-        (LOCAL_LAB, Ranks::TP4),
+        (nvfp4_routed(), Ranks::TP2),
+        (nvfp4_routed(), Ranks::TP4),
+        (mxfp8_dense(), Ranks::TP2),
+        (mxfp8_dense(), Ranks::TP4),
     ] {
         let coverage = served_dense(text, ranks, Sweep::Every);
         let tp = Shape::flash(ranks).ranks();
@@ -853,7 +872,7 @@ fn served_dense(text: &str, ranks: Ranks, sweep: Sweep) -> Coverage {
             arithmetic.numerical_contract = recipe
                 .map_or(&p.numerical_contract, |r| &r.numerical_contract)
                 .clone();
-            // A quantized export's own activation recipe (local-lab's MXFP8)
+            // A quantized export's own activation recipe (such as MXFP8's)
             // is admitted as the declared A16 BF16 operands.
             let mut activations = old.source.activations.clone();
             if !old.legacy {
@@ -1328,9 +1347,7 @@ fn served_native_mixed_experts_at(
     use model_qwen38_contract::precision::Projection;
     let shape = Shape::flash(ranks);
     let tp = shape.ranks();
-    let mut m = headers::fixture(include_str!(
-        "../../contract/tests/fixtures/projections/nvidia.json"
-    ));
+    let mut m = headers::fixture(nvfp4_routed());
     let d = headers::owner_scope(&projections::declaration(tp).unwrap(), &mut m);
     let g = projections::geometry(tp).unwrap();
     let b = headers::bind(&d, &g, &m).unwrap();
@@ -1925,18 +1942,9 @@ fn compare_record_bytes(
 #[test]
 fn unbaselined_header_families_pin_fixed_bf16_and_converted_mtp_banks() {
     for (text, converted) in [
-        (
-            include_str!("../../contract/tests/fixtures/projections/fp8.json"),
-            "F8_E4M3",
-        ),
-        (
-            include_str!("../../contract/tests/fixtures/projections/nvidia.json"),
-            "F8_E4M3",
-        ),
-        (
-            include_str!("../../contract/tests/fixtures/projections/local-lab.json"),
-            "U8",
-        ),
+        (FP8, "F8_E4M3"),
+        (nvfp4_routed(), "F8_E4M3"),
+        (mxfp8_dense(), "U8"),
     ] {
         let fixture: serde_json::Value = serde_json::from_str(text).unwrap();
         let mut fixed = 0;
@@ -1994,14 +2002,8 @@ fn record_policy_follows_authenticated_source_precision() {
     let names =
         BTreeSet::from(["model.language_model.layers.0.mlp.experts.0.gate_proj.weight".into()]);
     for (text, expected) in [
-        (
-            include_str!("../../contract/tests/fixtures/projections/fp8.json"),
-            RecordPolicy::Sections(RecordLayout::Fragment),
-        ),
-        (
-            include_str!("../../contract/tests/fixtures/projections/nvidia.json"),
-            RecordPolicy::PackedPieces,
-        ),
+        (FP8, RecordPolicy::Sections(RecordLayout::Fragment)),
+        (nvfp4_routed(), RecordPolicy::PackedPieces),
     ] {
         let headers = headers::fixture(text);
         let source = source_for_names(&headers, Shape::TP4, &names);

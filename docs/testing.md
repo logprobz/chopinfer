@@ -363,7 +363,7 @@ checks the recipe's guard mechanics.
 ## Export recipe
 
 `bash tests/model-export-recipe.sh --ci` checks that a quantized export whose
-format mix no committed export uses is served with data alone. In a temporary
+format mix no tested layout uses is served with data alone. In a temporary
 worktree at a clean committed HEAD it synthesizes a sparse mixed export of a
 compiled geometry from the geometry generator's layout, rebuilds the bundle
 with `KERNELS_LOCK_UPDATE=1` and regenerates the projection adoption ledger.

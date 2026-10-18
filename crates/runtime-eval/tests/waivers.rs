@@ -149,6 +149,7 @@ fn the_report_lists_applied_waivers_and_a_waived_run_qualifies() {
         },
         model: "m".into(),
         declaration_sha256: "0".repeat(64),
+        variant_source: None,
         suite: "accuracy".into(),
         at: "20261015T000000000000Z".into(),
         server: json!({}),

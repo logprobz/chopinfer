@@ -4,22 +4,20 @@
 //! `--activation-policy` included. The profile request then selects the
 //! checkpoint layout's serving profile; the emission checks every text
 //! tensor header the load's plans read, then writes the package of the
-//! checkpoint in its layout (`emit`): its pinned frontend, the
-//! checkpoint's tokenizer at the pinned revision (every export's is the
-//! block-FP8 one's), the precision component, the planned rank images, the
-//! planned encoder image when it serves images, and the installed native
-//! module.
+//! checkpoint in its layout (`emit`): the checkpoint's own tokenizer files
+//! with the frontend that names them (the declared one for the pinned
+//! revision's files), the precision component, the planned rank images,
+//! the planned encoder image when it serves images, and the installed
+//! native module.
 use model_compiler_sdk::files::Result;
 use model_compiler_sdk::preparation::direct::DirectEmission;
 use model_compiler_sdk::preparation::helper::Provider;
 use model_compiler_sdk::quantization::ActivationPolicy;
 use model_glm5next_contract::admission::{self, Matched};
-use model_glm5next_contract::quantization::{
-    FP8_BLOCK128, LAYOUT_OPTION, Layout, NVFP4_DENSE_ROUTED, NVFP4_ROUTED,
-};
+use model_glm5next_contract::quantization::{LAYOUT_OPTION, Layout};
 use runtime_bundle::preparation::{DirectProfile, Modality, PrepareDirectRequest};
 use runtime_bundle_abi::weight_plan::WeightPlanRequestV1;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// The checkpoint's `config.json`, opened as the host opens it (a regular
@@ -71,11 +69,13 @@ pub fn served_modalities(
     Ok(served)
 }
 
-/// An admitted checkpoint: its match, the config it was admitted from (read
+/// An admitted checkpoint: its match, its layout (its class encodings with
+/// its headers' side tensor dtypes), the config it was admitted from (read
 /// once, and the version the package is emitted from), the modalities its
 /// package serves and the headers they were resolved from.
 pub struct Admitted {
     pub matched: Matched,
+    pub layout: &'static Layout,
     pub config: serde_json::Value,
     pub served: BTreeSet<Modality>,
     pub checkpoint: WeightPlanRequestV1,
@@ -92,11 +92,13 @@ pub fn admit(root: &Path, request: &PrepareDirectRequest) -> Result<Admitted> {
     admission::check_ranks(request.tensor_parallel_size)?;
     let checkpoint = crate::checkpoint_headers::request(root, request.tensor_parallel_size)?;
     let (matched, config) = admit_config(&checkpoint)?;
+    let layout = model_glm5next_contract::direct::resolve_layout(&checkpoint, &matched)?;
     let served = served_modalities(&checkpoint, request)?;
     let policy = ActivationPolicy::from_precedence(request.activation_policy.as_deref(), None)?;
     matched.quantization.check_policy(policy)?;
     Ok(Admitted {
         matched,
+        layout,
         config,
         served,
         checkpoint,
@@ -119,8 +121,8 @@ pub fn encoder_components(
 /// The installed native module beside the helper.
 const NATIVE_MODULE: &str = "libbundle_glm5next.so";
 
-/// The checkpoint files of the pinned block-FP8 revision, whose chat
-/// template the frontend renders.
+/// The checkpoint files of the pinned block-FP8 revision, whose tokenizer
+/// the declared frontend names.
 const PINNED_FILES: &str = include_str!("../../checkpoint-files.json");
 
 // The serving profiles of every checkpoint layout.
@@ -128,19 +130,22 @@ use crate::package::PROFILES;
 
 /// The serving profile `name` for a checkpoint of `layout`, refused when it
 /// does not exist or its `model_options` assert another layout
-/// ([`LAYOUT_OPTION`], which the package's manifest also constrains).
+/// ([`LAYOUT_OPTION`], which the package's manifest also constrains). The
+/// shipped profiles assert none, so each serves every layout.
 pub fn serving_profile(layout: &Layout, name: &str) -> Result<DirectProfile> {
     let file: serde_json::Value = serde_json::from_str(PROFILES)?;
     let profile = file["profiles"]
         .get(name)
         .ok_or_else(|| format!("glm5next declares no serving profile {name}"))?;
-    let served = Layout::named(&profile["model_options"][LAYOUT_OPTION])?;
-    if served != layout {
-        return Err(format!(
-            "serving profile {name} sets {LAYOUT_OPTION}={}, but the checkpoint's layout is {}",
-            served.id, layout.id
-        )
-        .into());
+    if let Some(asserted) = profile["model_options"].get(LAYOUT_OPTION) {
+        let served = Layout::named(asserted)?;
+        if served != layout {
+            return Err(format!(
+                "serving profile {name} sets {LAYOUT_OPTION}={}, but the checkpoint's layout is {}",
+                served.id, layout.id
+            )
+            .into());
+        }
     }
     Ok(DirectProfile {
         name: name.into(),
@@ -148,52 +153,95 @@ pub fn serving_profile(layout: &Layout, name: &str) -> Result<DirectProfile> {
     })
 }
 
-/// The profile a direct package of a checkpoint of `layout` carries: MTP
-/// with three draft tokens at context-parallel size 1, `tp4-mtp` for the
-/// block-FP8 checkpoint, `tp4-mtp-nvfp4` for local-inference-lab's NVFP4
-/// export and `tp4-mtp-nvfp4-nvidia` for NVIDIA's. The autoregressive and
+/// The profile a direct package of a checkpoint of `layout` carries:
+/// `tp4-mtp`, MTP with three draft tokens at context-parallel size 1, for
+/// every admitted layout, since admission requires a served encoding for
+/// the MTP layer's experts as for every other class. The autoregressive and
 /// context-parallel profiles are chosen by name.
 pub fn select_profile(layout: &Layout) -> Result<DirectProfile> {
-    let name = [
-        (&FP8_BLOCK128, "tp4-mtp"),
-        (&NVFP4_ROUTED, "tp4-mtp-nvfp4"),
-        (&NVFP4_DENSE_ROUTED, "tp4-mtp-nvfp4-nvidia"),
-    ]
-    .into_iter()
-    .find_map(|(own, name)| (own == layout).then_some(name))
-    .ok_or_else(|| {
-        format!(
-            "glm5next selects no serving profile for the {} checkpoint",
-            layout.id
-        )
-    })?;
-    serving_profile(layout, name)
+    serving_profile(layout, "tp4-mtp")
 }
 
-/// The checkpoint file `name` at `root`, refused unless it is the pinned
-/// revision's (its length and SHA-256 in `checkpoint-files.json`).
-fn pinned_file(root: &Path, name: &str, pins: &str) -> Result<Vec<u8>> {
-    use sha2::{Digest, Sha256};
+/// The official release's tokenizer configuration, which another
+/// checkpoint's must state ([`TokenizerSemantics`]).
+const TOKENIZER_SEMANTICS: &[u8] = include_bytes!("../fixtures/tokenizer-semantics.json");
+
+/// The most bytes read of a checkpoint's tokenizer definition, and of its
+/// tokenizer configuration or chat template.
+const DEFINITION_BYTES: u64 = 64 << 20;
+const CONFIGURATION_BYTES: u64 = 1 << 20;
+
+/// Whether `bytes` are the pinned revision's file `name` (its length and
+/// SHA-256 in `pins`, `checkpoint-files.json`).
+fn pinned(pins: &serde_json::Value, name: &str, bytes: &[u8]) -> bool {
+    pins[name]["byte_length"].as_u64() == Some(bytes.len() as u64)
+        && pins[name]["sha256"] == runtime_weights::sha256_bytes(bytes).as_str()
+}
+
+/// The frontend, `tokenizer.json` and `tokenizer_config.json` the package
+/// of the checkpoint at `root` carries. The pinned revision's tokenizer
+/// files keep the declared frontend. Other files are served when their
+/// configuration and chat template state the pinned revision's
+/// ([`TokenizerSemantics`]), under a frontend that names their content
+/// (tokenizer repository `local` at a content revision) and builds from
+/// them as a serving host builds it.
+fn tokenizer(root: &Path, pins: &str) -> Result<[Vec<u8>; 3]> {
+    use model_compiler_sdk::preparation::tokenizer::{self, TokenizerSemantics};
     let pins: serde_json::Value = serde_json::from_str(pins)?;
-    let pin = &pins[name];
-    let limit = pin["byte_length"]
-        .as_u64()
-        .ok_or_else(|| format!("{name} has no pinned length"))?;
-    let bytes = crate::checkpoint_headers::document(root, name, limit)?;
-    let digest = format!("{:x}", Sha256::digest(&bytes));
-    if pin["byte_length"].as_u64() != Some(bytes.len() as u64) || pin["sha256"] != digest.as_str() {
-        return Err(format!(
-            "{name} is not the pinned revision's ({} bytes, sha256 {digest}); the frontend renders that revision's chat template",
-            bytes.len()
-        )
-        .into());
+    let read = |name: &str, limit| crate::checkpoint_headers::document(root, name, limit);
+    let definition = read("tokenizer.json", DEFINITION_BYTES)?;
+    let configuration = read("tokenizer_config.json", CONFIGURATION_BYTES)?;
+    if pinned(&pins, "tokenizer.json", &definition)
+        && pinned(&pins, "tokenizer_config.json", &configuration)
+    {
+        return Ok([
+            crate::frontend::COMPONENT.to_vec(),
+            definition,
+            configuration,
+        ]);
     }
-    Ok(bytes)
+    let mut files = BTreeMap::from([
+        ("tokenizer.json".to_owned(), definition),
+        ("tokenizer_config.json".to_owned(), configuration),
+    ]);
+    if !std::fs::symlink_metadata(root.join("chat_template.jinja"))
+        .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+    {
+        files.insert(
+            "chat_template.jinja".into(),
+            read("chat_template.jinja", CONFIGURATION_BYTES)?,
+        );
+    }
+    let config: serde_json::Value = serde_json::from_slice(&files["tokenizer_config.json"])
+        .map_err(|e| format!("tokenizer_config.json: {e}"))?;
+    TokenizerSemantics::parse(TOKENIZER_SEMANTICS)?
+        .check(&config, files.get("chat_template.jinja").map(Vec::as_slice))?;
+    let revision = tokenizer::content_revision(&files)?;
+    let definition = files.remove("tokenizer.json").expect("read above");
+    let configuration = files.remove("tokenizer_config.json").expect("read above");
+    let mut frontend: serde_json::Value = serde_json::from_slice(crate::frontend::COMPONENT)?;
+    tokenizer::rewrite_tokenizer(
+        &mut frontend,
+        &definition,
+        &configuration,
+        "local",
+        &revision,
+    )?;
+    let component = serde_json::to_vec(&frontend)?;
+    let descriptor =
+        runtime_frontend_contract::FrontendDescriptorV1::from_component_bytes(&component)?;
+    runtime_frontend_contract::tokenizer_from_components_v1(
+        &descriptor,
+        &definition,
+        &configuration,
+    )?;
+    Ok([component, definition, configuration])
 }
 
 /// Emits into `output` the package of the admitted checkpoint at `root`
 /// with the native module at `module`, and the serving profile it carries:
-/// the frontend, the pinned tokenizer, the precision component of the
+/// the checkpoint's tokenizer files and the frontend that names them
+/// ([`tokenizer`]), the precision component of the
 /// checkpoint's lowered projections, the planned rank images (with the MTP
 /// drafter's views when the profile drafts), the planned encoder image when
 /// it serves images, and the module.
@@ -219,22 +267,15 @@ fn emit_with_pins(
     use model_glm5next_contract::contract::Shape;
     let admitted = admit(root, request)?;
     let matched = admitted.matched;
-    let layout = matched.quantization.layout;
+    let layout = admitted.layout;
     let profile = select_profile(layout)?;
     let precision =
         model_glm5next_contract::prepared::checkpoint_component(layout, &admitted.config)?;
+    let [frontend, definition, configuration] = tokenizer(root, pins)?;
     let mut components = vec![
-        package_draft::frontend(StagedContentV1::bytes(crate::frontend::COMPONENT))?,
-        package_draft::tokenizer_definition(StagedContentV1::bytes(pinned_file(
-            root,
-            "tokenizer.json",
-            pins,
-        )?))?,
-        package_draft::tokenizer_configuration(StagedContentV1::bytes(pinned_file(
-            root,
-            "tokenizer_config.json",
-            pins,
-        )?))?,
+        package_draft::frontend(StagedContentV1::bytes(frontend))?,
+        package_draft::tokenizer_definition(StagedContentV1::bytes(definition))?,
+        package_draft::tokenizer_configuration(StagedContentV1::bytes(configuration))?,
         crate::package::precision(precision, layout)?,
     ];
     components.extend(encoder_components(&admitted.checkpoint, &admitted.served)?);
@@ -272,7 +313,8 @@ impl Provider for Glm5NextFamily {
     fn deployment_policy(&self) -> Option<&str> {
         Some(crate::package::DEPLOYMENT_POLICY)
     }
-    /// Every checkpoint layout's profiles, which the emission serves.
+    /// The profiles the emission serves: each that asserts no layout, or
+    /// an admitted one.
     fn profiles(&self) -> Vec<String> {
         let file: serde_json::Value =
             serde_json::from_str(PROFILES).expect("the serving profiles parse");
@@ -282,7 +324,9 @@ impl Provider for Glm5NextFamily {
                 profiles
                     .iter()
                     .filter(|(_, profile)| {
-                        Layout::named(&profile["model_options"][LAYOUT_OPTION]).is_ok()
+                        profile["model_options"]
+                            .get(LAYOUT_OPTION)
+                            .is_none_or(|layout| Layout::named(layout).is_ok())
                     })
                     .map(|(name, _)| name.clone())
                     .collect()
@@ -324,7 +368,7 @@ impl Provider for Glm5NextFamily {
         served_modalities(&checkpoint, request).map(Some)
     }
     fn direct_profile(&self, root: &Path, request: &PrepareDirectRequest) -> Result<DirectProfile> {
-        select_profile(admit(root, request)?.matched.quantization.layout)
+        select_profile(admit(root, request)?.layout)
     }
 }
 
@@ -335,7 +379,11 @@ mod test_native;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use model_glm5next_contract::quantization::LAYOUTS;
+    use model_glm5next_contract::catalog::DType;
+    use model_glm5next_contract::quantization::{
+        FP8_BLOCK128, FP8_NVFP4_ROUTED, NVFP4_DENSE_ROUTED, NVFP4_ROUTED, representative_layouts,
+        test_support::{config_of, extra_checkpoints},
+    };
 
     fn probe(config: &serde_json::Value, ranks: u32) -> std::result::Result<(), String> {
         static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -484,39 +532,49 @@ mod tests {
         }
     }
 
-    /// Always runs a bounded case in the ordinary library suite. Configured
-    /// exports add real metadata and pinned tokenizer coverage. An explicit
-    /// native-module override is verified as supplied, never skipped.
-    fn emission_checkpoints(variable: &str, layout: &Layout, config: &[u8]) -> Vec<Checkpoint> {
-        let mut checkpoints = vec![Checkpoint::bounded(layout, config)];
-        if let Some(source) = std::env::var_os(variable) {
-            let source = Path::new(&source);
-            let config = std::fs::read(source.join("config.json")).unwrap();
-            let checkpoint = Checkpoint::new(
-                &config,
-                None,
-                Some(source),
-                &["tokenizer.json", "tokenizer_config.json"],
+    /// The real metadata of the checkpoint at `source`: its config and
+    /// tokenizer files, its headers in sparse files of their logical
+    /// lengths, and the installed native module.
+    fn real_checkpoint(source: &Path) -> Checkpoint {
+        let config = std::fs::read(source.join("config.json")).unwrap();
+        let checkpoint = Checkpoint::new(
+            &config,
+            None,
+            Some(source),
+            &["tokenizer.json", "tokenizer_config.json"],
+        );
+        let headers = crate::checkpoint_headers::request(source, 4).unwrap();
+        let lengths: Vec<_> = headers
+            .files
+            .iter()
+            .map(|file| (file.name.clone(), file.byte_length))
+            .collect();
+        let checkpoint = checkpoint.with_request(headers);
+        for (name, byte_length) in lengths {
+            assert_eq!(
+                std::fs::metadata(checkpoint.root.join(name)).unwrap().len(),
+                byte_length,
+                "the sparse checkpoint fixture retains the original logical length",
             );
-            let headers = crate::checkpoint_headers::request(source, 4).unwrap();
-            let lengths: Vec<_> = headers
-                .files
-                .iter()
-                .map(|file| (file.name.clone(), file.byte_length))
-                .collect();
-            let checkpoint = checkpoint.with_request(headers);
-            for (name, byte_length) in lengths {
-                assert_eq!(
-                    std::fs::metadata(checkpoint.root.join(name)).unwrap().len(),
-                    byte_length,
-                    "the sparse export fixture retains the original logical length",
-                );
-            }
-            std::fs::copy(test_native::module(), &checkpoint.module).unwrap();
-            checkpoints.push(checkpoint);
+        }
+        std::fs::copy(test_native::module(), &checkpoint.module).unwrap();
+        checkpoint
+    }
+
+    /// Always runs a bounded case in the ordinary library suite. The
+    /// configured official checkpoint (`CHOPINFER_GLM5NEXT_CHECKPOINT`, for
+    /// its layout) adds real metadata and pinned tokenizer coverage. An
+    /// explicit native-module override is verified as supplied, never
+    /// skipped.
+    fn emission_checkpoints(layout: &Layout, config: &[u8]) -> Vec<Checkpoint> {
+        let mut checkpoints = vec![Checkpoint::bounded(layout, config)];
+        if *layout == FP8_BLOCK128
+            && let Some(source) = std::env::var_os("CHOPINFER_GLM5NEXT_CHECKPOINT")
+        {
+            checkpoints.push(real_checkpoint(Path::new(&source)));
         }
         eprintln!(
-            "{}: 1 bounded case, {} configured export case(s)",
+            "{}: 1 bounded case, {} configured case(s)",
             layout.id,
             checkpoints.len() - 1
         );
@@ -529,11 +587,28 @@ mod tests {
         }
     }
 
+    /// A checkpoint holding `config` and catalog headers in the layout of
+    /// its classes (BF16 convolutions, F32 mHC vectors), with no tokenizer,
+    /// and the emission request with `policy` for it.
+    fn headers_only(config: &[u8], policy: Option<&str>) -> Checkpoint {
+        let classes = admission::admit_bytes(config).unwrap().quantization.classes;
+        let layout =
+            model_glm5next_contract::quantization::find(classes, DType::Bf16, DType::F32).unwrap();
+        let headers = model_glm5next_contract::direct::test_support::checkpoint_request(
+            layout,
+            config,
+            0,
+            |_| {},
+        );
+        Checkpoint::new(config, policy, None, &[]).with_request(headers)
+    }
+
     /// A direct emission request with `policy` for a checkpoint holding
-    /// only `config`: the emission's error, after checking the profile
-    /// request admits the same way (and selects a profile when admitted).
+    /// `config` and its headers: the emission's error, after checking the
+    /// profile request admits the same way (and selects a profile when
+    /// admitted).
     fn emit_error(config: &[u8], policy: Option<&str>) -> String {
-        let checkpoint = Checkpoint::new(config, policy, None, &[]);
+        let checkpoint = headers_only(config, policy);
         let error = checkpoint.emit().err().unwrap().to_string();
         let profile = Glm5NextFamily.direct_profile(&checkpoint.root, &checkpoint.request);
         if let Err(profile) = profile {
@@ -543,43 +618,27 @@ mod tests {
     }
 
     fn direct_profile(config: &[u8]) -> String {
-        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "glm5next-profile-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("config.json"), config).unwrap();
-        let request = PrepareDirectRequest {
-            path: root.clone(),
-            cache_root: root.join("cache"),
-            tensor_parallel_size: 4,
-            activation_policy: None,
-            modalities: Default::default(),
-        };
-        let profile = Glm5NextFamily.direct_profile(&root, &request);
-        std::fs::remove_dir_all(root).unwrap();
-        profile.unwrap().name
+        let checkpoint = headers_only(config, None);
+        Glm5NextFamily
+            .direct_profile(&checkpoint.root, &checkpoint.request)
+            .unwrap()
+            .name
     }
 
-    /// Each checkpoint selects its own layout's MTP profile, and a profile
-    /// of another layout is refused for it.
+    /// Every layout selects the MTP profile, and every shipped profile
+    /// serves every layout: none asserts one.
     #[test]
-    fn the_checkpoint_layout_selects_its_serving_profile() {
-        let nvfp4: &[u8] = include_bytes!("../../contract/fixtures/nvfp4-config.json");
-        let nvidia: &[u8] = include_bytes!("../../contract/fixtures/nvidia-nvfp4-config.json");
-        let fp8: &[u8] = include_bytes!("../../contract/fixtures/config.json");
-        assert_eq!(direct_profile(fp8), "tp4-mtp");
-        assert_eq!(direct_profile(nvfp4), "tp4-mtp-nvfp4");
-        assert_eq!(direct_profile(nvidia), "tp4-mtp-nvfp4-nvidia");
-        for layout in [&NVFP4_ROUTED, &NVFP4_DENSE_ROUTED] {
+    fn every_layout_selects_the_mtp_profile() {
+        for layout in representative_layouts() {
+            assert_eq!(direct_profile(&config_of(layout)), "tp4-mtp");
+        }
+        for layout in representative_layouts() {
             let selected = select_profile(layout).unwrap();
+            assert_eq!(selected.name, "tp4-mtp");
             assert_eq!(selected.profile["speculation"]["drafter"], "mtp");
             assert_eq!(selected.profile["speculation"]["tokens"], 3);
             assert!(selected.profile.get("context_parallel_size").is_none());
-            assert_eq!(selected.profile["status"], "qualified");
-            assert_eq!(selected.profile["qualified_max_sequences"], 32);
+            assert!(selected.profile.get("model_options").is_none());
         }
 
         let file: serde_json::Value = serde_json::from_str(PROFILES).unwrap();
@@ -592,35 +651,19 @@ mod tests {
                 "tp4-mtp",
                 "tp4-mtp-dcp2",
                 "tp4-mtp-dcp4",
-                "tp4-mtp-k5",
-                "tp4-mtp-nvfp4",
-                "tp4-mtp-nvfp4-nvidia"
+                "tp4-mtp-k5"
             ]
         );
         for name in names {
-            let own =
-                Layout::named(&file["profiles"][name.as_str()]["model_options"][LAYOUT_OPTION])
-                    .unwrap();
-            assert_eq!(serving_profile(own, name).unwrap().name, *name);
-            for other in LAYOUTS.iter().filter(|other| *other != own) {
-                assert_eq!(
-                    serving_profile(other, name).unwrap_err().to_string(),
-                    format!(
-                        "serving profile {name} sets {LAYOUT_OPTION}={}, but the checkpoint's \
-                         layout is {}",
-                        own.id, other.id
-                    )
-                );
+            assert!(
+                file["profiles"][name.as_str()]
+                    .get("model_options")
+                    .is_none()
+            );
+            for layout in representative_layouts() {
+                assert_eq!(serving_profile(layout, name).unwrap().name, *name);
             }
         }
-        // The NVIDIA export is refused the local-inference-lab profile.
-        assert_eq!(
-            serving_profile(&NVFP4_DENSE_ROUTED, "tp4-mtp-nvfp4")
-                .unwrap_err()
-                .to_string(),
-            "serving profile tp4-mtp-nvfp4 sets checkpoint.quantization_layout=nvfp4-routed, but \
-             the checkpoint's layout is nvfp4-dense-routed"
-        );
         assert_eq!(
             serving_profile(&FP8_BLOCK128, "tp2-mtp")
                 .unwrap_err()
@@ -631,7 +674,7 @@ mod tests {
 
     #[test]
     fn the_activation_policy_is_admitted_against_the_quantization_layout() {
-        let nvfp4: &[u8] = include_bytes!("../../contract/fixtures/nvfp4-config.json");
+        let nvfp4 = &config_of(&NVFP4_ROUTED)[..];
         let fp8: &[u8] = include_bytes!("../../contract/fixtures/config.json");
         // auto (the default) and bf16 run BF16 activations: admitted, then
         // each emission reads the checkpoint's tokenizer, which these
@@ -657,27 +700,12 @@ mod tests {
     }
 
     /// Each admitted layout's catalog includes a vision tower, so its
-    /// bounded checkpoint and each configured export serve images by default.
+    /// bounded checkpoint and the configured official one serve images by
+    /// default.
     #[test]
     fn the_admitted_checkpoints_serve_images_by_default() {
-        for (variable, layout, config) in [
-            (
-                "CHOPINFER_GLM5NEXT_CHECKPOINT",
-                &FP8_BLOCK128,
-                include_bytes!("../../contract/fixtures/config.json").as_slice(),
-            ),
-            (
-                "CHOPINFER_GLM5NEXT_NVFP4_CHECKPOINT",
-                &NVFP4_ROUTED,
-                include_bytes!("../../contract/fixtures/nvfp4-config.json").as_slice(),
-            ),
-            (
-                "CHOPINFER_GLM5NEXT_NVIDIA_NVFP4_CHECKPOINT",
-                &NVFP4_DENSE_ROUTED,
-                include_bytes!("../../contract/fixtures/nvidia-nvfp4-config.json").as_slice(),
-            ),
-        ] {
-            for checkpoint in emission_checkpoints(variable, layout, config) {
+        for layout in representative_layouts() {
+            for checkpoint in emission_checkpoints(layout, &config_of(layout)) {
                 assert_eq!(
                     Glm5NextFamily
                         .direct_modalities(&checkpoint.root, &checkpoint.request)
@@ -843,13 +871,13 @@ mod tests {
         }
     }
 
-    /// Both bounded and configured block-FP8 metadata emit the pinned frontend,
-    /// precision and media components. Text-only emission omits the encoder;
-    /// same-size tokenizer corruption and an oversized tokenizer fail distinctly.
+    /// Both bounded and configured block-FP8 metadata emit the declared
+    /// frontend, precision and media components. Text-only emission omits
+    /// the encoder; a tokenizer configuration whose chat template is not the
+    /// pinned revision's, and an oversized one, fail distinctly.
     #[test]
     fn the_fp8_checkpoint_emits_its_package() {
         for mut checkpoint in emission_checkpoints(
-            "CHOPINFER_GLM5NEXT_CHECKPOINT",
             &FP8_BLOCK128,
             include_bytes!("../../contract/fixtures/config.json"),
         ) {
@@ -908,18 +936,22 @@ mod tests {
             let manifest: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(out.join("manifest.json")).unwrap()).unwrap();
             assert!(!media(&manifest));
-            // Another revision's tokenizer configuration.
+            // The pinned revision's tokenizer files keep the declared frontend.
+            assert_eq!(
+                std::fs::read(out.join("components/frontend.json")).unwrap(),
+                crate::frontend::COMPONENT
+            );
+            // A tokenizer configuration with another chat template.
             std::fs::remove_dir_all(&out).unwrap();
             let path = checkpoint.root.join("tokenizer_config.json");
-            let mut bytes = std::fs::read(&path).unwrap();
-            bytes[0] ^= 1;
-            std::fs::write(&path, bytes).unwrap();
+            std::fs::write(&path, br#"{"chat_template": "{{ edited }}"}"#).unwrap();
             let error = checkpoint.emit().err().unwrap().to_string();
-            assert!(error.contains("not the pinned revision's"), "{error}");
+            assert!(
+                error.contains("unsupported chat template semantics"),
+                "{error}"
+            );
             assert!(!out.exists());
-            let mut oversized = std::fs::read(&path).unwrap();
-            oversized.push(b'\n');
-            std::fs::write(&path, oversized).unwrap();
+            std::fs::write(&path, vec![b' '; (CONFIGURATION_BYTES + 1) as usize]).unwrap();
             let error = checkpoint.emit().err().unwrap().to_string();
             assert!(
                 error.contains("tokenizer_config.json: checkpoint metadata exceeds limit"),
@@ -929,40 +961,137 @@ mod tests {
         }
     }
 
-    /// Both NVFP4 layouts emit their own profile and precision document,
-    /// using bounded fixtures plus each configured export's sparse headers.
+    /// The pinned revision's tokenizer, its configuration serialized anew
+    /// with another provenance, states the same meaning: its package carries
+    /// those files under a frontend that names their content, which builds
+    /// the declared tokenizer. Needs `CHOPINFER_GLM5NEXT_CHECKPOINT`.
     #[test]
-    fn each_nvfp4_checkpoint_emits_its_text_package() {
-        for (variable, layout, config, name) in [
-            (
-                "CHOPINFER_GLM5NEXT_NVFP4_CHECKPOINT",
-                &NVFP4_ROUTED,
-                include_bytes!("../../contract/fixtures/nvfp4-config.json").as_slice(),
-                "tp4-mtp-nvfp4",
-            ),
-            (
-                "CHOPINFER_GLM5NEXT_NVIDIA_NVFP4_CHECKPOINT",
-                &NVFP4_DENSE_ROUTED,
-                include_bytes!("../../contract/fixtures/nvidia-nvfp4-config.json").as_slice(),
-                "tp4-mtp-nvfp4-nvidia",
-            ),
-        ] {
-            for checkpoint in emission_checkpoints(variable, layout, config) {
+    fn a_tokenizer_of_the_same_meaning_is_served_by_its_content() {
+        let Some(source) = std::env::var_os("CHOPINFER_GLM5NEXT_CHECKPOINT") else {
+            eprintln!("CHOPINFER_GLM5NEXT_CHECKPOINT unset: skipped");
+            return;
+        };
+        let source = Path::new(&source);
+        let mut checkpoint = real_checkpoint(source);
+        checkpoint.request.modalities = selection(&[Modality::Text]);
+        let path = checkpoint.root.join("tokenizer_config.json");
+        let mut config: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        config["name_or_path"] = "local-fine-tune".into();
+        config["is_local"] = false.into();
+        let configuration = serde_json::to_vec_pretty(&config).unwrap();
+        std::fs::write(&path, &configuration).unwrap();
+        // The chat template is the pinned revision's file.
+        let error = checkpoint.emit().err().unwrap().to_string();
+        assert!(error.contains("no chat template"), "{error}");
+        std::fs::copy(
+            source.join("chat_template.jinja"),
+            checkpoint.root.join("chat_template.jinja"),
+        )
+        .unwrap();
+        checkpoint.emit().unwrap();
+        let out = checkpoint.root.join("out");
+        let frontend: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(out.join("components/frontend.json")).unwrap())
+                .unwrap();
+        let declared: serde_json::Value =
+            serde_json::from_slice(crate::frontend::COMPONENT).unwrap();
+        let tokenizer = &frontend["tokenizer"];
+        assert_eq!(tokenizer["repository"], "local");
+        assert_ne!(tokenizer["revision"], declared["tokenizer"]["revision"]);
+        assert_eq!(tokenizer["revision"].as_str().unwrap().len(), 64);
+        assert_eq!(
+            tokenizer["configuration"]["sha256"],
+            runtime_weights::sha256_bytes(&configuration)
+        );
+        assert_eq!(tokenizer["definition"], declared["tokenizer"]["definition"]);
+        assert_eq!(
+            tokenizer["merge_count"],
+            declared["tokenizer"]["merge_count"]
+        );
+        assert_eq!(frontend["models"], declared["models"]);
+        assert_eq!(
+            std::fs::read(out.join("components/tokenizer_config.json")).unwrap(),
+            configuration
+        );
+        // Another chat template is refused.
+        std::fs::remove_dir_all(&out).unwrap();
+        std::fs::write(checkpoint.root.join("chat_template.jinja"), b"{{ edited }}").unwrap();
+        let error = checkpoint.emit().err().unwrap().to_string();
+        assert!(
+            error.contains("unsupported chat template semantics"),
+            "{error}"
+        );
+    }
+
+    /// The text package of `checkpoint`, admitted in `layout`: the MTP
+    /// profile, its own precision document, and a manifest that declares
+    /// its layout.
+    fn assert_text_package(checkpoint: &Checkpoint, layout: &Layout) {
+        {
+            {
                 let emitted = checkpoint.emit().unwrap();
-                assert_eq!(emitted.profile.name, name);
-                assert_eq!(
-                    emitted.profile.profile["model_options"][LAYOUT_OPTION],
-                    layout.id
-                );
+                assert_eq!(emitted.profile.name, "tp4-mtp");
                 let out = checkpoint.root.join("out");
                 let precision = std::fs::read(out.join(crate::package::PRECISION_PATH)).unwrap();
                 model_glm5next_contract::prepared::decode_for(&precision, layout).unwrap();
-                assert!(model_glm5next_contract::prepared::decode(&precision).is_err());
+                // The component holds the lowered projections only, which a
+                // mix whose latent attention, shared experts and dense MLPs
+                // are block FP8 lowers as the block-FP8 layout does.
+                let fp8 = model_glm5next_contract::quantization::Encoding::Fp8Block128;
+                assert_eq!(
+                    model_glm5next_contract::prepared::decode(&precision).is_ok(),
+                    layout.projections == fp8 && layout.dense == fp8,
+                    "{}",
+                    layout.id
+                );
+                let manifest: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(out.join("manifest.json")).unwrap())
+                        .unwrap();
+                let option = manifest["model_options"]["options"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|option| option["name"] == LAYOUT_OPTION)
+                    .unwrap();
+                assert_eq!(
+                    option["definition"]["allowed_values"],
+                    serde_json::json!([layout.id])
+                );
             }
         }
     }
 
-    /// Every layout's profiles are the helper's.
+    /// Each mixed representative layout emits its text package from a
+    /// bounded checkpoint of its synthetic config.
+    #[test]
+    fn each_mixed_checkpoint_emits_its_text_package() {
+        for layout in [&NVFP4_ROUTED, &NVFP4_DENSE_ROUTED, &FP8_NVFP4_ROUTED] {
+            for checkpoint in emission_checkpoints(layout, &config_of(layout)) {
+                assert_text_package(&checkpoint, layout);
+            }
+        }
+    }
+
+    /// Each checkpoint of `CHOPINFER_GLM5NEXT_EXTRA_CHECKPOINTS`, of any
+    /// layout, admits in the layout its config and headers resolve to and
+    /// emits its text package; skipped when none is named.
+    #[test]
+    fn extra_checkpoints_emit_their_packages() {
+        let extra = extra_checkpoints();
+        if extra.is_empty() {
+            eprintln!("CHOPINFER_GLM5NEXT_EXTRA_CHECKPOINTS unset: skipped");
+        }
+        for source in extra {
+            let mut checkpoint = real_checkpoint(&source);
+            let layout = admit(&checkpoint.root, &checkpoint.request).unwrap().layout;
+            eprintln!("{}: layout {}", source.display(), layout.id);
+            checkpoint.request.modalities = selection(&[Modality::Text]);
+            assert_text_package(&checkpoint, layout);
+        }
+    }
+
+    /// The shipped profiles are the helper's.
     #[test]
     fn the_helper_describes_every_layout_s_profiles() {
         let mut profiles = Glm5NextFamily.profiles();
@@ -974,9 +1103,7 @@ mod tests {
                 "tp4-mtp",
                 "tp4-mtp-dcp2",
                 "tp4-mtp-dcp4",
-                "tp4-mtp-k5",
-                "tp4-mtp-nvfp4",
-                "tp4-mtp-nvfp4-nvidia"
+                "tp4-mtp-k5"
             ]
         );
     }
@@ -1082,9 +1209,21 @@ mod tests {
             "--modalities names image, which this checkpoint does not provide; it provides text"
         );
         // A checkpoint directory holding no safetensors file stores no
-        // tower either.
+        // tower either, so its modalities resolve to text; the profile
+        // request and the emission refuse it, since its headers fix its
+        // layout and it has none.
         let checkpoint = Checkpoint::new(fp8, None, None, &[]);
-        assert_eq!(resolved(&checkpoint).unwrap(), text);
+        assert_eq!(
+            Glm5NextFamily
+                .direct_modalities(&checkpoint.root, &checkpoint.request)
+                .unwrap(),
+            Some(text.clone())
+        );
+        let error = Glm5NextFamily
+            .direct_profile(&checkpoint.root, &checkpoint.request)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("model.safetensors.index.json"), "{error}");
         let broken = || {
             Checkpoint::new(fp8, None, None, &[]).with_headers(|header| {
                 header.remove("model.visual.merger.down_proj.weight");

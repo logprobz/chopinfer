@@ -2,10 +2,11 @@
 
 In a detached worktree of the committed HEAD, the recipe synthesizes a sparse
 ModelOpt mixed export of the Qwen3.8 Flash geometry whose format mix neither
-committed export uses: MXFP8 full-attention, indexer and shared-expert
+committed layout uses: MXFP8 full-attention, indexer and shared-expert
 projections beside BF16 linear-attention projections, NVFP4 routed experts
-and n-gram lookup, and weight-only NVFP4 MTP experts. NVIDIA's export keeps
-every dense projection BF16 and local-lab's makes every one MXFP8. The
+and n-gram lookup, and weight-only NVFP4 MTP experts. The nvfp4-routed-fp8-mtp
+layout keeps every dense projection BF16 and mxfp8-dense-nvfp4 makes every
+one MXFP8. The
 shared kernels already publish BF16 and MXFP8 for every dense port at every
 topology, so the mix needs no new kernel.
 
@@ -45,7 +46,7 @@ SCHEDULES = f"models/{MODEL}/bundle/projection-schedules.json"
 GENERATED = (LOCK, ADOPTIONS)
 LAYERS = "model.language_model.layers"
 MTP_EXPERTS = "mtp.layers.0.mlp.experts"
-# ModelOpt leaves these modules unquantized, as local-lab's export does: the
+# ModelOpt leaves these modules unquantized, as an mxfp8-dense-nvfp4 export does: the
 # MTP layer keeps BF16 dense projections, which the drafter requires.
 IGNORE = ["lm_head", "model.visual.*", "mtp.fc_embedding", "mtp.fc_hidden", "mtp.pre_fc_norm_*",
           "mtp.hyper_connection_mixer*", "mtp.layers.0.self_attn*", "mtp.layers.0.attn_hyper_connection*",

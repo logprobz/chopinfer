@@ -30,3 +30,6 @@ mod checkpoint_index;
 
 #[cfg(test)]
 mod projection_comparison;
+
+#[cfg(test)]
+mod mixed_layouts;

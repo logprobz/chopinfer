@@ -243,6 +243,25 @@ def configurations(model):
     return result
 
 
+def external_configuration(model, name):
+    """How the external variant `name` is served, as `configurations` gives a
+    declared configuration's: the model's default serving, the checkpoint
+    from `CHOPINFER_<KEY>_CHECKPOINT` (the overlay's `checkpoint`), verified
+    against the lock beside its overlay, and its own served profile name. It
+    never runs the screens, and never moves the stored baselines."""
+    facts = model_facts(model)
+    file = declaration.overlay(model, name)
+    require(file is not None, f'{model} declares no configuration {name}, and the variant root '
+            f'({declaration.VARIANTS_ENV}, --variant-dir) holds no {model}/{name}.json')
+    value = read(declaration.named(declaration_name(model, name)))
+    spec, root = read(file), declaration.require_variant_root(value)
+    return {'serve': [], 'environment': {}, 'features': [], 'tensor_parallel_size': 4, 'screens': False,
+            'checkpoint': f"CHOPINFER_{spec['checkpoint']}_CHECKPOINT",
+            'manifest': str(root / value['qualification']['checkpoint']['lock']),
+            'profile': spec.get('serving', {}).get('profile_name', facts['profile']),
+            'depth': facts['depth'], 'producer': None, 'external': True}
+
+
 def configuration_facts(facts, name):
     """The model's facts with a configuration's own checks and cohorts, read
     from its expanded declaration (`chopinfer eval declaration`)."""
@@ -520,7 +539,8 @@ def environment(gpu=False, target=None, config=None):
     """This process's environment for children: shipping defaults only (no
     CHOPINFER_* debug overrides), the declared input locations kept."""
     env = dict(os.environ)
-    keep = {'CHOPINFER_DATA', 'CHOPINFER_LOCAL_ENV', 'CHOPINFER_EVAL', 'CHOPINFER_REFRUN_PYTHON'}
+    keep = {'CHOPINFER_DATA', 'CHOPINFER_LOCAL_ENV', 'CHOPINFER_EVAL', 'CHOPINFER_REFRUN_PYTHON',
+            declaration.VARIANTS_ENV}
 
     def declared(value):
         if isinstance(value, dict):
@@ -885,12 +905,14 @@ def prepare(args):
 
 def selected_configurations(model, names, suite='quick'):
     """The named configurations; by default `default` for quick and every
-    declared one for full."""
+    declared one for full. A name the model does not declare is an external
+    variant under the selected variant root (`external_configuration`)."""
     declared = configurations(model)
     names = names or (['default'] if suite == 'quick' else list(declared))
-    unknown = [name for name in names if name not in declared]
-    require(not unknown, f'{model} declares no configuration {", ".join(unknown)}; it declares {sorted(declared)}')
-    return {name: declared[name] for name in names}
+    unknown = [name for name in names if name not in declared and declaration.overlay(model, name) is None]
+    require(not unknown, f'{model} declares no configuration {", ".join(unknown)}; it declares {sorted(declared)}'
+            + (f', and {declaration.VARIANTS_ENV} holds no such variant' if declaration.variant_root() else ''))
+    return {name: declared[name] if name in declared else external_configuration(model, name) for name in names}
 
 
 def module_option(module, option, default, model=None):
@@ -2164,7 +2186,7 @@ def whole_model_full_pass(result, model):
     selected = result.get('configurations')
     rows = result.get('rows')
     return (result.get('model') == model and result.get('suite') == 'full' and result.get('passed') is True
-            and not result.get('selected_checks')
+            and not result.get('selected_checks') and not result.get('external_variants')
             and isinstance(selected, list) and all(isinstance(name, str) for name in selected)
             and len(selected) == len(declared) and set(selected) == declared
             and isinstance(rows, list) and bool(rows)
@@ -2194,7 +2216,8 @@ def finish(run):
               'source': run.identity, 'install_source': run.install_source, 'used_installs': used,
               'seconds': round(time.monotonic() - run.started, 1),
               'numerical_reference': run.facts['numerical_reference'],
-              'selected_checks': getattr(run.args, 'check', [])}
+              'selected_checks': getattr(run.args, 'check', []),
+              'external_variants': sorted(name for name, config in run.configs.items() if config.get('external'))}
     write(run.out / 'results.json', result)
     report(run.out, result)
     if (whole_model_full_pass(result, run.facts['model'])
@@ -2317,6 +2340,8 @@ class Store:
         the result stands and nothing moves."""
         if result.get('selected_checks'):
             return f'{self.name} {self.model}: not updated (a selected check subset)'
+        if result.get('external_variants'):
+            return f'{self.name} {self.model}: not updated (an external variant ran)'
         if not whole_model_full_pass(result, self.model):
             return f'{self.name} {self.model}: not updated (requires a whole-model full pass)'
         failures = shutdown_failures(directory, self.model, result['suite'], result['configurations'], {})
@@ -2598,7 +2623,10 @@ def main(argv=None):
     for name in ('prepare', 'run', 'plan'):
         command = commands.add_parser(name)
         command.add_argument('--model', required=True)
-        command.add_argument('--config', action='append', default=[])
+        command.add_argument('--config', action='append', default=[],
+                             help='a declared configuration, or an external variant under --variant-dir')
+        command.add_argument('--variant-dir', type=Path,
+                             help=f'root of external variants, MODEL/VARIANT.json (default ${declaration.VARIANTS_ENV})')
         command.add_argument('--suite', choices=SUITES, default='quick',
                              help='without --config: default for quick, every configuration for full')
         if name != 'prepare':
@@ -2621,6 +2649,8 @@ def main(argv=None):
     rescore.add_argument('run')
     rescore.add_argument('--legacy-preview', metavar='MODEL', help='a previous preview run (preview_legacy.py)')
     rescore.add_argument('--json', type=Path)
+    rescore.add_argument('--variant-dir', type=Path,
+                         help=f'root of the run\'s external variants (default ${declaration.VARIANTS_ENV})')
     baseline = commands.add_parser('baseline')
     baseline.add_argument('action', choices=('show', 'reseed'))
     baseline.add_argument('--model', required=True)
@@ -2628,6 +2658,7 @@ def main(argv=None):
     baseline.add_argument('--from', dest='source', help='reseed: the passing full run')
     baseline.add_argument('--reason', help='reseed: why the seed moves (recorded)')
     args = parser.parse_args(argv)
+    declaration.select_variant_root(getattr(args, 'variant_dir', None))
     handlers = {'prepare': prepare, 'run': run_command, 'plan': plan_command, 'rescore': rescore_command,
                 'baseline': baseline_command}
     try:

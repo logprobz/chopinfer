@@ -7,6 +7,9 @@
     python3 tools/qual/checks.py rescore --model M [--limits current|recorded]
         [--check ID] [--json FILE] [--require-recorded] PATH...
 
+Each command takes `--variant-dir DIR` (default $CHOPINFER_QUAL_VARIANTS)
+to read `--model MODEL.VARIANT` as an external variant, DIR/MODEL/VARIANT.json.
+
 `check` runs the check as release_gate.py runs it in a cohort: the same
 arguments, receipt, metrics and predicates (kinds.py). It writes the run
 under the receipts directory, with the policy, the check's receipt and
@@ -113,9 +116,11 @@ def check_command(args):
     result = {"schema": "chopinfer-check-run/v1", "at": stamp, "model": config["model"], "check": args.id,
               "kind": kinds.of(check["module"]).name, "cohort": args.cohort, "mechanics_only": mechanics,
               "config_sha256": release_gate.digest(policy), "config_source": str(config_path), "inputs": inputs,
-              "earlier": earlier, "earlier_raw": dict(earlier_raw), "status": "fail"}
+              "earlier": earlier, "earlier_raw": dict(earlier_raw), "variant_source": None, "status": "fail"}
     rows = []
     try:
+        from refs import variant_source
+        result["variant_source"] = variant_source(config)
         result["revision"] = release_gate.source_revision(release_gate.ROOT)
         if offline:
             result["server"] = None
@@ -517,7 +522,11 @@ def main():
     rescore.add_argument("--json", type=Path, help="write the rescore report here")
     rescore.add_argument("--require-recorded", action="store_true",
                          help="exit 1 unless every verdict and metric equals the recorded one")
+    for command in (listing, check, rescore):
+        command.add_argument("--variant-dir", type=Path,
+                             help=f"root of external variants, MODEL/VARIANT.json (default ${declaration.VARIANTS_ENV})")
     args = parser.parse_args()
+    declaration.select_variant_root(args.variant_dir)
     try:
         command = {"list": list_command, "check": check_command, "rescore": rescore_command}[args.command]
         return command(args)

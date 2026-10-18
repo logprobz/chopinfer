@@ -1,20 +1,19 @@
 # Deploy GLM 5.3 Flash
 
 **Served and released.** The `chopinfer-model-glm5next` helper emits the
-package of the FP8 checkpoint and of both NVFP4 exports (text, and images by
-default), and `serve` runs it on four GPUs. Six of its seven profiles are
-qualified through 32 sequences. The release archive and the image built
-from it ship the helper and the bundle library, with the container image
-default and the systemd unit below.
+package of a checkpoint of any admitted layout (text, and images by
+default), and `serve` runs it on four GPUs. Four of its five profiles are
+qualified through 32 sequences on the official checkpoint. The release
+archive and the image built from it ship the helper and the bundle library,
+with the container image default and the systemd unit below.
 
 **Release status.** The final release gate's results were adopted on
 2026-10-11 (see the [model page](model-glm5next.md#final-release-gate-2026-10-11)).
-Two soaks failed the plain memory rule, the default configuration's and the
-local-inference-lab NVFP4 export's; they pass the soak's declared warm-up
-and cache allowance.
+The default configuration's soak failed the plain memory rule; it passes
+the soak's declared warm-up and cache allowance.
 The full requalification through the release preview (stage 5,
 2026-10-14 to 2026-10-15) qualified it, with accepted rows
-in three configurations
+in two configurations (`taps` and `dcp4`)
 ([release qualification](model-glm5next.md#release-qualification-stage-5);
 the paired-teacher policies are pinned to accepted arms of the final
 gate's install), and `models/glm5next/model.toml` declares
@@ -29,29 +28,39 @@ the [topology page](topology-glm5next.md).
 
 | Checkpoint | Revision | Size | Layout | Test variable |
 |---|---|---:|---|---|
-| `zai-org/GLM-5.3-Flash` (default) | `eb9eb208eb0d988989d07a6a12d0fdeb5f52574a` | 328.4 GB | `fp8-block128` | `CHOPINFER_GLM5NEXT_CHECKPOINT` |
-| `local-inference-lab/GLM-5.3-Flash-NVFP4` | `175ae8ce3b5af842b0d0140dbeb43e9cfc557c49` | 198.1 GB | `nvfp4-routed` | `CHOPINFER_GLM5NEXT_NVFP4_CHECKPOINT` |
-| `nvidia/GLM-5.3-Flash-NVFP4` | `da920bb0b9f4a06727223a349e55468e38352348` | 204.5 GB | `nvfp4-dense-routed` | `CHOPINFER_GLM5NEXT_NVIDIA_NVFP4_CHECKPOINT` |
+| `zai-org/GLM-5.3-Flash` | `eb9eb208eb0d988989d07a6a12d0fdeb5f52574a` | 328.4 GB | `attn-fp8.dense-fp8.experts-fp8.mtp-fp8.conv-bf16.hc-f32` | `CHOPINFER_GLM5NEXT_CHECKPOINT` |
 
-Sizes are the sums of `models/glm5next/checkpoint-files.json`,
-`checkpoint-files-nvfp4.json` and `checkpoint-files-nvidia-nvfp4.json`,
-which pin every file's length and SHA-256.
+The size is the sum of `models/glm5next/checkpoint-files.json`, which pins
+every file's length and SHA-256.
 Download a checkpoint at its revision into a plain directory with
-`hf download --local-dir`, as in the [quickstart](developer-preview.md). The
-layouts differ in what is quantized
-([model README](../models/glm5next/README.md)): `nvfp4-routed` stores NVFP4
-routed experts, MXFP8 MTP experts and BF16 elsewhere; `nvfp4-dense-routed`
-stores NVFP4 dense MLPs and routed experts, BF16 MTP experts and BF16
-elsewhere.
+`hf download --local-dir`, as in the [quickstart](developer-preview.md).
 
-The test variables point CPU tests and reference runs at a checkpoint;
-serving takes the checkpoint directory itself (`serve --model DIR`). All
-three checkpoints serve the same package, `glm5next.v1`, at the same
-topology, `glm5next-tp4`. The local-inference-lab export shares the FP8
-checkpoint's tokenizer, chat template, processor and generation config byte
-for byte. NVIDIA's shares the tokenizer and processor configuration, but its
-chat template is an older revision, and its generation config, although
-not byte-identical, states the same temperature, top-p and EOS ids.
+Any other checkpoint of the flash geometry is admitted by its layout, the
+stored encoding of each projection class
+([checkpoint layouts](../models/glm5next/README.md#checkpoint-layouts)):
+
+- latent attention and shared experts: block-128 FP8 or BF16;
+- dense MLPs: block-128 FP8, BF16 or NVFP4;
+- routed experts: block-128 FP8 or NVFP4;
+- MTP routed experts: block-128 FP8, MXFP8 or BF16;
+- KDA convolution weights and mHC base and scale vectors: BF16 or F32.
+
+Support follows the projection declaration (`contract/projections.json`)
+and the kernels the bundle supplies for it. Admission is not
+qualification: `qual.json` qualifies the official checkpoint, and a
+checkpoint of another layout is qualified as an
+[external variant](../tools/qual/README.md#external-variants).
+
+The test variable points CPU tests and reference runs at the official
+checkpoint, and `CHOPINFER_GLM5NEXT_EXTRA_CHECKPOINTS` at further
+checkpoint directories of any layout (`:` separated), each checked against
+expectations derived from its own layout. Serving takes the checkpoint
+directory itself (`serve --model DIR`). Every layout serves the same
+package, `glm5next.v1`, at the same topology, `glm5next-tp4`. A checkpoint
+whose tokenizer files are not the pinned revision's is packaged when its
+`tokenizer_config.json` and chat template state the pinned revision's,
+under a frontend whose tokenizer repository is `local` at a content
+revision; the served model name stays `GLM-5.3-Flash`.
 
 ## Serve
 
@@ -62,9 +71,8 @@ chopinfer serve --model /path/to/GLM-5.3-Flash --tensor-parallel-size 4
 ```
 
 prepares the package from the checkpoint and serves it with the profile the
-preparation provider selects for its layout: `tp4-mtp` for the FP8
-checkpoint, `tp4-mtp-nvfp4` for the local-inference-lab export and
-`tp4-mtp-nvfp4-nvidia` for NVIDIA's. Explicit options override the profile.
+preparation provider selects, `tp4-mtp`, for every layout. Explicit options
+override the profile.
 TP4 needs exactly four distinct visible devices
 ([device visibility](deploy-common.md#device-visibility-and-rank-selection));
 preparation refuses any other rank count.
@@ -103,40 +111,38 @@ CHOPINFER_QUAL_CONFIG=models/glm5next/qual.json \
 ```
 
 The screen refuses a server whose checkpoint is not the declaration's pin,
-so for an NVFP4 export set `CHOPINFER_QUAL_CONFIG` to that configuration's
-declaration, as `chopinfer eval declaration --model models/glm5next
---variant nvfp4` (or `nvfp4-nvidia`) prints it.
+so for another checkpoint set `CHOPINFER_QUAL_CONFIG` to its external
+variant's declaration, as `chopinfer eval declaration --model
+models/glm5next --variant V --variant-dir DIR` prints it
+([external variants](../tools/qual/README.md#external-variants)).
 
 ## Profiles
 
-`models/glm5next/profiles.json` declares seven TP4
+`models/glm5next/profiles.json` declares five TP4
 [serving profiles](serving-profiles.md), each with 32 sequences, 8,192
 batch tokens, 2,048-token prefill chunks, KV fraction 0.9, KV dtype `auto`
-and the prefix cache on. Six are qualified through 32 sequences on the
-adopted final release gate (2026-10-11); the soaks of `tp4-mtp` and
-`tp4-mtp-nvfp4` pass under the declared warm-up rule
-([model README](../models/glm5next/README.md)).
+and the prefix cache on. Each serves every checkpoint layout. Four are
+qualified through 32 sequences on the official checkpoint by the adopted
+final release gate (2026-10-11); the soak of `tp4-mtp` passes under the
+declared warm-up rule ([model README](../models/glm5next/README.md)).
 `tp4-mtp-k5` stays experimental.
 
-| Profile | Checkpoint | Speculation | Context-parallel size | Status |
+| Profile | Gated on | Speculation | Context-parallel size | Status |
 |---|---|---|---:|---|
 | `tp4-mtp` (default) | FP8 | MTP, 3 draft tokens, adaptive | 1 | qualified through 32 |
 | `tp4-ar` | FP8 | none | 1 | qualified through 32 |
 | `tp4-mtp-dcp2` | FP8 | MTP, 3 draft tokens, adaptive | 2 | qualified through 32 |
 | `tp4-mtp-dcp4` | FP8 | MTP, 3 draft tokens, adaptive | 4 | qualified through 32 |
 | `tp4-mtp-k5` | FP8 | MTP, 5 draft tokens, adaptive (benchmark only) | 1 | experimental |
-| `tp4-mtp-nvfp4` | local-inference-lab NVFP4 | MTP, 3 draft tokens, adaptive | 1 | qualified through 32 |
-| `tp4-mtp-nvfp4-nvidia` | NVIDIA NVFP4 | MTP, 3 draft tokens, adaptive | 1 | qualified through 32 |
 
 `serve --model` never picks the autoregressive or context-parallel profiles
 by itself: pass `--speculative-tokens 0` for AR, `--speculative-tokens 5`
 for five drafts (the package declares five; `tp4-mtp-k5` is that arm) and
 `--context-parallel-size 2` or `4` for DCP, or name the profile with `--profile FILE#NAME` on an
 explicit package. A server started with explicit options keeps the name
-of the profile the provider selected (`tp4-mtp` for the FP8 checkpoint)
-and reports those values in its served identity. Each profile
-pins its checkpoint layout (below), so a profile of another layout is
-refused. The DCP profiles are qualified on their own declarations
+of the profile the provider selected (`tp4-mtp`) and reports those values
+in its served identity. No profile sets the checkpoint layout (below), so
+each serves a package of any layout. The DCP profiles are qualified on their own declarations
 ([context-parallel attention](context-parallel.md)); five drafts are served
 on the text package only (`--speculative-tokens 5 --modalities text`).
 
@@ -147,15 +153,15 @@ The package declares three `--model-option NAME=VALUE` options (list them with
 
 | Option | Default | Values |
 |---|---|---|
-| `checkpoint.quantization_layout` | the package's layout | that layout only: `fp8-block128`, `nvfp4-routed` or `nvfp4-dense-routed` |
+| `checkpoint.quantization_layout` | the package's layout | that layout only, for example `attn-fp8.dense-fp8.experts-fp8.mtp-fp8.conv-bf16.hc-f32` |
 | `runtime.sinkhorn_comm_epilogue` | `false` | `true` or `false` |
 | `text_config.index_topk` | the checkpoint's 2,048 | a multiple of 4 from 4 to 2,048 |
 
 `checkpoint.quantization_layout` records the layout the package was prepared
-for. Every profile sets it, and `--profile` checks the profile's value
-against the package before any explicit option applies; an explicit value
-other than the package's fails the manifest check at startup. Create reads it
-back. `text_config.index_topk` is the indexer's key budget; a value other
+for, as its id `attn-<e>.dense-<e>.experts-<e>.mtp-<e>.conv-<d>.hc-<d>`.
+The manifest declares it as the option's only allowed value, so an explicit
+value other than the package's fails the manifest check at startup; the
+shipped profiles do not set it. Create reads it back. `text_config.index_topk` is the indexer's key budget; a value other
 than the checkpoint's is unqualified
 ([serving profiles](serving-profiles.md#model-options)).
 `runtime.sinkhorn_comm_epilogue=true` changes the target model's sublayer
@@ -195,11 +201,10 @@ read.
 ## Activation policy
 
 Every projection runs BF16 activations (A16). `--activation-policy auto`
-(the default) and `bf16` run the FP8 checkpoint's block-FP8 weights and the
-NVFP4 exports' NVFP4 weights (W4A16) under BF16 activations. `checkpoint` is
-refused for all three, since each declares quantized activations no GLM
-engine implements: dynamic FP8 for the FP8 checkpoint and static NVFP4
-inputs for both NVFP4 exports
+(the default) and `bf16` run every layout's weights under BF16 activations
+(W4A16 for NVFP4 weights). `checkpoint` is refused for a checkpoint that
+declares quantized activations, which no GLM engine implements; the
+official checkpoint declares dynamic FP8
 ([quantized checkpoints](quantized-checkpoints.md)).
 
 ## Modalities
@@ -244,10 +249,6 @@ GiB) and buffers (2.26 GiB) on each rank:
 | FP8 | FP8 | 5 | images | does not fit | does not fit | does not fit |
 | FP8 | BF16 | 3 | text | 362,240 | 663,040 | 1,223,936 |
 | FP8 | BF16 | 3 | images | 117,376 | 173,312 | 244,480 |
-| local-inference-lab NVFP4 | FP8 | 3 | text | 4,782,656 | 9,452,288 | 18,716,928 |
-| local-inference-lab NVFP4 | FP8 | 3 | images | 4,332,608 | 8,552,192 | 16,916,736 |
-| NVIDIA NVFP4 | FP8 | 3 | text | 4,580,672 | 9,048,320 | 17,908,992 |
-| NVIDIA NVFP4 | FP8 | 3 | images | 4,130,624 | 8,148,224 | 16,108,800 |
 
 The default package serves images, so the default `tp4-mtp` profile (FP8
 checkpoint, FP8 KV, three drafts, 32 slots) plans 215,744 KV tokens at DCP
@@ -274,12 +275,12 @@ fixed working tail plus six checkpoints, so the state term is an
 approximation. The totals are shared by every slot; one sequence is
 limited to the model's 1,048,576-token context. With FP8 weights, 64 slots
 fit without drafts but not with three, and with images 32 slots with five
-drafts do not fit; with either NVFP4 export 64 slots with three drafts fit
-(4,034,176 and 3,832,192 tokens at DCP 1 for text, 3,584,128 and 3,382,208
-with images), though both NVFP4 profiles declare 32. NVIDIA's export ships an FP8 KV hint
-(`kv_cache_scheme`), which is ignored: the latent KV format is
-`--kv-cache-dtype`.
-Print the whole plan with
+drafts do not fit. A layout with NVFP4 weights holds less per rank and
+plans a larger pool; the plan is computed per layout. A ModelOpt
+checkpoint's static FP8 KV hint (`kv_cache_scheme`) imports nothing: the
+latent KV format is `--kv-cache-dtype`.
+Print the whole plan for the representative layouts, or for the layout ids
+given after `--`, with
 
 ```sh
 cargo run -p model-glm5next-contract --example capacity-table --locked --offline

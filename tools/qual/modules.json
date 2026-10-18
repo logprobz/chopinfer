@@ -97,7 +97,8 @@
    "NAME": "str",
    "ROOT": "number",
    "SCHEMA": "str",
-   "TOOLS": "number"
+   "TOOLS": "number",
+   "VARIANTS_ENV": "str"
   },
   "determinism": {
    "COLD_REPEAT": "dict",
@@ -495,6 +496,12 @@
    "MODEL": "set",
    "REQUIRED": "number",
    "SHA256": "number"
+  },
+  "variant": {
+   "COVERS": "dict",
+   "INDEX": "str",
+   "METADATA": "number",
+   "ROOT": "number"
   },
   "vectors": {
    "FILLER": "int",

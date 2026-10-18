@@ -4,6 +4,9 @@
 schema = "chopinfer-model-inventory-v1"
 # CPU CI reads CHOPINFER_QWEN38_CHECKPOINT and CHOPINFER_QWEN38_TOKENIZER_DIR.
 checkpoint_env = "QWEN38"
+# The model author: the only publisher whose checkpoints the model's JSON
+# names (check_publishers in tools/model_sdk/inventory.py).
+publisher = "Qwen"
 
 [bundle]
 package = "bundle-qwen38"

@@ -29,7 +29,9 @@ use kernel_core::properties::{Anchors, Batch, Chunk, Invariance, Rows, Scope, Ti
 use model_glm5next_contract::contract::{
     ANCHOR_ITEMS, Glm, PAGE_TOKENS, PREFILL_GRANULE, latent_format,
 };
-use model_glm5next_contract::quantization::{LAYOUTS, Layout};
+use model_glm5next_contract::quantization::{
+    FP8_BLOCK128, Layout, representative_layouts, test_support::config_of,
+};
 use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
 
 use super::*;
@@ -91,11 +93,12 @@ fn ask_line(asked: &Asked) -> String {
     )
 }
 
-/// Every serving configuration's plan: each layout at each group size.
+/// Every serving configuration's plan: each representative layout at each
+/// group size.
 fn plans() -> Vec<Plan> {
     let shape = Shape::TP4;
-    LAYOUTS
-        .iter()
+    representative_layouts()
+        .into_iter()
         .flat_map(|layout| {
             model_glm5next_contract::contract::CONTEXT_PARALLEL_SIZES.map(|size| Plan {
                 shape,
@@ -147,17 +150,12 @@ fn the_asks_choose_what_the_rows_alone_choose() {
 }
 
 /// The precision component of a checkpoint of `layout`: the pinned FP8
-/// test checkpoint's, or an export of the layout's fixture config.
+/// test checkpoint's, or one of a synthetic config of its class mix.
 fn component(layout: &Layout) -> Vec<u8> {
-    let config: &[u8] = match layout.id {
-        "fp8-block128" => return model_glm5next_contract::prepared::test_component(),
-        "nvfp4-routed" => include_bytes!("../../../contract/fixtures/nvfp4-config.json"),
-        "nvfp4-dense-routed" => {
-            include_bytes!("../../../contract/fixtures/nvidia-nvfp4-config.json")
-        }
-        other => panic!("no fixture config of layout {other}"),
-    };
-    let config = serde_json::from_slice(config).unwrap();
+    if *layout == FP8_BLOCK128 {
+        return model_glm5next_contract::prepared::test_component();
+    }
+    let config = serde_json::from_slice(&config_of(layout)).unwrap();
     model_glm5next_contract::prepared::checkpoint_component(layout, &config).unwrap()
 }
 
@@ -274,10 +272,14 @@ fn the_asks_and_grants_are_pinned() {
     // needs, which the composed form now keeps; and when the
     // context-parallel localizations and partial merges asked it too; and
     // when each layout's projections asked what their phase needs; and
-    // when the comm epilogues asked what every phase needs.
+    // when the comm epilogues asked what every phase needs. Re-pinned when
+    // layouts took ids derived from their encodings: with the earlier ids
+    // put back the journal is the earlier pin's, (3429, 0x11d59ba6cad32f95).
+    // Re-pinned when the block-FP8 and NVFP4 mix joined the plans: its
+    // lines follow the earlier 3429, (3429, 0xd4cff0ebdbfa4477), unchanged.
     check_journal(
         &lines,
-        (3429, 0x11d59ba6cad32f95),
+        (4578, 0x97f7cc82cc063865),
         "glm5next-invariance-asks.txt",
     )
     .unwrap();

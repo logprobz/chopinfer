@@ -60,7 +60,7 @@ bash tests/model-geometry-recipe.sh qwen38
 ```
 
 The [export recipe](../../docs/testing.md#export-recipe) admits a synthesized
-mixed export that neither committed export matches: MXFP8 full-attention,
+mixed export whose format mix neither tested mixed layout uses: MXFP8 full-attention,
 indexer and shared-expert projections, BF16 linear-attention projections,
 NVFP4 experts and n-gram lookup, and weight-only NVFP4 MTP experts. It needs
 no tree change:

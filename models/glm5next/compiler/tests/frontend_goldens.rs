@@ -460,25 +460,26 @@ fn declaration_pins_the_checkpoint_vocabulary_and_sampling() {
 /// The deploy defaults copy the explicit fields of the checkpoints'
 /// `generation_config.json`: each declared sampling field equals the file's
 /// (temperature 1.0, top-p 0.95, the others omitted in both) and the stop
-/// ids are its EOS ids, for the FP8 checkpoint and both NVFP4 exports
-/// alike, when they are configured. NVIDIA's also states `do_sample: true`,
-/// which the served API follows anyway. An omitted field keeps Chopinfer's default,
-/// which is not HF's effective one (HF fills top-k 50).
+/// ids are its EOS ids, for the official checkpoint and each of
+/// `CHOPINFER_GLM5NEXT_EXTRA_CHECKPOINTS` alike, when they are configured.
+/// A file may also state `do_sample: true`, which the served API follows
+/// anyway. An omitted field keeps Chopinfer's default, which is not HF's
+/// effective one (HF fills top-k 50).
 #[test]
 fn sampling_defaults_are_the_checkpoint_generation_config() {
     let d = descriptor();
     let declared = serde_json::to_value(d.generation_config).unwrap();
     let mut checked = 0;
-    for variable in [
-        "CHOPINFER_GLM5NEXT_CHECKPOINT",
-        "CHOPINFER_GLM5NEXT_NVFP4_CHECKPOINT",
-        "CHOPINFER_GLM5NEXT_NVIDIA_NVFP4_CHECKPOINT",
-    ] {
-        let Some(root) = std::env::var_os(variable) else {
-            eprintln!("SKIP: {variable} is unset");
-            continue;
-        };
-        let path = PathBuf::from(root).join("generation_config.json");
+    let official = std::env::var_os("CHOPINFER_GLM5NEXT_CHECKPOINT").map(PathBuf::from);
+    if official.is_none() {
+        eprintln!("SKIP: CHOPINFER_GLM5NEXT_CHECKPOINT is unset");
+    }
+    let extra = std::env::var_os(model_glm5next_contract::quantization::EXTRA_CHECKPOINTS)
+        .map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>())
+        .unwrap_or_default();
+    for root in official.into_iter().chain(extra) {
+        let variable = root.display().to_string();
+        let path = root.join("generation_config.json");
         let config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         for field in declared.as_object().unwrap().keys() {
             assert_eq!(declared[field], config[field], "{variable}: {field}");

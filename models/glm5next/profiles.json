@@ -4,9 +4,6 @@
   "served_model_name": "GLM-5.3-Flash",
   "profiles": {
     "tp4-mtp": {
-      "model_options": {
-        "checkpoint.quantization_layout": "fp8-block128"
-      },
       "bundle_id": "glm5next.v1",
       "topology": "glm5next-tp4",
       "tensor_parallel": 4,
@@ -40,9 +37,6 @@
       ]
     },
     "tp4-mtp-k5": {
-      "model_options": {
-        "checkpoint.quantization_layout": "fp8-block128"
-      },
       "bundle_id": "glm5next.v1",
       "topology": "glm5next-tp4",
       "tensor_parallel": 4,
@@ -76,9 +70,6 @@
       ]
     },
     "tp4-ar": {
-      "model_options": {
-        "checkpoint.quantization_layout": "fp8-block128"
-      },
       "bundle_id": "glm5next.v1",
       "topology": "glm5next-tp4",
       "tensor_parallel": 4,
@@ -112,9 +103,6 @@
       ]
     },
     "tp4-mtp-dcp2": {
-      "model_options": {
-        "checkpoint.quantization_layout": "fp8-block128"
-      },
       "bundle_id": "glm5next.v1",
       "topology": "glm5next-tp4",
       "tensor_parallel": 4,
@@ -149,9 +137,6 @@
       ]
     },
     "tp4-mtp-dcp4": {
-      "model_options": {
-        "checkpoint.quantization_layout": "fp8-block128"
-      },
       "bundle_id": "glm5next.v1",
       "topology": "glm5next-tp4",
       "tensor_parallel": 4,
@@ -177,78 +162,6 @@
       "prefill_chunk_tokens": 2048,
       "queue_depth": null,
       "context_parallel_size": 4,
-      "kv_memory_fraction": 0.9,
-      "status": "qualified",
-      "evidence": [
-        "docs/model-glm5next.md#final-gate-gates4",
-        "docs/model-glm5next.md#serving-profiles",
-        "models/glm5next/README.md#serving-profiles"
-      ]
-    },
-    "tp4-mtp-nvfp4": {
-      "model_options": {
-        "checkpoint.quantization_layout": "nvfp4-routed"
-      },
-      "bundle_id": "glm5next.v1",
-      "topology": "glm5next-tp4",
-      "tensor_parallel": 4,
-      "devices_required": 4,
-      "devices": [
-        0,
-        1,
-        2,
-        3
-      ],
-      "speculation": {
-        "mode": "adaptive",
-        "tokens": 3,
-        "draft_cost": "per-token",
-        "drafter": "mtp"
-      },
-      "max_sequences": 32,
-      "qualified_max_sequences": 32,
-      "qualification": "Qualified through 32 sequences: tp4-mtp for the local-inference-lab NVFP4 export (nvfp4-routed layout, W4A16), which the preparation provider chooses for that checkpoint and refuses for the FP8 one. qual.json's nvfp4 configuration gates it against its own HF reference and the FP8 GSM8K arm; its checks passed in GATES4 (part A, the autoregressive arms, at cab96b599; part B at 8c75e90bd), adopted by the operator on 2026-10-11 (paired GSM8K 1,285 of 1,319 against FP8's 1,283), except the soak: host growth 529.2 MiB. The soak's 512 MiB host-growth limit is waived for the bounded warm-up of pinned last-chunk prefill programs (at most 64 lengths, about 2.5 GiB host over a server's life); GPU memory for all 64 stays free after the KV pool. The capacity plan fits 64 sequences with MTP; 32 are qualified.",
-      "kv_cache_dtype": "auto",
-      "prefix_cache": true,
-      "max_batch_tokens": 8192,
-      "prefill_chunk_tokens": 2048,
-      "queue_depth": null,
-      "kv_memory_fraction": 0.9,
-      "status": "qualified",
-      "evidence": [
-        "docs/model-glm5next.md#final-gate-gates4",
-        "docs/model-glm5next.md#serving-profiles",
-        "models/glm5next/README.md#serving-profiles"
-      ]
-    },
-    "tp4-mtp-nvfp4-nvidia": {
-      "model_options": {
-        "checkpoint.quantization_layout": "nvfp4-dense-routed"
-      },
-      "bundle_id": "glm5next.v1",
-      "topology": "glm5next-tp4",
-      "tensor_parallel": 4,
-      "devices_required": 4,
-      "devices": [
-        0,
-        1,
-        2,
-        3
-      ],
-      "speculation": {
-        "mode": "adaptive",
-        "tokens": 3,
-        "draft_cost": "per-token",
-        "drafter": "mtp"
-      },
-      "max_sequences": 32,
-      "qualified_max_sequences": 32,
-      "qualification": "Qualified through 32 sequences: tp4-mtp for NVIDIA's NVFP4 export (nvfp4-dense-routed layout: NVFP4 dense MLPs and routed experts, BF16 MTP experts, W4A16), which the preparation provider chooses for that checkpoint and refuses for the others. qual.json's nvfp4-nvidia configuration gates it against its own HF reference and the FP8 GSM8K arm; its gate passed in GATES4 (part A, the autoregressive arms, at cab96b599; part B at 8c75e90bd), adopted by the operator on 2026-10-11, soak included (host growth 480.0 MiB; paired GSM8K 1,288 of 1,319 against FP8's 1,283). The capacity plan fits 64 sequences with MTP; 32 are qualified.",
-      "kv_cache_dtype": "auto",
-      "prefix_cache": true,
-      "max_batch_tokens": 8192,
-      "prefill_chunk_tokens": 2048,
-      "queue_depth": null,
       "kv_memory_fraction": 0.9,
       "status": "qualified",
       "evidence": [

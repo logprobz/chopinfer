@@ -468,7 +468,7 @@ is no hot reload or automatic fetching.
 
 For several quantized checkpoints of one architecture, declare the
 projections in `contract/projections.json` and use the shared
-[per-operation precision machinery](quantized-checkpoints.md#adding-a-family-or-exporter),
+[per-operation precision machinery](quantized-checkpoints.md#adding-a-family-or-layout),
 as the maintained example's precision exercise does; another
 checkpoint inside an implemented operation domain needs a normal package
 emission, not another model runtime. An optional preparation provider for

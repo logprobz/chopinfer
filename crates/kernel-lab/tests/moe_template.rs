@@ -35,8 +35,9 @@
 //! several rows of each token. The receipt records these domains, the
 //! written and finite nonzero output elements per bank, and the cases with
 //! finite nonzero outputs.
-//! `CHOPINFER_QWEN38_NVFP4_CHECKPOINT` (NVIDIA's mixed export) replaces
-//! local experts 0-7 with layer 1's real NVFP4 experts. The ignored
+//! `CHOPINFER_QWEN38_EXTRA_CHECKPOINTS` (colon-separated checkpoint
+//! directories) replaces local experts 0-7 with layer 1's real NVFP4 experts
+//! from the first listed checkpoint that stores them as NVFP4. The ignored
 //! `grouped_moe_packed_ring_timing` times them A B A B with captured graphs
 //! of 32 launches that rotate through eight banks and 32 route sets, so
 //! weights come from DRAM as in decode and host-side launch preparation
@@ -515,21 +516,48 @@ fn load_real(
     }
 }
 
-/// Layer 1's experts of rank `QWEN_RANK` from NVIDIA's mixed NVFP4 export
-/// (`CHOPINFER_QWEN38_NVFP4_CHECKPOINT`) as local experts 0-7, in the packed
-/// layout the preparation writes: row-major codes (gate rows, then up rows),
-/// UE4M3 scales in 16 x 8 tiles and each projection's `weight_scale_2`.
+/// The first checkpoint `CHOPINFER_QWEN38_EXTRA_CHECKPOINTS` lists whose
+/// layer `REAL_LAYER` routed `projection` stores NVFP4 headers: U8 codes
+/// beside an F32 `weight_scale_2`.
+fn nvfp4_checkpoint(projection: &str) -> Option<PathBuf> {
+    let listed = std::env::var_os("CHOPINFER_QWEN38_EXTRA_CHECKPOINTS")?;
+    let prefix = format!("model.language_model.layers.{REAL_LAYER}.mlp.experts.0.{projection}");
+    std::env::split_paths(&listed)
+        .filter(|root| !root.as_os_str().is_empty())
+        .find(|root| {
+            let dtype = |name: String| checkpoint_dtype(root, &name).ok();
+            dtype(format!("{prefix}.weight")).as_deref() == Some("U8")
+                && dtype(format!("{prefix}.weight_scale_2")).as_deref() == Some("F32")
+        })
+}
+
+/// The dtype the checkpoint at `root` stores tensor `name` in.
+fn checkpoint_dtype(root: &Path, name: &str) -> LabResult<String> {
+    let index: Value = serde_json::from_slice(
+        &std::fs::read(root.join("model.safetensors.index.json")).map_err(err)?,
+    )
+    .map_err(err)?;
+    let file = index["weight_map"][name]
+        .as_str()
+        .ok_or_else(|| format!("{name} is not in the checkpoint index"))?;
+    Ok(safetensors_entry(&root.join(file), name)?.0)
+}
+
+/// Layer 1's experts of rank `QWEN_RANK` from the first listed checkpoint
+/// with NVFP4 routed experts ([`nvfp4_checkpoint`]) as local experts 0-7,
+/// in the packed layout the preparation writes: row-major codes (gate rows,
+/// then up rows), UE4M3 scales in 16 x 8 tiles and each projection's
+/// `weight_scale_2`.
 fn load_real_nvfp4(session: &Session, g: Geometry, bank: &Bank) -> LabResult<Option<String>> {
-    let Some(root) = std::env::var_os("CHOPINFER_QWEN38_NVFP4_CHECKPOINT").map(PathBuf::from)
-    else {
-        return Ok(None);
-    };
-    let first = QWEN_RANK as usize * g.experts;
     let projections: &[&str] = if g.gate_up {
         &["gate_proj", "up_proj"]
     } else {
         &["down_proj"]
     };
+    let Some(root) = nvfp4_checkpoint(projections[0]) else {
+        return Ok(None);
+    };
+    let first = QWEN_RANK as usize * g.experts;
     let rows = if g.gate_up { g.n / 2 } else { g.n };
     let blocks = g.scale_blocks();
     let mut codes = Vec::new();
@@ -570,8 +598,9 @@ fn load_real_nvfp4(session: &Session, g: Geometry, bank: &Bank) -> LabResult<Opt
     poison::write(session, &bank.scales, 0, &scales)?;
     poison::write(session, &bank.f32_scales, 0, &globals)?;
     Ok(Some(format!(
-        "NVIDIA NVFP4 Qwen3.8 layer {REAL_LAYER} experts {first}-{} as local 0-{}",
+        "NVFP4 Qwen3.8 layer {REAL_LAYER} experts {first}-{} of {} as local 0-{}",
         first + REAL_EXPERTS - 1,
+        root.display(),
         REAL_EXPERTS - 1
     )))
 }
@@ -1768,7 +1797,7 @@ fn informative_elements(output: &[u8], r: &Routes, g: Geometry) -> (usize, usize
 
 fn packed_skip_reason(g: Geometry) -> &'static str {
     if g.format == Format::Nvfp4 {
-        "CHOPINFER_QWEN38_NVFP4_CHECKPOINT unset"
+        "CHOPINFER_QWEN38_EXTRA_CHECKPOINTS lists no NVFP4 expert checkpoint"
     } else {
         "no MXFP8 expert checkpoint is inspected"
     }
@@ -1776,8 +1805,8 @@ fn packed_skip_reason(g: Geometry) -> &'static str {
 
 /// The template's packed ring at its table row against the packed engine,
 /// bit for bit, at every live count, with skewed, hot and crowded routes,
-/// poisoned outputs and, with `CHOPINFER_QWEN38_NVFP4_CHECKPOINT`, layer 1's
-/// real NVIDIA experts; the banks are listed in the module comment.
+/// poisoned outputs and, with `CHOPINFER_QWEN38_EXTRA_CHECKPOINTS`, layer
+/// 1's real NVFP4 experts; the banks are listed in the module comment.
 #[test]
 fn grouped_moe_packed_ring_matches_the_packed_engine() {
     let instances = packed_instances();

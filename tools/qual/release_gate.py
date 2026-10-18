@@ -164,9 +164,10 @@ def eval_source(config, check, model_root=None):
     if (not declaration.plain(model) or (variant is not None and not declaration.plain(variant))
             or not (directory / declaration.NAME).is_file()):
         return None
+    variants = declaration.require_variant_root(config) if declaration.external(config) else None
     if variant is None:
         source = directory / declaration.NAME
-    elif variant in declaration.configurations(model, root):
+    elif variants is not None or variant in declaration.configurations(model, root):
         source = declaration.materialized(model, variant, root)
     else:
         source = declaration.path(model, root, variant)
@@ -174,16 +175,17 @@ def eval_source(config, check, model_root=None):
     if declared != check:
         raise ValueError(f"{source} declares another {check['id']} check than this run's policy; "
                          "chopinfer eval run would capture that one")
-    return directory, variant
+    return directory, variant, variants
 
 
 def eval_command(check, profile, context, source, report):
     """`chopinfer eval run` of one declared check against the server at
     `context`'s URL, bound to its startup log when the run has one, writing
-    its report to `report`."""
-    directory, variant = source
+    its report to `report`. An external variant is read from its root."""
+    directory, variant, variants = source
     return [str(kinds.eval_binary()), "eval", "run", "--model", str(directory),
-            *(["--variant", variant] if variant else []), "--served-model", context["model"],
+            *(["--variant", variant] if variant else []),
+            *(["--variant-dir", str(variants)] if variants else []), "--served-model", context["model"],
             "--check", check["id"], "--cohort", profile, "--url", context["url"],
             *(["--server-log", str(context["server_log"])] if context.get("server_log") else []),
             "--report", str(report)]
@@ -468,13 +470,16 @@ def run(config, config_path, profile, url, model, inputs, receipts, mechanics=Fa
     result = {"schema": "chopinfer-release-receipt/v1", "at": stamp,
               "model": config["model"], "profile": profile, "mechanics_only": mechanics,
               "config_sha256": digest(config_path), "config_source": source_config, "config": config,
+              "variant_source": None,
               "inputs": inputs, "checks": [], "limitations": config.get("limitations", []),
               "passed": False, "qualified": False}
     started = time.monotonic()
     # Each check is bounded by its own timeout_seconds; a cohort has no overall deadline.
     deadline = math.inf
     try:
-        from refs import verify_config
+        from refs import verify_config, variant_source
+        # An external variant's overlay, lock and checkpoint lock, by digest.
+        result["variant_source"] = variant_source(config)
         verify_config(config, model_root, policy_only=True)
         result["revision"] = source_revision(ROOT)
         if model_root is not None:
@@ -537,6 +542,8 @@ def main():
     selection.add_argument("--model", help="model whose models/<m>/qual.json to read, e.g. mimo26 or qwen38")
     selection.add_argument("--config", type=Path, help="external gate declaration")
     parser.add_argument("--model-root", type=Path, help="base for external declared input paths")
+    parser.add_argument("--variant-dir", type=Path,
+                        help=f"root of external variants, MODEL/VARIANT.json (default ${declaration.VARIANTS_ENV})")
     parser.add_argument("--served-model", help="API model alias; defaults to /v1/models")
     parser.add_argument("--url")
     parser.add_argument("--list-inputs", action="store_true", help="Resolve configured inputs without HTTP or receipts")
@@ -549,6 +556,7 @@ def main():
     args = parser.parse_args()
     if bool(args.config) != bool(args.model_root):
         parser.error("--config and --model-root must be supplied together")
+    declaration.select_variant_root(args.variant_dir)
     model_root = args.model_root.resolve() if args.model_root else None
     if args.config:
         config_path = args.config.resolve()
@@ -562,8 +570,9 @@ def main():
                 raise ValueError("--model must name a model declaration, as MODEL or MODEL.VARIANT")
         except ValueError as error:
             parser.error(str(error))
-        config_path = declaration.named(name)
     try:
+        if not args.config:
+            config_path = declaration.named(name)
         declaration.require_rooted(config_path, model_root or ROOT)
         config = declaration.load(config_path)
         validate(config, external=model_root is not None)

@@ -149,8 +149,8 @@ mod tests {
     use crate::quantization::{FP8_BLOCK128, NVFP4_DENSE_ROUTED, NVFP4_ROUTED};
 
     /// Each layout admits its scale views: block FP8's F32 block scales,
-    /// the NVFP4 exports' UE4M3 scales and F32 globals, and
-    /// local-inference-lab's MXFP8 MTP experts with their scales.
+    /// NVFP4's UE4M3 scales and F32 globals, and MXFP8 MTP experts with
+    /// their scales.
     #[test]
     fn each_layout_admits_its_scale_views() {
         let count = |layout, check| {

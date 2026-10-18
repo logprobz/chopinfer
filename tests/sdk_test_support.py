@@ -59,7 +59,10 @@ for _model in ('mimo26', 'qwen38'):
             ('tests', 'the projection test support of the contract, which includes checkpoint.rs',
              (f'models/{_model}/contract/tests/sm120/projections.rs',
               f'models/{_model}/contract/src/projections/variants/tests.rs',
-              f'models/{_model}/compiler/src/projection_comparison.rs')),
+              f'models/{_model}/compiler/src/projection_comparison.rs')
+             if _model == 'mimo26' else
+             ('models/qwen38/contract/tests/sm120/projections.rs',
+              'models/qwen38/compiler/src/mixed_layouts.rs')),
         f'models/{_model}/contract/src/projections/variants/tests.rs':
             ('cfg-test', "the variants' unit tests, which load the projection test support",
              (f'models/{_model}/contract/src/projections/variants.rs',)),
@@ -68,6 +71,9 @@ for _model in ('mimo26', 'qwen38'):
              (f'models/{_model}/compiler/src/lib.rs',)),
     }
 ALLOWED |= {
+    'models/qwen38/compiler/src/mixed_layouts.rs':
+        ('cfg-test', "the precision source tests' mixed layouts, which load the projection test support",
+         ('models/qwen38/compiler/src/lib.rs', 'models/qwen38/contract/src/lib.rs')),
     'models/glm5next/compiler/src/test_native.rs':
         ('cfg-test', "the preparation tests' native fixture, which includes native.rs",
          ('models/glm5next/compiler/src/preparation.rs',)),

@@ -181,6 +181,10 @@ pub struct Report {
     pub tool: Tool,
     pub model: String,
     pub declaration_sha256: String,
+    /// An external variant's overlay, lock and checkpoint lock, each path
+    /// with its SHA-256 (`lock::variant_source`); `None` for a variant the
+    /// tree declares.
+    pub variant_source: Option<Value>,
     pub suite: String,
     pub at: String,
     /// The server's identity and the checkpoint bound to it.
@@ -264,6 +268,7 @@ impl Report {
                       "checkpoint_identity": serving.get("checkpoint_identity").cloned().unwrap_or(Value::Null),
                       "profile": profile},
             "declaration_sha256": self.declaration_sha256,
+            "variant_source": self.variant_source,
             "suite": self.suite,
             "at": self.at,
             "server": self.server,

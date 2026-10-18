@@ -24,8 +24,9 @@ REVISION --local-dir DIRECTORY`, retaining its download metadata:
 | Qwen | `Qwen/Qwen3.8-Flash-Next-FP8` | `236dfdf285828023ca3bcd3f37366c58a3469b13` |
 | GLM (TP4 only) | `zai-org/GLM-5.3-Flash` | `eb9eb208eb0d988989d07a6a12d0fdeb5f52574a` |
 
-GLM's two NVFP4 exports are listed in its
-[deployment page](deploy-glm5next.md#checkpoints).
+Other checkpoints of these models, such as fine-tunes or other
+quantizations, are admitted by layout
+([compatible checkpoints](compatible-checkpoints.md#serve-your-own-checkpoint)).
 Set `CHECKPOINT` to that directory's absolute path. Allow about 166 GB for
 MiMo, 173 GB for Qwen or 328 GB for GLM, plus build space and host RAM.
 Qwen TP2 pins another 51.2 GB of host RAM per server. See [deployment memory](deploy-common.md#pinned-host-memory).

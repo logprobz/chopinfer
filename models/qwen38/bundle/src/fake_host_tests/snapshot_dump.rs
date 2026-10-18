@@ -616,7 +616,7 @@ fn precision_lifecycles_keep_their_recorded_bytes() {
             }
         }
     }
-    for (label, mx) in [("nvidia", false), ("mxfp8", true)] {
+    for (label, mx) in [("nvfp4", false), ("mxfp8", true)] {
         for served in [33, 100, 256] {
             cases.push((label, true, mx, case(Shape::TP4, false, false, served)));
         }

@@ -286,6 +286,7 @@ fn import_in_parallel(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mixed_layouts::Layout;
     use kernel_core::precision::TensorSpan;
 
     fn config() -> Qwen38Config {
@@ -314,56 +315,57 @@ mod tests {
         }
     }
 
-    fn mixed_fixture(name: &str) -> Result<MixedFixture> {
-        mixed_fixture_with(name, &[])
+    fn mixed_fixture(layout: Layout) -> Result<MixedFixture> {
+        mixed_fixture_with(layout, &[])
     }
 
-    /// The fixture with each listed F32 element `(tensor, element, value)`
-    /// written into the otherwise zero shard before capture.
-    fn mixed_fixture_with(name: &str, values: &[(&str, u64, f32)]) -> Result<MixedFixture> {
+    /// The layout's synthetic checkpoint with each listed F32 element
+    /// `(tensor, element, value)` written into the otherwise zero shard
+    /// before capture.
+    fn mixed_fixture_with(layout: Layout, values: &[(&str, u64, f32)]) -> Result<MixedFixture> {
         use std::io::Write;
         use std::os::unix::fs::FileExt;
-        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../compiler/fixtures/mixed")
-            .join(name);
         let root = std::env::temp_dir().join(format!(
-            "qwen38-mixed-{name}-{}-{}",
+            "qwen38-mixed-{}-{}-{}",
+            layout.name(),
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_nanos()
         ));
         std::fs::create_dir(&root)?;
-        for document in [
-            "config.json",
-            HF_QUANT_CONFIG,
-            "model.safetensors.index.json",
+        let tensors = crate::mixed_layouts::tensors(layout);
+        let weight_map: serde_json::Map<String, serde_json::Value> = tensors
+            .iter()
+            .map(|(name, _, _)| (name.clone(), "synthetic.safetensors".into()))
+            .collect();
+        for (document, value) in [
+            ("config.json", crate::mixed_layouts::config(layout)),
+            (
+                HF_QUANT_CONFIG,
+                crate::mixed_layouts::hf_quant_config(layout),
+            ),
+            (
+                "model.safetensors.index.json",
+                serde_json::json!({ "weight_map": weight_map }),
+            ),
         ] {
-            std::fs::copy(fixture.join(document), root.join(document))?;
+            std::fs::write(root.join(document), serde_json::to_vec(&value)?)?;
         }
-        let tensors: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(fixture.join("tensors.json"))?)?;
         let mut header = serde_json::Map::new();
         let mut offset = 0_u64;
-        for tensor in tensors.as_array().unwrap() {
-            let width = match tensor["dtype"].as_str().unwrap() {
+        for (name, dtype, shape) in tensors {
+            let width = match dtype.as_str() {
                 "U8" | "F8_E4M3" => 1,
                 "BF16" => 2,
                 "F32" => 4,
                 other => panic!("unsupported fixture dtype {other}"),
             };
-            let elements: u64 = tensor["shape"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|n| n.as_u64().unwrap())
-                .product();
-            let end = offset + elements * width;
+            let end = offset + shape.iter().product::<u64>() * width;
             header.insert(
-                tensor["name"].as_str().unwrap().into(),
+                name.clone(),
                 serde_json::json!({
-                    "dtype": tensor["dtype"], "shape": tensor["shape"],
-                    "data_offsets": [offset, end]
+                    "dtype": dtype, "shape": shape, "data_offsets": [offset, end]
                 }),
             );
             offset = end;
@@ -414,8 +416,8 @@ mod tests {
     }
 
     #[test]
-    fn nvidia_mixed_fixture_is_admitted_without_fp8_block_size() {
-        let fixture = mixed_fixture("nvidia").unwrap();
+    fn nvfp4_routed_fixture_is_admitted_without_fp8_block_size() {
+        let fixture = mixed_fixture(Layout::Nvfp4RoutedFp8Mtp).unwrap();
         let files = &fixture.files;
         let source = admit_mixed_fixture(files).unwrap();
         let format = |name: &str| source.operands[name].weight.format;
@@ -445,23 +447,22 @@ mod tests {
         }
     }
 
-    const LOCAL_LAB_NORM: &str =
-        "model.language_model.layers.0.attn_hyper_connection.hc_norm.weight";
+    const HC_NORM: &str = "model.language_model.layers.0.attn_hyper_connection.hc_norm.weight";
 
-    /// Local-lab's F32 hyper-connection norm is admitted as stored, beside
-    /// its MXFP8 and NVFP4 operands.
+    /// The MXFP8 layout's F32 hyper-connection norm is admitted as stored,
+    /// beside its MXFP8 and NVFP4 operands.
     #[test]
-    fn local_lab_mixed_fixture_admits_its_f32_norm() {
-        let fixture = mixed_fixture("local-lab").unwrap();
+    fn mxfp8_dense_fixture_admits_its_f32_norm() {
+        let fixture = mixed_fixture(Layout::Mxfp8DenseNvfp4).unwrap();
         let source = admit_mixed_fixture(&fixture.files).unwrap();
         assert_eq!(
             source
                 .f32_norms()
                 .map(|span| span.tensor.as_str())
                 .collect::<Vec<_>>(),
-            [LOCAL_LAB_NORM]
+            [HC_NORM]
         );
-        assert_eq!(source.inventory.tensors[LOCAL_LAB_NORM].dtype, DType::F32);
+        assert_eq!(source.inventory.tensors[HC_NORM].dtype, DType::F32);
         assert_eq!(
             source.operands["model.language_model.layers.0.linear_attn.in_proj_a.weight"]
                 .weight
@@ -475,8 +476,8 @@ mod tests {
     fn non_finite_f32_norms_are_refused() {
         for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
             let fixture = mixed_fixture_with(
-                "local-lab",
-                &[(LOCAL_LAB_NORM, 7, 0.25), (LOCAL_LAB_NORM, 9, value)],
+                Layout::Mxfp8DenseNvfp4,
+                &[(HC_NORM, 7, 0.25), (HC_NORM, 9, value)],
             )
             .unwrap();
             let source = admit_mixed_fixture(&fixture.files).unwrap();
@@ -486,10 +487,10 @@ mod tests {
                 .to_string();
             assert_eq!(
                 error,
-                format!("tensor {LOCAL_LAB_NORM}: F32 norm weight element 9 is not finite")
+                format!("tensor {HC_NORM}: F32 norm weight element 9 is not finite")
             );
         }
-        let finite = mixed_fixture_with("local-lab", &[(LOCAL_LAB_NORM, 9, -1.0002)]).unwrap();
+        let finite = mixed_fixture_with(Layout::Mxfp8DenseNvfp4, &[(HC_NORM, 9, -1.0002)]).unwrap();
         admit_mixed_fixture(&finite.files)
             .unwrap()
             .require_finite_f32_norms(&finite.files)
@@ -508,7 +509,7 @@ mod tests {
                 false,
             ),
             ("model.language_model.layers.1.ple.norm_conv.weight", true),
-            (LOCAL_LAB_NORM, true),
+            (HC_NORM, true),
         ] {
             let inventory = TensorInventory {
                 tensors: BTreeMap::from([(name.into(), tensor(name, DType::F32, &[128]))]),
@@ -530,14 +531,13 @@ mod tests {
         }
     }
 
-    /// Local-lab's export manifest names its MTP experts MXFP8 while its
-    /// quantization rules and tensor headers are weight-only NVFP4. The
-    /// catalog reads its configuration documents and headers alone, so a
-    /// disagreeing manifest selects no encoding (nor the composition an
-    /// encoding binds).
+    /// An export manifest may name MTP experts MXFP8 while the quantization
+    /// rules and tensor headers are weight-only NVFP4. The catalog reads its
+    /// configuration documents and headers alone, so a disagreeing manifest
+    /// selects no encoding (nor the composition an encoding binds).
     #[test]
     fn a_disagreeing_export_manifest_selects_no_encoding() {
-        let fixture = mixed_fixture("local-lab").unwrap();
+        let fixture = mixed_fixture(Layout::Mxfp8DenseNvfp4).unwrap();
         std::fs::write(
             fixture.root.join("export-manifest.json"),
             br#"{"precision": {"mtp_experts": "mxfp8_block32"}}"#,

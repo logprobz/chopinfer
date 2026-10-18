@@ -33,12 +33,7 @@ impl Verifier {
         let lock = registry.source_lock(identity)?;
         let config = catalog::open_source(&root.join("config.json"))?;
         // Authenticate index and metadata before interpreting their contents.
-        for name in [
-            "config.json",
-            "model.safetensors.index.json",
-            "tokenizer.json",
-            "tokenizer_config.json",
-        ] {
+        for (name, _) in crate::checkpoint::METADATA {
             if name == "config.json" {
                 lock.authenticate(name, &config)?;
             } else {
@@ -47,7 +42,9 @@ impl Verifier {
         }
         // Refuse execution geometry before opening tensor shard headers.
         let matched = authenticated_config(&config, &lock)?;
-        if root.join("dflash/config.json").try_exists()? {
+        // A local checkpoint whose DFlash drafter does not match is served
+        // without it (`catalog::Catalog::load_drafter_with_config`).
+        if !identity.is_local() && root.join("dflash/config.json").try_exists()? {
             catalog::validate_dflash_config(root, matched.geometry()?)?;
         }
         let (sources, tensors) = catalog::load_indexed(root)?;

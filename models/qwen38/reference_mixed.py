@@ -41,10 +41,11 @@ F32 uses `rounded`, the exact product rounded once (`--dequant f32=rounded`);
 `hf-bf16` forms the F32 product (E4M3 scale times global first, as ModelOpt
 does) and rounds it to BF16 for the bf16 spread mode.
 
-Stored F32 parameters (local-lab's hyper-connection and PLE norm weights)
-never narrow: they stay F32 in the bf16 mode and widen exactly in f64. HF's
-`Qwen4ExpTextRMSNorm` computes `1 + weight.float()` in F32, so every mode
-reads the stored values; HF's own BF16 loading would round them to BF16.
+Stored F32 parameters (the hyper-connection and PLE norm weights of an
+mxfp8-dense-nvfp4 export) never narrow: they stay F32 in the bf16 mode and
+widen exactly in f64. HF's `Qwen4ExpTextRMSNorm` computes
+`1 + weight.float()` in F32, so every mode reads the stored values; HF's own
+BF16 loading would round them to BF16.
 Stored BF16 tensors are cast to the mode dtype as in reference.py.
 """
 

@@ -67,19 +67,19 @@ fn mixed_packages_fit_their_declared_floor_and_the_real_device() {
             shape.ranks()
         );
         let legacy = planned(shape, None, BTreeSet::new());
-        for (export, document, norms) in [
+        for (layout, document, norms) in [
             (
-                "NVIDIA",
+                "nvfp4-routed-fp8-mtp",
                 component(shape, false, Some(fp8)),
                 BTreeSet::new(),
             ),
             (
-                "local-lab",
+                "mxfp8-dense-nvfp4",
                 component(shape, true, Some(WeightFormat::Nvfp4)),
-                super::norms::local_lab_norms(shape),
+                super::norms::mxfp8_dense_norms(shape),
             ),
         ] {
-            let label = format!("{export} TP{}", shape.ranks());
+            let label = format!("{layout} TP{}", shape.ranks());
             for (rank, ((device, pinned), (_, legacy_pinned))) in
                 planned(shape, Some(document), norms)
                     .into_iter()

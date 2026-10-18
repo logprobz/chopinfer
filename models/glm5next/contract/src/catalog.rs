@@ -476,7 +476,7 @@ pub fn checkpoint_catalog(g: &Geometry, layout: &Layout) -> Vec<TensorSpec> {
 mod tests {
     use super::*;
     use crate::geometry::FLASH;
-    use crate::quantization::{NVFP4_DENSE_ROUTED, NVFP4_ROUTED};
+    use crate::quantization::{Encoding, Layout, NVFP4_DENSE_ROUTED, NVFP4_ROUTED};
     use std::collections::BTreeMap;
 
     /// A tensor family: the name with each layer, block and expert index
@@ -533,7 +533,7 @@ mod tests {
     }
 
     #[test]
-    fn nvidia_nvfp4_catalog_totals_and_families() {
+    fn nvfp4_dense_routed_catalog_totals() {
         let tensors = checkpoint_catalog(&FLASH, &NVFP4_DENSE_ROUTED);
         assert_eq!(tensors.len(), 147_661);
         assert_eq!(
@@ -543,20 +543,124 @@ mod tests {
         // The NVFP4 routed experts' and dense MLPs' static input scales.
         let ignored = tensors.iter().filter(|t| t.ignored).count();
         assert_eq!(ignored, 42 * 288 * 3 + 3 * 3);
-        assert_families(
-            &tensors,
-            include_str!("../fixtures/nvidia-nvfp4-tensor-families.json"),
-        );
     }
 
-    /// Read from the local-inference-lab NVFP4 export's headers
-    /// (`fixtures/nvfp4-tensor-families.json`).
+    /// The official checkpoint's families (`fixtures/tensor-families.json`)
+    /// restated in `layout`: each block-FP8 weight in its class's encoding,
+    /// with that encoding's companions, and the side tensor families in the
+    /// layout's dtypes. Routed experts split between the main layers' class
+    /// and the MTP layer's.
+    fn families_in(layout: &Layout) -> String {
+        use crate::geometry::MlpKind;
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../fixtures/tensor-families.json")).unwrap();
+        let main = (0..FLASH.layers())
+            .filter(|&layer| FLASH.mlp_kind(layer) != MlpKind::Dense)
+            .count() as u64;
+        let mtp = u64::from(FLASH.mtp_layers());
+        let mut rows = BTreeMap::<(String, Vec<u64>), (String, u64)>::new();
+        let mut push = |name: String, dtype: DType, shape: Vec<u64>, count: u64| {
+            let entry = rows
+                .entry((name, shape))
+                .or_insert_with(|| (dtype.name().to_owned(), 0));
+            assert_eq!(entry.0, dtype.name());
+            entry.1 += count;
+        };
+        for row in fixture.as_array().unwrap() {
+            let name = row["name"].as_str().unwrap();
+            let count = row["count"].as_u64().unwrap();
+            let shape: Vec<u64> = row["shape"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|d| d.as_u64().unwrap())
+                .collect();
+            let dtype = row["dtype"].as_str().unwrap();
+            if name.ends_with(".weight_scale_inv") {
+                continue;
+            }
+            let side = match crate::quantization::SideFamily::of(name) {
+                Some(crate::quantization::SideFamily::KdaConv) => Some(layout.kda_conv),
+                Some(crate::quantization::SideFamily::HcVectors) => Some(layout.hc_vectors),
+                None => None,
+            };
+            if let Some(side) = side {
+                push(name.to_owned(), side, shape, count);
+                continue;
+            }
+            if dtype != DType::F8E4M3.name() {
+                let dtype = [DType::Bf16, DType::F32, DType::U8]
+                    .into_iter()
+                    .find(|d| d.name() == dtype)
+                    .unwrap();
+                push(name.to_owned(), dtype, shape, count);
+                continue;
+            }
+            let stem = name.strip_suffix(".weight").unwrap();
+            let classes = if name.contains(".mlp.experts.") {
+                let per_layer = count / (main + mtp);
+                vec![
+                    (layout.routed, per_layer * main),
+                    (layout.mtp_routed, per_layer * mtp),
+                ]
+            } else if crate::quantization::dense(stem) {
+                vec![(layout.dense, count)]
+            } else {
+                vec![(layout.projections, count)]
+            };
+            let (rows_, columns) = (shape[0], shape[1]);
+            for (encoding, count) in classes {
+                let at = |suffix: &str| format!("{stem}.{suffix}");
+                match encoding {
+                    Encoding::Fp8Block128 => {
+                        push(at("weight"), DType::F8E4M3, shape.clone(), count);
+                        let blocks = |n: u64| n.div_ceil(u64::from(FP8_BLOCK));
+                        push(
+                            at("weight_scale_inv"),
+                            DType::F32,
+                            vec![blocks(rows_), blocks(columns)],
+                            count,
+                        );
+                    }
+                    Encoding::Bf16 => push(at("weight"), DType::Bf16, shape.clone(), count),
+                    Encoding::Nvfp4 => {
+                        push(at("weight"), DType::U8, vec![rows_, columns / 2], count);
+                        let groups = columns / u64::from(NVFP4_GROUP);
+                        push(
+                            at("weight_scale"),
+                            DType::F8E4M3,
+                            vec![rows_, groups],
+                            count,
+                        );
+                        push(at("weight_scale_2"), DType::F32, vec![], count);
+                        push(at("input_scale"), DType::F32, vec![], count);
+                    }
+                    Encoding::Mxfp8 => {
+                        push(at("weight"), DType::F8E4M3, shape.clone(), count);
+                        let groups = columns / u64::from(MXFP8_GROUP);
+                        push(at("weight_scale"), DType::U8, vec![rows_, groups], count);
+                    }
+                }
+            }
+        }
+        let rows: Vec<serde_json::Value> = rows
+            .into_iter()
+            .map(|((name, shape), (dtype, count))| {
+                serde_json::json!({"name": name, "dtype": dtype, "shape": shape, "count": count})
+            })
+            .collect();
+        serde_json::to_string(&rows).unwrap()
+    }
+
+    /// Each representative layout's catalog holds the official checkpoint's
+    /// families restated in that layout ([`families_in`]). For block FP8
+    /// the restatement is the fixture itself, which the official catalog
+    /// matches.
     #[test]
-    fn nvfp4_catalog_matches_the_export_families() {
-        assert_families(
-            &checkpoint_catalog(&FLASH, &NVFP4_ROUTED),
-            include_str!("../fixtures/nvfp4-tensor-families.json"),
-        );
+    fn mixed_catalogs_restate_the_checkpoint_families() {
+        for layout in crate::quantization::representative_layouts() {
+            assert_families(&checkpoint_catalog(&FLASH, layout), &families_in(layout));
+        }
     }
 
     fn assert_families(tensors: &[TensorSpec], fixture: &str) {

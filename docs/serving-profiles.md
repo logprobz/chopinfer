@@ -55,8 +55,6 @@ file). `chopinfer profiles list` prints the current values.
 | GLM 5.3 Flash | `tp4-ar` | qualified | 32 | 32 |
 | GLM 5.3 Flash | `tp4-mtp-dcp2` | qualified | 32 | 32 |
 | GLM 5.3 Flash | `tp4-mtp-dcp4` | qualified | 32 | 32 |
-| GLM 5.3 Flash | `tp4-mtp-nvfp4` | qualified | 32 | 32 |
-| GLM 5.3 Flash | `tp4-mtp-nvfp4-nvidia` | qualified | 32 | 32 |
 | MiMo V2.6 Flash | `tp4-ar` | qualified | 32 | 64 |
 | MiMo V2.6 Flash | `tp4-mtp` | experimental | 32 | none |
 | MiMo V2.6 Flash | `tp4-dflash` | qualified | 32 | 64 |

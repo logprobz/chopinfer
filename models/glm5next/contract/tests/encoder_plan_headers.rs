@@ -2,9 +2,10 @@
 //! headers: every rank's records tile every view of the layout exactly,
 //! read tensors of the vision tower's file inside their data, and the
 //! planned index is the one the bundle admits. Set
-//! `CHOPINFER_GLM5NEXT_CHECKPOINT` (and `CHOPINFER_GLM5NEXT_NVFP4_CHECKPOINT`)
-//! to the pinned checkpoint directories; a test skips without one. Only
-//! headers are read, never tensor data.
+//! `CHOPINFER_GLM5NEXT_CHECKPOINT` to the official checkpoint directory and
+//! `CHOPINFER_GLM5NEXT_EXTRA_CHECKPOINTS` to further checkpoints (`:`
+//! separated) of any layout; a test skips without one. Only headers are
+//! read, never tensor data.
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::Path;
@@ -69,12 +70,8 @@ fn request(root: &Path) -> (WeightPlanRequestV1, BTreeMap<String, (String, Value
     (request, tensors)
 }
 
-fn check(variable: &str) {
-    let Some(root) = std::env::var_os(variable) else {
-        eprintln!("skipped: {variable} is not set");
-        return;
-    };
-    let (mut request, tensors) = request(Path::new(&root));
+fn check(root: &Path) {
+    let (mut request, tensors) = request(root);
     encoder_plan::check_tower(&request).unwrap();
     let layout = views::layout().unwrap();
     let mut identities = Vec::new();
@@ -120,11 +117,27 @@ fn check(variable: &str) {
 }
 
 #[test]
-fn the_bf16_checkpoint_plans_every_view() {
-    check("CHOPINFER_GLM5NEXT_CHECKPOINT");
+fn the_official_checkpoint_plans_every_view() {
+    let Some(root) = std::env::var_os("CHOPINFER_GLM5NEXT_CHECKPOINT") else {
+        eprintln!("skipped: CHOPINFER_GLM5NEXT_CHECKPOINT is not set");
+        return;
+    };
+    check(Path::new(&root));
 }
 
+/// Each extra checkpoint's vision tower, whatever its text layout, is the
+/// BF16 tower the encoder plans.
 #[test]
-fn the_nvfp4_export_plans_every_view() {
-    check("CHOPINFER_GLM5NEXT_NVFP4_CHECKPOINT");
+fn each_extra_checkpoint_plans_every_view() {
+    let Some(paths) = std::env::var_os(model_glm5next_contract::quantization::EXTRA_CHECKPOINTS)
+    else {
+        eprintln!(
+            "skipped: {} is not set",
+            model_glm5next_contract::quantization::EXTRA_CHECKPOINTS
+        );
+        return;
+    };
+    for root in std::env::split_paths(&paths).filter(|p| !p.as_os_str().is_empty()) {
+        check(&root);
+    }
 }

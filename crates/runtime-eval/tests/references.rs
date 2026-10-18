@@ -504,3 +504,134 @@ fn the_cache_comparison_is_what_python_reports() {
     agree("a refset unlike its digest");
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+/// The first shipped model (by directory) whose own declaration pins one
+/// checkpoint lock (no registry) and a bound teacher reference whose
+/// workload is in the repository, with that declaration and the reference.
+fn rehomed() -> (declaration::Loaded, Value) {
+    let models = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../models");
+    let mut directories: Vec<PathBuf> = std::fs::read_dir(models)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|directory| directory.join(declaration::FILE_NAME).is_file())
+        .collect();
+    directories.sort();
+    for directory in directories {
+        let loaded = declaration::load(&directory).unwrap();
+        let Some(Input::Path(path)) = loaded
+            .declaration
+            .references
+            .iter()
+            .find(|pin| pin.name == "teacher" && pin.workload.is_none())
+            .map(|pin| pin.path.clone())
+        else {
+            continue;
+        };
+        let (_, value) = runtime_eval::json::read(&loaded.root.join(&path)).unwrap();
+        if loaded.declaration.checkpoint.registry.is_none() && value.get("binding").is_some() {
+            return (loaded, value);
+        }
+    }
+    panic!("no shipped model pins a bound teacher reference with its workload in the repository");
+}
+
+#[test]
+fn an_external_variant_s_bound_reference_verifies_under_its_root() {
+    let (base, mut fixture) = rehomed();
+    let model = base.declaration.model.clone();
+    let root = scratch("external");
+    let directory = root.join(&model);
+    std::fs::create_dir_all(&directory).unwrap();
+    // The model's checkpoint lock as the variant's, beside its overlay, and
+    // the model's teacher reference re-homed onto it: its binding names the
+    // copy under the variant root, which the binding check reads.
+    std::fs::copy(
+        base.root.join(&base.declaration.checkpoint.lock),
+        directory.join("requant.checkpoint-files.json"),
+    )
+    .unwrap();
+    let spec = base.value["references"]["teacher"].clone();
+    let source = base.root.join(spec["path"].as_str().unwrap());
+    fixture["binding"]["lock"]["path"] = json!(format!("{model}/requant.checkpoint-files.json"));
+    let bytes = serde_json::to_vec(&fixture).unwrap();
+    std::fs::write(directory.join("requant.teacher-reference.json"), &bytes).unwrap();
+    let workload = source.with_file_name(format!(
+        "{}.workload.json",
+        source.file_stem().unwrap().to_str().unwrap()
+    ));
+    std::fs::copy(
+        workload,
+        directory.join("requant.teacher-reference.workload.json"),
+    )
+    .unwrap();
+    let mut pinned = spec.clone();
+    pinned["path"] = json!("requant.teacher-reference.json");
+    pinned["sha256"] = json!(sha256_hex(&bytes));
+    let mut checkpoint = base.value["qualification"]["checkpoint"].clone();
+    checkpoint["lock"] = json!("requant.checkpoint-files.json");
+    let mut overlay = json!({"schema": "chopinfer-qual-variant/v1", "model": model,
+                             "checkpoint": "REQUANT", "checks": ["teacher"], "quick": ["teacher"],
+                             "media": false, "references": {"teacher": pinned},
+                             "qualification": {"checkpoint": checkpoint}});
+    let mut inputs = serde_json::Map::new();
+    for (name, location) in base.value["inputs"].as_object().unwrap() {
+        if *location == spec["path"] {
+            inputs.insert(name.clone(), json!("requant.teacher-reference.json"));
+        }
+    }
+    overlay["inputs"] = Value::Object(inputs);
+    if let Some(capabilities) = base.value["capabilities"].as_object() {
+        let narrowed: serde_json::Map<String, Value> = capabilities
+            .iter()
+            .filter(|(key, _)| *key != "unqualified_media")
+            .map(|(key, value)| {
+                let value = match key.as_str() {
+                    "text" => value.clone(),
+                    "media" => json!([]),
+                    "speculation" => json!("none"),
+                    _ => json!(false),
+                };
+                (key.clone(), value)
+            })
+            .collect();
+        overlay["capabilities"] = Value::Object(narrowed);
+    }
+    let write = |overlay: &Value| {
+        std::fs::write(
+            directory.join("requant.json"),
+            serde_json::to_vec(overlay).unwrap(),
+        )
+        .unwrap()
+    };
+    write(&overlay);
+    let model_directory = base.root.join("models").join(&model);
+    let loaded =
+        declaration::load_variant_from(&model_directory, Some("requant"), Some(&root)).unwrap();
+    references::checkpoint_lock(&loaded).unwrap();
+    let pin = &loaded.declaration.references[0];
+    let verified = references::pinned(&loaded, pin, None).unwrap();
+    assert_eq!(
+        verified.path,
+        std::fs::canonicalize(&root)
+            .unwrap()
+            .join(&model)
+            .join("requant.teacher-reference.json")
+    );
+    match &verified.binding {
+        Binding::Bound { unchecked, .. } => assert!(unchecked.is_empty()),
+        other => panic!("{other:?}"),
+    }
+    // The base's reference, kept, is bound to the model's own lock, not the pin's.
+    overlay["references"] = json!({});
+    overlay["keep_references"] = json!(["teacher"]);
+    overlay.as_object_mut().unwrap().shift_remove("inputs");
+    write(&overlay);
+    let kept =
+        declaration::load_variant_from(&model_directory, Some("requant"), Some(&root)).unwrap();
+    let pin = &kept.declaration.references[0];
+    match references::pinned(&kept, pin, None) {
+        Err(ReferenceError::Stale(field, _)) => assert_eq!(field, "lock"),
+        other => panic!("{other:?}"),
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}

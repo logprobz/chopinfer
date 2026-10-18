@@ -700,17 +700,9 @@ mod tests {
             checkpoint_component(&FP8_BLOCK128, &fp8).unwrap(),
             test_component()
         );
-        for (layout, bytes) in [
-            (
-                &NVFP4_ROUTED,
-                &include_bytes!("../fixtures/nvfp4-config.json")[..],
-            ),
-            (
-                &NVFP4_DENSE_ROUTED,
-                &include_bytes!("../fixtures/nvidia-nvfp4-config.json")[..],
-            ),
-        ] {
-            let component = checkpoint_component(layout, &config(bytes)).unwrap();
+        for layout in [&NVFP4_ROUTED, &NVFP4_DENSE_ROUTED] {
+            let bytes = crate::quantization::synthetic::config_of(layout);
+            let component = checkpoint_component(layout, &config(&bytes)).unwrap();
             decode_for(&component, layout).unwrap();
             assert!(decode(&component).is_err(), "{}", layout.id);
         }

@@ -15,7 +15,9 @@ for model in ${checkpoint_envs}; do
     if [[ -n ${!checkpoint_var:-} ]]; then
         export "$tokenizer_var=${!tokenizer_var:-${!checkpoint_var}}"
     fi
-    if [[ ${CHOPINFER_CI_CHECKPOINT_TESTS:-0} != 1 ]]; then unset "$checkpoint_var"; fi
+    # Other checkpoints of the model (any layout), colon-separated.
+    extra_var=CHOPINFER_${model}_EXTRA_CHECKPOINTS
+    if [[ ${CHOPINFER_CI_CHECKPOINT_TESTS:-0} != 1 ]]; then unset "$checkpoint_var" "$extra_var"; fi
 done
 : "${CARGO_HOME:=$HOME/.cargo}"
 : "${CARGO_NET_OFFLINE:=true}"

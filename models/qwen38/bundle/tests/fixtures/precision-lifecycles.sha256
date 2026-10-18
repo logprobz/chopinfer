@@ -10,10 +10,10 @@ cf08d1e37ee4ba8b249b3a06d508f6666fca9c40d690187ae8751ae57efa96bd  precision-fp8-
 e672506e23d6cc50db89d6aa678b0ccb294e30461aac0647356d2cb1fb99bd8d  precision-fp8-tp4-mtp-layout-bf16-100.txt
 46ec7ae6a7930aa1661edb3e85e21e2c40f4f2133975fe143fe0dd3f7facc72d  precision-fp8-tp4-mtp-layout-fp8-32.txt
 0d0b0150b2e0587a783f10528e8aa8e3206fc6677c82dad115dd15c7a2814304  precision-fp8-tp4-mtp-layout-fp8-100.txt
-d0a0ac2547f6f5f4ff1b2709a1572a1997efff90e05f45cc3924b51ffbfbc32a  precision-nvidia-tp4-none-bf16-33.txt
-b0c9095e77f640ce9128d99b7d3929069f8934ada15b322af5e17d6df845fc79  precision-nvidia-tp4-none-bf16-100.txt
-b7e52b42ef4a8e6a1746743059084b2e5a0872a537f1f739ab72b966ff44f745  precision-nvidia-tp4-none-bf16-256.txt
-f904721c7c0eff9097579dcdcc1e997a9272af47df5ad23514e1da5c90002209  precision-nvidia-tp4-none-fp8-100.txt
+d0a0ac2547f6f5f4ff1b2709a1572a1997efff90e05f45cc3924b51ffbfbc32a  precision-nvfp4-tp4-none-bf16-33.txt
+b0c9095e77f640ce9128d99b7d3929069f8934ada15b322af5e17d6df845fc79  precision-nvfp4-tp4-none-bf16-100.txt
+b7e52b42ef4a8e6a1746743059084b2e5a0872a537f1f739ab72b966ff44f745  precision-nvfp4-tp4-none-bf16-256.txt
+f904721c7c0eff9097579dcdcc1e997a9272af47df5ad23514e1da5c90002209  precision-nvfp4-tp4-none-fp8-100.txt
 7667a45ce3299290f35195534c30be01777fb7c49d4d27954702748e10b1bccc  precision-mxfp8-tp4-none-bf16-33.txt
 1dba601f8bb03312f7c111dd5cd004325f22dc126b654c4fa2ec1f651f5867b8  precision-mxfp8-tp4-none-bf16-100.txt
 eac11ee50489beaacd92a4a94b18a75c285263801735e54c3feba56cfa4cc8df  precision-mxfp8-tp4-none-bf16-256.txt

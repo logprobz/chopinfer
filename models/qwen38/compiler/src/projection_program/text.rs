@@ -473,7 +473,7 @@ impl SourceProgram {
 }
 
 /// The CPU fixture of one topology's precision in a mixed NVFP4 package:
-/// the synthetic NVIDIA NVFP4 layer-0 experts (gate/up and down) at
+/// the synthetic NVFP4 layer-0 routed experts (gate/up and down) at
 /// `shape`, each altered by `alter`, resolved under the auto policy against
 /// the supplied mixed capabilities.
 #[cfg(test)]
@@ -843,27 +843,24 @@ pub(crate) mod drafter_tests {
     use model_compiler_sdk::quantization::source::TensorInventory;
     use std::collections::BTreeMap;
 
-    /// The MTP layer of an export shape (`nvidia` or `local-lab`): its
-    /// fixture's configuration and quantization rules, every `mtp.` tensor
-    /// at its checkpoint shape, and the MTP experts in the export's encoding
-    /// (FP8 block 128 with BF16 inverse scales, or weight-only NVFP4).
-    pub(crate) fn mtp_source(export: &str) -> SourcePrecision {
-        mtp_source_with(export, &[])
+    pub(crate) use crate::mixed_layouts::Layout;
+
+    /// The MTP layer of a mixed layout: its synthetic configuration and
+    /// quantization rules, every `mtp.` tensor at its checkpoint shape, and
+    /// the MTP experts in the layout's encoding (FP8 block 128 with BF16
+    /// inverse scales, or weight-only NVFP4).
+    pub(crate) fn mtp_source(layout: Layout) -> SourcePrecision {
+        mtp_source_with(layout, &[])
     }
 
     /// [`mtp_source`] with the MTP projection weights `mxfp8` quantized to
     /// MXFP8 by added export rules.
-    fn mtp_source_with(export: &str, mxfp8: &[&str]) -> SourcePrecision {
-        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("fixtures/mixed")
-            .join(export);
+    fn mtp_source_with(layout: Layout, mxfp8: &[&str]) -> SourcePrecision {
         let config = crate::config::Qwen38Config::from_bytes(
-            &std::fs::read(fixture.join("config.json")).unwrap(),
+            &serde_json::to_vec(&crate::mixed_layouts::config(layout)).unwrap(),
         )
         .unwrap();
-        let mut rules: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(fixture.join("hf_quant_config.json")).unwrap())
-                .unwrap();
+        let mut rules = crate::mixed_layouts::hf_quant_config(layout);
         for weight in mxfp8 {
             let layers = rules
                 .get("quantization")
@@ -911,7 +908,7 @@ pub(crate) mod drafter_tests {
                 );
             } else if name.contains(".mlp.experts.") && name.ends_with(".weight") {
                 let (n, k) = (shape[0], shape[1]);
-                if export == "nvidia" {
+                if layout == Layout::Nvfp4RoutedFp8Mtp {
                     add(name.clone(), DType::Fp8E4M3, vec![n, k]);
                     add(
                         name.replace(".weight", ".weight_scale_inv"),
@@ -950,11 +947,11 @@ pub(crate) mod drafter_tests {
             .unwrap()
     }
 
-    /// The MTP layer of an export shape at `shape`, resolved under the auto
+    /// The MTP layer of a mixed layout at `shape`, resolved under the auto
     /// policy: the records a mixed component appends to its text operations.
-    pub(crate) fn drafter_records(export: &str, shape: Shape) -> Vec<PrecisionSelection> {
+    pub(crate) fn drafter_records(layout: Layout, shape: Shape) -> Vec<PrecisionSelection> {
         let inventory = inventory();
-        drafter_operations(&mtp_source(export), shape)
+        drafter_operations(&mtp_source(layout), shape)
             .unwrap()
             .iter()
             .map(|op| {
@@ -974,18 +971,18 @@ pub(crate) mod drafter_tests {
         CapabilityInventory::new(document.clone(), document.entries(), "0".repeat(64)).unwrap()
     }
 
-    /// Both exports' MTP layers record their seven BF16 dense ports on the
-    /// registered compositions and their experts: NVIDIA's FP8 block experts
-    /// on the registered fragment entries, local-lab's weight-only NVFP4
-    /// experts on the main layers' generated entries, at TP2 and TP4, under
-    /// the auto and BF16 policies alike.
+    /// Both layouts' MTP layers record their seven BF16 dense ports on the
+    /// registered compositions and their experts: block FP8 experts on the
+    /// registered fragment entries, weight-only NVFP4 experts on the main
+    /// layers' generated entries, at TP2 and TP4, under the auto and BF16
+    /// policies alike.
     #[test]
-    fn both_exports_record_their_mtp_layers_at_every_topology() {
+    fn both_layouts_record_their_mtp_layers_at_every_topology() {
         let inventory = inventory();
-        for export in ["nvidia", "local-lab"] {
-            let source = mtp_source(export);
+        for layout in Layout::ALL {
+            let source = mtp_source(layout);
             for shape in [Shape::TP2, Shape::TP4] {
-                let label = format!("{export} TP{}", shape.ranks());
+                let label = format!("{} TP{}", layout.name(), shape.ranks());
                 let operations = drafter_operations(&source, shape).unwrap();
                 let ids: Vec<_> = operations.iter().map(|op| op.source.id.clone()).collect();
                 assert_eq!(
@@ -1020,7 +1017,7 @@ pub(crate) mod drafter_tests {
                         "main.experts.down"
                     };
                     for binding in &auto.bindings {
-                        let expected = if export == "nvidia" {
+                        let expected = if layout == Layout::Nvfp4RoutedFp8Mtp {
                             precision::legacy_expert_capability(
                                 shape,
                                 if main.ends_with("gate-up") {
@@ -1057,18 +1054,19 @@ pub(crate) mod drafter_tests {
     #[test]
     fn mtp_encodings_without_a_composition_name_the_tensor() {
         let q = "mtp.layers.0.self_attn.q_proj.weight";
-        let quantized = mtp_source_with("local-lab", &[q]);
+        let quantized = mtp_source_with(Layout::Mxfp8DenseNvfp4, &[q]);
         assert_eq!(quantized.operands[q].weight.format, WeightFormat::Mxfp8);
         let side = "mtp.fc_hidden.weight";
-        let mut side_quantized = mtp_source("nvidia");
+        let mut side_quantized = mtp_source(Layout::Nvfp4RoutedFp8Mtp);
         side_quantized.operands.get_mut(side).unwrap().weight.format = WeightFormat::Fp8PerTensor;
         let missing = "mtp.layers.0.self_attn.o_proj.weight";
-        let mut absent = mtp_source("local-lab");
+        let mut absent = mtp_source(Layout::Mxfp8DenseNvfp4);
         absent.operands.remove(missing);
-        // Alone, NVIDIA's MTP layer is the registered layout's: its drafter
-        // keeps the fixed program and records nothing.
-        assert!(mtp_source("nvidia").legacy_text_layout());
-        assert_eq!(drafter_refusal(&mtp_source("nvidia"), Shape::TP4), None);
+        // Alone, the block FP8 MTP layer is the registered layout's: its
+        // drafter keeps the fixed program and records nothing.
+        let registered = mtp_source(Layout::Nvfp4RoutedFp8Mtp);
+        assert!(registered.legacy_text_layout());
+        assert_eq!(drafter_refusal(&registered, Shape::TP4), None);
         for shape in [Shape::TP2, Shape::TP4] {
             for (source, expected) in [
                 (
@@ -1130,7 +1128,7 @@ pub(crate) mod drafter_tests {
                 let projection = role.projection_id(shape, Some(layer));
                 let names = ports.names(projection, Some(u64::from(layer))).unwrap();
                 let names: Vec<_> = names.iter().map(String::as_str).collect();
-                let source = mtp_source_with("local-lab", &names);
+                let source = mtp_source_with(Layout::Mxfp8DenseNvfp4, &names);
                 assert_eq!(
                     drafter_operations(&source, shape).err(),
                     Some(format!(
@@ -1146,7 +1144,7 @@ pub(crate) mod drafter_tests {
 
     /// The importer gives an MTP dense weight it keeps in BF16 a BF16
     /// activation, which the legacy BF16 rule also required: in both
-    /// exports' MTP layers, and under every supported algorithm as the
+    /// layouts' MTP layers, and under every supported algorithm as the
     /// export default (with the module also excluded), as a rule for the
     /// MTP module and as a quantization group with or without quantized
     /// inputs. Only an exclusion or the absence of a rule keeps a weight in
@@ -1168,18 +1166,15 @@ pub(crate) mod drafter_tests {
                     .unwrap(),
             );
         }
-        for export in ["nvidia", "local-lab"] {
-            let source = mtp_source(export);
+        for layout in Layout::ALL {
+            let source = mtp_source(layout);
+            let name = layout.name();
             for weight in &weights {
                 let operand = &source.operands[weight];
-                assert_eq!(
-                    operand.weight.format,
-                    WeightFormat::Bf16,
-                    "{export} {weight}"
-                );
+                assert_eq!(operand.weight.format, WeightFormat::Bf16, "{name} {weight}");
                 assert!(
                     operand.activation.as_ref().is_some_and(|a| a.is_bf16()),
-                    "{export} {weight}"
+                    "{name} {weight}"
                 );
             }
         }
@@ -1261,7 +1256,7 @@ pub(crate) mod drafter_tests {
         let inventory = inventory();
         let shape = Shape::TP4;
         let text = super::super::text::routed_nvfp4_fixture(shape, |_| {}).unwrap();
-        let drafter = drafter_operations(&mtp_source("local-lab"), shape).unwrap();
+        let drafter = drafter_operations(&mtp_source(Layout::Mxfp8DenseNvfp4), shape).unwrap();
         let program = SourceProgram {
             version: 1,
             ranks: shape.ranks(),

@@ -4,8 +4,9 @@
 A model directory holds up to three crates, one per role: bundle/, compiler/
 and contract/. The role is the directory. The inventory records what Cargo
 metadata cannot: each role's package name, its exact bin and cdylib targets
-(a policy assertion, not a derived fact), and the stem of the model's
-checkpoint variables for CPU CI. Optional closed operational sections declare
+(a policy assertion, not a derived fact), the stem of the model's
+checkpoint variables for CPU CI, and the publisher whose checkpoints the
+model's tracked JSON may name. Optional closed operational sections declare
 release selections, bounded contributor recipes, CI inputs, catalog opt-in
 and geometry recipe legs.
 
@@ -14,6 +15,7 @@ Usage: model_inventory.py checkpoint-env    print each declared stem
 from __future__ import annotations
 
 import dataclasses
+import json
 import pathlib
 import re
 import sys
@@ -24,10 +26,12 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 SCHEMA = "chopinfer-model-inventory-v1"
 ROLES = ("bundle", "compiler", "contract")
 REQUIRED_ROLES = ("bundle", "compiler")
-TOP_KEYS = {"schema", "checkpoint_env", *ROLES, "release", "contributor", "checks", "kernel_lab",
-            "geometry_recipe"}
+TOP_KEYS = {"schema", "checkpoint_env", "publisher", *ROLES, "release", "contributor", "checks",
+            "kernel_lab", "geometry_recipe"}
 ROLE_KEYS = {"package", "bin", "cdylib"}
 ENV_STEM = re.compile(r"[A-Z][A-Z0-9_]*")
+# A Hugging Face organization or user, as a repository id's first component.
+PUBLISHER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 NAME = re.compile(r"[a-z0-9][a-z0-9_-]*")
 ARCHITECTURE = re.compile(r"[A-Z][A-Za-z0-9]*")
 # A recipe stops at the contract stage while the model's bundle cannot build and
@@ -149,6 +153,9 @@ class Model:
     # and each family file of the directory form `bundle/kernels.lock.d/`
     # (crates/kernel-build LockDir), found at load. Empty means the file form.
     kernel_locks: tuple[str, ...] = ()
+    # The model author whose checkpoints the model's JSON may name
+    # (`publisher`); none for a model that does not declare one.
+    publisher: str | None = None
 
     @property
     def directory(self) -> str:
@@ -499,9 +506,47 @@ def file_inputs(root, model) -> tuple[str, ...]:
     return tuple(dict.fromkeys([*paths, *compile_files(root, model)]))
 
 
+def _repositories(value):
+    """Every string a JSON document holds under a `repository` key."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key == "repository" and isinstance(item, str):
+                yield item
+            else:
+                yield from _repositories(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _repositories(item)
+
+
+def check_publishers(models, root) -> None:
+    """Every `repository` a model's JSON names (under its directory and its
+    fixture root) is its publisher's: `<publisher>/<name>`, or that
+    repository on GitHub or Hugging Face. The tree names only the model
+    author's checkpoints; another checkpoint is qualified outside it."""
+    root = pathlib.Path(root)
+    for model in models:
+        if model.publisher is None:
+            continue
+        owned = re.compile(rf"(?:https://(?:github\.com|huggingface\.co)/)?{re.escape(model.publisher)}/[^/\s]+")
+        for directory in (model.directory, fixture_root(model)):
+            for path in sorted((root / directory).rglob("*.json")):
+                if path.is_symlink() or not path.is_file():
+                    continue
+                try:
+                    document = json.loads(path.read_bytes())
+                except (UnicodeDecodeError, ValueError):
+                    continue
+                for repository in _repositories(document):
+                    if not owned.fullmatch(repository):
+                        raise InventoryError(f"{path.relative_to(root).as_posix()}: repository {repository!r} is not "
+                                             f"{model.publisher}'s, the publisher {model.directory}/model.toml declares")
+
+
 def check_files(models, root) -> None:
     for model in models:
         file_inputs(root, model)
+    check_publishers(models, root)
 
 
 def load_model(root: pathlib.Path, directory: pathlib.Path) -> Model:
@@ -525,6 +570,9 @@ def load_model(root: pathlib.Path, directory: pathlib.Path) -> Model:
     stem = data.get("checkpoint_env")
     if stem is not None and not (isinstance(stem, str) and ENV_STEM.fullmatch(stem)):
         raise InventoryError(f"{relative}: checkpoint_env must be an upper-case variable stem")
+    publisher = data.get("publisher")
+    if publisher is not None and not (isinstance(publisher, str) and PUBLISHER.fullmatch(publisher)):
+        raise InventoryError(f"{relative}: publisher must be a Hugging Face organization name")
     packages = {}
     for role in ROLES:
         if role not in data:
@@ -548,7 +596,7 @@ def load_model(root: pathlib.Path, directory: pathlib.Path) -> Model:
     for role in ROLES:
         if role not in packages and (directory / role / "Cargo.toml").is_file():
             raise InventoryError(f"{relative}: {role}/Cargo.toml has no [{role}] entry")
-    model = Model(directory.name, stem, packages)
+    model = Model(directory.name, stem, packages, publisher=publisher)
     release, contributor, checks, kernel_lab, recipe = _operational(data, model, relative)
     model = dataclasses.replace(model, release=release, contributor=contributor,
                                 checks=checks, kernel_lab=kernel_lab, geometry_recipe=recipe,

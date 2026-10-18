@@ -1,10 +1,11 @@
-//! The lowered projections' offers in the NVFP4 exports' layouts that the
-//! block-FP8 export's offers (`crate::sm120::precision`) do not hold: the BF16
-//! rows of projections the FP8 export quantizes (latent attention, the
-//! shared expert's down projection, the dense MLP's down projection in
-//! local-inference-lab's export) and NVIDIA's NVFP4 dense down projections.
-//! They build in their own cubin under their own lock family, so the FP8
-//! projections' cubins and lock stay as they are.
+//! The lowered projections' offers in the layouts with a class outside block
+//! FP8 that the block-FP8 offers (`crate::sm120::precision`) do not hold: the
+//! BF16 rows of projections a block-FP8 export quantizes (latent attention,
+//! the shared expert's down projection, the dense MLP's down projection) and
+//! the NVFP4 dense down projections. They build in their own cubin under
+//! their own lock family, so the FP8 projections' cubins and lock stay as
+//! they are. The covering layouts (`crate::quantization::covering_layouts`)
+//! hold every such projection and format, so the union is built over them.
 
 use std::collections::BTreeMap;
 
@@ -15,15 +16,16 @@ use kernels_sm120::precision::Compute;
 use super::precision::{copies, instantiations, offer};
 use crate::contract::Shape;
 use crate::precision::{layout_formats, uses};
-use crate::quantization::{FP8_BLOCK128, LAYOUTS};
+use crate::quantization::covering_layouts;
 
 /// The lock family of [`CUBIN`] (`bundle/kernels.lock.d`).
 pub const FAMILY: &str = "projection_formats";
-/// The GEMM cubin of the NVFP4 layouts' added offers.
+/// The GEMM cubin of the added offers.
 pub const CUBIN: &str = "projection_formats_glm5next_sm120";
 
-/// Every distinct GEMM entry the NVFP4 layouts' lowered projections run at
-/// their declared uses and the block-FP8 export's do not
+/// Every distinct GEMM entry the lowered projections of a layout with a
+/// class outside block FP8 run at their declared uses and the block-FP8
+/// layouts' do not
 /// (`crate::sm120::precision::instantiations`), in symbol order. Refuses a layout
 /// whose uses need a layout copy the FP8 projections' copies lack.
 pub fn instantiations_added(shape: Shape) -> Result<Vec<InstantiationSpec>, String> {
@@ -36,7 +38,10 @@ pub fn instantiations_added(shape: Shape) -> Result<Vec<InstantiationSpec>, Stri
         .map(|copy| copy.stage().entry().symbol.clone())
         .collect();
     let mut added = BTreeMap::new();
-    for layout in LAYOUTS.iter().filter(|layout| **layout != FP8_BLOCK128) {
+    for layout in covering_layouts()
+        .iter()
+        .filter(|layout| !layout.block_fp8())
+    {
         for (id, weight) in layout_formats(shape, layout)? {
             for (usage, _) in uses(id)? {
                 let generated = offer(id, weight, usage)?;
@@ -74,10 +79,35 @@ mod tests {
     use kernel_core::contract::{ScaleMode, WeightFormat};
 
     use super::*;
-    use crate::quantization::{NVFP4_DENSE_ROUTED, NVFP4_ROUTED};
+    use crate::catalog::DType;
+    use crate::quantization::{FP8_BLOCK128, Layout, NVFP4_DENSE_ROUTED, NVFP4_ROUTED, layouts};
+
+    /// The covering layouts store every lowered projection in every format
+    /// any admitted layout stores it in, so the union over them is the union
+    /// over every layout. Side tensor dtypes change no projection format, so
+    /// one dtype pair stands for each class combination.
+    #[test]
+    fn the_covering_layouts_hold_every_projection_format() {
+        let shape = Shape::TP4;
+        let pairs = |layouts: &mut dyn Iterator<Item = &Layout>| {
+            let mut pairs = std::collections::BTreeSet::new();
+            for layout in layouts {
+                for (id, weight) in layout_formats(shape, layout).unwrap() {
+                    pairs.insert((id, format!("{weight:?}")));
+                }
+            }
+            pairs
+        };
+        let every =
+            pairs(&mut layouts().iter().filter(|layout| {
+                (layout.kda_conv, layout.hc_vectors) == (DType::Bf16, DType::F32)
+            }));
+        let covering = pairs(&mut covering_layouts().iter().copied());
+        assert_eq!(covering, every);
+    }
 
     #[test]
-    fn the_nvfp4_layouts_add_bf16_rows_and_nvidia_s_nvfp4_dense_down() {
+    fn the_mixed_layouts_add_bf16_rows_and_nvfp4_dense_down() {
         let shape = Shape::TP4;
         let fp8 = WeightFormat::Fp8Block128x128(ScaleMode::ExactF32);
         let formats = |layout| layout_formats(shape, layout).unwrap();

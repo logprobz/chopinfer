@@ -88,25 +88,11 @@ impl Stored {
     }
 }
 
-/// Whether `name` is a KDA convolution weight.
-fn kda_conv(name: &str) -> bool {
-    ["q_conv1d.weight", "k_conv1d.weight", "v_conv1d.weight"]
-        .iter()
-        .any(|suffix| name.ends_with(&format!("self_attn.{suffix}")))
-}
-
 /// Whether the engine reads side tensor `name` in F32: the KDA convolutions
-/// and the mHC base and scale vectors.
+/// and the mHC base and scale vectors, whichever dtype the checkpoint
+/// stores them in.
 fn f32_side(name: &str) -> bool {
-    kda_conv(name)
-        || [
-            "hc_attn_base",
-            "hc_attn_scale",
-            "hc_ffn_base",
-            "hc_ffn_scale",
-        ]
-        .iter()
-        .any(|suffix| name.ends_with(&format!(".{suffix}")))
+    crate::quantization::SideFamily::of(name).is_some()
 }
 
 /// A packed view's members by their place in it.
@@ -316,7 +302,7 @@ fn check_headers(
             .into_iter()
             .map(|spec| (spec.name.clone(), spec))
             .collect();
-    let mut headers = HashMap::<String, serde_json::Map<String, Value>>::new();
+    let mut headers = Headers::default();
     for entry in layout {
         for piece in &entry.pieces {
             let tensor = piece.tensor.as_str();
@@ -324,27 +310,7 @@ fn check_headers(
                 .get(tensor)
                 .ok_or_else(|| format!("{tensor} is not in the catalog"))?;
             let name = file(tensor)?;
-            if !headers.contains_key(&name) {
-                let checkpoint = request
-                    .files
-                    .iter()
-                    .find(|candidate| candidate.name == name)
-                    .ok_or_else(|| {
-                        format!("tensor {tensor}: file {name} is not in the checkpoint")
-                    })?;
-                let parsed = crate::admission::document(
-                    &format!("{name} header"),
-                    &checkpoint.header,
-                    checkpoint.header.len(),
-                )?;
-                let Value::Object(parsed) = parsed else {
-                    return Err(format!("{name} header is not an object"));
-                };
-                headers.insert(name.clone(), parsed);
-            }
-            let header = headers[&name]
-                .get(tensor)
-                .ok_or_else(|| format!("{tensor} is not in the header of {name}"))?;
+            let header = headers.tensor(request, &name, tensor)?;
             let dtype = header["dtype"].as_str();
             let dims = header["shape"]
                 .as_array()
@@ -378,6 +344,60 @@ fn check_headers(
         }
     }
     Ok(())
+}
+
+/// The safetensors headers of a request's files, each parsed once when a
+/// tensor of its file is first asked for.
+#[derive(Default)]
+struct Headers(HashMap<String, serde_json::Map<String, Value>>);
+
+impl Headers {
+    /// The header entry of `tensor` in file `name` of `request`.
+    fn tensor<'a>(
+        &'a mut self,
+        request: &WeightPlanRequestV1,
+        name: &str,
+        tensor: &str,
+    ) -> Result<&'a Value, String> {
+        if !self.0.contains_key(name) {
+            let checkpoint = request
+                .files
+                .iter()
+                .find(|candidate| candidate.name == name)
+                .ok_or_else(|| format!("tensor {tensor}: file {name} is not in the checkpoint"))?;
+            let parsed = crate::admission::document(
+                &format!("{name} header"),
+                &checkpoint.header,
+                checkpoint.header.len(),
+            )?;
+            let Value::Object(parsed) = parsed else {
+                return Err(format!("{name} header is not an object"));
+            };
+            self.0.insert(name.to_owned(), parsed);
+        }
+        self.0[name]
+            .get(tensor)
+            .ok_or_else(|| format!("{tensor} is not in the header of {name}"))
+    }
+}
+
+/// The admitted layout of the checkpoint `request` describes, whose config
+/// gave `matched`: its class encodings with the dtype its headers store for
+/// each side tensor family (`quantization::resolve`). Preparation and the
+/// load-time plan both resolve the layout here, so both plan the same one.
+pub fn resolve_layout(
+    request: &WeightPlanRequestV1,
+    matched: &crate::admission::Matched,
+) -> Result<&'static Layout, String> {
+    let weight_map = weight_map(request)?;
+    let mut headers = Headers::default();
+    crate::quantization::resolve(matched.geometry, &matched.quantization, |tensor| {
+        let name = mapped_file(&weight_map, tensor)?;
+        headers.tensor(request, &name, tensor)?["dtype"]
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| format!("{tensor} is untyped in {name}"))
+    })
 }
 
 /// The records that store `entry`, one per piece; `file` names each
@@ -425,7 +445,7 @@ fn index(
     let views: Vec<Value> = layout
         .iter()
         .map(|entry| {
-            // The index lists a scalar (NVIDIA's dense down projections'
+            // The index lists a scalar (an NVFP4 dense down projection's
             // weight_scale_2) as one element: its views need a shape.
             let shape = if entry.view.shape.is_empty() {
                 vec![1]
@@ -479,7 +499,7 @@ pub fn check_text_headers(
         matched.geometry,
         bundle_runtime::geometry::Ranks::new(ranks).ok_or("rank count")?,
     );
-    let quantization = matched.quantization.layout;
+    let quantization = resolve_layout(request, matched)?;
     let weight_map = weight_map(request)?;
     let file = |tensor: &str| mapped_file(&weight_map, tensor);
     for rank in 0..ranks {
@@ -509,7 +529,7 @@ pub fn plan(request: &WeightPlanRequestV1) -> Result<Option<WeightPlanV1>, Strin
         matched.geometry,
         bundle_runtime::geometry::Ranks::new(request.ranks).ok_or("rank count")?,
     );
-    let quantization = matched.quantization.layout;
+    let quantization = resolve_layout(request, &matched)?;
     let layout = checkpoint_layout(shape, quantization, request.rank)?;
     let image_bytes = layout
         .last()

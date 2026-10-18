@@ -607,9 +607,40 @@ class EvalsCompareGateTests(unittest.TestCase):
         path.write_text(json.dumps(value))
         return path
 
+    @staticmethod
+    def external(root):
+        """(model, variant) of a synthetic external variant under `root`
+        (tools/qual/test_variant.py) of each previewed model whose qual.json
+        declares an evals_compare whose other arm is recorded elsewhere (no
+        stored_<check> input) and that no shipped configuration selects: a
+        checkpoint variant selects it with that arm from the default
+        configuration's run (from_default)."""
+        import release_preview as preview
+        from test_variant import VARIANT, synthetic_variant
+        found = []
+        for model in preview.declaration.previewed(preview.ROOT):
+            facts = preview.model_facts(model)
+            check = facts["checks"].get("evals_compare")
+            if (check is None or preview.stored_inputs(check) or "evals_candidate" not in facts["checks"]
+                    or any("evals_compare" in preview.configuration_facts(facts, name)["full"]
+                           for name in preview.configurations(model))):
+                continue
+            synthetic_variant(root, model, overlay={"checks": ["teacher", "evals_candidate", "evals_compare"],
+                                                    "from_default": sorted(check.get("input_rules", {}))})
+            found.append((model, VARIANT))
+        return found
+
     def test_each_declared_compare_passes_dispatch_rescore_and_replay(self):
         import release_preview as preview
-        declared = self.declared()
+        from test_variant import selected
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        variants = Path(temporary.name) / "variants"
+        variants.mkdir()
+        with selected(variants):
+            self.compares(preview, self.declared() + self.external(variants))
+
+    def compares(self, preview, declared):
         self.assertTrue(declared)
         styles = set()
         for model, configuration in declared:

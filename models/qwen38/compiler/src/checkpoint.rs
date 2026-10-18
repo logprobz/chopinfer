@@ -72,6 +72,42 @@ impl CheckpointSource {
     }
 }
 
+/// The opt-in checkpoints `CHOPINFER_QWEN38_EXTRA_CHECKPOINTS` lists
+/// (colon-separated directories), each opened at TP4, that `fits` selects:
+/// ignored tests run on every listed checkpoint whose layout has what they
+/// exercise (`wanted`), and print a skip naming it when none does.
+#[cfg(test)]
+pub(crate) fn extra_checkpoints(
+    wanted: &str,
+    fits: impl Fn(&crate::precision_source::SourcePrecision) -> bool,
+) -> Vec<(std::path::PathBuf, CheckpointSource)> {
+    const VAR: &str = "CHOPINFER_QWEN38_EXTRA_CHECKPOINTS";
+    let listed = std::env::var_os(VAR).unwrap_or_default();
+    let selected: Vec<_> = std::env::split_paths(&listed)
+        .filter(|root| !root.as_os_str().is_empty())
+        .filter_map(|root| {
+            let source = CheckpointSource::open(&root, 4)
+                .unwrap_or_else(|e| panic!("{}: {e}", root.display()));
+            let precision = source.catalog.precision.as_ref()?;
+            fits(precision).then_some((root, source))
+        })
+        .collect();
+    if selected.is_empty() {
+        eprintln!("SKIP: {VAR} lists no checkpoint with {wanted}");
+    }
+    selected
+}
+
+/// Whether the main layers' routed experts are stored as NVFP4.
+#[cfg(test)]
+pub(crate) fn routed_nvfp4(precision: &crate::precision_source::SourcePrecision) -> bool {
+    precision.operands.iter().any(|(name, operand)| {
+        name.starts_with("model.language_model.layers.")
+            && name.contains(".mlp.experts.")
+            && operand.weight.format == kernel_core::contract::WeightFormat::Nvfp4
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,63 +313,64 @@ mod tests {
         }
     }
 
-    /// The local-inference-lab mixed export opens at TP4 with its F32 norm
-    /// weights admitted as stored and finite: every main layer's two
-    /// hyper-connection norms, the final mixer's and the three PLE norms,
-    /// while its MTP norms stay BF16.
+    /// The F32 norm weights a listed checkpoint's headers store open at TP4
+    /// admitted as stored and finite: each is an F32 norm consumer's
+    /// weight, and admission records exactly the header's F32 norms.
     #[test]
-    #[ignore = "needs the local-inference-lab mixed export: run with --ignored and \
-                CHOPINFER_QWEN38_LOCAL_LAB_CHECKPOINT set"]
-    fn local_lab_checkpoint_admits_finite_f32_norms() {
-        let root = std::env::var("CHOPINFER_QWEN38_LOCAL_LAB_CHECKPOINT")
-            .expect("set CHOPINFER_QWEN38_LOCAL_LAB_CHECKPOINT to the local-lab mixed export");
-        let source = CheckpointSource::open(Path::new(&root), 4).unwrap();
-        let precision = source.catalog.precision.as_ref().unwrap();
-        let norms = precision
-            .f32_norms()
-            .map(|span| span.tensor.clone())
-            .collect::<std::collections::BTreeSet<_>>();
-        let model = "model.language_model";
-        let layers = source.catalog.geometry.layers();
-        let mut expected = std::collections::BTreeSet::new();
-        for layer in 0..layers {
-            for sublayer in ["attn", "mlp"] {
-                expected.insert(format!(
-                    "{model}.layers.{layer}.{sublayer}_hyper_connection.hc_norm.weight"
-                ));
-            }
-        }
-        expected.insert(format!("{model}.hyper_connection_mixer.hc_norm.weight"));
-        for norm in ["norm_key", "norm_conv", "norm_query"] {
-            expected.insert(format!("{model}.layers.1.ple.{norm}.weight"));
-        }
-        assert_eq!(norms, expected);
-        assert_eq!(norms.len(), 100);
-        for (name, record) in &source.catalog.tensors {
-            if name.starts_with("mtp.") && name.contains("norm") {
-                assert_eq!(record.dtype, runtime_weights::DType::Bf16, "{name}");
+    #[ignore = "needs a checkpoint with F32 norm weights: run with --ignored and \
+                CHOPINFER_QWEN38_EXTRA_CHECKPOINTS set"]
+    fn extra_checkpoints_admit_finite_f32_norms() {
+        let f32_norms = |p: &crate::precision_source::SourcePrecision| p.f32_norms().count() > 0;
+        for (root, source) in extra_checkpoints("F32 norm weights", f32_norms) {
+            let precision = source.catalog.precision.as_ref().unwrap();
+            let norms = precision
+                .f32_norms()
+                .map(|span| span.tensor.clone())
+                .collect::<std::collections::BTreeSet<_>>();
+            let stored = source
+                .catalog
+                .tensors
+                .iter()
+                .filter(|(name, record)| {
+                    name.ends_with("norm.weight") && record.dtype == runtime_weights::DType::F32
+                })
+                .map(|(name, _)| name.clone())
+                .collect::<std::collections::BTreeSet<_>>();
+            assert_eq!(norms, stored, "{}", root.display());
+            for name in &norms {
+                assert!(
+                    model_qwen38_contract::norms::f32_consumer(name),
+                    "{}: {name}",
+                    root.display()
+                );
             }
         }
     }
 
-    /// Prepared at TP4 with a built native module, local-lab's rank images
-    /// store its 100 F32 norms as F32 row views, which prepared view
-    /// admission accepts and from which each consumer binds its F32 form,
-    /// and every rank index passes complete view validation.
+    /// Prepared at TP4 with a built native module, the rank images of each
+    /// listed checkpoint with F32 norm weights store them as F32 row views,
+    /// which prepared view admission accepts and from which each consumer
+    /// binds its F32 form, and every rank index passes complete view
+    /// validation.
     #[test]
-    #[ignore = "needs the local-inference-lab mixed export and a native module: run with \
-                --ignored and CHOPINFER_QWEN38_LOCAL_LAB_CHECKPOINT and \
+    #[ignore = "needs a checkpoint with F32 norm weights and a native module: run with \
+                --ignored and CHOPINFER_QWEN38_EXTRA_CHECKPOINTS and \
                 CHOPINFER_QWEN38_NATIVE_MODULE set"]
-    fn local_lab_prepared_rank_views_bind_its_f32_norms() {
+    fn extra_checkpoints_prepared_rank_views_bind_their_f32_norms() {
+        let f32_norms = |p: &crate::precision_source::SourcePrecision| p.f32_norms().count() > 0;
+        for (root, _) in extra_checkpoints("F32 norm weights", f32_norms) {
+            prepared_rank_views_bind_f32_norms(&root);
+        }
+    }
+
+    fn prepared_rank_views_bind_f32_norms(root: &Path) {
         use model_qwen38_contract::contract::Shape;
-        let root = std::env::var("CHOPINFER_QWEN38_LOCAL_LAB_CHECKPOINT")
-            .expect("set CHOPINFER_QWEN38_LOCAL_LAB_CHECKPOINT to the local-lab mixed export");
         let native = std::env::var("CHOPINFER_QWEN38_NATIVE_MODULE")
             .expect("set CHOPINFER_QWEN38_NATIVE_MODULE to a built libbundle_qwen38.so");
         let module =
             model_compiler_sdk::native_contract::NativeModule::inspect(Path::new(&native)).unwrap();
         let (source, precision) = crate::preparation::direct_precision(
-            Path::new(&root),
+            root,
             &module,
             Shape::TP4,
             model_compiler_sdk::quantization::ActivationPolicy::Auto,
@@ -350,7 +387,7 @@ mod tests {
             .f32_norms()
             .map(|span| span.tensor.clone())
             .collect::<Vec<_>>();
-        assert_eq!(expected.len(), 100);
+        assert!(!expected.is_empty());
         for index in &plan.ranks {
             let mut index = index.clone();
             index.sha256 = "0".repeat(64);
@@ -392,7 +429,7 @@ mod tests {
                 let view = &parsed.views[name];
                 assert_eq!(
                     (view.dtype.as_str(), view.bytes),
-                    ("F32", 4 * 10240),
+                    ("F32", source.catalog.tensors[name].bytes),
                     "{name}"
                 );
             }

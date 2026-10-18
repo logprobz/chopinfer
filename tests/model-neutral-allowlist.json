@@ -224,7 +224,7 @@
   "tools/profile/test_qwen38_e5_diagnostics.py": {"matches": {"qwen38": 3}, "reason": "Existing model qualification, profiling, or development integration; migrate new model behavior to its owner."},
   "tools/profile/test_qwen38_hc_linear_e5.py": {"matches": {"qwen38": 10}, "reason": "Existing model qualification, profiling, or development integration; migrate new model behavior to its owner."},
   "tools/profile/test_serving_step_nsys.py": {"matches": {"qwen38": 2}, "reason": "Existing model qualification, profiling, or development integration; migrate new model behavior to its owner."},
-  "tools/qual/README.md": {"matches": {"mimo": 18, "mimo26": 9, "qwen": 8, "qwen38": 22}, "reason": "Existing model qualification, profiling, or development integration; migrate new model behavior to its owner."},
+  "tools/qual/README.md": {"matches": {"mimo": 18, "mimo26": 9, "qwen": 8, "qwen38": 21}, "reason": "Existing model qualification, profiling, or development integration; migrate new model behavior to its owner."},
   "tools/qual/agentic_metrics.py": {"matches": {"qwen": 1}, "reason": "Existing model qualification, profiling, or development integration; migrate new model behavior to its owner."},
   "tools/qual/cli.py": {"matches": {"qwen38": 1}, "reason": "Existing model qualification, profiling, or development integration; migrate new model behavior to its owner."},
   "tools/qual/color_probe.py": {"matches": {"mimo": 1}, "reason": "Existing model qualification, profiling, or development integration; migrate new model behavior to its owner."},

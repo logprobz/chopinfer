@@ -5,7 +5,7 @@
     python3 models/glm5next/reference_fixtures.py long-context --workload W/long-context.json --output S.json
     python3 models/glm5next/reference_fixtures.py teacher-texts --workload W/teacher.json \\
         --output fixtures/glm5next/gate/teacher-texts.json
-    python3 models/glm5next/reference_fixtures.py nvfp4-teacher [--variant nvfp4-nvidia] \\
+    python3 models/glm5next/reference_fixtures.py nvfp4-teacher --checkpoint DIR --pin PIN.json \\
         --workload W/teacher.json --output S.json
     CUDA_VISIBLE_DEVICES= $CHOPINFER_REFRUN_PYTHON -B models/glm5next/reference_fixtures.py probes \\
         --workload W/probes.json --greedy RUN/f32.json --output S.json
@@ -20,9 +20,11 @@ skeleton over chat.json (`nvfp4-teacher` over it for a checkpoint variant).
 - `teacher` and `long-context`: schema `chopinfer.glm5next.teacher-reference.v1`, one text per workload
   sequence (name, category, prompt token IDs and first scored position), the layout the teacher capture
   (chopinfer eval run) reads.
-- `nvfp4-teacher`: the same over a checkpoint configuration (`--variant`, default `nvfp4`: the
-  checkpoint pin of that configuration in qual.json), whose runs are F32 and BF16
-  (`--modes f32=exact,bf16`).
+- `nvfp4-teacher`: the same over another checkpoint of the model that stores projections as NVFP4,
+  qualified as an external variant (tools/qual/README.md#external-variants): its provenance is the
+  checkpoint pin `--pin` (what `python3 -m tools.qual variant pin` prints) and its variants are
+  described from the layout of `--checkpoint`'s safetensors headers (which projections are NVFP4);
+  its runs are F32 and BF16 (`--modes f32=exact,bf16`).
 - `probes`: schema `chopinfer.glm5next.image-probe-references.v1`, the image-probes format
   tools/qual/multimodal.py reads: `rule` (the free-text spread rule), `provenance.capture_sha256` (the
   request capture reference_workloads.py writes in `capture/`), `token_bytes`, and per probe of
@@ -37,6 +39,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
+import struct
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -70,32 +74,63 @@ RULE = {"variants": ["bf16", "f64"], "mean_step": 0.05, "mean_floor": 0.15, "top
                 "variant), over the BF16 and f64 runs scored against the F32 run like a server"}
 # The long-context reference runs f32 and bf16 only: f64 stays within about 4K tokens.
 LONG_CONTEXT_VARIANTS = ("exact", "bf16")
-# The NVFP4 export's reference (the nvfp4 configuration): its routed experts' E2M1 codes times their E4M3 group
-# scales and F32 global scale, everything else BF16; the MTP layer is not loaded. No f64 run yet.
-NVFP4_VARIANTS = {
-    "exact": f"{CODE} in F32 on the GPU runner (tools/refrun) over the NVFP4 export, routed experts' E2M1 codes "
-             "times their E4M3 group scales and F32 global scale rounded once to F32 (dequant rounded): the gate "
-             "variant",
-    "bf16": f"{CODE} in BF16 over the NVFP4 export, weights dequantized and rounded to BF16 as HF loads them "
-            "(dequant hf-bf16), F32 log-softmax: spread variant",
-}
-# The NVIDIA export's (the nvfp4-nvidia configuration): its dense MLPs and routed experts NVFP4, everything else BF16.
-NVIDIA_NVFP4_VARIANTS = {
-    "exact": f"{CODE} in F32 on the GPU runner (tools/refrun) over the NVIDIA NVFP4 export, dense MLPs' and "
-             "routed experts' E2M1 codes times their E4M3 group scales and F32 global scale rounded once to F32 "
-             "(dequant rounded): the gate variant",
-    "bf16": f"{CODE} in BF16 over the NVIDIA NVFP4 export, weights dequantized and rounded to BF16 as HF loads "
-            "them (dequant hf-bf16), F32 log-softmax: spread variant",
-}
-# Each checkpoint configuration's descriptions.
-VARIANT_DESCRIPTIONS = {"nvfp4": NVFP4_VARIANTS, "nvfp4-nvidia": NVIDIA_NVFP4_VARIANTS}
+# The parts of a decoder layer a checkpoint may store as NVFP4, by the tensor names under `layers.N.`, in the
+# order a description names them.
+NVFP4_PARTS = (("dense MLPs", re.compile(r"mlp\.(?:gate|up|down)_proj\.weight$")),
+               ("shared experts", re.compile(r"mlp\.shared_experts\.")),
+               ("routed experts", re.compile(r"mlp\.experts\.")),
+               ("attention projections", re.compile(r"self_attn\.")))
 
 
-def configuration_pin(name):
-    """The checkpoint pin qual.json's configuration `name` states: the
-    export's lock, repository, revision and the identity serve reports."""
-    configurations = json.loads((ROOT / "models/glm5next/qual.json").read_text())["configurations"]
-    return configurations[name]["qualification"]["checkpoint"]
+def safetensors_headers(checkpoint):
+    """Each tensor's header entry, by name, over every safetensors file of
+    the checkpoint and its non-hidden immediate subdirectories."""
+    root, entries = Path(checkpoint), {}
+    files = [*root.glob("*.safetensors"), *(path for path in root.glob("*/*.safetensors")
+                                            if not path.parent.name.startswith("."))]
+    for path in sorted(files):
+        with path.open("rb") as stream:
+            (length,) = struct.unpack("<Q", stream.read(8))
+            header = json.loads(stream.read(length))
+        entries.update({name: entry for name, entry in header.items() if name != "__metadata__"})
+    return entries
+
+
+def nvfp4_parts(checkpoint):
+    """The parts of the text layers the reference loads (the MTP layer is
+    not loaded) that `checkpoint` stores as NVFP4: packed U8 codes with an
+    E4M3 `weight_scale` per 16 and an F32 `weight_scale_2`."""
+    config = json.loads((Path(checkpoint) / "config.json").read_text())
+    layers = (config.get("text_config") or config)["num_hidden_layers"]
+    entries, found = safetensors_headers(checkpoint), set()
+    for name, entry in entries.items():
+        located = re.search(r"(?:^|\.)layers\.(\d+)\.(.+)$", name)
+        base = name[:-len("weight")]
+        if (located is None or int(located.group(1)) >= layers or not name.endswith(".weight")
+                or entry.get("dtype") != "U8" or entries.get(base + "weight_scale", {}).get("dtype") != "F8_E4M3"
+                or entries.get(base + "weight_scale_2", {}).get("dtype") != "F32"):
+            continue
+        found |= {part for part, pattern in NVFP4_PARTS if pattern.match(located.group(2))}
+    return [part for part, _ in NVFP4_PARTS if part in found]
+
+
+def nvfp4_variants(checkpoint):
+    """The F32 gate and BF16 spread variants of a reference over an NVFP4
+    checkpoint, described from its layout (`nvfp4_parts`); everything it does
+    not store as NVFP4 is BF16."""
+    parts = nvfp4_parts(checkpoint)
+    if not parts:
+        raise ValueError(f"{checkpoint} stores no projection of its text layers as NVFP4")
+    named = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+    return {
+        "exact": f"{CODE} in F32 on the GPU runner (tools/refrun) over the NVFP4 checkpoint, {named}' E2M1 codes "
+                 "times their E4M3 group scales and F32 global scale rounded once to F32 (dequant rounded), "
+                 "everything else BF16: the gate variant",
+        "bf16": f"{CODE} in BF16 over the NVFP4 checkpoint, weights dequantized and rounded to BF16 as HF loads "
+                "them (dequant hf-bf16), F32 log-softmax: spread variant",
+    }
+
+
 POSITIONS = ("entry i scores the token at score_from + i from the logits of the row before it; top1 is the "
              "highest logit (ties to the lower ID), margin its logit minus the second's, and the top-k columns "
              "are ranked by logit")
@@ -221,8 +256,8 @@ def main():
     parser.add_argument("--greedy", type=Path, help="probes: the runner's f32.json of probes-greedy.json")
     parser.add_argument("--checkpoint", default=os.environ.get("CHOPINFER_GLM5NEXT_CHECKPOINT"),
                         help="probes: checkpoint directory holding tokenizer.json")
-    parser.add_argument("--variant", default="nvfp4", choices=sorted(VARIANT_DESCRIPTIONS),
-                        help="nvfp4-teacher: the checkpoint configuration of qual.json")
+    parser.add_argument("--pin", type=Path,
+                        help="nvfp4-teacher: the checkpoint pin (`python3 -m tools.qual variant pin`)")
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     if args.kind == "probes":
@@ -232,9 +267,10 @@ def main():
     elif args.kind == "teacher-texts":
         value = frozen_texts(args.workload)
     elif args.kind == "nvfp4-teacher":
-        # The configuration's pin, which qual.json states.
-        described = VARIANT_DESCRIPTIONS[args.variant]
-        value = texts(args.workload, tuple(described), configuration_pin(args.variant), described)
+        if args.pin is None or args.checkpoint is None:
+            parser.error("nvfp4-teacher needs --pin and --checkpoint")
+        described = nvfp4_variants(args.checkpoint)
+        value = texts(args.workload, tuple(described), json.loads(args.pin.read_text()), described)
     else:
         value = texts(args.workload, LONG_CONTEXT_VARIANTS if args.kind == "long-context" else tuple(VARIANTS))
     with args.output.open("x") as stream:

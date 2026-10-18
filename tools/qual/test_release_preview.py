@@ -2084,57 +2084,78 @@ class RunTests(unittest.TestCase):
             self.assertIn('nonclean', failures[0]['error'])
 
     def test_configuration_alias_binds_launch_and_all_capture_arguments(self):
-        import common
+        """A configuration served under another name than the model's (a
+        declared one, or an external variant of another checkpoint, which
+        names its own) binds that name to the launch and every capture."""
+        from test_variant import VARIANT, rehomed_model, selected, synthetic_variant
         tested = 0
         for name in MODELS:
-            facts = runner.model_facts(name)
             for config in runner.configurations(name):
-                value = declaration.load(declaration.named(runner.declaration_name(name, config)))
-                pin = value['qualification']['checkpoint']
-                alias = pin['served_model_name']
-                if alias == facts['name']:
-                    continue
-                tested += 1
-                selected = runner.configuration_facts(facts, config)
-                self.assertEqual(selected['name'], alias)
-                server = {'model': facts['name'], 'health': {'serving': {
-                    'checkpoint_identity': pin['checkpoint_identity'], 'startup_nonce': '1' * 32}}}
-                with self.assertRaisesRegex(ValueError, 'the server serves'):
-                    common.bind_checkpoint(server, None, 'http://unused', value)
-                server['model'] = selected['name']
-                common.bind_checkpoint(server, None, 'http://unused', value)
-                server['health']['serving']['checkpoint_identity'] = '0' * 64
-                with self.assertRaisesRegex(ValueError, 'the server loaded checkpoint'):
-                    common.bind_checkpoint(server, None, 'http://unused', value)
-                with self.subTest(model=name, config=config), self.validation() as base:
-                    fake = FakeRun(base, name)
-                    original_prepare = fake.prepare
-                    original_server = fake.server
+                tested += self.served_alias(name, config)
+        model = rehomed_model()
+        self.assertIn(model, MODELS)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'variants'
+            synthetic_variant(root, model, checkpoint={'served_model_name': 'someone/requant'})
+            with selected(root):
+                tested += self.served_alias(model, VARIANT)
+        self.assertGreaterEqual(tested, 1)
 
-                    def prepare():
-                        original_prepare()
-                        state = runner.read(fake.install / 'install.json')
-                        state['packages'][f'{name}/{config}'] = state['packages'][f'{name}/default']
-                        runner.write(fake.install / 'install.json', state)
+    def served_alias(self, name, config):
+        """Whether `config` of model `name` is served under another name; if
+        so, a full fake run of it binds that name everywhere."""
+        import common
+        facts = runner.model_facts(name)
+        value = declaration.load(declaration.named(runner.declaration_name(name, config)))
+        pin = value['qualification']['checkpoint']
+        alias = pin['served_model_name']
+        if alias == facts['name']:
+            return 0
+        selected = runner.configuration_facts(facts, config)
+        self.assertEqual(selected['name'], alias)
+        server = {'model': facts['name'], 'health': {'serving': {
+            'checkpoint_identity': pin['checkpoint_identity'], 'startup_nonce': '1' * 32}}}
+        with self.assertRaisesRegex(ValueError, 'the server serves'):
+            common.bind_checkpoint(server, None, 'http://unused', value)
+        server['model'] = selected['name']
+        common.bind_checkpoint(server, None, 'http://unused', value)
+        server['health']['serving']['checkpoint_identity'] = '0' * 64
+        with self.assertRaisesRegex(ValueError, 'the server loaded checkpoint'):
+            common.bind_checkpoint(server, None, 'http://unused', value)
+        spec = runner.selected_configurations(name, [config], 'full')[config]
+        with self.subTest(model=name, config=config), self.validation() as base:
+            fake = FakeRun(base, name)
+            original_prepare = fake.prepare
+            original_server = fake.server
 
-                    @contextlib.contextmanager
-                    def bound_server(context, arm, directory):
-                        self.assertEqual(context['facts']['name'], alias)
-                        self.assertEqual(context['fill']['name'], alias)
-                        with original_server(context, arm, directory) as endpoint:
-                            yield endpoint
+            def prepare():
+                original_prepare()
+                state = runner.read(fake.install / 'install.json')
+                state['packages'][f'{name}/{config}'] = state['packages'][f'{name}/default']
+                runner.write(fake.install / 'install.json', state)
+                # An external variant's checkpoint is verified against its own lock.
+                runner.write(runner.marker_path(name, fake.checkpoint, spec['manifest']),
+                             {'state_sha256': runner.state_digest(runner.checkpoint_state(fake.checkpoint)),
+                              'manifest': runner.manifest_identity(spec['manifest'])})
 
-                    fake.prepare, fake.server = prepare, bound_server
-                    spec = runner.configurations(name)[config]
-                    with patch.dict(os.environ, {spec['checkpoint']: str(fake.checkpoint)}):
-                        code, result = fake.run('--suite', 'full', '--config', config, '--no-baseline-update')
-                    self.assertEqual(code, 0, result['rows'])
-                    commands = [c for c in fake.commands if '--served-model' in c or '--model' in c]
-                    self.assertTrue(commands)
-                    for command in commands:
-                        option = '--served-model' if '--served-model' in command else '--model'
-                        self.assertEqual(command[command.index(option) + 1], alias)
-        self.assertGreaterEqual(tested, 2)
+            @contextlib.contextmanager
+            def bound_server(context, arm, directory):
+                self.assertEqual(context['facts']['name'], alias)
+                self.assertEqual(context['fill']['name'], alias)
+                with original_server(context, arm, directory) as endpoint:
+                    yield endpoint
+
+            fake.prepare, fake.server = prepare, bound_server
+            with patch.dict(os.environ, {spec['checkpoint']: str(fake.checkpoint)}):
+                code, result = fake.run('--suite', 'full', '--config', config, '--no-baseline-update')
+            self.assertEqual(code, 0, result['rows'])
+            self.assertEqual(result['external_variants'], [config] if spec.get('external') else [])
+            commands = [c for c in fake.commands if '--served-model' in c or '--model' in c]
+            self.assertTrue(commands)
+            for command in commands:
+                option = '--served-model' if '--served-model' in command else '--model'
+                self.assertEqual(command[command.index(option) + 1], alias)
+        return 1
 
     def test_run_refuses_changed_or_missing_verification_manifest_before_children(self):
         for change in ('unchanged', 'changed', 'missing'):

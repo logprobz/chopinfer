@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parent
 # Command name to the tools/qual script it runs.
 COMMANDS = {
     "gate": "release_gate", "preview": "release_preview",
-    "check": "checks", "rescore": "checks", "list": "checks", "refs": "refs",
+    "check": "checks", "rescore": "checks", "list": "checks", "refs": "refs", "variant": "variant",
 }
 COMMANDS.update({
     name.replace("_", "-"): name for name in (
@@ -33,6 +33,7 @@ DESCRIPTIONS = {
     "rescore": "re-judge stored check receipts offline",
     "list": "list check kinds and declared checks",
     "refs": "adopt and verify locked qualification inputs",
+    "variant": "lock, pin and adopt an external variant (another checkpoint, outside the tree)",
 }
 
 

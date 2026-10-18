@@ -62,7 +62,7 @@ const TOP_REQUIRED: [&str; 8] = [
     "qualification",
     "receipts",
 ];
-const TOP_OPTIONAL: [&str; 9] = [
+const TOP_OPTIONAL: [&str; 10] = [
     "configurations",
     "references",
     "checkpoint",
@@ -71,6 +71,7 @@ const TOP_OPTIONAL: [&str; 9] = [
     "renamed_checks",
     "capabilities",
     "variant",
+    "variant_source",
     "kv_offload",
 ];
 /// The module metadata, relative to the root.
@@ -1388,6 +1389,15 @@ pub fn validate(value: &Value, modules: &Modules) -> Checked<Declaration> {
         }
         None => None,
     };
+    // Set by [`external`] alone: the overlay an external variant expands.
+    if let Some(source) = map.get("variant_source") {
+        if variant.is_none() {
+            return fail("variant_source", "names the overlay of a variant");
+        }
+        let source = fields(source, "variant_source", &["overlay", "sha256"], &[])?;
+        text(&source["overlay"], "variant_source.overlay")?;
+        digest(&source["sha256"], "variant_source.sha256")?;
+    }
     let checks = object(&map["checks"], "checks")?;
     if checks.is_empty() {
         return fail("checks", "must declare at least one check");
@@ -1568,6 +1578,27 @@ pub struct Loaded {
     /// The directory every declared repo path resolves under: the parent of
     /// `models/` in a checkout or an install.
     pub root: PathBuf,
+    /// The variant root an external variant was read from
+    /// ([`load_variant_from`]): its overlay, lock, checkpoint lock and
+    /// references resolve there.
+    pub variants: Option<PathBuf>,
+}
+
+impl Loaded {
+    /// An environment variable as a declared path reads it: an external
+    /// variant's root for [`VARIANTS_ENV`], whatever the process sets.
+    pub fn environment(&self, name: &str) -> Option<String> {
+        match &self.variants {
+            Some(root) if name == VARIANTS_ENV => Some(root.display().to_string()),
+            _ => std::env::var(name).ok(),
+        }
+    }
+
+    /// The root the checkpoint lock a pin or binding names resolves under:
+    /// the variant root of an external variant, else the root.
+    pub fn lock_root(&self) -> &Path {
+        self.variants.as_deref().unwrap_or(&self.root)
+    }
 }
 
 /// Reads and validates the declaration of the model directory `model`
@@ -1671,12 +1702,19 @@ pub fn load_variant(model: &Path, variant: Option<&str>) -> Checked<Loaded> {
             named.unwrap_or_default()
         )));
     }
+    if value.get("variant_source").is_some() {
+        return Err(DeclarationError(format!(
+            "{}: variant_source: names an external variant's overlay; the tree declares none",
+            path.display()
+        )));
+    }
     Ok(Loaded {
         declaration,
         value,
         path,
         sha256: json::sha256_hex(&bytes),
         root,
+        variants: None,
     })
 }
 
@@ -2079,4 +2117,330 @@ pub fn configurations(value: &Value) -> Vec<String> {
         names.extend(declared.keys().cloned());
     }
     names
+}
+
+/// The environment variable naming the root of external variants
+/// (`--variant-dir`): `ROOT/<model>/<variant>.json` overlays a model's
+/// declaration from outside the tree.
+pub const VARIANTS_ENV: &str = "CHOPINFER_QUAL_VARIANTS";
+pub const VARIANT_SCHEMA: &str = "chopinfer-qual-variant/v1";
+/// The fields an external variant may state: its checkpoint and how it is
+/// pinned, its references and inputs, and which declared checks run. It
+/// cannot change a rule, an argument, a waiver or how the model is served
+/// (`configurations.<name>` can), so the base declaration's limits judge it.
+const VARIANT_FIELDS: [&str; 13] = [
+    "schema",
+    "model",
+    "checkpoint",
+    "checks",
+    "quick",
+    "serving",
+    "media",
+    "from_default",
+    "references",
+    "keep_references",
+    "inputs",
+    "qualification",
+    "capabilities",
+];
+/// Configuration fields an external variant must not state, named in the
+/// refusal (any other field outside [`VARIANT_FIELDS`] is unknown).
+const VARIANT_REFUSED: [&str; 7] = [
+    "rules",
+    "append",
+    "waivers",
+    "cohort_args",
+    "environment",
+    "install_features",
+    "producer",
+];
+const VARIANT_SERVING: [&str; 2] = ["checkpoint_identity", "profile_name"];
+/// The source a rule the expansion adds to an external variant cites.
+pub const VARIANT_SOURCE: &str = "tools/qual/README.md#external-variants";
+
+/// `relative`, a path an external variant names beside its overlay, as the
+/// path under the variant root: `<model>/<relative>`. An absolute path or
+/// one that leaves the overlay's directory is refused.
+fn variant_owned(relative: &Value, model: &str, field: &str) -> Checked<String> {
+    let relative = text(relative, field)?;
+    let path = Path::new(relative);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|part| !matches!(part, std::path::Component::Normal(_)))
+    {
+        return fail(
+            field,
+            "must be a relative path inside the variant's directory",
+        );
+    }
+    Ok(format!("{model}/{relative}"))
+}
+
+/// A path under the variant root, as an input declares it.
+fn variant_input(path: String) -> Value {
+    serde_json::json!({"env": VARIANTS_ENV, "path": path})
+}
+
+/// Refuses a capability an external variant claims beyond the base's: it
+/// may only narrow what the base declares (a modality fewer, speculation
+/// `none`, a capability turned off), so the checks it selects must still
+/// cover each one it keeps.
+fn narrowed(base: &Value, claimed: &Value) -> Checked<()> {
+    let field = "capabilities";
+    let Some(base) = base.as_object() else {
+        return fail(field, "the base declaration states no capabilities");
+    };
+    let claimed = object(claimed, field)?;
+    for key in claimed.keys() {
+        if !base.contains_key(key) {
+            return fail(&format!("{field}.{key}"), "is not a capability of the base");
+        }
+    }
+    for (key, value) in base {
+        let at = format!("{field}.{key}");
+        let Some(own) = claimed.get(key) else {
+            if key == "unqualified_media" {
+                continue;
+            }
+            return fail(&at, "is required");
+        };
+        let wider = match (key.as_str(), value) {
+            ("speculation", _) => own != value && own != "none",
+            (_, Value::Bool(flag)) => boolean(own, &at)? && !flag,
+            (_, Value::Array(items)) => strings(own, &at, false)?
+                .iter()
+                .any(|item| !items.iter().any(|base| base == item)),
+            (_, Value::Object(items)) => object(own, &at)?
+                .iter()
+                .any(|(name, reason)| items.get(name) != Some(reason)),
+            _ => own != value,
+        };
+        if wider {
+            return fail(&at, "must not claim more than the base declares");
+        }
+    }
+    Ok(())
+}
+
+/// The declaration of the external variant `name` of the model declared by
+/// `base` (its qual.json): the overlay `overlay` (`ROOT/<model>/<name>.json`,
+/// whose bytes have digest `sha256`) applied by [`expand`] as a configuration
+/// of that name. Paths it names resolve beside it, under the variant root
+/// ([`VARIANTS_ENV`]), its checkpoint lock as `<model>/<lock>`; it inherits
+/// no base reference unless `keep_references` names it, and
+/// `variant_source` names the overlay and its digest.
+pub fn external(base: &Value, name: &str, overlay: &Value, sha256: &str) -> Checked<Value> {
+    let model = text(&base["model"], "model")?;
+    if !plain(name) || name == "default" {
+        return fail("variant", "must be a plain name other than default");
+    }
+    if base["configurations"].get(name).is_some() {
+        return fail(
+            "variant",
+            &format!("{name} is a configuration the model's qual.json declares"),
+        );
+    }
+    let spec = object(overlay, "variant")?;
+    for key in spec.keys() {
+        if VARIANT_REFUSED.contains(&key.as_str()) {
+            return fail(key, "an external variant cannot state it");
+        }
+        if !VARIANT_FIELDS.contains(&key.as_str()) {
+            return fail(key, "unknown field");
+        }
+    }
+    for key in [
+        "schema",
+        "model",
+        "checkpoint",
+        "checks",
+        "quick",
+        "qualification",
+    ] {
+        if !spec.contains_key(key) {
+            return fail(key, "is required");
+        }
+    }
+    if spec["schema"] != VARIANT_SCHEMA {
+        return fail("schema", &format!("must be {VARIANT_SCHEMA}"));
+    }
+    if spec["model"] != model {
+        return fail(
+            "model",
+            &format!("must be {model}, the model its directory names"),
+        );
+    }
+    let key = text(&spec["checkpoint"], "checkpoint")?;
+    if !key
+        .chars()
+        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+    {
+        return fail(
+            "checkpoint",
+            "must be an environment name part (A-Z, 0-9, _)",
+        );
+    }
+    let qualification = fields(
+        &spec["qualification"],
+        "qualification",
+        &["checkpoint"],
+        &[],
+    )?;
+    let mut pin = object(&qualification["checkpoint"], "qualification.checkpoint")?.clone();
+    for key in ["pin", "registry"] {
+        if pin.contains_key(key) {
+            return fail(
+                &format!("qualification.checkpoint.{key}"),
+                "an external variant pins its own checkpoint lock",
+            );
+        }
+    }
+    let lock = variant_owned(
+        pin.get("lock").unwrap_or(&Value::Null),
+        model,
+        "qualification.checkpoint.lock",
+    )?;
+    pin.insert("lock".into(), Value::String(lock));
+    let identity = pin
+        .get("checkpoint_identity")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let mut config = spec.clone();
+    config.remove("schema");
+    config.remove("model");
+    config.insert(
+        "qualification".into(),
+        serde_json::json!({"checkpoint": Value::Object(pin)}),
+    );
+    let mut serving = match spec.get("serving") {
+        Some(value) => object(value, "serving")?.clone(),
+        None => Map::new(),
+    };
+    for key in serving.keys() {
+        if !VARIANT_SERVING.contains(&key.as_str()) {
+            return fail(
+                &format!("serving.{key}"),
+                "an external variant cannot state it",
+            );
+        }
+    }
+    match serving.get("checkpoint_identity") {
+        Some(stated) if *stated != identity => {
+            return fail(
+                "serving.checkpoint_identity",
+                "must be the pinned checkpoint_identity",
+            );
+        }
+        _ => {
+            serving.insert("checkpoint_identity".into(), identity);
+        }
+    }
+    config.insert("serving".into(), Value::Object(serving));
+    // A profile rule the expansion adds cites what states it.
+    config.insert("source".into(), Value::String(VARIANT_SOURCE.into()));
+    if let Some(references) = spec.get("references") {
+        let mut owned = Map::new();
+        for (reference, pin) in object(references, "references")? {
+            let at = format!("references.{reference}");
+            let mut pin = object(pin, &at)?.clone();
+            for key in ["path", "workload"] {
+                if let Some(path) = pin.get(key) {
+                    let path = variant_owned(path, model, &format!("{at}.{key}"))?;
+                    pin.insert(key.into(), variant_input(path));
+                }
+            }
+            owned.insert(reference.clone(), Value::Object(pin));
+        }
+        config.insert("references".into(), Value::Object(owned));
+    }
+    if let Some(inputs) = spec.get("inputs") {
+        let declared = object(&base["inputs"], "inputs")?;
+        let mut owned = Map::new();
+        for (input, path) in object(inputs, "inputs")? {
+            let at = format!("inputs.{input}");
+            if !declared.contains_key(input) {
+                return fail(&at, "is not an input the base declares");
+            }
+            let value = match path {
+                Value::Null => Value::Null,
+                path => variant_input(variant_owned(path, model, &at)?),
+            };
+            owned.insert(input.clone(), value);
+        }
+        config.insert("inputs".into(), Value::Object(owned));
+    }
+    // Inherit no base reference unless the overlay keeps it by name.
+    config
+        .entry("keep_references")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    if let Some(claimed) = spec.get("capabilities") {
+        narrowed(&base["capabilities"], claimed)?;
+    }
+    let mut value = base.clone();
+    let mut configurations = Map::new();
+    configurations.insert(name.to_owned(), Value::Object(config));
+    value["configurations"] = Value::Object(configurations);
+    let mut expanded = expand(&value, name)?;
+    expanded["variant_source"] =
+        serde_json::json!({"overlay": format!("{model}/{name}.json"), "sha256": sha256});
+    Ok(expanded)
+}
+
+/// Whether the tree declares `variant` of the model directory `model`: a
+/// configuration of its qual.json or a `qual.VARIANT.json` beside it.
+fn declared_in_tree(model: &Path, variant: &str) -> Checked<bool> {
+    let (_, base) = json::read(&model.join(FILE_NAME)).map_err(DeclarationError)?;
+    Ok(base["configurations"].get(variant).is_some()
+        || model.join(format!("qual.{variant}.json")).exists())
+}
+
+/// As [`load_variant`], with external variants under `variants` (the
+/// variant root, when one is given): a variant the tree does not declare
+/// is read from `variants/<model>/<variant>.json` ([`external`]). An
+/// overlay there of a variant the tree declares is refused.
+pub fn load_variant_from(
+    model: &Path,
+    variant: Option<&str>,
+    variants: Option<&Path>,
+) -> Checked<Loaded> {
+    let (Some(name), Some(variants)) = (variant, variants) else {
+        return load_variant(model, variant);
+    };
+    if !plain(name) {
+        return Err(DeclarationError(format!(
+            "variant {name:?} is not a plain name"
+        )));
+    }
+    let directory = std::fs::canonicalize(model)
+        .map_err(|error| DeclarationError(format!("{}: {error}", model.display())))?;
+    let model_name = directory
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_owned();
+    let overlay = variants.join(&model_name).join(format!("{name}.json"));
+    let in_tree = declared_in_tree(model, name)?;
+    if in_tree {
+        if overlay.exists() {
+            return Err(DeclarationError(format!(
+                "{}: variant: {name} is a variant the tree declares; an external variant needs another name",
+                overlay.display()
+            )));
+        }
+        return load_variant(model, variant);
+    }
+    let mut loaded = load_variant(model, None)?;
+    let (bytes, value) = json::read(&overlay).map_err(DeclarationError)?;
+    let expanded = external(&loaded.value, name, &value, &json::sha256_hex(&bytes))
+        .map_err(|error| DeclarationError(format!("{}: {error}", overlay.display())))?;
+    let modules = Modules::read(&loaded.root)?;
+    loaded.declaration = validate(&expanded, &modules)
+        .map_err(|error| DeclarationError(format!("{}: {error}", overlay.display())))?;
+    loaded.value = expanded;
+    loaded.variants = Some(
+        std::fs::canonicalize(variants)
+            .map_err(|error| DeclarationError(format!("{}: {error}", variants.display())))?,
+    );
+    Ok(loaded)
 }

@@ -111,8 +111,8 @@ mod tests {
     }
 
     /// Each layout's records run its chained projections in their formats
-    /// and its projections at their logical shapes: NVIDIA's NVFP4 dense
-    /// down projection reads K = 3072 per rank, not its 1,536 packed bytes,
+    /// and its projections at their logical shapes: an NVFP4 dense down
+    /// projection reads K = 3072 per rank, not its 1,536 packed bytes,
     /// and no scale companion counts as a weight.
     #[test]
     fn records_follow_the_checkpoint_layout() {

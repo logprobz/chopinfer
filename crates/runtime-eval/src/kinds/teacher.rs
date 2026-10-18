@@ -1068,12 +1068,13 @@ fn capture_teacher(capture: &mut Capture<'_>) -> Result<Value, KindError> {
             )));
         }
         let frozen: Vec<Value> = if name == "teacher" {
-            let fixture_root = crate::references::input_path(
-                capture.declaration,
-                "fixture_root",
-                &crate::references::process_environment,
-            )
-            .ok_or_else(|| KindError::Insufficient("the declaration has no fixture_root".into()))?;
+            let fixture_root =
+                crate::references::input_path(capture.declaration, "fixture_root", &|name| {
+                    capture.declaration.environment(name)
+                })
+                .ok_or_else(|| {
+                    KindError::Insufficient("the declaration has no fixture_root".into())
+                })?;
             let path = fixture_root.join("teacher-texts.json");
             let bytes = crate::lock::read(capture.declaration, "fixture_root", &path)
                 .map_err(KindError::Insufficient)?;

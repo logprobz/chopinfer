@@ -96,6 +96,9 @@ impl crate::checkpoint::Registry {
         if let Some(patch) = &identity.frontend {
             merge(&mut current, patch);
         }
+        if identity.is_local() {
+            current["models"][0]["owned_by"] = crate::checkpoint::LOCAL.into();
+        }
         apply_geometry(&mut current, geometry)?;
         // Repository, revision and file pins always come from the registered lock.
         for field in ["repository", "revision", "definition", "configuration"] {
@@ -125,6 +128,42 @@ impl crate::checkpoint::Registry {
             component.as_object_mut().unwrap().remove("multimodal");
         }
         Ok(serde_json::to_vec(&component)?)
+    }
+}
+
+impl crate::checkpoint::Registry {
+    /// Checks that the tokenizer files at `root` build the tokenizer
+    /// `identity`'s frontend declares, as a serving host builds them. A
+    /// local identity's tokenizer files are its own, admitted by their
+    /// configuration's meaning alone.
+    pub fn check_tokenizer(
+        &self,
+        root: &std::path::Path,
+        identity: &crate::checkpoint::Identity,
+        geometry: &'static model_mimo26_contract::geometry::Geometry,
+    ) -> crate::MimoResult<()> {
+        let component = self.component_for_geometry(identity, Encoders::NONE, geometry)?;
+        let descriptor = FrontendDescriptorV1::from_component_bytes(&component)?;
+        let lock = self.source_lock(identity)?;
+        let mut files = Vec::new();
+        for (name, limit) in ["tokenizer.json", "tokenizer_config.json"].map(|name| {
+            let (_, limit) = crate::checkpoint::METADATA
+                .into_iter()
+                .find(|(metadata, _)| *metadata == name)
+                .expect("tokenizer files are checkpoint metadata");
+            (name, limit)
+        }) {
+            let bytes = crate::checkpoint::read_metadata(root, name, limit)?;
+            let pin = lock.pin(name).ok_or("tokenizer source pin absent")?;
+            if bytes.len() as u64 != pin.byte_length
+                || runtime_weights::sha256_bytes(&bytes) != pin.sha256
+            {
+                return Err(format!("{name} differs from selected checkpoint").into());
+            }
+            files.push(bytes);
+        }
+        runtime_frontend_contract::tokenizer_from_components_v1(&descriptor, &files[0], &files[1])?;
+        Ok(())
     }
 }
 

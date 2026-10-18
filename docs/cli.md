@@ -13,14 +13,15 @@ chopinfer serve --model DIR [--tensor-parallel-size N] [--model-cache-dir DIR]
   [SERVING OPTIONS]
 ```
 
-`serve --model DIR` serves a supported local checkpoint (Qwen3.8 Flash, the
-pinned MiMo V2.6 Flash checkpoints, or the pinned GLM 5.3 Flash
-checkpoints) by loading its weights directly. The family
+`serve --model DIR` serves a local Qwen3.8 Flash, MiMo V2.6 Flash or GLM 5.3
+Flash checkpoint in a layout its family serves
+([compatible checkpoints](compatible-checkpoints.md#serve-your-own-checkpoint))
+by loading its weights directly. The family
 helper installed beside the host emits a small package without weights into the
 model cache, and names the serving profile it uses (Qwen: MTP where the rank
-count and precision support it; MiMo: DFlash when the checkpoint has
-`dflash/`, else MTP, else none; GLM: the MTP profile of the checkpoint's
-layout; the encoders the checkpoint has). The
+count and precision support it; MiMo: DFlash when the checkpoint's DFlash
+drafter checks, else MTP, else none; GLM: the MTP profile for every layout;
+the encoders the checkpoint has). The
 profile's settings are defaults under any explicit serving option.
 `--model` is exclusive with `--bundle`, `--topology`, `--profile` and
 `--checkpoint`. It does not run qualification. See
@@ -158,21 +159,23 @@ structured checks through `eval run --check ID` and takes the correctness
 runner's determinism and greedy records with `eval capture`.
 
 ```text
-chopinfer eval list (--model DIR | --package DIR) [--variant NAME] [--json]
-chopinfer eval run (--model DIR | --package DIR) [--variant NAME]
-  [--served-model NAME]
+chopinfer eval list (--model DIR | --package DIR)
+  [--variant NAME [--variant-dir DIR]] [--json]
+chopinfer eval run (--model DIR | --package DIR)
+  [--variant NAME [--variant-dir DIR]] [--served-model NAME]
   [--suite quick|accuracy | --check ID... [--cohort quick|full]]
   [--references DIR] [--report DIR] [--json] [--timeout SECONDS]
   [--server-log LOG] (--url URL | --launch [SERVE FLAGS...])
 chopinfer eval capture --kind determinism|greedy_pin
-  (--model DIR | --package DIR) [--variant NAME] [--served-model NAME]
-  [--references DIR] [--timeout SECONDS] [--server-log LOG]
+  (--model DIR | --package DIR) [--variant NAME [--variant-dir DIR]]
+  [--served-model NAME] [--references DIR] [--timeout SECONDS]
+  [--server-log LOG]
   --url URL --report DIR RECORD ARGUMENTS...
 chopinfer eval verify-references (--model DIR | --package DIR)
-  [--variant NAME] [--references DIR] [--json]
+  [--variant NAME [--variant-dir DIR]] [--references DIR] [--json]
 chopinfer eval files (--model DIR | --package DIR) [--variant NAME]
 chopinfer eval rescore < REQUEST.json
-chopinfer eval declaration --model DIR [--variant NAME]
+chopinfer eval declaration --model DIR [--variant NAME [--variant-dir DIR]]
 chopinfer eval declaration --root ROOT < DECLARATION.json
 ```
 
@@ -183,7 +186,11 @@ chopinfer eval declaration --root ROOT < DECLARATION.json
   `--variant NAME` reads the configuration `NAME` that `qual.json` declares,
   expanded onto the base declaration, with the model's lock; without such a
   configuration it reads a variant declaration file `qual.NAME.json` beside
-  `qual.json`, with its own pin, references and lock.
+  `qual.json`, with its own pin, references and lock. `--variant-dir DIR`
+  (default `$CHOPINFER_QUAL_VARIANTS`) reads a variant the tree does not
+  declare from `DIR/<model>/NAME.json`, an
+  [external variant](../tools/qual/README.md#external-variants) beside its
+  lock.
 - `list` prints the declared checks, cohorts and pinned references;
   `verify-references` verifies the checkpoint lock and every pinned reference
   offline; `files` prints every file under `ROOT` that `eval` reads (the

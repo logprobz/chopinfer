@@ -166,7 +166,7 @@ mod decoded_tile_tests {
     use super::*;
     use chained::Weights;
     use model_glm5next_contract::contract::Shape;
-    use model_glm5next_contract::quantization::{FP8_BLOCK128, LAYOUTS};
+    use model_glm5next_contract::quantization::{FP8_BLOCK128, representative_layouts};
 
     /// Every phase the package admits: each prefill row count, each decode
     /// bucket and each verify bucket of up to `MAX_VERIFY_ROWS` rows per
@@ -234,7 +234,7 @@ mod decoded_tile_tests {
                 projection.symbol
             );
         }
-        for layout in LAYOUTS {
+        for layout in representative_layouts() {
             let engines = Engines::shared(Shape::TP4, layout).unwrap();
             let decoded: Vec<_> = engines
                 .moe
@@ -304,7 +304,7 @@ mod tile_pair_tests {
     use super::*;
     use chained::Weights;
     use model_glm5next_contract::contract::Shape;
-    use model_glm5next_contract::quantization::LAYOUTS;
+    use model_glm5next_contract::quantization::representative_layouts;
 
     const PAIRS: [&str; 2] = [
         "chop_moe_chain_gateup_fp8block_e288k8_n1024_k4096_r64_clamp4120000041200000_tp2_v1",
@@ -362,7 +362,7 @@ mod tile_pair_tests {
             }
         }
         // Every layout lowers (and admits) the same tile pairs.
-        for layout in LAYOUTS {
+        for layout in representative_layouts() {
             let engines = Engines::for_layout(Shape::TP4, layout).unwrap();
             let pairs: Vec<_> = engines
                 .moe

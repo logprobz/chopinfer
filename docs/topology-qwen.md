@@ -83,7 +83,7 @@ One package, `qwen38.flash.v2`, and one native module serve every topology
 the checkpoint's precision supports: `qwen38-flash-tp2` and `qwen38-flash-tp4`,
 each with its own n-gram placement, recurrent state,
 sequence maximum, graph buckets, minimum device memory and precision
-component. Both mixed NVFP4 exports serve TP2 and TP4
+component. Both mixed NVFP4 layouts serve TP2 and TP4
 ([package topologies](deploy-common.md#package-topology-and-separate-instances)).
 
 ## Device selection

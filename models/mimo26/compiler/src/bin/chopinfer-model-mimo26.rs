@@ -69,8 +69,9 @@ impl MimoFamily {
         Ok(profile)
     }
 
-    /// The pinned checkpoint whose source lock `root`'s config, index and
-    /// tokenizer files match; MiMo serves only pinned checkpoints.
+    /// The verifier of the checkpoint at `root`: the registered identity
+    /// whose source lock its config, index and tokenizer files match, else
+    /// its local identity.
     fn verifier(root: &Path) -> Result<Verifier> {
         Self::verifier_with_registry(root, model_mimo26::checkpoint::registry())
     }
@@ -189,8 +190,17 @@ impl Provider for MimoFamily {
             Some("mtp") => Some(DrafterKind::Mtp),
             _ => None,
         };
+        if verifier.identity().is_local() {
+            verifier
+                .registry()
+                .check_tokenizer(root, verifier.identity(), config.geometry()?)?;
+        }
         let [tokenizer_definition, tokenizer_configuration] =
-            package::PackageAssets::pinned_tokenizer(root, verifier.identity())?;
+            package::PackageAssets::pinned_tokenizer_with_registry(
+                root,
+                verifier.identity(),
+                verifier.registry(),
+            )?;
         let assets = package::PackageAssets {
             tokenizer_definition,
             tokenizer_configuration,
@@ -412,5 +422,81 @@ mod tests {
                 .tokenizer_contract_for_flash(verifier.identity())
                 .unwrap()
         );
+    }
+
+    /// A checkpoint whose index no registered lock pins emits a package
+    /// bound to its local identity, which passes full package verification
+    /// and serves BF16 KV only.
+    #[test]
+    fn helper_admits_and_packages_a_local_checkpoint() {
+        let mut fixture = registry_fixture::Fixture::new();
+        fixture.state_tokenizer_semantics();
+        std::fs::write(
+            fixture.root.join("model.safetensors.index.json"),
+            br#"{"metadata":{"total_size":2,"format":"local"},"weight_map":{"a":"weight.safetensors"}}"#,
+        )
+        .unwrap();
+        let registry = fixture.registry();
+        let verifier = MimoFamily::verifier_with_registry(&fixture.root, &registry).unwrap();
+        let identity = verifier.identity();
+        assert!(identity.is_local());
+        let [tokenizer_definition, tokenizer_configuration] =
+            package::PackageAssets::pinned_tokenizer_with_registry(
+                &fixture.root,
+                identity,
+                verifier.registry(),
+            )
+            .unwrap();
+        let assets = package::PackageAssets {
+            tokenizer_definition,
+            tokenizer_configuration,
+            native_module: StagedContentV1::file(crate::test_native::fixture()),
+            drafter: None,
+            encoders: Encoders::NONE,
+            precision: package::fixture_precision(),
+        };
+        let output = fixture.root.join("package");
+        let rank_bytes = Tp::SUPPORTED.map(|tp| (tp, 1 << 30));
+        let emitted =
+            package::emit_verified_direct_package(assets, &rank_bytes, &output, &verifier).unwrap();
+        let host = runtime_bundle::BundleHostCompatibilityV1::new(Selected::ARCHITECTURE, 1)
+            .unwrap()
+            .with_capabilities(
+                emitted
+                    .manifest()
+                    .resource_requirements()
+                    .required_capabilities()
+                    .iter()
+                    .cloned(),
+            );
+        runtime_bundle::BundlePackageV1::verify_directory(&output, &host).unwrap();
+        for tp in Tp::SUPPORTED {
+            let manifest = emitted
+                .manifest()
+                .for_topology(model_mimo26_contract::topology::topology_id(tp))
+                .unwrap();
+            let ids: Vec<_> = manifest
+                .kv_formats()
+                .iter()
+                .map(|f| f.layout().id().as_str())
+                .collect();
+            assert_eq!(ids, ["mimo.ga-paged-bf16.v1"]);
+        }
+        let binding: runtime_bundle::checkpoint_binding::CheckpointBinding =
+            serde_json::from_slice(
+                &std::fs::read(output.join("components/checkpoint-binding.json")).unwrap(),
+            )
+            .unwrap();
+        let digest = verifier.source_lock_sha256();
+        assert_eq!(binding.repository, "local");
+        assert_eq!(binding.revision, digest[..40]);
+        assert_eq!(binding.served_model_name, format!("local-{digest}"));
+        assert_eq!(binding.source_lock_sha256, digest);
+        let component = std::fs::read(output.join("components/frontend.json")).unwrap();
+        let descriptor =
+            runtime_frontend_contract::FrontendDescriptorV1::from_component_bytes(&component)
+                .unwrap();
+        assert_eq!(descriptor.tokenizer.repository, binding.repository);
+        assert_eq!(descriptor.tokenizer.revision, binding.revision);
     }
 }

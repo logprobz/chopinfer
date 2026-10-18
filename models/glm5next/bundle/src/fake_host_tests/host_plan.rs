@@ -13,9 +13,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use model_glm5next_contract::quantization::{
-    FP8_BLOCK128, Layout, NVFP4_DENSE_ROUTED, NVFP4_ROUTED,
-};
+use model_glm5next_contract::quantization::test_support::{config_of, extra_checkpoints};
+use model_glm5next_contract::quantization::{Layout, representative_layouts};
 use runtime_bundle_abi::weight_plan::WeightPlanV1;
 use runtime_host::direct::{
     DirectCheckpointV1, DirectLoadOptionsV1, PlannedImageV1, implementation_v1,
@@ -95,38 +94,43 @@ pub(super) fn prepare_synthetic(layout: &Layout, config: &[u8]) -> Result<(), St
     Ok(())
 }
 
-/// Every rank's planned image of the checkpoint that `variable` names,
-/// prepared as the host does; `None` when it is unset.
-pub(super) fn real_planned(variable: &str) -> Option<Vec<super::Planned>> {
-    let root = std::env::var_os(variable)?;
-    let (_, plans) = DirectCheckpointV1::open(Path::new(&root))
+/// The admitted layout of the checkpoint at `root`: its config's classes
+/// with its headers' side tensor dtypes, as the plan resolves it.
+pub(super) fn real_layout(root: &Path) -> &'static Layout {
+    let checkpoint = DirectCheckpointV1::open(root)
+        .unwrap_or_else(|error| panic!("{}: {error}", root.display()));
+    let request = checkpoint.request(
+        RANK_IMAGE_ROLE,
+        RANKS,
+        0,
+        implementation_v1([7; 32]),
+        vec![],
+        vec![],
+    );
+    let config = request.document("config.json").expect("a config.json");
+    let matched = model_glm5next_contract::admission::admit_bytes(config)
+        .unwrap_or_else(|error| panic!("{}: {error}", root.display()));
+    model_glm5next_contract::direct::resolve_layout(&request, &matched)
+        .unwrap_or_else(|error| panic!("{}: {error}", root.display()))
+}
+
+/// Every rank's planned image of the checkpoint at `root`, prepared as the
+/// host does.
+pub(super) fn real_planned(root: &Path) -> Vec<super::Planned> {
+    let (_, plans) = DirectCheckpointV1::open(root)
         .and_then(prepare)
-        .unwrap_or_else(|error| panic!("{variable}: {error}"));
-    Some(plans.iter().map(super::Planned::of).collect())
+        .unwrap_or_else(|error| panic!("{}: {error}", root.display()));
+    plans.iter().map(super::Planned::of).collect()
 }
 
 /// Each layout's scalar globals (NVFP4 `weight_scale_2`, alone or packed
 /// per expert and projection) are records the host gathers as one element.
 #[test]
 fn each_layout_prepares_every_rank() {
-    let layouts: [(&Layout, &[u8]); 3] = [
-        (
-            &FP8_BLOCK128,
-            include_bytes!("../../../contract/fixtures/config.json"),
-        ),
-        (
-            &NVFP4_ROUTED,
-            include_bytes!("../../../contract/fixtures/nvfp4-config.json"),
-        ),
-        (
-            &NVFP4_DENSE_ROUTED,
-            include_bytes!("../../../contract/fixtures/nvidia-nvfp4-config.json"),
-        ),
-    ];
-    let refused: Vec<String> = layouts
+    let refused: Vec<String> = representative_layouts()
         .into_iter()
-        .filter_map(|(layout, config)| {
-            prepare_synthetic(layout, config)
+        .filter_map(|layout| {
+            prepare_synthetic(layout, &config_of(layout))
                 .err()
                 .map(|error| format!("{}: {error}", layout.id))
         })
@@ -136,19 +140,17 @@ fn each_layout_prepares_every_rank() {
 
 /// Each configured checkpoint's headers plan and prepare on every rank, as
 /// at a serving host's create, and the host produces every scalar global
-/// (one F32 element) as a finite positive scale read from the checkpoint.
+/// (one F32 element) as a finite positive scale read from the checkpoint:
+/// the official one and each of `CHOPINFER_GLM5NEXT_EXTRA_CHECKPOINTS`.
 #[test]
 fn real_checkpoints_prepare_every_rank() {
-    for variable in [
-        "CHOPINFER_GLM5NEXT_CHECKPOINT",
-        "CHOPINFER_GLM5NEXT_NVFP4_CHECKPOINT",
-        "CHOPINFER_GLM5NEXT_NVIDIA_NVFP4_CHECKPOINT",
-    ] {
-        let Some(root) = std::env::var_os(variable) else {
-            eprintln!("{variable} unset: skipped");
-            continue;
-        };
-        let (image, plans) = DirectCheckpointV1::open(Path::new(&root))
+    let official = std::env::var_os("CHOPINFER_GLM5NEXT_CHECKPOINT").map(PathBuf::from);
+    if official.is_none() {
+        eprintln!("CHOPINFER_GLM5NEXT_CHECKPOINT unset: skipped");
+    }
+    for root in official.into_iter().chain(extra_checkpoints()) {
+        let variable = root.display();
+        let (image, plans) = DirectCheckpointV1::open(&root)
             .and_then(prepare)
             .unwrap_or_else(|error| panic!("{variable}: {error}"));
         let mut start = 0;

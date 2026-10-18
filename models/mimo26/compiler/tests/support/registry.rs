@@ -1,7 +1,12 @@
+use model_compiler_sdk::preparation::tokenizer::TokenizerSemantics;
 use model_mimo26::checkpoint::Registry;
 use runtime_bundle::checkpoint_binding::FileDigest;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+
+/// The chat template of the tokenizer configuration
+/// [`Fixture::state_tokenizer_semantics`] writes.
+pub const TEMPLATE: &str = "{{ fixture }}";
 
 pub struct Fixture {
     pub root: PathBuf,
@@ -88,8 +93,48 @@ impl Fixture {
         self
     }
 
+    /// The registry of the fixture's identities, which checks a local
+    /// identity's tokenizer configuration against [`Fixture::semantics`].
     pub fn registry(&self) -> Registry {
-        Registry::parse(&self.data.to_string(), &self.locks.to_string()).unwrap()
+        Registry::parse(&self.data.to_string(), &self.locks.to_string())
+            .unwrap()
+            .with_tokenizer_semantics(Self::semantics())
+    }
+
+    /// A tokenizer configuration with [`TEMPLATE`] and one end token.
+    pub fn semantics() -> TokenizerSemantics {
+        TokenizerSemantics::parse(
+            &serde_json::to_vec(&serde_json::json!({
+                "chat_template_sha256": runtime_weights::sha256_bytes(TEMPLATE.as_bytes()),
+                "configuration": {"eos_token": "<|im_end|>"},
+            }))
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    /// Writes a tokenizer configuration that states [`Fixture::semantics`],
+    /// pinned for `third`.
+    pub fn state_tokenizer_semantics(&mut self) {
+        let configuration = serde_json::json!({
+            "chat_template": TEMPLATE, "eos_token": "<|im_end|>", "name_or_path": "fixture",
+        });
+        std::fs::write(
+            self.root.join("tokenizer_config.json"),
+            serde_json::to_vec(&configuration).unwrap(),
+        )
+        .unwrap();
+        self.pin("tokenizer_config.json");
+    }
+
+    /// Pins the current bytes of `name` for `third`.
+    pub fn pin(&mut self, name: &str) {
+        let bytes = std::fs::read(self.root.join(name)).unwrap();
+        self.locks["third"][name] = serde_json::to_value(FileDigest {
+            byte_length: bytes.len() as u64,
+            sha256: runtime_weights::sha256_bytes(&bytes),
+        })
+        .unwrap();
     }
 }
 

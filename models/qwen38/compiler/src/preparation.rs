@@ -974,7 +974,7 @@ mod tests {
     }
 
     /// A mixed component carries the MTP profile at TP2 and TP4 when it
-    /// records the MTP layer, of either export shape, and the
+    /// records the MTP layer, of either mixed layout, and the
     /// autoregressive profile when it does not (a component prepared before
     /// MTP records), which `--drafter mtp` refuses with a regenerate message.
     #[test]
@@ -994,17 +994,18 @@ mod tests {
             let catalog = crate::catalog::synthetic(shape.ranks() as usize);
             let refusal = drafter_refusal(&catalog, shape, &unrecorded).unwrap();
             assert!(refusal.contains("regenerate"), "{refusal}");
-            for export in ["nvidia", "local-lab"] {
+            for layout in crate::mixed_layouts::Layout::ALL {
                 let recorded = document(
                     text.iter()
                         .cloned()
-                        .chain(drafter_records(export, shape))
+                        .chain(drafter_records(layout, shape))
                         .collect(),
                 );
                 assert_eq!(
                     select_profile(shape, &recorded).unwrap().name,
                     format!("tp{}-mtp", shape.ranks()),
-                    "{export}"
+                    "{}",
+                    layout.name()
                 );
                 assert_eq!(drafter_refusal(&catalog, shape, &recorded), None);
             }
@@ -1097,14 +1098,23 @@ mod tests {
         );
     }
 
-    /// NVIDIA's mixed NVFP4 checkpoint and a built native module, or a
-    /// failure naming the variables: these tests run on request only.
-    fn mixed_nvfp4_inputs() -> (PathBuf, PathBuf) {
-        let root = std::env::var("CHOPINFER_QWEN38_NVFP4_CHECKPOINT")
-            .expect("set CHOPINFER_QWEN38_NVFP4_CHECKPOINT to NVIDIA's mixed NVFP4 export");
-        let native = std::env::var("CHOPINFER_QWEN38_NATIVE_MODULE")
-            .expect("set CHOPINFER_QWEN38_NATIVE_MODULE to a built libbundle_qwen38.so");
-        (root.into(), native.into())
+    /// The listed checkpoints whose routed experts are NVFP4: these tests
+    /// run on request only.
+    fn routed_nvfp4_checkpoints() -> Vec<PathBuf> {
+        crate::checkpoint::extra_checkpoints(
+            "NVFP4 routed experts",
+            crate::checkpoint::routed_nvfp4,
+        )
+        .into_iter()
+        .map(|(root, _)| root)
+        .collect()
+    }
+
+    /// A built native module, or a failure naming its variable.
+    fn native_module() -> PathBuf {
+        std::env::var("CHOPINFER_QWEN38_NATIVE_MODULE")
+            .expect("set CHOPINFER_QWEN38_NATIVE_MODULE to a built libbundle_qwen38.so")
+            .into()
     }
 
     fn direct_request(
@@ -1121,28 +1131,17 @@ mod tests {
         }
     }
 
-    /// `prepare --direct` on NVIDIA's mixed NVFP4 checkpoint emits its
-    /// package at TP2 and TP4 with the MTP drafter.
-    #[test]
-    #[ignore = "needs NVIDIA's mixed NVFP4 checkpoint and a native module: run with --ignored and \
-                CHOPINFER_QWEN38_NVFP4_CHECKPOINT and CHOPINFER_QWEN38_NATIVE_MODULE set"]
-    fn a_mixed_nvfp4_direct_package_serves_tp2_and_tp4_with_mtp() {
-        let (root, native) = mixed_nvfp4_inputs();
-        mixed_direct_package_serves_tp2_and_tp4_with_mtp(&root, &native);
-    }
-
-    /// `prepare --direct` on local-lab's mixed export (MXFP8 projections,
-    /// NVFP4 experts and lookup, W4A16 NVFP4 MTP experts, F32 norms) emits
+    /// `prepare --direct` on each listed checkpoint with NVFP4 routed
+    /// experts (whatever its dense, lookup, MTP and norm encodings) emits
     /// its package at TP2 and TP4 with the MTP drafter.
     #[test]
-    #[ignore = "needs the local-lab mixed export and a native module: run with --ignored and \
-                CHOPINFER_QWEN38_LOCAL_LAB_CHECKPOINT and CHOPINFER_QWEN38_NATIVE_MODULE set"]
-    fn the_local_lab_direct_package_serves_tp2_and_tp4_with_mtp() {
-        let root = std::env::var("CHOPINFER_QWEN38_LOCAL_LAB_CHECKPOINT")
-            .expect("set CHOPINFER_QWEN38_LOCAL_LAB_CHECKPOINT to the local-lab mixed export");
-        let native = std::env::var("CHOPINFER_QWEN38_NATIVE_MODULE")
-            .expect("set CHOPINFER_QWEN38_NATIVE_MODULE to a built libbundle_qwen38.so");
-        mixed_direct_package_serves_tp2_and_tp4_with_mtp(Path::new(&root), Path::new(&native));
+    #[ignore = "needs a checkpoint with NVFP4 routed experts and a native module: run with \
+                --ignored and CHOPINFER_QWEN38_EXTRA_CHECKPOINTS and \
+                CHOPINFER_QWEN38_NATIVE_MODULE set"]
+    fn mixed_direct_packages_serve_tp2_and_tp4_with_mtp() {
+        for root in routed_nvfp4_checkpoints() {
+            mixed_direct_package_serves_tp2_and_tp4_with_mtp(&root, &native_module());
+        }
     }
 
     /// The mixed export at `root` emits its direct package at TP2 and TP4
@@ -1273,21 +1272,24 @@ mod tests {
     /// emits: the same manifest (so the same package identity) and the same
     /// whole serving profile where the checkpoint serves the request, and
     /// the same refusal where it does not. The block-FP8 checkpoint
-    /// (`CHOPINFER_QWEN38_CHECKPOINT`) and NVIDIA's mixed NVFP4 export
-    /// (`CHOPINFER_QWEN38_NVFP4_CHECKPOINT`) serve TP2 and TP4 under
-    /// `auto` and `bf16`; neither serves the `checkpoint` policy.
+    /// (`CHOPINFER_QWEN38_CHECKPOINT`) and each listed checkpoint with
+    /// NVFP4 routed experts (`CHOPINFER_QWEN38_EXTRA_CHECKPOINTS`) serve TP2
+    /// and TP4 under `auto` and `bf16`; none serves the `checkpoint` policy.
     #[test]
-    #[ignore = "needs both real checkpoints and a native module: run with --ignored and \
-                CHOPINFER_QWEN38_CHECKPOINT, CHOPINFER_QWEN38_NVFP4_CHECKPOINT and \
+    #[ignore = "needs real checkpoints and a native module: run with --ignored and \
+                CHOPINFER_QWEN38_CHECKPOINT, CHOPINFER_QWEN38_EXTRA_CHECKPOINTS and \
                 CHOPINFER_QWEN38_NATIVE_MODULE set"]
     fn one_reading_emits_the_package_of_one_reading_per_topology() {
         let fp8 = PathBuf::from(
             std::env::var("CHOPINFER_QWEN38_CHECKPOINT")
                 .expect("set CHOPINFER_QWEN38_CHECKPOINT to a Qwen3.8 checkpoint"),
         );
-        let (mixed, native) = mixed_nvfp4_inputs();
+        let native = native_module();
         // Each checkpoint with the rank counts it serves.
-        let checkpoints = [(&fp8, &[2, 4][..]), (&mixed, &[2, 4][..])];
+        let mixed = routed_nvfp4_checkpoints();
+        let checkpoints = std::iter::once(&fp8)
+            .chain(&mixed)
+            .map(|root| (root, &[2, 4][..]));
         let scratch = std::env::temp_dir().join(format!("qwen-one-reading-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&scratch);
         std::fs::create_dir_all(&scratch).unwrap();

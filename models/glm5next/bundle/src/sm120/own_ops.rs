@@ -1698,7 +1698,7 @@ mod tests {
     fn admissions_of_every_layout_launch_what_create_forms() {
         let own = Sm120Own::new(SHAPE);
         let mut checks = BTreeMap::new();
-        for layout in model_glm5next_contract::quantization::LAYOUTS {
+        for layout in model_glm5next_contract::quantization::representative_layouts() {
             for rank in 0..SHAPE.ranks() {
                 let stored =
                     model_glm5next_contract::direct::checkpoint_layout(SHAPE, layout, rank)

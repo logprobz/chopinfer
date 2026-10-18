@@ -74,6 +74,12 @@ RULES = [
     ('local /tmp path in prose', re.compile(r'(?<![A-Za-z0-9_.$}-])/tmp/(?!nvidia-mps)'),
      re.compile(r'^(?!.*\.md$)')),
     ('GPU UUID', re.compile(r'GPU-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-'), None),
+    # The tree names only the model authors' checkpoints. Another checkpoint
+    # is admitted by its layout and qualified as an external variant outside
+    # the tree. CUDA container images keep their publisher's name.
+    ('third-party checkpoint name', re.compile(
+        r"local-?inference-?lab|local[-_]lab|nvidia/(?!cuda)[a-z]|nvidia[-_]nvfp4|"
+        r"nvidia's (?:export|nvfp4)", re.I), None),
     ('PCI bus ID in prose', re.compile(r'\b[0-9A-Fa-f]{4,8}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}\.[0-7]\b'),
      re.compile(r'^(?!.*\.(md|json|txt|log|csv)$)')),
     # The Qwen Community License, quoted verbatim in THIRD_PARTY_NOTICES,

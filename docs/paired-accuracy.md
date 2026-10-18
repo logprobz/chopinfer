@@ -149,9 +149,8 @@ check admits only that configuration's profile (context-parallel size, KV
 element, drafting). An accepted capture must pass the absolute teacher gate
 of its own configuration, and each configuration compares with its own
 stored arm. `models/glm5next/qual.json` declares the `tp4-mtp` margins (the
-FP8 checkpoint at DCP 1); the `dcp2`, `dcp4`, `nvfp4` and `nvfp4-nvidia`
-configurations apply them to their own arm, each NVFP4 one on its own
-checkpoint and teacher reference. BF16 KV and the five-draft profile declare
+FP8 checkpoint at DCP 1); the `dcp2` and `dcp4` configurations apply them
+to their own arm. BF16 KV and the five-draft profile declare
 no paired check; the `kv-bf16` configuration's `teacher_arms` reports the
 BF16 KV teacher difference ([BF16 KV](model-glm5next.md#bf16-kv)).
 
@@ -192,15 +191,15 @@ threshold are unchanged.
 On 2026-10-12 each policy had two independent accepted captures of the
 final release gate's install, from its own package cache, each start with its own
 startup nonce, after one `chopinfer verify` per capture job and checkpoint
-(73, 57 and 44 files verified, none failed, missing or unrecorded). Every
-capture scored 3,781 positions and passed its declaration's absolute teacher
-gate: mean |dlogprob| 0.06285 (FP8), 0.06395 (DCP 2), 0.06579 (DCP 4),
-0.05428 (local-inference-lab NVFP4) and 0.06157 (NVIDIA NVFP4). Each repeat
+(no file failed, missing or unrecorded). Every capture scored 3,781
+positions and passed its declaration's absolute teacher gate: mean
+|dlogprob| 0.06285 (FP8), 0.06395 (DCP 2) and 0.06579 (DCP 4). Each repeat
 pair served identical scored rows: zero pooled and category change, zero
 top-one and tail change in both directions. Each configuration's first
 accepted capture is its seed arm. In the accepted-versus-accepted dry run, a
 fresh candidate-role capture of the same install, with its server kept alive,
-passed the live paired comparison for all five configurations.
+passed the live paired comparison for the FP8, DCP 2 and DCP 4
+configurations.
 
 GLM's layer check (`text_layers`, `taps` configuration) takes its floor from
 HF's BF16 run with the served FP8 latent. On TP-split main one row's routing

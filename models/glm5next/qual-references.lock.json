@@ -1089,15 +1089,6 @@
       },
       "schema": "legacy-json-object"
     },
-    "3687d77bcc3b4701276874e3cbb17f1f12546c71e2f1a3a7517988e75a92ccb7": {
-      "production": {
-        "assembled_fixture_sha256": "229c5f93add41229310176435d34f6d9f4cc8a0480e3dac6754934a5a1d1daef",
-        "producer": "runner-binding",
-        "refset_sha256": "4979420e5201db81918ea597285918212fe426829660882a01090507941675d2",
-        "workload_sha256": "3cb1531003cb72b5765bb6c6d845dd0d9c8d3e9ab289f432c9816c23036108ba"
-      },
-      "schema": "chopinfer.glm5next.teacher-reference.v1"
-    },
     "3a661a679fdb5bff55705c06d6ef62c3c7ec569bf524e59c27fb78d51c0eb798": {
       "production": {
         "assembled_fixture_sha256": "88efa56565408f80ef5090c38a85009632fe8edda997d0530163391ecf170df8",
@@ -1168,15 +1159,6 @@
       },
       "schema": "chopinfer.glm5next.needles.v1"
     },
-    "62723e59d771b9fab780f6b0db86cfc0c3e47c0d17649f8bddd5eacc211297b9": {
-      "production": {
-        "assembled_fixture_sha256": "fb8a9f18d817f255766bba81756de52c2072554bc12c0083efd681c96a5c6787",
-        "producer": "runner-binding",
-        "refset_sha256": "4f0abc298da358b6e79f42a85da0dda09218bf1ebfa7922b998928a6be3cda9b",
-        "workload_sha256": "899c38b5f73993bfc193969bb4e8e4bb484edbda90d8ac14283e447f8cbb0c06"
-      },
-      "schema": "chopinfer.glm5next.teacher-reference.v1"
-    },
     "656f4e9255eb196c8c2991c1f84d4755dadb664a98c58f579eba84b920446a87": {
       "production": {
         "adoption_commit": "5b7852fb5355b3a43f3ab5d3eff288890b5c81f0",
@@ -1184,15 +1166,6 @@
         "producer": "legacy-unknown"
       },
       "schema": "legacy-json-object"
-    },
-    "663c944f5d534cf16913feaf4f60ba728622005d03dab9067144c2f00d62fdd0": {
-      "production": {
-        "assembled_fixture_sha256": "fcc9301fd4686c52f6f91e5362049ce5cbf7d7bb2abbe646ff3e85efe6354f82",
-        "producer": "runner-binding",
-        "refset_sha256": "89665fa59b14bb3e7ef17327a615267d9f2349c3feaec83b8302243b19b8cf67",
-        "workload_sha256": "899c38b5f73993bfc193969bb4e8e4bb484edbda90d8ac14283e447f8cbb0c06"
-      },
-      "schema": "chopinfer.glm5next.teacher-reference.v1"
     },
     "7156a8541cb49e10bbaceebfeb828d890da93315ebd702f00f5fe0ea15259fe4": {
       "production": {
@@ -1282,15 +1255,6 @@
         "workload_sha256": "101b68ebc7617cbfed2f2f175427c0117281a82f1df072888d449638a87d44fc"
       },
       "schema": "chopinfer.refrun.workload.v1"
-    },
-    "b12483b8340b35fc3471fdf093d845368e0170d9720d5e5aa90feed0816b734c": {
-      "production": {
-        "assembled_fixture_sha256": "bdc2f253d446e9ad62ee50ba2b1bbb7cf9ed2cf275f9f8c6c874f1d0eb9829e0",
-        "producer": "runner-binding",
-        "refset_sha256": "e78b894dfd2f7d3c4626eb069f0ec3d03b0e59c08a1dab867f698659ba004d46",
-        "workload_sha256": "3cb1531003cb72b5765bb6c6d845dd0d9c8d3e9ab289f432c9816c23036108ba"
-      },
-      "schema": "chopinfer.glm5next.teacher-reference.v1"
     },
     "ba7fc9794d3db90790d76cdf0b4faf0a1b66ff8acc685667ffb318c06e6d66b6": {
       "production": {
@@ -5393,99 +5357,5 @@
       "schema": "chopinfer.refrun.preprocessing.v1"
     }
   },
-  "schema": "chopinfer-qual-references/v1",
-  "configurations": {
-    "nvfp4": {
-      "entries": {
-        "exact": {
-          "directory": false,
-          "members": {
-            ".": "62723e59d771b9fab780f6b0db86cfc0c3e47c0d17649f8bddd5eacc211297b9"
-          },
-          "path": "fixtures/glm5next/nvfp4-teacher-reference.json"
-        },
-        "reference:chat": {
-          "directory": false,
-          "members": {
-            ".": "3687d77bcc3b4701276874e3cbb17f1f12546c71e2f1a3a7517988e75a92ccb7"
-          },
-          "path": "fixtures/glm5next/nvfp4-chat-reference.json"
-        },
-        "reference:teacher": {
-          "directory": false,
-          "members": {
-            ".": "62723e59d771b9fab780f6b0db86cfc0c3e47c0d17649f8bddd5eacc211297b9"
-          },
-          "path": "fixtures/glm5next/nvfp4-teacher-reference.json"
-        },
-        "teacher_reference": {
-          "directory": false,
-          "members": {
-            ".": "62723e59d771b9fab780f6b0db86cfc0c3e47c0d17649f8bddd5eacc211297b9"
-          },
-          "path": "fixtures/glm5next/nvfp4-teacher-reference.json"
-        },
-        "workload:chat": {
-          "directory": false,
-          "members": {
-            ".": "ca0c7f59d76dd5e7d77dd8922f973534d2d8cd990de55746eba7df92f4140eff"
-          },
-          "path": "fixtures/glm5next/nvfp4-chat-reference.workload.json"
-        },
-        "workload:teacher": {
-          "directory": false,
-          "members": {
-            ".": "3128c9bae0d091dd44269911e5066c9c70c28221fad6e66b5a20d4d9ad9c364d"
-          },
-          "path": "fixtures/glm5next/nvfp4-teacher-reference.workload.json"
-        }
-      }
-    },
-    "nvfp4-nvidia": {
-      "entries": {
-        "exact": {
-          "directory": false,
-          "members": {
-            ".": "663c944f5d534cf16913feaf4f60ba728622005d03dab9067144c2f00d62fdd0"
-          },
-          "path": "fixtures/glm5next/nvfp4-nvidia-teacher-reference.json"
-        },
-        "reference:chat": {
-          "directory": false,
-          "members": {
-            ".": "b12483b8340b35fc3471fdf093d845368e0170d9720d5e5aa90feed0816b734c"
-          },
-          "path": "fixtures/glm5next/nvfp4-nvidia-chat-reference.json"
-        },
-        "reference:teacher": {
-          "directory": false,
-          "members": {
-            ".": "663c944f5d534cf16913feaf4f60ba728622005d03dab9067144c2f00d62fdd0"
-          },
-          "path": "fixtures/glm5next/nvfp4-nvidia-teacher-reference.json"
-        },
-        "teacher_reference": {
-          "directory": false,
-          "members": {
-            ".": "663c944f5d534cf16913feaf4f60ba728622005d03dab9067144c2f00d62fdd0"
-          },
-          "path": "fixtures/glm5next/nvfp4-nvidia-teacher-reference.json"
-        },
-        "workload:chat": {
-          "directory": false,
-          "members": {
-            ".": "ca0c7f59d76dd5e7d77dd8922f973534d2d8cd990de55746eba7df92f4140eff"
-          },
-          "path": "fixtures/glm5next/nvfp4-nvidia-chat-reference.workload.json"
-        },
-        "workload:teacher": {
-          "directory": false,
-          "members": {
-            ".": "3128c9bae0d091dd44269911e5066c9c70c28221fad6e66b5a20d4d9ad9c364d"
-          },
-          "path": "fixtures/glm5next/nvfp4-nvidia-teacher-reference.workload.json"
-        }
-      }
-    }
-  }
+  "schema": "chopinfer-qual-references/v1"
 }

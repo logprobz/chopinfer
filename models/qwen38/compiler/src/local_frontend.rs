@@ -1,17 +1,12 @@
 //! Resolve frontend assets without assigning the reference release's identity.
 use crate::Result;
+use model_compiler_sdk::preparation::tokenizer;
 use runtime_frontend_contract::FrontendDescriptorV1;
 use runtime_tokenizer::Tokenizer;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
-
-/// The lowercase hex SHA-256 of `bytes`.
-fn digest(bytes: &[u8]) -> String {
-    use sha2::Digest;
-    format!("{:x}", sha2::Sha256::digest(bytes))
-}
 
 pub const REQUIRED: &[&str] = &[
     "config.json",
@@ -64,32 +59,14 @@ impl LocalFrontend {
         let config: Value = serde_json::from_slice(&configuration)?;
         validate_semantics(&config, inputs)?;
         let mut frontend: Value = serde_json::from_slice(crate::frontend::COMPONENT)?;
-        frontend["models"][0]["id"] = format!("local-{source_identity}").into();
-        frontend["models"][0]["owned_by"] = "local".into();
-        let mut identities = BTreeMap::new();
-        for name in [
-            "tokenizer.json",
-            "tokenizer_config.json",
-            "chat_template.jinja",
-            "generation_config.json",
-        ] {
-            identities.insert(name, inputs.get(name).map(|bytes| digest(bytes)));
-        }
-        frontend["tokenizer"]["repository"] = "local".into();
-        frontend["tokenizer"]["revision"] = digest(&serde_json::to_vec(&identities)?).into();
-        for (key, bytes) in [
-            ("definition", &definition),
-            ("configuration", &configuration),
-        ] {
-            frontend["tokenizer"][key]["byte_length"] = (bytes.len() as u64).into();
-            frontend["tokenizer"][key]["sha256"] = digest(bytes).into();
-        }
-        let tokenizer: Value = serde_json::from_slice(&definition)?;
-        frontend["tokenizer"]["merge_count"] = (tokenizer["model"]["merges"]
-            .as_array()
-            .ok_or("missing BPE merges")?
-            .len() as u64)
-            .into();
+        tokenizer::rename_model(&mut frontend, &format!("local-{source_identity}"), "local")?;
+        tokenizer::rewrite_tokenizer(
+            &mut frontend,
+            &definition,
+            &configuration,
+            "local",
+            &tokenizer::content_revision(inputs)?,
+        )?;
         if let Some(bytes) = inputs.get("generation_config.json") {
             let generation: Value = serde_json::from_slice(bytes)?;
             validate_generation(&generation)?;
@@ -120,52 +97,8 @@ impl LocalFrontend {
 }
 
 fn validate_semantics(config: &Value, inputs: &BTreeMap<String, Vec<u8>>) -> Result<()> {
-    let reference: Value =
-        serde_json::from_slice(include_bytes!("../fixtures/tokenizer-semantics.json"))?;
-    let template = config["chat_template"]
-        .as_str()
-        .ok_or("tokenizer_config.chat_template must be a supported string")?;
-    let expected = reference["chat_template_sha256"]
-        .as_str()
-        .ok_or("invalid template fixture")?;
-    if digest(template.as_bytes()) != expected {
-        return Err(
-            "unsupported chat template semantics; this family supports its declared text renderer"
-                .into(),
-        );
-    }
-    if let Some(bytes) = inputs.get("chat_template.jinja")
-        && digest(bytes) != expected
-    {
-        return Err("chat_template.jinja disagrees with the supported renderer".into());
-    }
-    let expected_config = reference["configuration"]
-        .as_object()
-        .ok_or("invalid configuration fixture")?;
-    for (key, value) in config
-        .as_object()
-        .ok_or("tokenizer configuration must be an object")?
-    {
-        if [
-            "chat_template",
-            "name_or_path",
-            "_name_or_path",
-            "transformers_version",
-        ]
-        .contains(&key.as_str())
-        {
-            continue;
-        }
-        if expected_config.get(key) != Some(value) {
-            return Err(format!("unsupported tokenizer_config.{key}").into());
-        }
-    }
-    for (key, value) in expected_config {
-        if config.get(key) != Some(value) {
-            return Err(format!("missing or unsupported tokenizer_config.{key}").into());
-        }
-    }
-    Ok(())
+    tokenizer::TokenizerSemantics::parse(include_bytes!("../fixtures/tokenizer-semantics.json"))?
+        .check(config, inputs.get("chat_template.jinja").map(Vec::as_slice))
 }
 
 fn validate_generation(value: &Value) -> Result<()> {
@@ -349,7 +282,7 @@ mod tests {
             let component: Value = serde_json::from_slice(&changed.component).unwrap();
             assert_eq!(
                 component["tokenizer"]["definition"]["sha256"],
-                digest(&changed.definition)
+                runtime_weights::sha256_bytes(&changed.definition)
             );
             assert_ne!(changed.definition, baseline.definition);
             let mut bad = inputs.clone();

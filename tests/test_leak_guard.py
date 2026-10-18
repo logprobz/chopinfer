@@ -23,6 +23,10 @@ NOREPLY = '1+test' + '@users.noreply.github.com'
 TRAILER = 'Co-Authored-By: Claude <noreply' + '@anthropic.com>'
 WORDING = 'The ' + 'operator' + ' decided this.'
 DATA_PATH = 'Mount the models at /' + 'data/models.\n'
+# Third-party checkpoint names, and the CUDA image names that stay allowed.
+THIRD_PARTY = ['local-' + 'inference-lab/GLM', 'LOCAL_' + 'LAB_CHECKPOINT', 'the local' + '-lab export',
+               'nvidia' + '/GLM-5.3-Flash-NVFP4', 'nvidia' + '-nvfp4', "NVIDIA's " + 'export']
+CUDA_IMAGES = ['nvidia' + '/cuda:13.2.1-devel-ubuntu24.04', 'NVIDIA NVFP4 recipe', "NVIDIA's CUDA header"]
 
 
 class Repo:
@@ -63,6 +67,20 @@ class Isolated(unittest.TestCase):
 
     def personal(self):
         return dict(os.environ, GIT_AUTHOR_EMAIL=PERSONAL, GIT_COMMITTER_EMAIL=PERSONAL)
+
+
+class Rules(unittest.TestCase):
+    def test_third_party_checkpoint_names_fail_and_cuda_images_pass(self):
+        rule = next(rule for rule in leak_guard.RULES if rule[0] == 'third-party checkpoint name')
+        for name in THIRD_PARTY:
+            with self.subTest(name=name):
+                failures = []
+                leak_guard.check_file('docs/notes.md', 1, f'See {name}.\n', [rule], failures)
+                self.assertEqual(len(failures), 1, failures)
+                self.assertIn('docs/notes.md:1: third-party checkpoint name', failures[0])
+        failures = []
+        leak_guard.check_file('deploy/Dockerfile', 1, '\n'.join(CUDA_IMAGES), [rule], failures)
+        self.assertEqual(failures, [])
 
 
 class GitModes(Isolated):

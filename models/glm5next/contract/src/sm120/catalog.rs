@@ -13,7 +13,7 @@ use kernels_sm120::{ModelCatalog, ProjectionInventory};
 
 use super::precision;
 use crate::contract::Shape;
-use crate::quantization::LAYOUTS;
+use crate::quantization::covering_layouts;
 
 /// glm5next's catalog entries: its projection inventory only.
 pub static CATALOG: ModelCatalog = ModelCatalog {
@@ -24,12 +24,13 @@ pub static CATALOG: ModelCatalog = ModelCatalog {
 
 /// Each lowered projection with every weight format a checkpoint layout
 /// stores it in on `shape`'s rank 0 (`crate::precision::layout_formats`), in
-/// [`crate::precision::LOWERED`] order then layout order: block FP8 where the FP8
-/// export quantizes it, BF16 where a layout keeps it unquantized, NVFP4 for
-/// the NVIDIA export's dense down projection.
+/// [`crate::precision::LOWERED`] order then layout order: block FP8 where a
+/// block-FP8 export quantizes it, BF16 where a layout keeps it unquantized,
+/// NVFP4 for a layout that stores the dense MLPs in NVFP4. The covering
+/// layouts hold every such pair.
 pub fn lowered_formats(shape: Shape) -> Result<Vec<(&'static str, WeightFormat)>, String> {
     let mut stored = Vec::new();
-    for layout in LAYOUTS {
+    for layout in covering_layouts() {
         stored.push(crate::precision::layout_formats(shape, layout)?);
     }
     let mut formats = Vec::new();
@@ -83,9 +84,9 @@ mod tests {
         for &id in crate::precision::LOWERED {
             assert!(formats.iter().any(|(f, _)| *f == id), "{id}");
         }
-        // The NVFP4 exports keep the FP8 export's quantized latent
-        // projections in BF16, and NVIDIA's dense down is NVFP4; the head
-        // stays BF16 everywhere.
+        // The mixed layouts keep the latent projections a block-FP8 export
+        // quantizes in BF16, and the NVFP4 dense and routed mix stores the
+        // dense down projection in NVFP4; the head stays BF16 everywhere.
         for (id, fp8, nvfp4) in [
             ("latent.q-a", true, false),
             ("dense.down", true, true),

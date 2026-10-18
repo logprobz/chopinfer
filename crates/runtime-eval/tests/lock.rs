@@ -56,51 +56,52 @@ fn the_shipped_inputs_read_as_their_lock_pins_them() {
 
 #[test]
 fn a_configuration_reads_the_model_lock_with_its_own_entries() {
-    let mut compared = 0;
-    for entry in std::fs::read_dir(checkout().join("models")).unwrap() {
-        let model = entry.unwrap().path();
-        if !model.join(lock::FILE_NAME).is_file() {
-            continue;
-        }
-        let (_, value) = runtime_eval::json::read(&model.join(lock::FILE_NAME)).unwrap();
-        let base = declaration::load(&model).unwrap();
-        let Some(default) =
-            runtime_eval::references::input_path(&base, "teacher_reference", &|_| None)
-        else {
-            continue;
-        };
-        for (name, spec) in value["configurations"].as_object().into_iter().flatten() {
-            let Some(path) = spec["entries"]["teacher_reference"]["path"].as_str() else {
-                continue;
-            };
-            if spec["entries"]["teacher_reference"] == value["entries"]["teacher_reference"] {
-                continue;
-            }
-            let loaded = declaration::load_variant(&model, Some(name)).unwrap();
-            assert_eq!(
-                lock::path(&loaded).canonicalize().unwrap(),
-                model.join(lock::FILE_NAME).canonicalize().unwrap()
-            );
-            let input =
-                runtime_eval::references::input_path(&loaded, "teacher_reference", &|_| None)
-                    .unwrap();
-            assert!(input.ends_with(path), "{name}: {}", input.display());
-            assert_eq!(
-                lock::read(&loaded, "teacher_reference", &input).unwrap(),
-                std::fs::read(&input).unwrap()
-            );
-            assert!(lock::read(&loaded, "teacher_reference", &default).is_err());
-            assert_eq!(
-                lock::read(&base, "teacher_reference", &default).unwrap(),
-                std::fs::read(&default).unwrap()
-            );
-            compared += 1;
-        }
-    }
-    assert!(
-        compared > 0,
-        "no configuration overrides its teacher reference"
+    // A model whose configuration `own` reads its own teacher_reference,
+    // pinned under configurations.own.entries of the model lock.
+    let root = locked_root("configuration");
+    let model = root.join("models/example");
+    let (default_bytes, own_bytes) = (b"{\"default\": true}".to_vec(), b"{\"own\": true}".to_vec());
+    let (default_path, own_path) = (
+        "fixtures/example/teacher-reference.json",
+        "fixtures/example/own-teacher-reference.json",
     );
+    std::fs::write(root.join(default_path), &default_bytes).unwrap();
+    std::fs::write(root.join(own_path), &own_bytes).unwrap();
+    let (_, mut qual) = runtime_eval::json::read(&model.join("qual.json")).unwrap();
+    qual["inputs"]["teacher_reference"] = json!(default_path);
+    qual["configurations"] = json!({"own": {"checks": ["api"], "quick": ["api"],
+                                            "inputs": {"teacher_reference": own_path}}});
+    std::fs::write(model.join("qual.json"), qual.to_string()).unwrap();
+    let (_, mut value) = runtime_eval::json::read(&model.join(lock::FILE_NAME)).unwrap();
+    let pinned = |path: &str, bytes: &[u8]| json!({"path": path, "directory": false, "members": {".": sha256_hex(bytes)}});
+    value["entries"]["teacher_reference"] = pinned(default_path, &default_bytes);
+    value["configurations"] =
+        json!({"own": {"entries": {"teacher_reference": pinned(own_path, &own_bytes)}}});
+    for bytes in [&default_bytes, &own_bytes] {
+        value["objects"][sha256_hex(bytes)] = json!({"schema": "legacy-json-object"});
+    }
+    std::fs::write(model.join(lock::FILE_NAME), value.to_string()).unwrap();
+    let base = declaration::load(&model).unwrap();
+    let loaded = declaration::load_variant(&model, Some("own")).unwrap();
+    assert_eq!(
+        lock::path(&loaded).canonicalize().unwrap(),
+        model.join(lock::FILE_NAME).canonicalize().unwrap()
+    );
+    let default =
+        runtime_eval::references::input_path(&base, "teacher_reference", &|_| None).unwrap();
+    let input =
+        runtime_eval::references::input_path(&loaded, "teacher_reference", &|_| None).unwrap();
+    assert!(input.ends_with(own_path), "{}", input.display());
+    assert_eq!(
+        lock::read(&loaded, "teacher_reference", &input).unwrap(),
+        own_bytes
+    );
+    assert!(lock::read(&loaded, "teacher_reference", &default).is_err());
+    assert_eq!(
+        lock::read(&base, "teacher_reference", &default).unwrap(),
+        default_bytes
+    );
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 /// A root whose model locks one input file and one directory member.

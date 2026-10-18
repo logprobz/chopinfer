@@ -73,7 +73,7 @@ fn run() -> Result<(), String> {
     let verifier = model_mimo26::checkpoint_provenance::Verifier::new(&checkpoint, identity)
         .map_err(|error| error.to_string())?;
     let [tokenizer_definition, tokenizer_configuration] =
-        PackageAssets::pinned_tokenizer(&checkpoint, identity)
+        PackageAssets::pinned_tokenizer_with_registry(&checkpoint, identity, verifier.registry())
             .map_err(|error| error.to_string())?;
     let assets = PackageAssets {
         tokenizer_definition,

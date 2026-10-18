@@ -6,8 +6,9 @@ layer with FP8 routed experts, and a two-block vision tower. The runner's
 scores, through the adapter's chunked vision attention and chunked prefill,
 must match a plain HF `model(...)` forward over the same weights decoded by
 the definitions. `MixedExportTests` checks reference_mixed.py the same way
-on tiny ModelOpt mixed exports of the NVIDIA and local-lab shapes. Needs
-torch and transformers 5.16.1; skipped without them.
+on tiny ModelOpt mixed exports of the nvfp4-routed-fp8-mtp and
+mxfp8-dense-nvfp4 layouts. Needs torch and transformers 5.16.1; skipped
+without them.
 
     CUDA_VISIBLE_DEVICES= $CHOPINFER_REFRUN_PYTHON -B models/qwen38/test_reference.py
 """
@@ -21,6 +22,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shutil
 import struct
 import sys
 import tempfile
@@ -397,10 +399,11 @@ def f32(value):
 
 
 def mixed_config(shape):
-    """A modelopt MIXED_PRECISION config of the NVIDIA or local-lab shape."""
+    """A modelopt MIXED_PRECISION config of the nvfp4-routed-fp8-mtp or
+    mxfp8-dense-nvfp4 layout."""
     layers = {EXPERTS.format(layer): {"quant_algo": "NVFP4", "group_size": 16} for layer in range(3)}
     layers["mtp.layers.0.mlp.experts"] = {"quant_algo": "FP8_PB_WO", "group_size": 128}
-    if shape == "nvidia":
+    if shape == "nvfp4-routed-fp8-mtp":
         layers[NGRAM.rstrip(".")] = {"quant_algo": "FP8"}
     else:
         layers[NGRAM.rstrip(".")] = {"quant_algo": "NVFP4", "group_size": 16}
@@ -416,8 +419,8 @@ def mixed_config(shape):
 
 def write_mixed_checkpoint(root, shape, seed=0):
     """A tiny export of `shape`: NVFP4 experts with input scales and an FP8
-    n-gram table (nvidia), plus MXFP8 projections, an NVFP4 n-gram table and
-    F32 norms (local-lab)."""
+    n-gram table (nvfp4-routed-fp8-mtp), plus MXFP8 projections, an NVFP4
+    n-gram table and F32 norms (mxfp8-dense-nvfp4)."""
     from safetensors.torch import save_file
     root.mkdir(parents=True)
     generator = torch.Generator().manual_seed(seed)
@@ -451,7 +454,7 @@ def write_mixed_checkpoint(root, shape, seed=0):
             continue
         scale = 0.05 if "norm" in name else 0.3
         weight = torch.randn(parameter.shape, generator=generator) * scale
-        keep = shape == "local-lab" and F32_NORMS.search(name)
+        keep = shape == "mxfp8-dense-nvfp4" and F32_NORMS.search(name)
         tensors[name] = weight if keep else weight.to(torch.bfloat16)
     real = hf.Qwen4ExpTextNGramEmbedding(text, text.ple_embed_dim, 1, 0)
     for key in ("layer_multipliers", "ngram_heads_vocab_sizes", "ngram_heads_offsets"):
@@ -467,12 +470,12 @@ def write_mixed_checkpoint(root, shape, seed=0):
     columns = real.ngram_embedding.embedding_dim
     rows = padded // text.split_ngram_parts
     for shard in range(text.split_ngram_parts):
-        if shape == "nvidia":
+        if shape == "nvfp4-routed-fp8-mtp":
             tensors[f"{NGRAM}shard_{shard}.weight"] = codes(generator, (rows, columns)).view(torch.float8_e4m3fn)
         else:
             nvfp4(f"{NGRAM}shard_{shard}.", rows, columns, input_scale=False)
             del tensors[f"{NGRAM}shard_{shard}.weight_scale_2"]
-    if shape == "nvidia":
+    if shape == "nvfp4-routed-fp8-mtp":
         tensors[NGRAM + "weight_scale"] = torch.tensor([0.0371], dtype=torch.bfloat16)
     else:
         tensors[NGRAM + "weight_scale_2"] = global_scale().reshape(1)
@@ -549,7 +552,7 @@ def plain_mixed_model(tensors, shape, dtype, rule, keep_f32=False):
                    for p in ("gate_proj", "up_proj", "down_proj")}
         state[prefix + "gate_up_proj"] = torch.cat([stacked["gate_proj"], stacked["up_proj"]], dim=1).to(dtype)
         state[prefix + "down_proj"] = stacked["down_proj"].to(dtype)
-    if shape == "nvidia":
+    if shape == "nvfp4-routed-fp8-mtp":
         table = torch.cat([tensors[f"{NGRAM}shard_{s}.weight"] for s in range(text.split_ngram_parts)]).view(torch.uint8)
         scale = float(tensors[NGRAM + "weight_scale"][0])
         rows = naive(table, lambda r, c: scale, table.shape[0], table.shape[1], "e4m3")
@@ -584,7 +587,8 @@ def built(root, mode, rule=None, change=None):
 
 @unittest.skipIf(torch is None, "needs torch (set CHOPINFER_REFRUN_PYTHON)")
 class MixedExportTests(unittest.TestCase):
-    """reference_mixed.py on tiny exports of the NVIDIA and local-lab shapes:
+    """reference_mixed.py on tiny exports of the nvfp4-routed-fp8-mtp and
+    mxfp8-dense-nvfp4 layouts:
     every mode's scores equal a plain HF forward over weights decoded by the
     definitions, and malformed exports are refused."""
 
@@ -596,7 +600,7 @@ class MixedExportTests(unittest.TestCase):
         (root / "workload.json").write_text(json.dumps({"schema": "chopinfer.refrun.workload.v1", "model": "qwen38",
                                                         "sequences": sequences}))
         cls.tensors, cls.scores, cls.provenance = {}, {}, {}
-        for shape in ("nvidia", "local-lab"):
+        for shape in ("nvfp4-routed-fp8-mtp", "mxfp8-dense-nvfp4"):
             cls.tensors[shape] = write_mixed_checkpoint(root / shape, shape)
             output = root / f"out-{shape}"
             cls.provenance[shape] = run.run(run.parse_args([
@@ -624,46 +628,47 @@ class MixedExportTests(unittest.TestCase):
         self.assertEqual(scores["top1"], expected.argmax(dim=-1).tolist(), (shape, label))
 
     def test_f64_exact_and_f32_rounded_match_a_plain_forward(self):
-        for shape in ("nvidia", "local-lab"):
+        for shape in ("nvfp4-routed-fp8-mtp", "mxfp8-dense-nvfp4"):
             self.check(shape, "f64", torch.float64, "exact", 1e-6)
             self.check(shape, "f32", torch.float32, "rounded", 2e-4)
 
     def test_hf_bf16_rounds_the_f32_product(self):
-        for shape in ("nvidia", "local-lab"):
+        for shape in ("nvfp4-routed-fp8-mtp", "mxfp8-dense-nvfp4"):
             self.check(shape, "f32-hf-bf16", torch.float32, "hf-bf16", 2e-4)
             exact, rounded = (self.scores[shape][label]["logprob"] for label in ("f32", "f32-hf-bf16"))
             self.assertNotEqual(exact, rounded, shape)
 
     def test_f32_needs_the_rounded_rule_for_nvfp4(self):
-        reference = built(self.root / "nvidia", "f32", "exact")
+        reference = built(self.root / "nvfp4-routed-fp8-mtp", "f32", "exact")
         with self.assertRaisesRegex(ValueError, "not exact in torch.float32"):
             quant.configure(reference.model, torch.float32, "exact")
 
     def test_f32_norms_never_narrow(self):
-        tensors = self.tensors["local-lab"]
+        tensors = self.tensors["mxfp8-dense-nvfp4"]
         norms = sorted(name for name in tensors if F32_NORMS.search(name))
         self.assertEqual(len(norms), 3 * 2 + 1 + 3)
         self.assertTrue(all(tensors[name].dtype == torch.float32 for name in norms))
         for mode, dtype in (("bf16", torch.float32), ("f64", torch.float64)):
-            model = built(self.root / "local-lab", mode).model
+            model = built(self.root / "mxfp8-dense-nvfp4", mode).model
             parameters = dict(model.named_parameters())
             for name in norms:
                 self.assertEqual(parameters[name].dtype, dtype, (mode, name))
                 self.assertTrue(torch.equal(parameters[name].double(), tensors[name].double()), (mode, name))
             bf16 = parameters["model.language_model.layers.0.linear_attn.norm.weight"].dtype
             self.assertEqual(bf16, torch.bfloat16 if mode == "bf16" else torch.float64)
-        self.assertEqual(self.provenance["local-lab"]["layout"]["f32_parameters"]["count"], len(norms))
-        self.assertEqual(self.provenance["nvidia"]["layout"]["f32_parameters"]["count"], 0)
+        self.assertEqual(self.provenance["mxfp8-dense-nvfp4"]["layout"]["f32_parameters"]["count"], len(norms))
+        self.assertEqual(self.provenance["nvfp4-routed-fp8-mtp"]["layout"]["f32_parameters"]["count"], 0)
 
     def test_layout_records_the_declaration(self):
-        layout = self.provenance["local-lab"]["layout"]
+        layout = self.provenance["mxfp8-dense-nvfp4"]["layout"]
         self.assertEqual(layout["dequant"], "hf-bf16")
         self.assertEqual(layout["declared"]["NVFP4"], {"mlp.experts": 3, "ple.ple_embedding.ngram_embedding": 1})
         self.assertEqual(layout["declared"]["MXFP8"]["mlp.shared_expert.down_proj"], 3)
         self.assertEqual(layout["declared"]["MXFP8"]["self_attn.indexer.index_qk_proj"], 1)
         self.assertEqual(layout["not_run"], {"declared": {"mtp.layers.0.mlp.experts": "FP8_PB_WO"},
                                              "mtp_tensors": 0})
-        self.assertEqual(self.provenance["nvidia"]["layout"]["ngram_embedding"], {NGRAM.rstrip("."): "FP8"})
+        self.assertEqual(self.provenance["nvfp4-routed-fp8-mtp"]["layout"]["ngram_embedding"],
+                         {NGRAM.rstrip("."): "FP8"})
         module, _ = run.load_adapter(MIXED)
         code = module.reference_code(None)
         self.assertEqual(code["models/qwen38/reference.py"], ADAPTER)
@@ -714,7 +719,7 @@ class MixedExportTests(unittest.TestCase):
 
     def test_malformed_exports_are_refused(self):
         module, _ = run.load_adapter(MIXED)
-        declared = mixed_config("local-lab")
+        declared = mixed_config("mxfp8-dense-nvfp4")
         with self.assertRaisesRegex(ValueError, "not a ModelOpt MIXED_PRECISION export"):
             module.declaration({**declared, "quantization_config": {"quant_method": "fp8"}})
         recipe = declared["quantization_config"]
@@ -750,7 +755,7 @@ class MixedExportTests(unittest.TestCase):
                                 (weight_only, re.escape("input_scale: W4A16_NVFP4 is weight-only")),
                                 (experts_undeclared, re.escape(f"{EXPERTS.format(2)}: experts the export does not"))):
             with self.assertRaisesRegex(ValueError, message):
-                built(self.root / "local-lab", "f64", change=change)
+                built(self.root / "mxfp8-dense-nvfp4", "f64", change=change)
 
     def test_coverage_is_the_consumed_set(self):
         """A stored tensor counts as covered only when a module consumes it
@@ -769,15 +774,15 @@ class MixedExportTests(unittest.TestCase):
                                  f"{NGRAM}shard_0.extra: a stored n-gram table tensor the table does not read"),
                                 (extra("foo.weight", host=True), "foo.weight: a stored tensor outside every")):
             with self.assertRaisesRegex(ValueError, re.escape(message)):
-                built(self.root / "local-lab", "f64", change=change)
-        reference = built(self.root / "local-lab", "f64", change=extra("mtp.layers.0.mlp.gate.weight", host=True))
+                built(self.root / "mxfp8-dense-nvfp4", "f64", change=change)
+        reference = built(self.root / "mxfp8-dense-nvfp4", "f64", change=extra("mtp.layers.0.mlp.gate.weight", host=True))
         self.assertEqual(reference.layout["not_run"]["mtp_tensors"], 1)
 
     def test_ngram_shards_are_exactly_shard_0_to_n_minus_1(self):
         def rename(checkpoint, _store):
             for name in [n for n in checkpoint.entries if n.startswith(NGRAM + "shard_3.")]:
                 checkpoint.entries[name.replace("shard_3.", "shard_99.")] = checkpoint.entries.pop(name)
-        for shape in ("nvidia", "local-lab"):
+        for shape in ("nvfp4-routed-fp8-mtp", "mxfp8-dense-nvfp4"):
             with self.assertRaisesRegex(ValueError, re.escape("missing ['shard_3'], unexpected ['shard_99']")):
                 built(self.root / shape, "f64", change=rename)
 
@@ -797,20 +802,20 @@ class MixedExportTests(unittest.TestCase):
             return change
         for value in (-1.0, 0.0, math.inf, math.nan):
             with self.assertRaisesRegex(ValueError, "global scale .* is not positive and finite"):
-                built(self.root / "local-lab", "f64", change=global_scale(value))
+                built(self.root / "mxfp8-dense-nvfp4", "f64", change=global_scale(value))
         for code in (0xB8, 0x7F, 0xFF):
             with self.assertRaisesRegex(ValueError, re.escape(f"{expert}weight_scale: an E4M3 block scale")):
-                built(self.root / "nvidia", "f64", change=local_scale(code))
+                built(self.root / "nvfp4-routed-fp8-mtp", "f64", change=local_scale(code))
 
         def table_global(_checkpoint, store):
             store.tensors[NGRAM + "weight_scale_2"] = torch.tensor([-0.5])
         with self.assertRaisesRegex(ValueError, "weight_scale_2: NVFP4 global scale -0.5"):
-            built(self.root / "local-lab", "f64", change=table_global)
+            built(self.root / "mxfp8-dense-nvfp4", "f64", change=table_global)
 
     def test_bf16_scores_match_a_plain_bf16_forward_with_f32_norms(self):
         """The bf16 run against HF in BF16 over hf-bf16 weights, keeping the
         stored F32 norm weights F32; log-softmax in F32 as the runner does."""
-        for shape in ("nvidia", "local-lab"):
+        for shape in ("nvfp4-routed-fp8-mtp", "mxfp8-dense-nvfp4"):
             model = plain_mixed_model(self.tensors[shape], shape, torch.bfloat16, "hf-bf16", keep_f32=True)
             norms = [n for n, t in self.tensors[shape].items() if t.dtype == torch.float32 and F32_NORMS.search(n)]
             parameters = dict(model.named_parameters())
@@ -833,8 +838,8 @@ class MixedExportTests(unittest.TestCase):
         output.mkdir()
         skeleton = {"schema": "demo.teacher-reference.v1",
                     "texts": [{"name": "text", "category": "prose", "prompt_token_ids": PROMPT, "score_from": 1}]}
-        report = emit.emit(skeleton, [self.root / "out-local-lab"], self.root / "workload.json",
-                           output / "reference.json", str(self.root / "local-lab/lock.json"), None,
+        report = emit.emit(skeleton, [self.root / "out-mxfp8-dense-nvfp4"], self.root / "workload.json",
+                           output / "reference.json", str(self.root / "mxfp8-dense-nvfp4/lock.json"), None,
                            ["f32=exact", "bf16", "f64"])
         value = json.loads(Path(report["fixture"]).read_text())
         tree = self.root / "tree"
@@ -850,91 +855,28 @@ class MixedExportTests(unittest.TestCase):
         self.assertEqual(raised.exception.field, "reference_code")
 
 
-def exports_module():
-
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("qwen38_reference_exports", ROOT / "models/qwen38/reference_exports.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+def variant_tool():
+    """tools/qual/variant.py, imported."""
+    sys.path.insert(0, str(ROOT / "tools/qual"))
+    import variant
+    return variant
 
 
-class ExportInputTests(unittest.TestCase):
-    """reference_exports.py: export locks, the engine's checkpoint identity
-    and each export's declaration (its qual.json configuration, or the
-    variant declaration adopt writes for a new export). No torch."""
+class VariantToolTests(unittest.TestCase):
+    """Another Qwen3.8 checkpoint (such as a ModelOpt mixed export) is
+    qualified as an external variant with `python3 -m tools.qual variant`
+    (tools/qual/variant.py): its lock, the engine's checkpoint identity, the
+    teacher skeleton over the frozen workload, and adoption into a temporary
+    variant root, which never touches the tree. No torch."""
 
     @classmethod
     def setUpClass(cls):
-        cls.exports = exports_module()
+        cls.tool = variant_tool()
 
-    def test_locks_cover_config_index_and_tokenizer_files(self):
-        for export in self.exports.exports():
-            lock = json.loads((ROOT / self.exports.lock_path(export)).read_text())
-            self.assertLessEqual(set(self.exports.METADATA), set(lock), export)
-            self.assertTrue(any(name.endswith(".safetensors") for name in lock), export)
-            for name, entry in lock.items():
-                self.assertEqual(set(entry), {"byte_length", "sha256"}, (export, name))
-                self.assertRegex(entry["sha256"], r"^[0-9a-f]{64}$")
-
-    def test_exports_are_discovered_from_their_source_declarations(self):
-        """Each models/qwen38/exports/EXPORT/source.json names an export, so
-        adding one needs no code; an adopted export's declaration (its
-        qual.json configuration, else qual.EXPORT.json) pins the same source
-        and the export's lock, and every declaration pinned to a lock under
-        exports/ has its source."""
-        found = self.exports.exports()
-        declared = {path.parent.name for path in (ROOT / "models/qwen38/exports").glob("*/source.json")}
-        self.assertEqual(set(found), declared)
-        self.assertEqual({export: found[export] for export in ("nvidia-nvfp4", "local-lab-nvfp4")}, {
-            "nvidia-nvfp4": {"repository": "nvidia/Qwen3.8-Flash-Next-NVFP4",
-                             "revision": "fc694b54fb0174e0913e6adf86691ef85a4ead47"},
-            "local-lab-nvfp4": {"repository": "local-inference-lab/Qwen3.8-Flash-Next-NVFP4",
-                                "revision": "6909a5bed089a48fa07e956d3915af2537de9368"}})
-        configurations = json.loads((ROOT / "models/qwen38/qual.json").read_text())["configurations"]
-        adopted = set()
-        for export, source in found.items():
-            path = ROOT / self.exports.declaration_path(export)
-            self.assertEqual(path, ROOT / f"models/qwen38/qual.{export}.json")
-            if export in configurations:
-                self.assertFalse(path.exists(), export)
-                checkpoint = configurations[export]["qualification"]["checkpoint"]
-            elif path.exists():
-                value = json.loads(path.read_text())
-                self.assertEqual((value["model"], value["variant"]), ("qwen38", export))
-                checkpoint = value["qualification"]["checkpoint"]
-                self.assertTrue((ROOT / self.exports.reference_lock_path(export)).is_file(), export)
-            else:
-                continue
-            adopted.add(export)
-            self.assertEqual({**source, "lock": self.exports.lock_path(export)},
-                             {key: checkpoint[key] for key in ("repository", "revision", "lock")}, export)
-        self.assertLessEqual({"nvidia-nvfp4", "local-lab-nvfp4"}, adopted)
-        declared = {path.name.removeprefix("qual.").removesuffix(".json"): json.loads(path.read_text())
-                    for path in (ROOT / "models/qwen38").glob("qual.*.json")}
-        declared.update(configurations)
-        for name, value in declared.items():
-            lock = value.get("qualification", {}).get("checkpoint", {}).get("lock", "")
-            if lock.startswith("models/qwen38/exports/"):
-                self.assertEqual(lock, self.exports.lock_path(name), name)
-                self.assertIn(name, found, name)
-        with tempfile.TemporaryDirectory() as directory, mock.patch.object(self.exports, "ROOT", Path(directory)):
-            added = Path(directory) / "models/qwen38/exports/added"
-            added.mkdir(parents=True)
-            (added / "source.json").write_text(json.dumps({"repository": "lab/Model", "revision": "a" * 40}))
-            (added.parent / "undeclared").mkdir()
-            self.assertEqual(self.exports.exports(), {"added": {"repository": "lab/Model", "revision": "a" * 40}})
-            with mock.patch.object(sys, "argv", ["reference_exports.py", "pin", "added", "--checkpoint", directory]), \
-                    mock.patch.object(self.exports, "pin", return_value={"repository": "lab/Model"}) as pinned, \
-                    contextlib.redirect_stdout(io.StringIO()):
-                self.exports.main()
-            self.assertEqual(pinned.call_args.args, ("added", Path(directory)))
-            for source in ({"repository": "lab/Model"}, {"repository": "lab/Model", "revision": "a" * 39},
-                           {"repository": 1, "revision": "a" * 40},
-                           {"repository": "lab/Model", "revision": "a" * 40, "extra": 1}):
-                (added / "source.json").write_text(json.dumps(source))
-                with self.assertRaisesRegex(ValueError, "repository and its 40-hex revision"):
-                    self.exports.exports()
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
 
     def test_identity_is_the_engines(self):
         """Every .safetensors file of the root and its non-hidden immediate
@@ -943,161 +885,128 @@ class ExportInputTests(unittest.TestCase):
         checkpoint = os.environ.get("CHOPINFER_QWEN38_CHECKPOINT")
         if checkpoint and Path(checkpoint).is_dir():
             gate = json.loads((ROOT / "models/qwen38/qual.json").read_text())
-            self.assertEqual(self.exports.identity(checkpoint),
-                             gate["qualification"]["checkpoint"]["checkpoint_identity"])
+            self.assertEqual(self.tool.identity(checkpoint), gate["qualification"]["checkpoint"]["checkpoint_identity"])
 
         def save(path, name):
             header = json.dumps({name: {"dtype": "F32", "shape": [2], "data_offsets": [0, 8]}}).encode()
+            path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(struct.pack("<Q", len(header)) + header + bytes(8))
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            save(root / "model.safetensors", "a")
-            before = self.exports.identity(root)
-            (root / ".hidden").mkdir()
-            save(root / ".hidden/x.safetensors", "b")
-            (root / "config.json").write_text("{}")
-            self.assertEqual(self.exports.identity(root), before)
-            (root / "audio").mkdir()
-            save(root / "audio/model.safetensors", "c")
-            self.assertNotEqual(self.exports.identity(root), before)
+        save(self.root / "model.safetensors", "a")
+        before = self.tool.identity(self.root)
+        save(self.root / ".hidden/x.safetensors", "b")
+        (self.root / "config.json").write_text("{}")
+        self.assertEqual(self.tool.identity(self.root), before)
+        save(self.root / "audio/model.safetensors", "c")
+        self.assertNotEqual(self.tool.identity(self.root), before)
 
-    def test_each_adopted_declaration_is_what_derived_writes(self):
-        """adopt writes json.dumps(derived(...), indent=1): each variant
-        declaration it adopted in the tree is that output, byte for byte, for
-        its own pin and reference (an export declared by a qual.json
-        configuration has none)."""
-        base = json.loads((ROOT / "models/qwen38/qual.json").read_text())
-        for export in self.exports.exports():
-            path = ROOT / self.exports.declaration_path(export)
-            if not path.exists():
-                continue
-            text = path.read_text()
-            value = json.loads(text)
-            teacher = value["references"]["teacher"]
-            derived = self.exports.derived(base, export, value["qualification"]["checkpoint"], teacher["sha256"],
-                                           teacher["workload_sha256"])
-            self.assertEqual(json.dumps(derived, indent=1) + "\n", text, export)
+    def test_a_lock_covers_every_safetensors_file_a_direct_load_opens(self):
+        """Shards the index no longer names (an export may keep superseded
+        ones) and subdirectory files are locked too, as `chopinfer verify`
+        and the checkpoint identity count them; hidden directories are not."""
+        from tools.refrun import stamps
+        checkpoint = self.root / "checkpoint"
+        for name in ("indexed.safetensors", "superseded.safetensors", "audio/model.safetensors",
+                     ".hidden/x.safetensors", "config.json", "tokenizer.json", "merges.txt", "vocab.json"):
+            (checkpoint / name).parent.mkdir(parents=True, exist_ok=True)
+            (checkpoint / name).write_text(name)
+        (checkpoint / "model.safetensors.index.json").write_text(json.dumps({"weight_map": {"w": "indexed.safetensors"}}))
+        target = self.root / "variants/qwen38" / self.tool.lock_name("requant")
+        with mock.patch.object(stamps, "RACY_NS", 1):
+            path = self.tool.write_lock(target, checkpoint, self.root / "stamps")
+            self.assertEqual(sorted(json.loads(path.read_text())),
+                             ["audio/model.safetensors", "config.json", "indexed.safetensors", "merges.txt",
+                              "model.safetensors.index.json", "superseded.safetensors", "tokenizer.json",
+                              "vocab.json"])
+            with self.assertRaises(FileExistsError):
+                self.tool.write_lock(target, checkpoint, self.root / "stamps")
 
-    def test_the_export_declaration_pins_the_export_and_keeps_only_its_checks(self):
-        base = json.loads((ROOT / "models/qwen38/qual.json").read_text())
-        pin = {"lock": self.exports.lock_path("nvidia-nvfp4"), "repository": "nvidia/Qwen3.8-Flash-Next-NVFP4",
-               "revision": "f" * 40, "served_model_name": "nvidia/Qwen3.8-Flash-Next-NVFP4",
+    def test_the_teacher_skeleton_is_the_frozen_teacher_workload(self):
+        """A skeleton over Qwen3.8's frozen teacher workload, with the pin as
+        its provenance and the base reference's variant descriptions."""
+        pin = {"repository": "someone/qwen-requant", "revision": "a" * 40, "served_model_name": "someone/qwen-requant",
                "source_lock_sha256": "1" * 64, "checkpoint_identity": "2" * 64}
-        workload = base["references"]["teacher"]["workload_sha256"]
-        value = self.exports.derived(base, "nvidia-nvfp4", pin, "3" * 64, workload)
-        sys.path.insert(0, str(ROOT / "tools/qual"))
-        import declaration
-        config = declaration.parse(value, declared=True)
-        fixture = "fixtures/qwen38/exports/nvidia-nvfp4/teacher-reference.json"
-        self.assertEqual((config["model"], config["variant"]), ("qwen38", "nvidia-nvfp4"))
-        self.assertEqual(config["qualification"]["checkpoint"], pin)
-        self.assertEqual(set(config["qualification"]["references"]), {"teacher"})
-        teacher = config["qualification"]["references"]["teacher"]
-        self.assertEqual((teacher["path"], teacher["sha256"], teacher["variants"]),
-                         (fixture, "3" * 64, ["exact", "bf16", "f64"]))
-        self.assertEqual({check["id"] for check in config["checks"]}, {"teacher", "spec_verify", "verify_exact"})
-        self.assertEqual(config["profiles"]["quick"]["checks"], ["teacher"])
-        self.assertEqual(config["profiles"]["full"]["checks"], ["teacher", "spec_verify", "verify_exact"])
-        self.assertEqual(config["inputs"], {**{key: base["inputs"][key] for key in self.exports.INPUTS},
-                                            "exact": fixture, "teacher_reference": fixture})
-        for retired in ("vllm_capture", "legacy_reference"):
-            self.assertNotIn(retired, config["inputs"])
-        self.assertEqual(config["receipts"], {"env": "CHOPINFER_DATA", "path": "qual/qwen38-nvidia-nvfp4"})
-        self.assertEqual(value["preview"]["gsm8k_floor"], base["preview"]["gsm8k_floor"])
-        text = json.dumps(value)
-        for old in (base["qualification"]["checkpoint"]["checkpoint_identity"], base["references"]["teacher"]["sha256"]):
-            self.assertNotIn(old, text)
-        rules = {check["id"]: check for check in config["checks"]}
-        identity = {"path": ["server", "checkpoint", "checkpoint_identity"], "op": "eq", "value": "2" * 64}
-        self.assertIn({**identity, "source": "fixtures/qwen38/README.md#teacher-gate-reference"},
-                      rules["teacher"]["rules"])
-        bound = {**identity, "source": "tools/qual/README.md#checkpoint-binding"}
-        for arm in ("spec_ar", "spec_candidate"):
-            self.assertIn(bound, rules["spec_verify"]["input_rules"][arm])
-        self.assertIn({**bound, "path": ["bound", "checkpoint_identity"]}, rules["spec_verify"]["rules"])
-        self.assertEqual(json.loads((ROOT / "models/qwen38/qual.json").read_text()), base)
-        with self.assertRaisesRegex(ValueError, "frozen teacher workload"):
-            self.exports.derived(base, "nvidia-nvfp4", pin, "3" * 64, "4" * 64)
+        document, workload = self.tool.skeleton("qwen38", "teacher", pin, ["exact", "bf16"])
+        base = json.loads((ROOT / "fixtures/qwen38/teacher-reference.json").read_text())
+        self.assertEqual(workload, ROOT / "fixtures/qwen38/teacher-reference.workload.json")
+        self.assertEqual(document["schema"], base["schema"])
+        self.assertEqual(document["provenance"]["checkpoint"], pin)
+        self.assertEqual(list(document["provenance"]["variants"]), ["exact", "bf16"])
+        sequences = json.loads(workload.read_text())["sequences"]
+        self.assertEqual([(text["name"], text["prompt_token_ids"], text["score_from"]) for text in document["texts"]],
+                         [(s["name"], s["token_ids"], s["score_from"]) for s in sequences])
 
-    def test_the_export_lock_repeats_the_models_records_and_authenticates_each_read(self):
-        """The export lock over the FP8 teacher reference as a stand-in
-        (bound, so adoptable) in an isolated tree: every shared input has
-        models/qwen38's record, the reference is adopted by its runner
-        binding, and a changed shared input is refused when read."""
+    def emitted(self):
+        """The FP8 teacher reference as a stand-in for an export's (bound, so
+        adoptable), re-homed onto a copy of the FP8 lock as the variant's."""
+        base = json.loads((ROOT / "models/qwen38/qual.json").read_text())
+        directory = self.root / "variants/qwen38"
+        directory.mkdir(parents=True)
+        shutil.copyfile(ROOT / base["qualification"]["checkpoint"]["lock"], directory / self.tool.lock_name("requant"))
+        fixture = json.loads((ROOT / base["references"]["teacher"]["path"]).read_text())
+        fixture["binding"]["lock"]["path"] = f"qwen38/{self.tool.lock_name('requant')}"
+        emitted = self.root / "emitted"
+        emitted.mkdir()
+        (emitted / "teacher-reference.json").write_text(json.dumps(fixture, indent=1) + "\n")
+        shutil.copyfile(ROOT / "fixtures/qwen38/teacher-reference.workload.json",
+                        emitted / "teacher-reference.workload.json")
+        return dict(base["qualification"]["checkpoint"], lock=self.tool.lock_name("requant")), emitted
+
+    def adopt(self, pin, emitted):
+        arguments = ["adopt", "--model", "qwen38", "--variant", "requant", "--dir", str(self.root / "variants"),
+                     "--checkpoint", str(self.root / "checkpoint"), "--repository", "someone/qwen-requant",
+                     "--revision", "a" * 40, "--reference", "teacher", "--emitted", str(emitted),
+                     "--check", "teacher", "--check", "spec_verify", "--check", "verify_exact"]
+        with mock.patch.object(self.tool, "pin", return_value=pin), contextlib.redirect_stdout(io.StringIO()):
+            return self.tool.main(arguments)
+
+    def test_an_export_adopts_as_an_external_variant_with_its_teacher_and_verify_checks(self):
+        """The variant runs qual.json's teacher, spec_verify and verify_exact
+        checks, pinned to its checkpoint and its own teacher reference; its
+        lock repeats models/qwen38's record of every shared input and
+        authenticates each read of what it owns."""
         sys.path.insert(0, str(ROOT / "tools/qual"))
         import common
         import declaration
         import refs
-        base = json.loads((ROOT / "models/qwen38/qual.json").read_text())
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "fixtures/qwen38").mkdir(parents=True)
-            for child in (ROOT / "fixtures/qwen38").iterdir():
-                (root / "fixtures/qwen38" / child.name).symlink_to(child)
-            (root / "fixtures/mimo26").symlink_to(ROOT / "fixtures/mimo26")
-            frontend = root / base["inputs"]["frontend"]
-            frontend.parent.mkdir(parents=True)
-            frontend.write_bytes((ROOT / base["inputs"]["frontend"]).read_bytes())
-            value = self.exports.derived(base, "nvidia-nvfp4", base["qualification"]["checkpoint"],
-                                         base["references"]["teacher"]["sha256"],
-                                         base["references"]["teacher"]["workload_sha256"])
-            stand_in = base["references"]["teacher"]["path"]
-            value["references"]["teacher"]["path"] = stand_in
-            value["inputs"] |= {"exact": stand_in, "teacher_reference": stand_in}
-            path = root / self.exports.declaration_path("nvidia-nvfp4")
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(value))
-            with mock.patch.dict(os.environ, {"CHOPINFER_QUAL_MODEL_ROOT": directory}):
-                config = declaration.load(path)
-                base_lock = json.loads((ROOT / "models/qwen38/qual-references.lock.json").read_text())
-                lock = self.exports.export_lock(config, base_lock)
-                self.assertEqual(lock["model"], "qwen38")
-                shared = [key for key in lock["entries"] if key in base_lock["entries"]
-                          and lock["entries"][key]["path"] == base_lock["entries"][key]["path"]]
-                self.assertLessEqual({"fixture_root", "frontend", "gsm8k", "spec_teacher", "exact"}, set(shared))
-                for key in shared:
-                    self.assertEqual(lock["entries"][key], base_lock["entries"][key], key)
-                producer = lock["objects"][lock["entries"]["reference:teacher"]["members"]["."]]["production"]
-                self.assertEqual(producer["producer"], "runner-binding")
-                target = refs.lock_path(config["model"], variant=config["variant"])
-                self.assertEqual(target, root / self.exports.reference_lock_path("nvidia-nvfp4"))
-                target.write_text(json.dumps(lock))
-                self.exports.verify(config)
-                self.assertEqual(common.input_bytes("frontend", config=config), frontend.read_bytes())
-                frontend.write_bytes(frontend.read_bytes() + b" ")
-                with self.assertRaisesRegex(ValueError, "lock entry frontend: sha256 differs"):
-                    common.input_bytes("frontend", config=config)
-
-    def test_a_lock_covers_every_safetensors_file_a_direct_load_opens(self):
-        """Shards the index no longer names (local-lab keeps superseded ones)
-        and subdirectory files are locked too, as `chopinfer verify` and the
-        checkpoint identity count them; hidden directories are not."""
-        from tools.refrun import stamps
-        with tempfile.TemporaryDirectory() as directory, mock.patch.object(self.exports, "ROOT", Path(directory)), \
-                mock.patch.object(stamps, "RACY_NS", 1):
-            checkpoint = Path(directory) / "checkpoint"
-            for name in ("indexed.safetensors", "superseded.safetensors", "audio/model.safetensors",
-                         ".hidden/x.safetensors", "config.json", "tokenizer.json"):
-                (checkpoint / name).parent.mkdir(parents=True, exist_ok=True)
-                (checkpoint / name).write_text(name)
-            (checkpoint / "model.safetensors.index.json").write_text(
-                json.dumps({"weight_map": {"w": "indexed.safetensors"}}))
-            path = self.exports.write_lock("nvidia-nvfp4", checkpoint, Path(directory) / "stamps")
-            self.assertEqual(sorted(json.loads(path.read_text())),
-                             ["audio/model.safetensors", "config.json", "indexed.safetensors",
-                              "model.safetensors.index.json", "superseded.safetensors", "tokenizer.json"])
-            with self.assertRaises(FileExistsError):
-                self.exports.write_lock("nvidia-nvfp4", checkpoint, Path(directory) / "stamps")
+        pin, emitted = self.emitted()
+        self.assertEqual(self.adopt(pin, emitted), 0)
+        directory = self.root / "variants/qwen38"
+        with mock.patch.dict(os.environ, {declaration.VARIANTS_ENV: str(self.root / "variants")}):
+            config = declaration.load(declaration.named("qwen38.requant"))
+            self.assertEqual((config["model"], config["variant"]), ("qwen38", "requant"))
+            self.assertEqual({check["id"] for check in config["checks"]}, {"teacher", "spec_verify", "verify_exact"})
+            self.assertEqual(config["profiles"]["quick"]["checks"], ["teacher"])
+            self.assertEqual(set(config["qualification"]["references"]), {"teacher"})
+            owned = {"env": declaration.VARIANTS_ENV, "path": "qwen38/requant.teacher-reference.json"}
+            self.assertEqual(config["qualification"]["references"]["teacher"]["path"], owned)
+            self.assertEqual((config["inputs"]["exact"], config["inputs"]["teacher_reference"]), (owned, owned))
+            self.assertEqual(config["qualification"]["checkpoint"]["lock"], "qwen38/requant.checkpoint-files.json")
+            lock = refs.load_lock(config)
+            base_lock = json.loads((ROOT / "models/qwen38/qual-references.lock.json").read_text())
+            shared = [key for key in lock["entries"] if key in base_lock["entries"]
+                      and lock["entries"][key]["path"] == base_lock["entries"][key]["path"]]
+            self.assertLessEqual({"fixture_root", "frontend", "gsm8k", "spec_teacher"}, set(shared))
+            for key in shared:
+                self.assertEqual(lock["entries"][key], base_lock["entries"][key], key)
+            producer = lock["objects"][lock["entries"]["reference:teacher"]["members"]["."]]["production"]
+            self.assertEqual(producer["producer"], "runner-binding")
+            self.tool.verify(config)
+            reference = directory / "requant.teacher-reference.json"
+            self.assertEqual(common.input_bytes("exact", config=config), reference.read_bytes())
+            reference.write_bytes(reference.read_bytes() + b" ")
+            with self.assertRaisesRegex(ValueError, "lock entry exact: sha256 differs"):
+                common.input_bytes("exact", config=config)
 
     def test_adopt_refuses_existing_evidence_before_writing(self):
-        with tempfile.TemporaryDirectory() as directory, mock.patch.object(self.exports, "ROOT", Path(directory)):
-            existing = Path(directory) / self.exports.declaration_path("local-lab-nvfp4")
-            existing.parent.mkdir(parents=True)
-            existing.write_text("{}")
-            with self.assertRaisesRegex(ValueError, "refusing to replace published local-lab-nvfp4 evidence"):
-                self.exports.adopt("local-lab-nvfp4", None, Path(directory) / "emitted")
-            self.assertEqual([p.relative_to(directory).as_posix() for p in Path(directory).rglob("*") if p.is_file()],
-                             [self.exports.declaration_path("local-lab-nvfp4")])
+        pin, emitted = self.emitted()
+        existing = self.root / "variants/qwen38/requant.json"
+        existing.write_text("{}")
+        with contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(SystemExit):
+            self.adopt(pin, emitted)
+        self.assertIn("refusing to replace qwen38.requant evidence", error.getvalue())
+        self.assertEqual(sorted(path.name for path in existing.parent.iterdir()),
+                         ["requant.checkpoint-files.json", "requant.json"])
+        self.assertEqual(existing.read_text(), "{}")
 
 
 def declaration_of(name):
@@ -1194,13 +1103,11 @@ class VariantTests(unittest.TestCase):
             self.addCleanup(sys.path.remove, str(path))
 
     def test_no_configuration_has_a_declaration_file_beside_qual_json(self):
-        """qual.json declares each configuration once; a qual.VARIANT.json
-        beside it is only what reference_exports.py adopts for a new export."""
+        """qual.json declares each configuration once, and no qual.VARIANT.json
+        beside it: another checkpoint is an external variant, kept outside
+        the tree (tools/qual/README.md#external-variants)."""
         import declaration
-        base = json.loads((ROOT / "models/qwen38/qual.json").read_text())
-        files = declaration.variants("qwen38", ROOT)
-        self.assertFalse(set(files) & set(base["configurations"]))
-        self.assertLessEqual(set(files), set(exports_module().exports()))
+        self.assertEqual(declaration.variants("qwen38", ROOT), [])
 
     def test_dcp2_keeps_every_limit_and_requires_its_servers(self):
         """Each of qual.json's checks keeps its rules and constants; the

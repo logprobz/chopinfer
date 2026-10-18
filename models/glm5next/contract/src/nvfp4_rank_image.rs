@@ -12,7 +12,10 @@ use crate::quantization::NVFP4_ROUTED;
 use crate::views::{Binding, checkpoint_rank_views};
 use kernel_core::latent_attention::LatentKvFormat;
 
-const CONFIG: &[u8] = include_bytes!("../fixtures/nvfp4-config.json");
+/// The synthetic config of the NVFP4-routed mix.
+fn config() -> Vec<u8> {
+    crate::quantization::synthetic::config_of(&NVFP4_ROUTED)
+}
 const LAYERS: &str = "model.language_model.layers";
 
 fn find<'a>(layout: &'a [Stored], name: &str) -> &'a Stored {
@@ -144,7 +147,7 @@ fn the_rank_image_packs_every_experts_codes_scales_and_globals() {
 
 #[test]
 fn the_plan_follows_the_admitted_layout() {
-    let request = test_support::checkpoint_request(&NVFP4_ROUTED, CONFIG, 2, |_| {});
+    let request = test_support::checkpoint_request(&NVFP4_ROUTED, &config(), 2, |_| {});
     let planned = plan(&request).unwrap().unwrap();
     let layout = checkpoint_layout(Shape::TP4, &NVFP4_ROUTED, 2).unwrap();
     let pieces: usize = layout.iter().map(|entry| entry.pieces.len()).sum();
@@ -193,15 +196,15 @@ fn nvfp4_weights_free_kv_capacity() {
     assert!(
         planner
             .table(DEVICE)
-            .starts_with("flash nvfp4-routed TP4, ")
+            .starts_with(&format!("flash {} TP4, ", NVFP4_ROUTED.id))
     );
 }
 
-/// NVIDIA's export: NVFP4 dense MLPs (row-split down projection), BF16 MTP
-/// experts, F32 KDA convolutions stored as read, and BF16 mHC vectors
-/// widened to the F32 the Sinkhorn engine reads.
+/// The NVFP4 dense and routed mix: NVFP4 dense MLPs (row-split down
+/// projection), BF16 MTP experts, F32 KDA convolutions stored as read, and
+/// BF16 mHC vectors widened to the F32 the Sinkhorn engine reads.
 #[test]
-fn the_nvidia_rank_image_stores_dense_nvfp4_and_widens_bf16_vectors() {
+fn the_dense_routed_rank_image_stores_dense_nvfp4_and_widens_bf16_vectors() {
     use crate::quantization::NVFP4_DENSE_ROUTED;
     use kernel_core::weight_transform::WeightTransform;
     let layout = checkpoint_layout(Shape::TP4, &NVFP4_DENSE_ROUTED, 1).unwrap();
@@ -252,8 +255,8 @@ fn the_nvidia_rank_image_stores_dense_nvfp4_and_widens_bf16_vectors() {
         )
     );
     assert_eq!(base.bytes(), 24 * 4);
-    const NVIDIA: &[u8] = include_bytes!("../fixtures/nvidia-nvfp4-config.json");
-    let request = test_support::checkpoint_request(&NVFP4_DENSE_ROUTED, NVIDIA, 1, |_| {});
+    let config = crate::quantization::synthetic::config_of(&NVFP4_DENSE_ROUTED);
+    let request = test_support::checkpoint_request(&NVFP4_DENSE_ROUTED, &config, 1, |_| {});
     let planned = plan(&request).unwrap().unwrap();
     let pieces: usize = layout.iter().map(|entry| entry.pieces.len()).sum();
     assert_eq!(planned.records.len(), pieces);

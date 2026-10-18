@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 #[path = "../../../../../crates/model-compiler-sdk/test-support/checkpoint.rs"]
 pub(crate) mod checkpoint;
 pub(crate) use checkpoint::fixture;
+pub(crate) mod exports;
 
 fn header_rules(d: &Declaration, g: &Geometry, m: &CheckpointMetadata) -> HeaderCompanionRules {
     let mut rules = HeaderCompanionRules::new(m, None).unwrap();

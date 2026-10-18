@@ -129,11 +129,12 @@ pub fn declared_path(
 /// (`common.pinned_kind` of `input_path(name)`): how a greedy record finds
 /// its pinned `exact` texts. `None` when no pin is stored there.
 pub fn pinned_input<'a>(loaded: &'a Loaded, name: &str) -> Option<&'a ReferencePin> {
-    let input = input_path(loaded, name, &process_environment)?
+    let environment = |name: &str| loaded.environment(name);
+    let input = input_path(loaded, name, &environment)?
         .canonicalize()
         .ok()?;
     loaded.declaration.references.iter().find(|pin| {
-        declared_path(&pin.path, &loaded.root, &process_environment)
+        declared_path(&pin.path, &loaded.root, &environment)
             .and_then(|path| path.canonicalize().ok())
             .is_some_and(|path| path == input)
     })
@@ -151,12 +152,13 @@ fn read(path: &Path) -> Result<(Vec<u8>, Value), ReferenceError> {
 /// The checkpoint lock the pin names, checked as `common.checkpoint_pin`
 /// checks it: the registry's default entry is the pin, and the canonical
 /// digest of the lock (the pin's entry of it, with a registry) is the
-/// pinned `source_lock_sha256`. Returns that lock.
+/// pinned `source_lock_sha256`. Returns that lock. An external variant's
+/// lock is under its variant root ([`Loaded::lock_root`]).
 pub fn checkpoint_lock(loaded: &Loaded) -> Result<Value, ReferenceError> {
     let pin = &loaded.declaration.checkpoint;
-    let (_, mut files) = read(&loaded.root.join(&pin.lock))?;
+    let (_, mut files) = read(&loaded.lock_root().join(&pin.lock))?;
     if let Some((name, registry)) = &pin.registry {
-        let (_, registry_value) = read(&loaded.root.join(registry))?;
+        let (_, registry_value) = read(&loaded.lock_root().join(registry))?;
         files = files.get(name).cloned().unwrap_or(Value::Null);
         let entry = &registry_value["checkpoints"][name];
         let differs = registry_value["default"].as_str() != Some(name.as_str())
@@ -252,8 +254,18 @@ pub struct Verified {
     pub binding: Binding,
 }
 
-fn reference_path(pin: &ReferencePin, root: &Path) -> Result<PathBuf, ReferenceError> {
-    declared_path(&pin.path, root, &process_environment).ok_or_else(|| {
+/// Where a pinned reference's paths resolve: repo paths, and the adapter and
+/// numerics files a binding names, under `root`; the checkpoint lock a
+/// binding names under `locks` (an external variant's root); environment
+/// paths through `environment`.
+pub struct Roots<'a> {
+    pub root: &'a Path,
+    pub locks: &'a Path,
+    pub environment: &'a dyn Fn(&str) -> Option<String>,
+}
+
+fn reference_path(pin: &ReferencePin, roots: &Roots<'_>) -> Result<PathBuf, ReferenceError> {
+    declared_path(&pin.path, roots.root, roots.environment).ok_or_else(|| {
         let env = match &pin.path {
             Input::Environment { env, .. } => env.as_str(),
             _ => "",
@@ -270,13 +282,22 @@ pub fn pinned(
     pin: &ReferencePin,
     references: Option<&Path>,
 ) -> Result<Verified, ReferenceError> {
-    let path = reference_path(pin, references.unwrap_or(&loaded.root))?;
+    let environment = |name: &str| loaded.environment(name);
+    let roots = Roots {
+        root: references.unwrap_or(&loaded.root),
+        locks: loaded.lock_root(),
+        environment: &environment,
+    };
+    let path = reference_path(pin, &roots)?;
     let bytes = std::fs::read(&path)
         .map_err(|error| ReferenceError::Missing(format!("{}: {error}", path.display())))?;
     let checkpoint = &loaded.declaration.checkpoint;
     let store = default_store(&process_environment);
-    verify_pinned(
-        &loaded.root,
+    verify_pinned_in(
+        &Roots {
+            root: &loaded.root,
+            ..roots
+        },
         checkpoint,
         pin,
         &path,
@@ -293,6 +314,24 @@ pub fn pinned(
 /// A binding's scores are compared with the reference cache at `store`.
 pub fn verify_pinned(
     root: &Path,
+    checkpoint: &CheckpointPin,
+    pin: &ReferencePin,
+    path: &Path,
+    bytes: Vec<u8>,
+    lock: &dyn Fn() -> Result<(), ReferenceError>,
+    store: Option<&Path>,
+) -> Result<Verified, ReferenceError> {
+    let roots = Roots {
+        root,
+        locks: root,
+        environment: &process_environment,
+    };
+    verify_pinned_in(&roots, checkpoint, pin, path, bytes, lock, store)
+}
+
+/// As [`verify_pinned`], with the paths resolved as `roots` says.
+pub fn verify_pinned_in(
+    roots: &Roots<'_>,
     checkpoint: &CheckpointPin,
     pin: &ReferencePin,
     path: &Path,
@@ -370,7 +409,7 @@ pub fn verify_pinned(
     {
         return unverified(format!("{}: scores another capture", path.display()));
     }
-    let binding = pinned_binding(root, checkpoint, pin, &value, store)?;
+    let binding = pinned_binding(roots, checkpoint, pin, &value, store)?;
     Ok(Verified {
         name: pin.name.clone(),
         path,
@@ -404,7 +443,7 @@ pub fn workload_sha256(texts: &[Value]) -> Result<String, ReferenceError> {
 /// The reference cache binding of a pinned reference
 /// (`common.pinned_binding` and `cache.verify`).
 fn pinned_binding(
-    root: &Path,
+    roots: &Roots<'_>,
     checkpoint: &CheckpointPin,
     pin: &ReferencePin,
     value: &Value,
@@ -427,7 +466,7 @@ fn pinned_binding(
         );
     }
     let workload = match &pin.workload {
-        Some(declared) => match declared_path(declared, root, &process_environment) {
+        Some(declared) => match declared_path(declared, roots.root, roots.environment) {
             Some(path) => path,
             None => {
                 let env = match declared {
@@ -441,7 +480,7 @@ fn pinned_binding(
             }
         },
         None => {
-            let path = reference_path(pin, root)?;
+            let path = reference_path(pin, roots)?;
             let stem = path
                 .file_stem()
                 .and_then(|stem| stem.to_str())
@@ -459,7 +498,7 @@ fn pinned_binding(
             ),
         );
     }
-    verify_binding(value, binding, root, &workload, store)
+    verify_binding(value, binding, roots, &workload, store)
 }
 
 fn field<'a>(value: &'a Value, key: &str) -> Result<&'a Value, ReferenceError> {
@@ -518,7 +557,7 @@ fn modes(binding: &Value) -> Result<Vec<(&String, Mode<'_>)>, ReferenceError> {
 fn verify_binding(
     value: &Value,
     binding: &Value,
-    root: &Path,
+    roots: &Roots<'_>,
     workload: &Path,
     store: Option<&Path>,
 ) -> Result<Binding, ReferenceError> {
@@ -607,7 +646,8 @@ fn verify_binding(
 
     // The working tree still produces the bound inputs.
     let lock_path = text_of(&binding["lock"], "path")?;
-    let (_, mut lock) = read(&root.join(lock_path))?;
+    let root = roots.root;
+    let (_, mut lock) = read(&roots.locks.join(lock_path))?;
     if let Some(variant) = binding["lock"]["variant"].as_str() {
         lock = lock.get(variant).cloned().unwrap_or(Value::Null);
     }

@@ -3,8 +3,9 @@
 projections.json declares Flash checkpoint tensor ownership, source shapes and
 formats, named operands, TP placement, layer and MTP materialization, use
 profiles, fusion output buffers, lookup companion scopes, encoder ownership and
-checkpoint-wide admission. Metadata tests bind FP8, NVIDIA mixed and local-lab
-mixed exports through the shared SDK header importer. Local-lab's 100 F32 norm
+checkpoint-wide admission. Metadata tests bind the FP8 export and two mixed
+layouts synthesized from it (nvfp4-routed-fp8-mtp and mxfp8-dense-nvfp4)
+through the shared SDK header importer. The MXFP8 layout's 100 F32 norm
 sources retain F32 identity views. Serving continues through the existing model
 code; the providers decode typed descriptors.
 

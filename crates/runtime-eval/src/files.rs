@@ -56,6 +56,12 @@ fn workload_media(root: &Path, workload: &str) -> Vec<String> {
 /// and are not listed; optional files are listed when present, and a
 /// missing required file is an error.
 pub fn files(loaded: &Loaded) -> Result<Vec<String>, String> {
+    if let Some(variants) = &loaded.variants {
+        return Err(format!(
+            "an external variant's files live under its variant root {}, which an install does not ship",
+            variants.display()
+        ));
+    }
     let declaration = &loaded.declaration;
     let root = &loaded.root;
     let name = loaded

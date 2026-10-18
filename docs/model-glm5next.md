@@ -1,21 +1,22 @@
 # GLM 5.3 Flash
 
-The full correctness suite of the default, `dcp2`, `dcp4`, `nvfp4` and
-`nvfp4-nvidia` configurations includes [KV preemption swap qualification](serving-kv-pool.md#formats-caching-and-offload);
+The full correctness suite of the default, `dcp2` and `dcp4`
+configurations includes [KV preemption swap qualification](serving-kv-pool.md#formats-caching-and-offload);
 offload stays disabled by default. These checks joined after the
 qualification below and have not run on GPUs yet.
 
 **Status: served, qualified and released.** GLM 5.3 Flash
-(`glm5next`) serves at TP4 on GPUs from the FP8 checkpoint and both NVFP4
-exports: MTP with three or five drafts or autoregressive, context-parallel
-sizes 1, 2 and 4, images, and FP8 or BF16 latent KV. The final release
-gate's results were adopted on 2026-10-11, and its
-two soak failures (the default configuration's and the local-inference-lab
-NVFP4 export's) pass the soak's declared warm-up and cache allowance, so
+(`glm5next`) serves at TP4 on GPUs from the official FP8 checkpoint: MTP
+with three or five drafts or autoregressive, context-parallel sizes 1, 2
+and 4, images, and FP8 or BF16 latent KV. It admits a checkpoint of any
+supported layout ([checkpoint layouts](#checkpoint-layouts)). The final
+release gate's results were adopted on 2026-10-11, and the default
+configuration's soak failure passes the soak's declared warm-up and cache
+allowance, so
 every gate declaration but the diagnostic-taps one qualifies. Its full
 requalification through the release preview (stage 5,
 2026-10-14 to 2026-10-15, on one release install) then qualified it, with
-accepted rows in three configurations
+accepted rows in two configurations (`taps` and `dcp4`)
 ([release qualification](#release-qualification-stage-5)), and
 `models/glm5next/model.toml` declares `[release] enabled = true`: the
 release archive and the image built from it ship its helper, bundle
@@ -29,15 +30,15 @@ section summarizes.
 | Area | State |
 |---|---|
 | Contract, catalog, weight plan (TP4) | Built and checked against the checkpoint headers |
-| Text program | Every stage lowers for the FP8 checkpoint and both NVFP4 exports, the MTP drafter's included; runs on four GPUs |
-| Package emission, `serve` | The helper emits the package (text, or text and images when the checkpoint stores the vision tower) for all three checkpoints; `serve --model DIR` prepares and serves it |
+| Text program | Every stage lowers for every admitted layout, the MTP drafter's included; runs on four GPUs |
+| Package emission, `serve` | The helper emits the package (text, or text and images when the checkpoint stores the vision tower) for a checkpoint of any admitted layout; `serve --model DIR` prepares and serves it |
 | FP8 and BF16 latent KV | Both served and qualified; FP8 is the default, BF16 was requalified on 2026-10-16 ([BF16 KV](#bf16-kv)) |
 | MTP | Three drafts (`tp4-mtp`, the default) or five (`tp4-mtp-k5`, text package only) |
 | Context parallelism (DCP 2 and 4) | Served (create accepts every checkpoint layout; run on GPUs with the FP8 checkpoint); DCP 2 and 4 have their own gate declarations |
 | Images | Served by default (`auto` modalities); video is refused |
-| NVFP4 checkpoints | local-inference-lab's and NVIDIA's served (W4A16) with their own profiles and gate declarations |
-| Serving profiles | Seven declared; six qualified through 32 sequences, `tp4-mtp-k5` experimental (see [Serving profiles](#serving-profiles)) |
-| Qualification | `qual.json`: the default configuration and seven others (BF16 KV, held on 2026-10-14, declared again on 2026-10-15 and requalified on 2026-10-16); the final release gate (two parts, completed 2026-10-11) passed every check but two soaks under the plain memory rule, which the declared soak warm-up now passes, and its results were adopted on 2026-10-11; only `taps` stays `mechanics_only` |
+| NVFP4 and mixed layouts | Admitted by layout and served (W4A16) with `tp4-mtp`; another checkpoint is qualified as an [external variant](../tools/qual/README.md#external-variants) |
+| Serving profiles | Five declared, each serving every layout; four qualified through 32 sequences on the official checkpoint, `tp4-mtp-k5` experimental (see [Serving profiles](#serving-profiles)) |
+| Qualification | `qual.json`: the default configuration and five others (BF16 KV, held on 2026-10-14, declared again on 2026-10-15 and requalified on 2026-10-16); the final release gate (two parts, completed 2026-10-11) passed every check but two soaks under the plain memory rule, which the declared soak warm-up now passes, and its results were adopted on 2026-10-11; only `taps` stays `mechanics_only` |
 
 ## Model
 
@@ -186,7 +187,7 @@ journals and kernel-lab bitwise cases pin them.
   bitwise the warp tiles; cubin and lock family `projections_staged`).
   Projections
   over NVFP4 weights run the
-  one-split tiled GEMM; the BF16 projections of the NVFP4 exports take the
+  one-split tiled GEMM; the BF16 projections of a mixed layout take the
   chain splits and warp tiles like any other. The decode and verify graph
   buckets up to 32 rows run each KDA layer's projections of its normed
   input (q, k, v, forget-a, beta and gate-a) as one stacked launch
@@ -208,9 +209,9 @@ journals and kernel-lab bitwise cases pin them.
   gate/up in warp streams at decode and their down in block warps up to
   four tokens and in columns above; at prefill every routed projection
   runs in columns and the block-FP8 ones in tile pairs from the backend's
-  tile-pair rows. In the NVFP4 exports the NVFP4 and BF16 routed experts
-  and the BF16 dense MLP and shared expert run as block warps at decode;
-  the MXFP8 routed experts and the NVFP4 dense gate/up keep the column
+  tile-pair rows. In the other layouts the NVFP4 and BF16 routed experts
+  and a BF16 dense MLP and shared expert run as block warps at decode;
+  MXFP8 routed experts and an NVFP4 dense gate/up keep the column
   schedule.
 - **mHC.** The mix-collapse of each sublayer is split over 16 CTAs per row,
   with chain sums in fixed order (`sinkhorn_hc_split`), bitwise the one-CTA
@@ -264,15 +265,13 @@ concurrency C; prefill is one 32,726-token prompt at C1.
 | `tp4-mtp-k5` | 78.7 (12.7) | 218.1 | 325.8 | 3,470 (9.4 s) |
 | `tp4-mtp-dcp2` | 77.1 (13.0) | 219.3 | 308.1 | 3,050 (10.7 s) |
 | `tp4-mtp-dcp4` | 69.5 (14.4) | 188.3 | 271.9 | 1,374 (23.8 s) |
-| `tp4-mtp-nvfp4` | 57.8 (17.3) | 241.0 | 317.5 | 3,451 (9.5 s) |
-| `tp4-mtp-nvfp4-nvidia` | 58.0 (17.2) | 208.3 | 311.2 | 3,373 (9.7 s) |
 
 What the pass showed:
 
 - **Adaptive speculation verified nothing at C32 in the measured
   cohorts.** `spec_bench.py`'s GSM8K and chat cohorts at C32 counted no
-  verify step at DCP 1 for three and five drafts and for both NVFP4
-  exports (see [MTP speculation](#mtp-speculation)); DCP 2 and 4 have no
+  verify step at DCP 1 for three and five drafts (see
+  [MTP speculation](#mtp-speculation)); DCP 2 and 4 have no
   such count. Separately, `bench.py`'s diverse prompts decode at about the
   same rate with and without MTP at C32 (325.9 against 329.5 tok/s), while
   MTP is 2.18 times faster at C1 and 1.51 times at C8.
@@ -280,20 +279,11 @@ What the pass showed:
   against 77.0 tok/s), 1-7% slower at C8 depending on the prompts, for 34%
   less KV. Three drafts stay the default; `tp4-mtp-k5` stays a benchmark
   profile.
-- **NVFP4 decodes about 25% slower at C1** than FP8 (57.8 and 58.0 against
-  77.0 tok/s). Acceptance is similar, not equal: on GSM8K at C1
-  local-inference-lab accepted 0.81 and NVIDIA 0.77 of drafts against
-  FP8's 0.83 (NVIDIA about 6.0 points lower), and the other cohorts lie
-  within 0.03 of FP8. Their NVFP4 projections also run the one-split GEMM
-  ([Step cost](#step-cost)); the measurements do not separate the two
-  causes. At C8 local-inference-lab is about 9% faster and NVIDIA about 6%
-  slower than FP8, at C32 about 3% and 5% slower, and prefill within 3%,
-  for 5.4-5.6 times the KV.
 - **DCP 4 costs long prefill.** The 32K prompt takes 23.8 s at DCP 4
   against 9.4 s at DCP 1 and 10.7 s at DCP 2, and C32 decode drops 17%. DCP 2 costs 5% at C32
   and 12% in prefill for 1.87 times the KV.
 - **Decode utilization.** In the saturation windows below, decode kept the
-  SMs 87.2-97.5% active with 1.4-4.9% tensor activity and 9.8-20.2% of
+  SMs 92.4-97.5% active with 1.4-4.9% tensor activity and 10.9-20.2% of
   DRAM read bandwidth. These are window averages, not a time breakdown of a decode
   step; they suggest, without showing, that decode is limited by neither
   tensor throughput nor DRAM bandwidth.
@@ -306,8 +296,6 @@ prompts at C1 and C8). Each cell lists C1 / C8 / C32:
 |---|---|---|---|---|---:|
 | `tp4-mtp` | 92.4 / 95.3 / 97.5 | 2.5 / 3.4 / 4.9 | 13.5 / 16.1 / 20.2 | 58.1 / 61.6 / 73.1 | 3,453 / 3,695 |
 | `tp4-ar` | 95.8 / 96.6 / 97.5 | 1.4 / 3.2 / 4.7 | 10.9 / 16.1 / 20.0 | 53.4 / 61.0 / 73.3 | 3,563 / 3,835 |
-| `tp4-mtp-nvfp4` | 92.8 / 87.2 / 96.7 | 2.2 / 3.8 / 4.6 | 9.8 / 11.0 / 12.7 | 57.2 / 65.8 / 72.1 | 3,395 / 3,710 |
-| `tp4-mtp-nvfp4-nvidia` | 93.6 / 88.5 / 96.8 | 2.2 / 3.7 / 4.6 | 9.9 / 11.4 / 12.7 | 57.2 / 65.8 / 72.0 | 3,284 / 3,688 |
 
 ## KV formats
 
@@ -373,11 +361,6 @@ Measured acceptance (the 2026-10-07 benchmark pass, unqualified;
 | 3 | chat | 0.58 (2.71) | 0.60 (2.80) | no verify steps |
 | 5 | GSM8K | 0.81 (3.53) | 0.77 (3.46) | no verify steps |
 | 5 | chat | 0.57 (2.77) | 0.59 (2.80) | no verify steps |
-
-The NVFP4 exports' acceptance at three drafts is similar to the FP8
-checkpoint's but not equal: the largest difference is NVIDIA's on GSM8K at
-C1, 177 of 231 drafts (0.766) against FP8's 181 of 219 (0.826), about 6.0
-points lower.
 
 Five drafts are served on the text package only (`--modalities text`): the
 capacity plan leaves no KV pool for seven KDA copies per slot at 32 slots
@@ -457,12 +440,10 @@ server's startup line checked against `/metrics` and `/health`
 | `tp4-mtp-dcp2` | FP8 | 1,218,560 | 1,504,128 | 318,464 | 611,456 |
 | `tp4-mtp-dcp4` | FP8 | 2,249,472 | 2,821,376 | 449,280 | 1,035,776 |
 | `tp4-mtp-k5` | FP8 | 366,400 | 509,760 | does not fit | not measured |
-| `tp4-mtp-nvfp4` | FP8 | 4,782,656 | 4,926,272 | 4,332,608 | 4,475,648 |
-| `tp4-mtp-nvfp4-nvidia` | FP8 | 4,580,672 | 4,692,480 | 4,130,624 | 4,241,856 |
 | `tp4-mtp` | BF16 | 362,240 | 441,600 | 117,376 | 196,416 |
 
-Measured over planned: 1.02 to 1.39 for the MTP profiles' text packages and
-1.03 to 2.31 with images; `tp4-ar` 0.88 (text) and 0.86 (images). Serving
+Measured over planned: 1.22 to 1.39 for the MTP profiles' text packages and
+1.67 to 2.31 with images; `tp4-ar` 0.88 (text) and 0.86 (images). Serving
 images costs 450,624 tokens measured against 450,048 planned at DCP 1,
 892,672 tokens measured against 900,096 planned at DCP 2, 1,785,600 tokens
 measured against 1,800,192 planned at DCP 4. The plan overstates `tp4-ar`:
@@ -474,7 +455,8 @@ holds (not verified). Five drafts with images was not measured; the plan's
 for `tp4-mtp` with FP8 KV as a text package and 442,112 with images.
 
 Print the whole planned table (1 to 64 slots, 0, 3 and 5 drafts, FP8 and
-BF16 KV, every checkpoint layout) with
+BF16 KV, the representative layouts or the layout ids given after `--`)
+with
 
 ```sh
 cargo run -p model-glm5next-contract --example capacity-table --locked --offline
@@ -582,56 +564,66 @@ Evidence:
   ([layer reference](../models/glm5next/README.md#layer-reference));
   `tools.qual.tapdiff` compares any capture.
 
-## NVFP4 checkpoint
+## Checkpoint layouts
 
-`local-inference-lab/GLM-5.3-Flash-NVFP4` at revision `175ae8ce`
-(`checkpoint-files-nvfp4.json`) is admitted through the shared ModelOpt
-importer as the `nvfp4-routed` layout (`contract/src/quantization.rs`):
-NVFP4 routed experts, MXFP8 MTP experts, BF16 elsewhere, all run with BF16
-activations (W4A16; `--activation-policy checkpoint` is refused). At TP4 it
-holds 47.38 GiB per GPU, which leaves room for far more KV: with 32 slots,
-FP8 KV and three drafts the plan gives 4,782,656 tokens at DCP 1 and
-18,716,928 at DCP 4 for a text package (4,332,608 and 16,916,736 with
-images), and 64 slots with three drafts fit (4,034,176 at DCP 1). Its
-profile is `tp4-mtp-nvfp4` ([Serving profiles](#serving-profiles)), gated
-by the `nvfp4` configuration against its own HF reference.
+A checkpoint is admitted by its layout, the stored encoding of each
+projection class, read from its `config.json` and safetensors headers
+(`contract/src/quantization.rs`):
 
-NVIDIA's export, `nvidia/GLM-5.3-Flash-NVFP4` at revision `da920bb0`
-(`checkpoint-files-nvidia-nvfp4.json`), is the `nvfp4-dense-routed`
-layout: NVFP4 dense MLPs and routed experts, BF16 MTP experts, BF16
-elsewhere, also W4A16 with `checkpoint` refused. It holds 48.87 GiB per
-GPU at TP4 (32 slots, FP8 KV and three drafts: 4,580,672 KV tokens at
-DCP 1 for a text package, 4,130,624 with images). Its profile is
-`tp4-mtp-nvfp4-nvidia`, gated by the `nvfp4-nvidia` configuration.
+- latent attention and shared experts: block-128 FP8 or BF16;
+- dense MLPs: block-128 FP8, BF16 or NVFP4;
+- routed experts: block-128 FP8 or NVFP4;
+- MTP routed experts: block-128 FP8, MXFP8 or BF16;
+- KDA convolution weights and mHC base and scale vectors: BF16 or F32.
 
-Both exports serve the same package and engines as the FP8 checkpoint,
-with the NVFP4, MXFP8 and BF16 expert formats bound per layout. Their
-NVFP4 projections run the one-split tiled GEMM (see [Step cost](#step-cost)),
-so their decode is slower than the FP8 checkpoint's at low concurrency.
+The layouts derive from the per-class formats that
+`contract/projections.json` declares, so support follows the projection
+declaration and the kernels the bundle supplies for it; no layout or
+export needs a file of its own. A layout id reads
+`attn-<e>.dense-<e>.experts-<e>.mtp-<e>.conv-<d>.hc-<d>`; the official
+checkpoint's is `attn-fp8.dense-fp8.experts-fp8.mtp-fp8.conv-bf16.hc-f32`.
+Every projection runs BF16 activations (W4A16 for NVFP4 weights;
+`--activation-policy checkpoint` is refused for a checkpoint that declares
+quantized activations), and a ModelOpt checkpoint's static FP8 KV hint
+(`kv_cache_scheme`) is accepted and imports nothing. Every layout serves the
+same package and engines with `tp4-mtp` at TP4
+([Serving profiles](#serving-profiles)), with the NVFP4, MXFP8 and BF16
+formats bound per layout. NVFP4 projections run the one-split tiled GEMM
+(see [Step cost](#step-cost)).
+
+Admission is not qualification. `qual.json` qualifies the official
+checkpoint; a checkpoint of another layout is qualified out of tree as an
+[external variant](../tools/qual/README.md#external-variants), with its own
+checkpoint lock, pin and teacher reference, under the model's checks and
+limits. Its paired GSM8K compares it with the FP8 arm `qual.json`'s gate
+run records ([GSM8K floor](#gsm8k-floor)). The
+[model README](../models/glm5next/README.md#checkpoint-layouts) gives the
+admission rules and the tests, which `CHOPINFER_GLM5NEXT_EXTRA_CHECKPOINTS`
+points at further checkpoints of any layout.
 
 ## Serving profiles
 
-`models/glm5next/profiles.json` declares seven TP4 profiles of the
-`glm5next.v1` package ([serving profiles](serving-profiles.md)). Every one
-has 32 sequences, `auto` (FP8) KV, the prefix cache on, 8,192 batch tokens,
+`models/glm5next/profiles.json` declares five TP4 profiles of the
+`glm5next.v1` package ([serving profiles](serving-profiles.md)), each
+serving every [checkpoint layout](#checkpoint-layouts). Every one has 32
+sequences, `auto` (FP8) KV, the prefix cache on, 8,192 batch tokens,
 2,048-token prefill chunks and a KV memory fraction of 0.9; its
-qualification text says which declaration gates it. Six are `qualified`
-through 32 sequences on the adopted final gate
-([final release gate](#final-release-gate-2026-10-11)); the soaks of `tp4-mtp` and
-`tp4-mtp-nvfp4` pass under the declared soak warm-up. `tp4-mtp-k5`, the five-draft benchmark arm, passed its
-declaration but stays `experimental`. The KV columns are the capacity plan's pool estimates for 32
+qualification text says which declaration gates it. Four are `qualified`
+through 32 sequences on the official checkpoint by the adopted final gate
+([final release gate](#final-release-gate-2026-10-11)); the soak of
+`tp4-mtp` passes under the declared soak warm-up. `tp4-mtp-k5`, the
+five-draft benchmark arm, passed its declaration but stays `experimental`.
+The KV columns are the capacity plan's pool estimates for 32
 slots, of a text package and of one serving images (see
 [Context parallelism](#context-parallelism)).
 
-| Profile | Checkpoint | Speculation | DCP | KV tokens, text | With images | Configuration |
+| Profile | Gated on | Speculation | DCP | KV tokens, text | With images | Configuration |
 |---|---|---|---:|---:|---:|---|
 | `tp4-mtp` (default) | FP8 | MTP, 3 drafts | 1 | 665,792 | 215,744 | `default` |
 | `tp4-ar` | FP8 | none | 1 | 1,648,064 | 1,157,120 | the AR arms of each configuration |
 | `tp4-mtp-dcp2` | FP8 | MTP, 3 drafts | 2 | 1,218,560 | 318,464 | `dcp2` |
 | `tp4-mtp-dcp4` | FP8 | MTP, 3 drafts | 4 | 2,249,472 | 449,280 | `dcp4` |
 | `tp4-mtp-k5` | FP8 | MTP, 5 drafts | 1 | 366,400 | does not fit | `k5` |
-| `tp4-mtp-nvfp4` | NVFP4 (local-inference-lab) | MTP, 3 drafts | 1 | 4,782,656 | 4,332,608 | `nvfp4` |
-| `tp4-mtp-nvfp4-nvidia` | NVFP4 (NVIDIA) | MTP, 3 drafts | 1 | 4,580,672 | 4,130,624 | `nvfp4-nvidia` |
 
 The profile settings are the package's serving defaults: 32 sequences and
 8,192 batch tokens are the package's decode batch and prefill tokens per
@@ -639,40 +631,29 @@ step (`compiler/src/package.rs`), and the draft counts are those the
 package's MTP drafter serves within its maximum of five. BF16 KV has no
 profile; its comparison arm is `tp4-mtp` with `--kv-cache-dtype bf16`.
 
-**How a profile is chosen.** Each profile asserts the checkpoint layout it
-serves as the model option `checkpoint.quantization_layout` (`fp8-block128`,
-`nvfp4-routed` or `nvfp4-dense-routed`). The package declares that option with the admitted
-layout as its one allowed value (`compiler/src/package.rs`). `--profile`
-checks the profile's own model options against the package's declaration
-before explicit options apply, so the host refuses a profile with a package
-of another layout (`...#tp4-mtp-nvfp4` with an FP8 or NVIDIA package, every
-FP8 profile with an NVFP4 package), even with an explicit `--model-option`
-naming the package's layout; an explicit value
-of the other layout fails the manifest check at startup. Create reads the
-option back. The preparation provider
-(`compiler/src/preparation.rs`, `select_profile`) picks the profile a direct
-package carries from the admitted layout: `tp4-mtp` for the block-FP8
-checkpoint, `tp4-mtp-nvfp4` for local-inference-lab's NVFP4 export and
-`tp4-mtp-nvfp4-nvidia` for NVIDIA's, and `serving_profile` refuses a
-profile whose option names another layout, naming the field and both layouts. The autoregressive,
-five-draft and context-parallel profiles are never picked by default; they
-are named, or their options given explicitly (`--speculative-tokens 0` or
-`5`, `--context-parallel-size`). A server started that way keeps the name
-of the profile the provider selected (`tp4-mtp` for the FP8 checkpoint,
-the NVFP4 profile for an export) and reports the explicit values in its
-served identity; a profile named with `--profile` keeps its own name.
+**How a profile is chosen.** The package declares the model option
+`checkpoint.quantization_layout` with the admitted layout's id as its one
+allowed value (`compiler/src/package.rs`), so an explicit value of another
+layout fails the manifest check at startup; create reads the option back.
+No shipped profile sets the option, so each serves every layout, and
+`serving_profile` (`compiler/src/preparation.rs`) still refuses a profile
+whose option names another layout, naming the field and both layouts. The
+preparation provider (`select_profile`) picks `tp4-mtp` as the profile a
+direct package carries for every layout. The autoregressive, five-draft and
+context-parallel profiles are never picked by default; they are named, or
+their options given explicitly (`--speculative-tokens 0` or `5`,
+`--context-parallel-size`). A server started that way keeps the name of the
+profile the provider selected (`tp4-mtp`) and reports the explicit values
+in its served identity; a profile named with `--profile` keeps its own
+name.
 
-The NVFP4 capacity plans fit 64 sequences with three drafts (4,034,176 KV
-tokens at DCP 1 for local-inference-lab's text package, 3,832,192 for
-NVIDIA's), but both NVFP4 profiles are qualified through 32, the
-concurrency the final release gate served. A released model's `tp4-ar` is qualified
-through the smaller of 64 and its package maximum; GLM's
-(`preview.package_max_sequences`) is 32, so `tp4-ar` stays at 32.
+A released model's `tp4-ar` is qualified through the smaller of 64 and its
+package maximum; GLM's (`preview.package_max_sequences`) is 32, so `tp4-ar`
+stays at 32.
 
 **Deploy defaults.** Each sampling default is taken from the checkpoint's
 `generation_config.json`, which states only `temperature`, `top_p`,
-`eos_token_id` and `pad_token_id` (plus `do_sample: true` in NVIDIA's
-export). The FP8 checkpoint and both NVFP4 exports state the same values:
+`eos_token_id` and `pad_token_id`:
 
 | Default | Value | Source |
 |---|---|---|
@@ -693,15 +674,16 @@ effort (`low` or `high`), as on every model
 ([request surface](serving-request-surface.md)); a request that disables
 reasoning is refused (the frontend declares `allow_disabled: false`).
 `compiler/tests/frontend_goldens.rs` checks the declared fields and
-omissions against each checkpoint's file when
-`CHOPINFER_GLM5NEXT_CHECKPOINT`, `CHOPINFER_GLM5NEXT_NVFP4_CHECKPOINT` and
-`CHOPINFER_GLM5NEXT_NVIDIA_NVFP4_CHECKPOINT` are set; it does not claim
-parity with HF's effective generation settings.
+omissions against the file of the official checkpoint
+(`CHOPINFER_GLM5NEXT_CHECKPOINT`) and of each checkpoint
+`CHOPINFER_GLM5NEXT_EXTRA_CHECKPOINTS` names, when set (a file may also
+state `do_sample: true`, which the served API follows anyway); it does not
+claim parity with HF's effective generation settings.
 
 ## GSM8K floor
 
 **Adopted: 193 of 200 on the screen** (2026-10-11).
-`qual.json` and both NVFP4 declarations state it as `preview.gsm8k_floor`,
+`qual.json` states it as `preview.gsm8k_floor`,
 which `tools/qual/gsm8k.py` and the release preview read. At stage 5 the
 full-split paired comparison against the previous gate's FP8 arm decides;
 the screen floor is advisory where the two disagree.
@@ -710,19 +692,17 @@ the screen floor is advisory where the two disagree.
   of the release. The floor is MiMo's on the same frozen items, the first
   200 of the test split. The final release gate's whole-split answers
   (2026-10-11) score
-  those items at 196 for the FP8 arm and 197 for each NVFP4 export; the
-  first bring-up screen scored 197 (2026-10-07, before the fixed latent
+  those items at 196 for the FP8 arm; the first bring-up screen scored 197 (2026-10-07, before the fixed latent
   splits). Treating each item as an independent trial, an unchanged model
   at the final gate's FP8 rate (97.27%) scores below 193 with probability about
   18%, and at the earlier screen's 98.5% about 1.1%. A screen below the
   floor after a numerics change is therefore checked on the whole split
   before it is read as a regression.
 - **Whole test split (1,319 items, `evals_gsm8k` arm `fp8`).** `qual.json`
-  records it as the FP8 arm the NVFP4 declarations compare against
-  (McNemar, p < 0.05), with no absolute floor. The final gate at C32: FP8
-  (`tp4-mtp`, FP8 KV, DCP 1) **1,283 of 1,319** (97.27%), local-inference-lab
-  NVFP4 1,285 (97.42%, McNemar p 0.774) and NVIDIA NVFP4 1,288 (97.65%,
-  p 0.227). The release-candidate run (2026-10-07) also scored 1,283. An
+  records it as the FP8 arm an external variant's paired GSM8K compares
+  against (McNemar, p < 0.05), with no absolute floor. The final gate at
+  C32: FP8 (`tp4-mtp`, FP8 KV, DCP 1) **1,283 of 1,319** (97.27%). The
+  release-candidate run (2026-10-07) also scored 1,283. An
   absolute whole-split floor (1,269 of 1,319, the count an unchanged model
   falls below with probability under 1%) was proposed and not adopted.
 
@@ -734,7 +714,8 @@ runs HF `glm5_next` (transformers 5.16.1) for the teacher, chat,
 long-context (131,072 tokens) and image-probe references that
 `models/glm5next/qual-references.lock.json` pins, and
 `tools/refrun/encoder.py` runs the vision declaration in the exact, policy
-and reference-bf16 modes. Each NVFP4 export has its own teacher reference.
+and reference-bf16 modes. An external variant brings its own teacher
+reference.
 `models/glm5next/taps.json` declares the taps the engine and the reference
 share, for tapdiff.
 
@@ -745,9 +726,8 @@ prefix and preemption exactness, determinism and media preprocessing), one
 gate run against one `tp4-mtp` server on the release build. A TP4 server takes all four GPUs, so each
 other configuration is declared in `qual.json`'s `configurations` and gated
 against its own server: `dcp2` and `dcp4` (DCP 2 and 4), `k5` (five drafts
-on the text package), `taps` (encoder parity on the diagnostic-taps build),
-and `nvfp4` and `nvfp4-nvidia` (the two NVFP4 exports), and `kv-bf16`
-(BF16 KV), which passed the final gate, was held on 2026-10-14, declared
+on the text package), `taps` (encoder parity on the diagnostic-taps build)
+and `kv-bf16` (BF16 KV), which passed the final gate, was held on 2026-10-14, declared
 again on 2026-10-15 and requalified on 2026-10-16 ([below](#bf16-kv)). Until 2026-10-13 each was a
 declaration file beside `qual.json` (`qual.<name>.json`), which the
 configurations reproduce. The final gate's results (below) were
@@ -769,16 +749,14 @@ served FP8 latent, and release_preview's `--input-value`. `k5` was rerun
 alone on 2026-10-14 with one more fix, which stops the determinism
 records from sending an image to its text-only server. Later landings
 were bound to this run by a reviewed check that their served paths and
-GLM's declarations are unchanged. The run selected all seven declared
-configurations; the BF16 KV configuration was held then and was not run
+GLM's declarations are unchanged. The run selected every configuration of
+the official checkpoint then declared; the BF16 KV configuration was held
+then and was not run
 ([below](#bf16-kv)). Release was enabled after the
 run was reviewed.
 
-Four configurations pass (default, k5, nvfp4 and dcp2). nvfp4-nvidia
-passes with two ACCEPTED paired_teacher rows: its pooled gap 0.0056 and
-chat 0.0158 exceed the 0.005 and 0.015 margins, and were accepted as an
-exact reproduction of the shift accepted on 2026-10-14, together with a
-passing paired GSM8K. taps and dcp4 are OPERATOR (the release preview's
+Three configurations pass (default, k5 and dcp2). taps and dcp4 are
+OPERATOR (the release preview's
 status for a row that needs a reviewer's decision), each with one accepted
 row and every other check passing. The accepted rows carry their numbers
 below; none is a waiver and no limit changed. GSM8K
@@ -792,8 +770,6 @@ pairs them with the arm in the stored seed.
 | `taps` (diagnostic-taps build) | OPERATOR: encoder_parity passes. text_layers is a row accepted on review (2026-10-14): 5 of 329 taps exceed their bound, first `L16.mlp.out`, on the whole-tap aggregate only, all from one of 31 rows where layer 16's routing is a near tie (the F32 reference routes expert 260, the TP build 92, at a 3.0e-5 gap between the 8th and 9th selection scores); without that row the five aggregates are 0.23 to 0.34 of the bound |
 | `dcp2` (`tp4-mtp-dcp2`) | PASS: teacher 0.0603 (all 2.86%); chat 0.193; long_context 0.0105; spec_verify, verify_exact, prefix_exact, determinism and both kv_offload checks pass; preemption_exact exact (2,248 positions) |
 | `dcp4` (`tp4-mtp-dcp4`) | OPERATOR: teacher 0.0603 (decisive 0.71%, near tie 2.12%, all 2.83%); chat 0.193; long_context 0.0127; spec_verify, verify_exact, prefix_exact, determinism and kv_offload_plain pass; preemption_exact exact (2,248 positions). kv_offload_pressure is a row accepted on review (2026-10-15): its one failing gate is `c16_prefix_evictions`, 0 against at least 1, and its other 24 gates pass (C1 36 of 36 gated, 0 bitwise differences, 107 swap-ins, 0 missed swaps, 0 accounting errors; C16 0 errors, 991 verified items). The scenario pins the device KV pool at 128 pages per rank, so a C16 prefix eviction is a pressure indicator with a narrow timing margin, not a correctness gate |
-| `nvfp4` (`tp4-mtp-nvfp4`) | PASS: teacher 0.0517 (all 2.35%); chat 0.144 against 0.20; GSM8K 1,287 of 1,319 (against this run's FP8 arm: 5 right only here, 5 only in FP8, McNemar p 1.0; against the seed: 4 and 2, p 0.688); soak host growth 488.2 MiB, GPU 264 MiB (50.4 and 24 MiB after warm-up); preemption_exact exact (2,224 positions); paired_teacher, api, structured, media_preprocessing, spec_verify, verify_exact, prefix_exact, determinism and both kv_offload checks pass |
-| `nvfp4-nvidia` (`tp4-mtp-nvfp4-nvidia`) | PASS with two ACCEPTED paired_teacher rows: teacher 0.0671 (all 2.83%); chat 0.190; GSM8K 1,292 of 1,319 (against this run's FP8 arm: 7 right only here, 2 only in FP8, McNemar p 0.180; against the seed: 7 and 3, p 0.344); soak host growth 520.3 MiB, GPU 256 MiB (125.5 and 56 MiB after warm-up); preemption_exact exact (2,293 positions); api, structured, media_preprocessing, spec_verify, verify_exact, prefix_exact, determinism and both kv_offload checks pass. Both paired_teacher rows (against last good and the seed) are ACCEPTED: they reproduce exactly the shift accepted on 2026-10-14 as part of the TP numerics change (pooled gap 0.0056 with a 95% interval up to 0.0123 against the 0.005 margin; chat 0.0158 against 0.015; top-1, tail and absolute gates pass), on condition of the passing paired GSM8K |
 
 Soak limits: host growth 3,072 MiB and GPU 1,856 MiB, each 512 MiB after
 the declared warm-up.
@@ -819,7 +795,7 @@ prose-frozen top-1 disagreement 16 of 141 positions (0.1135) against the
 the final gate's BF16 KV run had 11, and the pooled teacher was 0.0619 against 0.10
 with every other category passing. The `kv-bf16` configuration and the
 `teacher_arms` check only it ran were removed from `qual.json`, so stage 5
-covered the other seven configurations. FP8 KV, the default, was
+covered the other configurations. FP8 KV, the default, was
 unaffected, and `--kv-cache-dtype bf16` still served BF16 KV, unqualified.
 
 The configuration was declared again on 2026-10-15, unchanged,
@@ -881,13 +857,14 @@ drafts GLM's tokens on the shared sharded argmax kernels instead of GLM's
 own draft argmax kernels (bundle lowering, CUDA source and kernel locks).
 Part A's jobs never draft. Main after part B's build only deleted tests and
 renamed a crate.
-Each configuration ran on its own four-GPU server. Part A passed all 14
-jobs; part B passed 52 of 54, and the two failures are the soak's
-host-memory limit under the plain rule, from the bounded warm-up of pinned
-last-chunk programs. They were waived on 2026-10-11; the soak now declares
-that warm-up (180 s) and the programs' bound (2,560 MiB host, 1,344 MiB GPU),
-and under that rule both pass (models/glm5next/README.md, "Qualification
-checks", gives the numbers and the GPU headroom).
+Each configuration ran on its own four-GPU server. Part A passed every
+job. In part B every job of the configurations below passed except the
+default configuration's soak, which failed the host-memory limit under the
+plain rule, from the bounded warm-up of pinned last-chunk programs. It was
+waived on 2026-10-11; the soak now declares that warm-up (180 s) and the
+programs' bound (2,560 MiB host, 1,344 MiB GPU), and under that rule it
+passes (models/glm5next/README.md, "Qualification checks", gives the
+numbers and the GPU headroom).
 
 | Configuration (server) | Result |
 |---|---|
@@ -897,8 +874,6 @@ checks", gives the numbers and the GPU headroom).
 | `kv-bf16` (BF16 KV) | teacher 0.0620 (decisive 0.74%, near tie 2.17%, all 2.91%); teacher_arms reported against the FP8 arm |
 | `dcp2` (`tp4-mtp-dcp2`) | gate passed: teacher 0.0640 (all 2.80%), long_context 0.0029, spec_verify, verify_exact, prefix_exact, determinism; preemption_exact exact (2,202 positions) |
 | `dcp4` (`tp4-mtp-dcp4`) | gate passed: teacher 0.0658 (decisive 0.90%, near tie 1.96%, all 2.86%; chat 0.185 against 0.20), long_context 0.0025, spec_verify, verify_exact, prefix_exact, determinism; preemption_exact exact (2,196 positions) |
-| `nvfp4` (`tp4-mtp-nvfp4`) | teacher 0.0543 (all 2.65%); api, structured, media_preprocessing, spec_verify, verify_exact, preemption_exact, determinism and prefix_exact pass; paired GSM8K 1,285 of 1,319 against FP8's 1,283 (7 items right only here, 5 only in FP8; McNemar p 0.774); soak host growth 529.2 MiB, GPU 280 MiB (48.1 and 32 MiB after 180 s): failed the plain rule, passes the declared one |
-| `nvfp4-nvidia` (`tp4-mtp-nvfp4-nvidia`) | gate passed: teacher 0.0616 (all 2.75%), paired GSM8K 1,288 of 1,319 against FP8's 1,283 (8 only here, 3 only in FP8; McNemar p 0.227), api, structured, media_preprocessing, soak (host 480.0 MiB, GPU 240 MiB), spec_verify, verify_exact, prefix_exact, preemption_exact, determinism |
 
 The MTP drafter at three drafts made 3.30 and 3.11 tokens per step (copy
 and natural sets), with acceptance 0.78 and 0.73.
@@ -930,19 +905,13 @@ the same time, and `long_context` ran again against it.
 | DCP 4 | | 0.2015 (0.25), 3.7%, 6.8% | 3 of 3 | 0.0123, 0.33% |
 | five drafts, text | | 0.1915 (0.25) | | |
 | BF16 KV | | 0.1899 (0.25), 3.6%, 6.8% | | |
-| `tp4-mtp-nvfp4` | 31 + 27 rows equal | 0.1503 (0.20), 2.7%, 5.8% | 3 of 3 | |
-| `tp4-mtp-nvfp4-nvidia` | 31 + 27 rows equal | 0.1870 (0.25), 3.4%, 5.6% | 3 of 3 | |
 
-The chat references' own BF16 runs sit at 0.180 (FP8), 0.143
-(local-inference-lab) and 0.181 (NVIDIA), so the served builds are 1.03 to
-1.12 times their BF16 spread; the tool-call conversations carry most of the
-error. local-inference-lab's 0.1503 would fail a limit taken as the BF16
-spread rounded up to 0.05 (0.15), the rounding edge the 1.25 factor
-removes. Every needle answer gave the three values after a short reasoning
+The chat reference's own BF16 run sits at 0.180, so the served builds are
+at most 1.12 times its BF16 spread; the tool-call conversations carry most
+of the error. Every needle answer gave the three values after a short reasoning
 (`</think>`). The 262,144-token rows took 43 to 56 s to their first token,
 reusing the 131,072-token row's cached prefix. `capabilities.frontend` and
-`capabilities.long_context` are true in `qual.json` and both NVFP4
-declarations; the DCP 2 and 4 declarations claim `long_context` through
+`capabilities.long_context` are true in `qual.json`; the DCP 2 and 4 declarations claim `long_context` through
 their needle checks. `logprobs_parity` stays undeclared: it compares a
 reference OpenAI server's logprobs with the candidate's, and GLM's
 reference is HF through the reference runner, not a server.
@@ -992,30 +961,8 @@ configuration). Every check below ran under its declaration with
 | | determinism | pass: the MTP record equals the AR record bit for bit, text requests |
 | | preemption_exact | pass: c16, 36 requests, 2,195 positions after the first preemption, exact |
 | | prefix_exact | pass: 2026-10-08 21:29 UTC, after the media sizing fix |
-| `nvfp4` (`tp4-mtp-nvfp4`, local-inference-lab) | teacher | pass: pooled mean 0.0551 (limit 0.10), decisive 0.79%, near tie 1.77%, all 2.57%, 3,781 positions, no category failed |
-| | api, structured | pass; structured validity 1.0, none refused or truncated |
-| | media_preprocessing | pass |
-| | spec_verify | pass: copy set 1,024 scored positions, MTP equal to autoregressive |
-| | verify_exact | pass: three-draft verify against the AR arm's forced tokens, full coverage |
-| | determinism | pass: the MTP record equals the AR record bit for bit, text requests |
-| | preemption_exact | pass: c16, 36 requests, 2,156 positions after the first preemption, exact |
-| | prefix_exact | pass |
-| | soak | pass: 1,380 s at C32, 2,722 requests, device memory growth 0 MiB, host 0.11 MiB (limit 512) |
-| | evals_candidate, evals_compare | pass: GSM8K 1,289 of 1,319 at C32 against FP8's 1,283; McNemar p = 0.109375, no significant regression |
-| `nvfp4-nvidia` (`tp4-mtp-nvfp4-nvidia`) | teacher | pass: pooled mean 0.0608 (limit 0.10), decisive 0.79%, near tie 1.80%, all 2.59%, 3,781 positions, no category failed |
-| | api, structured | pass; structured validity 1.0, none refused or truncated |
-| | media_preprocessing | pass |
-| | spec_verify | pass: copy set 1,024 scored positions, MTP equal to autoregressive |
-| | verify_exact | pass: three-draft verify against the AR arm's forced tokens, full coverage |
-| | determinism | pass: the MTP record equals the AR record bit for bit, text requests |
-| | preemption_exact | pass: c16, 36 requests, 2,242 positions after the first preemption, exact |
-| | prefix_exact | pass: 2026-10-08 17:20 UTC |
-| | soak | pass: 1,380 s at C32, 2,725 requests, device memory growth 0 MiB, host 0.13 MiB (limit 512) |
-| | evals_candidate, evals_compare | pass: GSM8K 1,290 of 1,319 at C32 against FP8's 1,283; McNemar p = 0.015625, in NVIDIA's favor |
 
-On 2026-10-08, DCP 2 passed 7 of 7 gate checks and each NVFP4 export
-passed 12 of 12. NVIDIA's separate checks passed at 17:35 UTC and its
-gate completed at 18:21 UTC. DCP 4's gate stopped at the teacher failure;
+On 2026-10-08, DCP 2 passed 7 of 7 gate checks. DCP 4's gate stopped at the teacher failure;
 its five remaining checks other than prefix_exact passed separately by
 22:31 UTC, with prefix_exact as recorded above.
 
@@ -1071,7 +1018,7 @@ the GPU encoder checks:
 
 ```sh
 # Contract, compiler and bundle tests (CPU; checkpoint header checks with
-# CHOPINFER_GLM5NEXT_CHECKPOINT and CHOPINFER_GLM5NEXT_NVFP4_CHECKPOINT set)
+# CHOPINFER_GLM5NEXT_CHECKPOINT and CHOPINFER_GLM5NEXT_EXTRA_CHECKPOINTS set)
 cargo test -p model-glm5next-contract -p model-glm5next -p bundle-glm5next --locked --offline
 
 # Encoder conformance and the whole-tower check (one GPU)

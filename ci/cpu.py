@@ -60,11 +60,12 @@ PREREQUISITES = ("reference-prerequisites",)
 # selected checks run after.
 SETUP = ("profile-cli-build", "preparation-fixture-build", "profile-copy") + PREREQUISITES
 # The reference checks are required: each must execute tests and may skip only
-# cases whose reason names the opt-in input that enables them, a checkpoint
-# (CHOPINFER_CI_CHECKPOINT_TESTS=1) or a CUDA round trip, and names no missing
-# dependency (torch, transformers, numpy or the reference runner).
+# cases whose reason names the opt-in input that enables them, a checkpoint or
+# a model's extra checkpoints (CHOPINFER_CI_CHECKPOINT_TESTS=1) or a CUDA round
+# trip, and names no missing dependency (torch, transformers, numpy or the
+# reference runner).
 NO_DEPENDENCY = r"(?!(?i:.*(?:torch|transformers|numpy|refrun)))"
-REFERENCE_SKIPS = (NO_DEPENDENCY + r".*\bCHOPINFER_\w+_(?:CHECKPOINT|TOKENIZER_DIR)\b.*",
+REFERENCE_SKIPS = (NO_DEPENDENCY + r".*\bCHOPINFER_\w+_(?:CHECKPOINTS?|TOKENIZER_DIR)\b.*",
                    NO_DEPENDENCY + r".*\bCHOPINFER_\w+_CUDA=1\b.*")
 
 PROFILE_COPY = r"""

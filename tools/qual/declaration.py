@@ -36,6 +36,50 @@ CHECKPOINT_KEYS = ("repository", "revision", "served_model_name", "source_lock_s
 
 # The CPU fixture self-test config; it names no model and keeps the gate layout.
 MECHANICS = Path(__file__).with_name("gates") / "mechanics.json"
+# The root of external variants (`--variant-dir`): `<root>/<model>/<variant>.json`
+# overlays a model's qual.json from outside the tree (tools/qual/README.md#external-variants).
+VARIANTS_ENV = "CHOPINFER_QUAL_VARIANTS"
+
+
+def variant_root():
+    """The external variant root `CHOPINFER_QUAL_VARIANTS` names, or None."""
+    import os
+    value = os.environ.get(VARIANTS_ENV)
+    return Path(value).resolve() if value else None
+
+
+def select_variant_root(directory):
+    """Select `directory` (`--variant-dir`) as the external variant root for
+    this process and every tool it runs; None leaves the environment's."""
+    import os
+    if directory is not None:
+        os.environ[VARIANTS_ENV] = str(Path(directory).resolve())
+
+
+def overlay(model, variant):
+    """The external variant's overlay `<variant root>/<model>/<variant>.json`,
+    or None when no variant root is selected or it holds none."""
+    root = variant_root()
+    if root is None or not plain(model) or not plain(variant):
+        return None
+    file = root / model / f"{variant}.json"
+    return file if file.is_file() else None
+
+
+def external(config):
+    """Whether `config` is an external variant's: its expansion names the
+    overlay it came from (`variant_source`)."""
+    return isinstance(config, dict) and "variant_source" in config
+
+
+def require_variant_root(config):
+    """The variant root an external variant's paths resolve under; refused
+    when none is selected, since its lock and references live there."""
+    root = variant_root()
+    if root is None:
+        raise ValueError(f"{config['model']}.{config['variant']} is an external variant: select its root with "
+                         f"--variant-dir or {VARIANTS_ENV}")
+    return root
 
 
 def path(model, root=ROOT, variant=None):
@@ -79,12 +123,14 @@ def require_rooted(file, root):
 
 def named(name):
     """The config `release_gate.py --model NAME` reads: the mechanics fixture,
-    a model's declaration (MODEL) or one of its variants (MODEL.VARIANT)."""
+    a model's declaration (MODEL) or one of its variants (MODEL.VARIANT): a
+    configuration of its qual.json, a `qual.VARIANT.json` beside it, or an
+    external variant under the selected variant root."""
     if name == "mechanics":
         return MECHANICS
     model, dot, variant = name.partition(".")
     if dot and plain(model) and plain(variant):
-        if variant in configurations(model):
+        if variant in configurations(model) or overlay(model, variant) is not None:
             return materialized(model, variant)
         return path(model, variant=variant)
     return path(name)
@@ -101,19 +147,23 @@ def configurations(model, root=ROOT):
 
 def materialized(model, config, root=ROOT):
     """A file holding the declaration of `config`, expanded by `chopinfer eval
-    declaration` from the model's qual.json, for readers that take a file
+    declaration` from the model's qual.json (with an external variant's
+    overlay, under the selected variant root), for readers that take a file
     (CHOPINFER_QUAL_CONFIG), written again on each call. It lives outside
-    the tree: `<cache>/<qual.json digest>/<model>/qual.<config>.json`."""
+    the tree: `<cache>/<digest>/<model>/qual.<config>.json`, the digest of
+    qual.json and of the variant root."""
     import hashlib
     import os
     import tempfile
     import kinds
     base = path(model, root)
-    digest = hashlib.sha256(base.read_bytes()).hexdigest()[:16]
+    variants = variant_root()
+    digest = hashlib.sha256(base.read_bytes() + str(variants or "").encode()).hexdigest()[:16]
     cache = Path(tempfile.gettempdir()) / "chopinfer-qual-declarations"
     file = cache / digest / model / f"qual.{config}.json"
     done = subprocess.run([str(kinds.eval_binary()), "eval", "declaration", "--model", str(base.parent),
-                           "--variant", config], capture_output=True, text=True, check=False)
+                           "--variant", config, *(["--variant-dir", str(variants)] if variants else [])],
+                          capture_output=True, text=True, check=False)
     if done.returncode:
         raise DeclarationError(done.stderr.strip().removeprefix("eval declaration: "))
     file.parent.mkdir(parents=True, exist_ok=True)
@@ -201,6 +251,8 @@ def compile_gate(declaration):
         config["checkpoint"] = declaration["checkpoint"]
     if "variant" in declaration:
         config["variant"] = declaration["variant"]
+    if "variant_source" in declaration:
+        config["variant_source"] = declaration["variant_source"]
     if "capabilities" in declaration:
         # Encoder parity reads the media served but not qualified in-tree.
         config["capabilities"] = declaration["capabilities"]
@@ -289,7 +341,7 @@ def declared_value(name, root=ROOT):
     """The validated declaration a MODEL or MODEL.VARIANT name selects (a
     configuration as `chopinfer eval declaration` expands it)."""
     model, variant = split(name)
-    if variant is not None and variant in configurations(model, root):
+    if variant is not None and (variant in configurations(model, root) or overlay(model, variant) is not None):
         return json.loads(materialized(model, variant, root).read_text())
     value = json.loads(path(model, root, variant).read_text())
     validate(value)

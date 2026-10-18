@@ -667,11 +667,11 @@ mod tests {
     use super::*;
     use crate::program::DraftPass;
 
-    /// For every checkpoint layout, the shared projection shapes are the
-    /// ones computed fresh, and later requests return that same map.
+    /// For every representative layout, the shared projection shapes are
+    /// the ones computed fresh, and later requests return that same map.
     #[test]
     fn shared_projection_shapes_equal_fresh_ones() {
-        for layout in model_glm5next_contract::quantization::LAYOUTS {
+        for layout in model_glm5next_contract::quantization::representative_layouts() {
             let fresh = projections(Shape::TP4, layout);
             let shared = shared_projections(Shape::TP4, layout);
             assert_eq!(

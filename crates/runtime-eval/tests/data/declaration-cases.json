@@ -3480,7 +3480,7 @@
   {
    "name": "a checkpoint variant",
    "set": {
-    "/variant": "nvfp4"
+    "/variant": "requant"
    },
    "remove": [],
    "error": null

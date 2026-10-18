@@ -15,29 +15,32 @@ use crate::report::{CheckReport, Exit, ReferenceUse, Report, Tool, utc_stamp};
 use crate::{files, launch, locate};
 
 pub const USAGE: &str = "\
-eval list (--model DIR | --package DIR) [--variant NAME] [--json]
-eval run (--model DIR | --package DIR) [--variant NAME] [--served-model NAME]
+eval list (--model DIR | --package DIR) [--variant NAME [--variant-dir DIR]] [--json]
+eval run (--model DIR | --package DIR) [--variant NAME [--variant-dir DIR]] [--served-model NAME]
   [--suite quick|accuracy | --check ID... [--cohort quick|full]] [--references DIR]
   [--report DIR] [--json]
   [--timeout SECONDS] [--server-log LOG] (--url URL | --launch [SERVE FLAGS...])
-eval capture --kind determinism|greedy_pin (--model DIR | --package DIR) [--variant NAME]
-  [--served-model NAME] [--references DIR] [--timeout SECONDS] [--server-log LOG]
-  --url URL --report DIR RECORD ARGUMENTS...
+eval capture --kind determinism|greedy_pin (--model DIR | --package DIR)
+  [--variant NAME [--variant-dir DIR]] [--served-model NAME] [--references DIR]
+  [--timeout SECONDS] [--server-log LOG] --url URL --report DIR RECORD ARGUMENTS...
   (one record a runner compares, not a declared check, written to REPORT/STAMP-CHECK.json:
   determinism --arm ARM --run-id RUN [--image] [--image-reason TEXT];
   greedy_pin --arm ARM [--k N] [--cold-cache] [--concurrency 1] [--prompt-tokens N]
   [--max-tokens N], over the texts of the reference pinned at the declared exact input)
-eval verify-references (--model DIR | --package DIR) [--variant NAME] [--references DIR] [--json]
+eval verify-references (--model DIR | --package DIR) [--variant NAME [--variant-dir DIR]]
+  [--references DIR] [--json]
 eval files (--model DIR | --package DIR) [--variant NAME]
   (the files under ROOT eval reads, one per line)
-eval declaration --model DIR [--variant NAME] | eval declaration --root ROOT < DECLARATION.json
+eval declaration --model DIR [--variant NAME [--variant-dir DIR]]
+  | eval declaration --root ROOT < DECLARATION.json
   (validates a declaration and prints it; --root reads ROOT/tools/qual/modules.json)
 eval rescore < REQUEST.json   (offline verify, score, judge and limit calls; docs/cli.md)
 --model DIR is a model directory ROOT/models/<model> holding qual.json (declared paths resolve
 under ROOT) or a checkpoint directory, resolved as serve --model resolves it. --package DIR is a
 package directory or an install root with one model. --variant NAME reads the model's
 qual.NAME.json, which qualifies another checkpoint or serving configuration, in place of
-qual.json. --launch runs this chopinfer's serve with the flags after it for the run, logging to
+qual.json. --variant-dir DIR (default $CHOPINFER_QUAL_VARIANTS) reads a variant the tree does not
+declare from DIR/<model>/NAME.json, an external variant beside its lock. --launch runs this chopinfer's serve with the flags after it for the run, logging to
 REPORT/server.log, and stops it after. --server-log LOG also binds the server to its startup log:
 LOG must be the log of the process listening at the URL, naming the checkpoint and startup nonce
 its /health reports. A check takes its declared arguments, then those its cohort adds: the suite's
@@ -59,6 +62,8 @@ struct Options {
     model: Option<PathBuf>,
     package: Option<PathBuf>,
     variant: Option<String>,
+    /// The external variant root (`--variant-dir`).
+    variant_dir: Option<PathBuf>,
     url: Option<String>,
     served_model: Option<String>,
     suite: Option<String>,
@@ -77,11 +82,18 @@ struct Options {
 
 fn parse(command: &str, arguments: &[String]) -> Result<Options, Refusal> {
     let allowed: &[&str] = match command {
-        "list" => &["--model", "--package", "--variant", "--json"],
+        "list" => &[
+            "--model",
+            "--package",
+            "--variant",
+            "--variant-dir",
+            "--json",
+        ],
         "run" => &[
             "--model",
             "--package",
             "--variant",
+            "--variant-dir",
             "--url",
             "--served-model",
             "--suite",
@@ -98,6 +110,7 @@ fn parse(command: &str, arguments: &[String]) -> Result<Options, Refusal> {
             "--model",
             "--package",
             "--variant",
+            "--variant-dir",
             "--references",
             "--json",
         ],
@@ -106,6 +119,7 @@ fn parse(command: &str, arguments: &[String]) -> Result<Options, Refusal> {
             "--model",
             "--package",
             "--variant",
+            "--variant-dir",
             "--url",
             "--served-model",
             "--references",
@@ -143,6 +157,9 @@ fn parse(command: &str, arguments: &[String]) -> Result<Options, Refusal> {
             "--model" if options.model.is_none() => options.model = Some(value.into()),
             "--package" if options.package.is_none() => options.package = Some(value.into()),
             "--variant" if options.variant.is_none() => options.variant = Some(value),
+            "--variant-dir" if options.variant_dir.is_none() => {
+                options.variant_dir = Some(value.into())
+            }
             "--url" if options.url.is_none() => options.url = Some(value),
             "--served-model" if options.served_model.is_none() => {
                 options.served_model = Some(value)
@@ -195,6 +212,9 @@ fn parse(command: &str, arguments: &[String]) -> Result<Options, Refusal> {
         }
         _ => {}
     }
+    if options.variant_dir.is_some() && options.variant.is_none() {
+        return Err(usage("--variant-dir selects an external --variant NAME"));
+    }
     if command == "run" && options.url.is_some() == options.launch.is_some() {
         return Err(usage("eval run requires one of --url URL and --launch"));
     }
@@ -224,8 +244,16 @@ fn load(options: &Options, host: &Host) -> Result<Loaded, Refusal> {
         }
         (None, None) => unreachable!("parse requires --model or --package"),
     };
-    declaration::load_variant(&model, options.variant.as_deref())
+    let variants = variant_root(options.variant_dir.as_deref());
+    declaration::load_variant_from(&model, options.variant.as_deref(), variants.as_deref())
         .map_err(|error| Refusal(Exit::Usage, error.to_string()))
+}
+
+/// The external variant root: `--variant-dir`, else `$CHOPINFER_QUAL_VARIANTS`.
+fn variant_root(given: Option<&Path>) -> Option<PathBuf> {
+    given
+        .map(Path::to_path_buf)
+        .or_else(|| environment(declaration::VARIANTS_ENV).map(PathBuf::from))
 }
 
 fn environment(name: &str) -> Option<String> {
@@ -287,13 +315,14 @@ pub fn run_hosted(tool: &Tool, host: &Host, arguments: &[String]) -> Exit {
 /// (`--root ROOT`), printed as validated; exit 2 with the refusal.
 fn declaration_command(arguments: &[String], host: &Host) -> Exit {
     use std::io::Read as _;
-    let mut options: [Option<&String>; 3] = [None; 3];
+    let mut options: [Option<&String>; 4] = [None; 4];
     let mut words = arguments.iter();
     while let Some(word) = words.next() {
         let slot = match word.as_str() {
             "--model" => 0,
             "--variant" => 1,
             "--root" => 2,
+            "--variant-dir" => 3,
             _ => {
                 eprintln!("eval: eval declaration does not take {word}\n{USAGE}");
                 return Exit::Usage;
@@ -308,14 +337,21 @@ fn declaration_command(arguments: &[String], host: &Host) -> Exit {
         }
     }
     let value = match options {
-        [Some(model), variant, None] => locate::model(Path::new(model), host)
-            .map_err(|error| error.to_string())
-            .and_then(|model| {
-                declaration::load_variant(&model, variant.map(String::as_str))
+        [Some(model), variant, None, variants] if variant.is_some() || variants.is_none() => {
+            let variants = variant_root(variants.map(Path::new));
+            locate::model(Path::new(model), host)
+                .map_err(|error| error.to_string())
+                .and_then(|model| {
+                    declaration::load_variant_from(
+                        &model,
+                        variant.map(String::as_str),
+                        variants.as_deref(),
+                    )
                     .map_err(|error| error.to_string())
-            })
-            .map(|loaded| loaded.value),
-        [None, None, Some(root)] => {
+                })
+                .map(|loaded| loaded.value)
+        }
+        [None, None, Some(root), None] => {
             let mut bytes = Vec::new();
             std::io::stdin()
                 .read_to_end(&mut bytes)
@@ -332,7 +368,7 @@ fn declaration_command(arguments: &[String], host: &Host) -> Exit {
         }
         _ => {
             eprintln!(
-                "eval: eval declaration takes --model DIR [--variant NAME] or --root ROOT\n{USAGE}"
+                "eval: eval declaration takes --model DIR [--variant NAME [--variant-dir DIR]] or --root ROOT\n{USAGE}"
             );
             return Exit::Usage;
         }
@@ -644,6 +680,8 @@ fn run_checks(tool: &Tool, host: &Host, options: &Options) -> Result<Exit, Refus
         tool: tool.clone(),
         model: loaded.declaration.model.clone(),
         declaration_sha256: loaded.sha256.clone(),
+        variant_source: crate::lock::variant_source(&loaded)
+            .map_err(|error| Refusal(Exit::Usage, error))?,
         suite,
         at,
         server: json!({"url": url}),

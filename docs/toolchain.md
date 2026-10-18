@@ -29,7 +29,7 @@ cp local.env.example local.env
 | `CHOPINFER_MIMO_DFLASH_DIR` | Directory holding MiMo's DFlash `mask_embedding.pt`; defaults to the tokenizer or checkpoint directory's `dflash/`. `ci/cpu.sh` needs the file |
 | `CHOPINFER_QWEN38_CHECKPOINT` | `Qwen/Qwen3.8-Flash-Next-FP8` snapshot, revision `236dfdf285828023ca3bcd3f37366c58a3469b13` |
 | `CHOPINFER_QWEN38_TOKENIZER_DIR` | Qwen tokenizer files; defaults to `CHOPINFER_QWEN38_CHECKPOINT`. `ci/cpu.sh` needs one of them |
-| `CHOPINFER_GLM5NEXT_CHECKPOINT` | `zai-org/GLM-5.3-Flash` checkpoint, revision `eb9eb208eb0d988989d07a6a12d0fdeb5f52574a`; the NVFP4 exports use `CHOPINFER_GLM5NEXT_NVFP4_CHECKPOINT` and `CHOPINFER_GLM5NEXT_NVIDIA_NVFP4_CHECKPOINT` ([checkpoints](deploy-glm5next.md#checkpoints)) |
+| `CHOPINFER_GLM5NEXT_CHECKPOINT` | `zai-org/GLM-5.3-Flash` checkpoint, revision `eb9eb208eb0d988989d07a6a12d0fdeb5f52574a`; `CHOPINFER_GLM5NEXT_EXTRA_CHECKPOINTS` names further checkpoint directories of any layout (`:` separated), each checked against its own layout ([checkpoints](deploy-glm5next.md#checkpoints)) |
 | `CHOPINFER_QWEN38_LONG_REFERENCE` | Directory holding the pinned 128K `reference.json` and `reference.workload.json` of Qwen's `long_context_128k` check ([model-qwen38.md](model-qwen38.md)). `ci/cpu.sh` needs it |
 | `CHOPINFER_QWEN38_LAYER_REFERENCE` | Directory of the reference runner's pinned Qwen layer taps (`run.json`, `f32.json`, `bf16.json` and `taps/`) that the layers check compares with. `ci/cpu.sh` needs it |
 | `CHOPINFER_GLM5NEXT_LAYER_REFERENCE` | The same for GLM: two pinned runner runs of one workload ([models/glm5next/README.md](../models/glm5next/README.md)). `ci/cpu.sh` needs it |

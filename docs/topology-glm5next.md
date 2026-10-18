@@ -7,8 +7,8 @@ context-parallel groups, package memory, IDs and device selection of the one
 topology, `glm5next-tp4`.
 
 **Served, qualified and released** ([status](model-glm5next.md)): every stage
-below lowers for all three checkpoint layouts and runs on four GPUs, and
-create serves context-parallel sizes 1, 2 and 4.
+below lowers for every admitted checkpoint layout and runs on four GPUs,
+and create serves context-parallel sizes 1, 2 and 4.
 
 ## Per-rank shapes
 
@@ -166,7 +166,7 @@ then its down projection, and each chain ends at a consumer that reads only
 the live rows by the device count (a copy, a row kernel, an engine, or the
 rounding after the all-reduce) or at the logits exchange, whose inactive rows
 the sink never reads. The
-NVFP4 layouts lower the same stages: the instance checks its acquired image
+other layouts lower the same stages: the instance checks its acquired image
 against the package's layout and binds the NVFP4, MXFP8 and BF16 expert and
 projection formats that layout stores (`bundle/src/lower/formats.rs`).
 
@@ -208,9 +208,11 @@ reserve (`compiler/src/package.rs`):
 
 | Checkpoint | Weights per GPU (with MTP and vision) | Minimum device memory |
 |---|---:|---:|
-| FP8 (`fp8-block128`) | 83,370,801,144 B (77.65 GiB) | 84,444,542,968 B |
-| local-inference-lab NVFP4 (`nvfp4-routed`) | 50,875,133,880 B (47.38 GiB) | 51,948,875,704 B |
-| NVIDIA NVFP4 (`nvfp4-dense-routed`) | 52,469,325,024 B (48.87 GiB) | the weights plus 1 GiB |
+| FP8 (`attn-fp8.dense-fp8.experts-fp8.mtp-fp8.conv-bf16.hc-f32`) | 83,370,801,144 B (77.65 GiB) | 84,444,542,968 B |
+
+A checkpoint of another layout declares its own weights per GPU plus the
+same reserve; a layout with NVFP4 weights needs less
+(`compiler/src/package.rs` checks the representative layouts).
 
 The planned KV pool is in
 [deploy](deploy-glm5next.md#kv-formats-and-planned-capacity) and the
@@ -218,9 +220,11 @@ measured one on the [model page](model-glm5next.md#context-parallelism).
 
 ## IDs
 
-One package, `glm5next.v1`, serves one topology, `glm5next-tp4`, from each
-of the three checkpoint layouts; the package records the layout it was prepared for as the
-model option `checkpoint.quantization_layout`. Preparation refuses any other
+One package, `glm5next.v1`, serves one topology, `glm5next-tp4`, from every
+admitted checkpoint layout
+([checkpoint layouts](../models/glm5next/README.md#checkpoint-layouts));
+the package records the layout it was prepared for as the model option
+`checkpoint.quantization_layout`. Preparation refuses any other
 rank count ("unsupported tensor parallel size N: glm5next serves [4]"). At
 TP2 the FP8 weights would take 153.69 GiB per GPU, and TP2 and TP8 serving
 are out of scope (`contract/src/fit.rs`).

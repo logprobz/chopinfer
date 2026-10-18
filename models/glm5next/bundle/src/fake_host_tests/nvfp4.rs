@@ -1,20 +1,23 @@
-//! Fake-host tests of the NVFP4 exports' packages: create acquires the
+//! Fake-host tests of the packages of the mixed representative layouts,
+//! each from a synthetic config of its class mix: create acquires the
 //! layout's rank images (checked against `direct::checkpoint_layout`), its
 //! precision component and the format cubins, and decode and verify steps
 //! launch each chained projection and lowered projection in the layout's
 //! format. On the MTP KV format, a prompt chunk and a drafted step launch
-//! the MTP drafter's experts in the layout's MTP format (MXFP8 for
-//! local-inference-lab, BF16 for NVIDIA). Every journal is pinned per
-//! export.
+//! the MTP drafter's experts in the layout's MTP format (MXFP8, BF16 or
+//! block FP8). Every journal is pinned per layout.
 
 use super::*;
 use crate::config::tests::options_of;
-use model_glm5next_contract::quantization::{Layout, NVFP4_DENSE_ROUTED, NVFP4_ROUTED};
+use model_glm5next_contract::quantization::{
+    Encoding, FP8_NVFP4_ROUTED, Layout, NVFP4_DENSE_ROUTED, NVFP4_ROUTED,
+    test_support::{config_of, extra_checkpoints},
+};
 
-/// One export's package and its pinned journals.
-pub(super) struct Export {
+/// One mixed layout's package and its pinned journals.
+pub(super) struct Mix {
     pub(super) layout: &'static Layout,
-    config: &'static [u8],
+    config: fn() -> Vec<u8>,
     /// Symbols of the chained engine and projections that only this
     /// layout's steps launch.
     decode_symbols: &'static [&'static str],
@@ -34,10 +37,10 @@ pub(super) struct Export {
     drafted: (usize, u64),
 }
 
-/// Each export's journals; create, decode, verify and drafted re-pinned when the shared
+/// Each mix's journals; create, decode, verify and drafted re-pinned when the shared
 /// gate/up overlap became the default (the side streams and events; the
 /// shared gate/ups on them, proven the one-stream program's by
-/// `fake_host_tests::shared_overlap::nvfp4_exports_overlap_alike`). Every
+/// `fake_host_tests::shared_overlap::mixed_layouts_overlap_alike`). Every
 /// journal re-pinned when the strip-chain and prefill warp-tile entries took
 /// the kernels that fence their ring reads before release (their symbols,
 /// and their resolve order in create).
@@ -59,9 +62,9 @@ pub(super) struct Export {
 /// Create re-pinned when the KDA state pools moved before the serving KV
 /// pool: the one `serving kv` line follows their allocations and zeroes,
 /// every other line and handle as before.
-pub(super) const LOCAL_INFERENCE_LAB: Export = Export {
+pub(super) const ROUTED: Mix = Mix {
     layout: &NVFP4_ROUTED,
-    config: include_bytes!("../../../contract/fixtures/nvfp4-config.json"),
+    config: || config_of(&NVFP4_ROUTED),
     decode_symbols: &[
         "chop_moe_chain_gateup_nvfp4_e288k8_n1024_k4096_r16",
         "chop_moe_chain_down_nvfp4_e288k8_n4096_k512_r16",
@@ -79,9 +82,9 @@ pub(super) const LOCAL_INFERENCE_LAB: Export = Export {
     drafted: (4720, 0x0d5a83a35fff3307),
 };
 
-pub(super) const NVIDIA: Export = Export {
+pub(super) const DENSE_ROUTED: Mix = Mix {
     layout: &NVFP4_DENSE_ROUTED,
-    config: include_bytes!("../../../contract/fixtures/nvidia-nvfp4-config.json"),
+    config: || config_of(&NVFP4_DENSE_ROUTED),
     decode_symbols: &[
         "chop_moe_chain_gateup_nvfp4_e288k8_n1024_k4096_r16",
         "chop_moe_chain_down_nvfp4_e288k8_n4096_k512_r16",
@@ -100,9 +103,40 @@ pub(super) const NVIDIA: Export = Export {
     drafted: (4720, 0x5ea8a1980cddb9d7),
 };
 
-impl Export {
+/// Block FP8 everywhere but the main layers' routed experts, which are
+/// NVFP4, from a synthetic config of that mix: its dense MLPs and shared
+/// experts run the block-FP8 chained projections beside the NVFP4 experts.
+pub(super) const FP8_ROUTED: Mix = Mix {
+    layout: &FP8_NVFP4_ROUTED,
+    config: || config_of(&FP8_NVFP4_ROUTED),
+    decode_symbols: &[
+        "chop_moe_chain_gateup_nvfp4_e288k8_n1024_k4096_r16",
+        "chop_moe_chain_down_nvfp4_e288k8_n4096_k512_r16",
+        "chop_moe_chain_gateup_fp8block_dense_n6144_k4096_r16",
+        "chop_moe_chain_gateup_fp8block_dense_n1024_k4096_r16",
+    ],
+    drafter_symbols: &[
+        "chop_moe_chain_gateup_fp8block_e288k8_n1024_k4096_r16",
+        "chop_moe_chain_down_fp8block_e288k8_n4096_k512_r16",
+    ],
+    create: (3486, 0xaf32b4511f56cf03),
+    decode: (4296, 0xdf597b4e6dfdddf0),
+    verify: (4296, 0xcc5890568c3a2d2c),
+    prefill: (6192, 0x15e96b59198c7876),
+    drafted: (4720, 0x69d6298f9d15f8ff),
+};
+
+impl Mix {
     pub(super) fn host(&self) -> Rc<Host> {
-        FakeHost::with_layout((3, 32), self.layout, self.config)
+        FakeHost::with_layout((3, 32), self.layout, &(self.config)())
+    }
+
+    /// Whether the layout stores some class in block FP8, whose chained
+    /// projections and projections its steps then launch.
+    fn stores_fp8(&self) -> bool {
+        let fp8 = Encoding::Fp8Block128;
+        let l = self.layout;
+        [l.projections, l.dense, l.routed, l.mtp_routed].contains(&fp8)
     }
 
     /// Create from a record naming the layout and the precision component.
@@ -165,10 +199,12 @@ impl Export {
                 self.layout.id
             );
         }
-        // No block-FP8 chained projection or projection runs.
-        assert!(
-            !lines.iter().any(|line| line.starts_with("launch ")
+        // Block-FP8 chained projections or projections run only for a
+        // layout that stores a class in block FP8.
+        assert_eq!(
+            lines.iter().any(|line| line.starts_with("launch ")
                 && (line.contains("_fp8block_") || line.contains("chop_proj_fp8"))),
+            self.stores_fp8(),
             "{}",
             self.layout.id
         );
@@ -196,7 +232,7 @@ impl Export {
     pub(super) fn mtp_host(&self) -> Rc<Host> {
         let format = Shape::TP4.kv_formats()[1];
         assert!(model_glm5next_contract::contract::has_mtp_layer(&format));
-        FakeHost::with_layout_in((3, 32), self.layout, self.config, format)
+        FakeHost::with_layout_in((3, 32), self.layout, &(self.config)(), format)
     }
 
     /// [`Self::drafts`] on `host`.
@@ -243,60 +279,77 @@ impl Export {
 }
 
 #[test]
-fn the_local_inference_lab_package_creates_and_steps() {
-    LOCAL_INFERENCE_LAB.run();
+fn the_nvfp4_routed_package_creates_and_steps() {
+    ROUTED.run();
 }
 
 #[test]
-fn the_nvidia_package_creates_and_steps() {
-    NVIDIA.run();
+fn the_nvfp4_dense_routed_package_creates_and_steps() {
+    DENSE_ROUTED.run();
 }
 
-/// Each configured export's real plans (every rank planned from its
-/// headers and prepared as the host does) create, step and draft on the
-/// fake host with the pinned journals; skipped when its checkpoint variable
-/// is unset.
 #[test]
-fn the_real_exports_create_and_step_from_their_plans() {
-    for (export, variable) in [
-        (&LOCAL_INFERENCE_LAB, "CHOPINFER_GLM5NEXT_NVFP4_CHECKPOINT"),
-        (&NVIDIA, "CHOPINFER_GLM5NEXT_NVIDIA_NVFP4_CHECKPOINT"),
-    ] {
-        let Some(planned) = super::host_plan::real_planned(variable) else {
-            eprintln!("{variable} unset: skipped");
+fn the_block_fp8_and_nvfp4_package_creates_and_steps() {
+    FP8_ROUTED.run();
+}
+
+#[test]
+fn the_block_fp8_and_nvfp4_drafter_runs_its_fp8_experts() {
+    FP8_ROUTED.drafts();
+}
+
+/// Each extra checkpoint of a mixed layout pinned here
+/// (`CHOPINFER_GLM5NEXT_EXTRA_CHECKPOINTS`): its real plans (every rank
+/// planned from its headers and prepared as the host does) create, step
+/// and draft on the fake host with that layout's pinned journals. A
+/// checkpoint of another layout is skipped.
+#[test]
+fn extra_checkpoints_create_and_step_from_their_plans() {
+    for root in extra_checkpoints() {
+        let layout = super::host_plan::real_layout(&root);
+        let Some(mix) = [&ROUTED, &DENSE_ROUTED, &FP8_ROUTED]
+            .into_iter()
+            .find(|mix| mix.layout == layout)
+        else {
+            eprintln!(
+                "{}: no journals pinned for {}: skipped",
+                root.display(),
+                layout.id
+            );
             continue;
         };
+        let planned = super::host_plan::real_planned(&root);
         for (host, run) in [
-            (export.host(), Export::run_on as fn(&Export, &Rc<Host>)),
-            (export.mtp_host(), Export::drafts_on),
+            (mix.host(), Mix::run_on as fn(&Mix, &Rc<Host>)),
+            (mix.mtp_host(), Mix::drafts_on),
         ] {
             let mut host = Rc::into_inner(host).expect("a new host").into_inner();
             host.planned = planned.clone();
-            run(export, &Rc::new(Backend::new(host)));
+            run(mix, &Rc::new(Backend::new(host)));
         }
     }
 }
 
 #[test]
-fn the_local_inference_lab_drafter_runs_its_mxfp8_experts() {
-    LOCAL_INFERENCE_LAB.drafts();
+fn the_nvfp4_routed_drafter_runs_its_mxfp8_experts() {
+    ROUTED.drafts();
 }
 
 #[test]
-fn the_nvidia_drafter_runs_its_bf16_experts() {
-    NVIDIA.drafts();
+fn the_nvfp4_dense_routed_drafter_runs_its_bf16_experts() {
+    DENSE_ROUTED.drafts();
 }
 
-/// An NVFP4 package's rank images are refused under another layout's
+/// A mixed package's rank images are refused under another layout's
 /// model options: create checks each rank index against that layout's
 /// plan, before it reads the precision component.
 #[test]
 fn a_rank_image_of_another_layout_is_refused() {
-    let host = LOCAL_INFERENCE_LAB.host();
+    let host = ROUTED.host();
     let error = api()
         .create(
             HostServicesTableV1::new(Rc::clone(&host)),
-            &record(DECODE_BATCH, &options_of(NVIDIA.layout.id, 2048)),
+            &record(DECODE_BATCH, &options_of(DENSE_ROUTED.layout.id, 2048)),
         )
         .err()
         .unwrap();

@@ -5,6 +5,7 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -717,48 +718,62 @@ class Reports(unittest.TestCase):
         self.assertEqual(self.models(report), MODELS)
 
     def test_a_configuration_gate_is_selected_like_a_base_gate(self):
-        """glm5next's nvfp4 configuration (qual.json) is a gate of its own:
-        its readers and change classes select its checks, under --model
-        glm5next.nvfp4. Every declared configuration is a gate."""
+        """glm5next's k5 configuration (qual.json) is a gate of its own: its
+        readers and change classes select its checks, under --model
+        glm5next.k5. Every declared configuration is a gate."""
         raw = json.loads((ROOT / 'models/glm5next/qual.json').read_text())
         for name in ('glm5next', 'qwen38', 'mimo26'):
             declared = json.loads((ROOT / f'models/{name}/qual.json').read_text())['configurations']
             self.assertEqual(set(self.catalog.models[name]['variants']), set(declared))
-        self.assertIn('nvfp4', self.catalog.models['glm5next']['variants'])
-        report = self.report('fixtures/glm5next/nvfp4-teacher-reference.json')
-        self.assertIn('glm5next.nvfp4:gate:teacher', self.ids(report))
-        self.assertNotIn('glm5next:gate:teacher', self.ids(report))
-        plan = next(plan for plan in report['release_plans'] if plan['model'] == 'glm5next.nvfp4')
-        self.assertEqual(plan['command'][plan['command'].index('--model') + 1], 'glm5next.nvfp4')
+        self.assertIn('k5', self.catalog.models['glm5next']['variants'])
+        report = self.report('models/glm5next/compiler/src/frontend.rs')
+        self.assertIn('glm5next.k5:gate:teacher', self.ids(report))
+        plan = next(plan for plan in report['release_plans'] if plan['model'] == 'glm5next.k5')
+        self.assertEqual(plan['command'][plan['command'].index('--model') + 1], 'glm5next.k5')
         self.assertIn('teacher', plan['selected_checks'])
-        frontend = self.ids(self.report('models/glm5next/compiler/src/frontend.rs'))
-        _, classes = validation.configuration_gate(raw, 'nvfp4')
+        frontend = self.ids(report)
+        _, classes = validation.configuration_gate(raw, 'k5')
         self.assertTrue(classes['frontend'])
-        self.assertTrue({f'glm5next.nvfp4:gate:{check}' for check in classes['frontend']} <= frontend)
+        self.assertTrue({f'glm5next.k5:gate:{check}' for check in classes['frontend']} <= frontend)
         self.assertTrue({'glm5next:gate:teacher', 'glm5next:gate:api'} <= frontend)
-        self.assertNotIn('glm5next.nvfp4:gate:long_context', self.ids(self.report('unknown-input')))
+        self.assertNotIn('glm5next.k5:gate:long_context', self.ids(self.report('unknown-input')))
+
+    def test_an_external_variant_is_never_a_gate(self):
+        """An external variant under CHOPINFER_QUAL_VARIANTS (or --variant-dir)
+        qualifies another checkpoint outside the tree: the catalog never
+        reads its root, so no change selects it."""
+        sys.path.insert(0, str(ROOT / 'tools/qual'))
+        from test_variant import synthetic_variant
+        with tempfile.TemporaryDirectory() as temporary:
+            model, _ = synthetic_variant(Path(temporary), adopt=False)
+            with patch.dict(os.environ, {'CHOPINFER_QUAL_VARIANTS': temporary}):
+                catalog = validation.Catalog(ROOT, self.metadata)
+                report = validation.build_report(self.metadata, ['unknown-input'], graph=self.graph,
+                                                 catalog=catalog)
+        self.assertEqual(catalog.models[model]['variants'], self.catalog.models[model]['variants'])
+        self.assertNotIn('requant', catalog.models[model]['variants'])
+        self.assertFalse([item for item in self.ids(report) if item.startswith(f'{model}.requant:')])
 
     def test_a_variant_release_run_answers_the_variant_obligations(self):
-        """A release run of glm5next.nvfp4 (its summary names model glm5next
+        """A release run of glm5next.k5 (its summary names model glm5next
         and the variant in its stored policy) is matched to the
-        glm5next.nvfp4:gate obligations it ran or recorded as not run, never
+        glm5next.k5:gate obligations it ran or recorded as not run, never
         to the base gate's."""
-        config, _ = validation.configuration_gate(json.loads((ROOT / 'models/glm5next/qual.json').read_text()), 'nvfp4')
+        config, _ = validation.configuration_gate(json.loads((ROOT / 'models/glm5next/qual.json').read_text()), 'k5')
         with tempfile.TemporaryDirectory() as temporary:
             summary = Path(temporary) / 'summary.json'
             summary.write_text(json.dumps({
                 'schema': 'chopinfer-release-receipt/v1', 'model': 'glm5next', 'profile': 'full',
                 'config': config,
                 'config_sha256': hashlib.sha256((json.dumps(config, indent=2) + '\n').encode()).hexdigest(),
-                'checks': [{'id': 'teacher', 'passed': False}], 'not_run': ['api']}))
-            report = self.report('fixtures/glm5next/nvfp4-teacher-reference.json',
-                                 'models/glm5next/compiler/src/frontend.rs', context={}, receipts=[summary])
+                'checks': [{'id': 'teacher', 'passed': False}], 'not_run': ['chat']}))
+            report = self.report('models/glm5next/compiler/src/frontend.rs', context={}, receipts=[summary])
         claims = {row['claim'] for row in report['supplied_receipts']}
-        self.assertEqual(claims, {'glm5next.nvfp4:gate:teacher', 'glm5next.nvfp4:gate:api'})
-        teacher = self.item(report, 'glm5next.nvfp4:gate:teacher')['evidence']
+        self.assertEqual(claims, {'glm5next.k5:gate:teacher', 'glm5next.k5:gate:chat'})
+        teacher = self.item(report, 'glm5next.k5:gate:teacher')['evidence']
         self.assertEqual((teacher['execution'], teacher['result']), ('executed', 'failed'))
         self.assertFalse(teacher['satisfied'])
-        self.assertEqual(self.item(report, 'glm5next.nvfp4:gate:api')['evidence']['execution'], 'not_run')
+        self.assertEqual(self.item(report, 'glm5next.k5:gate:chat')['evidence']['execution'], 'not_run')
         self.assertNotEqual(self.item(report, 'glm5next:gate:teacher')['evidence'].get('result'), 'failed')
 
     def test_missing_change_class_mapping_keeps_every_gate_check(self):

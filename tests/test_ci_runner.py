@@ -287,10 +287,12 @@ class RequiredCoverage(unittest.TestCase):
             "    @unittest.skip('needs CHOPINFER_GLM5NEXT_CHECKPOINT (tokenizer)')\n"
             "    def test_b(self):\n        pass\n\n"
             "    @unittest.skip('the CUDA round trip runs with CHOPINFER_LATENT_KV_CUDA=1')\n"
-            "    def test_c(self):\n        pass\n")
-        # unittest's "Ran 3 tests" includes the two skipped cases.
-        self.assertEqual((result.status, result.tests, result.skipped), ("ok", 1, 2))
-        self.assertIn("reference: 1 tests executed, 2 skipped", log)
+            "    def test_c(self):\n        pass\n\n"
+            "    @unittest.skip('needs an NVFP4 checkpoint in CHOPINFER_GLM5NEXT_EXTRA_CHECKPOINTS')\n"
+            "    def test_d(self):\n        pass\n")
+        # unittest's "Ran 4 tests" includes the three skipped cases.
+        self.assertEqual((result.status, result.tests, result.skipped), ("ok", 1, 3))
+        self.assertIn("reference: 1 tests executed, 3 skipped", log)
 
     def test_a_suite_of_allowed_skips_executes_nothing_and_fails(self):
         result, log = self.run_module("    @unittest.skip('needs CHOPINFER_REVIEW_CHECKPOINT')\n"
@@ -751,7 +753,8 @@ class Inventory(unittest.TestCase):
             "test_kinds", "test_limits",
             "test_logprobs_parity", "test_multimodal", "test_needle", "test_prefix_exact", "test_qwen_exact_pin",
             "test_qwen_teacher_gate", "test_reference_binding", "test_release_preview", "test_router_bias",
-            "test_seeded_equality", "test_soak", "test_spec_metrics", "test_teacher", "test_verify_exact",
+            "test_seeded_equality", "test_soak", "test_spec_metrics", "test_teacher", "test_variant",
+            "test_verify_exact",
         })
         self.assertTrue(run_once < set(qualification.modules(ROOT)))
 

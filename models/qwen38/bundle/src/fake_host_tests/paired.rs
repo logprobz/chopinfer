@@ -7,13 +7,14 @@
 //! pair, and the padded HC mix.
 use super::*;
 
-/// A host of `shape` serving `served` sequences with local-lab's MXFP8 and
-/// NVFP4 package, whose rank views store its F32 norm weights.
+/// A host of `shape` serving `served` sequences with the MXFP8-dense
+/// layout's MXFP8 and NVFP4 package, whose rank views store its F32 norm
+/// weights.
 fn f32_host(shape: Shape, served: u32) -> Rc<FakeHost> {
     let host = Rc::new(FakeHost::at(shape));
     host.served.set(Some(served));
     *host.precision.borrow_mut() = Some(super::precision::document_for(shape, true, true, false));
-    *host.f32_norms.borrow_mut() = super::norms::local_lab_norms(shape);
+    *host.f32_norms.borrow_mut() = super::norms::mxfp8_dense_norms(shape);
     host
 }
 
@@ -67,7 +68,7 @@ fn prefill_and_decode(
     }
 }
 
-/// F32 norm-weight collectives of local-lab's TP4 package at 100 served
+/// F32 norm-weight collectives of the MXFP8-dense TP4 package at 100 served
 /// sequences: a short prompt (the one-shot all-reduce), a 40-row one (the
 /// phased pair), a one-row decode (the LL decode entry) and a short
 /// prefill; then, on a second instance, 40 live decode items (the wide

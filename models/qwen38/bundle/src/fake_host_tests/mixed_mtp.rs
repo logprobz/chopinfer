@@ -1,7 +1,7 @@
 //! Fake host coverage of the MTP drafter through a mixed component's
-//! recorded MTP layer: the NVIDIA shape (FP8 block MTP experts on the
-//! registered compositions) and the local-lab shape (NVFP4 MTP experts on
-//! the main layers' generated entries), at TP2 and TP4.
+//! recorded MTP layer: the NVFP4-routed layout (FP8 block MTP experts on
+//! the registered compositions) and the MXFP8-dense layout (NVFP4 MTP
+//! experts on the main layers' generated entries), at TP2 and TP4.
 use super::precision::{document_bound, published, selection};
 use super::speculation::{
     assert_drafter_rows, batch, committed_state, drafted, drafter_host_at, execute, kept, plain,
@@ -54,7 +54,7 @@ fn drafter_records(
     records
 }
 
-/// A component of one export shape: NVFP4 experts and the NVFP4 lookup,
+/// A component of one mixed layout: NVFP4 experts and the NVFP4 lookup,
 /// MXFP8 dense ports when `mx`, and the MTP layer recorded with `mtp`
 /// experts (or not at all).
 pub(super) fn component(shape: Shape, mx: bool, mtp: Option<WeightFormat>) -> PrecisionDocument {
@@ -69,15 +69,15 @@ pub(super) fn component(shape: Shape, mx: bool, mtp: Option<WeightFormat>) -> Pr
     document
 }
 
-/// The NVIDIA export shape (BF16 dense, FP8 block MTP experts) and the
-/// local-lab shape (MXFP8 dense, NVFP4 MTP experts).
-const EXPORTS: [(&str, bool, WeightFormat); 2] = [
+/// The NVFP4-routed layout (BF16 dense, FP8 block MTP experts) and the
+/// MXFP8-dense layout (MXFP8 dense, NVFP4 MTP experts).
+const LAYOUTS: [(&str, bool, WeightFormat); 2] = [
     (
-        "NVIDIA",
+        "nvfp4-routed-fp8-mtp",
         false,
         WeightFormat::Fp8Block128x128(kernel_core::contract::ScaleMode::ExactF32),
     ),
-    ("local-lab", true, WeightFormat::Nvfp4),
+    ("mxfp8-dense-nvfp4", true, WeightFormat::Nvfp4),
 ];
 
 fn mixed_drafter_host(shape: Shape, document: PrecisionDocument, fp8_kv: bool) -> Rc<FakeHost> {
@@ -94,7 +94,7 @@ fn create_mixed_drafter(host: &Rc<FakeHost>) -> BundleInstanceV1 {
 }
 
 /// Every registered FP8 fragment expert entry of `shape`: the fixed
-/// drafter program's, and the NVIDIA shape's recorded MTP experts'.
+/// drafter program's, and the NVFP4-routed layout's recorded MTP experts'.
 fn fragment_experts(shape: Shape) -> BTreeSet<String> {
     let mut symbols = BTreeSet::new();
     for usage in ports::uses().unwrap() {
@@ -109,7 +109,7 @@ fn fragment_experts(shape: Shape) -> BTreeSet<String> {
     symbols
 }
 
-/// Both export shapes at TP2 and TP4, with BF16 and FP8 KV, prefill, draft,
+/// Both layouts at TP2 and TP4, with BF16 and FP8 KV, prefill, draft,
 /// verify, accept all drafts, reject some, cancel a drafted step and
 /// decode: drafts follow the model, the committed state is the accepted
 /// tokens', the MTP experts run their recorded entries and every resource
@@ -117,9 +117,9 @@ fn fragment_experts(shape: Shape) -> BTreeSet<String> {
 #[test]
 fn recorded_mtp_layers_draft_verify_accept_reject_and_cancel() {
     for shape in [Shape::TP4, Shape::TP2] {
-        for (export, mx, experts) in EXPORTS {
+        for (layout, mx, experts) in LAYOUTS {
             for fp8_kv in [false, true] {
-                let label = format!("{export} TP{} fp8_kv={fp8_kv}", shape.ranks());
+                let label = format!("{layout} TP{} fp8_kv={fp8_kv}", shape.ranks());
                 let document = component(shape, mx, Some(experts));
                 let fragments = fragment_experts(shape);
                 let host = mixed_drafter_host(shape, document, fp8_kv);
@@ -136,7 +136,7 @@ fn recorded_mtp_layers_draft_verify_accept_reject_and_cancel() {
                 );
                 assert_eq!(sink.draft_tokens(), [(10, truths(6..9))], "{label}");
                 // Only the MTP layer can launch a fragment expert entry: the
-                // NVIDIA shape records them, the local-lab shape runs the
+                // NVFP4-routed layout records them, the MXFP8-dense layout runs the
                 // main layers' NVFP4 entries instead.
                 let names = launched(&host, before);
                 assert_eq!(
@@ -195,15 +195,15 @@ fn recorded_mtp_layers_draft_verify_accept_reject_and_cancel() {
     }
 }
 
-/// The local-lab export shape with its F32 norm weights: MXFP8 dense,
+/// The MXFP8-dense layout with its F32 norm weights: MXFP8 dense,
 /// NVFP4 experts and lookup, the MTP layer recorded on the main layers'
 /// NVFP4 entries, and F32 main and PLE norms, with the MTP norms BF16 as
-/// local-lab stores them or with F32 MTP hyper-connection norms. The
+/// the layout stores them or with F32 MTP hyper-connection norms. The
 /// drafter binds its projections through the recorded precision and its
 /// norms by their stored dtypes: the MTP layer's HC norm row reads BF16 or
 /// F32 accordingly, drafts follow the model and its experts run NVFP4.
 #[test]
-fn local_lab_shaped_drafters_bind_recorded_projections_and_stored_norms() {
+fn mxfp8_dense_drafters_bind_recorded_projections_and_stored_norms() {
     let mtp_norms = [
         "mtp.layers.0.attn_hyper_connection.hc_norm.weight",
         "mtp.hyper_connection_mixer.hc_norm.weight",
@@ -217,7 +217,7 @@ fn local_lab_shaped_drafters_bind_recorded_projections_and_stored_norms() {
                 component(shape, true, Some(WeightFormat::Nvfp4)),
                 false,
             );
-            let mut norms = super::norms::local_lab_norms(shape);
+            let mut norms = super::norms::mxfp8_dense_norms(shape);
             if f32_mtp {
                 norms.extend(mtp_norms.iter().map(|n| n.to_string()));
             }
@@ -397,7 +397,7 @@ fn unrecorded_partial_and_altered_mtp_layers_refuse_the_drafter() {
 }
 
 /// Startup warmup waves of 1, 2, 4, ... sequences up to the package's
-/// served count, as `serve` runs them, for both export shapes at TP2 and
+/// served count, as `serve` runs them, for both layouts at TP2 and
 /// TP4: each wave prefills and decodes every sequence (the drafter catches
 /// up after the decode, at the decode wave's bucket), then verifies three
 /// drafts for as many sequences as draft in one step within the verify
@@ -408,7 +408,7 @@ fn recorded_mtp_drafters_run_every_warmup_wave() {
     use model_qwen38_contract::package::{Encoders, maximum_sequences};
     for shape in [Shape::TP4, Shape::TP2] {
         let served = maximum_sequences(shape, true, Encoders::VISION);
-        for (export, mx, experts) in EXPORTS {
+        for (layout, mx, experts) in LAYOUTS {
             let host = mixed_drafter_host(shape, component(shape, mx, Some(experts)), false);
             host.served.set(Some(served));
             // `serve` narrows a step's verify rows to 32 when it serves at
@@ -419,7 +419,7 @@ fn recorded_mtp_drafters_run_every_warmup_wave() {
             let prompt = truths(0..5);
             let mut request = 100;
             for wave in (0..=served.ilog2()).map(|power| 1_u64 << power) {
-                let label = format!("{export} TP{} wave {wave}", shape.ranks());
+                let label = format!("{layout} TP{} wave {wave}", shape.ranks());
                 let ids: Vec<u64> = (request..request + wave).collect();
                 request += wave;
                 // Four KV pages per slot, so every served slot fits the

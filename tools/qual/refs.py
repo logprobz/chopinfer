@@ -55,6 +55,42 @@ def lock_path(model, root=None, variant=None):
     return root / "models" / model / name
 
 
+def external_lock_path(config):
+    """An external variant's reference lock, beside its overlay:
+    `<variant root>/<model>/<variant>.lock.json`."""
+    import declaration
+    return declaration.require_variant_root(config) / config["model"] / f"{config['variant']}.lock.json"
+
+
+def config_lock_path(config, root=None):
+    """The lock `adopt`, `verify` and `status` read and write for `config`:
+    an external variant's beside its overlay, a variant file's beside it,
+    else the model's (which also holds each configuration's entries)."""
+    import declaration
+    if declaration.external(config):
+        return external_lock_path(config)
+    if config.get("variant") is None:
+        return lock_path(config["model"], root)
+    return lock_path(config["model"], root, config["variant"])
+
+
+def variant_source(config):
+    """What receipts record of the external variant `config` came from: the
+    variant root and the overlay, its lock and the checkpoint lock it pins,
+    each by its path under that root and its SHA-256 (the overlay's as it
+    was expanded). None for a config the tree declares."""
+    import declaration
+    if not declaration.external(config):
+        return None
+    root = declaration.require_variant_root(config)
+    lock = external_lock_path(config).relative_to(root).as_posix()
+    checkpoint = config["qualification"]["checkpoint"]["lock"]
+    return {"root": str(root),
+            "overlay": {"path": config["variant_source"]["overlay"], "sha256": config["variant_source"]["sha256"]},
+            "lock": {"path": lock, "sha256": digest(root / lock)},
+            "checkpoint_lock": {"path": checkpoint, "sha256": digest(root / checkpoint)}}
+
+
 def reference_sibling(source, name):
     """A sibling path preserving an external reference's environment base."""
     path = Path(source.get("path", "") if isinstance(source, dict) else source)
@@ -155,6 +191,12 @@ def load_lock(config, root=None):
     import declaration
     model = config.get("model", "")
     variant = config.get("variant")
+    if declaration.external(config):
+        # An external variant's lock is beside its overlay, and required.
+        path = external_lock_path(config)
+        if not path.is_file():
+            raise ValueError(f"reference lock is missing: {path}")
+        return validate_lock(json.loads(path.read_text()), config, root)
     if variant is not None and lock_path(model, root).is_file() and any(
             variant in declaration.configurations(model, tree) for tree in (ROOT, root_path(root))):
         # A configuration reads its model's lock: the model's entries, with
@@ -209,17 +251,21 @@ def verify_mixed_generation(value, generated):
             raise ValueError("mixed answer generation key differs")
 
 
-def snapshot(config, root=None, *, previous=None):
-    """The lock of every input `config` declares: each file's or scoped
-    directory member's SHA-256. A directory keeps the scope of its
-    `previous` entry at the same path. Bound references, their workloads
-    and preprocessing records are verified before their bytes are pinned,
-    and their objects record what proved them; other objects keep the
-    record `previous` holds for the same bytes."""
+def snapshot(config, root=None, *, previous=None, only=None):
+    """The lock of every input `config` declares (of those whose lock keys
+    `only` names, when given): each file's or scoped directory member's
+    SHA-256. A directory keeps the scope of its `previous` entry at the same
+    path. Bound references, their workloads and preprocessing records are
+    verified before their bytes are pinned, and their objects record what
+    proved them; other objects keep the record `previous` holds for the same
+    bytes."""
     from common import binding_names_pin, declared_path, verified_binding
     root = root_path(root)
+    wanted = lambda key: only is None or key in only  # noqa: E731
     proven = {}
     for kind, spec in config.get("qualification", {}).get("references", {}).items():
+        if not wanted("reference:" + kind):
+            continue
         path = declared_path(spec["path"], root)
         value = json.loads(path.read_bytes())
         if value.get("binding"):
@@ -240,7 +286,7 @@ def snapshot(config, root=None, *, previous=None):
                 "workload_sha256": binding["workload_sha256"],
             }
     generation = config.get("inputs", {}).get("media_mixed_generation")
-    if generation:
+    if generation and wanted("media_mixed_generation"):
         from common import reference_binding
         capture_path = declared_path(generation, root)
         generated = json.loads(capture_path.read_bytes())
@@ -258,7 +304,7 @@ def snapshot(config, root=None, *, previous=None):
         proven[digest(workload)] = {"producer": "runner-workload", "refset_sha256": status["refset_sha256"],
                                    "workload_sha256": generated["binding"]["workload_sha256"]}
     preprocessing_path = config.get("inputs", {}).get("media_preprocessing_reference")
-    if preprocessing_path is not None:
+    if preprocessing_path is not None and wanted("media_preprocessing_reference"):
         from tools.refrun import preprocessing
         directory = declared_path(preprocessing_path, root)
         manifests = sorted(directory.glob("*/reference.json")) if directory is not None else []
@@ -277,7 +323,7 @@ def snapshot(config, root=None, *, previous=None):
                 for tensor in tensors:
                     proven[tensor["sha256"]] = production
     ab_path = config.get("inputs", {}).get("media_preprocessing_ab")
-    if ab_path:
+    if ab_path and wanted("media_preprocessing_ab"):
         from tools.refrun import preprocessing_ab
         ab_path = declared_path(ab_path, root)
         record = json.loads(ab_path.read_bytes())
@@ -295,6 +341,8 @@ def snapshot(config, root=None, *, previous=None):
     old_entries = (previous or {}).get("entries", {})
     old_objects = (previous or {}).get("objects", {})
     for key, location in sources(config).items():
+        if not wanted(key):
+            continue
         path = declared_path(location, root)
         if path is None or not path.exists():
             raise ValueError(f"lock entry {key}: missing input")
@@ -375,6 +423,27 @@ def adoption(config, previous=None, root=None):
         elif sha not in replaced:
             value["objects"][sha] = copy.deepcopy(record)
     return value
+
+
+def external_adoption(config, root=None):
+    """The lock of the external variant `config`: the model lock's record of
+    every input the variant shares with the model (the same lock key at the
+    same path, entry and objects as the model lock holds them), and a
+    snapshot of everything else, its references always: each is proved by
+    its runner binding against the variant's own checkpoint pin, so a kept
+    base reference bound to another checkpoint is refused."""
+    model_lock = json.loads(lock_path(config["model"], root).read_text())
+    declared = sources(config)
+    shared = {key for key, location in declared.items()
+              if not key.startswith(("reference:", "workload:"))
+              and model_lock["entries"].get(key, {}).get("path") == location}
+    lock = snapshot(config, root, previous=model_lock, only=set(declared) - shared)
+    for key in sorted(shared):
+        entry = copy.deepcopy(model_lock["entries"][key])
+        lock["entries"][key] = entry
+        for sha in entry["members"].values():
+            lock["objects"][sha] = copy.deepcopy(model_lock["objects"][sha])
+    return lock
 
 
 def kept_record(sha, proved, record, renew=False):
@@ -566,17 +635,23 @@ def main():
     parser.add_argument("--replace-sha256", help="Required old lock digest when refreshing changed entries")
     parser.add_argument("--dry-run", action="store_true",
                         help="adopt: report what the lock would become; write nothing")
+    parser.add_argument("--variant-dir", type=Path,
+                        help=f"the root of external variants (default ${declaration.VARIANTS_ENV})")
     args = parser.parse_args()
-    config = declaration.load(declaration.named(args.model))
-    if args.action == "adopt" and config.get("variant") in declaration.configurations(config["model"]):
+    declaration.select_variant_root(args.variant_dir)
+    try:
+        config = declaration.load(declaration.named(args.model))
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
+    if (args.action == "adopt" and not declaration.external(config)
+            and config.get("variant") in declaration.configurations(config["model"])):
         parser.error(f"configuration {config['variant']} is pinned in the model lock's configurations; "
-                     f"adopt writes only a model's or a variant file's lock")
-    path = (lock_path(args.model) if config.get("variant") is None
-            else lock_path(config["model"], variant=config["variant"]))
+                     f"adopt writes only a model's, a variant file's or an external variant's lock")
+    path = config_lock_path(config)
     try:
         if args.action == "adopt":
             previous = json.loads(path.read_text()) if path.exists() else None
-            value = adoption(config, previous)
+            value = external_adoption(config) if declaration.external(config) else adoption(config, previous)
             validate_lock(value, config)
             gate_reference_producers(config, value)
             for line in changes(previous, value):

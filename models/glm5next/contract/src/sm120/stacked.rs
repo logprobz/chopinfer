@@ -23,7 +23,7 @@ use kernels_sm120::precision::Compute;
 use super::precision;
 use crate::contract::Shape;
 use crate::precision::layout_formats;
-use crate::quantization::LAYOUTS;
+use crate::quantization::covering_layouts;
 use crate::sm120::engines::PROFILE;
 
 /// The lock family of [`CUBIN`] (`bundle/kernels.lock.d`).
@@ -220,9 +220,10 @@ pub fn part(
 /// The stacked entries, one per decode and verify bucket of at most
 /// [`MAX_ROWS`] rows (a decode and a verify use of one capacity share
 /// it), in capacity order. Refused unless every checkpoint layout stores
-/// the parts' weights in BF16.
+/// the parts' weights in BF16 (the covering layouts hold each part's every
+/// format).
 pub fn entries(shape: Shape) -> Result<Vec<Stacked>, String> {
-    for layout in LAYOUTS {
+    for layout in covering_layouts() {
         for (id, weight) in layout_formats(shape, layout)? {
             if PROJECTIONS.contains(&id) && weight != WeightFormat::Bf16 {
                 return Err(format!(

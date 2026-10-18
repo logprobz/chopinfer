@@ -37,3 +37,9 @@ pub mod placement;
 pub mod precision_packing;
 #[path = "../../compiler/src/precision_source.rs"]
 pub mod precision_source;
+
+// The mixed layouts the precision source tests synthesize, at the crate root
+// as in the compiler.
+#[cfg(test)]
+#[path = "../../compiler/src/mixed_layouts.rs"]
+mod mixed_layouts;

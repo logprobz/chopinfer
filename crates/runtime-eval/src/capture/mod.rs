@@ -14,7 +14,7 @@ use crate::declaration::Check;
 use crate::http::HttpError;
 use crate::json;
 use crate::kind::{Capture, KindError};
-use crate::references::{input_path, process_environment};
+use crate::references::input_path;
 use crate::report::utc_stamp;
 
 pub const SCHEMA: &str = "chopinfer-qualification/v1";
@@ -71,7 +71,10 @@ pub fn option(check: &Check, option: &str) -> Option<String> {
 /// A declared input file read as JSON, authenticated by the reference
 /// lock (`common.input_bytes`), with its path.
 pub fn input_json(capture: &Capture<'_>, name: &str) -> Result<(PathBuf, Value), KindError> {
-    let path = input_path(capture.declaration, name, &process_environment).ok_or_else(|| {
+    let path = input_path(capture.declaration, name, &|name| {
+        capture.declaration.environment(name)
+    })
+    .ok_or_else(|| {
         KindError::Insufficient(format!(
             "{} declares no usable input {name}",
             capture.declaration.declaration.model

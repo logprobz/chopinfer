@@ -4,8 +4,8 @@ A family has one architecture implementation. Shared SDK importers interpret
 checkpoint encodings, and each operation binds supplied kernels for its exact
 geometry and precision. Qwen is the first consumer of mixed precision; MiMo
 uses the same importer for its fixed encodings. GLM 5.3 Flash (`glm5next`)
-imports its block-FP8 and NVFP4 exports through it too and lowers its dense
-projections through the shared declaration adapter. This extends
+imports every layout its declaration serves through it too and lowers its
+dense projections through the shared declaration adapter. This extends
 [compatible checkpoint serving](compatible-checkpoints.md) and the
 [external model SDK](external-models.md). Preparation and loading never compile
 CUDA.
@@ -56,21 +56,21 @@ inherit the source recipe's quality or native W4A4 throughput.
 
 ## Qwen coverage
 
-| Recipe | Text topology | `auto` and `bf16` | `checkpoint` |
+| Layout | Text topology | `auto` and `bf16` | `checkpoint` |
 | --- | --- | --- | --- |
 | Compatible block-FP8 | TP2/4 | FP8 fragment weights and BF16 expert operands; `auto` reports plain-FP8 reuse | Refused: the dynamic-FP8 expert recipe is not supplied |
-| NVIDIA mixed NVFP4 export | TP2/4 with MTP | NVFP4 routed experts, FP8 block-128 MTP experts, FP8 PLE, BF16 elsewhere | Refused: per-expert calibrated NVFP4 activations |
-| local-inference-lab mixed NVFP4 export | TP2/4 with MTP | MXFP8 attention, linear-attention and shared-expert projections; NVFP4 routed experts and PLE; W4A16 NVFP4 MTP experts; F32 HC and PLE norm weights; BF16 activation operands | Refused: unavailable source-activation compositions |
+| `nvfp4-routed-fp8-mtp` | TP2/4 with MTP | NVFP4 routed experts, FP8 block-128 MTP experts, FP8 PLE, BF16 elsewhere | Refused: per-expert calibrated NVFP4 activations |
+| `mxfp8-dense-nvfp4` | TP2/4 with MTP | MXFP8 attention, linear-attention and shared-expert projections; NVFP4 routed experts and PLE; W4A16 NVFP4 MTP experts; F32 HC and PLE norm weights; BF16 activation operands | Refused: unavailable source-activation compositions |
 
-Export names identify inspected examples, not allowlists; admission follows
-tensor and operation contracts. A mixed checkpoint runs the MTP drafter when
-its MTP layer has a composition for every format it stores: BF16 dense
-projections, and experts the main layers' grouped compositions bind.
-Otherwise the package serves autoregressively and `--drafter mtp` is
-refused, naming the tensor and its format. The local-inference-lab export
-stores its 100 HC and PLE norm weights as F32; they are bound by their view
-dtype, and the communication all-reduce and RMSNorm epilogue that consume
-them run in F32 forms. NVIDIA's BF16 vision tower is planned as the encoder
+The mixed rows are layouts the CPU tests synthesize from the official
+export's tensors, not allowlists; admission follows tensor and operation
+contracts. A mixed checkpoint runs the MTP drafter when its MTP layer has a
+composition for every format it stores: BF16 dense projections, and experts the main layers'
+grouped compositions bind. Otherwise the package serves autoregressively and
+`--drafter mtp` is refused, naming the tensor and its format. HC and PLE
+norm weights stored as F32 (100 of them in `mxfp8-dense-nvfp4`) are bound by
+their view dtype, and the communication all-reduce and RMSNorm epilogue that
+consume them run in F32 forms. A BF16 vision tower is planned as the encoder
 image; quantized vision is refused. FP8 packages keep their encoders and MTP
 speculation.
 
@@ -86,30 +86,15 @@ the checkpoint and `--module`; `--precision-component FILE[,FILE...]` reuses a
 precision record resolved earlier, which packaging checks against the
 checkpoint and refuses on conflict.
 
-Measured on four RTX PRO 6000 Blackwell GPUs at TP4: packed weights take about
-180 GiB (FP8), 128 GiB (NVIDIA NVFP4) and 105 GiB (local NVFP4/MXFP8) across
-the four ranks (2026-09-28). With packed ring decode for NVFP4 experts, NVIDIA
-NVFP4 decode was within about 0.5% of FP8 at C1 and faster at C4 to C32, and
-both scored 195/200 on GSM8K (2026-09-30). Different weight quantizations are
-not expected to produce identical logits.
+Measured on four RTX PRO 6000 Blackwell GPUs at TP4, the official FP8
+checkpoint's packed weights take about 180 GiB across the four ranks
+(2026-09-28). Different weight quantizations are not expected to produce
+identical logits.
 
-Each mixed export is a configuration of `qwen38`: `models/qwen38/qual.json`
-declares it under `configurations.<export>`, with its reference lock entries
-in `models/qwen38/qual-references.lock.json`; its checkpoint lock and source
-pin stay in `models/qwen38/exports/<export>/`, and its f64 refrun teacher
-reference is in `fixtures/qwen38/exports/<export>/`.
-Select it with `--model qwen38.<export>` in the Python qualification tools
-(`tools/qual`) and with `--variant <export>` in `chopinfer eval`. Both exports
-passed on a release build at TP2 and TP4 with MTP (2026-10-07):
-
-| Check | NVIDIA | local-inference-lab | Gate |
-| --- | --- | --- | --- |
-| Teacher at TP2: mean abs logprob error, decisive top-one, near-tie top-one, top-one disagreement | 0.057, 0.0089, 0.0141, 0.023 | 0.043, 0.0038, 0.0117, 0.0156 | 0.1, 0.08, 0.08, 0.1 |
-| verify_exact, TP2 and TP4 | K3 MTP rows equal AR top-one at all 4106 scored positions | same | exact |
-| spec_verify, TP2 and TP4 | AR and MTP outputs equal on every copy and natural request | same | exact |
-| Draft acceptance in spec_verify, copy/natural | TP2 0.747/0.703, TP4 0.729/0.698 | TP2 0.731/0.729, TP4 0.769/0.743 | none |
-| GSM8K at TP2 with MTP | 197/200 | 195/200 | 194/200 |
-
+A mixed checkpoint is qualified as an
+[external variant](../tools/qual/README.md#external-variants): an overlay of
+`models/qwen38/qual.json` kept outside the tree, with its own checkpoint lock
+and references, judged by the model's own checks and limits.
 The gates are in [numerics](numerics.md#serving-qualification-gates).
 
 ## MiMo V2.6 Flash coverage
@@ -181,7 +166,7 @@ at scale bytes 0 through 252; bytes 253 and 254 require checking the actual
 codes. Dense and grouped MXFP4 paths use the same scaled conversion and trap
 on invalid extreme-scale operands, including in cached images.
 
-## Adding a family or exporter
+## Adding a family or layout
 
 Shared code owns encodings, codecs and export interpretation
 (`kernel-core::precision`, `model_compiler_sdk::quantization`), one format
@@ -242,10 +227,10 @@ schema.
    `projection::Authenticated`) and lowers each use with `projection::launch`;
    execution never searches for a different recipe.
 
-### A new export or rank count
+### A new layout or rank count
 
-An export of an existing family can need no model code, but only when
-everything it changes already fits the family's code:
+A checkpoint of an existing family in a new layout needs no model code and
+no data, but only when everything it changes already fits the family's code:
 
 - its tensor names and layouts match the declaration's source patterns, and
   the family's own admission (for example a catalog of expected tensors and
@@ -255,14 +240,14 @@ everything it changes already fits the family's code:
 - the shared importer reads its export metadata and every recipe, and each
   operation lies inside the shared operation domain and a supplied kernel.
 
-A new mix of the formats each port already offers is then data; the
-[export recipe](testing.md#export-recipe) proves this for one synthesized
-mix. A format a port does not offer is refused at preparation, naming the
-operation and the missing composition, until the declaration offers it. The
-change is data:
+A new mix of the formats each port already offers is then served as it is;
+the [export recipe](testing.md#export-recipe) proves this for one
+synthesized mix. The tree holds no pins or fixtures for such a checkpoint:
+CPU tests synthesize the layouts they cover, and the checkpoint is qualified
+as an [external variant](../tools/qual/README.md#external-variants). A format
+a port does not offer is refused at preparation, naming the operation and the
+missing composition, until the declaration offers it. That change is data:
 
-- checkpoint data: the export's identity and source pins, and metadata
-  fixtures for its CPU admission tests;
 - declaration data: support rules that admit the export's formats at the
   intended rank counts and phases, when the declaration currently refuses
   them; a format a port does not offer yet, added to its `offers` with the
@@ -273,8 +258,8 @@ change is data:
   append records to the bundle's `kernels.lock` (built with
   `KERNELS_LOCK_UPDATE=1`), each with kernel-lab oracle and invariance
   evidence before serving;
-- adoption entries, for a family with an adoption ledger: its exporter
-  appends discoveries and cubin placements to `projection-adoptions.json`
+- adoption entries, for a family with an adoption ledger: the new
+  discoveries and cubin placements are appended to `projection-adoptions.json`
   (the in-tree models print them with their contract's
   `<m>_projection_adoptions` example). Existing records stay byte-identical.
 
@@ -289,7 +274,8 @@ cannot express is a namespaced registered variant (a source transform such as
 a scale regroup, a stateful stage before a lookup, or an existing fused entry
 kept for byte identity) with its `VariantDeriver` behavior. A new weight
 format is a shared plug-in, not model code. Admission is never a
-qualification: every new export needs its own numerical evidence.
+qualification: every new layout needs its own numerical evidence, and every
+checkpoint its own qualification.
 
 Put exporter and codec tests in the shared modules, without family tensor
 names. `quantization::identity::decode_component` reads a package's

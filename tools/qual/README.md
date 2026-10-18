@@ -36,7 +36,8 @@ check failed or could not run.
 `python3 -m tools.qual --help` lists every command. `gate` runs or inspects a
 release gate; `check`, `rescore` and `list` use the check-kind registry;
 `preview` runs the [correctness runner](#correctness-runner) through
-`release_preview.sh`; `refs` adopts and verifies locked inputs. Every other
+`release_preview.sh`; `refs` adopts and verifies locked inputs; `variant`
+prepares an [external variant](#external-variants). Every other
 command runs one tool (check names use hyphens, such as `teacher-arms`,
 `multimodal` and `seeded-equality`); its help keeps the script's program
 name, and each tool also runs directly as `python3 -B tools/qual/<tool>.py`.
@@ -60,6 +61,7 @@ Measurement and inspection helpers outside this list live in
 | `CHOPINFER_QUAL_RECEIPTS` | Overrides the receipt directory. |
 | `CHOPINFER_MIMO_FIXTURES` | Root of the frozen GSM8K and functional (media and needle) inputs. |
 | `CHOPINFER_QUAL_MODEL_ROOT` | Root that declared paths and the reference lock resolve from (default: the checkout). |
+| `CHOPINFER_QUAL_VARIANTS` | Root of [external variants](#external-variants), `<root>/<model>/<variant>.json`; `--variant-dir` sets it for a tool and every tool it runs. |
 | `OPENAI_API_KEY` | Bearer token, when the endpoint requires one. |
 | `CHOPINFER_EVAL` | The `chopinfer` binary the shared kinds call, for scoring and for the checks and records `chopinfer eval` captures; default the checkout's build (`cargo build -p runtime-host --bin chopinfer`). |
 
@@ -234,15 +236,78 @@ their pins and directory scopes.
 
 A declaration file beside `qual.json`, `models/<model>/qual.<variant>.json`
 with its own lock `qual-references.<variant>.lock.json`, is still read when
-`qual.json` declares no configuration of that name: an exported model root
-ships its own, and `models/qwen38/reference_exports.py adopt` writes one for
-a new export until `qual.json` declares it. A model or variant declaration
+`qual.json` declares no configuration of that name, as an exported model
+root ships one. Another checkpoint of a model (a fine-tune or a
+re-quantization) is qualified from outside the tree instead, as an
+[external variant](#external-variants). A model or variant declaration
 selected by location must name the model its directory gives it and be the
 one under this workspace or under `CHOPINFER_QUAL_MODEL_ROOT`
 (`--model-root`), since its lock is found there by name; one from another
 tree is refused. A model or variant declared in either tree needs its lock,
 and a config without a lock does not vouch for a file a locked declaration
 declares.
+
+#### External variants
+
+Any checkpoint of a supported model can be qualified from a declaration kept
+outside the tree, such as under `$CHOPINFER_DATA`, with no change to the
+repository. The tree declares only the model author's checkpoints; an
+external variant is how anyone else's checkpoint is gated, against the
+model's own checks and limits.
+
+An external variant is the overlay `DIR/<model>/<variant>.json`
+(`chopinfer-qual-variant/v1`) of the model's `qual.json`, selected with
+`--variant-dir DIR` or `CHOPINFER_QUAL_VARIANTS=DIR` and `--model
+<model>.<variant>` (`release_gate.py`, `checks.py`, `refs.py`), `--config
+<variant>` (`release_preview.sh`) or `chopinfer eval ... --variant <variant>
+--variant-dir DIR`. `chopinfer eval declaration --model models/<model>
+--variant <variant> --variant-dir DIR` expands it like a configuration of
+that name. Everything it owns sits beside it: its checkpoint lock, its
+references with their workloads and its reference lock
+`<variant>.lock.json`. Paths it names are relative to its directory; code,
+adapters, numerics and shared fixtures come from the checkout.
+
+The overlay states `schema`, `model`, `checkpoint` (the `KEY` of
+`CHOPINFER_<KEY>_CHECKPOINT`, the directory the runner serves),
+`qualification.checkpoint` (its pin, whose `lock` is beside it), `checks`
+and `quick` (checks the base declares), and optionally `references`,
+`keep_references`, `inputs` (base inputs it replaces with its own files, or
+null), `serving.checkpoint_identity` (the pin's, its default) and
+`serving.profile_name`, `from_default`, `media` and `capabilities`, which may
+only narrow the base's. It cannot state `rules`, `append`, `waivers`,
+`cohort_args`, `environment`, `install_features`, `producer`, how the model
+is served or any other field, so the base declaration's limits judge it,
+and it cannot take a name the tree declares. Without `keep_references` it
+inherits no base reference; a kept or supplied reference must still name the
+variant's checkpoint pin, so one bound to the model's own checkpoint fails
+adoption. Its lock is required: nothing it owns is read unauthenticated.
+
+`python3 -m tools.qual variant` prepares one, writing only under `DIR`:
+
+```sh
+python3 -m tools.qual variant lock --model M --variant V --dir DIR --checkpoint C
+python3 -m tools.qual variant pin --model M --variant V --dir DIR --checkpoint C --repository R --revision REV
+python3 -m tools.qual variant skeleton ... --reference teacher --reference chat --output OUT
+python3 -m tools.refrun emit --skeleton OUT/teacher-reference.skeleton.json ... \
+    --lock-root DIR --lock DIR/M/V.checkpoint-files.json --output OUT/teacher-reference.json
+python3 -m tools.qual variant adopt ... --reference teacher --emitted OUT --check teacher --check spec_verify
+```
+
+`lock` writes the checkpoint lock `V.checkpoint-files.json`; `pin` prints
+the checkpoint pin (served model name `--served-model-name`, default the
+repository); `skeleton` lays a reference out as the base reference the
+model's `qual.json` pins (schema, workload and texts, scores removed, the
+pin as its provenance); `adopt` takes the emitted references into `DIR`,
+writes the overlay and its lock (the model lock's record of every input the
+variant shares, its own files pinned and proved by their runner bindings)
+and verifies them as the gates read them. A model's own reference fixture
+script may lay out a skeleton whose variants its checkpoint's layout needs.
+
+Gate and check receipts record `variant_source` beside the policy digest:
+the variant root and the overlay, its lock and the checkpoint lock, each
+with its SHA-256. A full pass of an external variant qualifies that
+checkpoint (`qualified: true`); it never moves the correctness runner's
+last good, and `ci/validation.py` never selects one.
 
 `tools/qual/declaration.py` refuses a malformed declaration with a message
 naming the field and compiles it to the `chopinfer-release-gates/v1` policy
@@ -501,8 +566,8 @@ describes fixture assembly, the binding fields and the standalone verifier.
 
 `models/<model>/qual-references.lock.json` (with each configuration's own
 entries under `configurations`; a variant declaration file's:
-`qual-references.<variant>.lock.json`; an export's beside its declaration)
-pins the bytes gates read:
+`qual-references.<variant>.lock.json`; an external variant's
+`<variant>.lock.json` beside its overlay) pins the bytes gates read:
 
 ```sh
 python3 -B -m tools.qual refs status --model mimo26

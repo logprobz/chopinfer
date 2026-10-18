@@ -795,28 +795,44 @@ class ConfigurationLockTests(unittest.TestCase):
     declares."""
 
     def test_a_configuration_reads_its_own_entries_of_the_model_lock(self):
-        compared = 0
-        for path in declaration.shipped():
-            if path.name != declaration.NAME:
-                continue
-            model = path.parent.name
+        """A model root (CHOPINFER_QUAL_MODEL_ROOT) whose qual.json adds a
+        configuration with its own teacher_reference input, pinned under
+        configurations.<name>.entries of the model lock."""
+        import shutil
+        model = next(path.parent.name for path in declaration.shipped() if path.name == declaration.NAME
+                     and "teacher_reference" in json.loads(refs.lock_path(path.parent.name).read_text())["entries"])
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "tools/qual").mkdir(parents=True)
+            shutil.copyfile(refs.ROOT / "tools/qual/modules.json", root / "tools/qual/modules.json")
+            base = json.loads(declaration.path(model).read_text())
+            own = f"fixtures/{model}/own-teacher-reference.json"
+            (root / own).parent.mkdir(parents=True)
+            (root / own).write_text('{"schema": "own"}\n')
+            spec = {"checks": ["teacher"], "quick": ["teacher"], "media": False, "keep_references": ["teacher"],
+                    "inputs": {"teacher_reference": own}}
+            if "capabilities" in base:
+                spec["capabilities"] = {key: (value if key == "text" else [] if key == "media" else
+                                              "none" if key == "speculation" else False)
+                                        for key, value in base["capabilities"].items() if key != "unqualified_media"}
+            base["configurations"] = {"own": spec}
+            declaration.path(model, root).parent.mkdir(parents=True)
+            declaration.path(model, root).write_text(json.dumps(base))
             lock = json.loads(refs.lock_path(model).read_text())
-            for name, spec in lock.get("configurations", {}).items():
-                own = spec.get("entries", {})
-                if "teacher_reference" not in own or own["teacher_reference"] == lock["entries"]["teacher_reference"]:
-                    continue
-                with self.subTest(model=model, config=name):
-                    config = declaration.load(declaration.materialized(model, name))
-                    loaded = refs.load_lock(config)
-                    self.assertEqual(loaded["entries"]["teacher_reference"], own["teacher_reference"])
-                    self.assertNotEqual(own["teacher_reference"], lock["entries"]["teacher_reference"])
-                    self.assertEqual({key for key in loaded["entries"] if not key.startswith("operator:")},
-                                     set(refs.sources(config)))
-                    self.assertNotIn("configurations", loaded)
-                    self.assertEqual(refs.load_lock(declaration.load(path))["entries"]["teacher_reference"],
-                                     lock["entries"]["teacher_reference"])
-                    compared += 1
-        self.assertGreater(compared, 0)
+            sha = refs.digest(root / own)
+            entry = {"path": own, "directory": False, "members": {".": sha}}
+            lock["configurations"] = {"own": {"entries": {"teacher_reference": entry}}}
+            lock["objects"][sha] = {"schema": "own"}
+            refs.lock_path(model, root).write_text(json.dumps(lock))
+            config = declaration.load(declaration.materialized(model, "own", root))
+            loaded = refs.load_lock(config, root)
+            self.assertEqual(loaded["entries"]["teacher_reference"], entry)
+            self.assertNotEqual(entry, lock["entries"]["teacher_reference"])
+            self.assertEqual({key for key in loaded["entries"] if not key.startswith("operator:")},
+                             set(refs.sources(config)))
+            self.assertNotIn("configurations", loaded)
+            self.assertEqual(refs.load_lock(declaration.load(declaration.path(model, root)), root)
+                             ["entries"]["teacher_reference"], lock["entries"]["teacher_reference"])
 
 
 class VariantDeclarationTests(unittest.TestCase):

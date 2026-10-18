@@ -948,8 +948,10 @@ pub fn mask_embedding(archive: &[u8]) -> MimoResult<[u8; crate::drafters::MASK_B
 
 impl Catalogs {
     /// Reads the checkpoint description: the shard index, every header, the
-    /// DFlash config and mask archive.
-    pub fn read(request: &WeightPlanRequestV1) -> MimoResult<Self> {
+    /// DFlash config and mask archive. With `dflash_required` (a package
+    /// that drafts with DFlash) the DFlash drafter must check; otherwise a
+    /// DFlash drafter that does not check is left out, unread and unplanned.
+    pub fn read(request: &WeightPlanRequestV1, dflash_required: bool) -> MimoResult<Self> {
         let geometry = request_geometry(request)?;
         let index = runtime_weights::parse_safetensors_index(
             request
@@ -1038,22 +1040,31 @@ impl Catalogs {
         }
         let dflash = others
             .get(DFLASH_FILE)
-            .map(|file| header_tensors(file))
-            .transpose()?;
-        let mask = if dflash.is_some() {
-            crate::dflash::validate_config_for(
-                geometry,
-                request
-                    .document(DFLASH_CONFIG)
-                    .ok_or("the DFlash drafter has no config.json")?,
-            )?;
-            Some(mask_embedding(
-                request
-                    .document(MASK_ARCHIVE)
-                    .ok_or("the DFlash drafter has no mask_embedding.pt")?,
-            )?)
-        } else {
-            None
+            .map(|file| -> MimoResult<_> {
+                let tensors = header_tensors(file)?;
+                crate::dflash::validate_config_for(
+                    geometry,
+                    request
+                        .document(DFLASH_CONFIG)
+                        .ok_or("the DFlash drafter has no config.json")?,
+                )?;
+                let mask = mask_embedding(
+                    request
+                        .document(MASK_ARCHIVE)
+                        .ok_or("the DFlash drafter has no mask_embedding.pt")?,
+                )?;
+                let admitted = crate::precision::admit_dflash(geometry, &tensors)?;
+                Ok((tensors, mask, admitted))
+            })
+            .transpose();
+        let dflash = match dflash {
+            Ok(dflash) => dflash,
+            Err(error) if dflash_required => return Err(error),
+            Err(_) => None,
+        };
+        let (dflash, mask, dflash_admitted) = match dflash {
+            Some((tensors, mask, admitted)) => (Some(tensors), Some(mask), Some(admitted)),
+            None => (None, None, None),
         };
         let mtp_file = request.files.iter().any(|file| file.name == MTP_FILE);
         let mtp = (mtp_file && !mtp.is_empty()).then_some(mtp);
@@ -1082,10 +1093,6 @@ impl Catalogs {
                     &crate::precision::mtp_roles(geometry),
                 )
             })
-            .transpose()?;
-        let dflash_admitted = dflash
-            .as_ref()
-            .map(|dflash| crate::precision::admit_dflash(geometry, dflash))
             .transpose()?;
         Ok(Self {
             geometry,
@@ -1185,43 +1192,51 @@ fn check_rank_shape(views: &[PlannedView], tp: Tp) -> MimoResult<()> {
 static CATALOGS: RequestCache<Catalogs> = RequestCache::new();
 
 fn catalogs(request: &WeightPlanRequestV1) -> MimoResult<Arc<Catalogs>> {
+    let dflash_required = packaged_drafter(request)? == Some(Drafter::Dflash);
     let mut key = RequestKey::new(b"catalogs", request);
     for document in &request.documents {
         key.bytes(document.name.as_bytes());
         key.bytes(&document.bytes);
     }
-    CATALOGS.get_or_build(key.finish(), || Catalogs::read(request))
+    key.bytes(&[u8::from(dflash_required)]);
+    CATALOGS.get_or_build(key.finish(), || Catalogs::read(request, dflash_required))
 }
 
-/// The drafter a package holds: its drafter-kind component's (a package
-/// without rank images), its rank index's, or DFlash when the checkpoint
-/// has one.
-fn drafter_kind(request: &WeightPlanRequestV1, catalogs: &Catalogs) -> MimoResult<Drafter> {
+/// The drafter a package names: its drafter-kind component's (a package
+/// without rank images) or its rank index's; none for a package that
+/// names neither.
+fn packaged_drafter(request: &WeightPlanRequestV1) -> MimoResult<Option<Drafter>> {
     if let Some(bytes) = request.component(DRAFTER_KIND_ROLE) {
         let value: serde_json::Value = serde_json::from_slice(bytes)?;
         return match value["drafter"].as_str() {
-            Some("dflash") => Ok(Drafter::Dflash),
-            Some("mtp") => Ok(Drafter::Mtp),
+            Some("dflash") => Ok(Some(Drafter::Dflash)),
+            Some("mtp") => Ok(Some(Drafter::Mtp)),
             _ => Err("the drafter-kind component names no known drafter".into()),
         };
     }
     let packaged = request
         .component(&index_role(DRAFTER_IMAGE_ROLE, 0))
         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok());
-    match packaged {
-        Some(index) => {
-            let dflash = index["views"]
-                .as_array()
-                .is_some_and(|views| views.iter().any(|v| v["name"] == "mask_embedding.weight"));
-            Ok(if dflash {
-                Drafter::Dflash
-            } else {
-                Drafter::Mtp
-            })
+    Ok(packaged.map(|index| {
+        let dflash = index["views"]
+            .as_array()
+            .is_some_and(|views| views.iter().any(|v| v["name"] == "mask_embedding.weight"));
+        if dflash {
+            Drafter::Dflash
+        } else {
+            Drafter::Mtp
         }
-        None if catalogs.dflash.is_some() => Ok(Drafter::Dflash),
-        None => Ok(Drafter::Mtp),
-    }
+    }))
+}
+
+/// The drafter a package holds: the one it names, else DFlash when the
+/// checkpoint has a DFlash drafter that checks.
+fn drafter_kind(request: &WeightPlanRequestV1, catalogs: &Catalogs) -> MimoResult<Drafter> {
+    Ok(match packaged_drafter(request)? {
+        Some(kind) => kind,
+        None if catalogs.dflash.is_some() => Drafter::Dflash,
+        None => Drafter::Mtp,
+    })
 }
 
 /// The bundle's `chop_bundle_weight_plan_v1`: the text, drafter and encoder

@@ -43,7 +43,7 @@ packages and the bundle ABI. Please
 
 | | |
 |---|---|
-| Models | MiMo V2.6 Flash (default `XiaomiMiMo/MiMo-V2.6-Flash-MOPD`), Qwen3.8 Flash (FP8, plus [mixed NVFP4](docs/quantized-checkpoints.md)) and GLM 5.3 Flash at TP4 (FP8, plus two NVFP4 exports; [status](docs/model-glm5next.md)) |
+| Models | MiMo V2.6 Flash (default `XiaomiMiMo/MiMo-V2.6-Flash-MOPD`), Qwen3.8 Flash (FP8, plus [mixed NVFP4](docs/quantized-checkpoints.md)) and GLM 5.3 Flash at TP4 (FP8, plus [NVFP4 and mixed layouts](docs/model-glm5next.md#checkpoint-layouts); [status](docs/model-glm5next.md)); other checkpoints of these models by layout ([compatible checkpoints](docs/compatible-checkpoints.md#serve-your-own-checkpoint)) |
 | Hardware | Linux x86_64, two or four RTX PRO 6000 Blackwell 96 GB GPUs per model (GLM 5.3 Flash needs four); other SM120 parts are untested and may be refused ([tested hardware](docs/performance.md#hardware)) |
 | Topologies | TP4 and TP2; TP2 profiles are experimental ([profile status](docs/serving-profiles.md#profile-status)) |
 | Inputs | Text and image by default; MiMo video and audio with `--modalities all` |
@@ -64,11 +64,8 @@ and logprobs were bit-identical to AR at the same rank count; Qwen TP4 also
 matched its pinned greedy baseline. See the
 [measured speed snapshot](docs/serving-profiles.md#measured-speed).
 GLM 5.3 Flash joined the release after its full requalification
-(2026-10-14 to 2026-10-15). Of its seven configurations, four pass
-(default, k5, nvfp4 and dcp2). nvfp4-nvidia passes with two paired-teacher
-rows the maintainers accepted: its pooled gap 0.0056 and chat 0.0158
-exceed the 0.005 and 0.015 margins, reproducing exactly a shift accepted
-on 2026-10-14, together with a passing paired GSM8K. taps and dcp4 each
+(2026-10-14 to 2026-10-15). Of the five configurations it ran, three
+pass (default, k5 and dcp2). taps and dcp4 each
 have one maintainer-accepted row (a near-tie routing flip in the layer
 taps and a KV offload pressure indicator) and pass every other check.
 None is a waiver
@@ -78,9 +75,8 @@ requalified on 2026-10-16 ([BF16 KV](docs/model-glm5next.md#bf16-kv)).
 
 Each serving profile declares its own status, separate from that release
 validation. Today MiMo `tp4-ar` and `tp4-dflash`, Qwen `tp4-ar` and
-`tp4-mtp`, and GLM `tp4-mtp`, `tp4-ar`, its DCP 2 and 4 profiles and its
-two NVFP4 profiles (through 32 sequences) are qualified; GLM `tp4-mtp-k5`
-and every TP2 profile are experimental. The
+`tp4-mtp`, and GLM `tp4-mtp`, `tp4-ar` and its DCP 2 and 4 profiles are
+qualified; GLM `tp4-mtp-k5` and every TP2 profile are experimental. The
 [profile status table](docs/serving-profiles.md#profile-status) lists every
 profile with its status and sequence limits.
 

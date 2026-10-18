@@ -1280,7 +1280,7 @@ fn check_overlap(off: &Trace, on: &Trace) -> usize {
 
 /// The configurations whose pinned journals the default overlap re-pinned
 /// hold the same proof: context-parallel groups of 2 and 4 (the served
-/// target steps, and the drafter's passes), both NVFP4 exports (decode,
+/// target steps, and the drafter's passes), the mixed layouts (decode,
 /// verify and the drafter), and the Sinkhorn mHC comm epilogue.
 #[test]
 fn context_parallel_groups_overlap_alike() {
@@ -1316,12 +1316,12 @@ fn context_parallel_groups_overlap_alike() {
 
 /// See [`context_parallel_groups_overlap_alike`].
 #[test]
-fn nvfp4_exports_overlap_alike() {
-    use super::nvfp4::{Export, LOCAL_INFERENCE_LAB, NVIDIA};
-    for export in [&LOCAL_INFERENCE_LAB, &NVIDIA] {
+fn mixed_layouts_overlap_alike() {
+    use super::nvfp4::{DENSE_ROUTED, FP8_ROUTED, Mix, ROUTED};
+    for export in [&ROUTED, &DENSE_ROUTED, &FP8_ROUTED] {
         for (scenario, host) in [
-            (Scenario::Target, Export::host as fn(&Export) -> Rc<Host>),
-            (Scenario::Drafter, Export::mtp_host),
+            (Scenario::Target, Mix::host as fn(&Mix) -> Rc<Host>),
+            (Scenario::Drafter, Mix::mtp_host),
         ] {
             let trace = |settings| {
                 trace_with(

@@ -222,8 +222,6 @@ conformance::suite! {
         tp4_ar: "tp4-ar",
         tp4_mtp_dcp2: "tp4-mtp-dcp2",
         tp4_mtp_dcp4: "tp4-mtp-dcp4",
-        tp4_mtp_nvfp4: "tp4-mtp-nvfp4",
-        tp4_mtp_nvfp4_nvidia: "tp4-mtp-nvfp4-nvidia",
     }
     mod ar_fp8 {
         allocation_release: Model<AR_FP8> => AllocationRelease;
@@ -302,31 +300,6 @@ struct Served {
     serving: conformance::Serving,
 }
 
-impl Served {
-    /// The profile's checkpoint layout and its config fixture; none for the
-    /// FP8 layout the default host serves.
-    fn layout(
-        serving: &conformance::Serving,
-    ) -> Option<(
-        &'static model_glm5next_contract::quantization::Layout,
-        &'static [u8],
-    )> {
-        use model_glm5next_contract::quantization::{NVFP4_DENSE_ROUTED, NVFP4_ROUTED};
-        match serving.model_options[model_glm5next_contract::quantization::LAYOUT_OPTION].as_str() {
-            "fp8-block128" => None,
-            "nvfp4-routed" => Some((
-                &NVFP4_ROUTED,
-                include_bytes!("../../contract/fixtures/nvfp4-config.json"),
-            )),
-            "nvfp4-dense-routed" => Some((
-                &NVFP4_DENSE_ROUTED,
-                include_bytes!("../../contract/fixtures/nvidia-nvfp4-config.json"),
-            )),
-            other => panic!("{}: layout {other}", serving.profile),
-        }
-    }
-}
-
 impl conformance::Startup for Served {
     type Limits = Limits;
 
@@ -334,7 +307,10 @@ impl conformance::Startup for Served {
         include_str!("../../profiles.json")
     }
     fn servings() -> Vec<conformance::Serving> {
-        let serving = |profile: &str, drafts: u32, context_parallel: u32, layout: &str| {
+        // No profile names a checkpoint layout; each starts on the block-FP8
+        // package the default host serves. The mixed layouts' packages are
+        // stepped by `fake_host_tests::nvfp4`.
+        let serving = |profile: &str, drafts: u32, context_parallel: u32| {
             conformance::Serving {
                 profile: profile.to_owned(),
                 tensor_parallel: Shape::TP4.ranks(),
@@ -343,11 +319,7 @@ impl conformance::Startup for Served {
                 drafter: if drafts > 0 { "mtp" } else { "none" }.to_owned(),
                 draft_tokens: drafts,
                 prefix_cache: true,
-                model_options: [(
-                    model_glm5next_contract::quantization::LAYOUT_OPTION.to_owned(),
-                    layout.to_owned(),
-                )]
-                .into(),
+                model_options: Default::default(),
                 // The contract declares the vision encoder
                 // (`encoder::declarations`), whose tower every admitted
                 // checkpoint stores, so `auto` serves images.
@@ -368,22 +340,17 @@ impl conformance::Startup for Served {
             }
         };
         vec![
-            serving("tp4-ar", 0, 1, "fp8-block128"),
-            serving("tp4-mtp", 3, 1, "fp8-block128"),
-            serving("tp4-mtp-k5", 5, 1, "fp8-block128"),
-            serving("tp4-mtp-dcp2", 3, 2, "fp8-block128"),
-            serving("tp4-mtp-dcp4", 3, 4, "fp8-block128"),
-            serving("tp4-mtp-nvfp4", 3, 1, "nvfp4-routed"),
-            serving("tp4-mtp-nvfp4-nvidia", 3, 1, "nvfp4-dense-routed"),
+            serving("tp4-ar", 0, 1),
+            serving("tp4-mtp", 3, 1),
+            serving("tp4-mtp-k5", 5, 1),
+            serving("tp4-mtp-dcp2", 3, 2),
+            serving("tp4-mtp-dcp4", 3, 4),
         ]
     }
     fn new(serving: &conformance::Serving) -> Self {
         let format = Shape::TP4.kv_formats()[usize::from(serving.draft_tokens > 0)];
         let speculation = (serving.draft_tokens, serving.verify_rows());
-        let host = match Self::layout(serving) {
-            None => FakeHost::with_format(speculation, format),
-            Some((layout, config)) => FakeHost::with_layout_in(speculation, layout, config, format),
-        };
+        let host = FakeHost::with_format(speculation, format);
         host.items.set(serving.sequences);
         Self {
             observed: Rc::new(ObservedHost::new(Rc::clone(&host))),
@@ -397,8 +364,7 @@ impl conformance::Startup for Served {
             tail.extend(runtime_bundle_sdk::context_parallel::TAG);
             tail.extend_from_slice(&self.serving.context_parallel.to_le_bytes());
         }
-        let layout = Self::layout(&self.serving).map_or("fp8-block128", |(layout, _)| layout.id);
-        tail.extend(crate::config::tests::options_of(layout, 2048));
+        tail.extend(crate::config::tests::options(2048));
         let mut roles = vec![crate::projections::COMPONENT_ROLE.as_bytes().to_vec()];
         if self.serving.serves_images() {
             roles.extend(crate::config::tests::encoder_roles());

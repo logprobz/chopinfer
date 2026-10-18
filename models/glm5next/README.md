@@ -9,33 +9,33 @@ config admission, per-rank kernel profiles, the tensor catalog, the TP4
 weight plan and the `glm5next.v1` serving contract (see below).
 `compiler/` (crate `model-glm5next`) holds the preparation provider, which
 routes a checkpoint by its `config.json` and emits its package (helper
-`chopinfer-model-glm5next`) for the FP8 checkpoint and both NVFP4 exports,
-with the encoder image when the checkpoint stores the vision tower.
+`chopinfer-model-glm5next`) for a checkpoint of any admitted layout
+([checkpoint layouts](#checkpoint-layouts)), with the encoder image when the checkpoint stores the vision tower.
 `bundle/` (crate `bundle-glm5next`) holds the forward program, its launch
 records and the instance, whose whole program lowers for every admitted
 layout and serves on four GPUs. [docs/model-glm5next.md](../../docs/model-glm5next.md)
 summarizes what is served and qualified. `model.toml` declares `[release] enabled = true`, so
 the released-model facts the inventory, profile and qualification tests
 check apply to it. The operator adopted the final gate's results
-(GATES4, 2026-10-11), whose two soak failures the declared soak warm-up now
-passes (they were waived then), so `qual.json` and its
+(GATES4, 2026-10-11), whose soak failure the declared soak warm-up now
+passes (it was waived then), so `qual.json` and its
 configurations are no longer `mechanics_only`, except the `taps`
 configuration (see "Qualification checks"). See
 [adding a model](../../docs/adding-a-model.md).
 
-Release status: released. The GATES4 results are adopted; its two soak
-failures (the default configuration's and the local-inference-lab NVFP4
-export's) pass the soak's declared warm-up and cache allowance. The full
+Release status: released. The GATES4 results are adopted; the default
+configuration's soak failure passes the soak's declared warm-up and cache
+allowance. The full
 requalification through the release preview (stage 5,
 2026-10-14 to 2026-10-15 at 3d5494e7b) qualified it, with accepted
-rows in three configurations
+rows in two configurations (`taps` and `dcp4`)
 ([release qualification](../../docs/model-glm5next.md#release-qualification-stage-5)),
 and `model.toml` enables the release. It declares the release
 targets (the helper and the bundle library; the release plan ships the
 `kernels.lock.d/` family files), the `[contributor]` table and the
 profile target, and the deploy artifacts exist (systemd unit, container
 default, the deploy doc's readiness line), and `qual.json` has its
-`preview` section. `qual.json`, the DCP declarations and the NVFP4
+`preview` section. `qual.json` and the DCP
 declarations declare the `paired_teacher` check with the operator's GLM
 margins (2026-10-11), pinned to accepted arms captured from the GATES4
 install at 8c75e90bd; each passed its accepted-versus-accepted dry run
@@ -53,8 +53,8 @@ server.
 (top-level token IDs, `text_config` and `vision_config`, without training
 metadata). `supported.json` admits `glm5_next`, `glm5_next_text` and
 `glm5_next_vision`, constrains execution semantics, and admits the `fp8`
-recipe class with 128x128 block scales and the `modelopt` class (see NVFP4
-checkpoint below). `contract/build.rs` generates the
+recipe class with 128x128 block scales and the `modelopt` class (see
+[checkpoint layouts](#checkpoint-layouts)). `contract/build.rs` generates the
 geometry and its TP4 kernel profiles from these files; extra directories may
 be listed in `CHOPINFER_GLM5NEXT_GEOMETRY_DIRS`. The bundle and its cubins are
 built for flash at TP4 (`Shape::TP4`), so the contract admits and plans an
@@ -87,177 +87,91 @@ shape against the safetensors headers; it reads headers only. Without it,
 `contract/fixtures/tensor-families.json` (read from those headers) checks the
 catalog's families.
 
-## NVFP4 checkpoint
+## Checkpoint layouts
 
-`local-inference-lab/GLM-5.3-Flash-NVFP4` at revision
-`175ae8ce3b5af842b0d0140dbeb43e9cfc557c49` is a second checkpoint of the
-flash geometry. `checkpoint-files-nvfp4.json` holds its 44 indexed shards,
-config, `hf_quant_config.json`, index, chat template and tokenizer files.
-Tests read it from `CHOPINFER_GLM5NEXT_NVFP4_CHECKPOINT`. Its tokenizer, chat
-template, processor and generation config are byte-identical to the FP8
-checkpoint's.
+A checkpoint of the flash geometry is admitted by what it stores, not by
+who exported it (`contract/src/quantization.rs`). Its layout fixes the
+stored encoding of four projection classes and the dtypes of two side
+tensor families that no quantization config declares. The admitted layouts
+are every combination of the encodings `contract/projections.json` supports
+at TP4 for each class:
 
-Admission reads its ModelOpt `quantization_config` through the shared
-importer, projection by projection, and selects the `nvfp4-routed` layout
-(`contract/src/quantization.rs`); a recipe no layout stores is refused,
-naming the module:
+- latent attention and shared experts: block-128 FP8 or BF16;
+- dense MLPs (layers 0-2): block-128 FP8, BF16 or NVFP4;
+- routed experts (layers 3-44): block-128 FP8 or NVFP4;
+- MTP routed experts (layer 45): block-128 FP8, MXFP8 or BF16;
+- KDA convolution weights and mHC base and scale vectors: BF16 or F32
+  each, which the rank image reads as F32 (BF16 widened at load).
 
-- routed experts (layers 3-44): NVFP4, U8 E2M1 pairs with an E4M3
-  `weight_scale` per 16 K values and an F32 `weight_scale_2` per expert
-  projection; the static `input_scale` is present and never read;
-- MTP routed experts (layer 45): MXFP8, E4M3 codes with a U8 E8M0
-  `weight_scale` per 32 K values;
-- everything else BF16, including latent attention and the dense and
-  shared MLPs, which are block FP8 in the base checkpoint.
+Every other projection is BF16. A layout id reads
+`attn-<e>.dense-<e>.experts-<e>.mtp-<e>.conv-<d>.hc-<d>`: the encoding
+tags `fp8` (block-128 FP8), `bf16`, `nvfp4` and `mxfp8` of the classes in
+that order, then the two side dtypes. The official checkpoint is
+`attn-fp8.dense-fp8.experts-fp8.mtp-fp8.conv-bf16.hc-f32`. No layout needs
+a file of its own: adding an encoding to a class in the projection
+declaration, with the kernels the bundle supplies for it, admits every
+layout that uses it.
+
+An HF block-FP8 export (`quant_method: fp8`) stores every class in block
+FP8. A ModelOpt export's `quantization_config` is read through the shared
+importer, projection by projection: each catalog projection's recipe must
+agree within its class, and each class's encoding must be one the
+declaration supports for it, or admission refuses it, naming the class.
+The side tensor dtypes come from the safetensors headers. The importer reads
+HF's single-algorithm ModelOpt form, whose config groups target the
+`Linear` class. A recorded static FP8 KV cache hint (`kv_cache_scheme`) is
+accepted for every ModelOpt layout and imports nothing: the latent KV
+format is the serving `--kv-cache-dtype`. NVFP4 weights are U8 E2M1 pairs
+with an E4M3 `weight_scale` per 16 K values and an F32 `weight_scale_2`
+per projection; a static `input_scale` is never read. A rank slice of an
+NVFP4 down projection keeps whole groups of 16 K values. MXFP8 weights are
+E4M3 codes with a U8 E8M0 `weight_scale` per 32 K values.
 
 Every projection runs BF16 activations (A16). `--activation-policy auto`
-and `bf16` run the NVFP4 and MXFP8 weights under BF16 activations (W4A16
-for NVFP4); `checkpoint` is refused, since the export declares static
-NVFP4 input activations. The base checkpoint's `checkpoint` is refused
-likewise (it declares dynamic FP8 activations). The compiler checks the
-policy when a package or profile is requested.
+and `bf16` run every layout's weights under BF16 activations (W4A16 for
+NVFP4); `checkpoint` refuses a checkpoint that declares quantized
+activations, as the official one does (dynamic FP8). The compiler checks
+the policy when a package or profile is requested.
 
-The catalog for this layout has 148,498 tensors (198.0 GB). At TP4 each GPU
-holds 47.38 GiB instead of 77.65: routed experts 39.87, other main-layer
-tensors 3.98, MTP 1.90, vision 1.05, embedding and head 0.59; the text rank
-image is 46.33 GiB. Under the capacity assumptions below, 32 slots with FP8
-KV and three draft tokens plan 4.78M KV tokens at DCP 1 and 18.72M at DCP 4
-for a text package, 4.33M and 16.92M with images (block FP8: 0.67M and
-2.25M, 0.22M and 0.45M with images), and 64 slots with MTP fit (4.03M at
-DCP 1).
-`contract/tests/nvfp4_checkpoint.rs` checks the catalog and the projection
-binding against the export's headers when the variable is set, and
-`contract/fixtures/nvfp4-tensor-families.json` without it.
+Every layout serves the one package, `glm5next.v1`, at the one topology,
+`glm5next-tp4`. The package declares the model option
+`checkpoint.quantization_layout` with the checkpoint's layout id as its
+only allowed value, and the preparation provider selects `tp4-mtp` for
+every layout ([serving profiles](#serving-profiles)). The pinned
+revision's tokenizer files keep the declared frontend. Other tokenizer
+files are packaged when their `tokenizer_config.json` and chat template
+state the pinned revision's
+(`compiler/fixtures/tokenizer-semantics.json`), under a frontend whose
+tokenizer repository is `local` at a content revision; the served model
+name stays `GLM-5.3-Flash`.
 
-The HF reference of the export (models/glm5next/reference.py, same adapter
-and teacher workload as the FP8 reference, 2026-10-06) differs from the FP8
-teacher reference's F32 gate variant by the quantization itself. Scored
-like a server over the 3,781 teacher positions:
+Admission is not qualification. `qual.json` qualifies the official
+checkpoint only. Another checkpoint, of this layout or another, is
+qualified out of tree as an
+[external variant](../../tools/qual/README.md#external-variants) against
+the model's checks and limits, with its own checkpoint lock, pin and
+references. `qual.json` keeps the checks such a variant selects: its
+default gate run records the FP8 GSM8K arm (`evals_gsm8k`, arm `fp8`, the
+whole 1,319-item test split), `evals_candidate` answers the same items on
+the variant's `tp4-mtp` server at TP4, FP8 KV and DCP 1, under the
+variant's checkpoint identity, and `evals_compare` compares the two arms by
+their receipts and fails if the variant is significantly worse (McNemar,
+p < 0.05). A variant inherits no base reference unless it keeps one, so it
+supplies its own teacher reference:
+`reference_fixtures.py nvfp4-teacher` lays out the skeleton for a
+checkpoint that stores NVFP4 projections, its variants described from that
+checkpoint's headers.
 
-| Set | NVFP4 F32: mean, max, top-one | NVFP4 BF16: mean, max, top-one | FP8 BF16 (the gate's spread) |
-|---|---|---|---|
-| pooled | 0.148, 9.07, 5.9% | 0.149, 9.02, 6.2% | 0.063, 7.96, 2.9% |
-| chat (560) | 0.347, 5.28, 11.1% | 0.338, 5.12, 11.2% | 0.158, 5.27, 7.0% |
-| code (695) | 0.115, 7.43, 3.0% | 0.114, 7.26, 3.5% | 0.044, 3.06, 1.4% |
-| math (701) | 0.084, 6.54, 3.9% | 0.082, 6.80, 3.6% | 0.031, 1.16, 1.7% |
-| multilingual (796) | 0.150, 7.95, 6.9% | 0.162, 7.88, 7.2% | 0.062, 1.67, 2.9% |
-| prose (376) | 0.187, 9.07, 8.8% | 0.197, 9.02, 9.8% | 0.083, 7.96, 2.9% |
-| prose-frozen (141) | 0.262, 3.02, 17.0% | 0.231, 3.01, 17.7% | 0.115, 1.80, 9.9% |
-| long-context (512) | 0.0014, 0.15, 0.2% | 0.0024, 0.46, 0.4% | 0.0005, 0.06, 0.2% |
-
-Mean and max are |dlogprob| in nats; top-one is the share of positions whose
-top-one token differs. The export's own BF16 run sits 0.054 (pooled, top-one
-2.8%) from its F32 run, close to the FP8 checkpoint's 0.063. Its F32 run
-would fail the FP8 teacher gate (pooled mean 0.148 against 0.10; the chat,
-multilingual, prose and prose-frozen categories fail), so NVFP4 serving
-needs its own pinned reference rather than the FP8 one.
-
-The `nvfp4` configuration of `qual.json` qualifies the export (profile
-`tp4-mtp-nvfp4`) against that reference, read as `--model glm5next.nvfp4`,
-with its own entries in `qual-references.lock.json`. It states the NVFP4
-checkpoint pin (identity
-`83b4297362ba87927e462afaff42c406e8a2d8a869fb36e14fdc65badb5201e6`, the one
-the engine's direct preparation reported for the export's directory), the
-teacher reference
-`fixtures/glm5next/nvfp4-teacher-reference.json` (the F32 gate variant and
-the BF16 spread variant above, over the FP8 teacher workload), and the checks
-that hold for any checkpoint (api, structured, soak without a media mix,
-spec_verify, verify_exact, prefix_exact, preemption_exact, determinism and
-media_preprocessing), plus a paired GSM8K run against the FP8 arm that
-`qual.json`'s gate run records (`evals_gsm8k`, arm `fp8`, the whole
-1,319-item test split): `evals_candidate` answers the same items on the
-export, and `evals_compare` compares the two arms by their receipts and
-fails if the export is significantly worse (McNemar, p < 0.05). The FP8
-arm's receipt (input `fp8_gsm8k`) must be of that run (input
-`fp8_gsm8k_run`, its run ID), pin the GSM8K workload digest and report
-`tp4-mtp` at TP4, FP8 KV and DCP 1 and the FP8 checkpoint pin. Every other check that reads a serving profile requires
-`tp4-mtp-nvfp4` at TP4, FP8 KV and DCP 1. The reference's own spread sets
-the teacher limits: pooled mean 0.10, the chat category 0.15 (its BF16
-spread 0.130), every other category 0.15, top-one 8% decisive and near tie,
-10% in all. Long context, image probes and encoder parity need NVFP4
-references not yet run and are not declared, so the declaration claims no
-media. An f64 run is not needed for the limits (the FP8 reference's f64
-spread is 0.0005 against BF16's 0.063); it would show how far the F32
-dequantization rounding moves the gate variant, in two GPU jobs of about
-12 and 10 minutes (the FP8 f64 teacher's 525 and 414 s, scaled by the
-export's slower f64 probe, 175 s against 127 s).
-
-## NVIDIA NVFP4 checkpoint
-
-`nvidia/GLM-5.3-Flash-NVFP4` at revision
-`da920bb0b9f4a06727223a349e55468e38352348` is a third checkpoint of the
-flash geometry (`checkpoint-files-nvidia-nvfp4.json`: 33 shards, config,
-`hf_quant_config.json`, index, chat template and tokenizer files; tests
-read it from `CHOPINFER_GLM5NEXT_NVIDIA_NVFP4_CHECKPOINT`). Its config
-declares NVFP4 for every `Linear` with exclusions, which admits the
-`nvfp4-dense-routed` layout:
-
-- dense MLPs (layers 0-2) and routed experts (layers 3-44): NVFP4, as
-  above; the down projection's rank slice keeps whole groups of 16 K
-  values, and the global and activation scales are scalars every rank
-  holds;
-- MTP routed experts: BF16, a quarter of each per rank like the others;
-- latent attention, shared experts, the router, embedding and head: BF16;
-- side tensors in other dtypes than the base: F32 KDA convolutions, stored
-  as read, and BF16 mHC base and scale vectors, widened to F32 in the rank
-  image.
-
-Its KV cache hint (`kv_cache_scheme`, FP8) is ignored; the latent KV format
-is the serving `--kv-cache-dtype`. `--activation-policy checkpoint` is
-refused (static NVFP4 inputs); `auto` and `bf16` run W4A16. The catalog has
-147,661 tensors (204.4 GB). At TP4 each GPU holds 48.87 GiB (the text rank
-image 47.82 GiB); 32 slots with FP8 KV and three draft tokens plan 4.65M KV
-tokens at DCP 1 and 18.18M at DCP 4 for a text package, 4.20M and 16.38M
-with images. Its tokenizer, processor config and
-tokenizer config match the FP8 checkpoint's; its chat template and
-generation config do not (an older template revision), so its references
-reuse the FP8 checkpoint's teacher workload.
-
-Admitting it changed code beyond declarations: the layout gained a dense
-class and the two side tensor dtypes, the contract normalizes HF's
-single-algorithm ModelOpt form, which the shared importer refuses or
-misreads (`contract/src/quantization.rs`: the `Linear` class group must
-agree with the top-level algorithm, its group size moves to the top level,
-and the static FP8 KV hint is dropped for this layout only), the
-weight plan gained the NVFP4 K granule, and the rank image widens BF16
-side vectors. The projection declaration only admits the new side dtypes.
-
-Its HF reference (models/glm5next/reference.py, F32 with dequant rounded
-and BF16, over the FP8 teacher workload, 2026-10-07) scored like a server
-over the 3,781 teacher positions, against the FP8 teacher reference's F32
-gate variant and against the local-inference-lab export's runs:
-
-| Set | NVIDIA F32 vs FP8 F32: mean, max, top-one | NVIDIA BF16 vs FP8 F32 | NVIDIA F32 vs local-inference-lab F32 |
-|---|---|---|---|
-| pooled | 0.147, 9.29, 5.4% | 0.149, 9.06, 5.8% | 0.130, 8.44, 5.1% |
-| chat (560) | 0.375, 6.86, 11.1% | 0.405, 6.55, 12.0% | 0.363, 8.04, 10.7% |
-| code (695) | 0.101, 7.25, 3.3% | 0.085, 3.41, 3.2% | 0.083, 3.71, 3.2% |
-| math (701) | 0.084, 5.20, 3.9% | 0.080, 2.36, 3.9% | 0.069, 3.54, 3.0% |
-| multilingual (796) | 0.151, 8.40, 6.0% | 0.149, 6.58, 6.2% | 0.134, 8.44, 6.2% |
-| prose (376) | 0.169, 9.29, 8.0% | 0.170, 9.06, 9.0% | 0.127, 1.96, 5.3% |
-| prose-frozen (141) | 0.232, 2.78, 9.9% | 0.256, 2.74, 12.1% | 0.195, 1.49, 14.2% |
-| long-context (512) | 0.0016, 0.16, 0.2% | 0.0028, 0.39, 0.4% | 0.0012, 0.21, 0.0% |
-
-The FP8 teacher gate refuses its F32 run as it refuses the
-local-inference-lab export's: pooled mean 0.147 against 0.10 (decisive
-top-one 2.7%, near tie 2.8%), with the chat, multilingual, prose and
-prose-frozen categories failing; its BF16 run fails chat, prose and
-prose-frozen. The two NVFP4 exports differ from each other (pooled 0.130,
-top-one 5.1%) nearly as much as each differs from FP8 (0.147 and 0.148),
-so neither export's reference stands in for the other's. Its own BF16 run
-sits 0.065 (pooled, top-one 2.3%) from its F32 run. The short f64 probe
-(the 512-token probe, 256 scored positions, dequant exact) completed with
-finite scores; against the FP8 and local-inference-lab f64 probes it
-differs by a mean 0.121 and 0.101 (top-one 6.6% and 5.9%), the same
-quantization gap.
-
-The `nvfp4-nvidia` configuration qualifies it (profile
-`tp4-mtp-nvfp4-nvidia`) against that reference,
-`fixtures/glm5next/nvfp4-nvidia-teacher-reference.json` (the F32 gate variant
-and the BF16 spread variant), as `nvfp4` does the local-inference-lab
-export, with its own lock entries. Its own spread sets the teacher
-limits: pooled mean 0.10, the chat category 0.20 (its BF16 spread 0.160),
-every other category 0.15, top-one 8% decisive and near tie, 10% in all.
+Tests cover the layouts without any export's files. A contract test
+admits each mixed representative layout from a config synthesized at test
+time (`quantization::synthetic`) and binds its catalog to the projection
+declaration in the layout's formats. `CHOPINFER_GLM5NEXT_EXTRA_CHECKPOINTS` names further checkpoint
+directories of any layout (`:` separated); each is checked against
+expectations derived from the layout its config and headers resolve to:
+its shard headers against that layout's catalog and binding, its encoder
+image plan, its generation config against the deploy defaults, its
+package emission, its rank plans on the bundle's fake host and, for NVFP4
+weights, the HF reference adapter's loading (`test_nvfp4_reference.py`).
 
 ## Serving contract and program
 
@@ -381,10 +295,10 @@ indexer pooling gate and position bias, and `kv_b_proj` (the latent
 attention engine's absorbed key and value halves). Vision tensors are owned
 by the encoder declaration. The gate-up projections carry the SwiGLU clamp
 (`swiglu_limit`) as a registered `glm5next/clamped-swiglu-*` implementation,
-because `Epilogues` has no clamp. The NVFP4 routed and MXFP8 MTP expert
-formats of the local-inference-lab export and the BF16 projections it keeps
-are declared beside FP8; `contract/tests/projections.rs` binds the catalog,
-a header-shaped stand-in for that export and, with
+because `Epilogues` has no clamp. The NVFP4, MXFP8 and BF16 formats of the
+[checkpoint layouts](#checkpoint-layouts) are declared beside FP8, class by
+class; `contract/tests/projections.rs` binds the catalog, header-shaped
+mixed metadata with NVFP4 routed and MXFP8 MTP experts and, with
 `CHOPINFER_GLM5NEXT_CHECKPOINT` set, the checkpoint's own headers.
 
 ## Vision encoder
@@ -487,9 +401,9 @@ named engine workspaces plus a 2 GiB allowance, the KDA and indexer tail state
 (36.9 MB per copy at TP4: one copy per slot without drafts, `rows + 1` with
 them, and sixteen for the anchor spares, all allocated before the KV pool),
 and the KV pool the host then sizes. KV tokens scale with the context-parallel size; the state does
-not. Print the table of each checkpoint layout for slots 1 to 64, MTP K 0, 3
-and 5, FP8 and BF16 KV and DCP 1, 2 and 4, text packages and packages
-serving images, with
+not. Print the table of the representative layouts, or of the layout ids
+given after `--`, for slots 1 to 64, MTP K 0, 3 and 5, FP8 and BF16 KV and
+DCP 1, 2 and 4, text packages and packages serving images, with
 
 ```sh
 cargo run -p model-glm5next-contract --example capacity-table --locked --offline
@@ -521,25 +435,22 @@ pool leaves free: the host's 1 GiB reserve and the 10% of the rest that
 `profiles.json` declares TP4 only: `tp4-mtp` (the default, MTP with three
 draft tokens), `tp4-ar`, `tp4-mtp-dcp2` and `tp4-mtp-dcp4` (context-parallel
 sizes 2 and 4) and `tp4-mtp-k5` (five draft tokens, a benchmark arm that is
-never selected by default) for the block-FP8 checkpoint, `tp4-mtp-nvfp4` for
-local-inference-lab's NVFP4 export and `tp4-mtp-nvfp4-nvidia` for NVIDIA's.
-Each asserts its layout as the model option
-`checkpoint.quantization_layout`, which the package declares with its own
-layout as the one allowed value, so the host refuses a profile on a package
-of another layout. `compiler/src/preparation.rs` selects `tp4-mtp`,
-`tp4-mtp-nvfp4` or `tp4-mtp-nvfp4-nvidia` by the checkpoint's quantization
-layout. The package declares the MTP drafter at the contract's five drafts;
-the served `--speculative-tokens` (the profile's count) sets the drafts, the
-state copies and the verify graphs. All seven serve. Six are qualified
-through 32 sequences on the adopted final gate (GATES4, 2026-10-11):
-`tp4-mtp` by `qual.json`, `tp4-ar` by each configuration's autoregressive
-arms, `tp4-mtp-dcp2` and `tp4-mtp-dcp4` by the `dcp2` and `dcp4`
-configurations, and the NVFP4 profiles by `nvfp4` and `nvfp4-nvidia`.
-GATES4 judged the soaks of `tp4-mtp` and `tp4-mtp-nvfp4` by the operator's
-waiver; the declared warm-up rule now passes them. `tp4-mtp-k5` passed its
-gate (then `qual.k5.json`, now the `k5` configuration) but stays
-experimental: it is
-a benchmark arm, never selected by default. The
+never selected by default). None asserts a checkpoint layout, so each
+serves every [checkpoint layout](#checkpoint-layouts): the package declares
+the model option `checkpoint.quantization_layout` with its own layout as
+the one allowed value, and `compiler/src/preparation.rs` selects `tp4-mtp`
+for every layout. The package declares the MTP drafter at the contract's
+five drafts; the served `--speculative-tokens` (the profile's count) sets
+the drafts, the state copies and the verify graphs. All five serve. Four
+are qualified through 32 sequences on the official checkpoint by the
+adopted final gate (GATES4, 2026-10-11): `tp4-mtp` by `qual.json`,
+`tp4-ar` by each configuration's autoregressive arms, and `tp4-mtp-dcp2`
+and `tp4-mtp-dcp4` by the `dcp2` and `dcp4` configurations. GATES4 judged
+the soak of `tp4-mtp` by the operator's waiver; the declared warm-up rule
+now passes it. `tp4-mtp-k5` passed its gate (then `qual.k5.json`, now the
+`k5` configuration) but stays experimental: it is a benchmark arm, never
+selected by default. A checkpoint of another layout is qualified as an
+[external variant](../../tools/qual/README.md#external-variants). The
 [model page](../../docs/model-glm5next.md#serving-profiles) lists their
 capacity, the deploy defaults and the adopted GSM8K floor.
 
@@ -559,8 +470,9 @@ lower-index ties are the engine's rule. The f32 gate run needs
 mantissa. `reference_workloads.py` and `reference_fixtures.py` build the
 step-30 workloads and skeletons; `test_reference.py` checks the adapter on
 tiny synthetic checkpoints on CPU, and `test_nvfp4_reference.py` against the
-NVFP4 export's headers. The adapter reads the NVFP4 export as stored and
-needs `--dequant f32=rounded` for the f32 run as well.
+headers of each checkpoint with NVFP4 weights that
+`CHOPINFER_GLM5NEXT_EXTRA_CHECKPOINTS` names. The adapter reads NVFP4
+weights as stored and needs `--dequant f32=rounded` for the f32 run as well.
 
 The long-context reference holds `long_4k` and the last 1,024 positions of
 `long_128k`, 131,072 tokens (2026-10-11). The default placement does not fit
@@ -585,8 +497,9 @@ twice.
 `qual.json` declares the plan step 39 gates. The operator adopted their
 results from the final gate on 2026-10-11: GATES4, part A (the
 autoregressive arms, no drafter) at cab96b599 and part B at 8c75e90bd.
-Every check passed except two soaks under the plain memory rule, which the
-operator waived then; the declared warm-up rule below passes them.
+Every check of the official checkpoint's configurations passed except the
+default configuration's soak under the plain memory rule, which the
+operator waived then; the declared warm-up rule below passes it.
 So `qualification.mechanics_only` is false in `qual.json` and in every
 configuration it declares, except `taps`. That configuration's
 `text_layers` check still needs its pinned layer reference
@@ -596,14 +509,11 @@ is the one the engine reported for the zai-org FP8 checkpoint at its pinned
 revision (the startup `serving_identity` of a TP4 tp4-mtp serve,
 2026-10-07); it is the SHA-256 of every safetensors file's name, length and
 header, so it changes only with those files. The serving-configuration
-variants pin the same checkpoint. The NVFP4 variants pin their exports'
-identities as the engine's direct preparation reported them at TP4
-(`chopinfer-model-glm5next prepare --direct`, 2026-10-07; serve refuses a
-checkpoint whose identity differs from its package's):
-`83b4297362ba87927e462afaff42c406e8a2d8a869fb36e14fdc65badb5201e6` for
-local-inference-lab's (44 shards) and
-`aadfa0fd2df0268c5ee9cba10c33388ac33d118126fd6cfacd2c00568b19c8e2` for
-NVIDIA's (33 shards).
+variants pin the same checkpoint. An
+[external variant](../../tools/qual/README.md#external-variants) pins its
+own checkpoint's identity (`serving.checkpoint_identity`, its pin's by
+default); serve refuses a checkpoint whose identity differs from its
+package's.
 
 The limits are those of [the serving qualification
 gates](../../docs/numerics.md#serving-qualification-gates), computed at gate
@@ -628,12 +538,10 @@ teacher chat texts and ten longer conversations of 251 to 603 tokens
 spread rule's headroom factor 1.25 (`SPREAD_MEAN_FACTOR`, adopted
 2026-10-11, fixed before the references ran): 1.25 x 0.180 rounded up to
 0.25. The tool-call conversations carry most of the BF16 error (0.26 to 0.34
-nats per position, against 0.06 to 0.13 for the others). The NVFP4 exports'
-chat references give limits 0.20 (local-inference-lab, BF16 0.143) and 0.25
-(NVIDIA, BF16 0.181). The teacher check keeps its seven chat texts and its
-limits.
+nats per position, against 0.06 to 0.13 for the others). The teacher check
+keeps its seven chat texts and its limits.
 
-The needle check (qual.json, DCP 2 and 4, both NVFP4 exports) runs at total
+The needle check (qual.json, DCP 2 and 4) runs at total
 contexts of 8,192, 131,072 and 262,144 tokens: frozen token-ID prompts of
 7,168, 130,048 and 261,120 tokens, each with 1,024 tokens to answer. It
 requires the three needle values in order.
@@ -650,9 +558,8 @@ declared 1,048,576-token context does not fit one sequence on the default
 package.
 
 On 2026-10-11 the chat check passed against `tp4-mtp` (DCP 1, 2 and 4, five
-drafts, BF16 KV) and both NVFP4 exports; frontend_goldens against `tp4-mtp`
-at DCP 1 and both NVFP4 exports; the needle against `tp4-mtp` at DCP 1, 2
-and 4 and both NVFP4 exports; and `long_context` against the 131,072-token
+drafts, BF16 KV); frontend_goldens against `tp4-mtp` at DCP 1; the needle
+against `tp4-mtp` at DCP 1, 2 and 4; and `long_context` against the 131,072-token
 reference at DCP 1, 2 and 4 only. So `capabilities.frontend` and
 `capabilities.long_context` are true. The results per server are on the
 [model page](../../docs/model-glm5next.md#coverage-checks-2026-10-11).
@@ -709,8 +616,9 @@ KV. The other serving configurations are declared in `qual.json`'s
   `x.hc.attn,attn.out,x.hc.mlp,mlp.out,x.latent,x.indexer.ids,router.*,norm`
   and the server with the same sites.
 
-The default gate run also records the FP8 GSM8K arm the NVFP4 configurations
-compare against (`evals_gsm8k`).
+The default gate run also records the FP8 GSM8K arm an external variant's
+paired GSM8K compares against (`evals_gsm8k`; see
+[checkpoint layouts](#checkpoint-layouts)).
 
 prefix_exact reads its record in two shards (`prefix_exact.py record --shard
 I/2`, inputs `prefix_record_1` and `prefix_record_2`), each from its own
@@ -721,8 +629,8 @@ count once, and on the DCP 1 record split offline into two or three shards
 it equals the whole record's report.
 
 The soak judges GLM's memory with a declared warm-up and cache allowance
-(operator, 2026-10-11; the soak check's constants in `qual.json` and both
-NVFP4 declarations, `soak.memory_rule` in tools/qual). A request's last
+(operator, 2026-10-11; the soak check's constants in `qual.json`,
+`soak.memory_rule` in tools/qual). A request's last
 prompt chunk captures its prefill program at its first run and keeps it
 (see "Serving contract and program"), at most 64 lengths. Each length holds
 about 40 MiB of host memory and about 21 MiB of GPU memory across the four
@@ -737,8 +645,6 @@ gate (GATES4, 8c75e90bd, 2026-10-11) ran the plain rule:
 | Soak | Host growth (MiB) | GPU growth (MiB) | After 180 s, host / GPU (MiB) | Plain rule | Declared rule |
 |---|---:|---:|---:|---|---|
 | DCP 1, `tp4-mtp` with images (22 lengths) | 1,077.5 | 440 | 43.6 / 24 | fail (waived then) | pass |
-| local-inference-lab NVFP4 gate | 529.2 | 280 | 48.1 / 32 | fail (waived then) | pass |
-| NVIDIA NVFP4 gate | 480.0 | 240 | 43.3 / 24 | pass | pass |
 | DCP 1, all 64 lengths captured at create (`CHOPINFER_GLM5NEXT_LAST_CHUNK_GRAPHS=1`, 300 s) | 331.9 | 64 | | pass | |
 
 The same growth appears before the GLM backend port (9867df47a), so it is
@@ -749,8 +655,8 @@ the host sizes the pool, out of the 1 GiB the host keeps free and the 10% of
 the rest the pool leaves (see "Tuning and capacity"). In GATES4 every agreed
 configuration had at least 989 MiB free per rank before its first graph
 capture. DCP 4 with MTP is the tightest at 989.6 MiB; the others had 1,021.6
-(DCP 2), 1,053.6 (DCP 1 with images, and BF16 KV), 1,181.6 (K=5), about 4,000
-(both NVFP4 exports) and at least 2,461.6 (`tp4-ar`). All 64 programs with
+(DCP 2), 1,053.6 (DCP 1 with images, and BF16 KV), 1,181.6 (K=5) and at
+least 2,461.6 (`tp4-ar`). All 64 programs with
 every other graph took 460 MiB per rank at DCP 1. Projected from each
 configuration's measured peak at 5.6 MiB per missing length, they take at
 most about 500 MiB per rank, which leaves at least 490 MiB.
@@ -803,11 +709,10 @@ screen at the floor the operator adopted on 2026-10-11, 193 of 200:
 read; the
 [model page](../../docs/model-glm5next.md#gsm8k-floor) gives the
 evidence). The first screen scored 197 of 200 (2026-10-07, before the fixed
-latent splits). GATES4's whole split scored 1,283 of 1,319 (FP8), 1,285
-(local-inference-lab NVFP4) and 1,288 (NVIDIA NVFP4), and the screen's 200
-items within it 196, 197 and 197. None is a gate check; spec_verify's
-GSM8K questions are prompts, not that screen. `chopinfer verify --model` passed for all three
-checkpoints on 2026-10-07 (every file against its hub blob digest).
+latent splits). GATES4's whole split scored 1,283 of 1,319 (FP8), and the
+screen's 200 items within it 196. None is a gate check; spec_verify's
+GSM8K questions are prompts, not that screen. `chopinfer verify --model` passed for the
+official checkpoint on 2026-10-07 (every file against its hub blob digest).
 
 ### Layer reference
 

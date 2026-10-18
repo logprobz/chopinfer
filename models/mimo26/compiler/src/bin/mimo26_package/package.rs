@@ -54,18 +54,8 @@ pub struct PackageAssets {
 }
 
 impl PackageAssets {
-    /// Reads the real tokenizer files only against model-mimo26's pinned identities.
-    pub fn pinned_tokenizer(
-        checkpoint: &Path,
-        identity: &model_mimo26::checkpoint::Identity,
-    ) -> Result<[StagedContentV1; 2], CompilerError> {
-        Self::pinned_tokenizer_with_registry(
-            checkpoint,
-            identity,
-            model_mimo26::checkpoint::registry(),
-        )
-    }
-
+    /// The checkpoint's tokenizer files, staged only as `registry` pins
+    /// them for `identity` (a registered or a local identity).
     pub fn pinned_tokenizer_with_registry(
         checkpoint: &Path,
         identity: &model_mimo26::checkpoint::Identity,
@@ -1097,8 +1087,12 @@ mod tests {
                 .verify_tokenizer("tokenizer.json", 2, &"0".repeat(64))
                 .is_err()
         );
-        let [definition, configuration] =
-            PackageAssets::pinned_tokenizer(checkpoint, identity).unwrap();
+        let [definition, configuration] = PackageAssets::pinned_tokenizer_with_registry(
+            checkpoint,
+            identity,
+            verifier.registry(),
+        )
+        .unwrap();
         let output =
             std::env::temp_dir().join(format!("mimo-bound-{}-{selected}", std::process::id()));
         let assets = PackageAssets {

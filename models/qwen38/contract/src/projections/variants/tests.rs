@@ -5,19 +5,11 @@ use projection_spec::contracts::Interpretation;
 
 #[test]
 fn hash_stage_matches_served_lookup_symbols_state_and_phase_addressing() {
-    // Both served exports retain per-tensor FP8 n-gram tables. The mixed
-    // export serves TP4; the FP8 export serves both declared rank counts.
+    // Both served layouts retain per-tensor FP8 n-gram tables. The mixed
+    // layout serves TP4; the FP8 export serves both declared rank counts.
     for (export, text, ranks) in [
-        (
-            "fp8",
-            include_str!("../../../tests/fixtures/projections/fp8.json"),
-            &[2, 4][..],
-        ),
-        (
-            "nvidia",
-            include_str!("../../../tests/fixtures/projections/nvidia.json"),
-            &[4][..],
-        ),
+        ("fp8", fixtures::exports::FP8, &[2, 4][..]),
+        (MIXED.name(), MIXED.text(), &[4][..]),
     ] {
         for &tp in ranks {
             let declaration = crate::projections::declaration(tp).unwrap();
@@ -29,7 +21,7 @@ fn hash_stage_matches_served_lookup_symbols_state_and_phase_addressing() {
                 &metadata,
             )
             .unwrap();
-            if export == "nvidia" {
+            if export == MIXED.name() {
                 assert!(
                     bound
                         .operands
@@ -302,8 +294,9 @@ fn registered_hash_hook_retains_the_descriptor_and_refuses_missing_binding() {
     }
 }
 
-#[path = "../../../tests/projections_support/mod.rs"]
-mod fixtures;
+use crate::mixed_layouts::headers as fixtures;
+/// The mixed layout the served comparisons cover.
+const MIXED: fixtures::exports::Layout = fixtures::exports::Layout::Nvfp4RoutedFp8Mtp;
 #[path = "prototype.rs"]
 mod prototype;
 
@@ -311,22 +304,8 @@ mod prototype;
 fn served_export_implementation_records_match_current_rank_images() {
     use projection_spec::derive::{InstanceKey, ProjectionContext, Topology, ViewRole};
     for (export, text, degrees) in [
-        (
-            "fp8",
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/fixtures/projections/fp8.json"
-            )),
-            &[2, 4][..],
-        ),
-        (
-            "nvidia",
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/fixtures/projections/nvidia.json"
-            )),
-            &[4][..],
-        ),
+        ("fp8", fixtures::exports::FP8, &[2, 4][..]),
+        (MIXED.name(), MIXED.text(), &[4][..]),
     ] {
         let mut metadata = fixtures::fixture(text);
         let original = crate::projections::declaration(4).unwrap();
@@ -346,7 +325,7 @@ fn served_export_implementation_records_match_current_rank_images() {
             let mut experts = 0;
             for projection in &declaration.projections {
                 // The mixed export is served without the FP8 MTP drafter.
-                if export == "nvidia" && projection.id.starts_with("mtp.") {
+                if export == MIXED.name() && projection.id.starts_with("mtp.") {
                     continue;
                 }
                 let Some(frame) = bound
@@ -502,22 +481,8 @@ mod bytes;
 fn served_bf16_fusions_match_native_entries_records_and_output_addresses() {
     use projection_spec::derive::{AdapterValue as Value, FusionContext, InstanceKey, Topology};
     for (export, text, degrees) in [
-        (
-            "fp8",
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/fixtures/projections/fp8.json"
-            )),
-            &[2, 4][..],
-        ),
-        (
-            "nvidia",
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/fixtures/projections/nvidia.json"
-            )),
-            &[4][..],
-        ),
+        ("fp8", fixtures::exports::FP8, &[2, 4][..]),
+        (MIXED.name(), MIXED.text(), &[4][..]),
     ] {
         let mut metadata = fixtures::fixture(text);
         fixtures::owner_scope(&crate::projections::declaration(4).unwrap(), &mut metadata);
@@ -534,7 +499,7 @@ fn served_bf16_fusions_match_native_entries_records_and_output_addresses() {
             let shape = Shape::of(Ranks::new(tp).unwrap()).unwrap();
             let mut seen = 0;
             for group in &declaration.fusion_groups {
-                if export == "nvidia" && group.members[0].starts_with("mtp.") {
+                if export == MIXED.name() && group.members[0].starts_with("mtp.") {
                     continue;
                 }
                 let projection = declaration

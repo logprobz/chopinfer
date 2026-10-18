@@ -13,7 +13,7 @@ use kernel_core::contract::WeightFormat;
 use kernel_core::precision::OperationUse;
 use model_glm5next_contract::own_ops::OwnOps;
 use model_glm5next_contract::own_ops::stacked::{StackedPart, StackedProjection};
-use model_glm5next_contract::quantization::{FP8_BLOCK128, Layout};
+use model_glm5next_contract::quantization::Layout;
 use model_glm5next_contract::sm120::engines::{
     ARGMAX_CUBIN, BF16_LOW_LATENCY_ROWS, COMM_EPILOGUE_CUBIN, LL_ROUND_SYMBOL, LL_SYMBOL,
     PHASED_CALLS_PER_RUN, PHASED_RESET_RUNS, ROUNDED_LOW_LATENCY_ROWS, bf16_phased_admission_plans,
@@ -40,11 +40,12 @@ fn spinning(symbol: &'static str, plan: kernel_core::contract::LaunchPlan) -> Sp
 }
 
 /// Whether an instance serving an export stored in `layout` loads the
-/// embedded `cubin`: the NVFP4 exports' cubins (the chained engine's other
+/// embedded `cubin`: the other formats' cubins (the chained engine's other
 /// formats and its NVFP4 and BF16 block warps, of the dense MLP and shared
 /// expert, `engines::MOE_FORMATS_FAMILY`, and of the split routed experts,
-/// and the projections they add, `projection_formats`) load only for the
-/// NVFP4 layouts, so a block-FP8 instance loads none of them.
+/// and the projections they add, `projection_formats`) load only for a
+/// layout with a class outside block FP8, so an instance storing every
+/// class in block FP8 loads none of them.
 fn loads_format(layout: &Layout, cubin: &str) -> bool {
     use kernels_sm120::moe::chained::{self, Weights};
     let other = [Weights::Nvfp4, Weights::Mxfp8, Weights::Bf16];
@@ -61,7 +62,7 @@ fn loads_format(layout: &Layout, cubin: &str) -> bool {
                         .iter()
                         .any(|weights| cubin == format!("{prefix}_{}_bw4", weights.tag()))
             });
-    *layout != FP8_BLOCK128 || !format
+    !layout.block_fp8() || !format
 }
 
 impl Target for Sm120Own {
@@ -274,15 +275,20 @@ fn pool_gate(
 
 #[cfg(test)]
 mod tests {
+    use model_glm5next_contract::catalog::DType;
     use model_glm5next_contract::contract::Shape;
-    use model_glm5next_contract::quantization::{NVFP4_DENSE_ROUTED, NVFP4_ROUTED};
+    use model_glm5next_contract::quantization::{
+        Classes, FP8_BLOCK128, FP8_NVFP4_ROUTED, NVFP4_DENSE_ROUTED, NVFP4_ROUTED,
+    };
 
     use super::*;
 
-    /// The block-FP8 instance skips exactly the format families' cubins and
-    /// the split routed experts' cubins of the NVFP4 exports' formats.
+    /// An instance storing every class in block FP8 skips exactly the format
+    /// families' cubins and the split routed experts' cubins of the other
+    /// formats, whatever its side tensor dtypes; every other layout loads
+    /// them.
     #[test]
-    fn only_the_nvfp4_layouts_load_the_format_cubins() {
+    fn only_layouts_outside_block_fp8_load_the_format_cubins() {
         use kernels_sm120::moe::chained::split::PREFIX;
         use model_glm5next_contract::sm120::engines::{
             MOE_FORMATS_FAMILY, MOE_SPLIT_FAMILY, cubin_specs,
@@ -301,13 +307,26 @@ mod tests {
             }
         }
         assert_eq!(format.len(), 1 + 3 + 5);
-        for name in &format {
-            assert!(!loads_format(&FP8_BLOCK128, name), "{name}");
+        let side_mix = model_glm5next_contract::quantization::find(
+            Classes::BLOCK_FP8,
+            DType::F32,
+            DType::Bf16,
+        )
+        .unwrap();
+        for layout in [&FP8_BLOCK128, side_mix] {
+            for name in &format {
+                assert!(!loads_format(layout, name), "{name}");
+            }
         }
-        for layout in [&FP8_BLOCK128, &NVFP4_ROUTED, &NVFP4_DENSE_ROUTED] {
+        for layout in [
+            &FP8_BLOCK128,
+            &NVFP4_ROUTED,
+            &NVFP4_DENSE_ROUTED,
+            &FP8_NVFP4_ROUTED,
+        ] {
             assert!(other.iter().all(|name| loads_format(layout, name)));
         }
-        for layout in [&NVFP4_ROUTED, &NVFP4_DENSE_ROUTED] {
+        for layout in [&NVFP4_ROUTED, &NVFP4_DENSE_ROUTED, &FP8_NVFP4_ROUTED] {
             assert!(format.iter().all(|name| loads_format(layout, name)));
         }
     }

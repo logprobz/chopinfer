@@ -234,7 +234,7 @@ mod tests {
     }
 
     #[test]
-    fn nvidia_nvfp4_tp4_bytes_per_rank() {
+    fn nvfp4_dense_routed_tp4_bytes_per_rank() {
         let tensors = catalog::checkpoint_catalog(&FLASH, &NVFP4_DENSE_ROUTED);
         let ranks = plan(&FLASH, &tensors, 4).unwrap();
         let expected = GroupBytes {

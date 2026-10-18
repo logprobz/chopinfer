@@ -326,14 +326,14 @@ impl Engines {
 #[cfg(test)]
 mod shared_tests {
     use super::*;
-    use model_glm5next_contract::quantization::LAYOUTS;
+    use model_glm5next_contract::quantization::representative_layouts;
 
-    /// For every checkpoint layout, the shared engines are the ones lowered
-    /// fresh (every field, and the symbol table module loading reads), and
-    /// later requests return that same lowering.
+    /// For every representative layout, the shared engines are the ones
+    /// lowered fresh (every field, and the symbol table module loading
+    /// reads), and later requests return that same lowering.
     #[test]
     fn shared_engines_equal_fresh_ones() {
-        for layout in LAYOUTS {
+        for layout in representative_layouts() {
             let fresh = Engines::for_layout(Shape::TP4, layout).unwrap();
             let shared = Engines::shared(Shape::TP4, layout).unwrap();
             assert_eq!(format!("{shared:?}"), format!("{fresh:?}"), "{}", layout.id);

@@ -42,13 +42,13 @@ Usage: models/glm5next/redeploy.sh [options]
 Builds the host, chopinfer-model-glm5next and bundle-glm5next, copies them
 into a private install, prepares the direct package in the model cache, then
 serves `chopinfer serve --model CHECKPOINT` with the profile the helper
-selects for the checkpoint's layout (tp4-mtp, tp4-mtp-nvfp4 or
-tp4-mtp-nvfp4-nvidia) as defaults. Only --dry-run works until
-models/glm5next/model.toml lists the chopinfer-model-glm5next helper.
+selects (tp4-mtp, for every checkpoint layout) as defaults. Only --dry-run
+works until models/glm5next/model.toml lists the chopinfer-model-glm5next
+helper.
 With CHOPINFER_TAPS_DIR set it builds bundle-glm5next's diagnostic-taps
 feature, which writes the encoder taps there (encoder_parity's build).
-  --checkpoint DIR   Default $CHOPINFER_GLM5NEXT_CHECKPOINT (any of the three
-                     admitted checkpoints).
+  --checkpoint DIR   Default $CHOPINFER_GLM5NEXT_CHECKPOINT (a checkpoint of
+                     any admitted layout).
   --model-cache-dir DIR
                      Where the direct package goes (default
                      $CHOPINFER_DATA/model-cache).

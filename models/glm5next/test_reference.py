@@ -22,6 +22,7 @@ import json
 import os
 from pathlib import Path
 import re
+import struct
 import subprocess
 import sys
 import tempfile
@@ -1067,13 +1068,10 @@ class GateDeclarationTests(unittest.TestCase):
                 rules = [rule for rule in check["rules"] if rule["path"][:4] == profile]
                 if rules:
                     groups.append((f"{name}:{check_id}", rules, kv))
-        for name in ("kv-bf16", "nvfp4"):
-            checks = configured(name)["checks"]
-            for check_id, key in (("teacher_arms", "fp8_teacher"), ("evals_compare", "fp8_gsm8k")):
-                if check_id in checks:
-                    groups.append((f"{name}:{key}", [rule for rule in checks[check_id]["input_rules"][key]
-                                                     if rule["path"][:4] == profile], "fp8"))
-        self.assertEqual(len(groups), 9)
+        checks = configured("kv-bf16")["checks"]
+        groups.append(("kv-bf16:fp8_teacher", [rule for rule in checks["teacher_arms"]["input_rules"]["fp8_teacher"]
+                                               if rule["path"][:4] == profile], "fp8"))
+        self.assertEqual(len(groups), 8)
         for label, rules, kv in groups:
             with self.subTest(rules=label):
                 self.assertTrue(all(kinds.predicate(server("tp4-mtp", 3, kv), rule) for rule in rules))
@@ -1174,9 +1172,8 @@ class GateDeclarationTests(unittest.TestCase):
 
     def test_each_paired_configuration_compares_by_the_default_margins_on_its_own_reference(self):
         """qual.json declares one set of paired margins, tp4-mtp; every
-        configuration that declares paired_teacher (default, both DCP sizes,
-        both NVFP4 checkpoints) selects it by its profile, on its own teacher
-        reference, and compares with its own stored arm. The five-draft, BF16
+        configuration that declares paired_teacher (default and both DCP
+        sizes) selects it by its profile, on its own teacher reference, and compares with its own stored arm. The five-draft, BF16
         KV and taps configurations declare none."""
         import declaration
         import paired_teacher
@@ -1185,8 +1182,7 @@ class GateDeclarationTests(unittest.TestCase):
         policies = base["checks"]["paired_teacher"]["constants"]["paired_teacher"]["PROFILE_POLICIES"]["value"]
         self.assertEqual(set(policies), {"tp4-mtp"})
         profiles = json.loads((ROOT / "models/glm5next/profiles.json").read_text())["profiles"]
-        expected = {"default": "tp4-mtp", "dcp2": "tp4-mtp-dcp2", "dcp4": "tp4-mtp-dcp4",
-                    "nvfp4": "tp4-mtp-nvfp4", "nvfp4-nvidia": "tp4-mtp-nvfp4-nvidia"}
+        expected = {"default": "tp4-mtp", "dcp2": "tp4-mtp-dcp2", "dcp4": "tp4-mtp-dcp4"}
         for name in ["default", *sorted(base["configurations"])]:
             value = (base if name == "default" else
                      json.loads(declaration.materialized("glm5next", name).read_text()))
@@ -1218,7 +1214,7 @@ class GateDeclarationTests(unittest.TestCase):
         # qual.json declares them for its configurations; its own cohorts run none.
         for check in ("encoder_parity", "text_layers", "teacher_arms"):
             self.assertNotIn(check, gate_checks(base))
-        for name in ("dcp2", "dcp4", "k5", "kv-bf16", "nvfp4", "nvfp4-nvidia"):
+        for name in ("dcp2", "dcp4", "k5", "kv-bf16"):
             checks = configured(name)["checks"]
             self.assertNotIn("encoder_parity", checks)
             self.assertNotIn("text_layers", checks)
@@ -1371,176 +1367,131 @@ class DeterminismPairTests(unittest.TestCase):
         """qual.json claims image input, so both records must include the
         image request; the configurations, which claim no media, do not ask it."""
         self.assertFalse(self.judged("without-image", image=False)[0])
-        for name in ("dcp2", "dcp4", "nvfp4", "nvfp4-nvidia"):
+        for name in ("dcp2", "dcp4"):
             check = configured(name)["checks"]["determinism"]
             self.assertFalse([rule for rules in check["input_rules"].values() for rule in rules
                               if rule["path"] == ["image", "included"]], name)
 
 
-class NvfpDeclarationTests(unittest.TestCase):
-    """The nvfp4 configuration: the NVFP4 export's declaration, expanded from
-    qual.json, pins the export's own teacher reference and binds its checks
-    to the tp4-mtp-nvfp4 profile."""
+class ExternalVariantTests(unittest.TestCase):
+    """Another checkpoint of the model, qualified as an external variant
+    (tools/qual/README.md#external-variants): a synthetic one under a
+    temporary variant root, its teacher reference the model's re-homed onto
+    another checkpoint pin (tools/qual/test_variant.py)."""
+
+    REQUANT = {"repository": "someone/glm-requant", "revision": "a" * 40}
 
     def setUp(self):
         for path in (ROOT / "tools/qual", ROOT / "models/glm5next"):
             sys.path.insert(0, str(path))
             self.addCleanup(sys.path.remove, str(path))
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name) / "variants"
 
-    def test_a_variant_skeleton_names_the_pin_its_declaration_states(self):
-        """The nvfp4-teacher skeleton's provenance is the adopted reference's:
-        the configuration's checkpoint pin, which qual.json states."""
-        import reference_fixtures
-        workload = ROOT / "fixtures/glm5next/nvfp4-teacher-reference.workload.json"
-        pin = reference_fixtures.configuration_pin("nvfp4")
-        skeleton = reference_fixtures.texts(workload, ("exact", "bf16"), pin,
-                                            reference_fixtures.VARIANT_DESCRIPTIONS["nvfp4"])
-        lab = configured("nvfp4")
-        adopted = json.loads((ROOT / lab["references"]["teacher"]["path"]).read_text())
-        # Everything but the workload's file name, which the runs named
-        # teacher.json, and the checkpoint identity, pinned after the reference
-        # was adopted: the gate matches a reference's checkpoint by its
-        # checkpoint_keys, which leave the identity out.
-        keys = lab["references"]["teacher"]["checkpoint_keys"]
-        self.assertNotIn("checkpoint_identity", keys)
-        self.assertEqual(skeleton["provenance"]["checkpoint"]["checkpoint_identity"],
-                         lab["qualification"]["checkpoint"]["checkpoint_identity"])
-
-        def stated(provenance):
-            return {key: ({name: value[name] for name in keys} if key == "checkpoint" else value)
-                    for key, value in provenance.items() if key != "workload"}
-        self.assertEqual(stated(skeleton["provenance"]),
-                         stated({key: adopted["provenance"][key] for key in skeleton["provenance"]}))
-        nvidia = reference_fixtures.configuration_pin("nvfp4-nvidia")
-        self.assertEqual(nvidia["repository"], "nvidia/GLM-5.3-Flash-NVFP4")
-        self.assertEqual(nvidia["lock"], "models/glm5next/checkpoint-files-nvidia-nvfp4.json")
+    def variant(self, adopt=True, **overlay):
+        from test_variant import selected, synthetic_variant
+        synthetic_variant(self.root, "glm5next", overlay=overlay, adopt=adopt, checkpoint=self.REQUANT)
+        return selected(self.root)
 
     def test_each_reference_names_only_its_own_checkpoint(self):
         import common
         import declaration
-        configs = {variant: declaration.load(declaration.named("glm5next" if variant is None else
-                                                               "glm5next." + variant))
-                   for variant in (None, "nvfp4")}
-        pins = {variant: common.checkpoint_pin(config) for variant, config in configs.items()}
-        self.assertEqual(pins["nvfp4"]["repository"], "local-inference-lab/GLM-5.3-Flash-NVFP4")
-        for variant, config in configs.items():
-            spec = config["qualification"]["references"]["teacher"]
-            path = ROOT / spec["path"]
-            value = common.pinned_reference("teacher", path, config)
-            stated = value["provenance"]["checkpoint"]
-            for other, pin in pins.items():
-                with self.subTest(reference=variant, pin=other):
-                    matches = all(stated[key] == pin[key] for key in spec["checkpoint_keys"])
-                    self.assertEqual(matches, other == variant)
-        self.assertEqual(configs["nvfp4"]["qualification"]["references"]["teacher"]["variants"], ["exact", "bf16"])
+        with self.variant():
+            configs = {variant: declaration.load(declaration.named("glm5next" if variant is None else
+                                                                   "glm5next." + variant))
+                       for variant in (None, "requant")}
+            pins = {variant: common.checkpoint_pin(config) for variant, config in configs.items()}
+            self.assertEqual(pins["requant"]["repository"], self.REQUANT["repository"])
+            for variant, config in configs.items():
+                spec = config["qualification"]["references"]["teacher"]
+                path = common.reference_path("teacher", config)
+                value = common.pinned_reference("teacher", path, config)
+                stated = value["provenance"]["checkpoint"]
+                keys = spec.get("checkpoint_keys", common.PINNED_CHECKPOINT_KEYS)
+                for other, pin in pins.items():
+                    with self.subTest(reference=variant, pin=other):
+                        matches = all(stated[key] == pin[key] for key in keys)
+                        self.assertEqual(matches, other == variant)
+                        if other != variant:
+                            # Another declaration's lock and pin refuse it.
+                            with self.assertRaises(ValueError):
+                                common.pinned_reference("teacher", path, configs[other])
 
-    def test_every_profile_rule_names_the_nvfp4_profile_at_dcp_1(self):
-        profile = ["server", "health", "serving", "profile"]
-        nvfp4 = configured("nvfp4")
-        groups = 0
-        for name, check in nvfp4["checks"].items():
-            for rules in [check["rules"], *check.get("input_rules", {}).values()]:
-                read = {rule["path"][-1]: rule["value"] for rule in rules
-                        if rule["path"][:4] == profile and len(rule["path"]) == 5}
-                if not read:
-                    continue
-                groups += 1
-                with self.subTest(check=name):
-                    # evals_compare's input is the FP8 checkpoint's arm of the paired GSM8K.
-                    self.assertEqual(read, {"tensor_parallel_size": 4, "kv_cache_dtype": "fp8",
-                                            "context_parallel_size": 1,
-                                            "name": "tp4-mtp" if name == "evals_compare" else "tp4-mtp-nvfp4"})
-        # prefix_exact reads one record per shard (two).
-        self.assertEqual(groups, 14)
-        self.assertFalse({"long_context", "multimodal", "encoder_parity"} & set(nvfp4["checks"]))
-        self.assertFalse([name for name in nvfp4["checks"] if "_dcp" in name])
-
-    def test_a_variant_record_names_the_variant_checkpoint_not_the_fp8_one(self):
-        """Rules that name qual.json's checkpoint identity name the export's
-        in each NVFP4 configuration; the recorded FP8 arm keeps the FP8 pin."""
+    def test_a_variant_record_names_the_variant_checkpoint_and_the_recorded_fp8_arm_the_fp8_one(self):
+        """Rules that name qual.json's checkpoint identity name the
+        variant's; the FP8 arm the default configuration's run recorded
+        (from_default) keeps the FP8 pin and profile."""
+        own = "e" * 64
         fp8 = default()["qualification"]["checkpoint"]["checkpoint_identity"]
-        for variant in ("nvfp4", "nvfp4-nvidia"):
-            with self.subTest(variant=variant):
-                value = configured(variant)
-                named = {(name, key): rule["value"] for name, check in value["checks"].items()
-                         for key, rules in [("rules", check["rules"]), *check.get("input_rules", {}).items()]
-                         for rule in rules if rule["path"][-1] == "checkpoint_identity"}
-                own = value["qualification"]["checkpoint"]["checkpoint_identity"]
-                self.assertNotEqual(own, fp8)
-                self.assertEqual({key for key, identity in named.items() if identity == fp8},
-                                 {("evals_compare", "fp8_gsm8k")})
-                self.assertTrue({("determinism", "determinism_ar"), ("verify_exact", "verify_ar")}
-                                <= {key for key, identity in named.items() if identity == own})
-                self.assertEqual(set(named.values()), {own, fp8})
+        pin = {**default()["qualification"]["checkpoint"], **self.REQUANT, "checkpoint_identity": own,
+               "lock": "requant.checkpoint-files.json"}
+        with self.variant(adopt=False, checks=["teacher", "evals_candidate", "evals_compare", "determinism"],
+                          from_default=["fp8_gsm8k", "fp8_gsm8k_run"], serving={"profile_name": "tp4-mtp-requant"},
+                          qualification={"checkpoint": pin}):
+            import declaration
+            value = json.loads(declaration.named("glm5next.requant").read_text())
+        named = {(name, key): rule["value"] for name, check in value["checks"].items()
+                 for key, rules in [("rules", check["rules"]), *check.get("input_rules", {}).items()]
+                 for rule in rules if rule["path"][-1] == "checkpoint_identity"}
+        self.assertEqual({key for key, identity in named.items() if identity == fp8}, {("evals_compare", "fp8_gsm8k")})
+        self.assertTrue({("determinism", "determinism_ar"), ("evals_candidate", "rules")}
+                        <= {key for key, identity in named.items() if identity == own})
+        self.assertEqual(set(named.values()), {own, fp8})
+        profile = [*GateDeclarationTests.PROFILE, "name"]
+        names = {(name, key): rule["value"] for name, check in value["checks"].items()
+                 for key, rules in [("rules", check["rules"]), *check.get("input_rules", {}).items()]
+                 for rule in rules if rule["path"] == profile}
+        self.assertEqual(names.pop(("evals_compare", "fp8_gsm8k")), "tp4-mtp")
+        self.assertEqual(set(names.values()), {"tp4-mtp-requant"})
 
     def test_the_paired_gsm8k_arms_are_bound_and_compared_bound(self):
-        """Each GSM8K arm must come from a server bound to its own checkpoint
-        pin, and the comparison must be a bound one (both digests, one build)."""
+        """A variant that selects evals_candidate and evals_compare answers
+        the whole GSM8K test split on its own server, bound to its own pin,
+        and compares it, bound, with the FP8 arm qual.json's gate recorded
+        (evals_gsm8k), bound by its run, workload, profile and pin."""
         import kinds
-        base = json.loads((ROOT / "models/glm5next/qual.json").read_text())
-        recorded = base["checks"]["evals_gsm8k"]
-        self.assertEqual(recorded["args"][-2:], ["--server-log", "{server_log}"])
-        for variant in ("nvfp4", "nvfp4-nvidia"):
-            with self.subTest(variant=variant):
-                value = configured(variant)
-                checks = value["checks"]
-                candidate, compare = checks["evals_candidate"], checks["evals_compare"]
-                self.assertEqual(candidate["args"][-2:], ["--server-log", "{server_log}"])
-                self.assertIn("--bound", compare["args"])
-                self.assertIn({"path": ["bound"], "op": "eq", "value": True,
-                               "source": "tools/qual/README.md#release-gates"}, compare["rules"])
-                pin = value["qualification"]["checkpoint"]["checkpoint_identity"]
-                identity = [rule for rule in candidate["rules"] if rule["path"][-1] == "checkpoint_identity"]
-                self.assertEqual([(rule["path"], rule["value"]) for rule in identity],
-                                 [(["server", "checkpoint", "checkpoint_identity"], pin)])
-                # An unbound arm (no server.checkpoint) fails the FP8 arm's rules.
-                fp8 = [rule for rule in compare["input_rules"]["fp8_gsm8k"]
-                       if rule["path"][-1] == "checkpoint_identity"]
-                with self.assertRaises(KeyError):
-                    kinds.predicate({"server": {"health": {"serving": {"checkpoint_identity": "0" * 64}}}},
-                                    fp8[0])
-
-    def test_each_export_pairs_gsm8k_with_the_recorded_fp8_arm(self):
-        """Both NVFP4 declarations answer the whole GSM8K test split on the
-        export and compare it, by its receipt, with the FP8 arm qual.json's
-        gate recorded; the FP8 arm is bound by its run, workload, profile and
-        checkpoint pin."""
-        fp8 = json.loads((ROOT / "models/glm5next/qual.json").read_text())
+        fp8 = default()
         recorded = fp8["checks"]["evals_gsm8k"]
         self.assertEqual(recorded["args"][recorded["args"].index("--arm") + 1], "fp8")
+        self.assertEqual(recorded["args"][-2:], ["--server-log", "{server_log}"])
         self.assertIn("evals_gsm8k", fp8["cohorts"]["full"]["checks"])
         workload = next(rule["value"] for rule in recorded["rules"] if rule["path"] == ["workload_sha256"])
-        for variant, profile in (("nvfp4", "tp4-mtp-nvfp4"), ("nvfp4-nvidia", "tp4-mtp-nvfp4-nvidia")):
-            with self.subTest(variant=variant):
-                value = configured(variant)
-                checks = value["checks"]
-                full = value["cohorts"]["full"]["checks"]
-                self.assertEqual(full[full.index("teacher") + 1:full.index("teacher") + 3],
-                                 ["evals_candidate", "evals_compare"])
-                self.assertNotIn("evals_reference", checks)
-                self.assertTrue({"evals_candidate", "evals_compare"} <= set(value["change_classes"]["quality"]))
-                candidate = checks["evals_candidate"]["args"]
-                self.assertEqual([candidate[candidate.index(flag) + 1] for flag in ("--url", "--arm", "--run-id")],
-                                 ["{url}", "candidate", "{run_id}"])
-                compare = checks["evals_compare"]
-                self.assertEqual(compare["args"][1:], ["--arms", "candidate", "fp8", "--receipt",
-                                                       "candidate={evals_candidate}", "--receipt", "fp8={fp8_gsm8k}",
-                                                       "--bound"])
-                rules = {tuple(rule["path"]): rule["value"] for rule in compare["input_rules"]["fp8_gsm8k"]}
-                self.assertEqual(rules[("run_id",)], "{fp8_gsm8k_run}")
-                self.assertEqual(rules[("workload_sha256",)], workload)
-                self.assertEqual(rules[("server", "checkpoint", "checkpoint_identity")],
-                                 fp8["qualification"]["checkpoint"]["checkpoint_identity"])
-                self.assertEqual(rules[(*GateDeclarationTests.PROFILE, "name")], "tp4-mtp")
-                self.assertEqual([rule["value"] for rule in checks["evals_candidate"]["rules"]
-                                  if rule["path"][-1] in ("name", "workload_sha256")], [workload, profile])
+        with self.variant(adopt=False, checks=["teacher", "evals_candidate", "evals_compare"],
+                          from_default=["fp8_gsm8k", "fp8_gsm8k_run"]):
+            import declaration
+            value = json.loads(declaration.named("glm5next.requant").read_text())
+        checks = value["checks"]
+        candidate, compare = checks["evals_candidate"], checks["evals_compare"]
+        self.assertEqual([candidate["args"][candidate["args"].index(flag) + 1] for flag in ("--url", "--arm", "--run-id")],
+                         ["{url}", "candidate", "{run_id}"])
+        self.assertEqual(candidate["args"][-2:], ["--server-log", "{server_log}"])
+        self.assertEqual(compare["args"][1:], ["--arms", "candidate", "fp8", "--receipt", "candidate={evals_candidate}",
+                                               "--receipt", "fp8={fp8_gsm8k}", "--bound"])
+        self.assertIn({"path": ["bound"], "op": "eq", "value": True, "source": "tools/qual/README.md#release-gates"},
+                      compare["rules"])
+        pin = value["qualification"]["checkpoint"]["checkpoint_identity"]
+        self.assertEqual([(rule["path"], rule["value"]) for rule in candidate["rules"]
+                          if rule["path"][-1] == "checkpoint_identity"],
+                         [(["server", "checkpoint", "checkpoint_identity"], pin)])
+        rules = {tuple(rule["path"]): rule["value"] for rule in compare["input_rules"]["fp8_gsm8k"]}
+        self.assertEqual(rules[("run_id",)], "{fp8_gsm8k_run}")
+        self.assertEqual(rules[("workload_sha256",)], workload)
+        self.assertEqual(rules[("server", "checkpoint", "checkpoint_identity")],
+                         fp8["qualification"]["checkpoint"]["checkpoint_identity"])
+        self.assertEqual(rules[(*GateDeclarationTests.PROFILE, "name")], "tp4-mtp")
+        # An unbound arm (no server.checkpoint) fails the FP8 arm's rules.
+        identity = [rule for rule in compare["input_rules"]["fp8_gsm8k"] if rule["path"][-1] == "checkpoint_identity"]
+        with self.assertRaises(KeyError):
+            kinds.predicate({"server": {"health": {"serving": {"checkpoint_identity": "0" * 64}}}}, identity[0])
 
     def test_a_variant_receipt_and_gate_run_rescore_under_the_variant(self):
-        """`tools.qual rescore --model glm5next.nvfp4` judges a receipt and a
-        gate run by the nvfp4 configuration's checks (qual.json's, expanded),
-        and refuses a run of the base declaration."""
+        """`tools.qual rescore --model glm5next.requant --variant-dir DIR`
+        judges a receipt and a gate run by the variant's checks (qual.json's,
+        expanded), and refuses a run of the base declaration."""
         import declaration
-        variant = declaration.load(declaration.named("glm5next.nvfp4"))
+        with self.variant(checks=["teacher", "determinism"]):
+            variant = declaration.load(declaration.named("glm5next.requant"))
         base = declaration.load(declaration.path("glm5next", ROOT))
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1557,8 +1508,8 @@ class NvfpDeclarationTests(unittest.TestCase):
             def rescore(*paths):
                 report = root / "report.json"
                 result = subprocess.run([sys.executable, "-B", "-m", "tools.qual", "rescore", "--model",
-                                         "glm5next.nvfp4", "--json", str(report), *map(str, paths)],
-                                        cwd=ROOT, capture_output=True, text=True, timeout=300)
+                                         "glm5next.requant", "--variant-dir", str(self.root), "--json", str(report),
+                                         *map(str, paths)], cwd=ROOT, capture_output=True, text=True, timeout=300)
                 return result, json.loads(report.read_text()) if report.is_file() else None
 
             result, report = rescore(receipt)
@@ -1568,19 +1519,84 @@ class NvfpDeclarationTests(unittest.TestCase):
                              [("determinism", "insufficient")])
             result, report = rescore(root / "variant")
             self.assertIsNotNone(report, result.stderr)
-            self.assertEqual([row["id"] for row in report["checks"]],
-                             variant["profiles"]["full"]["checks"])
+            self.assertEqual([row["id"] for row in report["checks"]], variant["profiles"]["full"]["checks"])
             result, _ = rescore(root / "base")
             self.assertEqual(result.returncode, 2, result.stdout)
-            self.assertIn("a gate run of glm5next, not glm5next.nvfp4", result.stderr)
+            self.assertIn("a gate run of glm5next, not glm5next.requant", result.stderr)
 
     def test_verify_exact_names_the_variant_gate(self):
-        """`verify_exact.py --exact glm5next.nvfp4` reads the variant's exact input."""
+        """`verify_exact.py --exact glm5next.requant` reads the variant's exact input."""
         import verify_exact
-        self.assertEqual(verify_exact.exact_path("glm5next.nvfp4"),
-                         ROOT / "fixtures/glm5next/nvfp4-teacher-reference.json")
+        with self.variant():
+            self.assertEqual(verify_exact.exact_path("glm5next.requant"),
+                             self.root.resolve() / "glm5next/requant.teacher-reference.json")
         self.assertEqual(verify_exact.exact_path("glm5next"), ROOT / "fixtures/glm5next/teacher-reference.json")
 
+
+class Nvfp4SkeletonTests(unittest.TestCase):
+    """reference_fixtures.py nvfp4-teacher: an NVFP4 checkpoint's teacher
+    skeleton names the pin it is given and describes its variants from the
+    checkpoint's layout, whatever the variant is called."""
+
+    def setUp(self):
+        sys.path.insert(0, str(ROOT / "models/glm5next"))
+        self.addCleanup(sys.path.remove, str(ROOT / "models/glm5next"))
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
+    def checkpoint(self, name, parts):
+        """A header-only checkpoint of three text layers and an MTP layer,
+        whose `parts` (prefixes under layers.N.) are NVFP4, the rest BF16."""
+        directory = self.root / name
+        directory.mkdir()
+        (directory / "config.json").write_text(json.dumps({"text_config": {"num_hidden_layers": 3}}))
+        header = {}
+        for layer in range(4):
+            for module in ("mlp.gate_proj", "mlp.experts.0.up_proj", "mlp.shared_experts.down_proj",
+                           "self_attn.q_a_proj"):
+                base = f"model.language_model.layers.{layer}.{module}."
+                if layer == 3 or not any(module.startswith(part) for part in parts):
+                    header[base + "weight"] = {"dtype": "BF16", "shape": [2, 2], "data_offsets": [0, 8]}
+                    continue
+                header[base + "weight"] = {"dtype": "U8", "shape": [2, 1], "data_offsets": [0, 2]}
+                header[base + "weight_scale"] = {"dtype": "F8_E4M3", "shape": [2, 1], "data_offsets": [0, 2]}
+                header[base + "weight_scale_2"] = {"dtype": "F32", "shape": [], "data_offsets": [0, 4]}
+        data = json.dumps(header).encode()
+        (directory / "model.safetensors").write_bytes(struct.pack("<Q", len(data)) + data + bytes(8))
+        return directory
+
+    def test_the_variants_are_described_from_the_layout(self):
+        import reference_fixtures
+        routed = self.checkpoint("routed", ["mlp.experts."])
+        dense = self.checkpoint("dense", ["mlp.experts.", "mlp.gate_proj"])
+        self.assertEqual(reference_fixtures.nvfp4_parts(routed), ["routed experts"])
+        self.assertEqual(reference_fixtures.nvfp4_parts(dense), ["dense MLPs", "routed experts"])
+        self.assertIn("routed experts' E2M1 codes", reference_fixtures.nvfp4_variants(routed)["exact"])
+        self.assertIn("dense MLPs and routed experts' E2M1 codes", reference_fixtures.nvfp4_variants(dense)["exact"])
+        self.assertEqual(list(reference_fixtures.nvfp4_variants(dense)), ["exact", "bf16"])
+        # Only the MTP layer (not loaded) is NVFP4: no NVFP4 text layer.
+        mtp = self.checkpoint("mtp", [])
+        with self.assertRaisesRegex(ValueError, "stores no projection of its text layers as NVFP4"):
+            reference_fixtures.nvfp4_variants(mtp)
+
+    def test_the_skeleton_names_the_given_pin(self):
+        import reference_fixtures
+        checkpoint = self.checkpoint("routed", ["mlp.experts."])
+        pin = {"lock": "any.checkpoint-files.json", "repository": "someone/glm-requant", "revision": "a" * 40,
+               "served_model_name": "GLM-5.3-Flash", "source_lock_sha256": "1" * 64, "checkpoint_identity": "2" * 64}
+        (self.root / "pin.json").write_text(json.dumps(pin))
+        output = self.root / "skeleton.json"
+        workload = ROOT / "fixtures/glm5next/teacher-reference.workload.json"
+        with mock.patch.object(sys, "argv", ["reference_fixtures.py", "nvfp4-teacher", "--checkpoint", str(checkpoint),
+                                             "--pin", str(self.root / "pin.json"), "--workload", str(workload),
+                                             "--output", str(output)]):
+            reference_fixtures.main()
+        value = json.loads(output.read_text())
+        self.assertEqual(value["provenance"]["checkpoint"], {key: pin[key] for key in pin if key != "lock"})
+        self.assertEqual(value["provenance"]["variants"], reference_fixtures.nvfp4_variants(checkpoint))
+        self.assertEqual([text["name"] for text in value["texts"]],
+                         [sequence["name"] for sequence in json.loads(workload.read_text())["sequences"]])
 
 
 def parity_run():

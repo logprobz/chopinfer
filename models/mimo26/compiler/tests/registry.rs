@@ -228,3 +228,171 @@ fn registry_accepts_a_different_data_only_calibration() {
         Some(scales.as_slice())
     );
 }
+
+/// A checkpoint no registered lock matches is served under its local
+/// identity, named by its own metadata, with BF16 KV only, once its
+/// tokenizer configuration states the official one's; an edited chat
+/// template or configuration is refused.
+#[test]
+fn unregistered_checkpoints_are_served_under_their_local_identity() {
+    let mut fixture = fixture::Fixture::new();
+    fixture.state_tokenizer_semantics();
+    // The registered locks admit as before.
+    let registry = fixture.registry();
+    let verifier = registry.verifier(&fixture.root).unwrap();
+    assert_eq!(verifier.identity().served_model_name, "third");
+    // An index no lock pins.
+    std::fs::write(
+        fixture.root.join("model.safetensors.index.json"),
+        br#"{"metadata":{"total_size":2,"format":"local"},"weight_map":{"a":"weight.safetensors"}}"#,
+    )
+    .unwrap();
+    let verifier = registry.verifier(&fixture.root).unwrap();
+    let identity = verifier.identity();
+    let digest = verifier.source_lock_sha256();
+    assert!(identity.is_local());
+    assert_eq!(identity.repository, "local");
+    assert_eq!(identity.revision, digest[..40]);
+    assert_eq!(identity.served_model_name, format!("local-{digest}"));
+    assert_eq!(verifier.config().unwrap().vocab_size, 152576);
+    let local = verifier.registry();
+    for tp in Tp::SUPPORTED {
+        assert_eq!(local.fp8_kv_layout(identity, tp).unwrap(), None);
+    }
+    let component = local.component_for_flash(identity, Encoders::NONE).unwrap();
+    let frontend: serde_json::Value = serde_json::from_slice(&component).unwrap();
+    assert_eq!(
+        frontend["models"],
+        serde_json::json!([{"id": identity.served_model_name, "owned_by": "local"}])
+    );
+    let descriptor = FrontendDescriptorV1::from_component_bytes(&component).unwrap();
+    assert_eq!(descriptor.tokenizer.repository, "local");
+    assert_eq!(descriptor.tokenizer.revision, identity.revision);
+    assert_eq!(
+        descriptor.tokenizer.configuration.sha256,
+        runtime_weights::sha256_bytes(
+            &std::fs::read(fixture.root.join("tokenizer_config.json")).unwrap()
+        )
+    );
+    // The same metadata names the same identity; other metadata, another.
+    let again = registry.verifier(&fixture.root).unwrap();
+    assert_eq!(
+        again.identity().served_model_name,
+        identity.served_model_name
+    );
+    std::fs::write(
+        fixture.root.join("model.safetensors.index.json"),
+        br#"{"metadata":{"total_size":2,"format":"other"},"weight_map":{"a":"weight.safetensors"}}"#,
+    )
+    .unwrap();
+    let other = registry.verifier(&fixture.root).unwrap();
+    assert_ne!(
+        other.identity().served_model_name,
+        identity.served_model_name
+    );
+
+    let refused = |configuration: serde_json::Value, template: Option<&str>| {
+        std::fs::write(
+            fixture.root.join("tokenizer_config.json"),
+            serde_json::to_vec(&configuration).unwrap(),
+        )
+        .unwrap();
+        let path = fixture.root.join("chat_template.jinja");
+        match template {
+            Some(template) => std::fs::write(&path, template).unwrap(),
+            None => {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+        let error = registry.verifier(&fixture.root).err().unwrap().to_string();
+        assert!(
+            error.starts_with("not a supported MiMo V2.6 Flash checkpoint ("),
+            "{error}"
+        );
+        error[error.find("local: ").unwrap()..].to_owned()
+    };
+    let template = fixture::TEMPLATE;
+    let edited = serde_json::json!({"chat_template": "{{ edited }}", "eos_token": "<|im_end|>"});
+    assert!(refused(edited, None).contains("unsupported chat template semantics"));
+    let separate = serde_json::json!({"chat_template": template, "eos_token": "<|im_end|>"});
+    assert!(refused(separate, Some("{{ edited }}")).contains("chat_template.jinja disagrees"));
+    let added = serde_json::json!({"chat_template": template, "eos_token": "<|im_end|>", "model_max_length": 8});
+    assert!(refused(added, None).contains("unsupported tokenizer_config.model_max_length"));
+    let missing = serde_json::json!({"chat_template": template});
+    assert!(refused(missing, None).contains("missing or unsupported tokenizer_config.eos_token"));
+}
+
+/// The registry refuses an identity that claims the local name.
+#[test]
+fn registered_identities_may_not_claim_the_local_name() {
+    let mut fixture = fixture::Fixture::new();
+    fixture.data["checkpoints"]["third"]["repository"] = "local".into();
+    let error = Registry::parse(&fixture.data.to_string(), &fixture.locks.to_string())
+        .err()
+        .unwrap();
+    assert!(
+        error
+            .to_string()
+            .contains("names an unregistered checkpoint")
+    );
+}
+
+/// The official release's tokenizer files state the semantics a local
+/// identity is checked against, and build the tokenizer its local frontend
+/// declares; an edited chat template is refused. Needs
+/// `CHOPINFER_MIMO_CHECKPOINT`; only its metadata is read.
+#[test]
+fn real_tokenizer_states_the_official_semantics() {
+    let Ok(checkpoint) = std::env::var("CHOPINFER_MIMO_CHECKPOINT") else {
+        eprintln!("SKIP: set CHOPINFER_MIMO_CHECKPOINT");
+        return;
+    };
+    let checkpoint = std::path::PathBuf::from(checkpoint);
+    let fixture = fixture::Fixture::new();
+    let root = fixture.root.join("local");
+    std::fs::create_dir(&root).unwrap();
+    for name in [
+        "config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "chat_template.jinja",
+    ] {
+        std::fs::copy(checkpoint.join(name), root.join(name)).unwrap();
+    }
+    let mut index: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(checkpoint.join("model.safetensors.index.json")).unwrap(),
+    )
+    .unwrap();
+    index["metadata"]["format"] = "local".into();
+    std::fs::write(
+        root.join("model.safetensors.index.json"),
+        serde_json::to_vec(&index).unwrap(),
+    )
+    .unwrap();
+    let registry = model_mimo26::checkpoint::registry()
+        .with_local(&root)
+        .unwrap();
+    let identity = registry.identity("local").unwrap();
+    assert!(identity.served_model_name.starts_with("local-"));
+    registry
+        .check_tokenizer(&root, identity, &model_mimo26_contract::geometry::V26_FLASH)
+        .unwrap();
+    let mut configuration: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.join("tokenizer_config.json")).unwrap())
+            .unwrap();
+    configuration["chat_template"] = "{{ edited }}".into();
+    std::fs::write(
+        root.join("tokenizer_config.json"),
+        serde_json::to_vec(&configuration).unwrap(),
+    )
+    .unwrap();
+    let error = model_mimo26::checkpoint::registry()
+        .with_local(&root)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        error.contains("unsupported chat template semantics"),
+        "{error}"
+    );
+}

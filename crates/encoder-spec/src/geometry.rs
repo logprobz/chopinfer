@@ -244,6 +244,37 @@ pub fn grid_positions(patchify: Patchify, merge: u64, h: u64, w: u64) -> Vec<[u6
     out
 }
 
+/// The rows `merge.space-to-depth.v1` gathers from a row-major `[t, h, w]`
+/// patch grid: per `factor x factor` cell in row-major order (each
+/// temporal grid in turn), its patches position-major (`ky * factor +
+/// kx`), each the input row it reads or -1 where the cell runs past the
+/// grid (a zero row).
+pub fn space_to_depth_indices([t, h, w]: [u64; 3], factor: u64) -> Result<Vec<i32>, String> {
+    if factor == 0 {
+        return Err("a space-to-depth cell of side 0".into());
+    }
+    let (cells_h, cells_w) = (h.div_ceil(factor), w.div_ceil(factor));
+    let mut out = Vec::new();
+    for grid in 0..t {
+        for cy in 0..cells_h {
+            for cx in 0..cells_w {
+                for ky in 0..factor {
+                    for kx in 0..factor {
+                        let (y, x) = (cy * factor + ky, cx * factor + kx);
+                        out.push(if y < h && x < w {
+                            i32::try_from((grid * h + y) * w + x)
+                                .map_err(|_| format!("patch row of [{t}, {h}, {w}] past i32"))?
+                        } else {
+                            -1
+                        });
+                    }
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Bounds of consecutive sequences of `size` rows over `rows` rows.
 fn bounds(rows: u64, size: u64) -> Vec<u64> {
     (0..=rows / size).map(|index| index * size).collect()
@@ -514,6 +545,25 @@ impl Declaration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn space_to_depth_gathers_cells_position_major_with_holes() {
+        // A 2 x 3 grid in 2 x 2 cells: two cells, the right one half past
+        // the grid.
+        assert_eq!(
+            space_to_depth_indices([1, 2, 3], 2).unwrap(),
+            [0, 1, 3, 4, 2, -1, 5, -1]
+        );
+        // 7 x 5 in 3 x 3 cells: 3 x 2 cells of 9, the last row and column
+        // of cells partly holes; every patch is read once.
+        let indices = space_to_depth_indices([1, 7, 5], 3).unwrap();
+        assert_eq!(indices.len(), 6 * 9);
+        let mut read: Vec<i32> = indices.iter().copied().filter(|&i| i >= 0).collect();
+        read.sort_unstable();
+        assert_eq!(read, (0..35).collect::<Vec<_>>());
+        assert_eq!(indices[9..18], [3, 4, -1, 8, 9, -1, 13, 14, -1]);
+        assert!(space_to_depth_indices([1, 1, 1], 0).is_err());
+    }
 
     #[test]
     fn grid_positions_follow_the_patch_order() {

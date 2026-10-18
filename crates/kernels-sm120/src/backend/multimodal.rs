@@ -329,6 +329,18 @@ impl PreparedOp<EncoderRowBuffers<View>> for EncoderOp {
                 named.side("indices", b.indices, span(rows, 1, 4)?)?;
                 (f32_rows(width)?, f32_rows(width)?, "live_rows")
             }
+            MultimodalQuery::GatherRowsF32 { width, group, .. } => {
+                // Every index names one of at most `rows * group` input
+                // rows (each output row's blocks hold distinct inputs or
+                // holes).
+                let columns = u64::from(width) * u64::from(group);
+                named.side("indices", b.indices, span(rows, group.into(), 4)?)?;
+                (
+                    span(rows, columns, 4)?,
+                    span(rows, columns, 4)?,
+                    "live_rows",
+                )
+            }
             MultimodalQuery::ResidualAddF32 { width, .. } => {
                 named.side("residual", b.residual, f32_rows(width)?)?;
                 (f32_rows(width)?, f32_rows(width)?, "live_rows")
@@ -735,6 +747,22 @@ mod tests {
                     Some("reorder"),
                     MultimodalQuery::PermuteF32 {
                         width: 1280,
+                        capacity: CAPACITY,
+                    },
+                ),
+                EncoderRowBuffers {
+                    indices: Some(big(4)),
+                    ..b
+                },
+                vec![buf(1), buf(4), buf(2), buf(3)],
+            ),
+            (
+                entry(
+                    "merge.space-to-depth.v1",
+                    None,
+                    MultimodalQuery::GatherRowsF32 {
+                        width: 1024,
+                        group: 9,
                         capacity: CAPACITY,
                     },
                 ),
@@ -1445,7 +1473,12 @@ mod tests {
             eps_bits: eps(1e-6),
             capacity: CAPACITY,
         };
-        for query in [wide, odd] {
+        let ragged = MultimodalQuery::GatherRowsF32 {
+            width: 1022,
+            group: 9,
+            capacity: CAPACITY,
+        };
+        for query in [wide, odd, ragged] {
             assert!(query.validate().is_ok());
             assert!(kernel::contract("chop_enc_test_v1", query).is_err());
         }

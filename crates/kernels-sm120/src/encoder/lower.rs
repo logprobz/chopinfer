@@ -210,7 +210,37 @@ impl Lowering<'_> {
                 );
                 Ok(())
             }
-            StageOp::Merge(_) | StageOp::Cast(_) | StageOp::Unresolved(_) => {
+            StageOp::Merge(Merge::SpaceToDepth(params)) => {
+                if self.precision != Precision::F32Pairs
+                    || !matches!(
+                        input.data,
+                        Data::Rows {
+                            element: Element::F32,
+                            ..
+                        }
+                    )
+                {
+                    return Err(format!(
+                        "`{}` gathers F32 rows under f32-pairs.v1 only",
+                        op.id()
+                    ));
+                }
+                self.at("gather", None);
+                self.push(
+                    &op.id(),
+                    None,
+                    MultimodalQuery::GatherRowsF32 {
+                        width: width()?,
+                        group: narrow(
+                            u64::from(params.factor) * u64::from(params.factor),
+                            "space-to-depth cell",
+                        )?,
+                        capacity: self.capacity,
+                    },
+                );
+                Ok(())
+            }
+            StageOp::Cast(_) | StageOp::Unresolved(_) => {
                 Err(format!("`{}` has no encoder kernel yet", op.id()))
             }
         }

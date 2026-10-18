@@ -431,6 +431,28 @@ fn rotate_token_rows(
     )
 }
 
+/// `output[row] = input[indices[row]]`, or zeros for a negative index: a
+/// row gather with holes. Read as `[indices / group, group * width]`, this
+/// is `GatherRowsF32 { width, group }`. Every nonnegative index must name
+/// an input row.
+pub fn gather_rows(input: &[f64], width: usize, indices: &[i32]) -> Result<OracleOutput, Refusal> {
+    if width == 0 || !input.len().is_multiple_of(width) || indices.is_empty() {
+        return Err(Refusal("gather shape mismatch"));
+    }
+    let rows = input.len() / width;
+    let mut values = Vec::with_capacity(indices.len() * width);
+    for &index in indices {
+        match usize::try_from(index) {
+            Ok(index) if index < rows => {
+                values.extend_from_slice(&input[index * width..(index + 1) * width]);
+            }
+            Ok(_) => return Err(Refusal("gather index past the input rows")),
+            Err(_) => values.extend(std::iter::repeat_n(0.0, width)),
+        }
+    }
+    output(values.clone(), values.iter().map(|x| x.abs()).collect(), 1)
+}
+
 /// `output[row] = input[indices[row]]`, requiring a full permutation.
 pub fn permute_rows(input: &[f64], width: usize, indices: &[u32]) -> Result<OracleOutput, Refusal> {
     if width == 0 || input.len() != indices.len() * width || indices.is_empty() {
@@ -881,6 +903,13 @@ mod tests {
             [3.0, 1.0, 2.0]
         );
         assert!(permute_rows(&[1.0, 2.0], 1, &[0, 0]).is_err());
+        assert_eq!(
+            gather_rows(&[1.0, 2.0, 3.0, 4.0], 2, &[1, -1, 0])
+                .unwrap()
+                .values,
+            [3.0, 4.0, 0.0, 0.0, 1.0, 2.0]
+        );
+        assert!(gather_rows(&[1.0, 2.0], 2, &[1]).is_err());
         assert_eq!(
             im2col1d(&[1.0, 2.0, 3.0], 1, 2, 2, 0, 1, DType::F32)
                 .unwrap()

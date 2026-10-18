@@ -75,7 +75,8 @@ impl Kernel {
 
 /// Where a kernel runs in a declaration: its stage (the stage count for the
 /// output layout), the part of the stage it runs, and for a per-block kernel
-/// its block. Parts: `linear`, `position`, `norm`, `pad`, `layout`; a registered
+/// its block. Parts: `linear`, `position`, `norm`, `pad`, `gather` (a
+/// space-to-depth merge), `layout`; a registered
 /// stage's kernel's role, else `registered`;
 /// a conv1d's `unfold`, `linear` and `gelu_rows`; a transformer's `norm`
 /// (both of its norms), `qkv`, `qk_norm`, `split`, `rotary`, `attention`

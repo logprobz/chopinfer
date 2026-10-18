@@ -40,8 +40,9 @@ pub fn is_gemm(query: MultimodalQuery) -> bool {
 }
 
 /// SM120's limits on a valid query: the head dims of the contiguous
-/// attention engine (`attention/varlen.cuh`) and of the q/k RMSNorm's
-/// 32-lane heads (`encoder/rows/qk_rms_f32.cuh`).
+/// attention engine (`attention/varlen.cuh`), of the q/k RMSNorm's
+/// 32-lane heads (`encoder/rows/qk_rms_f32.cuh`) and the row gather's
+/// float4 blocks (`encoder/rows/gather_rows_f32.cuh`).
 pub fn limits(query: MultimodalQuery) -> Result<(), Refusal> {
     match query {
         MultimodalQuery::ContiguousAttention { head_dim, .. }
@@ -59,6 +60,9 @@ pub fn limits(query: MultimodalQuery) -> Result<(), Refusal> {
                 "SM120 q/k RMSNorm heads are 32-lane steps up to 256 dims",
             ))
         }
+        MultimodalQuery::GatherRowsF32 { width, .. } if !width.is_multiple_of(4) => Err(Refusal(
+            "SM120 row gathers copy float4 blocks of a width divisible by 4",
+        )),
         _ => Ok(()),
     }
 }
@@ -120,6 +124,7 @@ pub fn capacity(query: MultimodalQuery) -> u32 {
         | MultimodalQuery::ContiguousAttentionPairs { capacity, .. }
         | MultimodalQuery::RmsNormF32 { capacity, .. }
         | MultimodalQuery::PermuteF32 { capacity, .. }
+        | MultimodalQuery::GatherRowsF32 { capacity, .. }
         | MultimodalQuery::SwigluF32 { capacity, .. }
         | MultimodalQuery::ResidualAddF32 { capacity, .. }
         | MultimodalQuery::Im2col1dF32 { capacity, .. }
@@ -156,6 +161,7 @@ pub fn with_capacity(query: MultimodalQuery, rows: u32) -> MultimodalQuery {
         | MultimodalQuery::ContiguousAttentionPairs { capacity, .. }
         | MultimodalQuery::RmsNormF32 { capacity, .. }
         | MultimodalQuery::PermuteF32 { capacity, .. }
+        | MultimodalQuery::GatherRowsF32 { capacity, .. }
         | MultimodalQuery::SwigluF32 { capacity, .. }
         | MultimodalQuery::ResidualAddF32 { capacity, .. }
         | MultimodalQuery::Im2col1dF32 { capacity, .. }
@@ -291,6 +297,7 @@ pub fn header(query: MultimodalQuery) -> Result<&'static str, Refusal> {
         MultimodalQuery::RopeQkvPairs { .. } => "#include \"encoder/rows/rope_qkv_pairs.cuh\"",
         MultimodalQuery::RmsNormF32 { .. } => "#include \"encoder/rows/rms_f32.cuh\"",
         MultimodalQuery::PermuteF32 { .. } => "#include \"encoder/rows/permute_f32.cuh\"",
+        MultimodalQuery::GatherRowsF32 { .. } => "#include \"encoder/rows/gather_rows_f32.cuh\"",
         MultimodalQuery::SwigluF32 { .. } => "#include \"encoder/rows/swiglu_f32.cuh\"",
         MultimodalQuery::ResidualAddF32 { .. } => "#include \"encoder/rows/residual_add_f32.cuh\"",
         MultimodalQuery::Im2col1dF32 { .. } => "#include \"encoder/rows/im2col_f32.cuh\"",
@@ -394,6 +401,9 @@ pub fn body(query: MultimodalQuery) -> Result<String, Refusal> {
         MultimodalQuery::PermuteF32 { width, .. } => {
             format!("chop::multimodal::permute_f32<{width}>(input,indices,output,live_rows);")
         }
+        MultimodalQuery::GatherRowsF32 { width, group, .. } => format!(
+            "chop::multimodal::gather_rows_f32<{width},{group}>(input,indices,output,live_rows);"
+        ),
         MultimodalQuery::SwigluF32 { hidden, .. } => {
             format!("chop::multimodal::swiglu_f32<{hidden}>(input,output,live_rows);")
         }
@@ -487,7 +497,7 @@ pub fn params(query: MultimodalQuery) -> Vec<EntryParam> {
             live(),
             u32_arg("eps_bits"),
         ],
-        MultimodalQuery::PermuteF32 { .. } => vec![
+        MultimodalQuery::PermuteF32 { .. } | MultimodalQuery::GatherRowsF32 { .. } => vec![
             ptr("input", "const float"),
             ptr("indices", "const int32_t"),
             ptr("output", "float"),

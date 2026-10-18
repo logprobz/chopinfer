@@ -634,6 +634,53 @@ pub fn rows(session: &Session, case: &Case) -> LabResult<()> {
             check_exact(&lab.read_f32(&output, m * width)?, &expected)
                 .map_err(|index| format!("{name} differs at {index}"))?;
         }
+        MultimodalQuery::GatherRowsF32 { width, group, .. } => {
+            // A space-to-depth merge over odd grids, whose last cells run
+            // past the grid: their blocks must be zeros, every other block
+            // its patch row exactly, and the row past the live cells must
+            // keep its poison.
+            let (width, group) = (width as usize, group as usize);
+            let factor = group.isqrt();
+            if factor * factor != group {
+                return Err(format!(
+                    "{name}: a gather group of {group} is not a square cell"
+                ));
+            }
+            let capacity = case.entry.capacity() as usize;
+            for [h, w] in [[7_u64, 5], [31, 51], [1, 1]] {
+                let patches = (h * w) as usize;
+                let indices =
+                    encoder_spec::geometry::space_to_depth_indices([1, h, w], factor as u64)?;
+                let cells = indices.len() / group;
+                if cells + 1 > capacity {
+                    continue;
+                }
+                let input = seeded_f32(patches * width, 0x7708 ^ h ^ (w << 8), 4.0);
+                let (input_buffer, index_buffer) = (lab.f32(&input)?, lab.i32(&indices)?);
+                let output = lab.output((cells + 1) * group * width, 4)?;
+                let live = lab.count(cells)?;
+                lab.run(
+                    name,
+                    cells as u32,
+                    &[
+                        ("input", &input_buffer),
+                        ("indices", &index_buffer),
+                        ("output", &output),
+                        ("live_rows", &live),
+                    ],
+                    &[],
+                )?;
+                let expected = oracle::gather_rows(&widen(&input), width, &indices)
+                    .map_err(|e| e.to_string())?;
+                let actual = lab.read_f32(&output, (cells + 1) * group * width)?;
+                let (written, past) = actual.split_at(cells * group * width);
+                check_exact(&widen(written), &expected.values)
+                    .map_err(|index| format!("{name} {h} x {w} differs at {index}"))?;
+                if past.iter().any(|x| !x.is_nan()) {
+                    return Err(format!("{name} {h} x {w}: wrote past its live cells"));
+                }
+            }
+        }
         MultimodalQuery::SwigluF32 { hidden, .. } => {
             let hidden = hidden as usize;
             let input = seeded_f32(m * 2 * hidden, 0x7704 ^ hidden as u64, 12.0);

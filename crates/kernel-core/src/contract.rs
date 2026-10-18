@@ -322,6 +322,17 @@ pub enum MultimodalQuery {
         width: u32,
         capacity: u32,
     },
+    /// A grouped row gather over F32 rows with holes: output row `r` is
+    /// `group` input rows side by side, block `j` input row
+    /// `indices[r * group + j]`, or zeros where that index is negative. The
+    /// live count is the output's rows; the host computes the indices, such
+    /// as a space-to-depth merge's cells with the cells past the grid as
+    /// holes, and every nonnegative one names an input row.
+    GatherRowsF32 {
+        width: u32,
+        group: u32,
+        capacity: u32,
+    },
     /// SwiGLU over F32 rows `[T, 2 * hidden]`, the gate half first:
     /// `silu(gate) * up` in F32, F32 output `[T, hidden]`.
     SwigluF32 {
@@ -1324,6 +1335,18 @@ impl Validate for MultimodalQuery {
             {
                 Err(Refusal("invalid row width or capacity"))
             }
+            Self::GatherRowsF32 {
+                width,
+                group,
+                capacity,
+            } if width == 0
+                || group == 0
+                || capacity == 0
+                || width.checked_mul(group).is_none()
+                || capacity.checked_mul(group).is_none() =>
+            {
+                Err(Refusal("invalid row gather geometry"))
+            }
             Self::InterpolatedPositionAddF32 {
                 width,
                 table_rows,
@@ -2145,6 +2168,7 @@ impl NumericalContract for MultimodalQuery {
             }
             Self::RmsNormF32 { .. } => "row.rmsnorm-f32.v1".to_owned(),
             Self::PermuteF32 { .. } => "row.permute-index-f32.v1".to_owned(),
+            Self::GatherRowsF32 { .. } => "row.gather-index-zero-f32.v1".to_owned(),
             Self::SwigluF32 { .. } => "row.swiglu-f32.v1".to_owned(),
             Self::ResidualAddF32 { .. } => "row.residual-add-f32.v1".to_owned(),
             Self::Im2col1dF32 { .. } => "row.im2col1d-f32.v1".to_owned(),

@@ -29,6 +29,7 @@
 //! | `RmsNormF32 { width }` | `input` r F32 `[T, width]`; `weight` r BF16 `[width]`; `output` w F32 `[T, width]` |
 //! | `InterpolatedPositionAddF32 { width, table_rows }` | `input` r F32 `[T, width]`; `table` r BF16 `[table_rows, width]`; `indices` r i32 `[T, 4]` (table rows); `blend` r F32 `[T, 4]`; `output` w F32 `[T, width]` |
 //! | `PermuteF32 { width }` | `input` r F32 `[T, width]`; `indices` r i32 `[T]`, a permutation; `output` w F32 `[T, width]`, row `r` input row `indices[r]` |
+//! | `GatherRowsF32 { width, group }` | `input` r F32 `[S, width]`; `indices` r i32 `[T, group]`; `output` w F32 `[T, group * width]`, block `j` of row `r` input row `indices[r * group + j]`, or zeros where it is negative; every other index is below `S` |
 //! | `ResidualAddF32 { width }` | `input`, `residual` r F32 `[T, width]`; `output` w F32 `[T, width]` |
 //! | `SwigluF32 { hidden }`, `SwigluClampedF32 { hidden }` | `input` r F32 `[T, 2 hidden]`, gate half first; `output` w F32 `[T, hidden]` |
 //! | `GeluRowsF32 { width }` | `input` r F32 `[T, width]`; `output` w F32 `[T, width]`, which may alias `input` |
@@ -97,6 +98,7 @@ impl EncoderStage {
             | Q::RmsNormF32 { .. }
             | Q::InterpolatedPositionAddF32 { .. }
             | Q::PermuteF32 { .. }
+            | Q::GatherRowsF32 { .. }
             | Q::ResidualAddF32 { .. }
             | Q::SwigluF32 { .. }
             | Q::SwigluClampedF32 { .. }

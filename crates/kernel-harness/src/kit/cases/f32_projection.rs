@@ -273,6 +273,8 @@ pub fn case<'a>(
         activation_global: None,
         routing: None,
         scratch: ProjectionScratch {
+            quantizer_status: None,
+            quantizer_status_row_offset: 0,
             partial: Spec::untouched(16),
             semaphores: Spec::untouched(16),
             unused: Spec::untouched(16),

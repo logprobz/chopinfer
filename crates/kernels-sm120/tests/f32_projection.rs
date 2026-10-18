@@ -85,6 +85,8 @@ fn buffers(e: &Entry) -> ProjectionBuffers<View> {
         activation_global: None,
         routing: None,
         scratch: ProjectionScratch {
+            quantizer_status: None,
+            quantizer_status_row_offset: 0,
             partial: View::EMPTY,
             semaphores: View::EMPTY,
             unused: View::EMPTY,

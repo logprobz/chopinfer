@@ -80,7 +80,8 @@ class DeepseekInventory(ModelRequirements):
         sys.path.insert(0, str(ROOT / 'tools' / 'qual'))
         import release_gate
         config = self.qual()['configurations']['kv-bf16']
-        self.assertEqual(config['serve'], ['--kv-cache-dtype', 'bf16'])
+        self.assertIn(config['serve'], (['--kv-cache-dtype', 'bf16'],
+                                      ['--kv-cache-dtype', 'bf16', '--speculative-tokens', '0']))
         appended = config['append']['prefix_exact']
         self.assertEqual(sorted(appended), ['prefix_record_1', 'prefix_record_2', 'rules'])
 

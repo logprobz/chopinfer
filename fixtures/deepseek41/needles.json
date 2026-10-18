@@ -1,0 +1,66 @@
+{
+ "schema": "chopinfer.deepseek41.needles.v1",
+ "provenance": "Runs on CPU with the checkpoint's tokenizer.json (through `tokenizers`) and its prompt-format reference `encoding/encoding.py`; no weights. The method is GLM's (fixtures/glm5next/capture/needles.py): the haystack and the three needles of MiMo's functional needle prompt (`$CHOPINFER_MIMO_FIXTURES/functional/context-524288.json`), decoded with MiMo's tokenizer, rebuilt in DeepSeek's prompt format at DeepSeek token lengths, with the needles in front of the paragraphs nearest 10%, 50% and 90% of the haystack. The prompt is rendered by `encode_messages` in chat mode (`thinking_mode=\"chat\"`), which answers without reasoning, and each row leaves 1,024 tokens to answer.",
+ "tokenizer_json_sha256": "c90dfa01249db1be4245780a052ede752e1361c612ac6d08e2bdada7d599476b",
+ "encoding_sha256": "13231c592e958fb39e2af6001dae69d90e7a36b265702b9b390236fb387599e2",
+ "needle_source_sha256": "de8458f9447757eb3b5ab5e90c185667fb6a0354120067486df75bf1788ee9be",
+ "full_file": {
+  "path": "${CHOPINFER_DATA}/deepseek41/needle/prompts.json",
+  "sha256": "466404fa4dfd015f313019e26279ce65cc619749bab874f8389a0701379a8965",
+  "bytes": 6983598
+ },
+ "needles": [
+  {
+   "name": "needle_8k",
+   "total_context": 8192,
+   "max_tokens": 1024,
+   "expected": "8D71A93C,46B2F8E0,C5920AD7",
+   "needle_offsets": [
+    745,
+    3568,
+    6400
+   ],
+   "token_count": 7168,
+   "token_ids_sha256": "7835eb2bbb6165f0b536609e2df0bef0a3db397f6e9d77c6bbaae56ad14c8fea"
+  },
+  {
+   "name": "needle_128k",
+   "total_context": 131072,
+   "max_tokens": 1024,
+   "expected": "8D71A93C,46B2F8E0,C5920AD7",
+   "needle_offsets": [
+    13010,
+    64988,
+    116947
+   ],
+   "token_count": 130048,
+   "token_ids_sha256": "09a60731b10f8188e1401c70e2b22d061b18941d5a8737c91065e5ea8af56868"
+  },
+  {
+   "name": "needle_256k",
+   "total_context": 262144,
+   "max_tokens": 1024,
+   "expected": "8D71A93C,46B2F8E0,C5920AD7",
+   "needle_offsets": [
+    26091,
+    130550,
+    234914
+   ],
+   "token_count": 261120,
+   "token_ids_sha256": "f5cb38d0ab59c1f81ea9cf608408b411dacb522777c55c5ea5c78534c55d7193"
+  },
+  {
+   "name": "needle_1024k",
+   "total_context": 1048576,
+   "max_tokens": 1024,
+   "expected": "8D71A93C,46B2F8E0,C5920AD7",
+   "needle_offsets": [
+    104762,
+    523747,
+    942714
+   ],
+   "token_count": 1047552,
+   "token_ids_sha256": "b2e5c101816259ce19f12a648cb84fea0d94cb11366029e8abfd6fca3505472b"
+  }
+ ]
+}

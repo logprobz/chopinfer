@@ -384,41 +384,80 @@ fn typed_values_stream_as_the_whole_parse_reads_them() {
 /// inside a tag or a raw or JSON value delivers only whole parameters.
 #[test]
 fn a_typed_completion_cut_anywhere_leaks_no_markup() {
+    cut_anywhere_leaks_no_markup("", "<calls");
+}
+
+/// The same with full-width markers, cut at every byte including inside a
+/// scalar: the reserved marker is structure once it is whole.
+#[test]
+fn a_typed_completion_with_full_width_markers_cut_anywhere_leaks_no_markup() {
+    cut_anywhere_leaks_no_markup("｜DSML｜", "｜DSML｜");
+}
+
+/// Cuts a typed completion whose tags carry `tag` after their `<` or `</`
+/// at every byte, fed as one token and as one byte per token, with
+/// `reserved` declared a reserved marker.
+fn cut_anywhere_leaks_no_markup(tag: &str, reserved: &str) {
     let mut declaration: serde_json::Value = serde_json::from_str(TYPED_PARAMETERS).unwrap();
     declaration["context"]["maximum_total_tokens"] = json!(1024);
     declaration["tokenizer"]["model_max_length"] = json!(1024);
     declaration["limits"]["maximum_generated_tokens"] = json!(1024);
-    declaration["format"]["parser"]["reserved_markers"]
+    let parser = &mut declaration["format"]["parser"];
+    for field in [
+        "tool_call_open",
+        "tool_call_close",
+        "function_open",
+        "function_close",
+        "parameter_open",
+        "parameter_close",
+    ] {
+        let marker = parser[field].as_str().unwrap().to_owned();
+        let tagged = marker.replacen("</", &format!("</{tag}"), 1);
+        let tagged = if tagged == marker {
+            marker.replacen('<', &format!("<{tag}"), 1)
+        } else {
+            tagged
+        };
+        parser[field] = json!(tagged);
+    }
+    parser["reserved_markers"]
         .as_array_mut()
         .unwrap()
-        .push(json!("<calls"));
+        .push(json!(reserved));
     let fixture = FixtureV1::new("typed-parameters", &declaration.to_string());
-    let whole = "ok\n\n<calls>\n<invoke name=\"f\">\n\
-                 <parameter name=\"x\" string=\"true\">a b</parameter>\n\
-                 <parameter name=\"n\" string=\"false\">{\"k\": [1, \"</parameter>\"]}</parameter>\n\
-                 </invoke>\n</calls>";
-    let markup = [
-        "<calls",
-        "<invoke",
-        "<parameter",
-        "</parameter",
-        "</invoke",
-        "</calls",
-    ];
+    let close = format!("</{tag}parameter>");
+    let whole = format!(
+        "ok\n\n<{tag}calls>\n<{tag}invoke name=\"f\">\n\
+         <{tag}parameter name=\"x\" string=\"true\">a b{close}\n\
+         <{tag}parameter name=\"n\" string=\"false\">{{\"k\": [1, \"{close}\"]}}{close}\n\
+         </{tag}invoke>\n</{tag}calls>"
+    );
+    let markup = ["calls", "invoke", "parameter"]
+        .map(|name| [format!("<{tag}{name}"), format!("</{tag}{name}")])
+        .concat();
+    let whole_values = [json!("a b"), json!({"k": [1, close]})];
     for cut in 0..=whole.len() {
-        let prefix = &whole[..cut];
-        for parts in [
-            vec![prefix.as_bytes()],
-            prefix.as_bytes().chunks(1).collect(),
-        ] {
+        let prefix = &whole.as_bytes()[..cut];
+        let valid = match std::str::from_utf8(prefix) {
+            Ok(text) => text,
+            Err(error) => std::str::from_utf8(&prefix[..error.valid_up_to()]).unwrap(),
+        };
+        for parts in [vec![prefix], prefix.chunks(1).collect()] {
+            // A length finish drops the tokens since text last ended on a
+            // whole scalar, as the detokenizer holds them.
+            let stable = if parts.len() == 1 && valid.len() < prefix.len() {
+                ""
+            } else {
+                valid
+            };
             let mut decoder = fixture.decoder(PromptModeV1::Chat);
             let mut updates = feed(&mut decoder, &parts);
             updates.extend(decoder.finish_length().expect("a cut completion finishes"));
             let content = text(&updates).1;
-            if prefix.contains("<calls") {
+            if stable.contains(&format!("<{tag}calls")) || stable.contains(reserved) {
                 assert_eq!(content, "ok", "cut {cut}");
             } else {
-                assert_eq!(content, prefix, "cut {cut}");
+                assert_eq!(content, stable, "cut {cut}");
             }
             for call in updates
                 .iter()
@@ -430,7 +469,6 @@ fn a_typed_completion_cut_anywhere_leaks_no_markup() {
             {
                 assert_eq!(call.name, "f", "cut {cut}");
                 let arguments: serde_json::Value = serde_json::from_str(&call.arguments).unwrap();
-                let whole_values = [json!("a b"), json!({"k": [1, "</parameter>"]})];
                 for (name, value) in arguments.as_object().unwrap() {
                     assert!(
                         !value

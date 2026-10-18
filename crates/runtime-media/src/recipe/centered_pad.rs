@@ -279,8 +279,10 @@ pub fn centered_pad_grid(
 /// holds while it decodes and becomes patch rows with
 /// [`centered_pad_grid`], in the terms of
 /// [`super::image_preparation_bytes`]: the decoder's buffers, the
-/// resampler's horizontal pass and output, the 8-bit canvas, the F32 patch
-/// rows and a payload of up to 4 bytes per value.
+/// resampler's weights for both passes ([`resample::coefficient_bytes`]),
+/// its intermediate pass in either order and its output, the 8-bit canvas,
+/// the normalization table, the F32 patch rows and a payload of up to 4
+/// bytes per value.
 pub fn centered_pad_preparation_bytes(
     width: u32,
     height: u32,
@@ -288,14 +290,20 @@ pub fn centered_pad_preparation_bytes(
     limits: MediaLimits,
 ) -> MediaResult<u64> {
     let plan = centered_pad_plan(height, width, recipe, limits)?;
+    let (content_h, content_w) = plan.content;
     let source = u64::from(width) * u64::from(height);
-    let content = u64::from(plan.content.0) * u64::from(plan.content.1);
+    let content = u64::from(content_h) * u64::from(content_w);
     let canvas = u64::from(plan.canvas.0) * u64::from(plan.canvas.1);
+    let intermediate =
+        (u64::from(height) * u64::from(content_w)).max(u64::from(content_h) * u64::from(width));
     [
         source.checked_mul(super::DECODE_BYTES_PER_PIXEL),
-        u64::from(height).checked_mul(u64::from(plan.content.1) * 3),
+        Some(resample::coefficient_bytes(width, content_w)),
+        Some(resample::coefficient_bytes(height, content_h)),
+        intermediate.checked_mul(3),
         content.checked_mul(3),
         canvas.checked_mul(3),
+        Some(3 * 256 * 4),
         canvas.checked_mul(3 * (4 + 4)),
     ]
     .into_iter()
@@ -410,6 +418,32 @@ mod tests {
             ..limits
         };
         assert!(!centered_pad_emits_size(560, 560, recipe(), small));
+    }
+
+    #[test]
+    fn preparation_bytes_hold_the_resampler_weights() {
+        // A 1 x 10000 source at patch and downsample 1, no minimum and a
+        // 15002-token budget collapses to one 7500-high column: the
+        // vertical pass's 7 weights per output hold 7500 * (7 * 12 + 16)
+        // bytes beside the buffers.
+        let recipe = CenteredPadRecipe {
+            patch: 1,
+            downsample: 1,
+            minimum_pixels: 0,
+            maximum_tokens: 15_002,
+            ..recipe()
+        };
+        let plan = centered_pad_plan(10_000, 1, recipe, limits()).unwrap();
+        assert_eq!((plan.canvas, plan.content), ((7500, 1), (7500, 1)));
+        let bytes = centered_pad_preparation_bytes(1, 10_000, recipe, limits()).unwrap();
+        let weights = 7500 * (7 * 12 + 16);
+        let buffers = 10_000 * super::super::DECODE_BYTES_PER_PIXEL
+            + 10_000 * 3
+            + 7500 * 3
+            + 7500 * 3
+            + 3 * 256 * 4
+            + 7500 * 3 * 8;
+        assert_eq!(bytes, weights + buffers);
     }
 
     #[test]

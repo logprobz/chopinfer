@@ -16,16 +16,57 @@
 //!   `p` is always 22 (`PRECISION_BITS`, 32 - 8 - 2), the outer lobe is
 //!   evaluated as `(((x - 5) x + 8) x - 4) a`, and, as Pillow 12.3's
 //!   `Image.resize` does, a source more than 100 times taller than wide
-//!   whose height shrinks takes the vertical pass first.
+//!   whose height shrinks takes the vertical pass first. Pillow passes the
+//!   resize box to C as F32, which rounds sides above 2^24; this path
+//!   refuses sides of 2^24 or more instead of mirroring that rounding.
+//!
+//! Each pass's weights live in two flat buffers, allocated fallibly:
+//! [`coefficient_bytes`] is their peak size.
 use std::borrow::Cow;
 
 use crate::core::try_filled;
-use crate::{MediaResult, RgbImage};
+use crate::{MediaError, MediaResult, RgbImage};
 
 struct AxisWeights {
-    /// First input index and fixed-point weights for each output index.
-    taps: Vec<(usize, Vec<i32>)>,
+    /// Weights per output index, the first `count` of each `taps` used.
+    taps: usize,
+    /// First input index and weight count of each output index.
+    bounds: Vec<(usize, usize)>,
+    /// `taps` fixed-point weights per output index.
+    weights: Vec<i32>,
     precision: u32,
+}
+
+impl AxisWeights {
+    /// The first input index and weights of output `i`.
+    fn of(&self, i: usize) -> (usize, &[i32]) {
+        let (first, count) = self.bounds[i];
+        (first, &self.weights[i * self.taps..i * self.taps + count])
+    }
+}
+
+/// The largest source side the Pillow path takes: Pillow's F32 resize box
+/// holds every integer below it exactly.
+const PILLOW_MAXIMUM_SIDE: usize = 1 << 24;
+
+/// The weights per output sample when `input` samples resize to `output`:
+/// `2 * ceil(support) + 1` with support `2 * max(input / output, 1)`.
+fn taps_per_output(input: usize, output: usize) -> usize {
+    let scale = input as f64 / output as f64;
+    let support = if scale >= 1.0 { 2.0 * scale } else { 2.0 };
+    support.ceil() as usize * 2 + 1
+}
+
+/// The peak bytes of one pass's weights when `input` samples resize to
+/// `output` (none when the sizes match and the pass is skipped): the F64
+/// weights and the fixed-point weights, both `taps * output` long, and the
+/// bounds of each output sample.
+pub(crate) fn coefficient_bytes(input: u32, output: u32) -> u64 {
+    if input == output || output == 0 {
+        return 0;
+    }
+    let taps = taps_per_output(input as usize, output as usize) as u64;
+    u64::from(output) * (taps * (8 + 4) + 16)
 }
 
 /// The two fixed-point conventions of the 8-bit path.
@@ -55,32 +96,37 @@ fn cubic(x: f64, fixed: Fixed) -> f64 {
     }
 }
 
-fn axis_weights(input: usize, output: usize, fixed: Fixed) -> AxisWeights {
+fn axis_weights(input: usize, output: usize, fixed: Fixed) -> MediaResult<AxisWeights> {
     let scale = input as f64 / output as f64;
     let (support, inverse) = if scale >= 1.0 {
         (2.0 * scale, 1.0 / scale)
     } else {
         (2.0, 1.0)
     };
-    let maximum_taps = support.ceil() as i64 * 2 + 1;
+    let taps = taps_per_output(input, output);
+    let size = output
+        .checked_mul(taps)
+        .ok_or_else(|| MediaError::new("resample weight allocation overflow"))?;
     let mut largest = 0.0f64;
-    let mut real = Vec::with_capacity(output);
-    for i in 0..output {
+    let mut real = try_filled(size, 0.0f64)?;
+    let mut bounds = try_filled(output, (0usize, 0usize))?;
+    for (i, (weights, bound)) in real.chunks_exact_mut(taps).zip(&mut bounds).enumerate() {
         let center = scale * (i as f64 + 0.5);
         let first = ((center - support + 0.5) as i64).max(0);
         let count =
-            (((center + support + 0.5) as i64).min(input as i64) - first).clamp(0, maximum_taps);
-        let mut weights: Vec<f64> = (0..count)
-            .map(|j| cubic(((j + first) as f64 - center + 0.5) * inverse, fixed))
-            .collect();
+            (((center + support + 0.5) as i64).min(input as i64) - first).clamp(0, taps as i64);
+        let weights = &mut weights[..count as usize];
+        for (j, weight) in weights.iter_mut().enumerate() {
+            *weight = cubic(((j as i64 + first) as f64 - center + 0.5) * inverse, fixed);
+        }
         let total = weights.iter().fold(0.0, |sum, &w| sum + w);
         if total != 0.0 {
-            for weight in &mut weights {
+            for weight in weights.iter_mut() {
                 *weight /= total;
                 largest = largest.max(*weight);
             }
         }
-        real.push((first as usize, weights));
+        *bound = (first as usize, count as usize);
     }
     let precision = match fixed {
         Fixed::Pillow => PILLOW_PRECISION,
@@ -94,20 +140,17 @@ fn axis_weights(input: usize, output: usize, fixed: Fixed) -> AxisWeights {
             precision
         }
     };
-    let taps = real
-        .into_iter()
-        .map(|(first, weights)| {
-            let weights = weights
-                .into_iter()
-                .map(|w| {
-                    let v = w * f64::from(1u32 << precision);
-                    (if v < 0.0 { v - 0.5 } else { v + 0.5 }) as i32
-                })
-                .collect();
-            (first, weights)
-        })
-        .collect();
-    AxisWeights { taps, precision }
+    let mut weights = try_filled(size, 0i32)?;
+    for (fixed_point, &w) in weights.iter_mut().zip(&real) {
+        let v = w * f64::from(1u32 << precision);
+        *fixed_point = (if v < 0.0 { v - 0.5 } else { v + 0.5 }) as i32;
+    }
+    Ok(AxisWeights {
+        taps,
+        bounds,
+        weights,
+        precision,
+    })
 }
 
 fn fixed_point(sum: i64, precision: u32) -> u8 {
@@ -137,6 +180,11 @@ pub(crate) fn bicubic_pillow(
 fn resize(image: &RgbImage, height: u32, width: u32, fixed: Fixed) -> MediaResult<Cow<'_, [u8]>> {
     let (in_w, in_h) = (image.width as usize, image.height as usize);
     let (out_w, out_h) = (width as usize, height as usize);
+    if fixed == Fixed::Pillow && in_w.max(in_h) >= PILLOW_MAXIMUM_SIDE {
+        return Err(MediaError::new(
+            "Pillow's F32 resize box rounds source sides of 2^24 or more; they are refused",
+        ));
+    }
     let source = Cow::Borrowed(image.data.as_slice());
     // Pillow's `Image.resize` shrinks a source more than 100 times taller
     // than wide vertically first, as two one-axis resizes.
@@ -159,14 +207,15 @@ fn horizontal_pass(
     if out_w == in_w {
         return Ok(source);
     }
-    let weights = axis_weights(in_w, out_w, fixed);
+    let weights = axis_weights(in_w, out_w, fixed)?;
     let round = 1i64 << (weights.precision - 1);
     let mut out = try_filled(rows * out_w * 3, 0u8)?;
     for (source, row) in source
         .chunks_exact(in_w * 3)
         .zip(out.chunks_exact_mut(out_w * 3))
     {
-        for ((first, taps), pixel) in weights.taps.iter().zip(row.chunks_exact_mut(3)) {
+        for (x, pixel) in row.chunks_exact_mut(3).enumerate() {
+            let (first, taps) = weights.of(x);
             for (c, sample) in pixel.iter_mut().enumerate() {
                 let sum = taps.iter().enumerate().fold(round, |sum, (k, &w)| {
                     sum + i64::from(source[(first + k) * 3 + c]) * i64::from(w)
@@ -190,11 +239,12 @@ fn vertical_pass(
     if out_h == in_h {
         return Ok(source);
     }
-    let weights = axis_weights(in_h, out_h, fixed);
+    let weights = axis_weights(in_h, out_h, fixed)?;
     let round = 1i64 << (weights.precision - 1);
     let line = width * 3;
     let mut out = try_filled(out_h * line, 0u8)?;
-    for ((first, taps), row) in weights.taps.iter().zip(out.chunks_exact_mut(line)) {
+    for (y, row) in out.chunks_exact_mut(line).enumerate() {
+        let (first, taps) = weights.of(y);
         for (x, sample) in row.iter_mut().enumerate() {
             let sum = taps.iter().enumerate().fold(round, |sum, (k, &w)| {
                 sum + i64::from(source[(first + k) * line + x]) * i64::from(w)
@@ -237,19 +287,43 @@ mod tests {
     fn weights_quantize_like_the_fixed_point_reference() {
         // Halving stretches the kernel to 4 taps each side; the edge rows
         // lose their out-of-range taps and are renormalized.
-        let w = axis_weights(8, 4, Fixed::Adaptive);
+        let w = axis_weights(8, 4, Fixed::Adaptive).unwrap();
         assert_eq!(w.precision, 16);
-        assert_eq!(w.taps[0], (0, vec![30437, 30437, 7952, -2468, -823]));
+        assert_eq!(w.of(0), (0, &[30437, 30437, 7952, -2468, -823][..]));
         assert_eq!(
-            w.taps[1],
-            (0, vec![-2277, 7338, 28087, 28087, 7338, -2277, -759])
+            w.of(1),
+            (0, &[-2277, 7338, 28087, 28087, 7338, -2277, -759][..])
         );
-        assert_eq!(w.taps[3], (3, vec![-823, -2468, 7952, 30437, 30437]));
+        assert_eq!(w.of(3), (3, &[-823, -2468, 7952, 30437, 30437][..]));
         // Doubling uses the unstretched kernel at quarter-pixel offsets.
-        let w = axis_weights(2, 4, Fixed::Adaptive);
+        let w = axis_weights(2, 4, Fixed::Adaptive).unwrap();
         assert_eq!(w.precision, 14);
-        assert_eq!(w.taps[0], (0, vec![17830, -1446]));
-        assert_eq!(w.taps[1], (0, vec![12990, 3394]));
+        assert_eq!(w.of(0), (0, &[17830, -1446][..]));
+        assert_eq!(w.of(1), (0, &[12990, 3394][..]));
+    }
+
+    #[test]
+    fn coefficient_bytes_are_the_weight_buffers() {
+        // Halving takes 2 * 4 + 1 = 9 weights per output, doubling 5.
+        for (input, output, taps) in [(8, 4, 9), (2, 4, 5), (10_000, 7_500, 7)] {
+            let w = axis_weights(input, output, Fixed::Pillow).unwrap();
+            assert_eq!(w.taps, taps);
+            let bytes = (w.weights.len() * (8 + 4) + w.bounds.len() * 16) as u64;
+            assert_eq!(coefficient_bytes(input as u32, output as u32), bytes);
+        }
+        assert_eq!(coefficient_bytes(7, 7), 0);
+    }
+
+    #[test]
+    fn pillow_refuses_sides_its_f32_box_rounds() {
+        // 2^24 one-pixel rows are refused by name before any allocation.
+        let wide = RgbImage {
+            width: 1 << 24,
+            height: 1,
+            data: Vec::new(),
+        };
+        let error = bicubic_pillow(&wide, 1, 3).unwrap_err().to_string();
+        assert!(error.contains("2^24"), "{error}");
     }
 
     #[test]
@@ -266,12 +340,13 @@ mod tests {
 
     #[test]
     fn pillow_weights_use_22_bits_and_its_lobe_order() {
-        let w = axis_weights(8, 4, Fixed::Pillow);
+        let w = axis_weights(8, 4, Fixed::Pillow).unwrap();
         assert_eq!(w.precision, 22);
         // The adaptive weights at 16 bits, scaled by 2^6, are within the
         // rounding of the 22-bit ones.
-        let adaptive = axis_weights(8, 4, Fixed::Adaptive);
-        for ((first, taps), (first16, taps16)) in w.taps.iter().zip(&adaptive.taps) {
+        let adaptive = axis_weights(8, 4, Fixed::Adaptive).unwrap();
+        for i in 0..4 {
+            let ((first, taps), (first16, taps16)) = (w.of(i), adaptive.of(i));
             assert_eq!(first, first16);
             for (&t, &t16) in taps.iter().zip(taps16) {
                 assert!((t - t16 * 64).abs() <= 32, "{t} against {t16}");

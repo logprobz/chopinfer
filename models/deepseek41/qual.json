@@ -30,7 +30,8 @@
         "determinism",
         "kv_offload_plain",
         "kv_offload_pressure",
-        "multimodal"
+        "multimodal",
+        "spec_verify"
       ]
     }
   },
@@ -61,7 +62,9 @@
       "kv_offload_plain",
       "kv_offload_pressure"
     ],
-    "speculation": [],
+    "speculation": [
+      "spec_verify"
+    ],
     "prefix": [
       "prefix_exact"
     ]
@@ -1149,6 +1152,130 @@
         }
       ]
     },
+    "spec_verify": {
+      "module": "spec_verify",
+      "args": [
+        "compare",
+        "--ar",
+        "{spec_ar}",
+        "--spec",
+        "{spec_candidate}"
+      ],
+      "timeout_seconds": 7200,
+      "stdout_json": true,
+      "files": [
+        "spec_ar",
+        "spec_candidate"
+      ],
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "models/deepseek41/README.md#dspark-qualification"
+        },
+        {
+          "path": [
+            "sets",
+            "copy",
+            "scored_positions"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        }
+      ],
+      "constants": {
+        "spec_verify": {
+          "MAXIMUM_ABS_DLOGPROB": {
+            "value": 0.15,
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          },
+          "MAXIMUM_TOP1_DISAGREEMENT": {
+            "value": 0.08,
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          }
+        }
+      },
+      "input_rules": {
+        "spec_ar": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          },
+          {
+            "path": [
+              "sampling",
+              "temperature"
+            ],
+            "op": "eq",
+            "value": 1.0,
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          },
+          {
+            "path": [
+              "sampling",
+              "top_p"
+            ],
+            "op": "eq",
+            "value": 1.0,
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          }
+        ],
+        "spec_candidate": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          },
+          {
+            "path": [
+              "sampling",
+              "temperature"
+            ],
+            "op": "eq",
+            "value": 1.0,
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          },
+          {
+            "path": [
+              "sampling",
+              "top_p"
+            ],
+            "op": "eq",
+            "value": 1.0,
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          }
+        ]
+      }
+    },
     "multimodal": {
       "module": "multimodal",
       "args": [
@@ -1358,7 +1485,6 @@
     "Pending checks, each added with its references and limits pinned before any candidate run (models/deepseek41/README.md#qualification): long_context (131,072 tokens), whose rule is the teacher rule over the last 1,024 positions with BF16 the only spread variant and whose values follow its F32-TQ reference; verify_exact and spec_verify with DSpark; media_preprocessing and encoder_parity with the vision encoder. frontend_goldens' tokenizer and chat renders are pinned CPU fixtures; their served equality remains to be qualified. determinism compares the AR record with the DSpark record, so it runs once the DSpark profile is declared. paired_teacher and gsm8k_regression compare against a stored passing run and report no baseline until one exists.",
     "multimodal teacher-forces the six image probes of models/deepseek41/probe_images.py (one image and the probe question in a chat turn, thinking disabled) on their F32-TQ greedy answers as a served chat continues them, against the image_probes reference (F32-TQ gate, BF16 and F64-TQ spread variants, the image-probe rule: mean floor 0.15, top-1 floor 0.08, mean step 0.05, near tie 0.3 nats). Its limits, derived from the reference's own spread before any served result, are the floors for every probe (mean |dlogprob| 0.15, decisive and near-tie top-1 0.08, all top-1 flips 0.10) except wide-1000x40's all-flips limit, 7/69 (BF16). The BF16 and F64-TQ spreads over the 487 positions are mean |dlogprob| 0.074 and 0.065 with 28 and 25 top-1 flips (models/deepseek41/README.md#qualification).",
     "The needle check runs frozen token-ID prompts at total contexts of 8,192, 131,072, 262,144 and 1,048,576 tokens and needs no reference (models/deepseek41/README.md#qualification).",
-    "Pending sections, deferred from the skeleton by a revision of its acceptance scope (integration owner, 2026-10-17): preview (profile tp4-ar, quick_arms [\"ar\"]) lands with the chopinfer-model-deepseek41 helper of the geometry recipe.",
     "kv-bf16 is a comparison configuration, never a served default: --kv-cache-dtype bf16 serves the BF16 KV layout, which stores the same values as the native trained formats, and its served bits must equal the native layout's bit for bit. Its pages are about 3.6 times larger (3,200 bytes against 890 per token), and capacity, offload and pressure behavior follow page size, so it is not qualified for capacity, preemption under pressure or offload. Its checks are prefix_exact and kv_layout_equality (native mixed versus BF16 served bits, bit for bit, on the determinism request set) now; teacher, teacher_arms and chat join with their references."
   ],
   "configurations": {
@@ -1444,5 +1570,23 @@
     "max_preemptions": 3,
     "min_gated": 18,
     "pressure_tokens": 32768
+  },
+  "preview": {
+    "profile": "tp4-dspark",
+    "speculation": {
+      "drafter": "dspark",
+      "tokens": 5,
+      "draft_cost": "per-block"
+    },
+    "spec_greedy": {
+      "rule": "exact"
+    },
+    "quick_arms": [
+      "ar",
+      "spec"
+    ],
+    "numerical_reference": "F32-TQ reference of the pinned vendor code. DSpark verify bounds and GSM8K floor are pinned in models/deepseek41/README.md#dspark-qualification.",
+    "gsm8k_floor": 193,
+    "package_max_sequences": 32
   }
 }

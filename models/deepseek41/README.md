@@ -164,6 +164,51 @@ checkpoint's `encoding/encoding.py` in chat mode, with the needles near
 `$CHOPINFER_DATA/deepseek41/needle/prompts.json`; the digests are in
 `fixtures/deepseek41/needles.json` (`--check` rebuilds and compares).
 
-`profiles.json` holds the experimental `tp4-ar` bring-up profile. The
+`profiles.json` holds the experimental `tp4-ar` and `tp4-dspark` profiles. The
 release preview's full suite at the release revision is the
 qualification evidence.
+
+### DSpark qualification
+
+The preview selects `tp4-dspark`, with both AR and speculative quick arms
+and exact greedy equality. DSpark computes all five proposals per block;
+scheduler budgets select the emitted prefix. Its profile uses the shared
+`per-block` draft-cost model and native KV at TP4.
+
+The speculative-verification copy set must have mean absolute logprob
+difference at most 0.15 and top-1 disagreement at most 0.08 against AR.
+Both arms must score at least 193 of 200 on the GSM8K screen. These bounds
+are declared before speculative candidate results. Verification captures
+use recipe sampling, temperature 1.0 and top_p 1.0. The generic recorder
+and preview validator need recipe-aware capture before the full suite runs.
+
+The preview context follows the planned needle lengths, 8K, 128K, 256K and
+1M tokens. The frozen digest manifest and external token-ID prompts remain
+pending. This declaration supplies no needle or speculative GPU evidence.
+
+### M0 synthetic bring-up
+
+`qual.m0.json` declares the teacher check of M0: the bundle serving the
+synthetic-small checkpoint (12 layers, random weights, seed 0; lock
+`m0-checkpoint-files.json`) at TP2, autoregressive, native KV, teacher-forced
+against the pinned vendor code's F32-TQ run with its BF16 and F64-TQ runs as
+spread. On random weights F32 is chaotic: the reference's own exact against
+BF16 spread is a mean of 1.68 nats with top-1 agreement 0.28. Its limits
+(mean |dlogprob| at most 2.0 nats, top-1 disagreement at most 0.8) catch only
+gross failures, so M0's verdict is tapdiff's over the early layers' taps;
+the teacher record is kept beside it. It is a bring-up declaration, never a
+qualification.
+
+### M1 teacher check
+
+`qual.m1.json` declares the teacher check of M1: the official checkpoint
+(lock `checkpoint-files.json`) served at TP4, autoregressive, native KV,
+teacher-forced against the pinned vendor code's F32-TQ run over 35 texts
+(3,974 scored positions), with its BF16 and F64-TQ runs as spread. Its
+limits were pinned from that spread before any served result (variant-spread.v2):
+mean |dlogprob| at most 0.15, top-1 decisive and near-tie each at most 8%,
+total top-1 disagreement at most 10%, no failed category. It is a bring-up
+declaration, never a qualification.
+Its frozen texts are `teacher-texts.json` under `$CHOPINFER_DATA/deepseek41/m1/fixtures-text`
+(`inputs.fixture_root`): the reference's 35 texts in its order, with the token IDs
+and `score_from` whose workload digest the reference pins.

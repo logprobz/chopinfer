@@ -15,6 +15,7 @@ cdylib = ["bundle_deepseek41"]
 
 [compiler]
 package = "model-deepseek41"
+bin = ["chopinfer-model-deepseek41"]
 
 [contract]
 package = "model-deepseek41-contract"

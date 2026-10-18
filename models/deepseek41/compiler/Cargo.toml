@@ -7,6 +7,7 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+bundle-runtime.workspace = true
 kernel-core.workspace = true
 model-compiler-sdk.workspace = true
 model-deepseek41-contract.workspace = true
@@ -20,12 +21,15 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
-bundle-runtime.workspace = true
 frontend-format.workspace = true
 runtime-frontend = { workspace = true, features = ["test-support"] }
 runtime-host = { workspace = true, features = ["test-support"] }
 runtime-server.workspace = true
 sha2.workspace = true
+
+[[bin]]
+name = "chopinfer-model-deepseek41"
+path = "src/bin/chopinfer-model-deepseek41.rs"
 
 [lints]
 workspace = true

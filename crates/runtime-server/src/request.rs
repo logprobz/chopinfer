@@ -153,10 +153,25 @@ thread_local! {
 
 /// Reads `body` as `T` with the thinking keywords ignored when `ignored`.
 fn decode_chat<'a, T: Deserialize<'a>>(body: &'a [u8], ignored: bool) -> Result<T, ApiError> {
-    THINKING_KEYWORDS_IGNORED.set(ignored);
-    let decoded = decode(body);
-    THINKING_KEYWORDS_IGNORED.set(false);
-    decoded
+    let _ignoring = IgnoringThinkingKeywords::set(ignored);
+    decode(body)
+}
+
+/// Sets [`THINKING_KEYWORDS_IGNORED`] while it lives and clears it on drop,
+/// so a decode that panics leaves the thread's next decode checking them.
+struct IgnoringThinkingKeywords;
+
+impl IgnoringThinkingKeywords {
+    fn set(ignored: bool) -> Self {
+        THINKING_KEYWORDS_IGNORED.set(ignored);
+        Self
+    }
+}
+
+impl Drop for IgnoringThinkingKeywords {
+    fn drop(&mut self) {
+        THINKING_KEYWORDS_IGNORED.set(false);
+    }
 }
 
 /// The typed `chat_template_kwargs`: every typed keyword checked, or, while
@@ -2405,4 +2420,24 @@ fn validate_string(
 
 fn nullable_bool<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
     Ok(Option::<bool>::deserialize(deserializer)?.unwrap_or(false))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Panics;
+
+    impl<'de> Deserialize<'de> for Panics {
+        fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+            panic!("the decode panics");
+        }
+    }
+
+    #[test]
+    fn a_decode_that_panics_still_clears_the_ignored_thinking_keywords() {
+        let decoded = std::panic::catch_unwind(|| decode_chat::<Panics>(b"{}", true));
+        assert!(decoded.is_err());
+        assert!(!THINKING_KEYWORDS_IGNORED.get());
+    }
 }

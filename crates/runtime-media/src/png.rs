@@ -1,5 +1,6 @@
 //! Bounded PNG decoder. The inflate interface keeps compression separate from parsing.
 
+use crate::core::{try_filled, try_reserve, try_with_capacity};
 use crate::{Alpha, MediaError, MediaLimits, MediaResult, RgbImage};
 
 pub trait Inflate {
@@ -10,9 +11,15 @@ pub struct MinizInflate;
 
 impl Inflate for MinizInflate {
     fn zlib_exact(&self, compressed: &[u8], expected: usize) -> MediaResult<Vec<u8>> {
-        let bytes = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(compressed, expected)
-            .map_err(|_| MediaError::new("PNG inflate failed or exceeded decoded limit"))?;
-        if bytes.len() != expected {
+        let mut bytes = try_filled(expected, 0_u8)?;
+        let written = miniz_oxide::inflate::decompress_slice_iter_to_slice(
+            &mut bytes,
+            std::iter::once(compressed),
+            true,
+            false,
+        )
+        .map_err(|_| MediaError::new("PNG inflate failed or exceeded decoded limit"))?;
+        if written != expected {
             return Err(MediaError::new("PNG inflated byte count differs"));
         }
         Ok(bytes)
@@ -287,18 +294,24 @@ fn decode_inner(
             b"PLTE"
                 if seen_ihdr && !seen_idat && len % 3 == 0 && len <= 768 && !data.is_empty() =>
             {
-                palette = data
-                    .chunks_exact(3)
-                    .map(|rgb| [rgb[0], rgb[1], rgb[2]])
-                    .collect();
+                palette = try_with_capacity(len / 3)?;
+                palette.extend(data.chunks_exact(3).map(|rgb| [rgb[0], rgb[1], rgb[2]]));
             }
-            b"tRNS" if seen_ihdr && !seen_idat => transparency = data.to_vec(),
+            b"tRNS" if seen_ihdr && !seen_idat => {
+                transparency = try_with_capacity(len)?;
+                transparency.extend_from_slice(data);
+            }
             b"IDAT" if seen_ihdr => {
                 seen_idat = true;
-                idat.extend_from_slice(data);
-                if idat.len() > limits.maximum_bytes {
+                if idat
+                    .len()
+                    .checked_add(data.len())
+                    .is_none_or(|len| len > limits.maximum_bytes)
+                {
                     return Err(MediaError::new("PNG IDAT byte limit exceeded"));
                 }
+                try_reserve(&mut idat, data.len())?;
+                idat.extend_from_slice(data);
             }
             b"IEND" if seen_ihdr && len == 0 => {
                 seen_iend = true;
@@ -331,7 +344,7 @@ fn decode_inner(
             .ok_or_else(|| MediaError::new("PNG pixel size overflow"))?,
     )
     .map_err(|_| MediaError::new("PNG pixel size overflow"))?;
-    let mut rgb = crate::core::try_filled(output_len, 0_u8)?;
+    let mut rgb = try_filled(output_len, 0_u8)?;
     let mut source = 0_usize;
     let bpp = ((h.channels() * h.depth as usize).div_ceil(8)).max(1);
     for &(sx, sy, dx, dy) in passes(h.interlace) {
@@ -341,11 +354,12 @@ fn decode_inner(
             continue;
         }
         let stride = h.row_bytes(width)?;
-        let mut previous = vec![0_u8; stride];
+        let mut previous = try_filled(stride, 0_u8)?;
+        let mut row = try_filled(stride, 0_u8)?;
         for y in 0..height {
             let filter = raw[source];
             source += 1;
-            let mut row = raw[source..source + stride].to_vec();
+            row.copy_from_slice(&raw[source..source + stride]);
             source += stride;
             unfilter(filter, &mut row, &previous, bpp)?;
             for x in 0..width {
@@ -361,7 +375,7 @@ fn decode_inner(
                     policy,
                 )?);
             }
-            previous = row;
+            std::mem::swap(&mut previous, &mut row);
         }
     }
     RgbImage::new(h.width, h.height, rgb, limits)
@@ -387,6 +401,47 @@ mod tests {
             maximum_frames: 32,
             maximum_tokens: 1024,
             maximum_aspect_ratio: 200.0,
+        }
+    }
+
+    #[test]
+    fn large_rgba_allocation_failures_return_media_errors() {
+        let (width, height) = (8192_u32, 512_u32);
+        let stride = width as usize * 4;
+        let raw = vec![0_u8; (stride + 1) * height as usize];
+        let compressed = miniz_oxide::deflate::compress_to_vec_zlib(&raw, 6);
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        let mut ihdr = width.to_be_bytes().to_vec();
+        ihdr.extend_from_slice(&height.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+        chunk(b"IHDR", &ihdr, &mut png);
+        chunk(b"IDAT", &compressed, &mut png);
+        chunk(b"IEND", &[], &mut png);
+        let limits = MediaLimits {
+            maximum_pixels: 1 << 24,
+            ..limits()
+        };
+        let decode = || decode_with_alpha(&png, limits, Alpha::Discard);
+        assert_eq!(
+            decode().unwrap().data.len(),
+            width as usize * height as usize * 3
+        );
+        // IDAT, inflated scanlines, RGB, and both filter-row buffers must
+        // report a fallible reservation failure instead of aborting.
+        for (size, skip) in [
+            (compressed.len(), 0),
+            (raw.len(), 0),
+            (width as usize * height as usize * 3, 0),
+            (stride, 0),
+            (stride, 1),
+        ] {
+            let result = crate::core::with_allocation_failure(size, skip, decode);
+            assert!(result.is_err(), "allocation {size}, {skip} was infallible");
+            assert_eq!(
+                result.unwrap_err().to_string(),
+                "media buffer allocation failed",
+                "{size}, {skip}"
+            );
         }
     }
 

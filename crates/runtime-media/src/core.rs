@@ -36,9 +36,49 @@ pub(crate) fn try_filled<T: Clone>(len: usize, value: T) -> MediaResult<Vec<T>> 
 /// abort when the host cannot allocate it.
 pub(crate) fn try_with_capacity<T>(len: usize) -> MediaResult<Vec<T>> {
     let mut out = Vec::new();
-    out.try_reserve_exact(len)
-        .map_err(|_| MediaError::new("media buffer allocation failed"))?;
+    try_reserve(&mut out, len)?;
     Ok(out)
+}
+
+pub(crate) fn try_reserve<T>(out: &mut Vec<T>, additional: usize) -> MediaResult<()> {
+    #[cfg(test)]
+    if out.capacity() - out.len() < additional
+        && fail_allocation(additional.saturating_mul(size_of::<T>()))
+    {
+        return Err(MediaError::new("media buffer allocation failed"));
+    }
+    out.try_reserve_exact(additional)
+        .map_err(|_| MediaError::new("media buffer allocation failed"))
+}
+
+#[cfg(test)]
+thread_local! {
+    static ALLOCATION_FAILURE: std::cell::Cell<Option<(usize, usize)>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+fn fail_allocation(bytes: usize) -> bool {
+    ALLOCATION_FAILURE.with(|failure| match failure.get() {
+        Some((size, skip)) if size == bytes => {
+            failure.set(skip.checked_sub(1).map(|skip| (size, skip)));
+            skip == 0
+        }
+        _ => false,
+    })
+}
+
+/// Fail one reservation of `bytes` on this test thread after `skip` matches.
+#[cfg(test)]
+pub(crate) fn with_allocation_failure<T>(bytes: usize, skip: usize, run: impl FnOnce() -> T) -> T {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            ALLOCATION_FAILURE.set(None);
+        }
+    }
+    ALLOCATION_FAILURE.set(Some((bytes, skip)));
+    let _reset = Reset;
+    run()
 }
 
 /// How a decoder handles transparency.

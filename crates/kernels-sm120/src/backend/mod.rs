@@ -983,7 +983,10 @@ impl Backend for Sm120 {
         // A registered pooling norm serves its exact requirement; any other
         // F32 norm is a row RMSNorm entry's.
         if op.input == kernel_core::contract::DType::F32
-            && self.f32_norms.iter().any(|(norm, _)| norm.requirement() == op)
+            && self
+                .f32_norms
+                .iter()
+                .any(|(norm, _)| norm.requirement() == op)
         {
             return gated_pooling::norm(&self.f32_norms, op, need);
         }

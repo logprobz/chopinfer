@@ -32,8 +32,8 @@ use model_glm5next_contract::contract::Shape;
 use model_glm5next_contract::own_ops::OwnOps;
 use model_glm5next_contract::own_ops::draft::{DraftGather, DraftGatherBuffers};
 use model_glm5next_contract::own_ops::rows::{
-    EhInput, EhInputBuffers, ResidualAdd, ResidualAddBuffers,
-    RoundRows, RoundRowsBuffers, WidenRows, WidenRowsBuffers,
+    EhInput, EhInputBuffers, ResidualAdd, ResidualAddBuffers, RoundRows, RoundRowsBuffers,
+    WidenRows, WidenRowsBuffers,
 };
 use model_glm5next_contract::own_ops::stacked::{StackedProjection, StackedProjectionBuffers};
 use model_glm5next_contract::own_ops::state::{
@@ -564,13 +564,13 @@ mod tests {
         Buffer, CommState, DrafterBuffers, RankBuffers, StatePools, allocate_scratch,
     };
     use crate::journal_tests::head_rows;
-    use kernel_core::row_copy::GatherByIndexBuffers;
-    use model_glm5next_contract::copies;
-    use model_glm5next_contract::sm120::engines::ROW_GATHER_SYMBOL;
     use crate::lower::Lowering;
     use crate::program::{DraftPass, Phase, Stage, Sublayer, draft_rows};
     use crate::sm120::engines::Engines;
     use kernel_core::contract::ArgumentList;
+    use kernel_core::row_copy::GatherByIndexBuffers;
+    use model_glm5next_contract::copies;
+    use model_glm5next_contract::sm120::engines::ROW_GATHER_SYMBOL;
 
     const SHAPE: Shape = Shape::TP4;
 

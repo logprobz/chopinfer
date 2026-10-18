@@ -29,8 +29,8 @@ pub mod state;
 
 use draft::{DraftGather, DraftGatherBuffers};
 use rows::{
-    EhInput, EhInputBuffers, ResidualAdd, ResidualAddBuffers,
-    RoundRows, RoundRowsBuffers, WidenRows, WidenRowsBuffers,
+    EhInput, EhInputBuffers, ResidualAdd, ResidualAddBuffers, RoundRows, RoundRowsBuffers,
+    WidenRows, WidenRowsBuffers,
 };
 use stacked::{StackedProjection, StackedProjectionBuffers};
 use state::{Admission, AdmissionBuffers, StateCopy, StateCopyBuffers};

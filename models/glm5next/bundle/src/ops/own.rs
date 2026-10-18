@@ -16,8 +16,7 @@ use model_glm5next_contract::contract::{PREFILL_TOKENS, Shape};
 use model_glm5next_contract::own_ops::OwnOps;
 use model_glm5next_contract::own_ops::draft::{DraftGather, DraftGatherBuffers};
 use model_glm5next_contract::own_ops::rows::{
-    EhInput, EhInputBuffers, ResidualAdd, ResidualAddBuffers,
-    WidenRows, WidenRowsBuffers,
+    EhInput, EhInputBuffers, ResidualAdd, ResidualAddBuffers, WidenRows, WidenRowsBuffers,
 };
 use model_glm5next_contract::own_ops::stacked::StackedProjectionBuffers;
 use runtime_bundle_abi::DeviceBufferSpanV1 as Span;

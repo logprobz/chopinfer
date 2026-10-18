@@ -83,7 +83,8 @@ use model_glm5next_contract::{
         OwnOps,
         draft::{self as draft_ops, DraftGather, DraftGatherBuffers},
         rows::{
-            self as row_ops, EhInput, EhInputBuffers, ResidualAdd, ResidualAddBuffers, RoundRows, RoundRowsBuffers, WidenRows, WidenRowsBuffers,
+            self as row_ops, EhInput, EhInputBuffers, ResidualAdd, ResidualAddBuffers, RoundRows,
+            RoundRowsBuffers, WidenRows, WidenRowsBuffers,
         },
         same_bf16, same_f32,
         stacked::{self as stacked_ops, StackedPart, StackedProjection, StackedProjectionBuffers},
@@ -486,7 +487,6 @@ fn own_row_cases(rng: &mut Rng) -> LabResult<Vec<OwnCase>> {
         },
     );
     cases.push(("residual_add", need, case));
-
 
     // The drafter's input halves at a 32-row decode use: the normalized
     // embedding rows at column 0, the hidden rows at the hidden width.
@@ -997,19 +997,21 @@ fn gather_case(
     let prepared = shared
         .gather_by_index(&op, need)
         .map_err(|refused| format!("SM120 refuses the bundle's head rows: {refused}"))?;
-    Ok(OpCase::new(prepared, capacity, roles)?.oracle(move |images, live| {
-        let mut output = vec![0; rows * width * 2];
-        let indices = image_words(images, "row_indices")?;
-        kernel_core::row_copy::gather_by_index(
-            &op,
-            images.bytes("source")?,
-            &indices,
-            live,
-            &mut output,
-        )
-        .map_err(refused)?;
-        Ok(vec![("destination".into(), Expected::Bits(output))])
-    }))
+    Ok(
+        OpCase::new(prepared, capacity, roles)?.oracle(move |images, live| {
+            let mut output = vec![0; rows * width * 2];
+            let indices = image_words(images, "row_indices")?;
+            kernel_core::row_copy::gather_by_index(
+                &op,
+                images.bytes("source")?,
+                &indices,
+                live,
+                &mut output,
+            )
+            .map_err(refused)?;
+            Ok(vec![("destination".into(), Expected::Bits(output))])
+        }),
+    )
 }
 
 /// The bundle's stream expansion, router score compaction and head rows'

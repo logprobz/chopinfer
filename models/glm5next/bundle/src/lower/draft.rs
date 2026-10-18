@@ -3,9 +3,9 @@
 //! head rows on the shared gather by index (`crate::ops::logits`); and of
 //! its argmax on the shared sharded argmax (`crate::ops::draft`).
 
+use kernel_core::row_copy::GatherByIndexBuffers;
 use model_glm5next_contract::contract::DRAFT_ITEMS;
 use model_glm5next_contract::own_ops::draft::DraftGatherBuffers;
-use kernel_core::row_copy::GatherByIndexBuffers;
 use model_glm5next_contract::own_ops::rows::ResidualAddBuffers;
 use runtime_bundle_abi::DeviceBufferSpanV1;
 

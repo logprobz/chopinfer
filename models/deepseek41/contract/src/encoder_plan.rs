@@ -243,9 +243,7 @@ pub type Lookup<'a> = &'a dyn Fn(&str) -> Option<(String, Vec<u64>)>;
 /// projection declaration's `external_tensors`: every one the declaration
 /// reads, after they check against it as `lookup` states them. An error
 /// when the checkpoint holds an encoder that differs from the declaration.
-pub fn validated(
-    lookup: Lookup,
-) -> Result<BTreeSet<String>, String> {
+pub fn validated(lookup: Lookup) -> Result<BTreeSet<String>, String> {
     let declaration = &crate::encoder::declarations().map_err(|e| e.0)?[0];
     let names = declaration.tensors();
     let mut headers = BTreeMap::new();

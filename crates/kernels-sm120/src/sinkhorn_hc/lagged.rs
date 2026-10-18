@@ -76,7 +76,7 @@ fn check(query: Query, op: Op) -> Result<u32, Refusal> {
         | (
             Query::Head {
                 width,
-                mode: StreamHeadMode::SigmoidWeighted,
+                mode: StreamHeadMode::SigmoidWeighted | StreamHeadMode::SigmoidWeightedF32,
                 capacity,
                 ..
             },
@@ -210,8 +210,23 @@ impl Entry {
             (Query::ExpandF32 { streams, width, .. }, _) => format!(
                 "chop::sinkhorn_hc::expand_f32<{streams},{width}>(x,y,post,comb,out,live_rows);"
             ),
-            (Query::Head { streams, width, .. }, _) => {
-                format!("chop::sinkhorn_hc::weighted_head<{streams},{width}>(x,pre,out,live_rows);")
+            (
+                Query::Head {
+                    streams,
+                    width,
+                    mode,
+                    ..
+                },
+                _,
+            ) => {
+                let output = if mode == StreamHeadMode::SigmoidWeightedF32 {
+                    ",float"
+                } else {
+                    ""
+                };
+                format!(
+                    "chop::sinkhorn_hc::weighted_head<{streams},{width}{output}>(x,pre,out,live_rows);"
+                )
             }
             _ => String::new(),
         }
@@ -266,10 +281,14 @@ pub fn expand_params() -> Vec<EntryParam> {
 
 /// The sigmoid-weighted head ABI.
 pub fn head_params() -> Vec<EntryParam> {
+    weighted_head_params("uint16_t")
+}
+
+fn weighted_head_params(output: &str) -> Vec<EntryParam> {
     vec![
         ptr("x", "const uint16_t"),
         ptr("pre", "const float"),
-        ptr("out", "uint16_t"),
+        ptr("out", output),
         ptr("live_rows", "const uint32_t"),
     ]
 }
@@ -311,6 +330,7 @@ pub fn entries(profile: Profile, geometry: Geometry, probe: bool) -> Vec<Entry> 
             op: Op::Head,
             params: head_params(),
         },
+        head_f32_entry(profile, geometry),
     ];
     if probe {
         list.push(Entry {
@@ -322,6 +342,23 @@ pub fn entries(profile: Profile, geometry: Geometry, probe: bool) -> Vec<Entry> 
         });
     }
     list
+}
+
+/// The unrounded F32 weighted head of `geometry`. A bundle builds this
+/// entry with [`cubin_spec`] and registers it with `with_sinkhorn_lagged`.
+pub fn head_f32_entry(profile: Profile, geometry: Geometry) -> Entry {
+    Entry {
+        profile,
+        symbol: format!("chop_sinkhorn_hc_{}_weighted_head_f32_v1", profile.tag()),
+        query: Query::Head {
+            streams: geometry.mix.streams,
+            width: geometry.mix.width,
+            mode: StreamHeadMode::SigmoidWeightedF32,
+            capacity: geometry.capacity,
+        },
+        op: Op::Head,
+        params: weighted_head_params("float"),
+    }
 }
 
 /// The lab's lagged mixer: 4 streams of 5120 (the row's streams fill the
@@ -419,6 +456,30 @@ pub fn twin_cubin() -> String {
     format!("sinkhorn_hc_{}_probe_sm120", TWIN_PROFILE.tag())
 }
 
+/// The F32 head has its own cubin so adding it preserves existing cubins.
+pub fn head_f32_cubin() -> String {
+    format!("sinkhorn_hc_{}_head_f32_sm120", LAB_PROFILE.tag())
+}
+
+/// Lab-only negative controls: round before storing, or reverse the chain.
+pub const HEAD_F32_MUTANTS: [(&str, &str); 2] = [
+    ("round_bf16", "CHOP_HC_HEAD_ROUND_BF16"),
+    ("reverse_streams", "CHOP_HC_HEAD_REVERSE_STREAMS"),
+];
+
+pub fn head_f32_mutant(suffix: &str) -> Entry {
+    let mut entry = head_f32_entry(LAB_PROFILE, LAB);
+    entry.symbol = format!(
+        "chop_sinkhorn_hc_{}_weighted_head_f32_{suffix}_v1",
+        LAB_PROFILE.tag()
+    );
+    entry
+}
+
+pub fn head_f32_mutant_cubin(suffix: &str) -> String {
+    format!("sinkhorn_hc_{}_head_f32_{suffix}_sm120", LAB_PROFILE.tag())
+}
+
 /// The lab's cubins: the served entries, the lagged probe and the twin's
 /// per-sublayer probe.
 pub fn lab_cubin_specs() -> Vec<CubinSpec> {
@@ -426,11 +487,30 @@ pub fn lab_cubin_specs() -> Vec<CubinSpec> {
         .into_iter()
         .filter(|entry| entry.op == Op::MixCollapse { probe: true })
         .collect::<Vec<_>>();
-    vec![
-        cubin_spec(served_cubin(), &catalog()),
+    let existing = catalog()
+        .into_iter()
+        .filter(|entry| {
+            !matches!(
+                entry.query,
+                Query::Head {
+                    mode: StreamHeadMode::SigmoidWeightedF32,
+                    ..
+                }
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut specs = vec![
+        cubin_spec(served_cubin(), &existing),
         cubin_spec(probe_cubin(), &probes),
         super::cubin_spec(twin_cubin(), &[twin_probe()]),
-    ]
+        cubin_spec(head_f32_cubin(), &[head_f32_entry(LAB_PROFILE, LAB)]),
+    ];
+    for (suffix, define) in HEAD_F32_MUTANTS {
+        let mut spec = cubin_spec(head_f32_mutant_cubin(suffix), &[head_f32_mutant(suffix)]);
+        spec.defines.push((define.into(), "1".into()));
+        specs.push(spec);
+    }
+    specs
 }
 
 #[cfg(test)]
@@ -443,7 +523,7 @@ mod tests {
         assert_eq!(f32::from_bits(LAB.mix.norm_eps_bits), 1e-20);
         assert_eq!(LAB.mix.flat_width() * 2, STREAM_SHARED_LIMIT);
         let entries = lab_catalog();
-        assert_eq!(entries.len(), 4);
+        assert_eq!(entries.len(), 5);
         for entry in &entries {
             entry.contract().unwrap();
             assert_eq!(entry.capacity().unwrap(), 8192);
@@ -602,11 +682,14 @@ mod tests {
                 "sinkhorn_hc_hcl4x5120_sm120",
                 "sinkhorn_hc_hcl4x5120_probe_sm120",
                 "sinkhorn_hc_hclt4x5120_probe_sm120",
+                "sinkhorn_hc_hcl4x5120_head_f32_sm120",
+                "sinkhorn_hc_hcl4x5120_head_f32_round_bf16_sm120",
+                "sinkhorn_hc_hcl4x5120_head_f32_reverse_streams_sm120",
             ]
         );
         assert_eq!(
             specs.iter().map(|s| s.entries.len()).collect::<Vec<_>>(),
-            [3, 1, 1]
+            [3, 1, 1, 1, 1, 1]
         );
     }
 }

@@ -377,6 +377,7 @@ shared-memory row exactly), 20 iterations, eps 1e-6, norm eps 1e-20 and F32
 | `lagged_mix_collapse_probe` (lab only) | `(rows)` | as above, then `projected`, `rstd` and `cells` as `mix_collapse_probe`, before `live_rows` |
 | `expand_f32` | `(ceil(H/512), rows)` | `x`, `y` BF16, `post [rows, N]` and `comb [rows, N, N]` F32, `out` BF16 (must not alias `x`), `live_rows` |
 | `weighted_head` | `(ceil(H/512), rows)` | `x` BF16, `pre [rows, N]` F32, `out [rows, H]` BF16, `live_rows` |
+| `weighted_head_f32` | `(ceil(H/512), rows)` | `x` BF16, `pre [rows, N]` F32, `out [rows, H]` F32, `live_rows` |
 
 `pre_in` and `pre` must not overlap; the host alternates two buffers between
 sublayers and writes the one-hot `(1, 0, ..., 0)` before the first.
@@ -392,6 +393,15 @@ weights. `expand_f32` computes
 FMA chain from zero in stream order and one rounding to BF16;
 `weighted_head` computes `bf16(sum_i pre_i X_i)` as an FMA chain from zero
 in stream order. Both are exact functions of their operands.
+
+`StreamHeadMode::SigmoidWeightedF32` stores that same weighted F32 chain
+without the final BF16 round. The CUDA template shares the accumulation
+and specializes the output store. A bundle builds `lagged::head_f32_entry`
+with `lagged::cubin_spec`, registers it with `Sm120::with_sinkhorn_lagged`,
+and requests `Head { streams, width, mode: SigmoidWeightedF32, capacity }`
+through `Backend::sinkhorn_weighted_head`. `WeightedStreamHeadBuffers`
+then requires four output bytes per element. The lab builds the F32 head
+in a separate cubin to preserve the existing cubins and ABI symbols.
 
 `tests/sinkhorn_hc_lagged_compile.rs` builds and audits the cubins.
 `crates/kernel-lab/tests/sinkhorn_hc_lagged.rs` holds the GPU tests, at 1,

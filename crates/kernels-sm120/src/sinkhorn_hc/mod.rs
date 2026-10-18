@@ -106,7 +106,7 @@ pub fn limits(query: Query) -> Result<(), Refusal> {
             ));
         }
         Query::Head {
-            mode: StreamHeadMode::SigmoidWeighted,
+            mode: StreamHeadMode::SigmoidWeighted | StreamHeadMode::SigmoidWeightedF32,
             ..
         } => {
             return Err(Refusal(

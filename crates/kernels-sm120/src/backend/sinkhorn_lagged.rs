@@ -28,6 +28,7 @@ use crate::sinkhorn_hc::{self, lagged};
 const LAGGED_MIX_COLLAPSE: &str = "sm120.sinkhorn.lagged-mix-collapse.v1[chain=128]";
 const EXPAND_F32: &str = "sm120.sinkhorn.expand-f32.v1";
 const WEIGHTED_HEAD: &str = "sm120.sinkhorn.weighted-head.v1";
+const WEIGHTED_HEAD_F32: &str = "sm120.sinkhorn.weighted-head-f32.v1";
 
 /// What a lagged entry launches: its symbol, ABI and the code its query's
 /// shape and kernel compile; its capacity only bounds the rows.
@@ -67,7 +68,7 @@ impl<K> LaggedOp<K> {
             (Query::ExpandF32 { .. }, lagged::Op::Expand) => true,
             (
                 Query::Head {
-                    mode: StreamHeadMode::SigmoidWeighted,
+                    mode: StreamHeadMode::SigmoidWeighted | StreamHeadMode::SigmoidWeightedF32,
                     ..
                 },
                 lagged::Op::Head,
@@ -242,7 +243,18 @@ pub(super) fn head(
     op: &Query,
     need: Need,
 ) -> Result<Prepared<WeightedStreamHeadBuffers<View>>, Refused> {
-    let op = LaggedOp::new(selection, *op, lagged::Op::Head, WEIGHTED_HEAD, need)?;
+    let implementation = if matches!(
+        op,
+        Query::Head {
+            mode: StreamHeadMode::SigmoidWeightedF32,
+            ..
+        }
+    ) {
+        WEIGHTED_HEAD_F32
+    } else {
+        WEIGHTED_HEAD
+    };
+    let op = LaggedOp::new(selection, *op, lagged::Op::Head, implementation, need)?;
     Ok(Box::new(op))
 }
 
@@ -262,7 +274,18 @@ impl PreparedOp<WeightedStreamHeadBuffers<View>> for LaggedOp<WeightedStreamHead
         let (streams, width) = self.shape();
         buffers.x.covers(dense(rows, streams * width, 2)?)?;
         buffers.pre.covers(dense(rows, streams, 4)?)?;
-        buffers.output.covers(dense(rows, width, 2)?)?;
+        let output_bytes = if matches!(
+            self.query,
+            Query::Head {
+                mode: StreamHeadMode::SigmoidWeightedF32,
+                ..
+            }
+        ) {
+            4
+        } else {
+            2
+        };
+        buffers.output.covers(dense(rows, width, output_bytes)?)?;
         buffers.live_rows.covers(4)?;
         self.launch(
             rows,
@@ -419,6 +442,49 @@ mod tests {
             ..buffers
         };
         assert!(head.launches(&short, view(0, 0), Counts::rows(6)).is_err());
+    }
+
+    #[test]
+    fn f32_head_selects_its_entry_and_requires_four_bytes_per_output() {
+        let entry = lagged::head_f32_entry(LAB_PROFILE, LAB);
+        let need = Need::rows(8).with_exact(Invariance::any_rows(8));
+        let prepared = backend()
+            .sinkhorn_weighted_head(&entry.query, need)
+            .unwrap();
+        assert_eq!(prepared.info().implementation, WEIGHTED_HEAD_F32);
+        let buffers = WeightedStreamHeadBuffers {
+            x: view(1, 8 * 4 * 5120 * 2),
+            pre: view(2, 8 * 4 * 4),
+            output: view(3, 8 * 5120 * 4),
+            live_rows: view(4, 4),
+        };
+        let launches = prepared
+            .launches(&buffers, view(0, 0), Counts::rows(8))
+            .unwrap();
+        assert_eq!(launches[0].symbol, entry.symbol);
+        assert_eq!(launches[0].arguments.0, handles(1..=4));
+        assert_eq!(launches[0].plan.grid, [10, 8, 1]);
+        for bytes in [8 * 5120 * 2, 8 * 5120 * 4 - 1] {
+            let short = WeightedStreamHeadBuffers {
+                output: view(3, bytes),
+                ..buffers
+            };
+            assert!(
+                prepared
+                    .launches(&short, view(0, 0), Counts::rows(8))
+                    .is_err()
+            );
+        }
+        let bf16 = Sm120::new().with_sinkhorn_lagged(
+            lagged::catalog()
+                .into_iter()
+                .filter(|e| e.query != entry.query),
+        );
+        assert!(bf16.sinkhorn_weighted_head(&entry.query, need).is_err());
+        let f32_only = Sm120::new().with_sinkhorn_lagged([entry.clone()]);
+        assert!(f32_only.sinkhorn_weighted_head(&head(8), need).is_err());
+        assert!(backend().sinkhorn_head(&entry.query, need).is_err());
+        assert!(crate::sinkhorn_hc::limits(entry.query).is_err());
     }
 
     #[test]

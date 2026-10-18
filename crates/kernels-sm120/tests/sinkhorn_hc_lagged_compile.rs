@@ -10,7 +10,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use kernel_build::{BuildOptions, Toolchain, build};
-use kernels_sm120::sinkhorn_hc::lagged::{Op, lab_catalog, lab_cubin_specs, twin_probe};
+use kernels_sm120::sinkhorn_hc::lagged::{self, Op, lab_catalog, lab_cubin_specs, twin_probe};
 
 fn sass_of(cubin: &Path, symbol: &str) -> String {
     let output = Command::new("/usr/local/cuda/bin/cuobjdump")
@@ -54,12 +54,16 @@ fn lagged_sinkhorn_hc_entries_compile_and_audit() {
     assert_eq!(
         counts,
         [
+            ("sinkhorn_hc_hcl4x5120_head_f32_reverse_streams_sm120", 1),
+            ("sinkhorn_hc_hcl4x5120_head_f32_round_bf16_sm120", 1),
+            ("sinkhorn_hc_hcl4x5120_head_f32_sm120", 1),
             ("sinkhorn_hc_hcl4x5120_probe_sm120", 1),
             ("sinkhorn_hc_hcl4x5120_sm120", 3),
             ("sinkhorn_hc_hclt4x5120_probe_sm120", 1),
         ]
     );
-    let catalog = lab_catalog();
+    let mut catalog = lab_catalog();
+    catalog.extend(lagged::HEAD_F32_MUTANTS.map(|(suffix, _)| lagged::head_f32_mutant(suffix)));
     let twin = twin_probe();
     for cubin in &cubins {
         for report in &cubin.entries {
@@ -92,9 +96,17 @@ fn lagged_sinkhorn_hc_entries_compile_and_audit() {
                 report.shared_static_bytes
             );
             let sass = sass_of(&cubin.path, &report.symbol);
-            for opcode in ["ACQBULK", "PREEXIT", "BF16.F32", "FFMA"] {
+            for opcode in ["ACQBULK", "PREEXIT", "FFMA"] {
                 assert!(sass.contains(opcode), "{} lacks {opcode}", report.symbol);
             }
+            let unrounded = report.symbol.contains("weighted_head_f32")
+                && !report.symbol.contains("_round_bf16_");
+            assert_eq!(
+                sass.contains("BF16.F32"),
+                !unrounded,
+                "{} output conversion",
+                report.symbol
+            );
             for opcode in ["HMMA", "QMMA", "OMMA", "DMMA", "ATOM", "RED."] {
                 assert!(!sass.contains(opcode), "{} has {opcode}", report.symbol);
             }

@@ -229,9 +229,9 @@ __device__ void expand_f32(const uint16_t* x, const uint16_t* y, const float* po
 // Sigmoid-weighted head (grid: (ceil(H / 512), row capacity), 256
 // threads): out = bf16(sum_i pre_i * X_i), an FMA chain from zero in stream
 // order, with pre [rows, N] F32 the last lagged mix-collapse's. x is
-// [rows, N, H] and out [rows, H], BF16.
-template<int Streams, int Width>
-__device__ void weighted_head(const uint16_t* x, const float* pre, uint16_t* out,
+// [rows, N, H] BF16 and out [rows, H], BF16 or unrounded F32.
+template<int Streams, int Width, class Output = uint16_t>
+__device__ void weighted_head(const uint16_t* x, const float* pre, Output* out,
                               const uint32_t* live_rows) {
   static_assert(Streams >= 2 && Streams <= 8 && Width % 2 == 0);
   constexpr int N = Streams;
@@ -245,13 +245,27 @@ __device__ void weighted_head(const uint16_t* x, const float* pre, uint16_t* out
   const uint64_t base = uint64_t(row) * N * H + col;
   float lo = 0.f, hi = 0.f;
   #pragma unroll
-  for (int i = 0; i < N; ++i) {
+  for (int step = 0; step < N; ++step) {
+    #ifdef CHOP_HC_HEAD_REVERSE_STREAMS
+    const int i = N - 1 - step;
+    #else
+    const int i = step;
+    #endif
     const float w = pre[uint64_t(row) * N + i];
     const uint32_t pair = *reinterpret_cast<const uint32_t*>(x + base + uint64_t(i) * H);
     lo = fmaf(w, bf_lo(pair), lo);
     hi = fmaf(w, bf_hi(pair), hi);
   }
-  *reinterpret_cast<uint32_t*>(out + uint64_t(row) * H + col) = pack(lo, hi);
+  if constexpr (sizeof(Output) == sizeof(float)) {
+    #ifdef CHOP_HC_HEAD_ROUND_BF16
+    lo = bf(to_bf(lo));
+    hi = bf(to_bf(hi));
+    #endif
+    out[uint64_t(row) * H + col] = lo;
+    out[uint64_t(row) * H + col + 1] = hi;
+  } else {
+    *reinterpret_cast<uint32_t*>(out + uint64_t(row) * H + col) = pack(lo, hi);
+  }
 }
 
 } // namespace chop::sinkhorn_hc

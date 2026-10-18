@@ -67,8 +67,8 @@ DIVERGENCES_SCHEMA = "chop-frontend-divergences-v1"
 MAPPING_KEYS = ("id", "follows", "rule", "source", "cases")
 # The request fields a render vector may carry besides `messages`
 # (crates/runtime-host/src/frontend_check.rs REQUEST_FIELDS_V1).
-REQUEST_FIELDS = ("tools", "tool_choice", "chat_template_kwargs", "reasoning_effort", "response_format",
-                  "add_generation_prompt", "continue_final_message")
+REQUEST_FIELDS = ("tools", "tool_choice", "chat_template_kwargs", "reasoning_effort", "thinking",
+                  "response_format", "add_generation_prompt", "continue_final_message")
 # Template keywords the transport reads as absent when sent as null
 # (crates/runtime-server/src/frontend.rs TYPED_TEMPLATE_KEYWORDS_V1).
 TYPED_KEYWORDS = ("enable_thinking", "thinking", "reasoning_effort", "preserve_thinking", "clear_thinking",
@@ -329,13 +329,27 @@ def hf_input(request, transport, reasoning, reasoning_field="reasoning", decode_
     sets it to whether the effort differs from the declaration's
     `disable_value` (`reasoning`, the declaration's reasoning section). This
     is protocol normalization, the same for every model; a model's
-    divergence table states only where its template differs from it."""
+    divergence table states only where its template differs from it.
+
+    A declaration whose reasoning `switch` is `thinking-object` switches by
+    the top-level `thinking` object instead (runtime-server
+    `thinking_object_switch`): the thinking keywords and the effort in
+    `chat_template_kwargs` are dropped, the object's switch is both
+    thinking keywords, and an effort of `none` under an enabled object
+    names no effort."""
     keywords = {}
     template = request.get("chat_template_kwargs")
+    by_object = reasoning.get("switch") == "thinking-object"
+    ignored = ("enable_thinking", "thinking", "reasoning_effort") if by_object else ()
     if isinstance(template, dict):
         keywords.update({key: value for key, value in template.items()
-                         if not (value is None and key in TYPED_KEYWORDS)})
+                         if not (value is None and key in TYPED_KEYWORDS) and key not in ignored})
     effort = request.get("reasoning_effort")
+    switch = thinking_object(request.get("thinking")) if by_object else None
+    if switch is not None:
+        keywords["enable_thinking"] = keywords["thinking"] = switch
+        if switch and effort == "none":
+            effort = None
     if effort is not None:
         keywords["reasoning_effort"] = effort
         keywords.setdefault("enable_thinking", effort != reasoning["disable_value"])
@@ -346,6 +360,18 @@ def hf_input(request, transport, reasoning, reasoning_field="reasoning", decode_
             "add_generation_prompt": (not continued) if generation is None else bool(generation),
             "continue_final_message": continued,
             "keywords": keywords}
+
+
+def thinking_object(value):
+    """The switch a top-level `thinking` object sets: True for a `type` of
+    `enabled` or its alias `adaptive`, False for `disabled`, None for an
+    absent or null object."""
+    if value is None:
+        return None
+    kind = value.get("type") if isinstance(value, dict) else None
+    if kind not in ("enabled", "adaptive", "disabled"):
+        raise CorpusError(f"thinking object {value!r} is not one the transport reads")
+    return kind != "disabled"
 
 
 def vector_problems(vector):

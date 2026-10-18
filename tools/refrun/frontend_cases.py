@@ -102,11 +102,18 @@ def undeclared_effort(declaration):
     return next(name for name in ("minimal", "turbo", "extreme") if name not in taken)
 
 
+# The top-level thinking object's types, for a declaration that switches
+# thinking by it.
+THINKING_OBJECT_TYPES = ("enabled", "adaptive", "disabled")
+
+
 def shared_axes(declaration):
     """The model-neutral axes and their values, in a fixed order."""
     reasoning = declaration["reasoning"]
     thinking = ["absent"] + [f"{keyword}={value}" for keyword in reasoning["thinking_keywords"]
                              for value in ("true", "false")]
+    if reasoning.get("switch") == "thinking-object":
+        thinking += [f"object={kind}" for kind in THINKING_OBJECT_TYPES]
     return {
         "system": ["absent", "first", "late", "empty", "whitespace"],
         "developer": ["absent", "present"],
@@ -348,12 +355,18 @@ FUNCTION_GRAMMARS = ("xml-function-parameters-v1", "xml-typed-parameters-v1")
 def raw_markers(parser):
     """The bare markers that end a raw (string) parameter value in the
     declared tool grammar: the parameter open and close and the function
-    close in the function-parameter and typed grammars, the value close and
-    the call close in the key-value one."""
+    close in the function-parameter grammar, the parameter close alone in
+    the typed one, and the value close and the call close in the key-value
+    one."""
     if parser is None:
         return []
-    names = (("parameter_open", "parameter_close", "function_close")
-             if parser.get("tool_grammar") in FUNCTION_GRAMMARS else ("parameter_close", "tool_call_close"))
+    grammar = parser.get("tool_grammar")
+    if grammar == "xml-typed-parameters-v1":
+        names = ("parameter_close",)
+    elif grammar in FUNCTION_GRAMMARS:
+        names = ("parameter_open", "parameter_close", "function_close")
+    else:
+        names = ("parameter_close", "tool_call_close")
     return [parser[name].strip() for name in names if parser.get(name, "").strip()]
 
 
@@ -543,7 +556,10 @@ class _Builder:
         thinking = self.row["thinking"]
         if thinking != "absent":
             keyword, value = thinking.split("=")
-            kwargs[keyword] = value == "true"
+            if keyword == "object":
+                request["thinking"] = {"type": value}
+            else:
+                kwargs[keyword] = value == "true"
             self.tag("thinking")
         for keyword in ("clear_thinking", "preserve_thinking"):
             if self.row[keyword] != "absent":
@@ -619,6 +635,8 @@ def isolated_values(declaration):
     isolated |= {f"media:{part}" for part in MEDIA_PARTS if part not in served}
     if not reasoning.get("allow_disabled", True):
         isolated |= {f"thinking:{keyword}=false" for keyword in reasoning["thinking_keywords"]}
+        if reasoning.get("switch") == "thinking-object":
+            isolated.add("thinking:object=disabled")
     return isolated
 
 

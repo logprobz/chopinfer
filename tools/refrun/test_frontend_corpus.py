@@ -427,6 +427,43 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(keywords(reasoning_effort="none", chat_template_kwargs={"enable_thinking": None}),
                          {"reasoning_effort": "none", "enable_thinking": False})
 
+    def test_a_thinking_object_switch_reads_the_object_and_drops_the_keywords(self):
+        reasoning = dict(toy_declaration()["reasoning"], switch="thinking-object",
+                         thinking_keywords=["enable_thinking", "thinking"])
+
+        def keywords(**request):
+            return corpus.hf_input({"messages": [user()], **request}, TRANSPORT, reasoning)["keywords"]
+
+        kwargs = {"enable_thinking": True, "thinking": True, "reasoning_effort": "high", "preserve_thinking": True}
+        self.assertEqual(keywords(thinking={"type": "disabled"}, chat_template_kwargs=kwargs),
+                         {"enable_thinking": False, "thinking": False, "preserve_thinking": True})
+        # An explicit object overrides the effort that disables thinking.
+        self.assertEqual(keywords(thinking={"type": "adaptive"}, reasoning_effort="none"),
+                         {"enable_thinking": True, "thinking": True})
+        self.assertEqual(keywords(thinking={"type": "enabled", "budget_tokens": 4}, reasoning_effort="low"),
+                         {"enable_thinking": True, "thinking": True, "reasoning_effort": "low"})
+        # Without one, the top-level effort switches, and the keywords are
+        # ignored.
+        self.assertEqual(keywords(reasoning_effort="none", chat_template_kwargs=kwargs),
+                         {"reasoning_effort": "none", "enable_thinking": False, "preserve_thinking": True})
+        self.assertEqual(keywords(thinking=None, chat_template_kwargs=kwargs), {"preserve_thinking": True})
+        with self.assertRaises(corpus.CorpusError):
+            keywords(thinking={"type": "on"})
+        # A declaration without the switch ignores the object.
+        plain = toy_declaration()["reasoning"]
+        self.assertEqual(corpus.hf_input({"messages": [user()], "thinking": {"type": "disabled"}}, TRANSPORT,
+                                         plain)["keywords"], {})
+
+    def test_the_generator_sends_the_thinking_object_only_where_it_switches(self):
+        declaration = toy_declaration()
+        self.assertNotIn("object=enabled", frontend_cases.shared_axes(declaration)["thinking"])
+        declaration = dict(declaration, reasoning=dict(declaration["reasoning"], switch="thinking-object"))
+        cases = frontend_cases.generate(declaration, None, seed=0)
+        for kind in frontend_cases.THINKING_OBJECT_TYPES:
+            sent = [case for case in cases if f"thinking:object={kind}" in case["features"]]
+            self.assertTrue(sent, kind)
+            self.assertTrue(all(case["request"]["thinking"] == {"type": kind} for case in sent), kind)
+
     def test_the_reference_renders_the_top_level_effort_of_both_controls(self):
         model = ToyModel(Path(tempfile.mkdtemp()))
         both = {"messages": [user()], "reasoning_effort": "low", "chat_template_kwargs": {"reasoning_effort": "high"}}
@@ -906,6 +943,9 @@ class TypedArgumentTests(unittest.TestCase):
                          ("delimiter", "n is raw text that spells the marker '</p>'"))
         # A cases module reads arguments the HF input keeps as text.
         self.assertIsNone(corpus.argument_failure(turn("{\"n\": 1}"), tools, self.PARSER, json.loads))
+        # Only the parameter close ends a raw value: another parameter's
+        # open and the function close inside one are text.
+        self.assertIsNone(corpus.argument_failure(turn({"n": "a <p name=\"m\"> b </f>"}), tools, self.PARSER))
 
 
 class RoundTripDomainTests(Harness):

@@ -5,6 +5,9 @@ schema = "chopinfer-model-inventory-v1"
 # CPU CI reads CHOPINFER_DEEPSEEK_CHECKPOINT: deepseek-ai/DeepSeek-V4.1-Flash-1017
 # at revision 1bae0e1088993b9b82de08f59de5be5a34e42170 (checkpoint-files.json).
 checkpoint_env = "DEEPSEEK"
+# The model author: the only publisher whose checkpoints the model's JSON
+# names (check_publishers in tools/model_sdk/inventory.py).
+publisher = "deepseek-ai"
 
 [bundle]
 package = "bundle-deepseek41"

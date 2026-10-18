@@ -518,6 +518,10 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
     })?;
     let items = config.create.items;
     let (verify_rows, mut verify) = verify_rows(&services, items)?;
+    if verify_rows > 0 && config.kv.storage == model_deepseek41_contract::state::KvStorage::Bf16 {
+        log("BF16 KV supports autoregressive serving only; set --speculative-tokens 0");
+        return Err(BundleStatusV1::Unsupported.into());
+    }
     // The head scores at most this many rows per phase.
     bundle_runtime::config::check_scored_rows(
         &services,

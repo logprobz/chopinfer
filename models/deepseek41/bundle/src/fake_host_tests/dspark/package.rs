@@ -171,3 +171,46 @@ fn emitted_package_with_speculation_off_keeps_the_full_ar_journal() {
     assert_eq!(installed.state_bytes.get(), legacy.state_bytes.get());
     assert_eq!(actual, expected);
 }
+
+#[test]
+fn emitted_package_refuses_bf16_speculation_at_startup() {
+    let package = Package::new();
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    let bf16 = package.record(shape, BundleKvDtypeV1::Bf16);
+    let ar = package_host(shape, KV_LAYOUTS[1]);
+    ar_journal(&ar, &bf16);
+
+    let native = package_host(shape, KV_LAYOUTS[0]);
+    native.speculation.set(Some((5, 32)));
+    let record = package.record(shape, BundleKvDtypeV1::MixedPlanes);
+    let mut instance = create_from_record(&native, &record).unwrap();
+    execute(&mut instance, &native, &prompt(7, 0, 0, 3, true));
+    instance.commit().unwrap();
+    assert!(crate::instance::dspark_context(instance.handle(), 7).is_some());
+    let sink = execute(&mut instance, &native, &super::verify(7, 0, 3, 5));
+    assert_eq!(sink.draft_tokens(), vec![(7, vec![0; 5])]);
+    instance.commit_accepted(&[kept(7, 6)]).unwrap();
+    instance.retire_request(7).unwrap();
+    instance.destroy().unwrap();
+    assert_eq!(native.acquired.get(), native.released.get());
+
+    for drafts in 1..=5 {
+        let host = package_host(shape, KV_LAYOUTS[1]);
+        host.speculation.set(Some((drafts, 32)));
+        let error = match create_from_record(&host, &bf16) {
+            Err(error) => error,
+            Ok(mut instance) => {
+                instance.destroy().unwrap();
+                panic!("BF16 KV admitted {drafts} speculative tokens");
+            }
+        };
+        assert_eq!(error, BundleAbiError::Status(BundleStatusV1::Unsupported));
+        assert!(host.logs.borrow().iter().any(|line| {
+            line.contains(
+                "BF16 KV supports autoregressive serving only; set --speculative-tokens 0",
+            )
+        }));
+        assert_eq!(host.acquired.get(), 0, "startup refusal acquired resources");
+        assert_eq!(host.state_bytes.get(), 0);
+    }
+}

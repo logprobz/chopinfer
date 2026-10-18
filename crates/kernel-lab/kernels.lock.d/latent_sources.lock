@@ -14,7 +14,7 @@
     "defines": [],
     "entries": [
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_window_normalized_s1_r64_prefill_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_window_normalized_s1_r64_prefill_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -43,6 +43,11 @@
           },
           {
             "kind": "DevicePointer",
+            "name": "window_item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
             "name": "window_keys",
             "cxx_type": "const int32_t"
           },
@@ -66,6 +71,10 @@
           {
             "kind": "U32",
             "name": "window_sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window_items"
           },
           {
             "kind": "U32",
@@ -118,7 +127,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_window_normalized_s1_r64_decode_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_window_normalized_s1_r64_decode_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -147,6 +156,11 @@
           },
           {
             "kind": "DevicePointer",
+            "name": "window_item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
             "name": "window_keys",
             "cxx_type": "const int32_t"
           },
@@ -170,6 +184,10 @@
           {
             "kind": "U32",
             "name": "window_sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window_items"
           },
           {
             "kind": "U32",
@@ -222,7 +240,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_window_normalized_s1_r64_verify_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_window_normalized_s1_r64_verify_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -251,6 +269,11 @@
           },
           {
             "kind": "DevicePointer",
+            "name": "window_item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
             "name": "window_keys",
             "cxx_type": "const int32_t"
           },
@@ -274,6 +297,10 @@
           {
             "kind": "U32",
             "name": "window_sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window_items"
           },
           {
             "kind": "U32",
@@ -326,7 +353,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_window_partial_s1_r64_prefill_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_window_partial_s1_r64_prefill_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -355,6 +382,11 @@
           },
           {
             "kind": "DevicePointer",
+            "name": "window_item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
             "name": "window_keys",
             "cxx_type": "const int32_t"
           },
@@ -378,6 +410,10 @@
           {
             "kind": "U32",
             "name": "window_sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window_items"
           },
           {
             "kind": "U32",
@@ -430,7 +466,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_window_partial_s1_r64_decode_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_window_partial_s1_r64_decode_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -459,6 +495,11 @@
           },
           {
             "kind": "DevicePointer",
+            "name": "window_item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
             "name": "window_keys",
             "cxx_type": "const int32_t"
           },
@@ -482,6 +523,10 @@
           {
             "kind": "U32",
             "name": "window_sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window_items"
           },
           {
             "kind": "U32",
@@ -534,7 +579,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_window_partial_s1_r64_verify_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_window_partial_s1_r64_verify_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -563,6 +608,11 @@
           },
           {
             "kind": "DevicePointer",
+            "name": "window_item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
             "name": "window_keys",
             "cxx_type": "const int32_t"
           },
@@ -586,6 +636,10 @@
           {
             "kind": "U32",
             "name": "window_sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window_items"
           },
           {
             "kind": "U32",
@@ -638,7 +692,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_mixed_normalized_s1_r64_prefill_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_mixed_normalized_s1_r64_prefill_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -667,6 +721,11 @@
           },
           {
             "kind": "DevicePointer",
+            "name": "window_item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
             "name": "window_keys",
             "cxx_type": "const int32_t"
           },
@@ -690,6 +749,10 @@
           {
             "kind": "U32",
             "name": "window_sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window_items"
           },
           {
             "kind": "U32",
@@ -781,7 +844,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_mixed_normalized_s1_r64_decode_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_mixed_normalized_s1_r64_decode_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -810,6 +873,11 @@
           },
           {
             "kind": "DevicePointer",
+            "name": "window_item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
             "name": "window_keys",
             "cxx_type": "const int32_t"
           },
@@ -833,6 +901,10 @@
           {
             "kind": "U32",
             "name": "window_sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window_items"
           },
           {
             "kind": "U32",
@@ -924,7 +996,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_mixed_normalized_s1_r64_verify_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_mixed_normalized_s1_r64_verify_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -953,6 +1025,11 @@
           },
           {
             "kind": "DevicePointer",
+            "name": "window_item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
             "name": "window_keys",
             "cxx_type": "const int32_t"
           },
@@ -976,6 +1053,10 @@
           {
             "kind": "U32",
             "name": "window_sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window_items"
           },
           {
             "kind": "U32",
@@ -1067,7 +1148,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_mixed_partial_s1_r64_prefill_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_mixed_partial_s1_r64_prefill_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1096,6 +1177,11 @@
           },
           {
             "kind": "DevicePointer",
+            "name": "window_item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
             "name": "window_keys",
             "cxx_type": "const int32_t"
           },
@@ -1119,6 +1205,10 @@
           {
             "kind": "U32",
             "name": "window_sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window_items"
           },
           {
             "kind": "U32",
@@ -1210,7 +1300,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_mixed_partial_s1_r64_decode_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_mixed_partial_s1_r64_decode_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1239,6 +1329,11 @@
           },
           {
             "kind": "DevicePointer",
+            "name": "window_item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
             "name": "window_keys",
             "cxx_type": "const int32_t"
           },
@@ -1262,6 +1357,10 @@
           {
             "kind": "U32",
             "name": "window_sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window_items"
           },
           {
             "kind": "U32",
@@ -1353,7 +1452,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_mixed_partial_s1_r64_verify_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_mixed_partial_s1_r64_verify_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1382,6 +1481,11 @@
           },
           {
             "kind": "DevicePointer",
+            "name": "window_item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
             "name": "window_keys",
             "cxx_type": "const int32_t"
           },
@@ -1405,6 +1509,10 @@
           {
             "kind": "U32",
             "name": "window_sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window_items"
           },
           {
             "kind": "U32",
@@ -1496,7 +1604,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_window_normalized_s1_r64_prefill_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_window_normalized_s1_r64_prefill_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1525,6 +1633,11 @@
           },
           {
             "kind": "DevicePointer",
+            "name": "window_item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
             "name": "window_keys",
             "cxx_type": "const int32_t"
           },
@@ -1548,6 +1661,10 @@
           {
             "kind": "U32",
             "name": "window_sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window_items"
           },
           {
             "kind": "U32",
@@ -1600,7 +1717,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_window_normalized_s1_r64_decode_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_window_normalized_s1_r64_decode_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1629,6 +1746,11 @@
           },
           {
             "kind": "DevicePointer",
+            "name": "window_item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
             "name": "window_keys",
             "cxx_type": "const int32_t"
           },
@@ -1652,6 +1774,10 @@
           {
             "kind": "U32",
             "name": "window_sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window_items"
           },
           {
             "kind": "U32",
@@ -1704,7 +1830,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_window_normalized_s1_r64_verify_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_window_normalized_s1_r64_verify_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1733,6 +1859,11 @@
           },
           {
             "kind": "DevicePointer",
+            "name": "window_item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
             "name": "window_keys",
             "cxx_type": "const int32_t"
           },
@@ -1756,6 +1887,10 @@
           {
             "kind": "U32",
             "name": "window_sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window_items"
           },
           {
             "kind": "U32",
@@ -1808,7 +1943,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_window_partial_s1_r64_prefill_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_window_partial_s1_r64_prefill_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1837,6 +1972,11 @@
           },
           {
             "kind": "DevicePointer",
+            "name": "window_item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
             "name": "window_keys",
             "cxx_type": "const int32_t"
           },
@@ -1860,6 +2000,10 @@
           {
             "kind": "U32",
             "name": "window_sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window_items"
           },
           {
             "kind": "U32",
@@ -1912,7 +2056,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_window_partial_s1_r64_decode_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_window_partial_s1_r64_decode_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1941,6 +2085,11 @@
           },
           {
             "kind": "DevicePointer",
+            "name": "window_item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
             "name": "window_keys",
             "cxx_type": "const int32_t"
           },
@@ -1964,6 +2113,10 @@
           {
             "kind": "U32",
             "name": "window_sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window_items"
           },
           {
             "kind": "U32",
@@ -2016,7 +2169,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_window_partial_s1_r64_verify_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_window_partial_s1_r64_verify_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2045,6 +2198,11 @@
           },
           {
             "kind": "DevicePointer",
+            "name": "window_item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
             "name": "window_keys",
             "cxx_type": "const int32_t"
           },
@@ -2068,6 +2226,10 @@
           {
             "kind": "U32",
             "name": "window_sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window_items"
           },
           {
             "kind": "U32",
@@ -2120,7 +2282,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_mixed_normalized_s1_r64_prefill_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_mixed_normalized_s1_r64_prefill_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2149,6 +2311,11 @@
           },
           {
             "kind": "DevicePointer",
+            "name": "window_item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
             "name": "window_keys",
             "cxx_type": "const int32_t"
           },
@@ -2172,6 +2339,10 @@
           {
             "kind": "U32",
             "name": "window_sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window_items"
           },
           {
             "kind": "U32",
@@ -2263,7 +2434,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_mixed_normalized_s1_r64_decode_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_mixed_normalized_s1_r64_decode_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2292,6 +2463,11 @@
           },
           {
             "kind": "DevicePointer",
+            "name": "window_item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
             "name": "window_keys",
             "cxx_type": "const int32_t"
           },
@@ -2315,6 +2491,10 @@
           {
             "kind": "U32",
             "name": "window_sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window_items"
           },
           {
             "kind": "U32",
@@ -2406,7 +2586,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_mixed_normalized_s1_r64_verify_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_mixed_normalized_s1_r64_verify_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2435,6 +2615,11 @@
           },
           {
             "kind": "DevicePointer",
+            "name": "window_item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
             "name": "window_keys",
             "cxx_type": "const int32_t"
           },
@@ -2458,6 +2643,10 @@
           {
             "kind": "U32",
             "name": "window_sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window_items"
           },
           {
             "kind": "U32",
@@ -2549,7 +2738,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_mixed_partial_s1_r64_prefill_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_mixed_partial_s1_r64_prefill_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2578,6 +2767,11 @@
           },
           {
             "kind": "DevicePointer",
+            "name": "window_item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
             "name": "window_keys",
             "cxx_type": "const int32_t"
           },
@@ -2601,6 +2795,10 @@
           {
             "kind": "U32",
             "name": "window_sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window_items"
           },
           {
             "kind": "U32",
@@ -2692,7 +2890,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_mixed_partial_s1_r64_decode_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_mixed_partial_s1_r64_decode_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2721,6 +2919,11 @@
           },
           {
             "kind": "DevicePointer",
+            "name": "window_item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
             "name": "window_keys",
             "cxx_type": "const int32_t"
           },
@@ -2744,6 +2947,10 @@
           {
             "kind": "U32",
             "name": "window_sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window_items"
           },
           {
             "kind": "U32",
@@ -2835,7 +3042,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_mixed_partial_s1_r64_verify_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_mixed_partial_s1_r64_verify_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -2864,6 +3071,11 @@
           },
           {
             "kind": "DevicePointer",
+            "name": "window_item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
             "name": "window_keys",
             "cxx_type": "const int32_t"
           },
@@ -2887,6 +3099,10 @@
           {
             "kind": "U32",
             "name": "window_sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window_items"
           },
           {
             "kind": "U32",
@@ -2978,10 +3194,10 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "9259fec1aeb74c9aa1722bb13bad0b6c281628d8bbe4516132f02eefbb62fe95",
+    "cubin_sha256": "dfe08b13aca132373e25ba46ae585440929d7a438f45ee3714b12dcfb99fb078",
     "resources": [
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_window_normalized_s1_r64_prefill_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_window_normalized_s1_r64_prefill_v3",
         "registers": 171,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
@@ -2999,7 +3215,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_window_normalized_s1_r64_decode_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_window_normalized_s1_r64_decode_v3",
         "registers": 173,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
@@ -3017,7 +3233,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_window_normalized_s1_r64_verify_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_window_normalized_s1_r64_verify_v3",
         "registers": 173,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
@@ -3035,7 +3251,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_window_partial_s1_r64_prefill_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_window_partial_s1_r64_prefill_v3",
         "registers": 171,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
@@ -3053,7 +3269,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_window_partial_s1_r64_decode_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_window_partial_s1_r64_decode_v3",
         "registers": 173,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
@@ -3071,7 +3287,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_window_partial_s1_r64_verify_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_window_partial_s1_r64_verify_v3",
         "registers": 173,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
@@ -3089,7 +3305,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_mixed_normalized_s1_r64_prefill_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_mixed_normalized_s1_r64_prefill_v3",
         "registers": 173,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
@@ -3107,7 +3323,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_mixed_normalized_s1_r64_decode_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_mixed_normalized_s1_r64_decode_v3",
         "registers": 175,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
@@ -3125,7 +3341,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_mixed_normalized_s1_r64_verify_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_mixed_normalized_s1_r64_verify_v3",
         "registers": 175,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
@@ -3143,7 +3359,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_mixed_partial_s1_r64_prefill_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_mixed_partial_s1_r64_prefill_v3",
         "registers": 173,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
@@ -3161,7 +3377,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_mixed_partial_s1_r64_decode_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_mixed_partial_s1_r64_decode_v3",
         "registers": 175,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
@@ -3179,7 +3395,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_mixed_partial_s1_r64_verify_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h4_d128_mixed_partial_s1_r64_verify_v3",
         "registers": 175,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
@@ -3197,7 +3413,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_window_normalized_s1_r64_prefill_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_window_normalized_s1_r64_prefill_v3",
         "registers": 175,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
@@ -3215,7 +3431,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_window_normalized_s1_r64_decode_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_window_normalized_s1_r64_decode_v3",
         "registers": 177,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
@@ -3233,7 +3449,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_window_normalized_s1_r64_verify_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_window_normalized_s1_r64_verify_v3",
         "registers": 177,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
@@ -3251,7 +3467,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_window_partial_s1_r64_prefill_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_window_partial_s1_r64_prefill_v3",
         "registers": 175,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
@@ -3269,7 +3485,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_window_partial_s1_r64_decode_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_window_partial_s1_r64_decode_v3",
         "registers": 177,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
@@ -3287,7 +3503,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_window_partial_s1_r64_verify_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_window_partial_s1_r64_verify_v3",
         "registers": 177,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
@@ -3305,7 +3521,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_mixed_normalized_s1_r64_prefill_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_mixed_normalized_s1_r64_prefill_v3",
         "registers": 176,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
@@ -3323,7 +3539,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_mixed_normalized_s1_r64_decode_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_mixed_normalized_s1_r64_decode_v3",
         "registers": 178,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
@@ -3341,7 +3557,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_mixed_normalized_s1_r64_verify_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_mixed_normalized_s1_r64_verify_v3",
         "registers": 178,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
@@ -3359,7 +3575,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_mixed_partial_s1_r64_prefill_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_mixed_partial_s1_r64_prefill_v3",
         "registers": 176,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
@@ -3377,7 +3593,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_mixed_partial_s1_r64_decode_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_mixed_partial_s1_r64_decode_v3",
         "registers": 178,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
@@ -3395,7 +3611,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_mixed_partial_s1_r64_verify_v2",
+        "symbol": "chop_latent_sources_latent_native_shared_h16_d512_mixed_partial_s1_r64_verify_v3",
         "registers": 178,
         "shared_static_bytes": 1024,
         "local_bytes": 0,

@@ -82,6 +82,7 @@ impl Fixture {
             .with("compressed.cache.pool", compressed)
             .with("q", vec![0; ROWS * heads * width * 2])
             .with("row_batch", i32_bytes(&[0; ROWS]))
+            .with("window.item_slots", i32_bytes(&[0, 1, -1]))
             .with("window.key_lists", i32_bytes(&vec![-1; ROWS * 128]))
             .with("compressed.key_lists", i32_bytes(&vec![-1; ROWS * 128]))
             .with("sinks", f32_bytes(&vec![0.0; heads]))
@@ -137,11 +138,22 @@ impl Fixture {
     }
 
     fn window_raw(&mut self, slot: usize, codes: &[u8], scales: &[u8]) -> LabResult<()> {
+        self.window_state_raw(0, slot, codes, scales)
+    }
+
+    fn window_state_raw(
+        &mut self,
+        state: usize,
+        slot: usize,
+        codes: &[u8],
+        scales: &[u8],
+    ) -> LabResult<()> {
         assert_eq!((codes.len(), scales.len()), (self.width, self.width / 32));
         let mut code_plane = self.images.bytes("window.codes")?.to_vec();
-        code_plane[slot * self.width..(slot + 1) * self.width].copy_from_slice(codes);
+        let at = state * (code_plane.len() / 2) + slot * self.width;
+        code_plane[at..at + codes.len()].copy_from_slice(codes);
         let mut scale_plane = self.images.bytes("window.scales")?.to_vec();
-        let at = slot * (self.width / 32);
+        let at = state * (scale_plane.len() / 2) + slot * (self.width / 32);
         scale_plane[at..at + scales.len()].copy_from_slice(scales);
         self.images = self
             .images
@@ -159,12 +171,22 @@ impl Fixture {
     }
 
     fn compressed_raw(&mut self, position: usize, codes: &[u8], scales: &[u8]) -> LabResult<()> {
+        self.compressed_item_raw(0, position, codes, scales)
+    }
+
+    fn compressed_item_raw(
+        &mut self,
+        item: usize,
+        position: usize,
+        codes: &[u8],
+        scales: &[u8],
+    ) -> LabResult<()> {
         assert_eq!(
             (codes.len(), scales.len()),
             (self.width / 2, self.width / 16)
         );
         let tables = self.images.i32s("compressed.block_tables.tables")?;
-        let physical = tables[position / self.page] as usize;
+        let physical = tables[item * (tables.len() / 3) + position / self.page] as usize;
         let slot = position % self.page;
         let mut pool = self.images.bytes("compressed.cache.pool")?.to_vec();
         let first = physical * self.page_stride + slot * self.width / 2;
@@ -212,6 +234,64 @@ fn native_numerical_controls_prepare() {
     assert_eq!(specs[0].entries.len(), 5);
     assert!(entries[0].sink_per_split_entry_spec().is_err());
     assert!(entries[1].sink_per_split_entry_spec().is_ok());
+}
+
+#[test]
+fn native_window_items_map_to_recycled_state_slots() {
+    kernel_lab::gpu_test(1 << 30, |session| {
+        let functions = LabModules.load(session)?;
+        let mut checked = 0;
+        for entry in family::catalog() {
+            let mut fixture = Fixture::new(&entry)?;
+            let width = fixture.width;
+            fixture.window_state_raw(0, 0, &vec![0x38; width], &vec![127; width / 32])?;
+            fixture.window_state_raw(1, 0, &vec![0x48; width], &vec![127; width / 32])?;
+            for (item, code) in [(0, 0x44), (1, 0x77), (2, 0x22)] {
+                fixture.compressed_item_raw(
+                    item,
+                    0,
+                    &vec![code; width / 2],
+                    &vec![0x38; width / 16],
+                )?;
+            }
+            fixture.images = fixture.images.with("row_batch", i32_bytes(&[2, 0, 1, 0]));
+            for row in 0..3 {
+                fixture.select(row, &[(0, 0)], &[(0, 0)])?;
+            }
+            let mut check = |mapping: [i32; 3], expected: [f32; 3]| -> LabResult<()> {
+                fixture.images = fixture
+                    .images
+                    .with("window.item_slots", i32_bytes(&mapping));
+                let output = fixture.run(session, functions.as_ref(), 3)?;
+                fixture.judge(&output, 3)?;
+                let values = bf16(&output["output"]);
+                for (row, expected) in expected.into_iter().enumerate() {
+                    let start = row * fixture.heads * width;
+                    assert!(
+                        values[start..start + fixture.heads * width]
+                            .iter()
+                            .all(|&v| v == f32_to_bf16(expected)),
+                        "row={row}, mapping={mapping:?}"
+                    );
+                }
+                checked += 1;
+                Ok(())
+            };
+            check([1, -1, 0], [2.0 / 3.0, 2.0, 3.0])?;
+            // Recycle state 0 from item 2 to item 1, keeping item tables fixed.
+            check([1, 0, -1], [0.5, 2.0, 7.0 / 3.0])?;
+            for invalid in [-1, i32::MIN, 2, i32::MAX] {
+                check([invalid; 3], [0.5, 1.0, 3.0])?;
+            }
+        }
+        assert_eq!(checked, 12);
+        session.receipt(
+            "native-latent-item-slots",
+            BTreeMap::from([("mappings_checked".into(), serde_json::json!(checked))]),
+        )?;
+        Ok(())
+    })
+    .expect("window state mapping leaves compressed tables indexed by item");
 }
 
 #[test]

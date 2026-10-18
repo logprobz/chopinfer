@@ -121,6 +121,13 @@ impl PreparedOp<LatentSourcesBuffers<View>> for Sources {
         if slots == 0 || b.window.sequences == 0 || b.window.budget > b.window.key_stride {
             return Err(Refusal("native latent window geometry or budget mismatch"));
         }
+        if b.window.items == 0 {
+            return Err(Refusal("native latent window item count is zero"));
+        }
+        b.window
+            .item_slots
+            .covers(bytes(&[u64::from(b.window.items), 4])?)
+            .map_err(|_| Refusal("native latent window item slots view is too short"))?;
         if b.window.code_stride < code_bytes {
             return Err(Refusal("native latent window code stride is too short"));
         }
@@ -193,6 +200,8 @@ impl PreparedOp<LatentSourcesBuffers<View>> for Sources {
             ("live_rows", buffer(b.live_rows)),
             ("window_codes", buffer(b.window.codes)),
             ("window_scales", buffer(b.window.scales)),
+            ("window_item_slots", buffer(b.window.item_slots)),
+            ("window_items", Argument::U32(b.window.items)),
             ("window_keys", buffer(b.window.key_lists)),
             ("workspace", buffer(b.workspace)),
             ("window_code_stride", Argument::U64(b.window.code_stride)),
@@ -209,7 +218,7 @@ impl PreparedOp<LatentSourcesBuffers<View>> for Sources {
             if c.cache.pages == 0
                 || c.cache.page_stride < page_bytes
                 || c.budget > c.key_stride
-                || c.block_tables.sequences != b.window.sequences
+                || c.block_tables.sequences != b.window.items
             {
                 return Err(Refusal(
                     "native latent compressed geometry or budget mismatch",
@@ -349,6 +358,8 @@ mod tests {
             window: LatentWindowBuffers {
                 codes: view(3, code_stride * 2),
                 scales: view(16, scale_stride * 2),
+                item_slots: view(17, 2 * 4),
+                items: 2,
                 sequences: 2,
                 code_stride,
                 scale_stride,
@@ -504,6 +515,43 @@ mod tests {
     }
 
     #[test]
+    fn native_sources_bind_items_independently_of_state_slots() {
+        let e = entry();
+        let op = Sm120::new()
+            .with_latent_sources(e.clone())
+            .latent_attention_sources(&e.query, Need::rows(8))
+            .unwrap();
+        let mut b = buffers();
+        b.window.items = 3;
+        b.window.item_slots.bytes = 12;
+        let tables = &mut b.compressed.as_mut().unwrap().block_tables;
+        tables.sequences = 3;
+        tables.tables.bytes = 3 * 4 * 4;
+        let launches = op.launches(&b, View::default(), Counts::rows(8)).unwrap();
+        assert!(
+            launches[0]
+                .arguments
+                .0
+                .contains(&Argument::DeviceBuffer(17))
+        );
+        b.window.item_slots.bytes -= 1;
+        assert_eq!(
+            op.launches(&b, View::default(), Counts::rows(8))
+                .unwrap_err()
+                .0,
+            "native latent window item slots view is too short"
+        );
+        b.window.item_slots.bytes += 1;
+        b.window.items = 0;
+        assert_eq!(
+            op.launches(&b, View::default(), Counts::rows(8))
+                .unwrap_err()
+                .0,
+            "native latent window item count is zero"
+        );
+    }
+
+    #[test]
     fn native_sources_validate_each_buffer_budget_and_output_role() {
         let e = entry();
         let backend = Sm120::new().with_latent_sources(e.clone());
@@ -524,6 +572,8 @@ mod tests {
         push(|b| b.window.scale_stride -= 1);
         push(|b| b.window.code_stride -= 1);
         push(|b| b.window.sequences = 0);
+        push(|b| b.window.items = 0);
+        push(|b| b.window.item_slots.bytes -= 1);
         push(|b| b.window.key_lists.bytes -= 1);
         push(|b| b.window.budget += 1);
         push(|b| b.window.storage = LatentWindowStorage::Staged { slots: 0 });

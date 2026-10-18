@@ -23,6 +23,7 @@ use kernels_sm120::latent::sources::Entry;
 pub const CAPACITY: u32 = 4;
 const PAD: usize = 64;
 const SEQUENCES: usize = 2;
+const ITEMS: usize = 3;
 
 fn i32_bytes(values: &[i32]) -> Vec<u8> {
     values.iter().flat_map(|x| x.to_le_bytes()).collect()
@@ -201,7 +202,7 @@ fn with_queries<'a>(
         }
     };
     let pages_per_sequence = compressed_budget.max(1).div_ceil(page);
-    let visible_pages = pages_per_sequence * SEQUENCES;
+    let visible_pages = pages_per_sequence * ITEMS;
     let pages = visible_pages + 1;
     let (window, packed_stride) =
         pool(LatentKvFormat::Fp8E4M3Ue8M0Block32, width, slots, SEQUENCES);
@@ -224,12 +225,12 @@ fn with_queries<'a>(
     let mut compressed_keys = vec![-1; rows * compressed_budget];
     for row in 0..rows {
         for key in 0..window_budget {
-            if row != 1 && key % 7 != 6 {
+            if (row != 1 || nonzero) && key % 7 != 6 {
                 window_keys[row * window_budget + key] = ((slots - 1 + key) % slots) as i32;
             }
         }
         for key in 0..compressed_budget {
-            if row != 1 && key % 5 != 4 {
+            if (row != 1 || nonzero) && key % 5 != 4 {
                 compressed_keys[row * compressed_budget + key] =
                     ((key + row * 5) % compressed_budget) as i32;
             }
@@ -264,7 +265,7 @@ fn with_queries<'a>(
         row_batch: Spec::input(
             DType::I32,
             (Rows::Live, 1),
-            i32_bytes(&(0..rows).map(|r| (r % 2) as i32).collect::<Vec<_>>()),
+            i32_bytes(&(0..rows).map(|r| (r % ITEMS) as i32).collect::<Vec<_>>()),
         ),
         window: LatentWindowBuffers {
             codes: Spec::input(
@@ -277,6 +278,8 @@ fn with_queries<'a>(
                 (Rows::Fixed(SEQUENCES), window_scale_stride),
                 window_scales,
             ),
+            item_slots: Spec::input(DType::I32, (Rows::Fixed(ITEMS), 1), i32_bytes(&[1, -1, 0])),
+            items: ITEMS as u32,
             sequences: SEQUENCES as u32,
             code_stride: window_code_stride as u64,
             scale_stride: window_scale_stride as u64,
@@ -299,18 +302,18 @@ fn with_queries<'a>(
                 tables: if nonzero {
                     Spec::input(
                         DType::I32,
-                        (Rows::Fixed(SEQUENCES), pages_per_sequence),
+                        (Rows::Fixed(ITEMS), pages_per_sequence),
                         i32_bytes(&tables),
                     )
                 } else {
                     Spec::ids(
-                        (Rows::Fixed(SEQUENCES), pages_per_sequence),
+                        (Rows::Fixed(ITEMS), pages_per_sequence),
                         tables,
                         &[("compressed.cache.pool", page_stride)],
                         Holes::Never,
                     )
                 },
-                sequences: SEQUENCES as u32,
+                sequences: ITEMS as u32,
                 max_pages: pages_per_sequence as u32,
             },
             key_lists: Spec::input(
@@ -346,6 +349,7 @@ fn with_queries<'a>(
             .collect::<Vec<_>>();
         let batch = images.i32s("row_batch")?;
         let window_list = images.i32s("window.key_lists")?;
+        let item_slots = images.i32s("window.item_slots")?;
         let compressed_list = if second_fp4_keys {
             images.i32s("compressed.key_lists")?
         } else {
@@ -382,6 +386,8 @@ fn with_queries<'a>(
                 window: LatentWindowInput {
                     codes: images.bytes("window.codes")?,
                     scales: images.bytes("window.scales")?,
+                    item_slots: &item_slots,
+                    sequences: SEQUENCES,
                     code_stride: window_code_stride,
                     scale_stride: window_scale_stride,
                     storage,
@@ -584,6 +590,7 @@ mod tests {
             .with("window.scales", scales)
             .with("q", bf16_bytes(&q))
             .with("row_batch", i32_bytes(&[0; CAPACITY as usize]))
+            .with("window.item_slots", i32_bytes(&[0, 1, -1]))
             .with("window.key_lists", i32_bytes(&ids));
         let mut den = vec![0.0; CAPACITY as usize * heads];
         den[..heads].fill(2.0);

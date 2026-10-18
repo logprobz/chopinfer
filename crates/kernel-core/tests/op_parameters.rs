@@ -1707,6 +1707,8 @@ mod latent_parameters {
                 window: LatentWindowInput {
                     codes: &self.window[..128 * D],
                     scales: &self.window[128 * D..],
+                    item_slots: &[0],
+                    sequences: 1,
                     code_stride: self.window.len(),
                     scale_stride: self.window.len(),
                     storage: LatentWindowStorage::Ring128,
@@ -1798,6 +1800,8 @@ mod latent_parameters {
         input.window = LatentWindowInput {
             codes: &codes,
             scales: &scales,
+            item_slots: &[0, 1],
+            sequences: 2,
             code_stride,
             scale_stride,
             storage: LatentWindowStorage::Staged {
@@ -1935,6 +1939,78 @@ mod latent_parameters {
         }
         // The two sources are never separately normalized and added.
         assert_ne!(out[0], 1.5 + 0.75);
+    }
+
+    #[test]
+    fn latent_window_items_map_to_recycled_state_slots() {
+        let source = Sources::new();
+        let slots = 136;
+        let code_stride = slots * D;
+        let scale_stride = slots * D / 32;
+        let mut codes = vec![0x38; 2 * code_stride];
+        codes[code_stride..].fill(0x48); // State 0 is 1; state 1 is 4.
+        let scales = vec![127; 2 * scale_stride];
+        let q = vec![0.0; 3 * 2 * D];
+        let mut compressed = source.compressed.clone();
+        let page = COMPRESSED.page_bytes(D as u32, 2) as usize;
+        // Item 0 reads page 1 (2); item 1 reads page 0 (6); item 2 reads page 1.
+        compressed[..D].fill(0x77);
+        compressed[D..page].fill(0x38);
+        compressed[page..page + D].fill(0x44);
+        compressed[page + D..].fill(0x38);
+        let mut input = source.input(&[0, 0, 0], &[0, 0, 0]);
+        input.q = &q;
+        input.row_batch = &[2, 0, 1];
+        input.sinks = Some(&[0.0, 0.0]);
+        input.window = LatentWindowInput {
+            codes: &codes,
+            scales: &scales,
+            item_slots: &[1, -1, 0],
+            sequences: 2,
+            code_stride,
+            scale_stride,
+            storage: LatentWindowStorage::Staged {
+                slots: slots as u32,
+            },
+            lists: LatentKeyLists {
+                indices: &[0, 0, 0],
+                stride: 1,
+                budget: 1,
+            },
+        };
+        let compressed_input = input.compressed.as_mut().unwrap();
+        compressed_input.pool = &compressed;
+        compressed_input.paging.block_tables = &[1, 0, 1];
+        compressed_input.paging.max_pages = 1;
+        compressed_input.lists = input.window.lists;
+        fn check(input: LatentSourcesInput<'_>, expected: [f64; 3]) {
+            let mut query = query(Output::Normalized);
+            if let Query::Attention { capacity, .. } = &mut query {
+                *capacity = 3;
+            }
+            let actual = normalized(latent_attention_with_sources(query, input).unwrap());
+            for (row, value) in expected.into_iter().enumerate() {
+                assert!(
+                    actual[row * 2 * D..(row + 1) * 2 * D]
+                        .iter()
+                        .all(|&v| v == value),
+                    "row {row}"
+                );
+            }
+        }
+        check(input, [1.0, 2.0, 3.0]);
+        // Retire item 2, then assign its state slot to item 1. Compressed
+        // tables keep the original item index through both map changes.
+        input.window.item_slots = &[1, 0, -1];
+        check(input, [1.0, 2.0, 7.0 / 3.0]);
+        for invalid in [-1, i32::MIN, 2, i32::MAX] {
+            let mapping = [invalid; 3];
+            let mut empty = input;
+            empty.window.item_slots = &mapping;
+            empty.window.codes = &[];
+            empty.window.scales = &[];
+            check(empty, [1.0, 1.0, 3.0]);
+        }
     }
 
     #[test]

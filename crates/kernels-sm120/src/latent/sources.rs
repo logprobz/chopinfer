@@ -100,7 +100,7 @@ fn u64p(name: &str) -> EntryParam {
 
 impl Entry {
     pub fn symbol(&self) -> String {
-        format!("chop_latent_sources_{}_v2", self.name)
+        format!("chop_latent_sources_{}_v3", self.name)
     }
     pub fn merge_symbol(&self) -> String {
         format!("chop_latent_sources_{}_merge_v1", self.name)
@@ -222,12 +222,14 @@ impl Entry {
             ptr("live_rows", "const uint32_t"),
             ptr("window_codes", "const uint8_t"),
             ptr("window_scales", "const uint8_t"),
+            ptr("window_item_slots", "const int32_t"),
             ptr("window_keys", "const int32_t"),
             ptr("workspace", "float"),
             u64p("window_code_stride"),
             u64p("window_scale_stride"),
             u32p("window_slots"),
             u32p("window_sequences"),
+            u32p("window_items"),
             u32p("window_key_stride"),
             u32p("window_budget"),
             u32p("scale_bits"),
@@ -314,7 +316,7 @@ impl Entry {
                 self.symbol(),
                 self.params()?,
                 format!(
-                    "chop::latent::sources::attention<{traits}>(q,row_batch,live_rows,window_codes,window_scales,window_keys,{sources},workspace,window_code_stride,window_scale_stride,window_slots,window_sequences,window_key_stride,window_budget,{geometry},scale_bits);"
+                    "chop::latent::sources::attention<{traits}>(q,row_batch,live_rows,window_codes,window_scales,window_item_slots,window_keys,{sources},workspace,window_code_stride,window_scale_stride,window_slots,window_sequences,window_items,window_key_stride,window_budget,{geometry},scale_bits);"
                 ),
                 s.latent / 128 * 32,
                 1,

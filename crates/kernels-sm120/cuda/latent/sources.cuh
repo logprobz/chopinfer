@@ -48,11 +48,12 @@ __device__ __forceinline__ uint64_t partial_index(uint32_t row, uint32_t split, 
 template<class T>
 __device__ void attention(
     const uint16_t* q, const int32_t* row_batch, const uint32_t* live_rows,
-    const uint8_t* window_codes, const uint8_t* window_scales, const int32_t* window_keys,
+    const uint8_t* window_codes, const uint8_t* window_scales,
+    const int32_t* window_item_slots, const int32_t* window_keys,
     const uint8_t* compressed_pool, const int32_t* compressed_keys,
     const int32_t* block_tables, float* workspace,
     uint64_t window_code_stride, uint64_t window_scale_stride,
-    uint32_t window_slots, uint32_t window_sequences,
+    uint32_t window_slots, uint32_t window_sequences, uint32_t window_items,
     uint32_t window_key_stride, uint32_t window_budget,
     uint64_t page_stride, uint32_t max_pages, uint32_t compressed_pages,
     uint32_t compressed_sequences, uint32_t compressed_key_stride,
@@ -64,6 +65,8 @@ __device__ void attention(
   if (row >= *live_rows) return;
   const int head0 = blockIdx.y * T::head_tile;
   const int batch = row_batch[row];
+  const int state_slot = batch >= 0 && uint32_t(batch) < window_items
+      ? window_item_slots[batch] : -1;
   const uint32_t count = window_budget + (T::second ? compressed_budget : 0);
   const uint32_t units = (count + T::keys - 1) / T::keys;
   const uint32_t begin = uint64_t(units) * split / T::splits;
@@ -118,11 +121,11 @@ __device__ void attention(
       const uint32_t j = unit * T::keys + key;
       int kind = 0;
       const uint8_t *codes = nullptr, *scales = nullptr;
-      if (j < window_budget && batch >= 0 && uint32_t(batch) < window_sequences) {
+      if (j < window_budget && state_slot >= 0 && uint32_t(state_slot) < window_sequences) {
         const int32_t position = window_keys[uint64_t(row) * window_key_stride + j];
         if (position >= 0 && uint32_t(position) < window_slots) {
-          codes = window_codes + uint64_t(batch) * window_code_stride + uint64_t(position) * T::latent;
-          scales = window_scales + uint64_t(batch) * window_scale_stride + uint64_t(position) * (T::latent / 32);
+          codes = window_codes + uint64_t(state_slot) * window_code_stride + uint64_t(position) * T::latent;
+          scales = window_scales + uint64_t(state_slot) * window_scale_stride + uint64_t(position) * (T::latent / 32);
           kind = 1;
         }
       } else if constexpr (T::second) {

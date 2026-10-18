@@ -440,7 +440,10 @@ crate::scratch_record! {
 
 crate::scratch_record! {
     /// Per-layer native FP8 window, with separate code and UE8M0 scale
-    /// views. Sequence s starts at `s * code_stride` bytes in `codes` and
+    /// views. `item_slots` is I32 `[items]`: phase item i reads state slot
+    /// `item_slots[i]`. A negative mapping or one outside `[0, sequences)`
+    /// means no window. An item outside `[0, items)` also has no window.
+    /// State slot s starts at `s * code_stride` bytes in `codes` and
     /// `s * scale_stride` bytes in `scales`. Each holds contiguous slot rows
     /// of `latent` codes and `latent / 32` scales. Lists name physical ring
     /// slots or staged rows, with `key_stride` entries and `budget` live.
@@ -452,6 +455,8 @@ crate::scratch_record! {
     pub struct LatentWindowBuffers {
         pub codes: value,
         pub scales: value,
+        pub item_slots: value,
+        pub items: scalar(u32),
         pub sequences: scalar(u32),
         pub code_stride: scalar(u64),
         pub scale_stride: scalar(u64),
@@ -464,6 +469,7 @@ crate::scratch_record! {
 
 crate::scratch_record! {
     /// Native compressed FP4 keys, with a separate index space and table.
+    /// Block tables stay indexed by phase item, independent of window state slots.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct LatentCompressedBuffers {
         pub cache: record(LatentKvCache),
@@ -476,7 +482,8 @@ crate::scratch_record! {
 
 crate::scratch_record! {
     /// Native attention extension operands. `q` is already tail-rotated
-    /// BF16. `sinks` is F32 `[heads]`, present exactly when declared.
+    /// BF16. `row_batch` is I32 `[rows]`, naming the phase item for each row.
+    /// `sinks` is F32 `[heads]`, present exactly when declared.
     /// `cos_sin` is F32 `[rows, tail_rope_dims/2, 2]`, for the normalized
     /// output's inverse rotation; partials leave it to their final merge.
     /// `compressed` is present exactly when `second_fp4_keys` is set.

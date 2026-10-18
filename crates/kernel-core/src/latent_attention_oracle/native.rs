@@ -183,11 +183,15 @@ impl LatentKeyLists<'_> {
 /// Attention only reads this source; ring updates and verify rollback are
 /// explicit caller-owned operations. The lists alone specify visibility.
 /// Producers supply a valid slot or -1; every index outside `[0, slots)`
-/// is a hole and reads neither plane.
+/// is a hole and reads neither plane. `item_slots` maps phase items to
+/// state slots; negative or out-of-range mappings, and items outside the
+/// map, have no window. Compressed block tables remain indexed by item.
 #[derive(Clone, Copy, Debug)]
 pub struct LatentWindowInput<'a> {
     pub codes: &'a [u8],
     pub scales: &'a [u8],
+    pub item_slots: &'a [i32],
+    pub sequences: usize,
     pub code_stride: usize,
     pub scale_stride: usize,
     pub storage: LatentWindowStorage,
@@ -337,9 +341,13 @@ pub fn latent_attention_with_sources(
     };
     for row in 0..rows {
         let mut keys = Vec::new();
+        let sequence = usize::try_from(input.row_batch[row])
+            .ok()
+            .and_then(|item| input.window.item_slots.get(item))
+            .and_then(|&slot| usize::try_from(slot).ok())
+            .filter(|&slot| slot < input.window.sequences);
         for position in input.window.lists.row(row, Some(slots))? {
-            let sequence = usize::try_from(input.row_batch[row])
-                .map_err(|_| Refusal("latent sequence is negative"))?;
+            let Some(sequence) = sequence else { continue };
             let codes = plane(
                 input.window.codes,
                 sequence,

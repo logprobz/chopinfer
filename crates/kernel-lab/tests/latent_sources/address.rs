@@ -65,6 +65,14 @@ fn native_sources_preserve_wide_strides_and_page_offsets() {
                         session.allocate((sequences - 1) as usize * scale_stride + scale_bytes)?,
                     ),
                     ("window_keys", upload(&0_u32.to_le_bytes())?),
+                    (
+                        "item_slots",
+                        upload(
+                            &(0_u32..sequences)
+                                .flat_map(|i| i.to_le_bytes())
+                                .collect::<Vec<_>>(),
+                        )?,
+                    ),
                     ("compressed", session.allocate(page_offset + page_bytes)?),
                     (
                         "tables",
@@ -140,6 +148,8 @@ fn native_sources_preserve_wide_strides_and_page_offsets() {
                     window: LatentWindowBuffers {
                         codes: view("window_codes"),
                         scales: view("window_scales"),
+                        item_slots: view("item_slots"),
+                        items: sequences,
                         sequences,
                         code_stride: code_stride as u64,
                         scale_stride: scale_stride as u64,

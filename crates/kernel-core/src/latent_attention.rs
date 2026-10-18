@@ -185,7 +185,11 @@ pub enum LatentAttentionQuery {
     /// Producers guarantee an in-range slot or -1; a reader treats every
     /// index outside `[0, slots)` as a hole without reading codes or scales.
     /// Compressed lists name positions through their own page table and skip
-    /// -1. Valid positions must not repeat within a source.
+    /// -1 and negative page-table entries. `page_size` is the number of
+    /// compressed positions per page, independent of window storage slots
+    /// and of the uncompressed token page. A source compressed by ratio r
+    /// from a P-token page uses `page_size = P / r` (64 or 32 for r=1 or 2).
+    /// Valid positions must not repeat within a source.
     /// The lists alone specify visibility, including block-visible verify.
     Attention {
         heads: u32,
@@ -470,6 +474,13 @@ crate::scratch_record! {
 crate::scratch_record! {
     /// Native compressed FP4 keys, with a separate index space and table.
     /// Block tables stay indexed by phase item, independent of window state slots.
+    /// For width D and P = query.page_size compressed positions, each page
+    /// stores P code rows of D/2 bytes followed by P scale rows of D/16 bytes.
+    /// Position j reads table[item, j/P], code offset (j%P)*D/2 and scale
+    /// offset P*D/2 + (j%P)*D/16 within that physical page. A negative page
+    /// entry is a hole. The byte stride is at least P*(D/2+D/16), may include
+    /// padding, and physical_page*page_stride uses checked 64-bit offsets.
+    /// The FP8 window instead uses its own slot count and separate planes.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct LatentCompressedBuffers {
         pub cache: record(LatentKvCache),

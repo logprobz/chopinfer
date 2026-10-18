@@ -2015,6 +2015,52 @@ mod latent_parameters {
     }
 
     #[test]
+    fn latent_compressed_pages_use_their_own_row_count_and_skip_hole_pages() {
+        let source = Sources::new();
+        for page_size in [32, 64] {
+            let stride = COMPRESSED.page_bytes(D as u32, page_size as u32) as usize + 64;
+            let mut pool = vec![0x38; 3 * stride];
+            for (physical, code) in [(0, 0x22), (1, 0x44), (2, 0x66)] {
+                pool[physical * stride..physical * stride + page_size * D / 2].fill(code);
+            }
+            let ids = [
+                page_size as i32 - 1,
+                page_size as i32,
+                2 * page_size as i32,
+                3 * page_size as i32,
+            ];
+            let mut input = source.input(&[], &ids);
+            let compressed = input.compressed.as_mut().unwrap();
+            compressed.pool = &pool;
+            compressed.paging = LatentPaging {
+                block_tables: &[2, 0, -1, 1],
+                max_pages: 4,
+                page_stride: stride,
+            };
+            let mut query = query(Output::Normalized);
+            if let Query::Attention { page_size: p, .. } = &mut query {
+                *p = page_size as u32;
+            }
+            let out = normalized(latent_attention_with_sources(query, input).unwrap());
+            assert!(out[..D].iter().all(|&x| x == 7.0 / 4.0));
+            // A hole page must not read the pool, even with a live position.
+            let mut hole = input;
+            let hole_id = [2 * page_size as i32];
+            let compressed = hole.compressed.as_mut().unwrap();
+            compressed.pool = &[];
+            compressed.lists = LatentKeyLists {
+                indices: &hole_id,
+                stride: 1,
+                budget: 1,
+            };
+            assert_eq!(
+                normalized(latent_attention_with_sources(query, hole).unwrap()),
+                vec![0.0; 2 * D]
+            );
+        }
+    }
+
+    #[test]
     fn latent_out_of_range_window_slots_are_holes() {
         let source = Sources::new();
         for (storage, slots, outside) in [

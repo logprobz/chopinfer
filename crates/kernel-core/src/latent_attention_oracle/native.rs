@@ -216,6 +216,36 @@ pub struct LatentSourcesInput<'a> {
     pub sinks: Option<&'a [f32]>,
 }
 
+// Native compressed page holes do not read the pool. Keep this separate
+// from the original paged oracle, whose missing-page contract is refusing.
+fn compressed_location(
+    layout: Layout,
+    paging: LatentPaging<'_>,
+    pool_bytes: usize,
+    item: i32,
+    position: usize,
+) -> Result<Option<(usize, usize)>, Refusal> {
+    let item = usize::try_from(item).map_err(|_| Refusal("latent sequence is negative"))?;
+    let column = position / layout.page_size;
+    if column >= paging.max_pages {
+        return Err(Refusal("latent position past the page table"));
+    }
+    let at = item
+        .checked_mul(paging.max_pages)
+        .and_then(|n| n.checked_add(column))
+        .ok_or(Refusal("latent page table offset overflows"))?;
+    let page = *paging
+        .block_tables
+        .get(at)
+        .ok_or(Refusal("latent page table entry missing"))?;
+    if page < 0 {
+        return Ok(None);
+    }
+    layout
+        .locate(paging, pool_bytes, item as i32, position as i32)
+        .map(Some)
+}
+
 /// Add the declared probability storage error to the oracle's S so the
 /// unchanged gate `2^-22 * K * S` includes it. BF16 RNE has relative unit
 /// roundoff 2^-8 (seven stored fraction bits). A tile's later max rescale
@@ -371,12 +401,16 @@ pub fn latent_attention_with_sources(
         }
         if let Some(source) = input.compressed {
             for position in source.lists.row(row, None)? {
-                let (base, slot) = layout.locate(
+                let Some((base, slot)) = compressed_location(
+                    layout,
                     source.paging,
                     source.pool.len(),
                     input.row_batch[row],
-                    position as i32,
-                )?;
+                    position,
+                )?
+                else {
+                    continue;
+                };
                 keys.push(layout.decode(&source.pool[base..base + layout.page_bytes()], slot)?);
             }
         }
@@ -620,5 +654,40 @@ mod probability_bound_tests {
         let allowed = crate::oracle::accumulation_bound(2, probability_rounding_s(error, value, 2));
         assert!(error > 2_f64.powi(-8) * error);
         assert!(error <= allowed);
+    }
+}
+
+#[cfg(test)]
+mod page_tests {
+    use super::*;
+
+    #[test]
+    fn native_pages_keep_wide_offsets_at_a_million_token_context() {
+        for page_size in [32, 64] {
+            let positions = (1 << 20) / (64 / page_size);
+            let max_pages = positions / page_size;
+            let physical = 65537;
+            let page_stride = 65536;
+            let mut tables = vec![-1; max_pages];
+            tables[max_pages - 1] = physical;
+            let layout = Layout {
+                latent: 512,
+                page_size,
+                kv: LatentKvFormat::Fp4E2M1E4M3Block16,
+            };
+            let base = physical as usize * page_stride;
+            assert!(base > u32::MAX as usize);
+            let paging = LatentPaging {
+                block_tables: &tables,
+                max_pages,
+                page_stride,
+            };
+            assert_eq!(
+                compressed_location(layout, paging, base + layout.page_bytes(), 0, positions - 1)
+                    .unwrap(),
+                Some((base, page_size - 1))
+            );
+            assert_eq!(compressed_location(layout, paging, 0, 0, 0).unwrap(), None);
+        }
     }
 }

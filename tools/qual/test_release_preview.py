@@ -158,6 +158,13 @@ class RecordArgumentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'conflicting record arguments'):
             runner.plan(facts, 'full', 'default', config)
 
+    def test_ar_override_drops_the_configurations_speculation_mode(self):
+        base = ['--speculative-tokens', '5', '--speculation', 'fixed']
+        self.assertEqual(runner.serve_overrides(base, runner.ARMS['verify-ar']),
+                         runner.ARMS['verify-ar'])
+        self.assertEqual(runner.serve_overrides(base, runner.ARMS['verify-spec']),
+                         base + runner.ARMS['verify-spec'])
+
 
 class PlanTests(unittest.TestCase):
     def test_quick_starts_the_default_arms_with_determinism_first_and_checks_on_the_quick_arms(self):

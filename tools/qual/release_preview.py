@@ -982,6 +982,10 @@ def record_for(name, check, model=None):
 def serve_overrides(base, overrides):
     """Replace configuration options that an arm pins; the CLI refuses duplicates."""
     pinned = {word for word in overrides if word.startswith('--')}
+    # Like profile defaults, an inherited mode disappears when this arm
+    # disables drafting; the host refuses an explicit mode with zero drafts.
+    if any(overrides[i:i + 2] == ['--speculative-tokens', '0'] for i in range(len(overrides))):
+        pinned.add('--speculation')
     words = []
     index = 0
     while index < len(base):

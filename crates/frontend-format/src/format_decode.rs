@@ -30,7 +30,7 @@ use crate::format::{
     FormatToolCallDeltaV1, ParsedToolCallV1,
 };
 use crate::request::FrontendToolV1;
-use crate::toolkit::{malformed_v1, resource_v1, sequence_v1, validate_name_v1};
+use crate::toolkit::{malformed_v1, resource_v1, sequence_v1, validate_function_name_v1};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TextStateV1 {
@@ -494,7 +494,7 @@ impl DeclaredParserV1 {
         let terminals = ChatMlTerminalsV1::new(&parser);
         let mut deltas = Vec::new();
         for (offset, call) in named_calls(region).enumerate().skip(*streamed) {
-            validate_name_v1(&descriptor, &call.name, "parsed function")?;
+            validate_function_name_v1(&descriptor, &call.name, "parsed function")?;
             let arguments = call_arguments_v1(
                 &descriptor,
                 terminals,
@@ -586,7 +586,7 @@ impl DeclaredParserV1 {
             if self.calls.len() + offset >= descriptor.limits.maximum_tool_calls {
                 return Err(resource_v1("too many completion tool calls"));
             }
-            validate_name_v1(&descriptor, &call.name, "parsed function")?;
+            validate_function_name_v1(&descriptor, &call.name, "parsed function")?;
             let mut arguments = call_arguments_v1(
                 &descriptor,
                 terminals,

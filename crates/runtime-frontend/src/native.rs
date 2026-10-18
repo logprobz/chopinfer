@@ -22,7 +22,7 @@ use runtime_server::{
     PromptSegmentV1,
 };
 
-use crate::checks::{malformed_v1, resource_v1, sequence_v1, validate_name_v1};
+use crate::checks::{malformed_v1, resource_v1, sequence_v1, validate_function_name_v1};
 use crate::decode::{AssistantCompletionV1, CompletionFinishV1, ParsedToolCallV1, PromptModeV1};
 use crate::descriptor::{FrontendComponentErrorV1, FrontendDescriptorV1, FrontendMediaKindV1};
 use crate::format::{
@@ -682,7 +682,7 @@ impl NativeParserV1 {
     }
 
     fn check_name(&self, name: &str) -> Result<(), String> {
-        validate_name_v1(&self.descriptor, name, "parsed function")
+        validate_function_name_v1(&self.descriptor, name, "parsed function")
             .map_err(|_| malformed_v1("the format named a tool outside the declared name charset"))
     }
 

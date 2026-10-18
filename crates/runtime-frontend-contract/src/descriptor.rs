@@ -278,6 +278,39 @@ pub struct FrontendToolPolicyV1 {
     /// a forced choice's constraint alone does the forcing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub choice: Option<FrontendToolChoicePolicyV1>,
+    /// How a function in a namespace is named, for a model whose prompt
+    /// format qualifies one. Absent, a function name is one name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespaces: Option<FrontendToolNamespacesV1>,
+}
+
+impl FrontendToolPolicyV1 {
+    /// A function name as its namespace and its own name: split at the
+    /// first declared separator, or no namespace when none is declared or
+    /// the name spells none.
+    #[must_use]
+    pub fn split_function_name<'a>(&self, name: &'a str) -> (Option<&'a str>, &'a str) {
+        match &self.namespaces {
+            Some(namespaces) => match name.split_once(namespaces.separator.as_str()) {
+                Some((namespace, name)) => (Some(namespace), name),
+                None => (None, name),
+            },
+            None => (None, name),
+        }
+    }
+}
+
+/// The longest namespace separator a declaration may name.
+pub const FRONTEND_NAMESPACE_SEPARATOR_MAX_BYTES: usize = 8;
+
+/// Qualified function names: a namespace, the separator, then the
+/// function's own name, each part a name of `name_bytes`. The transport
+/// qualifies a tool's name by the namespace a request gives it, and a
+/// qualified call reads back as one name.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FrontendToolNamespacesV1 {
+    pub separator: String,
 }
 
 /// The longest prefill a tool choice policy may declare.
@@ -900,6 +933,24 @@ impl FrontendDescriptorV1 {
         }
         if !self.tools.name_bytes.ascii_alphanumeric && extra.is_empty() {
             return Err(invalid("the tool name byte set is empty"));
+        }
+        if let Some(namespaces) = &self.tools.namespaces {
+            let separator = &namespaces.separator;
+            // No byte of the separator is a name byte, so the first one
+            // splits a qualified name and a part never spells it.
+            if separator.is_empty()
+                || separator.len() > FRONTEND_NAMESPACE_SEPARATOR_MAX_BYTES
+                || !separator.bytes().all(|byte| byte.is_ascii_punctuation())
+                || separator
+                    .bytes()
+                    .any(|byte| self.tools.name_bytes.permits(byte))
+            {
+                return Err(invalid(format!(
+                    "tools.namespaces separator {separator:?} must be 1 to \
+                     {FRONTEND_NAMESPACE_SEPARATOR_MAX_BYTES} bytes of ASCII punctuation outside \
+                     tools.name_bytes"
+                )));
+            }
         }
         if let Some(choice) = &self.tools.choice {
             if choice.forced_prefill.len() > FRONTEND_TOOL_CHOICE_PREFILL_MAX_BYTES {

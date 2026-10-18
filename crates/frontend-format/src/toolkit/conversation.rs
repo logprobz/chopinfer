@@ -12,7 +12,7 @@ use crate::request::{
 use crate::toolkit::json::{
     field_v1, parse_json_object_v1, reserved_free_v1, resource_v1, sequence_v1, validate_json_v1,
 };
-use crate::toolkit::prompt::validate_name_v1;
+use crate::toolkit::prompt::validate_function_name_v1;
 
 /// One request message as a renderer reads it: plain content for every
 /// role but a user's media parts, and a tool result's call ID. It has no
@@ -106,7 +106,7 @@ pub fn validate_chat_v1(
     }
     let mut tool_names = BTreeSet::new();
     for tool in render.tools {
-        validate_name_v1(descriptor, &tool.name, "tool")?;
+        validate_function_name_v1(descriptor, &tool.name, "tool")?;
         if !tool_names.insert(tool.name.as_str()) {
             return Err(field_v1(format!("duplicate tool name '{}'", tool.name)));
         }
@@ -175,7 +175,7 @@ pub fn validate_chat_v1(
                     return Err(resource_v1("too many tool calls"));
                 }
                 for call in &turn.tool_calls {
-                    validate_name_v1(descriptor, &call.name, "tool call")?;
+                    validate_function_name_v1(descriptor, &call.name, "tool call")?;
                     if call.id.is_empty() || !all_call_ids.insert(call.id.as_str()) {
                         return Err(field_v1(format!(
                             "empty or duplicate tool call ID '{}'",

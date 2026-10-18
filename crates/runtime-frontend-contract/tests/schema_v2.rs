@@ -198,6 +198,35 @@ fn request_mapping_policies_default_to_the_template_and_every_constraint() {
     );
 }
 
+/// Qualified function names are optional; a separator is short ASCII
+/// punctuation that no name byte spells, so its first byte splits a name.
+#[test]
+fn a_namespace_separator_is_punctuation_outside_the_name_bytes() {
+    let descriptor = read(&declaration()).unwrap();
+    assert!(descriptor.tools.namespaces.is_none());
+    assert_eq!(descriptor.tools.split_function_name("a::f"), (None, "a::f"));
+    let mut value = declaration();
+    value["tools"]["namespaces"] = json!({"separator": "::"});
+    let descriptor = read(&value).unwrap();
+    assert_eq!(
+        descriptor.tools.split_function_name("a::f::g"),
+        (Some("a"), "f::g")
+    );
+    assert_eq!(descriptor.tools.split_function_name("f"), (None, "f"));
+    let written = serde_json::to_value(&descriptor).unwrap();
+    assert_eq!(read(&written).unwrap(), descriptor);
+    for separator in ["", "a", "_", " ", ":::::::::", "é"] {
+        refused(
+            |value| value["tools"]["namespaces"] = json!({"separator": separator}),
+            invalid,
+        );
+    }
+    refused(
+        |value| value["tools"]["namespaces"] = json!({"separator": "::", "other": 1}),
+        syntax,
+    );
+}
+
 #[test]
 fn only_v2_is_read() {
     refused(

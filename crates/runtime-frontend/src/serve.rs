@@ -18,7 +18,7 @@ use runtime_server::{
     ServerFrontendV1,
 };
 
-use crate::checks::{integral_numbers_v1, parse_json_value_v1, validate_name_v1};
+use crate::checks::{integral_numbers_v1, parse_json_value_v1, validate_function_name_v1};
 use crate::decode::PromptModeV1;
 use crate::descriptor::{
     FrontendComponentErrorV1, FrontendConstraintScopeV1, FrontendDescriptorV1, FrontendMediaKindV1,
@@ -372,6 +372,13 @@ impl ServerFrontendV1 for BundleFrontendV1 {
             .as_ref()
             .is_some_and(|choice| choice.forced_without_tools_is_auto)
     }
+    fn tool_namespace_separator(&self) -> Option<&str> {
+        self.descriptor
+            .tools
+            .namespaces
+            .as_ref()
+            .map(|namespaces| namespaces.separator.as_str())
+    }
     fn models(&self) -> &[FrontendModelV1] {
         &self.models
     }
@@ -652,7 +659,7 @@ impl ServerFrontendV1 for BundleFrontendV1 {
     }
 
     fn validate_tool_call(&self, name: &str, arguments: &str) -> Result<(), FrontendErrorV1> {
-        validate_name_v1(&self.descriptor, name, "function")
+        validate_function_name_v1(&self.descriptor, name, "function")
             .map_err(|_| FrontendErrorV1::new("backend tool call name is invalid", None))?;
         let arguments = parse_json_value_v1(arguments, self.descriptor.limits)
             .map_err(|_| FrontendErrorV1::new("backend tool call arguments are invalid", None))?;

@@ -387,3 +387,25 @@ fn forced_calls_share_one_call_block() {
     .unwrap();
     assert_eq!(parsed.tool_calls.len(), 2);
 }
+
+/// A declared namespace separator qualifies a parsed call's name, which is
+/// read back whole; a separator that could begin a marker ending a name is
+/// refused.
+#[test]
+fn a_qualified_call_reads_back_by_its_qualified_name() {
+    let qualified = |separator: &str| {
+        let mut value: serde_json::Value = serde_json::from_str(common::TYPED_PARAMETERS).unwrap();
+        value["tools"]["namespaces"] = serde_json::json!({"separator": separator});
+        FormatDescriptorV1::from_component_bytes(value.to_string().as_bytes())
+    };
+    let namespaced = qualified("::").unwrap();
+    let text = format!("{}[EOS]", block(&[call("ns::f", &[("x", false, "v")])]));
+    let parsed = parse_completion_v1(&namespaced, &text, PromptModeV1::Chat).unwrap();
+    assert_eq!(parsed.tool_calls[0].name, "ns::f");
+    let twice = format!("{}[EOS]", block(&[call("a::b::f", &[("x", false, "v")])]));
+    assert!(parse_completion_v1(&namespaced, &twice, PromptModeV1::Chat).is_err());
+    // Without the declaration a qualified name is no name.
+    assert!(parse_completion_v1(&descriptor(), &text, PromptModeV1::Chat).is_err());
+    let error = qualified("\"").unwrap_err().to_string();
+    assert!(error.contains("ends a name"), "{error}");
+}

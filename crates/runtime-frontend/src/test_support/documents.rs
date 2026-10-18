@@ -160,6 +160,10 @@ impl ServerFrontendV1 for PairedFrontendV1 {
         self.document.forced_choice_without_tools_is_auto()
     }
 
+    fn tool_namespace_separator(&self) -> Option<&str> {
+        self.document.tool_namespace_separator()
+    }
+
     fn extra_roles(&self) -> &[String] {
         self.document.extra_roles()
     }

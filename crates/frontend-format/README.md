@@ -152,6 +152,13 @@ constraint read it as the completion's start. A declaration without the
 section renders every offered tool for every choice, and the constraint
 alone forces a call.
 
+A `tools.namespaces` section (`{"separator": "::"}`) qualifies function
+names: a namespace, the separator, then the name, each part a name of
+`name_bytes`. The host names a tool in a namespace by its qualified name,
+and the parser and `validate_function_name_v1` read a call's qualified name
+whole. The separator is ASCII punctuation outside `name_bytes` that begins
+no marker ending a name.
+
 ## A model's own chat format
 
 A model's renderer implements `ChatFormatV1`:

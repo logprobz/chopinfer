@@ -52,6 +52,29 @@ pub fn validate_name_v1(
     Ok(())
 }
 
+/// Checks one function name: a name as [`validate_name_v1`] checks it, or,
+/// where the declaration qualifies names (`tools.namespaces`), a namespace
+/// and a name joined by the separator, each part such a name and the whole
+/// within the name length.
+pub fn validate_function_name_v1(
+    descriptor: &FormatDescriptorV1,
+    name: &str,
+    context: &str,
+) -> Result<(), String> {
+    match descriptor.tools.split_function_name(name) {
+        (Some(namespace), bare) => {
+            validate_name_v1(descriptor, namespace, context)?;
+            validate_name_v1(descriptor, bare, context)?;
+            let maximum = descriptor.limits.maximum_name_bytes;
+            if name.len() > maximum {
+                return Err(field_v1(format!("{context} name must fit {maximum} bytes")));
+            }
+            Ok(())
+        }
+        (None, _) => validate_name_v1(descriptor, name, context),
+    }
+}
+
 /// The placeholder a renderer writes for the media item at `index` of the
 /// media list it returns.
 #[must_use]

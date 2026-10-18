@@ -368,6 +368,22 @@ impl FormatDescriptorV1 {
                 )));
             }
         }
+        // A qualified name is read as a name too, so its separator may not
+        // begin a marker that ends one either.
+        if let Some(namespaces) = &self.tools.namespaces
+            && let Some((_, field)) = delimiters.iter().find(|(marker, _)| {
+                marker
+                    .bytes()
+                    .next()
+                    .is_some_and(|first| namespaces.separator.as_bytes().contains(&first))
+            })
+        {
+            return Err(invalid(format!(
+                "tools.namespaces separator {:?} holds the byte that begins the {field} that \
+                 ends a name",
+                namespaces.separator
+            )));
+        }
         Ok(())
     }
 

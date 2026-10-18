@@ -9,7 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.len() != 2 {
         return Err("usage: build_family FAMILY OUT_DIR".into());
     }
-    let (family, specs) = kernel_lab_families::all()
+    let (family, mut specs) = kernel_lab_families::all()
         .into_iter()
         .find(|(name, _)| *name == args[0])
         .ok_or("unknown kernel-lab family")?;
@@ -32,7 +32,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "build_family only initializes new locks; it cannot replace an existing family".into(),
         );
     }
-    let lock = LockDir::new(dir).family(family, specs.iter().map(|s| &s.name));
+    let mut lock = LockDir::new(dir).family(family, specs.iter().map(|s| &s.name));
+    // Standalone conformance needs its dependency probes and, for glue,
+    // numerical controls. The full catalog still assigns each cubin once.
+    let dependencies = match family {
+        "latent_glue" => &["dependency_probes", "latent_glue_mutants"][..],
+        "rmsnorm_f32" => &["dependency_probes"][..],
+        _ => &[][..],
+    };
+    for (name, required) in kernel_lab_families::all() {
+        if dependencies.contains(&name) {
+            lock = lock.family(name, required.iter().map(|s| &s.name));
+            specs.extend(required);
+        }
+    }
     let toolchain = Toolchain::detect()?;
     if toolchain.skipped {
         return Err("family compilation requires CUDA".into());

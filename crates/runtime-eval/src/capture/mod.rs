@@ -102,6 +102,47 @@ pub fn thinking_kwargs(capture: &Capture<'_>, enabled: bool) -> Result<Value, Ki
     Ok(json!({keyword: enabled}))
 }
 
+/// The request member that explicitly enables or disables thinking. The
+/// default frontend switch keeps the existing template-keyword request.
+pub fn thinking_control(
+    capture: &Capture<'_>,
+    enabled: bool,
+) -> Result<(&'static str, Value), KindError> {
+    let (path, frontend) = input_json(capture, "frontend")?;
+    match frontend["reasoning"].get("switch") {
+        None => Ok(("chat_template_kwargs", thinking_kwargs(capture, enabled)?)),
+        Some(Value::String(switch)) if switch == "template-keywords" => {
+            Ok(("chat_template_kwargs", thinking_kwargs(capture, enabled)?))
+        }
+        Some(Value::String(switch)) if switch == "thinking-object" => Ok((
+            "thinking",
+            json!({"type": if enabled { "enabled" } else { "disabled" }}),
+        )),
+        _ => Err(KindError::Insufficient(format!(
+            "{}: the frontend has an unsupported thinking switch",
+            path.display()
+        ))),
+    }
+}
+
+/// The response field carrying reasoning; older frontend inputs use
+/// `reasoning`, as before the response declaration was explicit.
+pub fn reasoning_field(capture: &Capture<'_>) -> Result<String, KindError> {
+    let (path, frontend) = input_json(capture, "frontend")?;
+    match frontend["response"].get("reasoning_field") {
+        None => Ok("reasoning".into()),
+        Some(Value::String(field))
+            if matches!(field.as_str(), "reasoning" | "reasoning_content") =>
+        {
+            Ok(field.clone())
+        }
+        _ => Err(KindError::Insufficient(format!(
+            "{}: the frontend has an unsupported reasoning response field",
+            path.display()
+        ))),
+    }
+}
+
 /// Whether the frontend admits a request that disables thinking
 /// (`reasoning.allow_disabled`, true when absent;
 /// `common.thinking_can_be_disabled`).

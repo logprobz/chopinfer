@@ -6,7 +6,7 @@
 
 use serde_json::{Map, Value, json};
 
-use crate::capture::{self, receipt, thinking_kwargs};
+use crate::capture::{self, receipt, thinking_control};
 use crate::declaration::Check;
 use crate::http::{Client, HttpError};
 use crate::json::{self, python_eq, truthy};
@@ -308,10 +308,10 @@ impl Kind for Api {
             None,
         )?;
         let question = json!([{"role": "user", "content": "What is 17 times 23?"}]);
-        let thinking = thinking_kwargs(run.capture, true)?;
+        let (thinking_key, thinking) = thinking_control(run.capture, true)?;
         run.check(
             "hidden_reasoning",
-            json!({"model": model, "messages": question, "chat_template_kwargs": thinking,
+            json!({"model": model, "messages": question, thinking_key: thinking,
                    "include_reasoning": false, "max_tokens": 8, "temperature": 0}),
             None,
             |value| {
@@ -440,9 +440,10 @@ impl Kind for Api {
             },
             None,
         )?;
+        let reasoning_field = capture::reasoning_field(run.capture)?;
         for thinking in [true, false] {
-            let kwargs = thinking_kwargs(run.capture, thinking)?;
-            let body = json!({"model": model, "messages": question, "chat_template_kwargs": kwargs,
+            let (thinking_key, control) = thinking_control(run.capture, thinking)?;
+            let body = json!({"model": model, "messages": question, thinking_key: control,
                               "max_tokens": if mechanics { 8 } else { 128 }, "temperature": 0});
             if !thinking && !mechanics && !capture::thinking_can_be_disabled(run.capture)? {
                 // A frontend that always reasons must refuse the disabled switch.
@@ -457,7 +458,7 @@ impl Kind for Api {
                     let message = py::item(&py::at(&py::item(value, "choices")?, 0)?, "message")?;
                     if !mechanics {
                         need(
-                            truthy(&py::get(&message, "reasoning")?) == thinking,
+                            truthy(&py::get(&message, &reasoning_field)?) == thinking,
                             "reasoning mode mismatch",
                         )?;
                     }

@@ -546,6 +546,12 @@ fn answer(path: &str, body: &Value, flaw: Flaw) -> (&'static str, &'static str, 
 /// A fake server answering every request on its own connection; its URL
 /// and the log of what it read.
 fn fake_server(flaw: Flaw) -> (String, Log) {
+    fake_server_with(move |path, body| answer(path, body, flaw))
+}
+
+fn fake_server_with(
+    answer: impl Fn(&str, &Value) -> (&'static str, &'static str, String) + Send + 'static,
+) -> (String, Log) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let log = Log::default();
@@ -574,7 +580,7 @@ fn fake_server(flaw: Flaw) -> (String, Log) {
                 parse(&bytes).unwrap()
             };
             let path = line.split(' ').nth(1).unwrap().to_owned();
-            let (status, kind, text) = answer(&path, &body, flaw);
+            let (status, kind, text) = answer(&path, &body);
             written
                 .lock()
                 .unwrap()
@@ -866,6 +872,181 @@ fn captures_as_python_does(
 
 fn rows(receipt: &Value) -> Vec<&Value> {
     receipt["rows"].as_array().unwrap().iter().collect()
+}
+
+/// Model a frontend's request control and response field independently of
+/// the checker. `wrong_mode` makes that mode return the opposite state.
+fn reasoning_server(frontend: Value, wrong_mode: Option<bool>) -> (String, Log) {
+    fake_server_with(move |path, body| {
+        let mut translated = body.clone();
+        let field = frontend["response"]["reasoning_field"].as_str().unwrap();
+        if path == "/v1/chat/completions" {
+            let enabled = if frontend["reasoning"]["switch"] == "thinking-object" {
+                Some(body["thinking"]["type"] != "disabled")
+            } else {
+                let keyword = frontend["reasoning"]["thinking_keywords"][0]
+                    .as_str()
+                    .unwrap();
+                body["chat_template_kwargs"]
+                    .get(keyword)
+                    .and_then(Value::as_bool)
+            };
+            if let Some(enabled) = enabled {
+                let served = if wrong_mode == Some(enabled) {
+                    !enabled
+                } else {
+                    enabled
+                };
+                translated["chat_template_kwargs"] = json!({"thinking": served});
+            }
+        }
+        let flaw = if frontend["reasoning"]["allow_disabled"] == false {
+            Flaw::AlwaysReasons
+        } else {
+            Flaw::None
+        };
+        let (status, kind, text) = answer(path, &translated, flaw);
+        if path == "/v1/chat/completions" && kind == "application/json" && status == "200 OK" {
+            let mut response = parse(text.as_bytes()).unwrap();
+            for choice in response["choices"].as_array_mut().unwrap() {
+                let message = choice["message"].as_object_mut().unwrap();
+                if field != "reasoning"
+                    && let Some(reasoning) = message.shift_remove("reasoning")
+                {
+                    message.insert(field.into(), reasoning);
+                }
+            }
+            (status, kind, response.to_string())
+        } else {
+            (status, kind, text)
+        }
+    })
+}
+
+fn object_reasoning_capture(name: &str, wrong_mode: Option<bool>) -> (Value, Log) {
+    let (loaded, inputs) = declared(name, true, json!({}));
+    let frontend = json!({"reasoning": {"thinking_keywords": ["ignored"],
+                                        "switch": "thinking-object"},
+                          "response": {"reasoning_field": "reasoning_content"}});
+    std::fs::write(inputs["frontend"].as_str().unwrap(), frontend.to_string()).unwrap();
+    let (url, log) = reasoning_server(frontend, wrong_mode);
+    let receipt = capture(&loaded, &url, Duration::from_secs(60), false).unwrap();
+    (receipt, log)
+}
+
+#[test]
+fn thinking_object_checks_the_declared_response_field_in_both_modes() {
+    let (receipt, log) = object_reasoning_capture("thinking-object", None);
+    assert_eq!(receipt["passed"], true, "{}", receipt["errors"]);
+    assert_eq!(rows(&receipt)[34]["passed"], true);
+    assert_eq!(rows(&receipt)[35]["passed"], true);
+    let bodies: Vec<Value> = log
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, body)| body["messages"][0]["content"] == "What is 17 times 23?")
+        .map(|(_, body)| body.clone())
+        .collect();
+    assert_eq!(bodies.len(), 3);
+    for (body, mode) in bodies.iter().zip(["enabled", "enabled", "disabled"]) {
+        assert_eq!(body["thinking"], json!({"type": mode}));
+        assert!(body.get("chat_template_kwargs").is_none());
+    }
+    assert_eq!(bodies[0]["include_reasoning"], false);
+}
+
+#[test]
+fn thinking_object_rejects_missing_reasoning_when_enabled() {
+    let (receipt, _) = object_reasoning_capture("thinking-object-missing", Some(true));
+    assert_eq!(rows(&receipt)[34]["passed"], false);
+    assert_eq!(rows(&receipt)[35]["passed"], true);
+    assert_eq!(receipt["errors"][0]["error"], "reasoning mode mismatch");
+}
+
+#[test]
+fn thinking_object_rejects_reasoning_when_disabled() {
+    let (receipt, _) = object_reasoning_capture("thinking-object-ignored", Some(false));
+    assert_eq!(rows(&receipt)[34]["passed"], true);
+    assert_eq!(rows(&receipt)[35]["passed"], false);
+    assert_eq!(receipt["errors"][0]["name"], "reasoning_False");
+    assert_eq!(receipt["errors"][0]["error"], "reasoning mode mismatch");
+}
+
+#[test]
+fn shipped_template_controls_preserve_recorded_api_requests_and_assertions() {
+    let mut covered = Vec::new();
+    for entry in std::fs::read_dir(root().join("models")).unwrap() {
+        let directory = entry.unwrap().path();
+        let path = directory.join("compiler/src/frontend.json");
+        if !path.is_file() {
+            continue;
+        }
+        let frontend = parse(&std::fs::read(path).unwrap()).unwrap();
+        if frontend["reasoning"]["switch"] == "thinking-object"
+            || frontend["response"]["reasoning_field"] != "reasoning"
+        {
+            continue;
+        }
+        let name = directory.file_name().unwrap().to_str().unwrap();
+        let (loaded, inputs) = declared(&format!("shipped-{name}"), true, json!({}));
+        std::fs::write(inputs["frontend"].as_str().unwrap(), frontend.to_string()).unwrap();
+        let (url, log) = reasoning_server(frontend.clone(), None);
+        let receipt = capture(&loaded, &url, Duration::from_secs(60), false).unwrap();
+        let always = frontend["reasoning"]["allow_disabled"] == false;
+        let baseline_name = if always { "reasons" } else { "pass" };
+        let flaw = if always {
+            Flaw::AlwaysReasons
+        } else {
+            Flaw::None
+        };
+        let (baseline, baseline_inputs) = declared(&format!("baseline-{name}"), true, json!({}));
+        let baseline_frontend = json!({"reasoning": {"thinking_keywords": ["thinking"],
+                                                    "allow_disabled": !always}});
+        std::fs::write(
+            baseline_inputs["frontend"].as_str().unwrap(),
+            baseline_frontend.to_string(),
+        )
+        .unwrap();
+        let (baseline_url, baseline_log) = fake_server(flaw);
+        let baseline_receipt =
+            capture(&baseline, &baseline_url, Duration::from_secs(60), false).unwrap();
+        as_retired_python_wrote(
+            &format!("api/{baseline_name}"),
+            &invariant(&baseline_log, &baseline_receipt),
+        );
+        let keyword = frontend["reasoning"]["thinking_keywords"][0]
+            .as_str()
+            .unwrap();
+        let expected: Vec<_> = requests(&baseline_log)
+            .into_iter()
+            .map(|(line, body)| {
+                (
+                    line,
+                    body.replace("\"thinking\":", &format!("\"{keyword}\":")),
+                )
+            })
+            .collect();
+        let actual = requests(&log);
+        assert_eq!(actual.len(), expected.len(), "{name}: request count");
+        for (index, (actual, expected)) in actual.iter().zip(&expected).enumerate() {
+            assert_eq!(actual, expected, "{name}: request {index} bytes");
+        }
+        assert_eq!(
+            canonical(&comparable(&receipt)),
+            canonical(&comparable(&baseline_receipt)),
+            "{name}: assertions and receipts"
+        );
+        covered.push(name.to_owned());
+    }
+    covered.sort();
+    eprintln!(
+        "recorded API request/assertion parity: {}",
+        covered.join(", ")
+    );
+    assert!(
+        covered.len() >= 3,
+        "must cover the shipped template-based frontends"
+    );
 }
 
 /// A frontend that always reasons must refuse the disabled-thinking case,

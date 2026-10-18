@@ -6,6 +6,8 @@ DeepSeek V4.1 Flash, from the official checkpoint
 `deepseek41.v1` at topology `deepseek41-flash-tp4`. It is not released:
 `model.toml` declares `[release] enabled = false` until it qualifies.
 
+Supports images in tool results through Chat Completions and Responses, in the official encoder's prompt order.
+
 | Crate | Directory | Holds |
 |---|---|---|
 | `model-deepseek41-contract` | `contract/` | IDs, geometry, projection declarations and kernel contracts the compiler, bundle and lab share |

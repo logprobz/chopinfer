@@ -118,8 +118,15 @@ pub enum Block {
     /// A tool result, as `merge_tool_messages` writes it.
     ToolResult {
         tool_use_id: String,
-        content: String,
+        content: ToolContent,
     },
+}
+
+/// A tool result keeps its list until images have been collected after sorting.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ToolContent {
+    Text(String),
+    Blocks(Vec<Block>),
 }
 
 /// One tool call of an assistant turn, in OpenAI's form: the function's
@@ -343,7 +350,10 @@ fn merge_tool_messages(messages: &[Message]) -> Vec<Message> {
             Role::Tool => {
                 let block = Block::ToolResult {
                     tool_use_id: message.tool_call_id.unwrap_or_default(),
-                    content: message.content.unwrap_or_default(),
+                    content: match message.content {
+                        Some(text) => ToolContent::Text(text),
+                        None => ToolContent::Blocks(message.blocks.unwrap_or_default()),
+                    },
                 };
                 if mergeable(merged.last()) {
                     merged
@@ -464,21 +474,7 @@ fn process_image_messages(
         let Some(blocks) = message.blocks.as_mut().filter(|blocks| !blocks.is_empty()) else {
             continue;
         };
-        for block in blocks.iter_mut() {
-            match block {
-                Block::Image(index) => {
-                    images.push(*index);
-                    *block = Block::Text(placeholder(images.len() - 1));
-                }
-                Block::Text(text) if text.contains(IMAGE_PLACEHOLDER) => {
-                    return error(format!(
-                        "Text block contains image placeholder '{IMAGE_PLACEHOLDER}'. Images \
-                         should be separate content blocks."
-                    ));
-                }
-                _ => {}
-            }
-        }
+        process_image_blocks(blocks, placeholder, &mut images)?;
         // Lines 387-393: a list content's text is its text blocks joined.
         if message.content.is_none() {
             let texts: Vec<&str> = blocks
@@ -492,6 +488,36 @@ fn process_image_messages(
         }
     }
     Ok(images)
+}
+
+/// `_process_image_blocks` also descends into list-valued tool results.
+fn process_image_blocks(
+    blocks: &mut [Block],
+    placeholder: &dyn Fn(usize) -> String,
+    images: &mut Vec<usize>,
+) -> Result<()> {
+    for block in blocks {
+        match block {
+            Block::Image(index) => {
+                images.push(*index);
+                *block = Block::Text(placeholder(images.len() - 1));
+            }
+            Block::ToolResult {
+                content: ToolContent::Blocks(nested),
+                ..
+            } => {
+                process_image_blocks(nested, placeholder, images)?;
+            }
+            Block::Text(text) if text.contains(IMAGE_PLACEHOLDER) => {
+                return error(format!(
+                    "Text block contains image placeholder '{IMAGE_PLACEHOLDER}'. Images \
+                     should be separate content blocks."
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// `render_reasoning_effort` (lines 456-474): the effort is checked for
@@ -681,6 +707,20 @@ fn render_message(
                         .map(|block| match block {
                             Block::Text(text) => text.clone(),
                             Block::ToolResult { content, .. } => {
+                                let content = match content {
+                                    ToolContent::Text(text) => text.clone(),
+                                    ToolContent::Blocks(blocks) => blocks
+                                        .iter()
+                                        .map(|block| match block {
+                                            Block::Text(text) => text.clone(),
+                                            Block::Image(_) => "[Unsupported image]".into(),
+                                            Block::ToolResult { .. } => {
+                                                "[Unsupported tool_result]".into()
+                                            }
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join("\n\n"),
+                                };
                                 format!("<tool_result>{content}</tool_result>")
                             }
                             Block::Image(_) => "[Unsupported image]".to_owned(),

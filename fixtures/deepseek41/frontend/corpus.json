@@ -277,86 +277,9 @@
   ]
  },
  {
-  "id": "g0003",
+  "id": "g0001",
   "raw": true,
   "messages": [
-   {
-    "role": "system",
-    "content": "  \n "
-   },
-   {
-    "role": "user",
-    "content": ""
-   },
-   {
-    "role": "assistant",
-    "content": "",
-    "reasoning": "Plan the answer.",
-    "tool_calls": [
-     {
-      "id": "call_0",
-      "type": "function",
-      "function": {
-       "name": "get_weather",
-       "arguments": "{\"value\": \"Paris <&>\", \"city\": \"Paris\"}"
-      }
-     }
-    ]
-   }
-  ],
-  "tools": [
-   {
-    "type": "function",
-    "function": {
-     "name": "get_weather",
-     "description": "The get_weather tool.",
-     "parameters": {
-      "type": "object",
-      "properties": {
-       "value": {
-        "type": "string"
-       },
-       "city": {
-        "type": "string"
-       }
-      }
-     }
-    }
-   },
-   {
-    "type": "function",
-    "function": {
-     "name": "clock",
-     "description": "The time.",
-     "parameters": {
-      "type": "object",
-      "properties": {}
-     }
-    }
-   }
-  ],
-  "thinking": {
-   "type": "adaptive"
-  },
-  "chat_template_kwargs": {
-   "reasoning_effort": "low",
-   "clear_thinking": true,
-   "preserve_thinking": false
-  },
-  "add_generation_prompt": true,
-  "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
-   "parameter": "messages"
-  }
- },
- {
-  "id": "g0005",
-  "raw": true,
-  "messages": [
-   {
-    "role": "system",
-    "content": "You are terse."
-   },
    {
     "role": "user",
     "content": [
@@ -378,146 +301,15 @@
    },
    {
     "role": "assistant",
-    "content": "  It is 18 °C.  ",
-    "reasoning": "Plan the answer."
-   }
-  ],
-  "chat_template_kwargs": {
-   "enable_thinking": false,
-   "clear_thinking": false
-  },
-  "response_format": {
-   "type": "text"
-  },
-  "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
-   "parameter": "messages"
-  }
- },
- {
-  "id": "g0009",
-  "raw": true,
-  "messages": [
-   {
-    "role": "system",
-    "content": ""
-   },
-   {
-    "role": "user",
-    "content": "What is the weather in Paris?"
-   },
-   {
-    "role": "assistant",
-    "content": " \n ",
-    "reasoning": "Plan the answer.",
+    "content": null,
     "reasoning_content": " Check the units. ",
-    "tool_calls": [
-     {
-      "id": "call_0",
-      "type": "function",
-      "function": {
-       "name": "get_weather",
-       "arguments": "{\"value\": 1e-05, \"city\": \"Paris\"}"
-      }
-     }
-    ]
-   }
-  ],
-  "tools": [
-   {
-    "type": "function",
-    "function": {
-     "name": "get_weather",
-     "description": null,
-     "parameters": {
-      "type": "object",
-      "properties": {
-       "value": {
-        "type": "number"
-       },
-       "city": {
-        "type": "string"
-       }
-      }
-     }
-    }
-   },
-   {
-    "type": "function",
-    "function": {
-     "name": "clock",
-     "description": "The time.",
-     "parameters": {
-      "type": "object",
-      "properties": {}
-     },
-     "defer_loading": true
-    }
-   }
-  ],
-  "chat_template_kwargs": {
-   "reasoning_effort": "high",
-   "enable_thinking": false,
-   "preserve_thinking": true
-  },
-  "response_format": {
-   "type": "json_object"
-  },
-  "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
-   "parameter": "messages"
-  }
- },
- {
-  "id": "g0011",
-  "raw": true,
-  "messages": [
-   {
-    "role": "user",
-    "content": [
-     {
-      "type": "text",
-      "text": "Look at this "
-     },
-     {
-      "type": "image_url",
-      "image_url": {
-       "url": "data:image/png;base64,AA=="
-      }
-     },
-     {
-      "type": "text",
-      "text": " and say what it is."
-     }
-    ]
-   },
-   {
-    "role": "assistant",
-    "content": "<think>inline plan</think> It is mild.",
-    "reasoning": "Plan the answer.",
     "tool_calls": [
      {
       "id": "",
       "type": "function",
       "function": {
        "name": "get_weather",
-       "arguments": "{\"value\": true, \"city\": \"Paris\"}"
-      }
-     },
-     {
-      "id": "call_1",
-      "type": "function",
-      "function": {
-       "name": "convert",
-       "arguments": "{\"value\": [1, \"two\", 3.5, null]}"
-      }
-     },
-     {
-      "id": "call_2",
-      "type": "function",
-      "function": {
-       "name": "ping",
-       "arguments": "{\"value\": 1.0}"
+       "arguments": "{\"value\": 3, \"city\": \"Paris\"}"
       }
      }
     ]
@@ -525,17 +317,16 @@
    {
     "role": "tool",
     "tool_call_id": "",
-    "content": "18 °C"
-   },
-   {
-    "role": "tool",
-    "tool_call_id": "call_1",
-    "content": "{\"temp\": 21}"
-   },
-   {
-    "role": "tool",
-    "tool_call_id": "call_2",
-    "content": " pong "
+    "content": [
+     {
+      "type": "text",
+      "text": "18 °C"
+     },
+     {
+      "type": "text",
+      "text": " (cached)"
+     }
+    ]
    },
    {
     "role": "tool",
@@ -547,49 +338,20 @@
    {
     "type": "function",
     "function": {
+     "name": "get_weather",
+     "description": "The get_weather tool.",
      "parameters": {
       "type": "object",
       "properties": {
        "value": {
-        "type": "boolean"
+        "type": "integer"
        },
        "city": {
         "type": "string"
        }
       }
      },
-     "description": "The get_weather tool.",
-     "name": "get_weather"
-    }
-   },
-   {
-    "type": "function",
-    "function": {
-     "name": "convert",
-     "description": "The convert tool.",
-     "parameters": {
-      "type": "object",
-      "properties": {
-       "value": {
-        "type": "array"
-       }
-      }
-     }
-    }
-   },
-   {
-    "type": "function",
-    "function": {
-     "name": "ping",
-     "description": "The ping tool.",
-     "parameters": {
-      "type": "object",
-      "properties": {
-       "value": {
-        "type": "number"
-       }
-      }
-     }
+     "strict": true
     }
    },
    {
@@ -601,19 +363,18 @@
       "type": "object",
       "properties": {}
      },
-     "defer_loading": "true"
+     "defer_loading": false
     }
    }
   ],
   "chat_template_kwargs": {
-   "thinking": true,
-   "preserve_thinking": false
+   "reasoning_effort": "max",
+   "enable_thinking": true
   },
-  "add_generation_prompt": false,
   "response_format": {
-   "type": "json_object"
+   "type": "text"
   },
-  "rendered_text": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the value, the more thorough the reasoning)\n\n\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"get_weather\", \"description\": \"The get_weather tool.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"value\": {\"type\": \"boolean\"}, \"city\": {\"type\": \"string\"}}}}\n{\"name\": \"convert\", \"description\": \"The convert tool.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"value\": {\"type\": \"array\"}}}}\n{\"name\": \"ping\", \"description\": \"The ping tool.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"value\": {\"type\": \"number\"}}}}\n{\"name\": \"clock\", \"description\": \"The time.\", \"parameters\": {\"type\": \"object\", \"properties\": {}}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n\n\n## Response Format:\n\nYou MUST strictly adhere to the following schema to reply:\n{\"type\": \"json_object\"}<｜User｜>Look at this \n\n<｜deepseek_image｜>\n\n and say what it is.<｜Assistant｜><think></think><think>inline plan</think> It is mild.\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"get_weather\">\n<｜DSML｜ parameter name=\"value\" string=\"false\">true</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"city\" string=\"true\">Paris</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"convert\">\n<｜DSML｜ parameter name=\"value\" string=\"false\">[1, \"two\", 3.5, null]</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"ping\">\n<｜DSML｜ parameter name=\"value\" string=\"false\">1.0</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜><｜User｜><tool_result>18 °C</tool_result>\n\n<tool_result>again</tool_result>\n\n<tool_result>{\"temp\": 21}</tool_result>\n\n<tool_result> pong </tool_result><｜Assistant｜><think>",
+  "rendered_text": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the value, the more thorough the reasoning)\n\n\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"get_weather\", \"description\": \"The get_weather tool.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"value\": {\"type\": \"integer\"}, \"city\": {\"type\": \"string\"}}}}\n{\"name\": \"clock\", \"description\": \"The time.\", \"parameters\": {\"type\": \"object\", \"properties\": {}}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n\n\n## Response Format:\n\nYou MUST strictly adhere to the following schema to reply:\n{\"type\": \"text\"}<｜User｜>Look at this \n\n<｜deepseek_image｜>\n\n and say what it is.<｜Assistant｜><think> Check the units. </think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"get_weather\">\n<｜DSML｜ parameter name=\"value\" string=\"false\">3</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"city\" string=\"true\">Paris</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜><｜User｜><tool_result>18 °C\n\n (cached)</tool_result>\n\n<tool_result>again</tool_result><｜Assistant｜><think>",
   "token_ids": [
    0,
    128799,
@@ -872,7 +633,7 @@
    4611,
    3362,
    582,
-   36541,
+   39648,
    87928,
    582,
    37399,
@@ -882,80 +643,6 @@
    3362,
    582,
    4463,
-   4,
-   3831,
-   30316,
-   24313,
-   2852,
-   3362,
-   582,
-   54276,
-   1760,
-   582,
-   20855,
-   3362,
-   582,
-   671,
-   4321,
-   4105,
-   66910,
-   582,
-   46172,
-   3362,
-   28612,
-   4611,
-   3362,
-   582,
-   10325,
-   1760,
-   582,
-   68838,
-   3362,
-   28612,
-   5197,
-   3362,
-   28612,
-   4611,
-   3362,
-   582,
-   7386,
-   4,
-   3831,
-   30316,
-   24313,
-   2852,
-   3362,
-   582,
-   22153,
-   1760,
-   582,
-   20855,
-   3362,
-   582,
-   671,
-   58093,
-   4105,
-   66910,
-   582,
-   46172,
-   3362,
-   28612,
-   4611,
-   3362,
-   582,
-   10325,
-   1760,
-   582,
-   68838,
-   3362,
-   28612,
-   5197,
-   3362,
-   28612,
-   4611,
-   3362,
-   582,
-   14360,
    4,
    3831,
    30316,
@@ -1023,8 +710,7 @@
    4611,
    3362,
    582,
-   14479,
-   55774,
+   2067,
    62773,
    128803,
    18948,
@@ -1041,15 +727,13 @@
    16,
    128804,
    128821,
+   8824,
+   270,
+   7130,
+   16,
+   223,
    128822,
-   128821,
-   46900,
-   2831,
-   128822,
-   983,
-   344,
-   18857,
-   339,
+   271,
    30,
    128825,
    10699,
@@ -1074,7 +758,7 @@
    1281,
    19836,
    3320,
-   11476,
+   21,
    1718,
    128825,
    10767,
@@ -1099,74 +783,6 @@
    128825,
    34756,
    1018,
-   30,
-   128825,
-   34756,
-   2329,
-   1281,
-   54276,
-   3816,
-   30,
-   128825,
-   10767,
-   2329,
-   1281,
-   5197,
-   4,
-   3418,
-   1281,
-   19836,
-   3320,
-   61,
-   19,
-   14,
-   582,
-   23315,
-   1760,
-   223,
-   21,
-   16,
-   23,
-   14,
-   5100,
-   63,
-   1718,
-   128825,
-   10767,
-   1018,
-   1718,
-   128825,
-   34756,
-   1018,
-   30,
-   128825,
-   34756,
-   2329,
-   1281,
-   22153,
-   3816,
-   30,
-   128825,
-   10767,
-   2329,
-   1281,
-   5197,
-   4,
-   3418,
-   1281,
-   19836,
-   3320,
-   19,
-   16,
-   18,
-   1718,
-   128825,
-   10767,
-   1018,
-   1718,
-   128825,
-   34756,
-   1018,
    1718,
    128825,
    10699,
@@ -1180,7 +796,11 @@
    864,
    8490,
    37,
-   1718,
+   271,
+   343,
+   69,
+   5246,
+   51761,
    72461,
    46148,
    4697,
@@ -1192,33 +812,202 @@
    1718,
    72461,
    46148,
-   4697,
-   30,
-   72461,
-   46148,
-   32,
-   24313,
-   26343,
-   3362,
-   223,
-   1602,
-   24568,
-   72461,
-   46148,
-   4697,
-   30,
-   72461,
-   46148,
-   32,
-   280,
-   700,
-   2728,
-   72461,
-   46148,
    32,
    128804,
    128821
   ]
+ },
+ {
+  "id": "g0003",
+  "raw": true,
+  "messages": [
+   {
+    "role": "system",
+    "content": "  \n "
+   },
+   {
+    "role": "user",
+    "content": ""
+   },
+   {
+    "role": "assistant",
+    "content": "",
+    "reasoning": "Plan the answer.",
+    "tool_calls": [
+     {
+      "id": "call_0",
+      "type": "function",
+      "function": {
+       "name": "get_weather",
+       "arguments": "{\"value\": \"Paris <&>\", \"city\": \"Paris\"}"
+      }
+     }
+    ]
+   }
+  ],
+  "tools": [
+   {
+    "type": "function",
+    "function": {
+     "name": "get_weather",
+     "description": "The get_weather tool.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "value": {
+        "type": "string"
+       },
+       "city": {
+        "type": "string"
+       }
+      }
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "clock",
+     "description": "The time.",
+     "parameters": {
+      "type": "object",
+      "properties": {}
+     }
+    }
+   }
+  ],
+  "thinking": {
+   "type": "adaptive"
+  },
+  "chat_template_kwargs": {
+   "reasoning_effort": "low",
+   "clear_thinking": true,
+   "preserve_thinking": false
+  },
+  "add_generation_prompt": true,
+  "refusal": {
+   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "parameter": "messages"
+  }
+ },
+ {
+  "id": "g0005",
+  "raw": true,
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are terse."
+   },
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "text",
+      "text": "Look at this "
+     },
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/png;base64,AA=="
+      }
+     },
+     {
+      "type": "text",
+      "text": " and say what it is."
+     }
+    ]
+   },
+   {
+    "role": "assistant",
+    "content": "  It is 18 °C.  ",
+    "reasoning": "Plan the answer."
+   }
+  ],
+  "chat_template_kwargs": {
+   "enable_thinking": false,
+   "clear_thinking": false
+  },
+  "response_format": {
+   "type": "text"
+  },
+  "refusal": {
+   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "parameter": "messages"
+  }
+ },
+ {
+  "id": "g0009",
+  "raw": true,
+  "messages": [
+   {
+    "role": "system",
+    "content": ""
+   },
+   {
+    "role": "user",
+    "content": "What is the weather in Paris?"
+   },
+   {
+    "role": "assistant",
+    "content": " \n ",
+    "reasoning": "Plan the answer.",
+    "reasoning_content": " Check the units. ",
+    "tool_calls": [
+     {
+      "id": "call_0",
+      "type": "function",
+      "function": {
+       "name": "get_weather",
+       "arguments": "{\"value\": 1e-05, \"city\": \"Paris\"}"
+      }
+     }
+    ]
+   }
+  ],
+  "tools": [
+   {
+    "type": "function",
+    "function": {
+     "name": "get_weather",
+     "description": null,
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "value": {
+        "type": "number"
+       },
+       "city": {
+        "type": "string"
+       }
+      }
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "clock",
+     "description": "The time.",
+     "parameters": {
+      "type": "object",
+      "properties": {}
+     },
+     "defer_loading": true
+    }
+   }
+  ],
+  "chat_template_kwargs": {
+   "reasoning_effort": "high",
+   "enable_thinking": false,
+   "preserve_thinking": true
+  },
+  "response_format": {
+   "type": "json_object"
+  },
+  "refusal": {
+   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "parameter": "messages"
+  }
  },
  {
   "id": "g0014",
@@ -10529,6 +10318,647 @@
    "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
    "parameter": "messages"
   }
+ },
+ {
+  "id": "tool-image-single",
+  "raw": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": "Look."
+   },
+   {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+     {
+      "id": "a",
+      "type": "function",
+      "function": {
+       "name": "look",
+       "arguments": "{}"
+      }
+     },
+     {
+      "id": "b",
+      "type": "function",
+      "function": {
+       "name": "look",
+       "arguments": "{}"
+      }
+     }
+    ]
+   },
+   {
+    "role": "tool",
+    "tool_call_id": "a",
+    "content": [
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/png;base64,AA=="
+      }
+     }
+    ]
+   }
+  ],
+  "thinking": {
+   "type": "disabled"
+  },
+  "rendered_text": "<｜begin▁of▁sentence｜><｜User｜>Look.<｜Assistant｜></think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"look\">\n\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"look\">\n\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜><｜User｜><tool_result><｜deepseek_image｜></tool_result><｜Assistant｜></think>",
+  "token_ids": [
+   0,
+   128803,
+   18948,
+   16,
+   128804,
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   12533,
+   32572,
+   1718,
+   128825,
+   34756,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   12533,
+   32572,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1,
+   128803,
+   30,
+   72461,
+   46148,
+   32,
+   129264,
+   1718,
+   72461,
+   46148,
+   32,
+   128804,
+   128822
+  ]
+ },
+ {
+  "id": "tool-images-several",
+  "raw": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": "Look."
+   },
+   {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+     {
+      "id": "a",
+      "type": "function",
+      "function": {
+       "name": "look",
+       "arguments": "{}"
+      }
+     },
+     {
+      "id": "b",
+      "type": "function",
+      "function": {
+       "name": "look",
+       "arguments": "{}"
+      }
+     }
+    ]
+   },
+   {
+    "role": "tool",
+    "tool_call_id": "a",
+    "content": [
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/png;base64,AA=="
+      }
+     },
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/png;base64,AQ=="
+      }
+     }
+    ]
+   }
+  ],
+  "thinking": {
+   "type": "disabled"
+  },
+  "rendered_text": "<｜begin▁of▁sentence｜><｜User｜>Look.<｜Assistant｜></think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"look\">\n\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"look\">\n\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜><｜User｜><tool_result><｜deepseek_image｜>\n\n<｜deepseek_image｜></tool_result><｜Assistant｜></think>",
+  "token_ids": [
+   0,
+   128803,
+   18948,
+   16,
+   128804,
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   12533,
+   32572,
+   1718,
+   128825,
+   34756,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   12533,
+   32572,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1,
+   128803,
+   30,
+   72461,
+   46148,
+   32,
+   129264,
+   271,
+   129264,
+   1718,
+   72461,
+   46148,
+   32,
+   128804,
+   128822
+  ]
+ },
+ {
+  "id": "tool-images-mixed-text",
+  "raw": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": "Look."
+   },
+   {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+     {
+      "id": "a",
+      "type": "function",
+      "function": {
+       "name": "look",
+       "arguments": "{}"
+      }
+     },
+     {
+      "id": "b",
+      "type": "function",
+      "function": {
+       "name": "look",
+       "arguments": "{}"
+      }
+     }
+    ]
+   },
+   {
+    "role": "tool",
+    "tool_call_id": "a",
+    "content": [
+     {
+      "type": "text",
+      "text": "before"
+     },
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/png;base64,AA=="
+      }
+     },
+     {
+      "type": "text",
+      "text": "between"
+     },
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/png;base64,AQ=="
+      }
+     },
+     {
+      "type": "text",
+      "text": "after"
+     }
+    ]
+   }
+  ],
+  "thinking": {
+   "type": "disabled"
+  },
+  "rendered_text": "<｜begin▁of▁sentence｜><｜User｜>Look.<｜Assistant｜></think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"look\">\n\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"look\">\n\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜><｜User｜><tool_result>before\n\n<｜deepseek_image｜>\n\nbetween\n\n<｜deepseek_image｜>\n\nafter</tool_result><｜Assistant｜></think>",
+  "token_ids": [
+   0,
+   128803,
+   18948,
+   16,
+   128804,
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   12533,
+   32572,
+   1718,
+   128825,
+   34756,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   12533,
+   32572,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1,
+   128803,
+   30,
+   72461,
+   46148,
+   32,
+   35975,
+   271,
+   129264,
+   271,
+   40188,
+   271,
+   129264,
+   271,
+   15479,
+   1718,
+   72461,
+   46148,
+   32,
+   128804,
+   128822
+  ]
+ },
+ {
+  "id": "tool-images-sorted",
+  "raw": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": "Look."
+   },
+   {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+     {
+      "id": "a",
+      "type": "function",
+      "function": {
+       "name": "look",
+       "arguments": "{}"
+      }
+     },
+     {
+      "id": "b",
+      "type": "function",
+      "function": {
+       "name": "look",
+       "arguments": "{}"
+      }
+     }
+    ]
+   },
+   {
+    "role": "tool",
+    "tool_call_id": "b",
+    "content": [
+     {
+      "type": "text",
+      "text": "second"
+     },
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/png;base64,AA=="
+      }
+     }
+    ]
+   },
+   {
+    "role": "tool",
+    "tool_call_id": "a",
+    "content": [
+     {
+      "type": "text",
+      "text": "first"
+     },
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/png;base64,AQ=="
+      }
+     },
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/png;base64,Ag=="
+      }
+     }
+    ]
+   }
+  ],
+  "thinking": {
+   "type": "disabled"
+  },
+  "rendered_text": "<｜begin▁of▁sentence｜><｜User｜>Look.<｜Assistant｜></think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"look\">\n\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"look\">\n\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜><｜User｜><tool_result>first\n\n<｜deepseek_image｜>\n\n<｜deepseek_image｜></tool_result>\n\n<tool_result>second\n\n<｜deepseek_image｜></tool_result><｜Assistant｜></think>",
+  "token_ids": [
+   0,
+   128803,
+   18948,
+   16,
+   128804,
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   12533,
+   32572,
+   1718,
+   128825,
+   34756,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   12533,
+   32572,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1,
+   128803,
+   30,
+   72461,
+   46148,
+   32,
+   13213,
+   271,
+   129264,
+   271,
+   129264,
+   1718,
+   72461,
+   46148,
+   4697,
+   30,
+   72461,
+   46148,
+   32,
+   10930,
+   271,
+   129264,
+   1718,
+   72461,
+   46148,
+   32,
+   128804,
+   128822
+  ]
+ },
+ {
+  "id": "tool-images-with-user",
+  "raw": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/png;base64,AA=="
+      }
+     }
+    ]
+   },
+   {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+     {
+      "id": "a",
+      "type": "function",
+      "function": {
+       "name": "look",
+       "arguments": "{}"
+      }
+     },
+     {
+      "id": "b",
+      "type": "function",
+      "function": {
+       "name": "look",
+       "arguments": "{}"
+      }
+     }
+    ]
+   },
+   {
+    "role": "tool",
+    "tool_call_id": "b",
+    "content": [
+     {
+      "type": "text",
+      "text": "second"
+     },
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/png;base64,AQ=="
+      }
+     }
+    ]
+   },
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/png;base64,Ag=="
+      }
+     }
+    ]
+   },
+   {
+    "role": "tool",
+    "tool_call_id": "a",
+    "content": [
+     {
+      "type": "text",
+      "text": "first"
+     },
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/png;base64,Aw=="
+      }
+     },
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/png;base64,BA=="
+      }
+     },
+     {
+      "type": "text",
+      "text": "end"
+     }
+    ]
+   }
+  ],
+  "thinking": {
+   "type": "disabled"
+  },
+  "rendered_text": "<｜begin▁of▁sentence｜><｜User｜><｜deepseek_image｜><｜Assistant｜></think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"look\">\n\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"look\">\n\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜><｜User｜><tool_result>first\n\n<｜deepseek_image｜>\n\n<｜deepseek_image｜>\n\nend</tool_result>\n\n<｜deepseek_image｜>\n\n<tool_result>second\n\n<｜deepseek_image｜></tool_result><｜Assistant｜></think>",
+  "token_ids": [
+   0,
+   128803,
+   129264,
+   128804,
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   12533,
+   32572,
+   1718,
+   128825,
+   34756,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   12533,
+   32572,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1,
+   128803,
+   30,
+   72461,
+   46148,
+   32,
+   13213,
+   271,
+   129264,
+   271,
+   129264,
+   271,
+   523,
+   1718,
+   72461,
+   46148,
+   4697,
+   129264,
+   271,
+   30,
+   72461,
+   46148,
+   32,
+   10930,
+   271,
+   129264,
+   1718,
+   72461,
+   46148,
+   32,
+   128804,
+   128822
+  ]
  },
  {
   "id": "vendor-pair-1",

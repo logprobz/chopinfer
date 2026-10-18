@@ -410,7 +410,10 @@ impl DeepSeekV41Format {
             for part in parts {
                 match part {
                     FrontendContentPartV1::Text(text) => blocks.push(Block::Text(text.clone())),
-                    FrontendContentPartV1::Media(item) if role == Role::User => {
+                    FrontendContentPartV1::Media(item)
+                        if role == Role::User
+                            || (role == Role::Tool && descriptor.tools.image_results) =>
+                    {
                         media_kind_v1(descriptor, item)?;
                         blocks.push(Block::Image(media.len()));
                         media.push(item.clone());
@@ -423,7 +426,7 @@ impl DeepSeekV41Format {
                     }
                 }
             }
-            if role == Role::User {
+            if role == Role::User || role == Role::Tool {
                 result.blocks = Some(blocks);
                 result.content = None;
             } else {

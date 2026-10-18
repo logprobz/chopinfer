@@ -260,7 +260,40 @@ WEATHER = {"type": "function", "function": {
         "required": ["location"]}}}
 
 
+def tool_image_cases():
+    """Image results and the vendor's source order, including sorting across user parts."""
+    def image(data):
+        return {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{data}"}}
+
+    def text(value):
+        return {"type": "text", "text": value}
+
+    def result(identifier, parts):
+        return {"role": "tool", "tool_call_id": identifier, "content": parts}
+
+    initial = [user("Look."), {"role": "assistant", "content": "", "tool_calls": [
+        call("a", "look", {}), call("b", "look", {})]}]
+    for name, results, order in [
+        ("tool-image-single", [result("a", [image("AA==")])], ["AA=="]),
+        ("tool-images-several", [result("a", [image("AA=="), image("AQ==")])], ["AA==", "AQ=="]),
+        ("tool-images-mixed-text", [result("a", [text("before"), image("AA=="),
+            text("between"), image("AQ=="), text("after")])], ["AA==", "AQ=="]),
+        ("tool-images-sorted", [result("b", [text("second"), image("AA==")]),
+            result("a", [text("first"), image("AQ=="), image("Ag==")])], ["AQ==", "Ag==", "AA=="]),
+        ("tool-images-with-user", [result("b", [text("second"), image("AQ==")]),
+            user([image("Ag==")]), result("a", [text("first"), image("Aw=="), image("BA=="), text("end")])],
+            ["AA==", "Aw==", "BA==", "Ag==", "AQ=="]),
+    ]:
+        messages = copy.deepcopy(initial)
+        if name == "tool-images-with-user":
+            messages[0] = user([image("AA==")])
+        yield name, {"messages": messages + results, "thinking": {"type": "disabled"}}, [
+            f"data:image/png;base64,{data}" for data in order]
+
+
 def cases(declaration):
+    for name, request, _ in tool_image_cases():
+        yield name, request, {f"fixed:{name}", "tool-results:images"}
     # The encoder's test pair 1 (encoding/tests/test_input_1.json) as a
     # served request: tools on the leading system message, a call without
     # an id and its result, thinking at the default effort.

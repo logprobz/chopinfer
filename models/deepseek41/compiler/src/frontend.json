@@ -135,6 +135,7 @@
     ]
   },
   "tools": {
+    "image_results": true,
     "name_bytes": {
       "ascii_alphanumeric": true,
       "extra": "_-"

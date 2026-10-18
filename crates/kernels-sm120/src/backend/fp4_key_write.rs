@@ -76,7 +76,7 @@ struct Write {
 impl Write {
     fn new(entry: &Entry, need: Need) -> Result<Self, Refused> {
         let info = OpInfo::new(
-            "sm120.fp4-key-write.f32-tail-rope-bf16-quantizer.v1",
+            "sm120.fp4-key-write.f32-tail-rope-status-or-zero.v2",
             Invariance::any_rows(need.capacity),
             vec![(entry.symbol().to_owned(), 0)],
         );
@@ -135,6 +135,19 @@ fn plane(view: View, pages: u32, stride: u64, minimum: u64) -> Result<(), Refusa
     )
 }
 
+fn status_buffer(status: View, offset: u64, rows: u32, operands: &[View]) -> Result<(), Refusal> {
+    status.covers(kernel_core::precision::quantizer::status_extent(
+        offset, rows,
+    )?)?;
+    if operands
+        .iter()
+        .any(|v| v.bytes > 0 && v.handle == status.handle)
+    {
+        return Err(Refusal("FP4 key-write status overlaps another operand"));
+    }
+    Ok(())
+}
+
 fn pointer(view: View) -> Argument {
     Argument::DeviceBuffer(view.handle)
 }
@@ -186,6 +199,22 @@ impl PreparedOp<PositionKeyWriteBuffers<View>> for IndexWrite {
         let elements = u64::from(write.entry.page_size()) * u64::from(write.entry.width());
         plane(k.codes, k.pages, k.code_page_stride, elements / 2)?;
         plane(k.scales, k.pages, k.scale_page_stride, elements / 32)?;
+        status_buffer(
+            b.status,
+            b.status_row_offset,
+            counts.rows,
+            &[
+                b.key,
+                b.norm_weight,
+                b.cos_sin,
+                b.positions,
+                b.row_batch,
+                b.live_rows,
+                k.page_tables.tables,
+                k.codes,
+                k.scales,
+            ],
+        )?;
         let mut args = vec![
             pointer(b.key),
             pointer(b.norm_weight),
@@ -205,6 +234,7 @@ impl PreparedOp<PositionKeyWriteBuffers<View>> for IndexWrite {
             counts,
             write.entry.eps_bits(),
         ));
+        args.extend([pointer(b.status), Argument::U64(b.status_row_offset)]);
         write.launch(args, counts)
     }
 }
@@ -252,6 +282,21 @@ impl PreparedOp<CompressedKvWriteBuffers<View>> for CompressedWrite {
                 View::EMPTY
             }
         };
+        status_buffer(
+            b.status,
+            b.status_row_offset,
+            counts.rows,
+            &[
+                b.latent,
+                b.cos_sin,
+                b.positions,
+                b.row_batch,
+                b.live_rows,
+                k.page_tables.tables,
+                k.values,
+                scale,
+            ],
+        )?;
         let mut args = vec![
             pointer(b.latent),
             pointer(b.cos_sin),
@@ -272,6 +317,7 @@ impl PreparedOp<CompressedKvWriteBuffers<View>> for CompressedWrite {
             counts,
             0,
         ));
+        args.extend([pointer(b.status), Argument::U64(b.status_row_offset)]);
         self.write.launch(args, counts)
     }
 }
@@ -318,6 +364,8 @@ mod tests {
 
     fn index_buffers() -> PositionKeyWriteBuffers<View> {
         PositionKeyWriteBuffers {
+            status: view(20),
+            status_row_offset: 3,
             key: view(1),
             norm_weight: view(2),
             cos_sin: view(3),
@@ -341,6 +389,8 @@ mod tests {
 
     fn compressed_buffers() -> CompressedKvWriteBuffers<View> {
         CompressedKvWriteBuffers {
+            status: view(20),
+            status_row_offset: 3,
             latent: view(1),
             cos_sin: view(2),
             positions: view(3),
@@ -458,6 +508,49 @@ mod tests {
         b = compressed_buffers();
         b.cos_sin.bytes = 1024 * 64 * 4 - 1;
         assert!(op.launches(&b, View::EMPTY, counts).is_err());
+    }
+
+    #[test]
+    fn status_extents_offsets_and_aliases_are_checked_for_both_writers() {
+        let counts = Counts::rows(8).with_positions(1024);
+        let q = index_query(2);
+        let op = Sm120::new()
+            .with_fp4_key_writes([Entry::index(&q, "status_index_v1").unwrap()])
+            .position_indexer_key_write(&q, Need::rows(8))
+            .unwrap();
+        let mut b = index_buffers();
+        b.status.bytes = (3 + 8) * 4;
+        let launch = op.launches(&b, View::EMPTY, counts).unwrap();
+        assert_eq!(launch[0].arguments.0.last(), Some(&Argument::U64(3)));
+        b.status.bytes -= 1;
+        assert!(op.launches(&b, View::EMPTY, counts).is_err());
+        b = index_buffers();
+        b.status_row_offset = u64::MAX;
+        assert!(op.launches(&b, View::EMPTY, counts).is_err());
+        for handle in 1..=9 {
+            let mut b = index_buffers();
+            b.status.handle = handle;
+            assert!(op.launches(&b, View::EMPTY, counts).is_err());
+        }
+        for storage in [CompressedKvStorage::Packed, CompressedKvStorage::Bf16] {
+            let q = compressed_query(storage, 2);
+            let op = Sm120::new()
+                .with_fp4_key_writes([Entry::compressed(&q, "status_kv_v1").unwrap()])
+                .compressed_kv_write(&q, Need::rows(8))
+                .unwrap();
+            let mut b = compressed_buffers();
+            if storage == CompressedKvStorage::Bf16 {
+                b.cache.scales = None;
+            }
+            op.launches(&b, View::EMPTY, counts).unwrap();
+            for handle in [1, 2, 3, 4, 5, 6, 8] {
+                let mut bad = b;
+                bad.status.handle = handle;
+                assert!(op.launches(&bad, View::EMPTY, counts).is_err());
+            }
+            b.status.bytes = 43;
+            assert!(op.launches(&b, View::EMPTY, counts).is_err());
+        }
     }
 
     #[test]

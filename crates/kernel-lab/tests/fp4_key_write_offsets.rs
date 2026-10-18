@@ -127,6 +127,7 @@ fn run(session: &Session, query: Query, strides: [u64; 2], fault: Option<Fault>)
     )?;
     let batch = upload(session, &[0; 8])?;
     let live = upload(session, &2_u32.to_le_bytes())?;
+    let status = upload(session, &[0; 20])?;
     let tables = upload(
         session,
         &[0_i32, 1]
@@ -147,6 +148,8 @@ fn run(session: &Session, query: Query, strides: [u64; 2], fault: Option<Fault>)
             .map_err(|e| e.to_string())?
             .launches(
                 &PositionKeyWriteBuffers {
+                    status: view(10, &status),
+                    status_row_offset: 3,
                     key: view(1, &key),
                     norm_weight: view(2, &norm),
                     cos_sin: view(3, &rope),
@@ -170,6 +173,8 @@ fn run(session: &Session, query: Query, strides: [u64; 2], fault: Option<Fault>)
             .map_err(|e| e.to_string())?
             .launches(
                 &CompressedKvWriteBuffers {
+                    status: view(10, &status),
+                    status_row_offset: 3,
                     latent: view(1, &key),
                     cos_sin: view(3, &rope),
                     positions: view(4, &positions),
@@ -199,6 +204,7 @@ fn run(session: &Session, query: Query, strides: [u64; 2], fault: Option<Fault>)
             (6, &live),
             (7, &tables),
             (8, &codes.buffer),
+            (10, &status),
         ]),
     };
     if let Some(scales) = &scales {

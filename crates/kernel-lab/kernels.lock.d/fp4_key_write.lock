@@ -88,6 +88,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -164,6 +173,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -235,6 +253,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -316,6 +343,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -392,6 +428,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -463,6 +508,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -470,12 +524,12 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "bf81d08a2c342220fd373c73408f7bbb811cc9dc2d05430f595d4eac43044493",
+    "cubin_sha256": "d51959cf55595ee0bfa18e545c68b64afc9e16fc349f57775ef99a5e6261a8d7",
     "resources": [
       {
         "symbol": "chop_fp4_index_r1_v1",
-        "registers": 29,
-        "shared_static_bytes": 1552,
+        "registers": 40,
+        "shared_static_bytes": 1556,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -483,8 +537,8 @@
       },
       {
         "symbol": "chop_fp4_compressed_packed_r1_v1",
-        "registers": 31,
-        "shared_static_bytes": 3072,
+        "registers": 40,
+        "shared_static_bytes": 3076,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -492,8 +546,8 @@
       },
       {
         "symbol": "chop_fp4_compressed_bf16_r1_v1",
-        "registers": 30,
-        "shared_static_bytes": 3072,
+        "registers": 40,
+        "shared_static_bytes": 3076,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -501,8 +555,8 @@
       },
       {
         "symbol": "chop_fp4_index_r2_v1",
-        "registers": 29,
-        "shared_static_bytes": 1552,
+        "registers": 40,
+        "shared_static_bytes": 1556,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -510,8 +564,8 @@
       },
       {
         "symbol": "chop_fp4_compressed_packed_r2_v1",
-        "registers": 31,
-        "shared_static_bytes": 3072,
+        "registers": 40,
+        "shared_static_bytes": 3076,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -519,8 +573,8 @@
       },
       {
         "symbol": "chop_fp4_compressed_bf16_r2_v1",
-        "registers": 30,
-        "shared_static_bytes": 3072,
+        "registers": 40,
+        "shared_static_bytes": 3076,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,

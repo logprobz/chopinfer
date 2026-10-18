@@ -16,7 +16,9 @@ use kernel_core::contract::{DType, Refusal, RmsNormKind};
 use kernel_core::pooled_indexer::{
     IndexerCandidates, PositionIndexerQuery, PositionKeyPages, PositionKeyWriteBuffers,
 };
-use kernel_core::precision::quantizer::BlockQuantization;
+use kernel_core::precision::quantizer::{
+    BlockQuantization, BlockQuantizeQuery, NONFINITE_INPUT, QuantizeOutput,
+};
 use kernel_core::quantize::Scales;
 
 pub const CAPACITY: u32 = 6;
@@ -119,6 +121,8 @@ kernel_core::scratch_record! {
     #[derive(Clone)]
     pub struct ProbeBuffers {
         pub key: value,
+        pub status: value,
+        pub status_row_offset: scalar(u64),
         pub norm_weight: option,
         pub cos_sin: value,
         pub positions: value,
@@ -153,6 +157,8 @@ impl PreparedOp<ProbeBuffers<View>> for Probe {
         match self {
             Self::Index(op) => op.launches(
                 &PositionKeyWriteBuffers {
+                    status: b.status,
+                    status_row_offset: b.status_row_offset,
                     key: b.key,
                     norm_weight: b
                         .norm_weight
@@ -175,6 +181,8 @@ impl PreparedOp<ProbeBuffers<View>> for Probe {
             ),
             Self::Compressed(op) => op.launches(
                 &CompressedKvWriteBuffers {
+                    status: b.status,
+                    status_row_offset: b.status_row_offset,
                     latent: b.key,
                     cos_sin: b.cos_sin,
                     positions: b.positions,
@@ -220,12 +228,16 @@ fn slots(
     };
     let mut out = Vec::new();
     for row in 0..live as usize {
-        if positions[row] < 0 {
+        if positions[row] < 0 || items[row] < 0 || items[row] >= 3 {
             continue;
         }
         let position = positions[row] as usize;
+        if position * query.ratio() as usize >= TABLE_ROWS as usize || position / query.page() >= 3
+        {
+            continue;
+        }
         let page = tables[items[row] as usize * 3 + position / query.page()];
-        if page < 0 {
+        if page < 0 || page as usize >= PAGES {
             continue;
         }
         let start = page as usize * stride + (position % query.page()) * bytes;
@@ -240,7 +252,29 @@ fn old_pages(bytes: usize, salt: u8) -> Vec<u8> {
         .collect()
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StatusCase {
+    Normal,
+    Saturation,
+    InputNonfinite,
+    RoundedOverflow,
+    RotaryNonfinite,
+    RotaryOverflow,
+    NormNonfinite,
+    DecodeOverflow,
+    Holes,
+    PriorFlags,
+}
+
 fn case(query: Query, prepared: Prepared<ProbeBuffers<View>>) -> LabResult<OpCase<'static>> {
+    status_case(query, prepared, StatusCase::Normal)
+}
+
+fn status_case(
+    query: Query,
+    prepared: Prepared<ProbeBuffers<View>>,
+    variant: StatusCase,
+) -> LabResult<OpCase<'static>> {
     let (page, rotary, capacity) = match query {
         Query::Index(q) => (q.page_size, q.tail_rope_dims, q.capacity),
         Query::Compressed(q) => (q.page_size, q.tail_rope_dims, q.capacity),
@@ -295,13 +329,13 @@ fn case(query: Query, prepared: Prepared<ProbeBuffers<View>>) -> LabResult<OpCas
             value * scale + perturb
         }
     };
-    let key: Vec<f32> = (0..CAPACITY as usize)
+    let mut key: Vec<f32> = (0..CAPACITY as usize)
         .flat_map(|row| (0..width).map(move |d| sample(row, d)))
         .collect();
-    let weights: Vec<u16> = (0..width)
+    let mut weights: Vec<u16> = (0..width)
         .map(|d| f32_to_bf16([0.0, 0.25, 0.75, 1.25, 2.5, 3.5, 5.0, 6.03125][d % 8]))
         .collect();
-    let table: Vec<f32> = (0..TABLE_ROWS)
+    let mut table: Vec<f32> = (0..TABLE_ROWS)
         .flat_map(|position| {
             (0..32).flat_map(move |pair| {
                 let angle = f64::from(position * 13 + pair * 7) / 17.0;
@@ -309,11 +343,73 @@ fn case(query: Query, prepared: Prepared<ProbeBuffers<View>>) -> LabResult<OpCas
             })
         })
         .collect();
+    let mut initial_status = vec![0_u32; CAPACITY as usize];
+    let mut positions = vec![page as i32 - 1, page as i32, 5, -1, 2, page as i32 + 1];
+    let mut items = ITEMS.to_vec();
+    let mut tables = TABLES.to_vec();
+    match variant {
+        StatusCase::Normal => {}
+        StatusCase::Saturation => {
+            for (row, value) in [2704., 2688., -2704.].into_iter().enumerate() {
+                key[row * width] = value;
+            }
+        }
+        StatusCase::InputNonfinite => {
+            for (row, value) in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY]
+                .into_iter()
+                .enumerate()
+            {
+                key[row * width] = value;
+            }
+        }
+        StatusCase::RoundedOverflow => {
+            key[0] = f32::MAX;
+            key[width] = -f32::MAX;
+        }
+        StatusCase::RotaryNonfinite => {
+            for (row, value) in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY]
+                .into_iter()
+                .enumerate()
+            {
+                table[positions[row] as usize * query.ratio() as usize * 64] = value;
+            }
+        }
+        StatusCase::RotaryOverflow => {
+            key[width - 64] = 2.;
+            table[positions[0] as usize * query.ratio() as usize * 64] = f32::MAX;
+        }
+        StatusCase::NormNonfinite => {
+            weights[0] = f32_to_bf16(f32::NAN);
+            weights[1] = f32_to_bf16(f32::INFINITY);
+            weights[2] = f32_to_bf16(f32::NEG_INFINITY);
+        }
+        StatusCase::DecodeOverflow => {
+            for (i, value) in key.iter_mut().enumerate() {
+                *value = if i % 2 == 0 { 1. } else { -1. };
+            }
+            weights.fill(0x7f7f);
+        }
+        StatusCase::Holes => {
+            // Keep the first row valid so every positive live prefix has
+            // an observable write; later rows exercise each hole guard.
+            positions[5] = -1;
+            positions[1] = i32::MAX;
+            items[2] = -1;
+            positions[3] = 5;
+            items[3] = 3;
+            tables[6] = PAGES as i32;
+        }
+        StatusCase::PriorFlags => {
+            initial_status = [0x80, 2, 1, 0x40, 0, 4].to_vec();
+        }
+    }
     let mut pools = vec![("codes", code_stride)];
     if packed {
         pools.push(("scales", scale_stride));
     }
     let roles = ProbeBuffers {
+        status: super::block_quantize::status_role(&initial_status),
+        status_row_offset: 0,
         key: Spec::input(DType::F32, (Rows::Live, width), f32_bytes(&key)),
         norm_weight: normalize
             .then(|| Spec::input(DType::Bf16, (Rows::Fixed(1), width), bf16_bytes(&weights))),
@@ -322,13 +418,14 @@ fn case(query: Query, prepared: Prepared<ProbeBuffers<View>>) -> LabResult<OpCas
             (Rows::Fixed(TABLE_ROWS as usize), 64),
             f32_bytes(&table),
         ),
-        positions: Spec::ids(
-            (Rows::Live, 1),
-            vec![page as i32 - 1, page as i32, 5, -1, 2, page as i32 + 1],
-            &[],
-            Holes::LastLive,
-        ),
-        row_batch: Spec::input(DType::I32, (Rows::Live, 1), i32_bytes(&ITEMS)),
+        positions: if variant == StatusCase::Holes {
+            // These invalid positions are tested directly, outside the
+            // valid-ID mutation generator's domain.
+            Spec::input(DType::I32, (Rows::Live, 1), i32_bytes(&positions))
+        } else {
+            Spec::ids((Rows::Live, 1), positions, &[], Holes::LastLive)
+        },
+        row_batch: Spec::input(DType::I32, (Rows::Live, 1), i32_bytes(&items)),
         live_rows: Spec::live(),
         codes: Spec::state(
             DType::U8,
@@ -357,7 +454,13 @@ fn case(query: Query, prepared: Prepared<ProbeBuffers<View>>) -> LabResult<OpCas
             )
         }),
         tables: BlockTables {
-            tables: Spec::ids((Rows::Fixed(3), 3), TABLES.to_vec(), &pools, Holes::Row(2)),
+            tables: if variant == StatusCase::Holes {
+                // Invalid page IDs are intentional data in this regression,
+                // outside the valid-ID permutation generator's domain.
+                Spec::input(DType::I32, (Rows::Fixed(3), 3), i32_bytes(&tables))
+            } else {
+                Spec::ids((Rows::Fixed(3), 3), tables, &pools, Holes::Row(2))
+            },
             sequences: 3,
             max_pages: 3,
         },
@@ -391,40 +494,57 @@ fn oracle_rounding(
     } else {
         vec![]
     };
+    let mut status = images
+        .bytes("status")?
+        .chunks_exact(4)
+        .map(|v| u32::from_le_bytes(v.try_into().unwrap()))
+        .collect::<Vec<_>>();
     let scale_slots = slots(query, images, live, true)?;
     for (row, destination) in slots(query, images, live, false)? {
         let mut values = key[row * width..(row + 1) * width].to_vec();
+        let mut flags = if values.iter().any(|v| !v.is_finite()) {
+            NONFINITE_INPUT
+        } else {
+            0
+        };
         if let Query::Index(q) = query {
-            if values.iter().enumerate().any(|(i, v)| *v != values[i % 2]) {
-                return Err("exact index fixture needs alternating F32 values".into());
-            }
             let weights: Vec<f64> = images
                 .u16s("norm_weight")?
                 .into_iter()
                 .map(|b| f64::from(bf16_to_f32(b)))
                 .collect();
-            let normalized = kernel_core::oracle::rmsnorm(
-                &values.iter().map(|&v| f64::from(v)).collect::<Vec<_>>(),
-                width,
-                &weights,
-                f64::from(f32::from_bits(q.key_norm_eps_bits)),
-                RmsNormKind::Plain,
-                None,
-            )
-            .map_err(|e| e.0)?;
-            // Every pair has the same exactly representable mean square,
-            // so the tree reduction and the analytic pair mean agree.
-            let mean = (values[0] * values[0] + values[1] * values[1]) * 0.5;
-            let inv = (1.0 / f64::from(mean + f32::from_bits(q.key_norm_eps_bits)).sqrt()) as f32;
-            for (value, weight) in values.iter_mut().zip(&weights) {
-                *value = (*value * inv) * *weight as f32;
+            if weights.iter().any(|v| !v.is_finite()) {
+                flags |= NONFINITE_INPUT;
             }
-            kernel_core::oracle::check_numeric(
-                &values.iter().copied().map(f64::from).collect::<Vec<_>>(),
-                &normalized,
-                DType::F32,
-            )
-            .map_err(|e| format!("index norm fixture violates its f64 bound: {e:?}"))?;
+            if flags == 0 {
+                if values.iter().enumerate().any(|(i, v)| *v != values[i % 2]) {
+                    return Err("exact index fixture needs alternating F32 values".into());
+                }
+                let normalized = kernel_core::oracle::rmsnorm(
+                    &values.iter().map(|&v| f64::from(v)).collect::<Vec<_>>(),
+                    width,
+                    &weights,
+                    f64::from(f32::from_bits(q.key_norm_eps_bits)),
+                    RmsNormKind::Plain,
+                    None,
+                )
+                .map_err(|e| e.0)?;
+                let mean = (values[0] * values[0] + values[1] * values[1]) * 0.5;
+                let inv =
+                    (1.0 / f64::from(mean + f32::from_bits(q.key_norm_eps_bits)).sqrt()) as f32;
+                for (v, w) in values.iter_mut().zip(weights) {
+                    *v = (*v * inv) * w as f32;
+                }
+                kernel_core::oracle::check_numeric(
+                    &values.iter().copied().map(f64::from).collect::<Vec<_>>(),
+                    &normalized,
+                    DType::F32,
+                )
+                .map_err(|e| format!("index norm fixture violates its f64 bound: {e:?}"))?;
+            }
+        }
+        if flags != 0 {
+            values.fill(0.);
         }
         if early_bf16 {
             for value in &mut values {
@@ -434,38 +554,115 @@ fn oracle_rounding(
         let position = positions[row] as usize * query.ratio() as usize;
         for d in (width - 64..width).step_by(2) {
             let cs = &table[position * 64 + d - (width - 64)..];
+            if !cs[0].is_finite() || !cs[1].is_finite() {
+                flags |= NONFINITE_INPUT;
+            }
             let (x, y) = (values[d], values[d + 1]);
             values[d] = x * cs[0] - y * cs[1];
             values[d + 1] = x * cs[1] + y * cs[0];
         }
-        let quantized = query.format().apply(&values, 1, width).map_err(|e| e.0)?;
-        let decoded = query
-            .format()
-            .fake_quant(&values, 1, width)
-            .map_err(|e| e.0)?;
-        if query.packed() {
-            codes[destination].copy_from_slice(&quantized.codes);
-            let bytes = match quantized.scales {
+        let q = BlockQuantizeQuery {
+            width: width as u32,
+            input: DType::F32,
+            format: query.format(),
+            output: if query.packed() {
+                QuantizeOutput::Codes
+            } else {
+                QuantizeOutput::Bf16
+            },
+        };
+        status[row] = q
+            .row_status(&values, &[status[row] | flags])
+            .map_err(|e| e.0)?[0];
+        let (bytes, scale_bytes) = if status[row] != 0 {
+            (
+                vec![0; query.row_bytes()],
+                vec![q.invalid_scale_code(); query.scale_bytes()],
+            )
+        } else if query.packed() {
+            let quantized = query.format().apply(&values, 1, width).map_err(|e| e.0)?;
+            let scales = match quantized.scales {
                 Scales::Ue8M0(v) | Scales::Ue4M3(v) => v,
                 _ => return Err("FP4 scales are bytes".into()),
             };
+            (quantized.codes, scales)
+        } else {
+            (
+                bf16_bytes(
+                    &query
+                        .format()
+                        .fake_quant(&values, 1, width)
+                        .map_err(|e| e.0)?,
+                ),
+                Vec::new(),
+            )
+        };
+        codes[destination].copy_from_slice(&bytes);
+        if query.packed() {
             let target = scale_slots
                 .iter()
                 .find(|(r, _)| *r == row)
                 .ok_or("missing scale slot")?
                 .1
                 .clone();
-            scales[target].copy_from_slice(&bytes);
-        } else {
-            codes[destination].copy_from_slice(&bf16_bytes(&decoded));
+            scales[target].copy_from_slice(&scale_bytes);
         }
     }
-    let mut results = vec![("codes".into(), Expected::Bits(codes))];
+    let mut results = vec![
+        ("codes".into(), Expected::Bits(codes)),
+        (
+            "status".into(),
+            Expected::Bits(status.iter().flat_map(|v| v.to_le_bytes()).collect()),
+        ),
+    ];
     if query.packed() {
         results.push(("scales".into(), Expected::Bits(scales)));
     }
     Ok(results)
 }
+
+pub fn status_family(variant: StatusCase) -> Vec<Required<'static>> {
+    queries()
+        .into_iter()
+        .filter(|query| match variant {
+            StatusCase::NormNonfinite | StatusCase::DecodeOverflow => {
+                matches!(query, Query::Index(_))
+            }
+            StatusCase::Saturation | StatusCase::RoundedOverflow | StatusCase::RotaryOverflow => {
+                matches!(query, Query::Compressed(_))
+            }
+            _ => true,
+        })
+        .map(|query| {
+            Required::new(
+                format!("FP4 status {variant:?} {query:?}"),
+                Need::rows(CAPACITY),
+                move |backend, need| match query {
+                    Query::Index(q) => backend
+                        .position_indexer_key_write(&q, need)
+                        .map(|op| Box::new(Probe::Index(op)) as Prepared<ProbeBuffers<View>>),
+                    Query::Compressed(q) => backend
+                        .compressed_kv_write(&q, need)
+                        .map(|op| Box::new(Probe::Compressed(op)) as Prepared<ProbeBuffers<View>>),
+                },
+                move |op| status_case(query, op, variant),
+            )
+            .required()
+        })
+        .collect()
+}
+
+pub const STATUS_CASES: [StatusCase; 9] = [
+    StatusCase::Saturation,
+    StatusCase::InputNonfinite,
+    StatusCase::RoundedOverflow,
+    StatusCase::RotaryNonfinite,
+    StatusCase::RotaryOverflow,
+    StatusCase::NormNonfinite,
+    StatusCase::DecodeOverflow,
+    StatusCase::Holes,
+    StatusCase::PriorFlags,
+];
 
 pub fn family() -> Vec<Required<'static>> {
     family_for(queries())
@@ -522,6 +719,87 @@ mod tests {
             ),
         };
         case(query, Box::new(prepared)).unwrap()
+    }
+
+    #[test]
+    fn status_fixtures_pin_saturation_trap_sites_and_holes() {
+        for variant in STATUS_CASES {
+            for query in queries().into_iter().filter(|q| match variant {
+                StatusCase::NormNonfinite | StatusCase::DecodeOverflow => {
+                    matches!(q, Query::Index(_))
+                }
+                StatusCase::Saturation
+                | StatusCase::RoundedOverflow
+                | StatusCase::RotaryOverflow => matches!(q, Query::Compressed(_)),
+                _ => true,
+            }) {
+                let entry = match query {
+                    Query::Index(q) => Entry::index(&q, "status_fixture_v1"),
+                    Query::Compressed(q) => Entry::compressed(&q, "status_fixture_v1"),
+                }
+                .unwrap();
+                let backend = Sm120::new().with_fp4_key_writes([entry]);
+                let prepared = match query {
+                    Query::Index(q) => Probe::Index(
+                        backend
+                            .position_indexer_key_write(&q, Need::rows(CAPACITY))
+                            .unwrap(),
+                    ),
+                    Query::Compressed(q) => Probe::Compressed(
+                        backend
+                            .compressed_kv_write(&q, Need::rows(CAPACITY))
+                            .unwrap(),
+                    ),
+                };
+                let case = status_case(query, Box::new(prepared), variant).unwrap();
+                let images = case.images();
+                let outputs = oracle(query, &images, CAPACITY).unwrap();
+                let status = outputs.iter().find(|(name, _)| name == "status").unwrap();
+                let Expected::Bits(bytes) = &status.1 else {
+                    panic!("exact status")
+                };
+                let words = bytes
+                    .chunks_exact(4)
+                    .map(|v| u32::from_le_bytes(v.try_into().unwrap()))
+                    .collect::<Vec<_>>();
+                match variant {
+                    StatusCase::Saturation => {
+                        assert!(words.iter().all(|&v| v == 0));
+                        let destination =
+                            slots(query, &images, CAPACITY, false).unwrap()[0].1.clone();
+                        let Expected::Bits(codes) = &outputs[0].1 else {
+                            panic!("exact codes")
+                        };
+                        if query.packed() {
+                            assert_eq!(codes[destination.start] & 15, 7);
+                            let scale_slot =
+                                slots(query, &images, CAPACITY, true).unwrap()[0].1.start;
+                            let Expected::Bits(scales) =
+                                &outputs.iter().find(|(n, _)| n == "scales").unwrap().1
+                            else {
+                                panic!("exact scales")
+                            };
+                            assert_eq!(scales[scale_slot], 0x7e);
+                        } else {
+                            assert_eq!(
+                                &codes[destination.start..destination.start + 2],
+                                &f32_to_bf16(2688.).to_le_bytes()
+                            );
+                        }
+                    }
+                    StatusCase::DecodeOverflow => assert_ne!(
+                        words[0] & kernel_core::precision::quantizer::UNREPRESENTABLE_OUTPUT,
+                        0
+                    ),
+                    StatusCase::Holes => {
+                        assert!(words.iter().all(|&v| v == 0));
+                        assert_eq!(slots(query, &images, CAPACITY, false).unwrap().len(), 1);
+                    }
+                    StatusCase::PriorFlags => assert_eq!(bytes, images.bytes("status").unwrap()),
+                    _ => assert_ne!(words[0] & NONFINITE_INPUT, 0, "{variant:?} {query:?}"),
+                }
+            }
+        }
     }
 
     #[test]

@@ -1,5 +1,1171 @@
 [
   {
+    "name": "pooling_write_drop_decode_status_v1",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_fp4_index_r1_drop_decode_status_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "norm_weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_compressed_packed_r1_drop_decode_status_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_compressed_bf16_r1_drop_decode_status_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_index_r2_drop_decode_status_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "norm_weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_compressed_packed_r2_drop_decode_status_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_compressed_bf16_r2_drop_decode_status_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "02d156cbad87cec7ca179cbdfe70fe7a22c25ed0359954807e29867b2fe1129c",
+    "resources": [
+      {
+        "symbol": "chop_fp4_index_r1_drop_decode_status_v1",
+        "registers": 40,
+        "shared_static_bytes": 1556,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_compressed_packed_r1_drop_decode_status_v1",
+        "registers": 40,
+        "shared_static_bytes": 3076,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_compressed_bf16_r1_drop_decode_status_v1",
+        "registers": 40,
+        "shared_static_bytes": 3076,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_index_r2_drop_decode_status_v1",
+        "registers": 40,
+        "shared_static_bytes": 1556,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_compressed_packed_r2_drop_decode_status_v1",
+        "registers": 40,
+        "shared_static_bytes": 3076,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_compressed_bf16_r2_drop_decode_status_v1",
+        "registers": 40,
+        "shared_static_bytes": 3076,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "pooling_write_drop_input_status_v1",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_fp4_index_r1_drop_input_status_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "norm_weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_compressed_packed_r1_drop_input_status_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_compressed_bf16_r1_drop_input_status_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_index_r2_drop_input_status_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "norm_weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_compressed_packed_r2_drop_input_status_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_compressed_bf16_r2_drop_input_status_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "0e60229025a99e82814b96d6e929f86d8478d69251ce2b4ebeedf0331b3481cc",
+    "resources": [
+      {
+        "symbol": "chop_fp4_index_r1_drop_input_status_v1",
+        "registers": 40,
+        "shared_static_bytes": 1556,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_compressed_packed_r1_drop_input_status_v1",
+        "registers": 40,
+        "shared_static_bytes": 3076,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_compressed_bf16_r1_drop_input_status_v1",
+        "registers": 40,
+        "shared_static_bytes": 3076,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_index_r2_drop_input_status_v1",
+        "registers": 40,
+        "shared_static_bytes": 1556,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_compressed_packed_r2_drop_input_status_v1",
+        "registers": 40,
+        "shared_static_bytes": 3076,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_compressed_bf16_r2_drop_input_status_v1",
+        "registers": 40,
+        "shared_static_bytes": 3076,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
     "name": "pooling_write_drop_split_tail_v1",
     "line_info": false,
     "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
@@ -251,6 +1417,1755 @@
     ]
   },
   {
+    "name": "pooling_write_flag_saturation_v1",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_fp4_index_r1_flag_saturation_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "norm_weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_compressed_packed_r1_flag_saturation_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_compressed_bf16_r1_flag_saturation_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_index_r2_flag_saturation_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "norm_weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_compressed_packed_r2_flag_saturation_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_compressed_bf16_r2_flag_saturation_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "7748d90b1242bcdfa36d4db6abde0386828fa325ab3ddd79fee1856f358f6ae1",
+    "resources": [
+      {
+        "symbol": "chop_fp4_index_r1_flag_saturation_v1",
+        "registers": 40,
+        "shared_static_bytes": 1556,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_compressed_packed_r1_flag_saturation_v1",
+        "registers": 40,
+        "shared_static_bytes": 3076,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_compressed_bf16_r1_flag_saturation_v1",
+        "registers": 40,
+        "shared_static_bytes": 3076,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_index_r2_flag_saturation_v1",
+        "registers": 40,
+        "shared_static_bytes": 1556,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_compressed_packed_r2_flag_saturation_v1",
+        "registers": 40,
+        "shared_static_bytes": 3076,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_compressed_bf16_r2_flag_saturation_v1",
+        "registers": 40,
+        "shared_static_bytes": 3076,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "pooling_write_hole_status_v1",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_fp4_index_r1_hole_status_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "norm_weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_compressed_packed_r1_hole_status_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_compressed_bf16_r1_hole_status_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_index_r2_hole_status_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "norm_weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_compressed_packed_r2_hole_status_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_compressed_bf16_r2_hole_status_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "31be7b7caf3593041feae98145e63939b7eb11ef3a0612cb934f616fb1b1306f",
+    "resources": [
+      {
+        "symbol": "chop_fp4_index_r1_hole_status_v1",
+        "registers": 40,
+        "shared_static_bytes": 1556,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_compressed_packed_r1_hole_status_v1",
+        "registers": 40,
+        "shared_static_bytes": 3076,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_compressed_bf16_r1_hole_status_v1",
+        "registers": 40,
+        "shared_static_bytes": 3076,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_index_r2_hole_status_v1",
+        "registers": 40,
+        "shared_static_bytes": 1556,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_compressed_packed_r2_hole_status_v1",
+        "registers": 40,
+        "shared_static_bytes": 3076,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_compressed_bf16_r2_hole_status_v1",
+        "registers": 40,
+        "shared_static_bytes": 3076,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "pooling_write_missing_status_or_v1",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_fp4_index_r1_missing_status_or_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "norm_weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_compressed_packed_r1_missing_status_or_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_compressed_bf16_r1_missing_status_or_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_index_r2_missing_status_or_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "norm_weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_compressed_packed_r2_missing_status_or_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_fp4_compressed_bf16_r2_missing_status_or_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "key",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "row_batch",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "page_tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U64",
+            "name": "code_stride"
+          },
+          {
+            "kind": "U64",
+            "name": "scale_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "table_rows"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "813026c9c93e1e901589ab5a88f1b346d37c6c0cce3cbe51bacc3c6e8dadd651",
+    "resources": [
+      {
+        "symbol": "chop_fp4_index_r1_missing_status_or_v1",
+        "registers": 40,
+        "shared_static_bytes": 1556,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_compressed_packed_r1_missing_status_or_v1",
+        "registers": 40,
+        "shared_static_bytes": 3076,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_compressed_bf16_r1_missing_status_or_v1",
+        "registers": 40,
+        "shared_static_bytes": 3076,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_index_r2_missing_status_or_v1",
+        "registers": 40,
+        "shared_static_bytes": 1556,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_compressed_packed_r2_missing_status_or_v1",
+        "registers": 40,
+        "shared_static_bytes": 3076,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_fp4_compressed_bf16_r2_missing_status_or_v1",
+        "registers": 40,
+        "shared_static_bytes": 3076,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
     "name": "pooling_write_narrow_codes_v1",
     "line_info": false,
     "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
@@ -339,6 +3254,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -415,6 +3339,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -486,6 +3419,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -567,6 +3509,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -643,6 +3594,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -714,6 +3674,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -721,12 +3690,12 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "3d92adc314c798921b8865c4ae28d17e566e5fbd051f5c989fdbb77a59fb5e6b",
+    "cubin_sha256": "ef324be5ab4a47e055407d37d43e80d00facd38ba0101febf60ff4e630afd200",
     "resources": [
       {
         "symbol": "chop_fp4_index_r1_narrow_codes_v1",
-        "registers": 29,
-        "shared_static_bytes": 1552,
+        "registers": 40,
+        "shared_static_bytes": 1556,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -734,8 +3703,8 @@
       },
       {
         "symbol": "chop_fp4_compressed_packed_r1_narrow_codes_v1",
-        "registers": 31,
-        "shared_static_bytes": 3072,
+        "registers": 40,
+        "shared_static_bytes": 3076,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -743,8 +3712,8 @@
       },
       {
         "symbol": "chop_fp4_compressed_bf16_r1_narrow_codes_v1",
-        "registers": 30,
-        "shared_static_bytes": 3072,
+        "registers": 40,
+        "shared_static_bytes": 3076,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -752,8 +3721,8 @@
       },
       {
         "symbol": "chop_fp4_index_r2_narrow_codes_v1",
-        "registers": 29,
-        "shared_static_bytes": 1552,
+        "registers": 40,
+        "shared_static_bytes": 1556,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -761,8 +3730,8 @@
       },
       {
         "symbol": "chop_fp4_compressed_packed_r2_narrow_codes_v1",
-        "registers": 31,
-        "shared_static_bytes": 3072,
+        "registers": 40,
+        "shared_static_bytes": 3076,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -770,8 +3739,8 @@
       },
       {
         "symbol": "chop_fp4_compressed_bf16_r2_narrow_codes_v1",
-        "registers": 30,
-        "shared_static_bytes": 3072,
+        "registers": 40,
+        "shared_static_bytes": 3076,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -868,6 +3837,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -944,6 +3922,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -1015,6 +4002,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -1096,6 +4092,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -1172,6 +4177,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -1243,6 +4257,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -1250,12 +4273,12 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "ab283d54b5809d69ebf588c521215a30184fc1b59dad1be6a5df9bc17d585aa3",
+    "cubin_sha256": "4fa0e523686bbaa24eca7eebde595e8d6b119ff170bfa076652ae7ee427cd6ee",
     "resources": [
       {
         "symbol": "chop_fp4_index_r1_narrow_scales_v1",
-        "registers": 31,
-        "shared_static_bytes": 1552,
+        "registers": 40,
+        "shared_static_bytes": 1556,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -1263,8 +4286,8 @@
       },
       {
         "symbol": "chop_fp4_compressed_packed_r1_narrow_scales_v1",
-        "registers": 31,
-        "shared_static_bytes": 3072,
+        "registers": 40,
+        "shared_static_bytes": 3076,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -1272,8 +4295,8 @@
       },
       {
         "symbol": "chop_fp4_compressed_bf16_r1_narrow_scales_v1",
-        "registers": 30,
-        "shared_static_bytes": 3072,
+        "registers": 40,
+        "shared_static_bytes": 3076,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -1281,8 +4304,8 @@
       },
       {
         "symbol": "chop_fp4_index_r2_narrow_scales_v1",
-        "registers": 31,
-        "shared_static_bytes": 1552,
+        "registers": 40,
+        "shared_static_bytes": 1556,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -1290,8 +4313,8 @@
       },
       {
         "symbol": "chop_fp4_compressed_packed_r2_narrow_scales_v1",
-        "registers": 31,
-        "shared_static_bytes": 3072,
+        "registers": 40,
+        "shared_static_bytes": 3076,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -1299,8 +4322,8 @@
       },
       {
         "symbol": "chop_fp4_compressed_bf16_r2_narrow_scales_v1",
-        "registers": 30,
-        "shared_static_bytes": 3072,
+        "registers": 40,
+        "shared_static_bytes": 3076,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -1397,6 +4420,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -1473,6 +4505,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -1544,6 +4585,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -1625,6 +4675,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -1701,6 +4760,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -1772,6 +4840,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -1779,12 +4856,12 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "305ea940f0328d327c796cd2960f7259aaba6419661b405afe8661d34ec2200b",
+    "cubin_sha256": "825507ccf699e9fffcb303e29dc127baf24e0db7bb7e97ec5d601d0eaaafca7a",
     "resources": [
       {
         "symbol": "chop_fp4_index_r1_swap_nibbles_v1",
-        "registers": 30,
-        "shared_static_bytes": 1552,
+        "registers": 40,
+        "shared_static_bytes": 1556,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -1792,8 +4869,8 @@
       },
       {
         "symbol": "chop_fp4_compressed_packed_r1_swap_nibbles_v1",
-        "registers": 35,
-        "shared_static_bytes": 3072,
+        "registers": 40,
+        "shared_static_bytes": 3076,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -1801,8 +4878,8 @@
       },
       {
         "symbol": "chop_fp4_compressed_bf16_r1_swap_nibbles_v1",
-        "registers": 30,
-        "shared_static_bytes": 3072,
+        "registers": 40,
+        "shared_static_bytes": 3076,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -1810,8 +4887,8 @@
       },
       {
         "symbol": "chop_fp4_index_r2_swap_nibbles_v1",
-        "registers": 30,
-        "shared_static_bytes": 1552,
+        "registers": 40,
+        "shared_static_bytes": 1556,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -1819,8 +4896,8 @@
       },
       {
         "symbol": "chop_fp4_compressed_packed_r2_swap_nibbles_v1",
-        "registers": 35,
-        "shared_static_bytes": 3072,
+        "registers": 40,
+        "shared_static_bytes": 3076,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -1828,8 +4905,8 @@
       },
       {
         "symbol": "chop_fp4_compressed_bf16_r2_swap_nibbles_v1",
-        "registers": 30,
-        "shared_static_bytes": 3072,
+        "registers": 40,
+        "shared_static_bytes": 3076,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -2651,6 +5728,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -2727,6 +5813,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -2798,6 +5893,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -2879,6 +5983,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -2955,6 +6068,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -3026,6 +6148,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 128,
@@ -3033,12 +6164,12 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "a9f7f08aac47569ffd1705a2842e01c6dd4f98dfb1886d276baa0b4fd2c47439",
+    "cubin_sha256": "7608530e84c2d5d3e43a3ebde7e7d8fb4e0b3ffc54e6a8cf46b1edd7a7653991",
     "resources": [
       {
         "symbol": "chop_fp4_index_r1_wrong_page_v1",
-        "registers": 29,
-        "shared_static_bytes": 1552,
+        "registers": 40,
+        "shared_static_bytes": 1556,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -3046,8 +6177,8 @@
       },
       {
         "symbol": "chop_fp4_compressed_packed_r1_wrong_page_v1",
-        "registers": 37,
-        "shared_static_bytes": 3072,
+        "registers": 40,
+        "shared_static_bytes": 3076,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -3055,8 +6186,8 @@
       },
       {
         "symbol": "chop_fp4_compressed_bf16_r1_wrong_page_v1",
-        "registers": 30,
-        "shared_static_bytes": 3072,
+        "registers": 40,
+        "shared_static_bytes": 3076,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -3064,8 +6195,8 @@
       },
       {
         "symbol": "chop_fp4_index_r2_wrong_page_v1",
-        "registers": 29,
-        "shared_static_bytes": 1552,
+        "registers": 40,
+        "shared_static_bytes": 1556,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -3073,8 +6204,8 @@
       },
       {
         "symbol": "chop_fp4_compressed_packed_r2_wrong_page_v1",
-        "registers": 37,
-        "shared_static_bytes": 3072,
+        "registers": 40,
+        "shared_static_bytes": 3076,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -3082,8 +6213,8 @@
       },
       {
         "symbol": "chop_fp4_compressed_bf16_r2_wrong_page_v1",
-        "registers": 30,
-        "shared_static_bytes": 3072,
+        "registers": 40,
+        "shared_static_bytes": 3076,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,

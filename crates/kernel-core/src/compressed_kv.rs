@@ -101,6 +101,12 @@ crate::scratch_record! {
     /// read-only, so index-key consumers retain its unrotated form.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct CompressedKvWriteBuffers {
+        /// Sticky shared quantizer flags, one U32 per launch row. The caller
+        /// clears and checks this plane. A valid addressed row with any flag
+        /// writes zero codes and finite scale 1. Invalid positions, items,
+        /// table rows and pages are holes: cache and status stay untouched.
+        pub status: value,
+        pub status_row_offset: scalar(u64),
         pub latent: value,
         pub cos_sin: value,
         pub positions: value,

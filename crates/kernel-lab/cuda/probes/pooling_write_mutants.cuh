@@ -5,6 +5,31 @@
 
 namespace chop::pooling_write_tests {
 
+template<uint32_t Mask>
+struct StatusDrop {
+  __device__ static uint32_t update(uint32_t* status, uint64_t row, uint32_t flags) {
+    return chop::row::block_quantize::StatusOr::update(status,row,flags & ~Mask);
+  }
+};
+struct StatusReplace {
+  __device__ static uint32_t update(uint32_t* status, uint64_t row, uint32_t flags) {
+    atomicExch(status+row,flags);
+    return flags;
+  }
+};
+template<int Width>
+__device__ void flag_saturation(const float* key, const uint32_t* live,
+    uint32_t* status, uint64_t offset) {
+  ptx::griddep_wait();
+  if (threadIdx.x == 0 && blockIdx.x < *live && fabsf(key[uint64_t(blockIdx.x)*Width]) > 2688.f)
+    atomicOr(status+offset+blockIdx.x, uint32_t(2));
+  __syncthreads();
+}
+__device__ void mark_holes(const uint32_t* live, uint32_t* status, uint64_t offset) {
+  __syncthreads();
+  if (threadIdx.x == 0 && blockIdx.x < *live) atomicOr(status+offset+blockIdx.x,uint32_t(1));
+}
+
 // Run the real prefill, but discard the tail carried out of its four-row
 // prefix. The six-row whole launch is unchanged, so the split-inside-pair
 // acceptance check must observe this fault in the next launch's latent.

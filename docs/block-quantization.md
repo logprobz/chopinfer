@@ -58,3 +58,19 @@ needed.
 
 The old finite-overflow refusal was stricter than this vendor behavior.
 Valid values within that prior domain keep their exact code and scale bits.
+
+## Fused paged key writers
+
+Index-key and compressed-KV writes use the same quantizer helper after F32
+normalization and RoPE. Both take caller-owned `status` and a U64
+`status_row_offset`, with the same OR flags and whole-row zero/scale-1 rule.
+The index path records decoder representability failures before using the
+trap-free conversion. The writers retain no traps.
+
+Negative or out-of-range positions, item IDs, rotary-table rows, logical
+pages and physical pages are holes. They read no key data, write no cache
+bytes, and leave the corresponding status word unchanged. Live, valid
+addresses receive the row's status and its defined quantized output.
+Status cannot alias any operand or cache plane. Projection quantizer status
+likewise cannot alias any other bound role of its composed operation,
+including final output, weights, residual, routing or compute scratch.

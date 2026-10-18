@@ -684,6 +684,12 @@ crate::scratch_record! {
     /// slots. No pooling or tail state is read here.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct PositionKeyWriteBuffers {
+        /// Sticky shared quantizer flags, one U32 per launch row. The caller
+        /// clears and checks this plane. A valid addressed row with any flag
+        /// writes zero codes and finite scale 1. Invalid positions, items,
+        /// table rows and pages are holes: cache and status stay untouched.
+        pub status: value,
+        pub status_row_offset: scalar(u64),
         pub key: value,
         pub norm_weight: value,
         pub cos_sin: value,

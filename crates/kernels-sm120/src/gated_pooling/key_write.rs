@@ -175,6 +175,10 @@ impl Entry {
             },
             scalar("table_rows"),
             scalar("eps_bits"),
+            pointer("status", "uint32_t"),
+            EntryParam::U64 {
+                name: "status_row_offset".into(),
+            },
         ];
         params.retain(|p| {
             !matches!(p, EntryParam::DevicePointer { name, .. }
@@ -188,7 +192,7 @@ impl Entry {
             format!(
                 "chop::gated_pooling::key_write<{},{},{},{},{normalize},{e4m3},{packed}>(\
              key,{norm},cos_sin,positions,row_batch,live_rows,page_tables,codes,\
-             {scales},items,pages,max_pages,code_stride,scale_stride,table_rows,__uint_as_float(eps_bits));",
+             {scales},items,pages,max_pages,code_stride,scale_stride,table_rows,__uint_as_float(eps_bits),status,status_row_offset);",
                 g.width, g.rotary, g.ratio, g.page_size,
             ),
             THREADS,

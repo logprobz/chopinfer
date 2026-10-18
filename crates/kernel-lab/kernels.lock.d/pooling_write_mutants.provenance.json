@@ -1,26 +1,46 @@
 [
   {
+    "name": "pooling_write_drop_decode_status_v1",
+    "source_closure_sha256": "1c13811fbb6dcae9fd9a1f1d288530a173a84c4b93f2e4fda10f55c7deb8961d"
+  },
+  {
+    "name": "pooling_write_drop_input_status_v1",
+    "source_closure_sha256": "a618cc4d89bfeed8da79e1cd0a8c49b88c5a4c89ac3888289dbc93ea7708faec"
+  },
+  {
     "name": "pooling_write_drop_split_tail_v1",
-    "source_closure_sha256": "046f34c45780ca2a26590e5ac85997c8b22ef4b17d25ca1d50c610c061aacbc6"
+    "source_closure_sha256": "25e17d9af0335c2ed27e40d84ab6639a9ca13466be48700dd31ec529f51ad18d"
+  },
+  {
+    "name": "pooling_write_flag_saturation_v1",
+    "source_closure_sha256": "8c291742718bd751c1a88831e9884334e6eb708a45d0855505ee7df6ab48b836"
+  },
+  {
+    "name": "pooling_write_hole_status_v1",
+    "source_closure_sha256": "9c8e71338aa32094e13eda01d6279272577823655aad6caec0410121f0f4b703"
+  },
+  {
+    "name": "pooling_write_missing_status_or_v1",
+    "source_closure_sha256": "8d61c18da67ce387cd29f04b835620f0feebb9e3867ef56ae662ebd6a1953083"
   },
   {
     "name": "pooling_write_narrow_codes_v1",
-    "source_closure_sha256": "f1bc0bd530bb9b02372657cfc1cc5d6c330290b5a72fb4d271059273b14c6f71"
+    "source_closure_sha256": "4893cdca43192bef8a8b6aaa538ee05af94d51a91a1fff33a74284d9fd9889df"
   },
   {
     "name": "pooling_write_narrow_scales_v1",
-    "source_closure_sha256": "4c05f6501037532c79b62e211150177479129adc7e4db46d235f8f275bb0f23f"
+    "source_closure_sha256": "0193dddd6e385809a03556e63357fc00d449aa206e88edc053fbcb37aa676195"
   },
   {
     "name": "pooling_write_swap_nibbles_v1",
-    "source_closure_sha256": "3e4c99c7c6739a95b7b88afb9945df2a74a4a6452ba90d0014621d477bb4b608"
+    "source_closure_sha256": "b221c073cf04c28b490bef0e0255b1a8af522512df7bbfa5671178aa6e869bc8"
   },
   {
     "name": "pooling_write_wrong_gate_v1",
-    "source_closure_sha256": "84c8061f7c4de851900198931e7a87d5d1eaf1aa1ef866912645436440c3dd27"
+    "source_closure_sha256": "9989959cd90c41a78c64feb226b5d9a934523c115f081f581c423af32f40778f"
   },
   {
     "name": "pooling_write_wrong_page_v1",
-    "source_closure_sha256": "c61b2dc4b55f73429be63eccfca910a663b1b6c417dfa813f2ecffd6c56120ce"
+    "source_closure_sha256": "44b7677cf8ac26608c6f4a75985fc48177bb4f6ad26c8edeade77988efe69b52"
   }
 ]

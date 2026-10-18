@@ -14,16 +14,22 @@ pub enum Fault {
     WrongPage,
     NarrowCodes,
     NarrowScales,
+    DropInputStatus,
+    DropDecodeStatus,
+    MissingStatusOr,
+    FlagSaturation,
+    HoleStatus,
 }
 
 impl Fault {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 11] = [
         Self::WrongGate,
         Self::DropSplitTail,
         Self::SwapNibbles,
         Self::WrongPage,
         Self::NarrowCodes,
         Self::NarrowScales,
+        Self::DropInputStatus, Self::DropDecodeStatus, Self::MissingStatusOr, Self::FlagSaturation, Self::HoleStatus,
     ];
 
     pub fn tag(self) -> &'static str {
@@ -34,6 +40,11 @@ impl Fault {
             Self::WrongPage => "wrong_page",
             Self::NarrowCodes => "narrow_codes",
             Self::NarrowScales => "narrow_scales",
+            Self::DropInputStatus => "drop_input_status",
+            Self::DropDecodeStatus => "drop_decode_status",
+            Self::MissingStatusOr => "missing_status_or",
+            Self::FlagSaturation => "flag_saturation",
+            Self::HoleStatus => "hole_status",
         }
     }
 
@@ -105,6 +116,20 @@ impl Fault {
                     entry.body = entry
                         .body
                         .replace(",scale_stride,", ",uint32_t(scale_stride),");
+                }
+                Self::DropInputStatus | Self::DropDecodeStatus | Self::MissingStatusOr => {
+                    let policy = match self {
+                        Self::DropInputStatus => "StatusDrop<1>", Self::DropDecodeStatus => "StatusDrop<4>", _ => "StatusReplace",
+                    };
+                    assert_eq!(entry.body.matches(">(key,").count(),1);
+                    entry.body=entry.body.replacen(">(key,", &format!(",chop::pooling_write_tests::{policy}>(key,"),1);
+                }
+                Self::FlagSaturation => {
+                    let served=crate::fp4_key_write::entries().into_iter().find(|e|e.symbol()==entry.symbol).unwrap();
+                    entry.body=format!("chop::pooling_write_tests::flag_saturation<{}>(key,live_rows,status,status_row_offset);{}",served.width(),entry.body);
+                }
+                Self::HoleStatus => {
+                    entry.body.push_str("chop::pooling_write_tests::mark_holes(live_rows,status,status_row_offset);");
                 }
                 _ => {}
             }

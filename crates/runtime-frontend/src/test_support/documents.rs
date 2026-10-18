@@ -148,6 +148,18 @@ impl ServerFrontendV1 for PairedFrontendV1 {
         self.document.reads_tool_objects()
     }
 
+    fn reads_thinking_object(&self) -> bool {
+        self.document.reads_thinking_object()
+    }
+
+    fn constrains_strict_only(&self) -> bool {
+        self.document.constrains_strict_only()
+    }
+
+    fn forced_choice_without_tools_is_auto(&self) -> bool {
+        self.document.forced_choice_without_tools_is_auto()
+    }
+
     fn extra_roles(&self) -> &[String] {
         self.document.extra_roles()
     }

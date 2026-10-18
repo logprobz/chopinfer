@@ -1015,7 +1015,28 @@ fn prepare_chat(
     // A frontend that reads the thinking object switches by it alone: the
     // keywords and the effort in chat_template_kwargs are ignored, and an
     // explicit switch overrides the effort, so the effort that disables
-    // thinking under an enabled object names no effort.
+    // thinking under an enabled object names no effort. The client's object
+    // reaches the frontend without them, carrying the switch instead.
+    let chat_template_kwargs = match (thinking_switch, chat_template_kwargs) {
+        (Some(switch), Some(FrontendJsonV1::Object(entries))) => {
+            let mut entries: Vec<_> = entries
+                .into_iter()
+                .filter(|(name, _)| {
+                    !matches!(
+                        name.as_str(),
+                        "enable_thinking" | "thinking" | "reasoning_effort"
+                    )
+                })
+                .collect();
+            if let Some(switch) = switch {
+                for name in ["enable_thinking", "thinking"] {
+                    entries.push((name.to_owned(), FrontendJsonV1::Bool(switch)));
+                }
+            }
+            Some(FrontendJsonV1::Object(entries))
+        }
+        (_, kwargs) => kwargs,
+    };
     let (enable_thinking, thinking, nested_reasoning_effort, reasoning_effort) =
         match thinking_switch {
             Some(switch) => (

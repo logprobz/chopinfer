@@ -2500,6 +2500,31 @@ async fn a_declared_vendor_mapping_shapes_constraints_choices_and_thinking() {
             );
             if extra.contains("preserve_thinking") {
                 assert_eq!(request.preserve_thinking, Some(true));
+                // The forwarded object carries what the typed keywords say.
+                let Some(runtime_server::FrontendJsonV1::Object(entries)) =
+                    &request.chat_template_kwargs
+                else {
+                    panic!("{body}: no forwarded object");
+                };
+                let names: Vec<_> = entries.iter().map(|(name, _)| name.as_str()).collect();
+                let expected: &[&str] = match (mapped, mapped_switch.0) {
+                    (false, _) => &[
+                        "enable_thinking",
+                        "thinking",
+                        "reasoning_effort",
+                        "preserve_thinking",
+                    ],
+                    (true, Some(_)) => &["preserve_thinking", "enable_thinking", "thinking"],
+                    (true, None) => &["preserve_thinking"],
+                };
+                assert_eq!(names, expected, "{mapped}: {body}");
+                if mapped && let Some(switch) = mapped_switch.0 {
+                    assert!(
+                        entries[1..].iter().all(
+                            |(_, value)| *value == runtime_server::FrontendJsonV1::Bool(switch)
+                        )
+                    );
+                }
             }
         }
         for thinking in [

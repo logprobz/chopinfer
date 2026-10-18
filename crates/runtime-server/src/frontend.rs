@@ -639,9 +639,10 @@ frontend_with_alias_delegation! {
     /// whose `type` is `enabled`, its alias `adaptive`, or `disabled`,
     /// ignores the thinking keywords and the effort in
     /// `chat_template_kwargs`, and passes the object's switch as both
-    /// thinking keywords. An explicit switch overrides the effort, so an
-    /// effort of `none` under an enabled object reaches the frontend as no
-    /// effort.
+    /// thinking keywords, typed and in the forwarded object, which no
+    /// longer carries the client's. An explicit switch overrides the
+    /// effort, so an effort of `none` under an enabled object reaches the
+    /// frontend as no effort.
     fn reads_thinking_object(&self) -> bool {
         false
     }

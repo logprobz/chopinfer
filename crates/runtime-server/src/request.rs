@@ -157,20 +157,24 @@ fn decode_chat<'a, T: Deserialize<'a>>(body: &'a [u8], ignored: bool) -> Result<
     decode(body)
 }
 
-/// Sets [`THINKING_KEYWORDS_IGNORED`] while it lives and clears it on drop,
-/// so a decode that panics leaves the thread's next decode checking them.
-struct IgnoringThinkingKeywords;
+/// Sets [`THINKING_KEYWORDS_IGNORED`] while it lives and restores the value
+/// it replaced on drop, so a decode inside another, or one that panics,
+/// leaves the flag as it found it.
+struct IgnoringThinkingKeywords {
+    previous: bool,
+}
 
 impl IgnoringThinkingKeywords {
     fn set(ignored: bool) -> Self {
-        THINKING_KEYWORDS_IGNORED.set(ignored);
-        Self
+        Self {
+            previous: THINKING_KEYWORDS_IGNORED.replace(ignored),
+        }
     }
 }
 
 impl Drop for IgnoringThinkingKeywords {
     fn drop(&mut self) {
-        THINKING_KEYWORDS_IGNORED.set(false);
+        THINKING_KEYWORDS_IGNORED.set(self.previous);
     }
 }
 
@@ -2434,10 +2438,37 @@ mod tests {
         }
     }
 
+    /// The flag's value while the body decodes.
+    struct Seen(bool);
+
+    impl<'de> Deserialize<'de> for Seen {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            serde::de::IgnoredAny::deserialize(deserializer)?;
+            Ok(Self(THINKING_KEYWORDS_IGNORED.get()))
+        }
+    }
+
     #[test]
     fn a_decode_that_panics_still_clears_the_ignored_thinking_keywords() {
         let decoded = std::panic::catch_unwind(|| decode_chat::<Panics>(b"{}", true));
         assert!(decoded.is_err());
         assert!(!THINKING_KEYWORDS_IGNORED.get());
+    }
+
+    #[test]
+    fn a_decode_inside_another_restores_the_outer_flag() {
+        for (outer, inner) in [(true, false), (false, true), (true, true)] {
+            let guard = IgnoringThinkingKeywords::set(outer);
+            let Ok(Seen(seen)) = decode_chat::<Seen>(b"{}", inner) else {
+                panic!("the body decodes");
+            };
+            assert_eq!(seen, inner);
+            assert_eq!(THINKING_KEYWORDS_IGNORED.get(), outer);
+            let panicked = std::panic::catch_unwind(|| decode_chat::<Panics>(b"{}", inner));
+            assert!(panicked.is_err());
+            assert_eq!(THINKING_KEYWORDS_IGNORED.get(), outer);
+            drop(guard);
+            assert!(!THINKING_KEYWORDS_IGNORED.get());
+        }
     }
 }

@@ -64,7 +64,10 @@ candidate run, never moved after a result:
 - the `kv-bf16` comparison configuration (`serve --kv-cache-dtype bf16`):
   the BF16 KV layout holds the same values as the native trained formats,
   and native versus BF16 served bits must be equal. It runs prefix_exact
-  now, and teacher, teacher_arms, chat and the served-bits equality as
+  and kv_layout_equality, which records the determinism request set on a
+  native server and on the configuration's BF16 server in one run and
+  requires every request's tokens and logprobs to be bit-identical, naming
+  the first differing position; teacher, teacher_arms and chat join as
   they land. It is never a served default and not qualified for capacity,
   preemption under pressure or offload, since its pages are about 3.6
   times larger (3,200 bytes against 890 per token).

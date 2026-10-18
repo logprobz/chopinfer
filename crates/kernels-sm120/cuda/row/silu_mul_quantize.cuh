@@ -19,54 +19,95 @@ namespace chop::row::silu_mul_quantize {
 __device__ __forceinline__ float exponential(float g) { return expf(-g); }
 
 // g = min(gate, gate_max), u = clamp(up, -limit, limit), then
-// (g / (1 + expf(-g))) * u, each step rounded in F32, then BF16. Non-finite
-// gate or up values, and a product that rounds to a BF16 infinity, trap:
-// the contract refuses them, so they are never clamped away.
-template<uint32_t GateMaxBits, uint32_t UpLimitBits>
-__device__ __forceinline__ float product(float gate, float up) {
-  if (!isfinite(gate) || !isfinite(up)) asm volatile("trap;");
+// (g / (1 + expf(-g))) * u, each step rounded in F32, then BF16. Invalid
+// operands never enter the product. In particular, -inf / expf(+inf)
+// must not turn a non-finite input into a second product-overflow flag.
+template<uint32_t GateMaxBits, uint32_t UpLimitBits, bool SkipInvalid = true>
+__device__ __forceinline__ float product(float gate, float up, uint32_t& flags) {
+  if (!isfinite(gate) || !isfinite(up)) {
+    flags |= block_quantize::NonfiniteInput;
+    if constexpr (SkipInvalid) return 0.f;
+  }
   const float gate_max = __uint_as_float(GateMaxBits);
   const float limit = __uint_as_float(UpLimitBits);
   const float g = fminf(gate, gate_max);
   const float u = fminf(fmaxf(up, -limit), limit);
   const float silu = __fdiv_rn(g, __fadd_rn(1.f, exponential(g)));
   const float rounded = convert::bf16_to_f32(convert::bf16_from_f32(__fmul_rn(silu, u)));
-  if (!isfinite(rounded)) asm volatile("trap;");
+  if (!isfinite(rounded)) {
+    flags |= block_quantize::UnrepresentableOutput;
+    return 0.f;
+  }
   return rounded;
 }
 
-// Grid (rows, Width / 32), 32 threads: lane l < 16 owns columns 2l and
-// 2l + 1 of its group. gate and up are [rows, Width] F32, codes
-// [rows, Width] E4M3 and scales [rows, Width / 32] UE8M0. Each column is a
-// scalar load, so the operands need only F32 alignment.
-template<int Width, uint32_t GateMaxBits, uint32_t UpLimitBits, uint32_t FloorBits>
-__device__ void run(const float* gate, const float* up, uint8_t* codes, uint8_t* scales,
-                    const uint32_t* live_rows) {
-  static_assert(Width > 0 && Width % 32 == 0);
-  ptx::griddep_launch_dependents();
-  ptx::griddep_wait();
-  const uint32_t row = blockIdx.x;
-  if (row >= *live_rows) return;
-  const uint32_t group = blockIdx.y;
+template<uint32_t GateMaxBits, uint32_t UpLimitBits, uint32_t FloorBits, bool SkipInvalid>
+__device__ __forceinline__ block_quantize::GroupValue quantize_group(
+    const float* gate, const float* up, uint64_t at) {
   const uint32_t lane = threadIdx.x;
-  const uint64_t at = uint64_t(row) * Width + uint64_t(group) * 32 + 2 * lane;
+  block_quantize::GroupValue result;
   float x = 0.f, y = 0.f;
   if (lane < 16) {
-    x = product<GateMaxBits, UpLimitBits>(gate[at], up[at]);
-    y = product<GateMaxBits, UpLimitBits>(gate[at + 1], up[at + 1]);
+    x = product<GateMaxBits, UpLimitBits, SkipInvalid>(gate[at], up[at], result.flags);
+    y = product<GateMaxBits, UpLimitBits, SkipInvalid>(gate[at + 1], up[at + 1], result.flags);
   }
   float maximum = fmaxf(fabsf(x), fabsf(y));
   for (int step = 16; step; step >>= 1)
     maximum = fmaxf(maximum, __shfl_xor_sync(0xffffffff, maximum, step));
   maximum = fmaxf(maximum, __uint_as_float(FloorBits));
-  const uint8_t scale_code = block_quantize::ceil_scale(maximum, 1.f / 448.f);
-  const float scale = __uint_as_float(uint32_t(scale_code) << 23);
-  if (lane == 0) scales[uint64_t(row) * (Width / 32) + group] = scale_code;
-  if (lane >= 16) return;
-  const uint16_t pair =
+  result.scale_code = block_quantize::ceil_scale(maximum, 1.f / 448.f);
+  const float scale = __uint_as_float(uint32_t(result.scale_code) << 23);
+  if (lane >= 16) return result;
+  result.codes =
       convert::pack_f32_e4m3(convert::Float2{__fdiv_rn(x, scale), __fdiv_rn(y, scale)});
-  codes[at] = uint8_t(pair);
-  codes[at + 1] = uint8_t(pair >> 8);
+  auto decoded = convert::unpack_f32_e4m3(result.codes);
+  decoded.lo = __fmul_rn(decoded.lo, scale);
+  decoded.hi = __fmul_rn(decoded.hi, scale);
+  const auto exact = convert::bf16x2_to_f32(convert::bf16x2_from_f32(decoded));
+  if (!isfinite(exact.lo) || !isfinite(exact.hi) ||
+      __float_as_uint(exact.lo) != __float_as_uint(decoded.lo) ||
+      __float_as_uint(exact.hi) != __float_as_uint(decoded.hi))
+    result.flags |= block_quantize::UnrepresentableOutput;
+  return result;
+}
+
+// One warp per row validates every group before writing any output. This
+// avoids races between groups when a late group fails. The second pass
+// preserves the original per-group arithmetic and positive/negative zeros
+// on passing rows. All data paths report status without trapping.
+template<int Width, uint32_t GateMaxBits, uint32_t UpLimitBits, uint32_t FloorBits,
+         class Status = block_quantize::StatusOr, bool SkipInvalid = true, bool WholeRow = true>
+__device__ void run(const float* gate, const float* up, uint8_t* codes, uint8_t* scales,
+                    const uint32_t* live_rows, uint32_t* status, uint64_t status_row_offset) {
+  static_assert(Width > 0 && Width % 32 == 0);
+  ptx::griddep_wait();
+  const uint32_t row = blockIdx.x;
+  if (row >= *live_rows) { ptx::griddep_launch_dependents(); return; }
+  const uint32_t lane = threadIdx.x;
+  uint32_t flags = 0;
+#pragma unroll 1
+  for (uint32_t group = 0; group < Width / 32; ++group) {
+    const uint64_t at = uint64_t(row) * Width + uint64_t(group) * 32 + 2 * lane;
+    flags |= quantize_group<GateMaxBits,UpLimitBits,FloorBits,SkipInvalid>(gate,up,at).flags;
+  }
+  for (int step = 16; step; step >>= 1)
+    flags |= __shfl_xor_sync(0xffffffff, flags, step);
+  if (lane == 0) flags = Status::update(status,status_row_offset+row,flags);
+  flags = __shfl_sync(0xffffffff,flags,0);
+#pragma unroll 1
+  for (uint32_t group = 0; group < Width / 32; ++group) {
+    const uint64_t at = uint64_t(row) * Width + uint64_t(group) * 32 + 2 * lane;
+    block_quantize::GroupValue value;
+    if (flags == 0 || (!WholeRow && group != 0))
+      value = quantize_group<GateMaxBits,UpLimitBits,FloorBits,SkipInvalid>(gate,up,at);
+    else value.scale_code = 127; // fixed finite scale 1
+    if (lane == 0) scales[uint64_t(row) * (Width / 32) + group] = value.scale_code;
+    if (lane < 16) {
+      codes[at] = uint8_t(value.codes);
+      codes[at + 1] = uint8_t(value.codes >> 8);
+    }
+  }
+  ptx::griddep_launch_dependents();
 }
 
 } // namespace chop::row::silu_mul_quantize

@@ -27,6 +27,35 @@ retains no traps, including in fake-quant conversion. Width, group divisibility,
 input/output types, capacity, buffer extents and aliases are checked on the host.
 Zero planned rows produce no launch.
 
+## Quantized clamped SwiGLU status
+
+`SiluMulQuantizeBuffers` uses the same required U32 `status` plane and U64
+`status_row_offset` in words. Its entry arguments are `gate, up, codes,
+scales, live_rows, status, status_row_offset`. Status must cover
+`(status_row_offset + planned_rows) * 4` bytes, with checked arithmetic,
+and cannot alias any other role. Clear the selected words once per step,
+order launches sharing rows, and inspect the accumulated flags before
+accepting output.
+
+Any NaN or infinity in either original F32 operand sets `NONFINITE_INPUT`.
+That element skips the product entirely, so a negative infinite gate cannot
+produce NaN through division by an infinite exponential. A product that
+rounds to BF16 infinity, or a packed result not finite and exact in BF16,
+sets `UNREPRESENTABLE_OUTPUT`. The registration refusal for clamps with
+`max(gate_max, 1) * up_limit` above the BF16 maximum remains. Both former
+device traps are removed.
+
+One 32-thread CTA validates every group of a row before updating status
+with atomic OR and writing output. Any prior or new bit produces positive
+zero codes and UE8M0 scale 127 throughout that row. Passing groups retain
+their original F32 operation order, single BF16 product rounding, warp
+amax reduction, ceil scale selection and E4M3 conversion. The lab retains
+its boundary-aware conformance cases and compares every finite input set
+bitwise with a frozen previous cubin. Status cases cover both operands,
+prior bits, ordered launches, offset guards, graph and PDL replay. Device
+controls drop a flag, address another status row, zero only part of a row,
+or omit the product skip; each must fail the unchanged oracle.
+
 ## Finite E2M1/E4M3 scale saturation
 
 TileLang 0.1.12, the pinned vendor dependency, saturates the scale to 448.

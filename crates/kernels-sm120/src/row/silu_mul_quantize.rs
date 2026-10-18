@@ -1,16 +1,16 @@
 //! The clamped SwiGLU with BF16 rounding and ceil E4M3/32 quantization
 //! (`cuda/row/silu_mul_quantize.cuh`): F32 gate and up rows in, E4M3 codes
 //! and UE8M0 scales out, the code and scale rule of the block quantizer
-//! (`row/block_quantize.cuh`). One CTA of 32 threads per row and group of
-//! 32 columns; each row and group reads only its own columns, so an entry
+//! (`row/block_quantize.cuh`). One CTA of 32 threads per row validates all
+//! groups before writing; each row reads only its own columns, so an entry
 //! claims one-row bits up to its capacity, any chunk split and row
 //! independence. Each column is a scalar load, so the gate and up views
 //! need only F32 alignment. An entry refuses a clamp whose product can
-//! round to a BF16 infinity ([`clamp_fits_bf16`]), so no finite input
-//! reaches the kernel's overflow trap.
+//! round to a BF16 infinity ([`clamp_fits_bf16`]). Device failures report
+//! sticky status and zero the whole row; no data path traps.
 
 use super::{pack_arguments, ptr};
-use kernel_build::{CubinSpec, EntrySpec};
+use kernel_build::{CubinSpec, EntryParam, EntrySpec};
 use kernel_core::contract::{
     Argument, ArgumentList, LaunchPlan, NumericalContract, Refusal, Validate,
 };
@@ -21,7 +21,7 @@ use kernel_core::properties::Invariance;
 pub const HEADER: &str = "row/silu_mul_quantize.cuh";
 pub const LAB_CUBIN: &str = "silu_mul_quantize_sm120";
 pub const LAB_CAPACITY: u32 = 16;
-/// Columns of one CTA: one quantization group.
+/// Columns of one quantization group.
 pub const GROUP: u32 = 32;
 /// The largest finite BF16 value, `0x7f7f`.
 const BF16_MAX: f64 = 3.389_531_389_251_535_5e38;
@@ -85,14 +85,14 @@ impl Entry {
     }
 
     /// The plan of a launch of `rows` token rows (at most the capacity):
-    /// one CTA per row and group. The kernel reads the live count on the
+    /// one CTA per row. The kernel reads the live count on the
     /// device, so rows past it write nothing.
     pub fn plan(&self, rows: u32) -> Result<LaunchPlan, Refusal> {
         if rows > self.capacity {
             return Err(Refusal("quantized SwiGLU rows exceed capacity"));
         }
         let plan = LaunchPlan {
-            grid: [rows.max(1), self.query.width / GROUP, 1],
+            grid: [rows.max(1), 1, 1],
             block: [32, 1, 1],
             dynamic_shared_bytes: 0,
             workspace_bytes: 0,
@@ -140,15 +140,20 @@ impl Entry {
                 ptr("codes", "uint8_t"),
                 ptr("scales", "uint8_t"),
                 ptr("live_rows", "const uint32_t"),
+                ptr("status", "uint32_t"),
+                EntryParam::U64 {
+                    name: "status_row_offset".into(),
+                },
             ],
             format!(
-                "chop::row::silu_mul_quantize::run<{width},{gate_max_bits:#x}u,{up_limit_bits:#x}u,{amax_floor_bits:#x}u>(gate,up,codes,scales,live_rows);"
+                "chop::row::silu_mul_quantize::run<{width},{gate_max_bits:#x}u,{up_limit_bits:#x}u,{amax_floor_bits:#x}u>(gate,up,codes,scales,live_rows,status,status_row_offset);"
             ),
             32,
             1,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn arguments(
         &self,
         gate: u64,
@@ -156,12 +161,16 @@ impl Entry {
         codes: u64,
         scales: u64,
         live: u64,
+        status: u64,
+        status_row_offset: u64,
     ) -> Result<ArgumentList, Refusal> {
         pack_arguments(
             &self.spec().params,
-            [gate, up, codes, scales, live]
+            [gate, up, codes, scales, live, status]
                 .map(Argument::DeviceBuffer)
-                .to_vec(),
+                .into_iter()
+                .chain([Argument::U64(status_row_offset)])
+                .collect(),
         )
     }
 }
@@ -200,7 +209,7 @@ pub fn lab_entries() -> Vec<Entry> {
                     amax_floor_bits: 1e-4_f32.to_bits(),
                 },
                 LAB_CAPACITY,
-                format!("chop_silu_mul_quantize_c10_w{width}_v1"),
+                format!("chop_silu_mul_quantize_c10_w{width}_v2"),
             )
             .unwrap()
         })
@@ -223,12 +232,12 @@ mod tests {
             let groups = entry.query.width / GROUP;
             for rows in [0, 1, LAB_CAPACITY] {
                 let plan = entry.plan(rows).unwrap();
-                assert_eq!(plan.grid, [rows.max(1), groups, 1]);
+                assert_eq!(plan.grid, [rows.max(1), 1, 1]);
                 assert_eq!(plan.block, [32, 1, 1]);
                 assert!(plan.pdl);
             }
             assert!(entry.plan(LAB_CAPACITY + 1).is_err());
-            entry.arguments(1, 2, 3, 4, 5).unwrap();
+            entry.arguments(1, 2, 3, 4, 5, 6, 3).unwrap();
             assert!(
                 entry.spec().body.contains("0x41200000u"),
                 "{}",

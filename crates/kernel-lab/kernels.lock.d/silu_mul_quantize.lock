@@ -85,7 +85,7 @@
     "defines": [],
     "entries": [
       {
-        "symbol": "chop_silu_mul_quantize_c10_w32_v1",
+        "symbol": "chop_silu_mul_quantize_c10_w32_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -111,6 +111,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -118,7 +127,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_silu_mul_quantize_c10_w576_v1",
+        "symbol": "chop_silu_mul_quantize_c10_w576_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -144,6 +153,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -151,7 +169,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_silu_mul_quantize_c10_w2304_v1",
+        "symbol": "chop_silu_mul_quantize_c10_w2304_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -177,6 +195,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -184,11 +211,11 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "c41fc06cd49bf17d43e1c3e4cb9c85d31d913c3c64bc86a1ac0a3522c7727d56",
+    "cubin_sha256": "929a1a6df2051b500435b2b554a02196f45d880d149d56ed31059878fedc759e",
     "resources": [
       {
-        "symbol": "chop_silu_mul_quantize_c10_w32_v1",
-        "registers": 25,
+        "symbol": "chop_silu_mul_quantize_c10_w32_v2",
+        "registers": 27,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -196,8 +223,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_silu_mul_quantize_c10_w576_v1",
-        "registers": 26,
+        "symbol": "chop_silu_mul_quantize_c10_w576_v2",
+        "registers": 30,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -205,8 +232,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_silu_mul_quantize_c10_w2304_v1",
-        "registers": 26,
+        "symbol": "chop_silu_mul_quantize_c10_w2304_v2",
+        "registers": 30,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,

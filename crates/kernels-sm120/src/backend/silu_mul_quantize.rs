@@ -11,7 +11,7 @@ use kernel_core::backend::{Counts, Launch, Need, OpInfo, Prepared, PreparedOp, R
 use kernel_core::contract::{Refusal, Validate};
 use kernel_core::gated_mlp::quantized::{SiluMulQuantizeBuffers, SiluMulQuantizeQuery};
 
-const IMPLEMENTATION: &str = "sm120.silu-mul-quantize.v1";
+const IMPLEMENTATION: &str = "sm120.silu-mul-quantize.status-or-zero.v2";
 
 fn key(entry: &Entry) -> String {
     format!("{:?}", entry.spec())
@@ -78,6 +78,28 @@ impl PreparedOp<SiluMulQuantizeBuffers<View>> for Op {
         buffers.codes.covers(entry.code_bytes(rows))?;
         buffers.scales.covers(entry.scale_bytes(rows))?;
         buffers.live_rows.covers(4)?;
+        if buffers.status.bytes == 0 {
+            return Err(Refusal("quantized SwiGLU requires row status"));
+        }
+        buffers
+            .status
+            .covers(kernel_core::precision::quantizer::status_extent(
+                buffers.status_row_offset,
+                rows,
+            )?)?;
+        if [
+            buffers.gate.handle,
+            buffers.up.handle,
+            buffers.codes.handle,
+            buffers.scales.handle,
+            buffers.live_rows.handle,
+        ]
+        .contains(&buffers.status.handle)
+        {
+            return Err(Refusal(
+                "quantized SwiGLU status must not alias another role",
+            ));
+        }
         let written = [buffers.codes.handle, buffers.scales.handle];
         let read = [
             buffers.gate.handle,
@@ -99,6 +121,8 @@ impl PreparedOp<SiluMulQuantizeBuffers<View>> for Op {
                 buffers.codes.handle,
                 buffers.scales.handle,
                 buffers.live_rows.handle,
+                buffers.status.handle,
+                buffers.status_row_offset,
             )?,
             collective: false,
             persistent: false,
@@ -122,6 +146,8 @@ mod tests {
             bytes: 16 * 2304 * 4,
         };
         SiluMulQuantizeBuffers {
+            status: v(6),
+            status_row_offset: 3,
             gate: v(1),
             up: v(2),
             codes: v(3),
@@ -149,13 +175,33 @@ mod tests {
                     .unwrap();
                 assert_eq!(launches.len(), 1);
                 assert_eq!(launches[0].symbol, entry.symbol);
-                assert_eq!(launches[0].plan.grid, [rows.max(1), query.width / 32, 1]);
+                assert_eq!(launches[0].plan.grid, [rows.max(1), 1, 1]);
                 assert_eq!(
                     launches[0].arguments.0,
-                    (1..=5).map(Argument::DeviceBuffer).collect::<Vec<_>>()
+                    (1..=6)
+                        .map(Argument::DeviceBuffer)
+                        .chain([Argument::U64(3)])
+                        .collect::<Vec<_>>()
                 );
             }
             assert!(op.launches(&buffers, View::EMPTY, Counts::rows(9)).is_err());
+            let mut status = buffers;
+            status.status.bytes = (3 + 8) * 4;
+            op.launches(&status, View::EMPTY, Counts::rows(8)).unwrap();
+            status.status.bytes -= 1;
+            assert!(op.launches(&status, View::EMPTY, Counts::rows(8)).is_err());
+            status.status = View::EMPTY;
+            assert!(op.launches(&status, View::EMPTY, Counts::rows(8)).is_err());
+            status = buffers;
+            for offset in [u64::MAX, u64::MAX / 4] {
+                status.status_row_offset = offset;
+                assert!(op.launches(&status, View::EMPTY, Counts::rows(8)).is_err());
+            }
+            for handle in 1..=5 {
+                status = buffers;
+                status.status.handle = handle;
+                assert!(op.launches(&status, View::EMPTY, Counts::rows(8)).is_err());
+            }
             buffers.scales.bytes = entry.scale_bytes(8) - 1;
             assert!(op.launches(&buffers, View::EMPTY, Counts::rows(8)).is_err());
             let mut aliased = self::buffers();

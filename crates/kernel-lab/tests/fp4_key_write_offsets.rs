@@ -11,7 +11,7 @@ use kernel_core::compressed_kv::{
 use kernel_core::pooled_indexer::{PositionKeyPages, PositionKeyWriteBuffers};
 use kernel_core::precision::quantizer::BlockQuantization;
 use kernel_core::quantize::Scales;
-use kernel_lab::families::{fp4_key_write, pooling_write_mutants::Fault};
+use kernel_lab::families::{fp4_key_write, fp4_key_write_bf16, pooling_write_mutants::Fault};
 use kernel_lab::kit::cases::fp4_key_write::{Query, queries};
 use kernel_lab::{LabResult, Session, gpu_test, launch};
 use kernels_sm120::backend::Sm120;
@@ -37,10 +37,10 @@ fn view(handle: u64, buffer: &DeviceBuffer) -> View {
 
 fn geometry(query: Query) -> (usize, usize, bool, BlockQuantization) {
     match query {
-        Query::Index(q) => (
+        Query::Index(q) | Query::IndexBf16(q) => (
             q.head_dim as usize,
             q.page_size as usize,
-            true,
+            matches!(query, Query::Index(_)),
             BlockQuantization::E2M1Ceil32,
         ),
         Query::Compressed(q) => (
@@ -71,7 +71,7 @@ fn run(session: &Session, query: Query, strides: [u64; 2], fault: Option<Fault>)
     let keys: Vec<f32> = (0..2)
         .flat_map(|row| {
             (0..width).map(move |d| {
-                if matches!(query, Query::Index(_)) {
+                if matches!(query, Query::Index(_) | Query::IndexBf16(_)) {
                     if (d + row) % 2 == 0 { 1.0 } else { -1.0 }
                 } else {
                     [6.0, -1.0, 2.0, -3.0, 4.0, -0.5, 1.0, -2.0][(d + row) % 8]
@@ -140,11 +140,19 @@ fn run(session: &Session, query: Query, strides: [u64; 2], fault: Option<Fault>)
         sequences: 1,
         max_pages: 2,
     };
-    let backend = Sm120::new().with_fp4_key_writes(fp4_key_write::entries());
+    let backend = Sm120::new().with_fp4_key_writes(fp4_key_write_bf16::all_entries());
     let counts = Counts::rows(2).with_positions(132);
     let launches = match query {
-        Query::Index(q) => backend
-            .position_indexer_key_write(&q, Need::rows(2))
+        Query::Index(q) | Query::IndexBf16(q) => backend
+            .position_indexer_key_write_with_storage(
+                &q,
+                if packed {
+                    kernel_core::pooled_indexer::IndexerKeyFormat::Fp4
+                } else {
+                    kernel_core::pooled_indexer::IndexerKeyFormat::Bf16
+                },
+                Need::rows(2),
+            )
             .map_err(|e| e.to_string())?
             .launches(
                 &PositionKeyWriteBuffers {
@@ -158,10 +166,10 @@ fn run(session: &Session, query: Query, strides: [u64; 2], fault: Option<Fault>)
                     live_rows: view(6, &live),
                     keys: PositionKeyPages {
                         codes: view(8, &codes.buffer),
-                        scales: view(9, &scales.as_ref().unwrap().buffer),
+                        scales: scales.as_ref().map_or(View::EMPTY, |s| view(9, &s.buffer)),
                         pages: 2,
                         code_page_stride: code_stride,
-                        scale_page_stride: scale_stride,
+                        scale_page_stride: if packed { scale_stride } else { 0 },
                         page_tables,
                     },
                 },
@@ -210,8 +218,12 @@ fn run(session: &Session, query: Query, strides: [u64; 2], fault: Option<Fault>)
     if let Some(scales) = &scales {
         bindings.buffers.insert(9, &scales.buffer);
     }
-    let module = session
-        .module(&fault.map_or_else(|| fp4_key_write::CUBIN.to_owned(), Fault::cubin_name))?;
+    let cubin = if matches!(query, Query::IndexBf16(_)) {
+        fp4_key_write_bf16::CUBIN
+    } else {
+        fp4_key_write::CUBIN
+    };
+    let module = session.module(&fault.map_or_else(|| cubin.to_owned(), Fault::cubin_name))?;
     for call in launches {
         let symbol = fault.map_or_else(|| call.symbol.clone(), |f| f.symbol(&call.symbol));
         let function = module.function(&symbol).map_err(|e| e.to_string())?;
@@ -311,6 +323,28 @@ fn fp4_planes_cross_both_32_bit_boundaries() {
                     "{fault:?}: {error}"
                 );
             }
+        }
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn bf16_index_values_cross_both_32_bit_boundaries() {
+    gpu_test(6 << 30, |session| {
+        let q = queries()
+            .into_iter()
+            .find_map(|q| match q {
+                Query::Index(q) if q.compression_ratio == 1 => Some(q),
+                _ => None,
+            })
+            .unwrap();
+        let query = Query::IndexBf16(q);
+        for stride in [64 * 128 * 2 + 4096]
+            .into_iter()
+            .chain(offsets::FP4_PLANE_STRIDES)
+        {
+            run(session, query, [stride, 0], None)?;
         }
         Ok(())
     })

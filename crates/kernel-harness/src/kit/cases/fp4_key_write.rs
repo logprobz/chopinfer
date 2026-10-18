@@ -14,7 +14,8 @@ use kernel_core::compressed_kv::{
 };
 use kernel_core::contract::{DType, Refusal, RmsNormKind};
 use kernel_core::pooled_indexer::{
-    IndexerCandidates, PositionIndexerQuery, PositionKeyPages, PositionKeyWriteBuffers,
+    IndexerCandidates, IndexerKeyFormat, PositionIndexerQuery, PositionKeyPages,
+    PositionKeyWriteBuffers,
 };
 use kernel_core::precision::quantizer::{
     BlockQuantization, BlockQuantizeQuery, NONFINITE_INPUT, QuantizeOutput,
@@ -31,34 +32,36 @@ const TABLES: [i32; 9] = [1, 3, -1, 0, 4, -1, 2, 5, -1];
 #[derive(Clone, Copy, Debug)]
 pub enum Query {
     Index(PositionIndexerQuery),
+    IndexBf16(PositionIndexerQuery),
     Compressed(CompressedKvWriteQuery),
 }
 
 impl Query {
     fn page(self) -> usize {
         match self {
-            Self::Index(q) => q.page_size as usize,
+            Self::Index(q) | Self::IndexBf16(q) => q.page_size as usize,
             Self::Compressed(q) => q.page_size as usize,
         }
     }
     pub fn width(self) -> u32 {
         match self {
-            Self::Index(q) => q.head_dim,
+            Self::Index(q) | Self::IndexBf16(q) => q.head_dim,
             Self::Compressed(q) => q.width,
         }
     }
     fn ratio(self) -> u32 {
         match self {
-            Self::Index(q) => q.compression_ratio,
+            Self::Index(q) | Self::IndexBf16(q) => q.compression_ratio,
             Self::Compressed(q) => q.compression_ratio,
         }
     }
     fn packed(self) -> bool {
-        !matches!(self, Self::Compressed(q) if q.storage == CompressedKvStorage::Bf16)
+        !matches!(self, Self::IndexBf16(_))
+            && !matches!(self, Self::Compressed(q) if q.storage == CompressedKvStorage::Bf16)
     }
     fn format(self) -> BlockQuantization {
         match self {
-            Self::Index(_) => BlockQuantization::E2M1Ceil32,
+            Self::Index(_) | Self::IndexBf16(_) => BlockQuantization::E2M1Ceil32,
             Self::Compressed(_) => BlockQuantization::E2M1E4M3Scale16,
         }
     }
@@ -169,7 +172,7 @@ impl PreparedOp<ProbeBuffers<View>> for Probe {
                     live_rows: b.live_rows,
                     keys: PositionKeyPages {
                         codes: b.codes,
-                        scales: b.scales.ok_or(Refusal("index case needs scales"))?,
+                        scales: b.scales.unwrap_or(View::EMPTY),
                         pages: PAGES as u32,
                         code_page_stride: b.code_stride,
                         scale_page_stride: b.scale_stride,
@@ -276,7 +279,7 @@ fn status_case(
     variant: StatusCase,
 ) -> LabResult<OpCase<'static>> {
     let (page, rotary, capacity) = match query {
-        Query::Index(q) => (q.page_size, q.tail_rope_dims, q.capacity),
+        Query::Index(q) | Query::IndexBf16(q) => (q.page_size, q.tail_rope_dims, q.capacity),
         Query::Compressed(q) => (q.page_size, q.tail_rope_dims, q.capacity),
     };
     if !matches!(page, 32 | 64)
@@ -291,7 +294,7 @@ fn status_case(
     }
     let width = query.width() as usize;
     let packed = query.packed();
-    let normalize = matches!(query, Query::Index(_));
+    let normalize = matches!(query, Query::Index(_) | Query::IndexBf16(_));
     let (code_stride, scale_stride) = query.strides();
     let sample = |row: usize, d: usize| -> f32 {
         if normalize {
@@ -507,7 +510,7 @@ fn oracle_rounding(
         } else {
             0
         };
-        if let Query::Index(q) = query {
+        if let Query::Index(q) | Query::IndexBf16(q) = query {
             let weights: Vec<f64> = images
                 .u16s("norm_weight")?
                 .into_iter()
@@ -622,11 +625,18 @@ fn oracle_rounding(
 }
 
 pub fn status_family(variant: StatusCase) -> Vec<Required<'static>> {
-    queries()
+    status_family_for(variant, queries())
+}
+
+pub fn status_family_for(
+    variant: StatusCase,
+    queries: impl IntoIterator<Item = Query>,
+) -> Vec<Required<'static>> {
+    queries
         .into_iter()
         .filter(|query| match variant {
             StatusCase::NormNonfinite | StatusCase::DecodeOverflow => {
-                matches!(query, Query::Index(_))
+                matches!(query, Query::Index(_) | Query::IndexBf16(_))
             }
             StatusCase::Saturation | StatusCase::RoundedOverflow | StatusCase::RotaryOverflow => {
                 matches!(query, Query::Compressed(_))
@@ -638,6 +648,9 @@ pub fn status_family(variant: StatusCase) -> Vec<Required<'static>> {
                 format!("FP4 status {variant:?} {query:?}"),
                 Need::rows(CAPACITY),
                 move |backend, need| match query {
+                    Query::IndexBf16(q) => backend
+                        .position_indexer_key_write_with_storage(&q, IndexerKeyFormat::Bf16, need)
+                        .map(|op| Box::new(Probe::Index(op)) as Prepared<ProbeBuffers<View>>),
                     Query::Index(q) => backend
                         .position_indexer_key_write(&q, need)
                         .map(|op| Box::new(Probe::Index(op)) as Prepared<ProbeBuffers<View>>),
@@ -664,6 +677,46 @@ pub const STATUS_CASES: [StatusCase; 9] = [
     StatusCase::PriorFlags,
 ];
 
+/// A 64-token page holds 64/ratio compressed entries in each stream.
+pub fn comparison_queries() -> Vec<Query> {
+    queries()
+        .into_iter()
+        .filter_map(|query| match query {
+            Query::Index(mut q) => {
+                q.page_size = 64 / q.compression_ratio;
+                Some(Query::Index(q))
+            }
+            Query::Compressed(mut q) if q.storage == CompressedKvStorage::Packed => {
+                q.page_size = 64 / q.compression_ratio;
+                Some(Query::Compressed(q))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+pub fn bf16_storage(query: Query) -> Query {
+    match query {
+        Query::Index(q) | Query::IndexBf16(q) => Query::IndexBf16(q),
+        Query::Compressed(q) => Query::Compressed(CompressedKvWriteQuery {
+            storage: CompressedKvStorage::Bf16,
+            ..q
+        }),
+    }
+}
+
+pub fn bf16_family() -> Vec<Required<'static>> {
+    let queries = comparison_queries()
+        .into_iter()
+        .map(bf16_storage)
+        .collect::<Vec<_>>();
+    let mut cases = family_for(queries.clone());
+    for variant in STATUS_CASES {
+        cases.extend(status_family_for(variant, queries.clone()));
+    }
+    cases
+}
+
 pub fn family() -> Vec<Required<'static>> {
     family_for(queries())
 }
@@ -679,6 +732,9 @@ pub fn family_for(queries: impl IntoIterator<Item = Query>) -> Vec<Required<'sta
                 format!("FP4 key write {query:?}"),
                 Need::rows(CAPACITY),
                 move |backend, need| match query {
+                    Query::IndexBf16(q) => backend
+                        .position_indexer_key_write_with_storage(&q, IndexerKeyFormat::Bf16, need)
+                        .map(|op| Box::new(Probe::Index(op)) as Prepared<ProbeBuffers<View>>),
                     Query::Index(q) => backend
                         .position_indexer_key_write(&q, need)
                         .map(|op| Box::new(Probe::Index(op)) as Prepared<ProbeBuffers<View>>),
@@ -693,6 +749,73 @@ pub fn family_for(queries: impl IntoIterator<Item = Query>) -> Vec<Required<'sta
         .collect()
 }
 
+/// Decode the observed native write and compare every addressed BF16 value.
+/// Each launch also checks its own exact oracle, guards, status and poison.
+pub fn compare_storage_on_device(
+    backend: &dyn kernel_core::backend::Backend,
+    modules: &dyn crate::kit::Modules,
+    session: &crate::Session,
+) -> LabResult<serde_json::Value> {
+    use kernel_core::codec::{SmallFloat, decode_ue8m0_f64, f64_to_bf16};
+    let functions = modules.load(session)?;
+    let mut pairs = 0;
+    let mut values = 0;
+    for query in comparison_queries() {
+        let comparison = bf16_storage(query);
+        for variant in std::iter::once(StatusCase::Normal).chain(STATUS_CASES) {
+            let Some(native_required) = status_family_for(variant, [query]).pop() else {
+                continue;
+            };
+            let bf16_required = status_family_for(variant, [comparison]).pop().unwrap();
+            let native = super::testing::prepared(backend, &native_required);
+            let bf16 = super::testing::prepared(backend, &bf16_required);
+            let a = native.images();
+            let b = bf16.images();
+            for live in [1, 3, CAPACITY] {
+                let left = native.launch(session, functions.as_ref(), &a, live)?;
+                let right = bf16.launch(session, functions.as_ref(), &b, live)?;
+                native.judge_outputs(&a, live, &left)?;
+                bf16.judge_outputs(&b, live, &right)?;
+                if left["status"] != right["status"] {
+                    return Err("comparison row status differs".into());
+                }
+                let scales = slots(query, &a, live, true)?;
+                let targets = slots(comparison, &b, live, false)?;
+                for (row, source) in slots(query, &a, live, false)? {
+                    let scale = &scales.iter().find(|(r, _)| *r == row).unwrap().1;
+                    let target = &targets.iter().find(|(r, _)| *r == row).unwrap().1;
+                    for channel in 0..query.width() as usize {
+                        let byte = left["codes"][source.start + channel / 2];
+                        let code = (byte >> (4 * (channel % 2))) & 15;
+                        let scale = left["scales"]
+                            [scale.start + channel / query.format().group_size() as usize];
+                        let scale = match query {
+                            Query::Index(_) | Query::IndexBf16(_) => decode_ue8m0_f64(scale),
+                            Query::Compressed(_) => SmallFloat::Ue4M3.decode_f64(scale),
+                        };
+                        let product = SmallFloat::E2M1.decode_f64(code) * scale;
+                        let expected = f64_to_bf16(product);
+                        if !product.is_finite()
+                            || f64::from(bf16_to_f32(expected)).to_bits() != product.to_bits()
+                        {
+                            return Err("native writer emitted an inexact BF16 product".into());
+                        }
+                        let at = target.start + channel * 2;
+                        if right["codes"][at..at + 2] != expected.to_le_bytes() {
+                            return Err(format!(
+                                "native/BF16 product differs at row {row} channel {channel}"
+                            ));
+                        }
+                        values += 1;
+                    }
+                }
+                pairs += 1;
+            }
+        }
+    }
+    Ok(serde_json::json!({"launch_pairs": pairs, "exact_products": values}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -703,10 +826,22 @@ mod tests {
     fn prepared_case(query: Query) -> OpCase<'static> {
         let entry = match query {
             Query::Index(q) => Entry::index(&q, "chop_fp4_test_v1").unwrap(),
+            Query::IndexBf16(q) => {
+                Entry::index_with_storage(&q, IndexerKeyFormat::Bf16, "chop_fp4_test_v1").unwrap()
+            }
             Query::Compressed(q) => Entry::compressed(&q, "chop_fp4_test_v1").unwrap(),
         };
         let backend = Sm120::new().with_fp4_key_writes([entry]);
         let prepared = match query {
+            Query::IndexBf16(q) => Probe::Index(
+                backend
+                    .position_indexer_key_write_with_storage(
+                        &q,
+                        IndexerKeyFormat::Bf16,
+                        Need::rows(CAPACITY),
+                    )
+                    .unwrap(),
+            ),
             Query::Index(q) => Probe::Index(
                 backend
                     .position_indexer_key_write(&q, Need::rows(CAPACITY))
@@ -726,7 +861,7 @@ mod tests {
         for variant in STATUS_CASES {
             for query in queries().into_iter().filter(|q| match variant {
                 StatusCase::NormNonfinite | StatusCase::DecodeOverflow => {
-                    matches!(q, Query::Index(_))
+                    matches!(q, Query::Index(_) | Query::IndexBf16(_))
                 }
                 StatusCase::Saturation
                 | StatusCase::RoundedOverflow
@@ -735,11 +870,23 @@ mod tests {
             }) {
                 let entry = match query {
                     Query::Index(q) => Entry::index(&q, "status_fixture_v1"),
+                    Query::IndexBf16(q) => {
+                        Entry::index_with_storage(&q, IndexerKeyFormat::Bf16, "status_fixture_v1")
+                    }
                     Query::Compressed(q) => Entry::compressed(&q, "status_fixture_v1"),
                 }
                 .unwrap();
                 let backend = Sm120::new().with_fp4_key_writes([entry]);
                 let prepared = match query {
+                    Query::IndexBf16(q) => Probe::Index(
+                        backend
+                            .position_indexer_key_write_with_storage(
+                                &q,
+                                IndexerKeyFormat::Bf16,
+                                Need::rows(CAPACITY),
+                            )
+                            .unwrap(),
+                    ),
                     Query::Index(q) => Probe::Index(
                         backend
                             .position_indexer_key_write(&q, Need::rows(CAPACITY))
@@ -835,14 +982,14 @@ mod tests {
                 .map(|v| bf16_to_f32(f32_to_bf16(v)))
                 .collect();
             let early_projection = images.clone().with("key", f32_bytes(&rounded));
-            if matches!(query, Query::Index(_))
+            if matches!(query, Query::Index(_) | Query::IndexBf16(_))
                 && correct != bits(oracle(query, &early_projection, CAPACITY).unwrap())
             {
                 projection_changes += 1;
             }
             if correct != bits(oracle_rounding(query, &images, CAPACITY, true).unwrap()) {
                 match query {
-                    Query::Index(_) => norm_changes += 1,
+                    Query::Index(_) | Query::IndexBf16(_) => norm_changes += 1,
                     Query::Compressed(_) => latent_changes += 1,
                 }
             }
@@ -867,10 +1014,23 @@ mod tests {
         for query in queries() {
             let entry = match query {
                 Query::Index(q) => Entry::index(&q, "chop_fp4_test_v1").unwrap(),
+                Query::IndexBf16(q) => {
+                    Entry::index_with_storage(&q, IndexerKeyFormat::Bf16, "chop_fp4_test_v1")
+                        .unwrap()
+                }
                 Query::Compressed(q) => Entry::compressed(&q, "chop_fp4_test_v1").unwrap(),
             };
             let backend = Sm120::new().with_fp4_key_writes([entry]);
             let prepared = match query {
+                Query::IndexBf16(q) => Probe::Index(
+                    backend
+                        .position_indexer_key_write_with_storage(
+                            &q,
+                            IndexerKeyFormat::Bf16,
+                            Need::rows(CAPACITY),
+                        )
+                        .unwrap(),
+                ),
                 Query::Index(q) => Probe::Index(
                     backend
                         .position_indexer_key_write(&q, Need::rows(CAPACITY))

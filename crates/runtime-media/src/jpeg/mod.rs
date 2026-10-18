@@ -1,7 +1,7 @@
 //! Bounded 8-bit JPEG decoding. The scan decoder and reconstruction live beside
 //! this marker parser so probing and full decoding agree on frame geometry.
 
-use crate::{MediaError, MediaLimits, MediaResult, RgbImage};
+use crate::{MediaError, MediaLimits, MediaResult, Orientation, RgbImage};
 
 mod decode;
 mod entropy;
@@ -170,7 +170,21 @@ fn tiff_orientation(bytes: &[u8]) -> Option<u8> {
 }
 
 pub fn decode(bytes: &[u8], limits: MediaLimits) -> MediaResult<RgbImage> {
-    render::render(decode::coefficients(bytes, limits)?, limits)
+    decode_oriented(bytes, limits, Orientation::Exif)
+}
+
+/// [`decode`] under `orientation`: [`Orientation::Stored`] ignores an EXIF
+/// orientation tag and keeps the stored pixels.
+pub fn decode_oriented(
+    bytes: &[u8],
+    limits: MediaLimits,
+    orientation: Orientation,
+) -> MediaResult<RgbImage> {
+    let mut frame = decode::coefficients(bytes, limits)?;
+    if orientation == Orientation::Stored {
+        frame.header.orientation = 1;
+    }
+    render::render(frame, limits)
 }
 
 /// Channel-level comparison against a captured libjpeg-turbo RGB frame.
@@ -209,6 +223,16 @@ pub fn compare_capture(
 }
 
 pub fn probe(bytes: &[u8], limits: MediaLimits) -> MediaResult<(u32, u32)> {
+    probe_oriented(bytes, limits, Orientation::Exif)
+}
+
+/// [`probe`] under `policy`: [`Orientation::Stored`] gives the stored
+/// width and height whatever the EXIF tag says.
+pub fn probe_oriented(
+    bytes: &[u8],
+    limits: MediaLimits,
+    policy: Orientation,
+) -> MediaResult<(u32, u32)> {
     limits.check_bytes(bytes.len())?;
     let mut markers = Markers::new(bytes)?;
     let mut orientation = 1;
@@ -239,7 +263,10 @@ pub fn probe(bytes: &[u8], limits: MediaLimits) -> MediaResult<(u32, u32)> {
                 return Err(MediaError::new("unsupported JPEG frame coding"));
             }
             0xda => {
-                let header = header.ok_or_else(|| MediaError::new("JPEG SOF is missing"))?;
+                let mut header = header.ok_or_else(|| MediaError::new("JPEG SOF is missing"))?;
+                if policy == Orientation::Stored {
+                    header.orientation = 1;
+                }
                 return Ok(header.oriented_size());
             }
             0xd9 => return Err(MediaError::new("JPEG scan is missing")),
@@ -509,5 +536,10 @@ mod tests {
         );
         bytes.extend_from_slice(&header()[2..]);
         assert_eq!(probe(&bytes, limits()).unwrap(), (2, 3));
+        // Kept as stored, the tag changes nothing.
+        assert_eq!(
+            probe_oriented(&bytes, limits(), Orientation::Stored).unwrap(),
+            (3, 2)
+        );
     }
 }

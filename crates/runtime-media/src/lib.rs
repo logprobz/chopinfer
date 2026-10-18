@@ -11,6 +11,6 @@ pub mod video_frames;
 pub mod wav;
 
 pub use core::{
-    Alpha, DecodedAudio, MediaError, MediaLimits, MediaResult, MediaSource, Probe, RgbImage,
-    content_key, decode_base64, decode_data_url, probe, read_source,
+    Alpha, DecodedAudio, MediaError, MediaLimits, MediaResult, MediaSource, Orientation, Probe,
+    RgbImage, content_key, decode_base64, decode_data_url, probe, probe_oriented, read_source,
 };

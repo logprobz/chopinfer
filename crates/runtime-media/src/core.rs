@@ -52,6 +52,17 @@ pub enum Alpha {
     Discard,
 }
 
+/// How a JPEG decoder treats an EXIF orientation tag.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Orientation {
+    /// Transpose the pixels into the tagged orientation.
+    #[default]
+    Exif,
+    /// Keep the stored pixel order and size, as PIL's `Image.open` followed
+    /// by `convert("RGB")` does without `ImageOps.exif_transpose`.
+    Stored,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct MediaLimits {
     pub maximum_bytes: usize,
@@ -327,13 +338,22 @@ fn read_local_source(path: &Path, root: &Path, limits: MediaLimits) -> MediaResu
 }
 
 pub fn probe(bytes: &[u8], limits: MediaLimits) -> MediaResult<Probe> {
+    probe_oriented(bytes, limits, Orientation::Exif)
+}
+
+/// [`probe`], with a JPEG's size taken under `orientation`.
+pub fn probe_oriented(
+    bytes: &[u8],
+    limits: MediaLimits,
+    orientation: Orientation,
+) -> MediaResult<Probe> {
     limits.check_bytes(bytes.len())?;
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         let (width, height) = crate::png::probe(bytes)?;
         limits.check_image(width, height)?;
         Ok(Probe::Png { width, height })
     } else if bytes.starts_with(b"\xff\xd8") {
-        let (width, height) = crate::jpeg::probe(bytes, limits)?;
+        let (width, height) = crate::jpeg::probe_oriented(bytes, limits, orientation)?;
         limits.check_image(width, height)?;
         Ok(Probe::Jpeg { width, height })
     } else if bytes.starts_with(b"RIFF") {

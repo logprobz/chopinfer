@@ -155,6 +155,8 @@ pub struct DirectCheckpointV1 {
     /// Runs before each read-ahead advice call, as if inside it.
     #[cfg(test)]
     advice_hook: OnceLock<Box<dyn Fn() + Send + Sync>>,
+    #[cfg(test)]
+    read_refusal: OnceLock<Range<u64>>,
 }
 
 impl std::fmt::Debug for DirectCheckpointV1 {
@@ -318,6 +320,8 @@ impl DirectCheckpointV1 {
             advisers: AdvisersV1::default(),
             #[cfg(test)]
             advice_hook: OnceLock::new(),
+            #[cfg(test)]
+            read_refusal: OnceLock::new(),
         })
     }
 
@@ -576,6 +580,9 @@ struct SourceAtV1 {
 struct RecordV1 {
     consumer: usize,
     packed_sources: Vec<Option<usize>>,
+    /// A matching code section is part of the image admitted by full upload.
+    /// Scale-only plans must read every referenced source themselves.
+    has_code_section: bool,
     offset: u64,
     /// A bundle transform's parameters, passed through unread.
     bundle_params: Vec<u8>,
@@ -707,7 +714,7 @@ struct InnerV1 {
     source_reads: AtomicU64,
     file_read_bytes: AtomicU64,
     unique_source_bytes: AtomicU64,
-    source_ranges: Mutex<SourceRanges>,
+    source_ranges: Option<Mutex<SourceRanges>>,
     source_cache_hits: AtomicU64,
     source_cache_bytes: AtomicU64,
     shared_output_hits: AtomicU64,
@@ -940,6 +947,25 @@ impl PlannedImageV1 {
         implementation: WeightPlanImplementationV1,
         options: DirectLoadOptionsV1,
     ) -> Result<Self, String> {
+        Self::new_with_range_tracking(
+            checkpoint,
+            plans,
+            transform,
+            implementation,
+            options,
+            std::env::var_os("CHOPINFER_DIRECT_LOAD_TRACK_RANGES")
+                .is_some_and(|value| value == "1"),
+        )
+    }
+
+    fn new_with_range_tracking(
+        checkpoint: Arc<DirectCheckpointV1>,
+        plans: Vec<WeightPlanV1>,
+        transform: Option<BundleWeightTransformFnV1>,
+        implementation: WeightPlanImplementationV1,
+        options: DirectLoadOptionsV1,
+        track_ranges: bool,
+    ) -> Result<Self, String> {
         let first = plans.first().ok_or("no rank plans")?;
         // An identity that covered no module would let two bundle builds
         // share it for different bytes.
@@ -1069,6 +1095,14 @@ impl PlannedImageV1 {
                 shared_users[group].1 += 1;
                 records.push((group, record));
             }
+            let code_groups: std::collections::BTreeSet<_> = records
+                .iter()
+                .filter(|(_, record)| record.prepared.section() == 0)
+                .map(|(group, _)| *group)
+                .collect();
+            for (group, record) in &mut records {
+                record.has_code_section = code_groups.contains(group);
+            }
             ranks.push((plan.arena_bytes, records));
         }
         // A group is shared when it is produced whole, or when several ranks
@@ -1166,7 +1200,7 @@ impl PlannedImageV1 {
             source_reads: AtomicU64::new(0),
             file_read_bytes: AtomicU64::new(0),
             unique_source_bytes: AtomicU64::new(0),
-            source_ranges: Mutex::default(),
+            source_ranges: track_ranges.then(Mutex::default),
             source_cache_hits: AtomicU64::new(0),
             source_cache_bytes: AtomicU64::new(0),
             shared_output_hits: AtomicU64::new(0),
@@ -1310,6 +1344,7 @@ impl PlannedImageV1 {
                 + self.inner.source_cache_bytes.load(Ordering::Relaxed),
             file_read_bytes: self.inner.file_read_bytes.load(Ordering::Relaxed),
             unique_source_bytes: self.inner.unique_source_bytes.load(Ordering::Relaxed),
+            source_ranges_tracked: self.inner.source_ranges.is_some(),
             source_cache_hits: self.inner.source_cache_hits.load(Ordering::Relaxed),
             source_cache_bytes: self.inner.source_cache_bytes.load(Ordering::Relaxed),
             shared_output_hits: self.inner.shared_output_hits.load(Ordering::Relaxed),
@@ -1382,6 +1417,19 @@ fn read_source_v1(
     let shard = &inner.checkpoint.shards[source.shard];
     let started = Instant::now();
     let at = source.begin + offset;
+    #[cfg(test)]
+    if inner
+        .checkpoint
+        .read_refusal
+        .get()
+        .is_some_and(|range| at < range.end && range.start < at + buffer.len() as u64)
+    {
+        return Err(WeightTransformError(format!(
+            "read {}: {}",
+            shard.name,
+            std::io::Error::from_raw_os_error(5)
+        )));
+    }
     // Runs the cache holds are copied from it; cold runs are read past it.
     let direct = inner
         .options
@@ -1447,14 +1495,15 @@ fn read_source_v1(
         .source_bytes
         .fetch_add(buffer.len() as u64, Ordering::Relaxed);
     inner.source_reads.fetch_add(1, Ordering::Relaxed);
-    let unique = inner
-        .source_ranges
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert(source.shard, at..at + buffer.len() as u64);
-    inner
-        .unique_source_bytes
-        .fetch_add(unique, Ordering::Relaxed);
+    if let Some(ranges) = &inner.source_ranges {
+        let unique = ranges
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(source.shard, at..at + buffer.len() as u64);
+        inner
+            .unique_source_bytes
+            .fetch_add(unique, Ordering::Relaxed);
+    }
     Ok(())
 }
 
@@ -1630,7 +1679,9 @@ fn produce_sections_v1(inner: &InnerV1, record: &RecordV1) -> Result<Vec<Vec<u8>
     }
     if let WeightTransform::PackedOperand(operand) = &record.prepared.record().transform {
         let described = record.prepared.record();
-        if let Some(index) = operand.independent_scale_source(described) {
+        if record.has_code_section
+            && let Some(index) = operand.independent_scale_source(described)
+        {
             let input = inner
                 .packed_sources
                 .read(inner, record, index)
@@ -1732,6 +1783,7 @@ fn prepare_record_v1(
         RecordV1 {
             consumer: 0,
             packed_sources: Vec::new(),
+            has_code_section: false,
             offset: record.arena_offset,
             bundle_params: if bundle {
                 record.params.clone()
@@ -2919,7 +2971,7 @@ mod tests {
         threads_per_rank: usize,
         shared_bytes: u64,
     ) -> PlannedImageV1 {
-        PlannedImageV1::new(
+        PlannedImageV1::new_with_range_tracking(
             checkpoint.clone(),
             plans.to_vec(),
             None,
@@ -2930,6 +2982,7 @@ mod tests {
                 direct_reads: false,
                 shared_bytes,
             },
+            true,
         )
         .unwrap()
     }

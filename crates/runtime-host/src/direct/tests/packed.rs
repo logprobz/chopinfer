@@ -75,33 +75,18 @@ fn fixture(experts: usize) -> (Temp, Vec<WeightPlanV1>, Vec<Vec<u8>>, u64) {
                     }],
                 };
                 let transform = WeightTransform::PackedOperand(Box::new(operand));
-                let record = WeightRecord {
-                    transform: transform.clone(),
-                    sources: vec![
-                        SourceTensor {
-                            dtype: "U8".into(),
-                            shape: vec![rows, k / 2],
-                            byte_length: code_bytes,
-                        },
-                        SourceTensor {
-                            dtype: "U8".into(),
-                            shape: vec![rows, k / 32],
-                            byte_length: scale_bytes,
-                        },
-                    ],
-                    axis: None,
-                    ranges: vec![],
-                    stored_shape: vec![],
+                let (source, row_bytes, width) = match section {
+                    PackedSection::Codes => (&tensors[expert * 2].3, k / 2, k / 8),
+                    PackedSection::LocalScales => (&tensors[expert * 2 + 1].3, k / 32, k / 128),
+                    PackedSection::GlobalScales => unreachable!(),
                 };
-                let WeightTransform::PackedOperand(operand) = &transform else {
-                    unreachable!()
-                };
-                let produced = operand
-                    .execute(
-                        &record,
-                        &[&tensors[expert * 2].3, &tensors[expert * 2 + 1].3],
-                    )
-                    .unwrap();
+                // Select stored row bytes directly, without invoking a packer.
+                let produced: Vec<u8> = (0..rows)
+                    .flat_map(|row| {
+                        let start = (row * row_bytes + rank * width) as usize;
+                        source[start..start + width as usize].iter().copied()
+                    })
+                    .collect();
                 records.push(WeightRecordV1 {
                     arena_offset: output.len() as u64,
                     byte_length: produced.len() as u64,
@@ -164,7 +149,43 @@ fn waves(image: &PlannedImageV1, chunk: usize) -> Vec<Vec<u8>> {
 }
 
 #[test]
-fn scale_first_expert_banks_match_the_whole_packer_at_small_and_large_budgets() {
+fn packed_rank_plans_and_images_keep_pre_change_digests() {
+    // SHA-256 from the original packer at b450a4ea1, including every rank's
+    // encoded plan and full arena. These do not depend on the new packer.
+    let plans_before = [
+        "1429608f4ce4cade372438ac4e45e9094c4d26abfff14719cdbbec92828e6415",
+        "014d935f75eab42b94aa9a5e290e52d0badab0d2c976a0cb7efeafa30f5b896e",
+        "121a25a60ec7e9c90e54c29ca278ca395d148bd1d0e33b2d73278422dc80464b",
+        "2048124912f22ce1641f8e4e47e442ddbfb90acecc64176645de21ab7495c0ad",
+    ];
+    let arenas_before = [
+        "7c14d5343ecad69f2c78a84a8e4180760246a26c61e4f6e315f903a67803208e",
+        "648261333bb9c4620789c52a11ce4578620da815142292281ce30c8b15c96934",
+        "92f327eddcab82cb57aac3f9fb572722c99c614a134ff3a779a959d1e2fa908d",
+        "b08a014acab30da0c793a111992708d4b93addbc18ea39bef107e8568806cb75",
+    ];
+    let (root, plans, expected, _) = fixture(32);
+    let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+    let image = sharing_image(&checkpoint, &plans, 2, 128 << 10);
+    let actual = waves(&image, 8192);
+    for rank in 0..4 {
+        assert_eq!(
+            runtime_weights::sha256_bytes(&plans[rank].encode()),
+            plans_before[rank]
+        );
+        assert_eq!(
+            runtime_weights::sha256_bytes(&expected[rank]),
+            arenas_before[rank]
+        );
+        assert_eq!(
+            runtime_weights::sha256_bytes(&actual[rank]),
+            arenas_before[rank]
+        );
+    }
+}
+
+#[test]
+fn scale_first_expert_banks_match_baseline_bytes_at_small_and_large_budgets() {
     let (root, plans, expected, unique) = fixture(32);
     let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
     for budget in [128 << 10, 2 << 20] {
@@ -190,6 +211,31 @@ fn packed_sources_are_shared_across_ranks_without_retaining_code_banks() {
         "reread amplification: {stats:?}"
     );
     assert!(stats.source_cache_hits > 0);
+}
+
+#[test]
+fn ordinary_reads_do_not_allocate_or_lock_a_range_union() {
+    let (root, plans, expected, _) = fixture(2);
+    let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+    let image = PlannedImageV1::new_with_range_tracking(
+        checkpoint,
+        plans,
+        None,
+        implementation_v1([0; 32]),
+        DirectLoadOptionsV1 {
+            threads_per_rank: 2,
+            read_ahead: false,
+            direct_reads: false,
+            shared_bytes: 128 << 10,
+        },
+        false,
+    )
+    .unwrap();
+    assert_eq!(waves(&image, 8192), expected);
+    assert!(image.inner.source_ranges.is_none());
+    assert!(!image.stats().source_ranges_tracked);
+    assert_eq!(image.stats().unique_source_bytes, 0);
+    assert!(image.stats().source_bytes > 0);
 }
 
 #[test]
@@ -259,4 +305,60 @@ fn packed_scale_admission_checks_unselected_source_rows_and_cleans_up_on_error()
         image.release_buffers();
         assert_eq!(image.inner.retained.load(Ordering::Acquire), 0);
     }
+}
+
+#[test]
+fn scale_only_plans_refuse_unreadable_code_payloads() {
+    let (root, mut plans, _, _) = fixture(1);
+    for plan in &mut plans {
+        plan.records.truncate(1);
+        plan.arena_bytes = plan.records[0].byte_length;
+    }
+    let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+    let (tensor, begin) = &checkpoint.shards[0].tensors["e0.codes"];
+    checkpoint
+        .read_refusal
+        .set(*begin..*begin + tensor.byte_length)
+        .unwrap();
+    let image = sharing_image(&checkpoint, &plans, 2, 128 << 10);
+    let error = image.read(0, &mut [0; 512]).unwrap_err();
+    assert!(error.contains("Input/output error"), "{error}");
+    checkpoint.verify_unchanged().unwrap();
+    image.release_buffers();
+    assert_eq!(image.inner.retained.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn failed_single_rank_upload_releases_packed_inputs_before_image_teardown() {
+    use crate::fake::{FakeHostDeviceV1, FakeRefusalV1};
+    use crate::{HostInstanceConfigV1, HostServicesV1Backend, HostTopologyV1};
+    use runtime_bundle_abi::HostServicesTableV1;
+    use std::rc::Rc;
+    let (root, plans, _, _) = fixture(2);
+    let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+    let image = Arc::new(sharing_image(&checkpoint, &plans, 2, 128 << 10));
+    let config = HostInstanceConfigV1::new(HostTopologyV1::new(vec![0, 1, 2, 3]).unwrap())
+        .with_planned_compiled_image(Arc::clone(&image))
+        .unwrap();
+    let backend = Rc::new(HostServicesV1Backend::new(FakeHostDeviceV1::new(), config));
+    let table = HostServicesTableV1::new(Rc::clone(&backend));
+    let host = table.caller();
+    let context = host.select_context(0, 0).unwrap();
+    let pool = host.select_memory_pool(context).unwrap();
+    let stream = host.create_stream(context, 0).unwrap();
+    let compiled = host.open_compiled_image(b"r").unwrap();
+    backend.with_device_mut(|device| device.refuse(FakeRefusalV1::SynchronizeStream));
+    assert!(
+        host.upload_rank_arena(context, pool, stream, compiled, 0)
+            .is_err()
+    );
+    assert!(image.stats().source_bytes > 0);
+    assert!(image.stats().retained_peak_bytes > 0);
+    assert_eq!(image.inner.retained.load(Ordering::Acquire), 0);
+    assert_eq!(image.inner.retained_held.now.load(Ordering::Acquire), 0);
+    host.release_compiled_image(compiled).unwrap();
+    host.release_stream(stream).unwrap();
+    host.release_memory_pool(pool).unwrap();
+    host.release_context(context).unwrap();
+    assert_eq!(backend.live_resource_count(), 0);
 }

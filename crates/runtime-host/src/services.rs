@@ -3225,7 +3225,15 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             rank,
         };
         let mut timing = DirectLoadTimingV1::new(&state, &[upload]);
-        let prepared = prepare_rank_upload_v1(&mut state, upload)?;
+        let prepared = match prepare_rank_upload_v1(&mut state, upload) {
+            Ok(prepared) => prepared,
+            Err(status) => {
+                for (image, _) in &timing.images {
+                    image.release_buffers();
+                }
+                return Err(status);
+            }
+        };
         timing.prepared();
         let started = std::time::Instant::now();
         let sparse = state.device.uses_sparse_probe_allocations();
@@ -3237,6 +3245,11 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                 .and_then(|()| verify_direct_sources_v1(&prepared.storage))
         };
         let upload_seconds = started.elapsed().as_secs_f64();
+        if result.is_err() {
+            for (image, _) in &timing.images {
+                image.release_buffers();
+            }
+        }
         timing.report(upload_seconds, 0.0);
         eprintln!(
             "startup weight_upload: {}",

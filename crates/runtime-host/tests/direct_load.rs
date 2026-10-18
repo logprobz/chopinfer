@@ -573,6 +573,7 @@ fn a_planned_component_serves_only_when_the_plan_supplies_it() {
 #[test]
 fn host_view_preparation_is_excluded_from_upload_counters() {
     let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .env("CHOPINFER_DIRECT_LOAD_TRACK_RANGES", "1")
         .args([
             "--exact",
             "planned_ranks_upload_with_a_host_view_and_planned_components",
@@ -594,6 +595,7 @@ fn host_view_preparation_is_excluded_from_upload_counters() {
     assert_eq!(reports.len(), 1, "{log}");
     let report = &reports[0];
     assert_eq!(report["counter_scope"], "cumulative");
+    assert_eq!(report["cumulative"]["source_ranges_tracked"], true);
     assert_eq!(report["preparation"]["counters"]["source_bytes"], 16000);
     assert_eq!(report["upload"]["counters"]["source_bytes"], 160);
     assert_eq!(report["cumulative"]["source_bytes"], 16160);

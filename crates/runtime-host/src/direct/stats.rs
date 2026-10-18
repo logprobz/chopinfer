@@ -14,6 +14,9 @@ pub struct DirectLoadStatsV1 {
     pub file_read_bytes: u64,
     /// Union of requested file ranges fetched from files, excluding alignment.
     pub unique_source_bytes: u64,
+    /// Exact range unions are an opt-in diagnostic. Without tracking, the
+    /// unique-byte counter is zero and reads take no range-accounting lock.
+    pub source_ranges_tracked: bool,
     pub source_cache_hits: u64,
     pub source_cache_bytes: u64,
     pub shared_output_hits: u64,
@@ -51,6 +54,7 @@ impl DirectLoadStatsV1 {
             unique_source_bytes: self
                 .unique_source_bytes
                 .saturating_sub(before.unique_source_bytes),
+            source_ranges_tracked: self.source_ranges_tracked,
             source_cache_hits: self
                 .source_cache_hits
                 .saturating_sub(before.source_cache_hits),

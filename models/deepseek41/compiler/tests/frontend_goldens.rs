@@ -852,4 +852,25 @@ fn a_namespaced_tool_is_named_as_the_encoder_names_it() {
             .is_ok()
     );
     assert!(frontend.validate_tool_call("ns::a::f", "{}").is_err());
+    // A qualified name holds two names of the recipe's 128 bytes, past the
+    // declared name length, when rendered, forced, parsed and validated.
+    let (namespace, name) = ("n".repeat(128), "f".repeat(128));
+    let long = format!("{namespace}::{name}");
+    let tools = serde_json::json!([{"type": "function", "function": {
+        "name": name, "namespace": namespace, "parameters": parameters}}]);
+    let rendered = prompt(serde_json::json!({"tools": tools}));
+    assert!(
+        rendered.contains(&format!(r#"{{"name": "{long}""#)),
+        "{rendered}"
+    );
+    let forced = prepare(serde_json::json!({"tools": tools,
+        "tool_choice": {"type": "function", "function": {"name": long}}}))
+    .unwrap_or_else(|error| panic!("{}", error.message));
+    assert!(forced.constraint.is_some());
+    let completion = completion.replace("ns::f", &long);
+    let parsed =
+        runtime_frontend::parse_completion_v1(&descriptor(), &completion, PromptModeV1::Chat)
+            .unwrap();
+    assert_eq!(parsed.tool_calls[0].name, long);
+    assert!(frontend.validate_tool_call(&long, r#"{"x": "v"}"#).is_ok());
 }

@@ -473,8 +473,8 @@ impl FormatParserV1 for NativeParserV1 {
         }
         .encode_into(&mut self.request);
         let limits = &self.descriptor.limits;
-        let per_call = limits
-            .maximum_name_bytes
+        let per_call = (self.descriptor.tools)
+            .maximum_function_name_bytes(limits.maximum_name_bytes)
             .saturating_add(EVENT_BYTES_PER_TOOL_CALL_V1)
             .saturating_mul(3);
         let maximum = input

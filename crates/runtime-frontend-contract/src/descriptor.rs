@@ -298,6 +298,19 @@ impl FrontendToolPolicyV1 {
             None => (None, name),
         }
     }
+
+    /// The longest function name: `maximum_name_bytes`, or where names are
+    /// qualified, a namespace and a name of that length each with the
+    /// separator between them.
+    #[must_use]
+    pub fn maximum_function_name_bytes(&self, maximum_name_bytes: usize) -> usize {
+        match &self.namespaces {
+            Some(namespaces) => maximum_name_bytes
+                .saturating_mul(2)
+                .saturating_add(namespaces.separator.len()),
+            None => maximum_name_bytes,
+        }
+    }
 }
 
 /// The longest namespace separator a declaration may name.

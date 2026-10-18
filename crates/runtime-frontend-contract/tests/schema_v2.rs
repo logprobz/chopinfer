@@ -205,6 +205,7 @@ fn a_namespace_separator_is_punctuation_outside_the_name_bytes() {
     let descriptor = read(&declaration()).unwrap();
     assert!(descriptor.tools.namespaces.is_none());
     assert_eq!(descriptor.tools.split_function_name("a::f"), (None, "a::f"));
+    assert_eq!(descriptor.tools.maximum_function_name_bytes(128), 128);
     let mut value = declaration();
     value["tools"]["namespaces"] = json!({"separator": "::"});
     let descriptor = read(&value).unwrap();
@@ -213,6 +214,7 @@ fn a_namespace_separator_is_punctuation_outside_the_name_bytes() {
         (Some("a"), "f::g")
     );
     assert_eq!(descriptor.tools.split_function_name("f"), (None, "f"));
+    assert_eq!(descriptor.tools.maximum_function_name_bytes(128), 258);
     let written = serde_json::to_value(&descriptor).unwrap();
     assert_eq!(read(&written).unwrap(), descriptor);
     for separator in ["", "a", "_", " ", ":::::::::", "é"] {

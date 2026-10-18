@@ -154,7 +154,8 @@ alone forces a call.
 
 A `tools.namespaces` section (`{"separator": "::"}`) qualifies function
 names: a namespace, the separator, then the name, each part a name of
-`name_bytes`. The host names a tool in a namespace by its qualified name,
+`name_bytes` within `maximum_name_bytes`, so a qualified name may reach twice
+that length and the separator. The host names a tool in a namespace by its qualified name,
 and the parser and `validate_function_name_v1` read a call's qualified name
 whole. The separator is ASCII punctuation outside `name_bytes` that begins
 no marker ending a name.

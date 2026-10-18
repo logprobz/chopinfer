@@ -238,6 +238,7 @@ mod tests {
             value_divisor: 255.0,
             mean: [0.5; 3],
             std: [0.5; 3],
+            value_rounding: crate::recipe::ValueRounding::None,
         };
         // Allocate the actual decoder's coefficient arrays and sample planes.
         // They remain live when render allocates its RGB output.

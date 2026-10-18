@@ -28,6 +28,7 @@ impl FrontendMediaRecipeV1 {
             "mean",
             "std",
             "maximum_aspect_ratio",
+            "value_rounding",
         ];
         let object = parameters
             .as_object()
@@ -41,6 +42,14 @@ impl FrontendMediaRecipeV1 {
         ) {
             return Err(format!(
                 "{} requires alpha_background \"white\" (composite) or \"none\" (discard)",
+                self.tag
+            ));
+        }
+        if let Some(rounding) = parameters.get("value_rounding")
+            && !matches!(rounding.as_str(), Some("none" | "bf16"))
+        {
+            return Err(format!(
+                "{} requires value_rounding \"none\" or \"bf16\"",
                 self.tag
             ));
         }

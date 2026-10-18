@@ -28,7 +28,10 @@
 //! ties to even. Each 8-bit value `v` normalizes in f32 as
 //! `(v / value_divisor - mean) / std`, each operation rounded, and the
 //! rows are the canvas's patches in reading order, each channel-major
-//! (`c * patch^2 + y * patch + x`).
+//! (`c * patch^2 + y * patch + x`). With [`ValueRounding::Bf16`] each
+//! normalized value is then rounded once to the nearest BF16, ties to even,
+//! and kept in f32: the input of a model whose processor casts its
+//! normalized pixels to BF16 before the encoder.
 use super::{PatchGrid, resample, round_even};
 use crate::core::{try_filled, try_with_capacity};
 use crate::{MediaError, MediaLimits, MediaResult, RgbImage};
@@ -46,6 +49,31 @@ pub struct CenteredPadRecipe {
     pub value_divisor: f32,
     pub mean: [f32; 3],
     pub std: [f32; 3],
+    /// How each normalized value is stored.
+    pub value_rounding: ValueRounding,
+}
+
+/// How a normalized value is stored in the f32 rows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ValueRounding {
+    /// As normalized in f32.
+    #[default]
+    None,
+    /// Rounded once to the nearest BF16, ties to even, and kept in f32
+    /// (every value is finite, so the rounding never meets a NaN).
+    Bf16,
+}
+
+impl ValueRounding {
+    fn apply(self, value: f32) -> f32 {
+        match self {
+            ValueRounding::None => value,
+            ValueRounding::Bf16 => {
+                let bits = value.to_bits();
+                f32::from_bits(bits.wrapping_add(0x7fff + ((bits >> 16) & 1)) & 0xffff_0000)
+            }
+        }
+    }
 }
 
 /// Integers up to this convert to f64 exactly.
@@ -218,7 +246,9 @@ fn normalized(recipe: CenteredPadRecipe) -> [[f32; 256]; 3] {
     let mut table = [[0.0; 256]; 3];
     for (c, values) in table.iter_mut().enumerate() {
         for (v, value) in values.iter_mut().enumerate() {
-            *value = (v as f32 / recipe.value_divisor - recipe.mean[c]) / recipe.std[c];
+            *value = recipe
+                .value_rounding
+                .apply((v as f32 / recipe.value_divisor - recipe.mean[c]) / recipe.std[c]);
         }
     }
     table
@@ -366,6 +396,7 @@ mod tests {
             value_divisor: 255.0,
             mean: [0.5; 3],
             std: [0.5; 3],
+            value_rounding: ValueRounding::None,
         }
     }
 
@@ -543,6 +574,34 @@ mod tests {
         assert_eq!(grid.rows[0].to_bits(), pad.to_bits());
         // Row 4 of the first patch is content.
         assert_eq!(grid.rows[4 * 14].to_bits(), 1.0_f32.to_bits());
+    }
+
+    #[test]
+    fn bf16_rounding_is_round_to_nearest_even() {
+        let step = 2f32.powi(-7);
+        for (value, rounded) in [
+            (1.0, 1.0),
+            (1.0 + step / 2.0, 1.0),
+            (1.0 + step * 1.5, 1.0 + step * 2.0),
+            (1.0 + step * 0.75, 1.0 + step),
+            (-1.0 - step / 4.0, -1.0),
+            (0.0, 0.0),
+        ] {
+            assert_eq!(
+                ValueRounding::Bf16.apply(value).to_bits(),
+                f32::to_bits(rounded),
+                "{value}"
+            );
+            assert_eq!(ValueRounding::None.apply(value).to_bits(), value.to_bits());
+        }
+        // Every normalized value of the vendor recipe is a BF16 value
+        // once rounded, and the gray pad (127) is not exact before.
+        let table = normalized(CenteredPadRecipe {
+            value_rounding: ValueRounding::Bf16,
+            ..recipe()
+        });
+        assert!(table.iter().flatten().all(|v| v.to_bits() & 0xffff == 0));
+        assert_ne!(normalized(recipe())[0][127].to_bits() & 0xffff, 0);
     }
 
     #[test]

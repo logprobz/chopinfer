@@ -478,6 +478,8 @@ fn centered_pad_descriptor_refuses_unusable_parameters_and_layouts() {
         ("alpha_background", json!("black")),
         ("maximum_aspect_ratio", json!(0.5)),
         ("maximum_aspect_ratio", Value::Null),
+        ("value_rounding", json!("f16")),
+        ("value_rounding", Value::Null),
         ("interpolation", json!("bicubic")),
     ] {
         let mut value = valid.clone();
@@ -523,6 +525,8 @@ fn centered_pad_descriptor_refuses_unusable_parameters_and_layouts() {
         ("alpha_background", json!("white")),
         ("minimum_pixels", json!(0)),
         ("maximum_aspect_ratio", json!(1)),
+        ("value_rounding", json!("none")),
+        ("value_rounding", json!("bf16")),
         ("std", json!([-0.5, 0.5, 0.5])),
     ] {
         let mut value = valid.clone();

@@ -3257,7 +3257,8 @@ pub fn token_budget_recipe_v1(
 }
 
 /// Parse the parameters of [`CENTERED_PAD_TAG_V1`]: `pad` is three 8-bit
-/// values, `value_divisor` a number.
+/// values, `value_divisor` a number, and the optional `value_rounding`
+/// `"none"` (the default) or `"bf16"`.
 pub fn centered_pad_recipe_v1(
     parameters: &serde_json::Value,
 ) -> Result<runtime_media::recipe::CenteredPadRecipe, AdmissionError> {
@@ -3288,6 +3289,14 @@ pub fn centered_pad_recipe_v1(
             .ok_or(AdmissionError::InvalidPrompt)? as f32,
         mean: media_vector_v1(parameters, "mean")?,
         std: media_vector_v1(parameters, "std")?,
+        value_rounding: match parameters.get("value_rounding") {
+            None => runtime_media::recipe::ValueRounding::None,
+            Some(value) => match value.as_str() {
+                Some("none") => runtime_media::recipe::ValueRounding::None,
+                Some("bf16") => runtime_media::recipe::ValueRounding::Bf16,
+                _ => return Err(AdmissionError::InvalidPrompt),
+            },
+        },
     })
 }
 
@@ -4720,6 +4729,31 @@ mod tests {
     }
 
     #[test]
+    fn centered_pad_recipe_reads_optional_value_rounding() {
+        use runtime_media::recipe::ValueRounding;
+        let mut parameters = serde_json::json!({
+            "patch": 14, "downsample": 3, "minimum_pixels": 295_936, "maximum_tokens": 1024,
+            "pad": [127, 127, 127], "value_divisor": 255.0, "mean": [0.5, 0.5, 0.5],
+            "std": [0.5, 0.5, 0.5], "alpha_background": "none"
+        });
+        let rounding = |parameters: &serde_json::Value| {
+            centered_pad_recipe_v1(parameters).map(|recipe| recipe.value_rounding)
+        };
+        assert_eq!(rounding(&parameters).unwrap(), ValueRounding::None);
+        for (value, expected) in [("none", ValueRounding::None), ("bf16", ValueRounding::Bf16)] {
+            parameters["value_rounding"] = value.into();
+            assert_eq!(rounding(&parameters).unwrap(), expected);
+        }
+        for bad in [serde_json::json!("f16"), serde_json::json!(null)] {
+            parameters["value_rounding"] = bad;
+            assert!(matches!(
+                rounding(&parameters),
+                Err(AdmissionError::InvalidPrompt)
+            ));
+        }
+    }
+
+    #[test]
     fn images_decode_by_mime_above_the_resize_budget() {
         let limits = runtime_media::MediaLimits {
             maximum_bytes: 64 << 20,
@@ -5249,6 +5283,7 @@ mod tests {
             value_divisor: 255.0,
             mean: [0.5; 3],
             std: [0.5; 3],
+            value_rounding: runtime_media::recipe::ValueRounding::None,
         };
         let limits = runtime_media::MediaLimits {
             maximum_bytes: 1 << 20,
@@ -5303,6 +5338,7 @@ mod tests {
             value_divisor: 255.0,
             mean: [0.5; 3],
             std: [0.5; 3],
+            value_rounding: runtime_media::recipe::ValueRounding::None,
         };
         let limits = runtime_media::MediaLimits {
             maximum_bytes: 1 << 20,

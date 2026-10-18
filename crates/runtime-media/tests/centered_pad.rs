@@ -6,11 +6,13 @@
 //! sources come from `pattern`, which the golden generator mirrors; the
 //! grayscale, alpha, palette and tRNS PNGs and the JPEGs are files decoded
 //! as the reference's `Image.open` and `convert("RGB")` read them: alpha
-//! discarded and an EXIF orientation kept as stored.
+//! discarded and an EXIF orientation kept as stored. With
+//! `value_rounding: "bf16"` the rows are the reference's BF16 patches
+//! widened to f32.
 use std::path::Path;
 
 use runtime_media::recipe::{
-    CenteredPadPlan, CenteredPadRecipe, centered_pad_grid, centered_pad_plan,
+    CenteredPadPlan, CenteredPadRecipe, ValueRounding, centered_pad_grid, centered_pad_plan,
     centered_pad_span_tokens, check_centered_pad_recipe,
 };
 use runtime_media::{Alpha, MediaLimits, Orientation, RgbImage, jpeg, png};
@@ -64,6 +66,7 @@ fn recipe(golden: &Value) -> CenteredPadRecipe {
         value_divisor: r["value_divisor"].as_f64().unwrap() as f32,
         mean: vector("mean"),
         std: vector("std"),
+        value_rounding: ValueRounding::None,
     };
     check_centered_pad_recipe(recipe).unwrap();
     recipe
@@ -232,6 +235,34 @@ fn rows_match_the_reference_bit_for_bit() {
             case["bf16_sha256"].as_str().unwrap(),
             "{name}"
         );
+        // Rounded to BF16, each row value is the reference's BF16 patch
+        // value widened: its upper half is the BF16 payload and its lower
+        // half is zero.
+        let rounded = CenteredPadRecipe {
+            value_rounding: ValueRounding::Bf16,
+            ..recipe
+        };
+        let widened = centered_pad_grid(&image, rounded, limits()).unwrap();
+        assert_eq!(
+            (widened.grid, widened.tokens, widened.columns),
+            (grid.grid, grid.tokens, grid.columns),
+            "{name}"
+        );
+        assert!(
+            widened.rows.iter().all(|v| v.to_bits() & 0xffff == 0),
+            "{name}: widened BF16"
+        );
+        assert_eq!(
+            sha256(
+                widened
+                    .rows
+                    .iter()
+                    .flat_map(|v| ((v.to_bits() >> 16) as u16).to_le_bytes())
+            ),
+            case["bf16_sha256"].as_str().unwrap(),
+            "{name}: rounded rows"
+        );
+        assert_eq!(widened.bf16_bytes(), grid.bf16_bytes(), "{name}");
     }
 }
 

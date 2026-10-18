@@ -48,7 +48,8 @@
               0.5,
               0.5
             ],
-            "alpha_background": "none"
+            "alpha_background": "none",
+            "value_rounding": "bf16"
           }
         },
         "layout": "learned-delimiters.v1",

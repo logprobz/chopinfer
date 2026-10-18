@@ -15,7 +15,9 @@ pub const COMPONENT: &[u8] = include_bytes!("frontend.json");
 /// modality, prepared by the vendor processor's centered pad (patch 14,
 /// 3 x 3 cells, at least 295,936 pixels, at most 1,024 tokens with the
 /// learned delimiters, gray 127 padding, values over 255 normalized by mean
-/// and std 0.5) and rendered as the encoder's image placeholder.
+/// and std 0.5, each normalized value then rounded to BF16 as the
+/// processor's `.to(torch.bfloat16)` does, `inference/image_processor.py:127`)
+/// and rendered as the encoder's image placeholder.
 pub const MULTIMODAL: &[u8] = include_bytes!("frontend-multimodal.json");
 
 pub fn descriptor() -> FrontendDescriptorV1 {

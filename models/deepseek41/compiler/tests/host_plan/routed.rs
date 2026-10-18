@@ -305,7 +305,7 @@ fn check_down(root: &Path, geometry: &model_deepseek41_contract::geometry::Geome
     }
 }
 
-fn fixture(geometry: &model_deepseek41_contract::geometry::Geometry) -> PathBuf {
+fn fixture(geometry: &model_deepseek41_contract::geometry::Geometry, operands: &[&str]) -> PathBuf {
     let root = sparse(geometry);
     let (header, data) = header(&root);
     let file = std::fs::OpenOptions::new()
@@ -313,26 +313,33 @@ fn fixture(geometry: &model_deepseek41_contract::geometry::Geometry) -> PathBuf 
         .open(root.join(synthetic::FILE))
         .unwrap();
     for expert in [0, 1, geometry.shape.moe.experts - 1] {
-        for (part, scale) in [("weight", false), ("scale", true)] {
-            let name = format!("layers.0.ffn.experts.{expert}.w2.{part}");
-            let entry = &header[&name];
-            let start = entry["data_offsets"][0].as_u64().unwrap();
-            let len = entry["data_offsets"][1].as_u64().unwrap() - start;
-            let width = entry["shape"][1].as_u64().unwrap() as usize;
-            let bytes = (0..len as usize)
-                .map(|i| {
-                    let row = i / width;
-                    let col = i % width;
-                    if scale {
-                        120 + ((row * 3 + col + expert as usize) % 7) as u8
-                    } else {
-                        let a = 1 + ((row + col * 2 + expert as usize) % 7) as u8;
-                        let b = 9 + ((row * 3 + col + expert as usize) % 7) as u8;
-                        a | b << 4
-                    }
-                })
-                .collect::<Vec<_>>();
-            file.write_all_at(&bytes, data + start).unwrap();
+        for (operand_index, operand) in operands.iter().enumerate() {
+            for (part, scale) in [("weight", false), ("scale", true)] {
+                let name = format!("layers.0.ffn.experts.{expert}.{operand}.{part}");
+                let entry = &header[&name];
+                let start = entry["data_offsets"][0].as_u64().unwrap();
+                let len = entry["data_offsets"][1].as_u64().unwrap() - start;
+                let width = entry["shape"][1].as_u64().unwrap() as usize;
+                let bytes = (0..len as usize)
+                    .map(|i| {
+                        let row = i / width;
+                        let col = i % width;
+                        if scale {
+                            120 + ((row * 3 + col + (expert as usize + operand_index * 3)) % 7)
+                                as u8
+                        } else {
+                            let a = 1
+                                + ((row + col * 2 + (expert as usize + operand_index * 3)) % 7)
+                                    as u8;
+                            let b = 9
+                                + ((row * 3 + col + (expert as usize + operand_index * 3)) % 7)
+                                    as u8;
+                            a | b << 4
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                file.write_all_at(&bytes, data + start).unwrap();
+            }
         }
     }
     root
@@ -345,7 +352,7 @@ fn routed_down_records_round_trip_through_chained_addresses() {
         "flash" => Some((g, 4)),
         _ => None,
     }) {
-        let root = fixture(geometry);
+        let root = fixture(geometry, &["w2"]);
         check_down(&root, geometry, ranks);
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -362,4 +369,101 @@ fn checkpoint_routed_down_records_round_trip_through_chained_addresses() {
         .find(|g| g.id == "synthetic_small")
         .expect("compile synthetic-small");
     check_down(&root, geometry, 2);
+}
+
+/// Flash is always compiled, so this checks the fused gate/up bank even
+/// when no optional geometry enables the full checkpoint-view test.
+#[test]
+fn flash_gate_up_records_round_trip_through_chained_addresses() {
+    let geometry = &model_deepseek41_contract::geometry::FLASH;
+    let root = fixture(geometry, &["w1", "w3"]);
+    let (header, data) = header(&root);
+    let ranks = 4;
+    let (image, plans) = prepare(&root, ranks).unwrap();
+    let n = geometry.shape.moe.intermediate as usize / ranks as usize;
+    let k = geometry.shape.hidden as usize;
+    let mut base = 0;
+    for (rank, plan) in plans.iter().enumerate() {
+        let index =
+            bundle_runtime::index::parse(&plan.components[0].bytes, rank as u32, INDEX_SCHEMA)
+                .unwrap();
+        let codes = &index.views["layers.0.ffn.experts.gate_up.weight"];
+        let scales = &index.views["layers.0.ffn.experts.gate_up.scale"];
+        for expert in [0, 1, geometry.shape.moe.experts - 1] {
+            // The loader's global row is expert * (2 * n) + half * n + row.
+            // Read both halves together, so the comparison also checks the
+            // expert stride and w1/w3 order, independently of record offsets.
+            let mut actual_codes = vec![0; 2 * n * k / 2];
+            let mut actual_scales = vec![0; 2 * n * k / 32];
+            image
+                .read(
+                    base + codes.offset + u64::from(expert) * actual_codes.len() as u64,
+                    &mut actual_codes,
+                )
+                .unwrap();
+            image
+                .read(
+                    base + scales.offset + u64::from(expert) * actual_scales.len() as u64,
+                    &mut actual_scales,
+                )
+                .unwrap();
+            for (half, operand) in ["w1", "w3"].into_iter().enumerate() {
+                let stem = format!("layers.0.ffn.experts.{expert}.{operand}");
+                let source_codes = source(&root, &header, data, &format!("{stem}.weight"));
+                let source_scales = source(&root, &header, data, &format!("{stem}.scale"));
+                let rows = (rank * n) as u64..((rank + 1) * n) as u64;
+                let expected_codes = block(
+                    &source_codes.bytes,
+                    k as u64 / 2,
+                    rows.clone(),
+                    0..k as u64 / 2,
+                );
+                let expected_scales =
+                    block(&source_scales.bytes, k as u64 / 32, rows, 0..k as u64 / 32);
+                let at = format!("Flash TP{ranks} rank{rank} expert{expert} {operand} chained");
+                same(
+                    &actual_codes[half * n * k / 2..(half + 1) * n * k / 2],
+                    &expected_codes,
+                    &format!("{at} codes"),
+                );
+                same(
+                    &actual_scales[half * n * k / 32..(half + 1) * n * k / 32],
+                    &expected_scales,
+                    &format!("{at} scales"),
+                );
+                for row in 0..n {
+                    for col in 0..k {
+                        assert_eq!(
+                            decoded(&actual_codes, &actual_scales, k, half * n + row, col)
+                                .to_bits(),
+                            decoded(
+                                &source_codes.bytes,
+                                &source_scales.bytes,
+                                k,
+                                rank * n + row,
+                                col
+                            )
+                            .to_bits(),
+                            "{at} row{row} K{col}"
+                        );
+                    }
+                }
+            }
+        }
+        assert_eq!(codes.layout_id, "mxfp4_e2m1_rows_v1");
+        assert_eq!(scales.layout_id, "mxfp4_ue8m0_scale_rows_v1");
+        assert_eq!(
+            codes.bytes,
+            u64::from(geometry.shape.moe.experts) * (2 * n * k / 2) as u64
+        );
+        assert_eq!(
+            scales.bytes,
+            u64::from(geometry.shape.moe.experts) * (2 * n * k / 32) as u64
+        );
+        eprintln!(
+            "Flash TP{ranks} rank{rank}: w1/w3 row-addressed records and every decoded weight passed for three experts"
+        );
+        base += plan.arena_bytes;
+    }
+    std::fs::remove_dir_all(root).unwrap();
 }

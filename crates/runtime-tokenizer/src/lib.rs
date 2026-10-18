@@ -31,22 +31,34 @@ const MAX_SPECIAL_TOKEN_BYTES: usize = 512;
 pub type Result<T> = std::result::Result<T, TokenizerError>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TokenizerError(String);
+pub struct TokenizerError {
+    message: String,
+    disallowed_special_token: Option<String>,
+}
 
 impl TokenizerError {
     fn new(message: impl Into<String>) -> Self {
-        Self(message.into())
+        Self {
+            message: message.into(),
+            disallowed_special_token: None,
+        }
     }
 
     #[must_use]
     pub fn validation(message: impl Into<String>) -> Self {
         Self::new(message)
     }
+
+    /// The special token refused by the caller's prompt policy, if any.
+    #[must_use]
+    pub fn disallowed_special_token(&self) -> Option<&str> {
+        self.disallowed_special_token.as_deref()
+    }
 }
 
 impl fmt::Display for TokenizerError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
+        formatter.write_str(&self.message)
     }
 }
 
@@ -670,9 +682,10 @@ impl Tokenizer {
             if let Some((length, id, token)) = self.special_at(bytes, offset) {
                 self.encode_ordinary(&text[ordinary_start..offset], &mut output, max_input_bytes)?;
                 if !allowed.contains(token.as_str()) {
-                    return Err(TokenizerError::new(format!(
-                        "disallowed special token '{token}' in input"
-                    )));
+                    return Err(TokenizerError {
+                        message: format!("disallowed special token '{token}' in input"),
+                        disallowed_special_token: Some(token),
+                    });
                 }
                 output.push(id);
                 offset = offset

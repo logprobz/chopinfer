@@ -2737,6 +2737,27 @@ fn unix_nanos() -> u128 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn prompt_tokenization_errors_preserve_specific_and_generic_messages() {
+        let message =
+            "prompt contains a special token the model does not admit in prompts: <special>";
+        for (refusal, expected) in [
+            (
+                AdmissionError::InvalidParameter {
+                    message: message.into(),
+                    parameter: "prompt",
+                },
+                message,
+            ),
+            (AdmissionError::InvalidPrompt, "prompt tokenization failed"),
+        ] {
+            let error = admission_error(refusal);
+            assert_eq!(error.status, StatusCode::BAD_REQUEST);
+            assert_eq!(error.value()["error"]["message"], expected);
+            assert_eq!(error.value()["error"]["param"], "prompt");
+        }
+    }
+
     /// A refused prepared item answers 400 with the backend's own message,
     /// not the tokenization one.
     #[test]

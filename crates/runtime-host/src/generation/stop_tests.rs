@@ -21,6 +21,43 @@ pub(crate) mod declarations;
 const EOS: u32 = 1;
 const X: u32 = b'x' as u32 + 3;
 
+#[test]
+fn prompt_special_token_refusals_are_distinct_from_other_tokenizer_errors() {
+    let mut descriptor =
+        FrontendDescriptorV1::from_component_bytes(declarations::KEY_VALUE.as_bytes()).unwrap();
+    descriptor.vocabulary.size = 259;
+    descriptor.vocabulary.eos_token_id = EOS;
+    descriptor.vocabulary.stop_token_ids = vec![EOS];
+    descriptor.vocabulary.prompt_special_tokens = vec!["[BOS]".to_owned()];
+    let backend = EngineGenerationBackend::new(
+        tokenizer(),
+        engine(vec![X], false, false),
+        EngineBackendConfig::new(1)
+            .unwrap()
+            .with_tokenizer_input_bytes(64),
+        EngineModelPolicyV1::from_declaration(&descriptor),
+    )
+    .unwrap();
+    for text in ["[EOS]", &"x".repeat(65)] {
+        let expected = if text == "[EOS]" {
+            AdmissionError::InvalidParameter {
+                message:
+                    "prompt contains a special token the model does not admit in prompts: [EOS]"
+                        .into(),
+                parameter: "prompt",
+            }
+        } else {
+            AdmissionError::InvalidPrompt
+        };
+        assert_eq!(backend.tokenize(text, false), Err(expected.clone()));
+        assert_eq!(
+            backend.prepare_prompt(PreparedPrompt::Raw(text.into())),
+            Err(expected)
+        );
+    }
+    assert!(backend.tokenize("[BOS]hello", false).is_ok());
+}
+
 pub(crate) fn tokenizer() -> Tokenizer {
     tokenizer_with(&[])
 }

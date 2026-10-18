@@ -1073,7 +1073,7 @@ impl GenerationBackend for EngineGenerationBackend {
                             &self.policy.prompt_special_tokens(),
                             self.tokenizer_input_bytes,
                         )
-                        .map_err(|_| AdmissionError::InvalidPrompt)
+                        .map_err(prompt_tokenization_error)
                 },
                 |part, modality| match cached.pop_front() {
                     Some(prepared) => Ok(prepared),
@@ -1115,7 +1115,7 @@ impl GenerationBackend for EngineGenerationBackend {
                 &self.policy.prompt_special_tokens(),
                 self.tokenizer_input_bytes,
             )
-            .map_err(|_| AdmissionError::InvalidPrompt)
+            .map_err(prompt_tokenization_error)
     }
 
     fn token_strings(&self, tokens: &[u32]) -> Result<Vec<String>, AdmissionError> {
@@ -2226,6 +2226,18 @@ pub(crate) fn generated_token_v1(
     Ok(GeneratedTokenV1::new(ordinal, token_id, bytes).with_special(special))
 }
 
+fn prompt_tokenization_error(error: runtime_tokenizer::TokenizerError) -> AdmissionError {
+    match error.disallowed_special_token() {
+        Some(token) => AdmissionError::InvalidParameter {
+            message: format!(
+                "prompt contains a special token the model does not admit in prompts: {token}"
+            ),
+            parameter: "prompt",
+        },
+        None => AdmissionError::InvalidPrompt,
+    }
+}
+
 fn tokenize_prompt(
     tokenizer: &Tokenizer,
     prompt: &PreparedPrompt,
@@ -2249,7 +2261,7 @@ fn tokenize_prompt(
                         &policy.prompt_special_tokens(),
                         tokenizer_input_bytes,
                     )
-                    .map_err(|_| AdmissionError::InvalidPrompt)
+                    .map_err(prompt_tokenization_error)
             },
             |_part, _modality| {
                 Err(AdmissionError::Rejected(
@@ -2279,7 +2291,7 @@ fn tokenize_prompt(
         PreparedPrompt::MediaChat { .. } => unreachable!("handled above"),
         PreparedPrompt::MediaTokens { tokens, .. } => Ok(tokens.clone()),
     }
-    .map_err(|_| AdmissionError::InvalidPrompt)
+    .map_err(prompt_tokenization_error)
 }
 
 /// Splices trusted pad IDs into text encoded with the declared prompt tokens.

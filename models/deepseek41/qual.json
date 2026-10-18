@@ -1393,6 +1393,26 @@
             "op": "eq",
             "value": "mixed",
             "source": "models/deepseek41/README.md#dspark-qualification"
+          },
+          {
+            "path": [
+              "serving",
+              "speculation",
+              "drafter"
+            ],
+            "op": "eq",
+            "value": "dspark",
+            "source": "models/deepseek41/profiles.json"
+          },
+          {
+            "path": [
+              "serving",
+              "speculation",
+              "tokens"
+            ],
+            "op": "eq",
+            "value": 5,
+            "source": "models/deepseek41/profiles.json"
           }
         ]
       }

@@ -1,4 +1,4 @@
-//! Typed construction of the existing BF16 row RMSNorm implementation.
+//! Typed construction of BF16 row RMSNorm and its plain F32-output mode.
 
 use super::{capacity_bucket, ptr, u32_arg};
 use kernel_build::{CubinSpec, EntryDeclaration, EntrySpec};
@@ -86,9 +86,18 @@ impl RmsNorm {
         target: RmsNormTarget,
     ) -> Result<Self, Refusal> {
         requirement.validate()?;
-        if [requirement.input, requirement.weight, requirement.output] != [DType::Bf16; 3] {
+        if [requirement.input, requirement.weight] != [DType::Bf16; 2]
+            || !matches!(requirement.output, DType::Bf16 | DType::F32)
+        {
             return Err(Refusal(
-                "RMSNorm requires BF16 input, weight and output formats",
+                "RMSNorm requires BF16 input and weight formats, with BF16 or F32 output",
+            ));
+        }
+        if requirement.output == DType::F32
+            && (requirement.kind != RmsNormKind::Plain || requirement.fused_residual)
+        {
+            return Err(Refusal(
+                "F32-output RMSNorm requires plain kind without a fused residual",
             ));
         }
         match requirement.layout {
@@ -282,7 +291,11 @@ impl RmsNorm {
         } else {
             "false"
         };
-        let body = if self.tree {
+        let body = if self.requirement.output == DType::F32 {
+            format!(
+                "chop::row::rmsnorm_f32<{width}>(x,weight,y,live_rows,__uint_as_float(eps_bits));"
+            )
+        } else if self.tree {
             format!(
                 "chop::row::rmsnorm_hf_tree<{width}>(x,weight,y,live_rows,__uint_as_float(eps_bits));"
             )
@@ -298,7 +311,14 @@ impl RmsNorm {
                 ptr("weight", "const uint16_t"),
                 ptr("residual", "const uint16_t"),
                 ptr("residual_out", "uint16_t"),
-                ptr("y", "uint16_t"),
+                ptr(
+                    "y",
+                    if self.requirement.output == DType::F32 {
+                        "float"
+                    } else {
+                        "uint16_t"
+                    },
+                ),
                 ptr("live_rows", "const uint32_t"),
                 u32_arg("eps_bits"),
             ],
@@ -311,6 +331,9 @@ impl RmsNorm {
     /// The `#include` lines a cubin holding this entry needs.
     pub fn headers(&self) -> Vec<String> {
         let mut headers = vec!["#include \"row/row.cuh\"".to_owned()];
+        if self.requirement.output == DType::F32 {
+            headers.push("#include \"row/rmsnorm_f32.cuh\"".to_owned());
+        }
         if self.tree {
             headers.push(format!("#include \"{TREE_HEADER}\""));
         }
@@ -395,6 +418,38 @@ mod tests {
             y: 3,
             live_rows: 4,
         }
+    }
+
+    #[test]
+    fn f32_output_is_an_additive_plain_entry() {
+        let req = RmsNormRequirement {
+            output: DType::F32,
+            ..plain()
+        };
+        let norm = RmsNorm::new(req, 4, RmsNormTarget::SM120F).unwrap();
+        assert!(format!("{:?}", norm.entry("norm")).contains("rmsnorm_f32<1280>"));
+        assert!(norm.headers().iter().any(|h| h.contains("rmsnorm_f32.cuh")));
+        let old = RmsNorm::new(plain(), 4, RmsNormTarget::SM120F).unwrap();
+        assert_eq!(old.headers(), ["#include \"row/row.cuh\""]);
+        for kind in [
+            RmsNormKind::GemmaOnePlusWeight,
+            RmsNormKind::HfBf16Intermediate,
+        ] {
+            assert!(
+                RmsNorm::new(RmsNormRequirement { kind, ..req }, 4, RmsNormTarget::SM120F).is_err()
+            );
+        }
+        assert!(
+            RmsNorm::new(
+                RmsNormRequirement {
+                    fused_residual: true,
+                    ..req
+                },
+                4,
+                RmsNormTarget::SM120F
+            )
+            .is_err()
+        );
     }
 
     #[test]

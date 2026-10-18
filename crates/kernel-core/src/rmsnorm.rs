@@ -144,6 +144,9 @@ pub struct RmsNormRequirement {
     pub kind: RmsNormKind,
     pub input: DType,
     pub weight: DType,
+    /// Output storage. Plain F32 output applies the weight in F32 and has
+    /// no BF16 boundary before or after the weight. BF16 rounds the final
+    /// product; the HF kind additionally rounds before the weight.
     pub output: DType,
     pub layout: RmsNormLayout,
     pub fused_residual: bool,

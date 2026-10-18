@@ -80,17 +80,26 @@ pub fn rmsnorm_case<'a>(
     capacity: u32,
     op: Prepared<RmsNormBuffers<View>>,
 ) -> LabResult<OpCase<'a>> {
-    if [requirement.input, requirement.weight, requirement.output] != [DType::Bf16; 3]
+    if [requirement.input, requirement.weight] != [DType::Bf16; 2]
+        || !matches!(requirement.output, DType::Bf16 | DType::F32)
         || requirement.output_quantization.is_some()
         || !matches!(requirement.layout, RmsNormLayout::ContiguousRows { .. })
     {
-        return Err("the kit's RMSNorm case covers contiguous unquantized BF16 rows".into());
+        return Err("the kit's RMSNorm case covers contiguous unquantized BF16 inputs and BF16 or F32 output".into());
     }
     let width = requirement.width as usize;
     let elements = capacity as usize * width;
     let rows = |image: Vec<u16>| Spec::input(DType::Bf16, (Rows::Live, width), bf16_bytes(&image));
+    let mut input = bf16_values(1, elements);
+    if requirement.output == DType::F32 {
+        // Scaling inputs leaves normalized values unchanged at this eps,
+        // while making the existing f64 bound distinguish BF16 rounding.
+        for v in &mut input {
+            *v = f32_to_bf16(bf16_to_f32(*v) / 256.0);
+        }
+    }
     let roles = RmsNormBuffers {
-        x: rows(bf16_values(1, elements)),
+        x: rows(input),
         weight: Spec::input(
             DType::Bf16,
             (Rows::Fixed(1), width),
@@ -100,7 +109,7 @@ pub fn rmsnorm_case<'a>(
             input: rows(bf16_values(3, elements)),
             output: Spec::output(DType::Bf16, (Rows::Live, width)),
         }),
-        y: Spec::output(DType::Bf16, (Rows::Live, width)),
+        y: Spec::output(requirement.output, (Rows::Live, width)),
         live_rows: Spec::live(),
     };
     Ok(OpCase::new(op, capacity, roles)?

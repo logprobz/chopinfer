@@ -538,6 +538,35 @@ fn weight_before_rounding_matches_f64_math_within_one_bf16_rounding() {
 }
 
 #[test]
+fn plain_f32_output_keeps_weight_products_without_bf16_rounding() {
+    use kernel_core::rmsnorm::RmsNormRequirement;
+    let width = 1280;
+    let x = bf16_exact(&values(3 * width, 1, 3.0 / 256.0));
+    let w = bf16_exact(&values(width, 2, 1.5));
+    let requirement = RmsNormRequirement {
+        output: DType::F32,
+        ..RmsNormRequirement::bf16_backend_chosen(width as u32, 1e-20, RmsNormKind::Plain, false)
+    };
+    let reference = requirement.oracle(&x, &w, 3).unwrap();
+    let arithmetic = RmsNorm {
+        output: None,
+        ..DEEPSEEK_NORM
+    };
+    let actual = arithmetic.apply(&x, &w, width).unwrap();
+    kernel_core::oracle::check_numeric(&actual.values, &reference, DType::F32).unwrap();
+    for mutant in [
+        DEEPSEEK_NORM,
+        RmsNorm {
+            before_weight: Some(DType::Bf16),
+            ..arithmetic
+        },
+    ] {
+        let wrong = mutant.apply(&x, &w, width).unwrap();
+        assert!(kernel_core::oracle::check_numeric(&wrong.values, &reference, DType::F32).is_err());
+    }
+}
+
+#[test]
 fn offset_and_groups_are_explicit() {
     let (width, head) = (32, 8);
     let x = values(2 * width, 3, 2.0);

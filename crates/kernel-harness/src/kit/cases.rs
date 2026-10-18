@@ -27,6 +27,7 @@ pub mod recurrent;
 pub mod rope_kv;
 #[cfg(feature = "host-sampling")]
 pub mod sampling;
+pub mod silu_mul_quantize;
 pub mod sinkhorn;
 pub mod sinkhorn_lagged;
 

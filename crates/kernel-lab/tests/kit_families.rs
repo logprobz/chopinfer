@@ -87,6 +87,11 @@ const FAMILIES: &[Family] = &[
         required: || Ok(kit::cases::sinkhorn::required_mix_norm()),
     },
     Family {
+        name: "silu mul quantize",
+        sm120: || Ok(kit::cases::silu_mul_quantize::sm120()),
+        required: || Ok(kit::cases::silu_mul_quantize::required()),
+    },
+    Family {
         name: "sinkhorn lagged",
         sm120: || Ok(kit::cases::sinkhorn_lagged::sm120()),
         required: || Ok(kit::cases::sinkhorn_lagged::required()),
@@ -244,6 +249,16 @@ fn sm120_passes_the_sinkhorn_cases_on_a_gpu() {
 fn sm120_passes_the_sinkhorn_tiled_and_mix_norm_cases_on_a_gpu() {
     gpu("sinkhorn tiled");
     gpu("sinkhorn mix norm");
+}
+
+#[test]
+fn silu_mul_quantize_cases_declare_on_sm120() {
+    cpu("silu mul quantize");
+}
+
+#[test]
+fn sm120_passes_the_silu_mul_quantize_cases_on_a_gpu() {
+    gpu("silu mul quantize");
 }
 
 #[test]

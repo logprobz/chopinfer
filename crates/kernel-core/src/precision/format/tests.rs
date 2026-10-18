@@ -322,6 +322,49 @@ fn layouts_preserve_existing_ids_and_explicit_variants() {
     }
 }
 
+/// A dense 32x32 UE8M0 operand is resident as its MXFP8 rows; other
+/// families keep the 32x32 grid.
+#[test]
+fn block32_dense_operands_are_resident_as_mxfp8_rows() {
+    let plugin = registry::by_id(FormatId::Fp8Block32).unwrap();
+    let dense = plugin.layout(KernelFamily::Dense, None).unwrap();
+    assert_eq!(
+        (dense.weight.id.as_str(), dense.codes, dense.local_scales),
+        (
+            "row-major",
+            "mxfp8_e4m3_rows_v1",
+            Some("mxfp8_ue8m0_scale_rows_v1")
+        )
+    );
+    assert_eq!(
+        plugin.resident_format(WeightFormat::Fp8Block32x32, KernelFamily::Dense),
+        WeightFormat::Mxfp8
+    );
+    for family in [KernelFamily::Row, KernelFamily::GroupedExpert] {
+        assert_eq!(
+            plugin.layout(family, None).unwrap().local_scales,
+            Some("fp8_ue8m0_block_scale_32x32_v1")
+        );
+        assert_eq!(
+            plugin.resident_format(WeightFormat::Fp8Block32x32, family),
+            WeightFormat::Fp8Block32x32
+        );
+    }
+    for id in [FormatId::Mxfp8, FormatId::Fp8Block128] {
+        let format = if id == FormatId::Mxfp8 {
+            WeightFormat::Mxfp8
+        } else {
+            WeightFormat::Fp8Block128x128(ScaleMode::ExactF32)
+        };
+        assert_eq!(
+            registry::by_id(id)
+                .unwrap()
+                .resident_format(format, KernelFamily::Dense),
+            format
+        );
+    }
+}
+
 #[test]
 fn every_format_slices_exact_codes_scales_and_origins() {
     for (id, format, group_rows, group_k, dtype) in [

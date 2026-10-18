@@ -166,6 +166,21 @@ pub trait FormatPlugin: Sync {
         Ok(execution.decode_order())
     }
 
+    /// The encoding of the resident operand this plug-in packs from an
+    /// `imported` weight for `family`. A dense 32x32 UE8M0 operand is stored
+    /// as its lossless per-row expansion ([`Self::repack_mxfp8_rows`]), the
+    /// MXFP8 rows the fold GEMM reads; every other operand keeps its encoding.
+    fn resident_format(&self, imported: WeightFormat, family: KernelFamily) -> WeightFormat {
+        if self.id() == FormatId::Fp8Block32
+            && imported == WeightFormat::Fp8Block32x32
+            && family == KernelFamily::Dense
+        {
+            WeightFormat::Mxfp8
+        } else {
+            imported
+        }
+    }
+
     /// Repeat each 32x32 block scale on its rows, preserving every code and
     /// source K origin. No quantization or scaled-weight rounding takes place.
     fn repack_mxfp8_rows(&self, matrix: MatrixView<'_>) -> Result<PackedMatrix, PrecisionError> {
@@ -483,6 +498,12 @@ impl FormatPlugin for Plugin {
                 "row-major",
                 "fp8_e4m3_row_major_v1",
                 Some("f32_row_major_v1"),
+            ),
+            // A dense operand is resident as MXFP8 rows (`resident_format`).
+            Fp8Block32 if family == KernelFamily::Dense => (
+                "row-major",
+                "mxfp8_e4m3_rows_v1",
+                Some("mxfp8_ue8m0_scale_rows_v1"),
             ),
             Fp8Block32 => (
                 "row-major",

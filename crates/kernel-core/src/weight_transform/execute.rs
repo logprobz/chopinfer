@@ -1586,4 +1586,91 @@ mod tests {
         bytes.sources[0].dtype = "F8_E4M3".into();
         bytes.prepare(32).unwrap();
     }
+
+    /// Two groups of 48 rows from one stacked 96x64 E4M3 source with 32x32
+    /// UE8M0 blocks: the block of rows 32..64 straddles the groups. Each
+    /// group packs as MXFP8 rows, every row carrying its own block's scales.
+    #[test]
+    fn block32_groups_pack_as_their_lossless_mxfp8_rows() {
+        use super::super::packed::{PackedMatrixSource, PackedOperand, PackedSection};
+        use crate::contract::{DType, SwigluColumns, WeightFormat};
+        use crate::precision::layout::PackingPlan;
+        use crate::precision::{DecodeOrder, NibbleOrder, WeightLayout};
+        let (rows, k, group) = (96_u64, 64_u64, 48_u64);
+        let codes: Vec<u8> = (0..rows * k)
+            .map(|i| ((i * 37 + 5) % 251) as u8 & 0x7e)
+            .collect();
+        let blocks: Vec<u8> = (0..(rows / 32) * (k / 32)).map(|i| 120 + i as u8).collect();
+        let plan = |layout: &str| PackingPlan {
+            layout: WeightLayout {
+                id: layout.into(),
+                version: 1,
+            },
+            format: WeightFormat::Mxfp8,
+            experts: 2,
+            projections: 1,
+            rows: group as u32,
+            k: k as u32,
+            columns: SwigluColumns::ConcatenatedHalves,
+            local_scale_dtype: Some(DType::Ue8M0),
+        };
+        assert!(plan("row-major").validate().is_err());
+        let operand = |section| PackedOperand {
+            plan: plan("row-major-groups"),
+            section,
+            decode_order: DecodeOrder::ExactScaledOperand,
+            matrices: (0..2)
+                .map(|g| PackedMatrixSource {
+                    expert: g as u32,
+                    projection: 0,
+                    format: WeightFormat::Fp8Block32x32,
+                    rows,
+                    k,
+                    row_origin: 0,
+                    k_origin: 0,
+                    nibble_order: NibbleOrder::EvenLow,
+                    codes: 0,
+                    local: Some(1),
+                    local_dtype: Some(DType::Ue8M0),
+                    global: None,
+                    source_expert: 0,
+                    source_experts: 1,
+                    rows_kept: vec![g * group..(g + 1) * group],
+                    k_kept: 0..k,
+                })
+                .collect(),
+        };
+        let record = |section| WeightRecord {
+            transform: WeightTransform::PackedOperand(Box::new(operand(section))),
+            sources: vec![
+                SourceTensor {
+                    dtype: "F8_E4M3".into(),
+                    shape: vec![rows, k],
+                    byte_length: rows * k,
+                },
+                SourceTensor {
+                    dtype: "U8".into(),
+                    shape: vec![rows / 32, k / 32],
+                    byte_length: blocks.len() as u64,
+                },
+            ],
+            axis: None,
+            ranges: vec![],
+            stored_shape: vec![],
+        };
+        let sources = [codes.as_slice(), blocks.as_slice()];
+        let packed = operand(PackedSection::Codes)
+            .execute_sections(&record(PackedSection::Codes), &sources)
+            .unwrap();
+        assert_eq!(packed[0], codes);
+        let expected: Vec<u8> = (0..rows)
+            .flat_map(|row| {
+                let block = (row / 32) as usize * 2;
+                blocks[block..block + 2].to_vec()
+            })
+            .collect();
+        assert_eq!(packed[1], expected);
+        // The expansion is never row-streamed from the 32x32 source.
+        assert_eq!(operand(PackedSection::Codes).code_rows(), None);
+    }
 }

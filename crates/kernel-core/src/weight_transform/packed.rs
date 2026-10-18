@@ -286,9 +286,24 @@ impl PackedOperand {
                 padded_k: plan.k as usize,
                 nibble_order: NibbleOrder::EvenLow,
             };
-            if view.format != plan.format {
-                return refuse("encoding differs from the prepared physical contract");
-            }
+            // A 32x32 UE8M0 source is resident as its lossless MXFP8 rows:
+            // expand the whole matrix, then slice, so a kept row reads its
+            // own block's scales wherever the slice starts.
+            let expanded = match (view.format, plan.format) {
+                (WeightFormat::Fp8Block32x32, WeightFormat::Mxfp8) => Some(
+                    crate::precision::format::registry::by_id(
+                        crate::precision::format::FormatId::Fp8Block32,
+                    )
+                    .and_then(|plugin| plugin.repack_mxfp8_rows(view))
+                    .map_err(precision)?,
+                ),
+                (source, resident) if source == resident => None,
+                _ => return refuse("encoding differs from the prepared physical contract"),
+            };
+            let view = match &expanded {
+                Some(rows) => rows.view("packed operand"),
+                None => view,
+            };
             let packed = view.repack(&slice).map_err(precision)?;
             let (rn, rk) = plan.groups();
             if (rn != u32::MAX && packed.row_origin % rn as usize != 0)
@@ -432,6 +447,7 @@ impl PackedOperand {
             && plan.experts == 1
             && plan.projections == 1
             && self.matrices.len() == 1
+            && self.matrices[0].format == plan.format
             && matches!(plan.groups().0, 1 | u32::MAX))
         .then(|| plan.code_bytes())
     }

@@ -126,6 +126,10 @@ impl PackingPlan {
         }
         let layout_ok = match self.layout.id.as_str() {
             "row-major" => self.experts == 1,
+            // Independent row-major matrices one after another, each with
+            // its own scale grid: the `[groups, rows, k]` operand of a
+            // grouped dense projection.
+            "row-major-groups" => true,
             "bf16-fragment" => self.format == WeightFormat::Bf16,
             "fp8-fragment" => matches!(
                 self.format,

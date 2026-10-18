@@ -104,8 +104,17 @@ impl Request {
         Ok(request)
     }
 
-    pub fn chat(&self, mut history: Vec<Value>, reasoning_field: &str) -> Result<Value, ApiError> {
-        history.extend(input_messages(&self.input, reasoning_field)?);
+    /// The chat request this one stands for. With `separator`, the frontend
+    /// qualifies function names ([`crate::ServerFrontendV1::tool_namespace_separator`]):
+    /// a `namespace` tool's functions are offered in that namespace, and a
+    /// `function_call` item may name its namespace.
+    pub fn chat(
+        &self,
+        mut history: Vec<Value>,
+        reasoning_field: &str,
+        separator: Option<&str>,
+    ) -> Result<Value, ApiError> {
+        history.extend(input_messages(&self.input, reasoning_field, separator)?);
         if let Some(instructions) = &self.instructions {
             history.insert(0, json!({"role":"system", "content":instructions}));
         }
@@ -183,34 +192,40 @@ impl Request {
             }
         }
         if let Some(tools) = &self.tools {
-            let tools = tools
-                .iter()
-                .map(|tool| {
-                    if tool["type"] != "function" || !tool["name"].is_string() {
-                        return Err(invalid("only named function tools are supported", "tools"));
+            let mut converted = Vec::new();
+            let mut namespaces = std::collections::BTreeSet::new();
+            for tool in tools {
+                if tool["type"] != "namespace" || separator.is_none() {
+                    converted.push(json!({"type":"function", "function":function_tool(tool)?}));
+                    continue;
+                }
+                supported_fields(tool, &["type", "name", "description", "tools"], "tools")?;
+                let name = tool["name"]
+                    .as_str()
+                    .ok_or_else(|| invalid("a namespace tool needs a string name", "tools"))?;
+                if !namespaces.insert(name) {
+                    return Err(invalid(
+                        format!("duplicate namespace name '{name}'"),
+                        "tools",
+                    ));
+                }
+                let mut namespace = json!({"name":name});
+                match &tool["description"] {
+                    Value::Null => {}
+                    Value::String(_) => namespace["description"] = tool["description"].clone(),
+                    _ => {
+                        return Err(invalid("a namespace description must be a string", "tools"));
                     }
-                    let mut function = tool.clone();
-                    function
-                        .as_object_mut()
-                        .expect("function object")
-                        .remove("type");
-                    if function
-                        .as_object()
-                        .expect("function object")
-                        .keys()
-                        .any(|key| {
-                            !matches!(
-                                key.as_str(),
-                                "name" | "description" | "parameters" | "strict"
-                            )
-                        })
-                    {
-                        return Err(invalid("unsupported function tool field", "tools"));
-                    }
-                    Ok(json!({"type":"function", "function":function}))
-                })
-                .collect::<Result<Vec<_>, ApiError>>()?;
-            chat["tools"] = json!(tools);
+                }
+                let functions = tool["tools"]
+                    .as_array()
+                    .ok_or_else(|| invalid("a namespace tool needs a tools list", "tools"))?;
+                for function in functions {
+                    converted.push(json!({"type":"function", "namespace":namespace,
+                        "function":function_tool(function)?}));
+                }
+            }
+            chat["tools"] = json!(converted);
         }
         if let Some(choice) = &self.tool_choice {
             chat["tool_choice"] = if choice.is_string() {
@@ -241,6 +256,32 @@ impl Request {
     }
 }
 
+/// One function tool as the chat function object it stands for.
+fn function_tool(tool: &Value) -> Result<Value, ApiError> {
+    if tool["type"] != "function" || !tool["name"].is_string() {
+        return Err(invalid("only named function tools are supported", "tools"));
+    }
+    let mut function = tool.clone();
+    function
+        .as_object_mut()
+        .expect("function object")
+        .remove("type");
+    if function
+        .as_object()
+        .expect("function object")
+        .keys()
+        .any(|key| {
+            !matches!(
+                key.as_str(),
+                "name" | "description" | "parameters" | "strict"
+            )
+        })
+    {
+        return Err(invalid("unsupported function tool field", "tools"));
+    }
+    Ok(function)
+}
+
 fn validate_strings(value: &Value, maximum: usize) -> Result<(), ApiError> {
     match value {
         Value::String(s) if s.len() > maximum => {
@@ -264,7 +305,13 @@ fn validate_strings(value: &Value, maximum: usize) -> Result<(), ApiError> {
     Ok(())
 }
 
-pub(super) fn input_messages(input: &Value, reasoning_field: &str) -> Result<Vec<Value>, ApiError> {
+/// The chat messages of a Responses input. With `separator`, a
+/// `function_call` item may name its namespace, which qualifies its name.
+pub(super) fn input_messages(
+    input: &Value,
+    reasoning_field: &str,
+    separator: Option<&str>,
+) -> Result<Vec<Value>, ApiError> {
     if let Some(text) = input.as_str() {
         return Ok(vec![json!({"role":"user", "content":text})]);
     }
@@ -280,6 +327,15 @@ pub(super) fn input_messages(input: &Value, reasoning_field: &str) -> Result<Vec
         };
         let fields: &[&str] = match kind {
             "message" => &["type", "id", "status", "role", "content"],
+            "function_call" if separator.is_some() => &[
+                "type",
+                "id",
+                "status",
+                "call_id",
+                "name",
+                "namespace",
+                "arguments",
+            ],
             "function_call" => &["type", "id", "status", "call_id", "name", "arguments"],
             "function_call_output" => &["type", "id", "status", "call_id", "output"],
             "reasoning" => &[
@@ -303,7 +359,14 @@ pub(super) fn input_messages(input: &Value, reasoning_field: &str) -> Result<Vec
                 } else { messages.push(json!({"role":role, "content":content})); }
             },
             "function_call" => {
-                let call = json!({"id":string(item,"call_id")?, "type":"function", "function":{"name":string(item,"name")?, "arguments":string(item,"arguments")?}});
+                let name = match (&item["namespace"], separator) {
+                    (Value::Null, _) | (_, None) => string(item, "name")?.to_owned(),
+                    (Value::String(namespace), Some(separator)) => {
+                        format!("{namespace}{separator}{}", string(item, "name")?)
+                    }
+                    _ => return Err(invalid("input item namespace must be a string", "input")),
+                };
+                let call = json!({"id":string(item,"call_id")?, "type":"function", "function":{"name":name, "arguments":string(item,"arguments")?}});
                 let message = assistant(&mut messages);
                 if message.get("tool_calls").is_none() { message["tool_calls"] = json!([]); }
                 message["tool_calls"].as_array_mut().expect("calls").push(call);

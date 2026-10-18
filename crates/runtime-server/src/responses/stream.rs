@@ -10,10 +10,14 @@ pub(super) struct Events {
     sequence: u64,
     finished: bool,
     usage: bool,
+    /// The separator a qualified function name is split at, so a call in a
+    /// namespace is returned as its `name` and `namespace`.
+    separator: Option<String>,
 }
 impl Events {
-    pub fn new(response: Value) -> Self {
+    pub fn new(response: Value, separator: Option<String>) -> Self {
         Self {
+            separator,
             response,
             output: Vec::new(),
             closed: Vec::new(),
@@ -194,7 +198,17 @@ impl Events {
                         self.close(previous, &mut events);
                     }
                     let index = self.output.len();
-                    let item = json!({"type":"function_call", "id":format!("{}_{}", self.response["id"].as_str().expect("id"),index), "call_id":call["id"], "name":call["function"]["name"], "arguments":"", "status":"in_progress"});
+                    let mut item = json!({"type":"function_call", "id":format!("{}_{}", self.response["id"].as_str().expect("id"),index), "call_id":call["id"], "name":call["function"]["name"], "arguments":"", "status":"in_progress"});
+                    // A qualified name returns as the function's own name
+                    // and its namespace, the fields a Responses call in a
+                    // namespace carries.
+                    if let (Some(separator), Some(name)) =
+                        (&self.separator, call["function"]["name"].as_str())
+                        && let Some((namespace, name)) = name.split_once(separator.as_str())
+                    {
+                        item["name"] = json!(name);
+                        item["namespace"] = json!(namespace);
+                    }
                     self.output.push(item.clone());
                     self.closed.push(false);
                     self.tools.push(index);

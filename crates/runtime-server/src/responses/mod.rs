@@ -26,6 +26,9 @@ pub(crate) struct Context {
     history: Vec<Value>,
     initial: Value,
     reasoning_field: String,
+    /// The separator of a qualified function name, for a frontend that
+    /// qualifies names ([`crate::ServerFrontendV1::tool_namespace_separator`]).
+    separator: Option<String>,
     reservation: Option<StoredGuard>,
 }
 impl Context {
@@ -59,7 +62,8 @@ impl Context {
             .transpose()?
             .unwrap_or_default();
         let reasoning_field = state.frontend.reasoning_field().to_owned();
-        let chat = request.chat(history, &reasoning_field)?;
+        let separator = state.frontend.tool_namespace_separator().map(str::to_owned);
+        let chat = request.chat(history, &reasoning_field, separator.as_deref())?;
         let mut history = chat["messages"].as_array().expect("chat messages").clone();
         // Instructions belong to this response only, including when it is
         // continued by previous_response_id.
@@ -92,6 +96,7 @@ impl Context {
                 history,
                 initial,
                 reasoning_field,
+                separator,
                 reservation: None,
             },
         ))
@@ -177,7 +182,7 @@ pub(crate) async fn adapt(
     let (sender, receiver) = mpsc::channel(1);
     let output = stream.then_some(sender);
     let run = async move {
-        let mut events = stream::Events::new(context.initial);
+        let mut events = stream::Events::new(context.initial, context.separator.clone());
         let result = consume(
             chat,
             &mut events,
@@ -191,8 +196,12 @@ pub(crate) async fn adapt(
             let event = events.error(error);
             let _ = send(output.as_ref(), vec![event], state.stream_write_timeout).await;
         }
-        let history = request::input_messages(&events.response["output"], &context.reasoning_field)
-            .unwrap_or_default();
+        let history = request::input_messages(
+            &events.response["output"],
+            &context.reasoning_field,
+            context.separator.as_deref(),
+        )
+        .unwrap_or_default();
         guard.finish(events.response, history);
         result
     };

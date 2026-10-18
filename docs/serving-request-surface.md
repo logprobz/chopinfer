@@ -130,7 +130,23 @@ with a strict tool constrains output to the model's call format. A model
 whose declaration has a `tools.choice` policy may also render no tools for
 `none`, only the named tool for a named choice, end a forced choice's prompt
 with the opening of its calls, refuse a forced choice in thinking mode, and
-serve a forced choice without tools as `auto` instead of refusing it. Tool names
+serve a forced choice without tools as `auto` instead of refusing it.
+
+**Tool namespaces.** A model whose declaration has `tools.namespaces` names
+a function in a namespace by its qualified name, such as `ns::f`. In chat, a
+tool's `namespace` (on the tool, else on its function) is a name or an
+object with a `name` and an optional `description`, which goes before the
+function's description on its own line; a function name already spelled
+`ns::f` keeps its namespace, and a different given one is refused. Calls, a
+named `tool_choice` and history use the qualified name, which chat returns
+whole in `function.name`. In the Responses API a `namespace` tool
+(`name`, `description`, `tools`) offers its functions that way, a
+`function_call` returns as its `name` and `namespace`, and an input
+`function_call` may carry a `namespace`. For other models a chat tool's
+`namespace` is not read, and a Responses `namespace` tool or a call's
+`namespace` is refused.
+
+Tool names
 can stream before a call closes; argument deltas wait for the close, since a
 later parameter can replace an earlier one. A generation that ends inside a
 call (length, stop token or client stop) finishes it with the same complete

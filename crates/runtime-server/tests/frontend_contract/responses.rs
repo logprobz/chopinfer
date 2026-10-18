@@ -1002,3 +1002,106 @@ async fn returned_reasoning_and_message_items_remain_replayable() {
         matches!(&backend.prompts()[1].prompt, PreparedPrompt::RenderedChat(text) if text == "assistant:answer~think|user:next")
     );
 }
+
+/// With qualified function names declared, a namespace tool offers its
+/// functions in that namespace, and a call in one returns as its name and
+/// namespace and reads back by them; without, both are refused.
+#[tokio::test]
+async fn namespace_tools_qualify_names_and_calls_return_them_apart() {
+    let namespace = json!({"type":"namespace","name":"fixture","description":"Fixture tools.",
+        "tools":[{"type":"function","name":"lookup","description":"Look.","parameters":{"type":"object"}}]});
+    let backend = ScriptedBackendV1::new(tool_events());
+    let mut frontend = FakeFrontendV1::new();
+    frontend.namespace_separator = Some(".");
+    let server = TestServerV1::start_with_frontend(backend.clone(), frontend).await;
+    let response = create(&server, json!({"input":"x","tools":[namespace]})).await;
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert!(
+        matches!(&backend.prompts()[0].prompt, PreparedPrompt::RenderedChat(text)
+            if text.ends_with("|offered:fixture.lookup:Fixture tools.\nLook.")),
+        "{:?}",
+        backend.prompts()[0].prompt
+    );
+    let call = response.json()["output"][0].clone();
+    assert_eq!(
+        (&call["name"], &call["namespace"]),
+        (&json!("lookup"), &json!("fixture"))
+    );
+    let response = create(
+        &server,
+        json!({"input":[{"role":"user","content":"x"}, call,
+        {"type":"function_call_output","call_id":call["call_id"],"output":"result"}],
+        "tools":[namespace]}),
+    )
+    .await;
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert!(
+        matches!(&backend.prompts()[1].prompt, PreparedPrompt::RenderedChat(text)
+            if text.contains("|called:fixture.lookup")),
+        "{:?}",
+        backend.prompts()[1].prompt
+    );
+    let duplicate = create(&server, json!({"input":"x","tools":[namespace, namespace]})).await;
+    assert_eq!(duplicate.status, 400, "{}", duplicate.body);
+    // A frontend that does not qualify names refuses both.
+    let plain = TestServerV1::start(ScriptedBackendV1::new(tool_events())).await;
+    let refused = create(&plain, json!({"input":"x","tools":[namespace]})).await;
+    assert_eq!(refused.status, 400, "{}", refused.body);
+    let refused = create(
+        &plain,
+        json!({"input":[{"type":"function_call","call_id":"c",
+        "name":"lookup","namespace":"fixture","arguments":"{}"}]}),
+    )
+    .await;
+    assert_eq!(refused.status, 400, "{}", refused.body);
+}
+
+/// Chat Completions with qualified function names declared: a tool's
+/// namespace, on the tool or on its function, qualifies its name and puts
+/// its description first; a call returns its qualified name whole; a
+/// conflicting namespace is refused by name.
+#[tokio::test]
+async fn chat_tools_in_a_namespace_are_named_by_their_qualified_names() {
+    let backend = ScriptedBackendV1::new(tool_events());
+    let mut frontend = FakeFrontendV1::new();
+    frontend.namespace_separator = Some(".");
+    let server = TestServerV1::start_with_frontend(backend.clone(), frontend).await;
+    let chat = |tools: Value| {
+        json!({"messages":[{"role":"user","content":"x"}],"tools":tools}).to_string()
+    };
+    for tools in [
+        json!([{"type":"function","namespace":{"name":"fixture","description":"Fixture tools."},
+            "function":{"name":"lookup","description":"Look."}}]),
+        json!([{"type":"function","function":{"name":"lookup","description":"Look.",
+            "namespace":{"name":"fixture","description":"Fixture tools."}}}]),
+        json!([{"type":"function","function":{"name":"fixture.lookup","description":"Look.",
+            "namespace":{"name":"fixture","description":"Fixture tools."}}}]),
+    ] {
+        let response = server
+            .request(&post("/v1/chat/completions", &chat(tools.clone())))
+            .await;
+        assert_eq!(response.status, 200, "{tools}: {}", response.body);
+        assert_eq!(
+            response.json()["choices"][0]["message"]["tool_calls"][0]["function"]["name"],
+            "fixture.lookup"
+        );
+        let prompts = backend.prompts();
+        assert!(
+            matches!(&prompts.last().unwrap().prompt, PreparedPrompt::RenderedChat(text)
+                if text.ends_with("|offered:fixture.lookup:Fixture tools.\nLook.")),
+            "{tools}: {:?}",
+            prompts.last().unwrap().prompt
+        );
+    }
+    for tools in [
+        json!([{"type":"function","namespace":"other","function":{"name":"fixture.lookup"}}]),
+        json!([{"type":"function","function":{"name":"lookup","namespace":{"description":"d"}}}]),
+        json!([{"type":"function","function":{"name":"lookup","namespace":[1]}}]),
+    ] {
+        let response = server
+            .request(&post("/v1/chat/completions", &chat(tools.clone())))
+            .await;
+        assert_eq!(response.status, 400, "{tools}: {}", response.body);
+        assert_eq!(response.json()["error"]["param"], "tools", "{tools}");
+    }
+}

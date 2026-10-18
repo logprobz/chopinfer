@@ -200,6 +200,24 @@ struct RawToolV1 {
     function: FrontendJsonV1,
 }
 
+/// Each offered tool's namespace, read only for a frontend that qualifies
+/// function names: the tool's own, else its function's.
+#[derive(Deserialize)]
+struct RawNamespacesV1 {
+    tools: Option<Vec<RawNamespaceToolV1>>,
+}
+
+#[derive(Deserialize)]
+struct RawNamespaceToolV1 {
+    namespace: Option<crate::frontend::LastValueJsonV1>,
+    function: Option<RawNamespaceFunctionV1>,
+}
+
+#[derive(Deserialize)]
+struct RawNamespaceFunctionV1 {
+    namespace: Option<crate::frontend::LastValueJsonV1>,
+}
+
 /// The client's `chat_template_kwargs` as sent, read again after the typed
 /// read so that the typed keywords keep their refusals. It refuses nothing
 /// the typed read accepted: a key named twice keeps its first place and its
@@ -486,6 +504,26 @@ pub(crate) fn parse(
             } else {
                 Vec::new()
             };
+            let tool_namespaces = if frontend.tool_namespace_separator().is_some() {
+                let raw: RawNamespacesV1 = decode(body)?;
+                raw.tools
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|tool| {
+                        let present = |namespace: Option<crate::frontend::LastValueJsonV1>| {
+                            namespace
+                                .map(|namespace| namespace.0)
+                                .filter(|namespace| *namespace != FrontendJsonV1::Null)
+                        };
+                        present(tool.namespace).or_else(|| {
+                            tool.function
+                                .and_then(|function| present(function.namespace))
+                        })
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
             let raw: RawTemplateKwargsV1 = decode(body)?;
             let template_kwargs = raw
                 .chat_template_kwargs
@@ -502,7 +540,7 @@ pub(crate) fn parse(
                 frontend,
                 sampling_overrides,
                 request,
-                (tool_objects, template_kwargs),
+                (tool_objects, template_kwargs, tool_namespaces),
                 identity,
                 max_string_bytes,
             )
@@ -940,7 +978,11 @@ fn prepare_chat(
     frontend: &dyn ServerFrontendV1,
     sampling_overrides: SamplingDefaults,
     request: ChatRequest,
-    (tool_objects, chat_template_kwargs): (Vec<FrontendJsonV1>, Option<FrontendJsonV1>),
+    (mut tool_objects, chat_template_kwargs, tool_namespaces): (
+        Vec<FrontendJsonV1>,
+        Option<FrontendJsonV1>,
+        Vec<Option<FrontendJsonV1>>,
+    ),
     identity: RequestIdentityV1,
     max_string_bytes: usize,
 ) -> Result<ParsedRequest, ApiError> {
@@ -994,7 +1036,15 @@ fn prepare_chat(
             Some("add_generation_prompt"),
         ));
     }
-    let supplied_tools = request.tools.unwrap_or_default();
+    let mut supplied_tools = request.tools.unwrap_or_default();
+    if let Some(separator) = frontend.tool_namespace_separator() {
+        qualify_tools(
+            &mut supplied_tools,
+            &mut tool_objects,
+            &tool_namespaces,
+            separator,
+        )?;
+    }
     let tool_choice = parse_tool_choice(
         request.tool_choice,
         &supplied_tools,
@@ -1769,6 +1819,93 @@ fn require_plain_message(
         ));
     }
     content.ok_or_else(|| ApiError::invalid("message content must be a string", Some("messages")))
+}
+
+/// Names each offered tool by its qualified name, for a frontend that
+/// qualifies function names by `separator`
+/// ([`ServerFrontendV1::tool_namespace_separator`]): the namespace the
+/// request gives it (`namespaces`, one per tool), then the separator, then
+/// its name. A name already qualified keeps its namespace, which a given
+/// one must equal. A namespace description goes before the function's on
+/// its own line. Each function object forwarded (`objects`) takes the same
+/// name and description and loses its namespace.
+fn qualify_tools(
+    tools: &mut [ToolDefinition],
+    objects: &mut [FrontendJsonV1],
+    namespaces: &[Option<FrontendJsonV1>],
+    separator: &str,
+) -> Result<(), ApiError> {
+    let invalid = |message: String| ApiError::invalid_owned(message, Some("tools".to_owned()));
+    for (index, tool) in tools.iter_mut().enumerate() {
+        let (namespace, description) = match namespaces.get(index).cloned().flatten() {
+            None => (None, None),
+            Some(FrontendJsonV1::String(name)) => (Some(name), None),
+            Some(FrontendJsonV1::Object(entries)) => {
+                let field = |key: &str| {
+                    entries
+                        .iter()
+                        .find(|(name, _)| name == key)
+                        .map(|(_, value)| value.clone())
+                };
+                let Some(FrontendJsonV1::String(name)) = field("name") else {
+                    return Err(invalid(
+                        "a tool namespace object needs a string name".into(),
+                    ));
+                };
+                let description = match field("description") {
+                    None | Some(FrontendJsonV1::Null) => None,
+                    Some(FrontendJsonV1::String(text)) => Some(text),
+                    Some(_) => {
+                        return Err(invalid(
+                            "a tool namespace description must be a string".into(),
+                        ));
+                    }
+                };
+                (Some(name), description)
+            }
+            Some(_) => {
+                return Err(invalid(
+                    "a tool namespace must be a name or an object with a name".into(),
+                ));
+            }
+        };
+        let function = &mut tool.function;
+        let namespace = match function.name.split_once(separator) {
+            Some((prefix, _)) if namespace.as_deref().is_some_and(|name| name != prefix) => {
+                return Err(invalid(format!(
+                    "the tool {:?} names the namespace {prefix:?} and is given {:?}",
+                    function.name,
+                    namespace.unwrap_or_default()
+                )));
+            }
+            Some(_) => None,
+            None => namespace,
+        };
+        if let Some(namespace) = namespace {
+            function.name = format!("{namespace}{separator}{}", function.name);
+        }
+        if let Some(prefix) = description.filter(|text| !text.is_empty()) {
+            function.description = Some(format!(
+                "{prefix}\n{}",
+                function.description.as_deref().unwrap_or_default()
+            ));
+        }
+        if let Some(FrontendJsonV1::Object(entries)) = objects.get_mut(index) {
+            entries.retain(|(key, _)| key != "namespace");
+            for (key, value) in [
+                ("name", Some(&function.name)),
+                ("description", function.description.as_ref()),
+            ] {
+                let Some(value) = value else { continue };
+                let value = FrontendJsonV1::String(value.clone());
+                match entries.iter_mut().find(|(name, _)| name == key) {
+                    Some((_, slot)) => *slot = value,
+                    None => entries.push((key.to_owned(), value)),
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn convert_tools(

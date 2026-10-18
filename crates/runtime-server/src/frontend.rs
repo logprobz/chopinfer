@@ -659,6 +659,17 @@ frontend_with_alias_delegation! {
     fn forced_choice_without_tools_is_auto(&self) -> bool {
         false
     }
+    /// The separator of a qualified function name (`namespace`, separator,
+    /// name), for a frontend whose prompt format qualifies a function in a
+    /// namespace; `None` when names are not qualified. The transport then
+    /// reads an offered tool's `namespace` (on the tool, else on its
+    /// function: a name, or an object with a `name` and an optional
+    /// `description`), names the tool by its qualified name, puts the
+    /// namespace description before the function's on its own line, and
+    /// forwards the function object so changed without the namespace.
+    fn tool_namespace_separator(&self) -> Option<&str> {
+        None
+    }
     /// The largest prompt-plus-completion token count this model serves.
     fn maximum_total_tokens(&self) -> usize;
 

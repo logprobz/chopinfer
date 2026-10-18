@@ -55,6 +55,9 @@ struct FakeFrontendV1 {
     echoes_template_kwargs: bool,
     extra_roles: Vec<String>,
     tool_references: bool,
+    /// The separator of qualified function names; with one, the prompt
+    /// ends with each offered tool's name and description.
+    namespace_separator: Option<&'static str>,
 }
 
 impl FakeFrontendV1 {
@@ -75,6 +78,7 @@ impl FakeFrontendV1 {
             echoes_template_kwargs: false,
             extra_roles: Vec::new(),
             tool_references: false,
+            namespace_separator: None,
         }
     }
 }
@@ -102,6 +106,10 @@ impl ServerFrontendV1 for FakeFrontendV1 {
 
     fn tool_references(&self) -> bool {
         self.tool_references
+    }
+
+    fn tool_namespace_separator(&self) -> Option<&str> {
+        self.namespace_separator
     }
 
     fn models(&self) -> &[FrontendModelV1] {
@@ -163,6 +171,20 @@ impl ServerFrontendV1 for FakeFrontendV1 {
         }
         for object in &request.tool_objects {
             prompt.push_str(&format!("|tool:{}", object.to_json_value()));
+        }
+        if self.namespace_separator.is_some() {
+            for tool in &request.tools {
+                prompt.push_str(&format!(
+                    "|offered:{}:{}",
+                    tool.name,
+                    tool.description.as_deref().unwrap_or_default()
+                ));
+            }
+            for message in &request.messages {
+                for call in &message.tool_calls {
+                    prompt.push_str(&format!("|called:{}", call.name));
+                }
+            }
         }
         if let Some(clear) = request.clear_thinking {
             prompt.push_str(&format!("|clear_thinking:{}", clear.to_json_value()));

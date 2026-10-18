@@ -62,6 +62,11 @@ pub enum Kind {
     Decode {
         drafts: u32,
     },
+    /// Verification tokens supplied by the host, including the bonus row.
+    /// These rows participate in retention without invoking this drafter.
+    Verify {
+        rows: u32,
+    },
 }
 
 impl Kind {
@@ -69,15 +74,20 @@ impl Kind {
         match self {
             Self::Prefill { rows } if rows > 0 => Ok(rows),
             Self::Decode { drafts } if drafts <= BLOCK_ROWS => Ok(drafts + 1),
+            Self::Verify { rows } if (2..=MAX_VERIFY_ROWS).contains(&rows) => Ok(rows),
             _ => Err("invalid DSpark target rows"),
         }
     }
 
     pub fn drafts(self) -> u32 {
         match self {
-            Self::Prefill { .. } => 0,
+            Self::Prefill { .. } | Self::Verify { .. } => 0,
             Self::Decode { drafts } => drafts,
         }
+    }
+
+    pub fn is_verify(self) -> bool {
+        matches!(self, Self::Verify { .. }) || self.drafts() > 0
     }
 }
 
@@ -284,7 +294,7 @@ impl State {
                 }
                 Some(_) => {}
                 None => {
-                    if row.start != 0 || row.kind.drafts() > 0 {
+                    if row.start != 0 || row.kind.is_verify() {
                         return Err("DSpark request needs prefill or prefix restore");
                     }
                     if self
@@ -426,7 +436,7 @@ impl State {
     }
 
     /// Validate the entire acceptance vector before issuing any copies.
-    /// `kept` lists drafting items in batch order, with counts including the
+    /// `kept` lists verification items in batch order, with counts including the
     /// bonus row, as in the host's commit_accepted callback. AR and prefill
     /// items retain all their target rows and have no entry in `kept`.
     pub fn begin_commit(&mut self, kept: &[(u64, u32)]) -> Result<CommitPlan> {
@@ -435,10 +445,12 @@ impl State {
         if pending.phase != Phase::Executed {
             return Err("DSpark target rows have not completed");
         }
-        let verify = pending.rows.iter().filter(|row| row.kind.drafts() > 0);
+        let verify = pending.rows.iter().filter(|row| row.kind.is_verify());
         if verify.clone().count() != kept.len()
             || verify.zip(kept).any(|(row, &(request, count))| {
-                request != row.request || count == 0 || count > row.kind.drafts() + 1
+                request != row.request
+                    || count == 0
+                    || count > row.kind.target_rows().expect("validated target rows")
             })
         {
             return Err("invalid DSpark accepted target rows");
@@ -448,7 +460,7 @@ impl State {
             .rows
             .iter()
             .map(|&rows| {
-                let count = if rows.kind.drafts() > 0 {
+                let count = if rows.kind.is_verify() {
                     accepted.next().expect("validated acceptance vector").1
                 } else {
                     rows.kind.target_rows().expect("validated target rows")

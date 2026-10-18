@@ -20,7 +20,7 @@ pub enum Error<E> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Input {
     pub rows: Rows,
-    /// All prefill tokens, or only the supplied bonus/input token for decode.
+    /// All prefill or host verification tokens, or only the bonus for decode.
     pub tokens: Vec<u32>,
 }
 
@@ -147,7 +147,7 @@ impl Runtime {
         // Reject bad caller input before opening the transaction or doing IO.
         for input in inputs {
             let known = match input.rows.kind {
-                Kind::Prefill { rows } => rows as usize,
+                Kind::Prefill { rows } | Kind::Verify { rows } => rows as usize,
                 Kind::Decode { .. } => 1,
             };
             if input.tokens.len() != known || input.tokens.iter().any(|&token| token >= self.vocab)
@@ -234,7 +234,12 @@ impl Runtime {
         let plan = self.state.begin_commit(kept).map_err(Error::State)?;
         self.host_result(host.commit_features(&plan))?;
         self.state.complete_commit(plan).map_err(Error::State)?;
-        for (diagnostic, &(_, count)) in self.diagnostics.iter_mut().zip(kept) {
+        for diagnostic in &mut self.diagnostics {
+            let count = kept
+                .iter()
+                .find(|&&(request, _)| request == diagnostic.request)
+                .expect("validated drafting acceptance")
+                .1;
             // These leading matches are certain. The next emitted token
             // may be an accepted stop token, a token-limit boundary or a
             // rejection; the callback reports none of those distinctions.

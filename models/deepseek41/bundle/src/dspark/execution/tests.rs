@@ -1,4 +1,4 @@
-use super::super::state::Config;
+use super::super::state::{Config, MAX_VERIFY_ROWS};
 use super::*;
 use std::collections::BTreeMap;
 
@@ -218,6 +218,82 @@ fn input(budget: u32) -> Input {
         },
         tokens: vec![4],
     }
+}
+
+#[test]
+fn host_verification_retains_each_accepted_prefix_without_redrafting() {
+    for rows in 2..=MAX_VERIFY_ROWS {
+        for kept in 1..=rows {
+            let (mut runtime, mut host) = setup();
+            let mut supplied = input(0);
+            supplied.rows.kind = Kind::Verify { rows };
+            supplied.tokens = (4..4 + rows).collect();
+            assert!(
+                runtime
+                    .execute(&mut host, &[supplied.clone()])
+                    .unwrap()
+                    .is_empty()
+            );
+            assert_eq!(host.target_rows[0].tokens, supplied.tokens);
+            assert!(
+                !host
+                    .journal
+                    .iter()
+                    .any(|line| line.starts_with("draft ") || line.starts_with("read_"))
+            );
+            assert!(runtime.commit(&mut host, &[(41, kept)]).unwrap().is_empty());
+            assert_eq!(
+                host.committed[&41],
+                [vec![1, 2, 3], supplied.tokens[..kept as usize].to_vec()].concat()
+            );
+            assert_eq!(
+                runtime.state().context(41).unwrap().end,
+                3 + u64::from(kept)
+            );
+            runtime.catch_up(&mut host, 41).unwrap();
+            assert!(
+                runtime
+                    .state()
+                    .context(41)
+                    .unwrap()
+                    .projected()
+                    .iter()
+                    .all(|&end| end == 3 + u64::from(kept))
+            );
+        }
+    }
+}
+
+#[test]
+fn mixed_host_and_bundle_verification_bind_diagnostics_by_request() {
+    let (mut runtime, mut host) = setup();
+    runtime
+        .restore_after_copy(
+            42,
+            1,
+            Snapshot {
+                start: 0,
+                end: 3,
+                window: 4,
+                stages: 3,
+            },
+        )
+        .unwrap();
+    host.committed.insert(42, vec![1, 2, 3]);
+    let mut supplied = input(0);
+    supplied.rows.kind = Kind::Verify { rows: 6 };
+    supplied.tokens = vec![4, 5, 6, 7, 8, 9];
+    let mut drafted = input(5);
+    drafted.rows.request = 42;
+    drafted.rows.slot = 1;
+    let proposals = runtime.execute(&mut host, &[supplied, drafted]).unwrap();
+    assert_eq!(proposals.len(), 1);
+    assert_eq!(proposals[0].request, 42);
+    let diagnostics = runtime.commit(&mut host, &[(41, 1), (42, 6)]).unwrap();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].request, 42);
+    assert_eq!(diagnostics[0].outcomes, [Outcome::Accepted; WIDTH]);
+    assert_eq!(host.committed[&41], [1, 2, 3, 4]);
 }
 
 #[test]

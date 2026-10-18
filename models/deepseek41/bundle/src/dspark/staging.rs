@@ -121,7 +121,7 @@ impl Staging {
                 None => None,
                 Some(mask) => {
                     let known = match row.rows.kind {
-                        Kind::Prefill { rows } => rows as usize,
+                        Kind::Prefill { rows } | Kind::Verify { rows } => rows as usize,
                         Kind::Decode { .. } => 1,
                     };
                     if mask.len() != known {

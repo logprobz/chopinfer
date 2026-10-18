@@ -6,22 +6,16 @@
 //! compiled geometry's synthetic checkpoint (`model_deepseek41::synthetic`)
 //! from a sparse file: the host checks every record against the headers.
 //!
-//! `planned_bytes_are_the_checkpoint_s` reads views of the synthetic
-//! checkpoint that `CHOPINFER_DEEPSEEK41_SYNTHETIC_CHECKPOINT` names (the
-//! `geometry-checkpoint` example's output; skipped when unset) and checks
-//! them against the checkpoint's own bytes: side tensors copied, a
-//! vocabulary shard of the embedding, and each dense block-32 FP8 matrix
-//! resident as MXFP8 rows, its E4M3 codes unchanged and each 32x32 block
-//! scale repeated on its 32 rows, for the replicated, column-split and
-//! row-split (K-split) matrices on every rank, the shared expert's three
-//! matrices (w1 and w3 each its own view) and the attention sinks of each
-//! rank's heads.
+//! `every_planned_view_is_the_checkpoint_s` writes the synthetic geometry's
+//! checkpoint with block scales that vary, prepares every rank at every rank
+//! count, and checks every view of every rank index against the rank's share
+//! of the checkpoint that the projection declaration selects.
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use model_deepseek41::synthetic;
-use model_deepseek41_contract::admission::{SUPPORTED_RANKS, admit, check_ranks};
+use model_deepseek41_contract::admission::{SUPPORTED_RANKS, check_ranks};
 use model_deepseek41_contract::geometry::GEOMETRIES;
 use model_deepseek41_contract::serving::{INDEX_SCHEMA, RANK_IMAGE_ROLE};
 use model_deepseek41_contract::weight_plan::plan;
@@ -148,16 +142,151 @@ fn mxfp8_rows(
     (expected_codes, expected_scales)
 }
 
+/// How a rank selects a tensor: whole, a contiguous share of its rows, or
+/// a contiguous share of its K.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Split {
+    Whole,
+    Rows,
+    K,
+}
+
+/// Each declared source tensor's split, from the projection declaration
+/// itself: `(name suffix after the stem, or the whole name, split)`, for
+/// every dense, grouped dense and lookup projection (each fused operand on
+/// its own) and every side tensor. Expert banks are matched by their view
+/// name instead.
+fn declared_splits() -> Vec<(String, Split)> {
+    let declaration: Value =
+        serde_json::from_str(model_deepseek41_contract::projections::DECLARATION).unwrap();
+    let mut splits = Vec::new();
+    for projection in declaration["projections"].as_array().unwrap() {
+        let Some(template) = projection["source"]["tensor"].as_str() else {
+            continue;
+        };
+        if template.contains("{expert}") {
+            continue;
+        }
+        let split = match projection["split"]["class"].as_str().unwrap() {
+            "replicate" => Split::Whole,
+            "column" | "expert_owned" | "vocab_sharded" => Split::Rows,
+            "row" => Split::K,
+            other => panic!("{}: split {other}", projection["id"]),
+        };
+        let operands: Vec<&str> = projection["operands"]
+            .as_array()
+            .map(|list| list.iter().map(|o| o.as_str().unwrap()).collect())
+            .unwrap_or_default();
+        if operands.is_empty() {
+            splits.push((template.replace("{stem}", ""), split));
+        }
+        for operand in operands {
+            splits.push((
+                template.replace("{stem}", "").replace("{operand}", operand),
+                split,
+            ));
+        }
+    }
+    for side in declaration["side_tensors"].as_array().unwrap() {
+        let split = if side["placement"].is_null() {
+            Split::Whole
+        } else {
+            assert_eq!(side["placement"]["axis"], 0);
+            Split::Rows
+        };
+        let template = side["source"]["tensor"].as_str().unwrap();
+        splits.push((template.replace("{stem}", ""), split));
+    }
+    splits
+}
+
+/// The split of checkpoint tensor `name`: the longest declared suffix it
+/// ends with, or its whole name.
+fn split_of(splits: &[(String, Split)], name: &str) -> Split {
+    splits
+        .iter()
+        .filter(|(suffix, _)| {
+            name == suffix.as_str() || (suffix.starts_with('.') && name.ends_with(suffix.as_str()))
+        })
+        .max_by_key(|(suffix, _)| suffix.len())
+        .unwrap_or_else(|| panic!("{name}: no declared source"))
+        .1
+}
+
+/// Rank `rank`'s share of `0..n` over `ranks`.
+fn share(n: u64, rank: u64, ranks: u64) -> std::ops::Range<u64> {
+    assert_eq!(n % ranks, 0, "{n} over {ranks}");
+    let part = n / ranks;
+    rank * part..(rank + 1) * part
+}
+
+/// Rows `rows` and byte columns `columns` of a row-major `[_, row_bytes]`
+/// tensor.
+fn block(
+    bytes: &[u8],
+    row_bytes: u64,
+    rows: std::ops::Range<u64>,
+    columns: std::ops::Range<u64>,
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    for r in rows {
+        let row = (r * row_bytes) as usize;
+        out.extend_from_slice(&bytes[row + columns.start as usize..row + columns.end as usize]);
+    }
+    out
+}
+
+/// A new directory holding `geometry`'s synthetic checkpoint with UE8M0
+/// scales that vary per block (so a misplaced block or slice shows), and
+/// its config.
+fn varied_checkpoint(geometry: &model_deepseek41_contract::geometry::Geometry) -> PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "deepseek41-payload-{}-{}",
+        geometry.id,
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let tensors: Vec<_> = synthetic::tensors(geometry)
+        .unwrap()
+        .into_iter()
+        .map(|mut tensor| {
+            if let synthetic::Fill::Ue8m0 { exponent } = tensor.fill {
+                tensor.fill = synthetic::Fill::Ue8m0Varied {
+                    exponent,
+                    spread: 3,
+                };
+            }
+            tensor
+        })
+        .collect();
+    synthetic::write(&root, &tensors, 11).unwrap();
+    std::fs::write(
+        root.join("config.json"),
+        serde_json::to_vec(&support::config(geometry)).unwrap(),
+    )
+    .unwrap();
+    root
+}
+
+/// Every view of every rank's planned image, as the host prepares and reads
+/// it, holds the rank's share of the checkpoint the declaration selects:
+/// side tensors and lookup rows copied; block-32 FP8 matrices as MXFP8 rows,
+/// each row carrying its own 32x32 block's scales, replicated, split by rows,
+/// by K or by groups; BF16 matrices in MMA fragment order; expert banks
+/// expert-major, each expert's operands split by rows (gate-up) or K (down),
+/// codes in rows and scales in 16x8 tiles. The checkpoint's scales vary per
+/// block, so a slice that starts in the wrong block fails. Runs when a
+/// synthetic geometry is compiled.
 #[test]
-fn planned_bytes_are_the_checkpoint_s() {
-    let Some(root) = std::env::var_os("CHOPINFER_DEEPSEEK41_SYNTHETIC_CHECKPOINT") else {
-        eprintln!("CHOPINFER_DEEPSEEK41_SYNTHETIC_CHECKPOINT is unset: skipped");
+fn every_planned_view_is_the_checkpoint_s() {
+    use kernel_core::transform::fragment::{FragmentWeightFormat, FragmentWeightLayout};
+    use kernel_core::transform::{Layout, Packed, ScaleTileLayout, Transform};
+    let Some(geometry) = GEOMETRIES.iter().find(|g| g.id != "flash") else {
+        eprintln!("no synthetic geometry is compiled: skipped");
         return;
     };
-    let root = PathBuf::from(root);
-    let config: Value =
-        serde_json::from_slice(&std::fs::read(root.join("config.json")).unwrap()).unwrap();
-    let geometry = admit(&config).unwrap();
+    let root = varied_checkpoint(geometry);
+    let splits = declared_splits();
     let mut prefix = [0_u8; 8];
     std::fs::File::open(root.join(synthetic::FILE))
         .unwrap()
@@ -172,142 +301,186 @@ fn planned_bytes_are_the_checkpoint_s() {
     let header: Value = serde_json::from_slice(&header).unwrap();
     let data = 8 + header_bytes;
     let tensor = |name: &str| source(&root, &header, data, name);
+    let mut groups = std::collections::BTreeSet::new();
     for &ranks in SUPPORTED_RANKS {
         if check_ranks(geometry, ranks).is_err() {
             continue;
         }
+        let n = u64::from(ranks);
         let (image, plans) = prepare(&root, ranks).unwrap();
         let mut start = 0;
         for (rank, plan) in plans.iter().enumerate() {
+            let r = rank as u64;
             let index =
                 bundle_runtime::index::parse(&plan.components[0].bytes, rank as u32, INDEX_SCHEMA)
                     .unwrap();
-            let read = |name: &str| -> Vec<u8> {
-                let view = index
-                    .views
-                    .get(name)
-                    .unwrap_or_else(|| panic!("tp{ranks} rank {rank}: no view {name}"));
-                let mut bytes = vec![0; view.bytes as usize];
-                image.read(start + view.offset, &mut bytes).unwrap();
-                bytes
-            };
-            let at = format!("tp{ranks} rank {rank}");
-            // Side tensors are copies.
-            for name in [
-                "norm.weight",
-                "layers.0.attn_norm.weight",
-                "layers.0.hc_attn_fn",
-            ] {
-                same(&read(name), &tensor(name).bytes, &format!("{at} {name}"));
-            }
-            // The embedding's vocabulary shard.
-            let embed = tensor("embed.weight");
-            let row = (embed.shape[1] * 2) as usize;
-            let shard = embed.shape[0] as usize / ranks as usize;
-            same(
-                &read("embed.weight"),
-                &embed.bytes[rank * shard * row..(rank + 1) * shard * row],
-                &format!("{at} embed"),
-            );
-            // Dense block-32 FP8 matrices as MXFP8 rows: replicated, split
-            // by rows, split by K.
-            let r = rank as u64;
-            let n = u64::from(ranks);
-            let matrices = |stem: &str| {
-                (
-                    tensor(&format!("{stem}.weight")),
-                    tensor(&format!("{stem}.scale")),
-                )
-            };
-            let (codes, scales) = matrices("layers.0.attn.wq_a");
-            let rows = codes.shape[0];
-            let k = codes.shape[1];
-            let expected = mxfp8_rows(&codes, &scales, 0..rows, 0..k);
-            same(
-                &read("layers.0.attn.wq_a.weight"),
-                &expected.0,
-                &format!("{at} wq_a codes"),
-            );
-            same(
-                &read("layers.0.attn.wq_a.scale"),
-                &expected.1,
-                &format!("{at} wq_a scales"),
-            );
-            let (codes, scales) = matrices("layers.0.attn.wq_b");
-            let (rows, k) = (codes.shape[0] / n, codes.shape[1]);
-            let expected = mxfp8_rows(&codes, &scales, r * rows..(r + 1) * rows, 0..k);
-            same(
-                &read("layers.0.attn.wq_b.weight"),
-                &expected.0,
-                &format!("{at} wq_b codes"),
-            );
-            same(
-                &read("layers.0.attn.wq_b.scale"),
-                &expected.1,
-                &format!("{at} wq_b scales"),
-            );
-            let (codes, scales) = matrices("layers.0.attn.wo_b");
-            let (rows, k) = (codes.shape[0], codes.shape[1] / n);
-            let expected = mxfp8_rows(&codes, &scales, 0..rows, r * k..(r + 1) * k);
-            same(
-                &read("layers.0.attn.wo_b.weight"),
-                &expected.0,
-                &format!("{at} wo_b codes"),
-            );
-            same(
-                &read("layers.0.attn.wo_b.scale"),
-                &expected.1,
-                &format!("{at} wo_b scales"),
-            );
-            // The output LoRA's groups, stacked in the checkpoint: a rank
-            // holds whole groups, each with its own blocks' scales.
-            let (codes, scales) = matrices("layers.0.attn.wo_a");
-            let (rows, k) = (codes.shape[0] / n, codes.shape[1]);
-            let expected = mxfp8_rows(&codes, &scales, r * rows..(r + 1) * rows, 0..k);
-            same(
-                &read("layers.0.attn.wo_a.weight"),
-                &expected.0,
-                &format!("{at} wo_a codes"),
-            );
-            same(
-                &read("layers.0.attn.wo_a.scale"),
-                &expected.1,
-                &format!("{at} wo_a scales"),
-            );
-            // The shared expert: w1 and w3 split by rows, each its own
-            // view, and w2 by K.
-            for (matrix, by_rows) in [("w1", true), ("w3", true), ("w2", false)] {
-                let stem = format!("layers.0.ffn.shared_experts.{matrix}");
-                let (codes, scales) = matrices(&stem);
-                let (rows, k) = (codes.shape[0], codes.shape[1]);
-                let expected = if by_rows {
-                    let rows = rows / n;
-                    mxfp8_rows(&codes, &scales, r * rows..(r + 1) * rows, 0..k)
-                } else {
-                    let k = k / n;
-                    mxfp8_rows(&codes, &scales, 0..rows, r * k..(r + 1) * k)
+            for (name, view) in &index.views {
+                let mut got = vec![0; view.bytes as usize];
+                image.read(start + view.offset, &mut got).unwrap();
+                let at = format!("tp{ranks} rank {rank} {name}");
+                let generic: Vec<_> = name
+                    .split('.')
+                    .map(|part| {
+                        if part.bytes().all(|b| b.is_ascii_digit()) {
+                            "N"
+                        } else {
+                            part
+                        }
+                    })
+                    .collect();
+                groups.insert(generic.join("."));
+                let expected = match view.layout_id.as_str() {
+                    "mxfp8_e4m3_rows_v1" | "mxfp8_ue8m0_scale_rows_v1" => {
+                        let stem = name
+                            .strip_suffix(".weight")
+                            .or_else(|| name.strip_suffix(".scale"))
+                            .unwrap();
+                        let codes = tensor(&format!("{stem}.weight"));
+                        let scales = tensor(&format!("{stem}.scale"));
+                        let (rows, k) = (codes.shape[0], codes.shape[1]);
+                        let (rows, columns) = match split_of(&splits, &format!("{stem}.weight")) {
+                            Split::Whole => (0..rows, 0..k),
+                            Split::Rows => (share(rows, r, n), 0..k),
+                            Split::K => (0..rows, share(k, r, n)),
+                        };
+                        let (codes, scales) = mxfp8_rows(&codes, &scales, rows, columns);
+                        if name.ends_with(".weight") {
+                            codes
+                        } else {
+                            scales
+                        }
+                    }
+                    "bf16_row_major_v1" | "f32_row_major_v1" => {
+                        let source = tensor(name);
+                        let rows = source.shape[0];
+                        let row_bytes = source.bytes.len() as u64 / rows;
+                        match split_of(&splits, name) {
+                            Split::Whole => source.bytes,
+                            Split::Rows => {
+                                block(&source.bytes, row_bytes, share(rows, r, n), 0..row_bytes)
+                            }
+                            Split::K => panic!("{at}: a row-major copy split by K"),
+                        }
+                    }
+                    "bf16_mma_fragments_16x16_v1" => {
+                        let source = tensor(name);
+                        let (rows, k) = (source.shape[0], source.shape[1]);
+                        let (rows, columns) = match split_of(&splits, name) {
+                            Split::Whole => (0..rows, 0..k),
+                            Split::Rows => (share(rows, r, n), 0..k),
+                            Split::K => (0..rows, share(k, r, n)),
+                        };
+                        // The packed operand pads its rows to whole row
+                        // tiles; the padding holds zeros.
+                        let (local_rows, local_k) = (
+                            (rows.end - rows.start) as usize,
+                            (columns.end - columns.start) as usize,
+                        );
+                        let strip_bytes = local_k / 16 * 512;
+                        assert_eq!(got.len() % strip_bytes, 0, "{at}: whole row strips");
+                        let padded = got.len() / strip_bytes * 16;
+                        assert!(padded >= local_rows, "{at}: {padded} rows for {local_rows}");
+                        let layout = FragmentWeightLayout {
+                            rows: padded,
+                            k: local_k,
+                            format: FragmentWeightFormat::Bf16,
+                        };
+                        let mut logical = layout
+                            .unpack(&Packed {
+                                bytes: got,
+                                layout: Layout::FragmentMajor(layout),
+                            })
+                            .unwrap_or_else(|e| panic!("{at}: {e:?}"));
+                        let padding = logical.split_off(local_rows * local_k * 2);
+                        assert!(padding.iter().all(|&b| b == 0), "{at}: nonzero row padding");
+                        got = logical;
+                        block(
+                            &source.bytes,
+                            k * 2,
+                            rows,
+                            columns.start * 2..columns.end * 2,
+                        )
+                    }
+                    "mxfp4_e2m1_rows_v1" | "mxfp4_ue8m0_scale_tiles_16x8_v1" => {
+                        let (prefix, bank) = name.split_once(".experts.").unwrap();
+                        let (bank, part) = bank.split_once('.').unwrap();
+                        let operands: &[&str] = if bank == "gate_up" {
+                            &["w1", "w3"]
+                        } else {
+                            &["w2"]
+                        };
+                        let experts = (0..)
+                            .take_while(|e| {
+                                header
+                                    .get(format!("{prefix}.experts.{e}.w2.weight"))
+                                    .is_some()
+                            })
+                            .count();
+                        let mut expected = Vec::new();
+                        let mut pieces = Vec::new();
+                        for e in 0..experts {
+                            for operand in operands {
+                                let stem = format!("{prefix}.experts.{e}.{operand}");
+                                let codes = tensor(&format!("{stem}.weight"));
+                                let scales = tensor(&format!("{stem}.scale"));
+                                let (rows, k) = (codes.shape[0], codes.shape[1] * 2);
+                                let (rows, columns) = if bank == "gate_up" {
+                                    (share(rows, r, n), 0..k)
+                                } else {
+                                    (0..rows, share(k, r, n))
+                                };
+                                if part == "weight" {
+                                    expected.extend(block(
+                                        &codes.bytes,
+                                        k / 2,
+                                        rows,
+                                        columns.start / 2..columns.end / 2,
+                                    ));
+                                } else {
+                                    let blocks = columns.start / 32..columns.end / 32;
+                                    pieces.push((
+                                        (rows.end - rows.start) as usize,
+                                        (blocks.end - blocks.start) as usize,
+                                    ));
+                                    expected.extend(block(&scales.bytes, k / 32, rows, blocks));
+                                }
+                            }
+                        }
+                        if part == "scale" {
+                            // Each expert's operand is one piece, tiled on its own.
+                            let mut logical = Vec::new();
+                            let mut offset = 0;
+                            for (rows, k_blocks) in pieces {
+                                let layout = ScaleTileLayout {
+                                    rows,
+                                    k_blocks,
+                                    tile_rows: 16,
+                                    k_blocks_per_tile: 8,
+                                };
+                                let bytes = rows.div_ceil(16) * k_blocks.div_ceil(8) * 128;
+                                logical.extend(
+                                    layout
+                                        .unpack(&Packed {
+                                            bytes: got[offset..offset + bytes].to_vec(),
+                                            layout: Layout::ScaleTile(layout),
+                                        })
+                                        .unwrap_or_else(|e| panic!("{at}: {e:?}")),
+                                );
+                                offset += bytes;
+                            }
+                            assert_eq!(offset, got.len(), "{at}: tiled scale bytes");
+                            got = logical;
+                        }
+                        expected
+                    }
+                    other => panic!("{at}: no expectation for layout {other}"),
                 };
-                same(
-                    &read(&format!("{stem}.weight")),
-                    &expected.0,
-                    &format!("{at} {matrix} codes"),
-                );
-                same(
-                    &read(&format!("{stem}.scale")),
-                    &expected.1,
-                    &format!("{at} {matrix} scales"),
-                );
+                same(&got, &expected, &at);
             }
-            // The attention sinks of the rank's heads.
-            let sink = tensor("layers.0.attn.attn_sink");
-            let heads = sink.bytes.len() / ranks as usize;
-            same(
-                &read("layers.0.attn.attn_sink"),
-                &sink.bytes[rank * heads..(rank + 1) * heads],
-                &format!("{at} attn_sink"),
-            );
             start += plan.arena_bytes;
         }
-        eprintln!("tp{ranks}: planned bytes match the checkpoint");
+        eprintln!("tp{ranks}: every planned view matches the checkpoint");
     }
+    eprintln!("{} view groups: {groups:?}", groups.len());
+    std::fs::remove_dir_all(&root).unwrap();
 }

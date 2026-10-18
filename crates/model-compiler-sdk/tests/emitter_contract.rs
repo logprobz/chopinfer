@@ -1654,6 +1654,55 @@ fn a_mixed_plane_kv_element_is_emitted_with_its_capability() {
     assert!(error.contains(MIXED_PLANE_KV_CAPABILITY_V1), "{error}");
 }
 
+/// A KV format that sizes the per-request state for its element is emitted
+/// with that state at every topology of a joined draft, where the host finds
+/// it for the format it serves.
+#[test]
+fn a_kv_formats_own_state_is_emitted_at_every_topology() {
+    let capability = id(MIXED_PLANE_KV_CAPABILITY_V1);
+    let weights = weight_bytes();
+    let resized = |ranks: u32| {
+        let mut formats = mixed_plane_formats(ranks);
+        let state = BundleStateLayoutV1::new(
+            id("fixture.state.v1"),
+            128 * u64::from(ranks),
+            64,
+            BundleStateLifetimeV1::Request,
+        )
+        .expect("the resized state is valid");
+        formats[1] = formats[1]
+            .clone()
+            .with_state_layout(state)
+            .expect("the mixed-plane format takes its own state");
+        topology_draft(&format!("tp{ranks}"), ranks, &weights).with_kv_formats(formats)
+    };
+    let joined =
+        BundleDraftV1::for_topologies(vec![resized(2), resized(4)]).expect("the drafts join");
+    let root = TemporaryDirectory::new("model-compiler-sdk-format-state");
+    let output = root.path().join("bundle");
+    let emitted = emit_bundle_directory_v1(&joined, &output).expect("the joined draft emits");
+    for ranks in [2_u32, 4] {
+        let selected = emitted
+            .manifest()
+            .for_topology(&format!("tp{ranks}"))
+            .expect("each topology selects");
+        let mixed = &selected.kv_formats()[1];
+        assert_eq!(mixed.dtype(), BundleKvDtypeV1::MixedPlanes);
+        assert_eq!(
+            selected.state_layout_for_v1(mixed.layout()).bytes(),
+            128 * u64::from(ranks)
+        );
+        // The preferred layout runs the manifest's state.
+        assert_eq!(
+            selected.state_layout_for_v1(selected.kv_layout()),
+            selected.state_layout()
+        );
+        assert_eq!(selected.state_layout().bytes(), 64);
+    }
+    BundlePackageV1::verify_directory(&output, &host().with_capabilities([capability]))
+        .expect("the package verifies");
+}
+
 fn model_options_draft(default: i64, qualified: bool) -> BundleDraftV1 {
     use runtime_bundle::model_options::{
         CAPABILITY, ModelOptionV1, ModelOptionsV1, OptionDefinitionV1,

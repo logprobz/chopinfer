@@ -812,6 +812,12 @@ pub struct BundleKvFormatV1 {
     /// format that predates it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     planes: Vec<BundleKvPlaneV1>,
+    /// The per-request state a host creates the bundle with when it serves
+    /// this format, when that differs from the manifest's `state_layout`:
+    /// the same state, sized for this element. Absent for every format that
+    /// predates it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    state_layout: Option<BundleStateLayoutV1>,
 }
 
 impl BundleKvFormatV1 {
@@ -823,7 +829,15 @@ impl BundleKvFormatV1 {
             dtype,
             layout,
             planes: Vec::new(),
+            state_layout: None,
         }
+    }
+
+    /// This format with its own per-request state.
+    pub fn with_state_layout(mut self, state: BundleStateLayoutV1) -> Result<Self, BundleError> {
+        self.state_layout = Some(state);
+        self.validate()?;
+        Ok(self)
     }
 
     /// A mixed-plane format of `planes`, distinctly named, whose codes and
@@ -846,6 +860,7 @@ impl BundleKvFormatV1 {
             dtype: BundleKvDtypeV1::MixedPlanes,
             layout,
             planes,
+            state_layout: None,
         };
         format.validate()?;
         Ok(format)
@@ -867,8 +882,17 @@ impl BundleKvFormatV1 {
         &self.planes
     }
 
+    /// The format's own per-request state, if it declares one.
+    #[must_use]
+    pub const fn state_layout(&self) -> Option<&BundleStateLayoutV1> {
+        self.state_layout.as_ref()
+    }
+
     fn validate(&self) -> Result<(), BundleError> {
         self.layout.validate()?;
+        if let Some(state) = &self.state_layout {
+            state.validate()?;
+        }
         let mixed = self.dtype == BundleKvDtypeV1::MixedPlanes;
         if mixed == self.planes.is_empty() {
             return Err(BundleError::validation(format!(
@@ -4017,8 +4041,31 @@ impl BundleManifestV1 {
     /// [`state_slots_v1`] of the served count, which such a package must
     /// name (1 to its maximum sequences).
     pub fn state_bytes_v1(&self, served: Option<u32>) -> Result<u64, BundleError> {
+        self.state_bytes_for_v1(&self.kv_layout, served)
+    }
+
+    /// The per-request state a host creates the bundle with when it serves
+    /// `layout`, one of the declared KV layouts: that format's own state, or
+    /// the manifest's.
+    #[must_use]
+    pub fn state_layout_for_v1(&self, layout: &BundleKvLayoutV1) -> &BundleStateLayoutV1 {
+        self.kv_formats
+            .iter()
+            .find(|format| format.layout == *layout)
+            .and_then(|format| format.state_layout.as_ref())
+            .unwrap_or(&self.state_layout)
+    }
+
+    /// [`Self::state_bytes_v1`] of the state `layout` is served with
+    /// ([`Self::state_layout_for_v1`]).
+    pub fn state_bytes_for_v1(
+        &self,
+        layout: &BundleKvLayoutV1,
+        served: Option<u32>,
+    ) -> Result<u64, BundleError> {
+        let state = self.state_layout_for_v1(layout);
         if !self.state_per_item() {
-            return Ok(self.state_layout.bytes);
+            return Ok(state.bytes);
         }
         let maximum = self
             .batch_limits
@@ -4033,7 +4080,7 @@ impl BundleManifestV1 {
                     "per-item state needs a served count from 1 to {maximum}"
                 ))
             })?;
-        self.state_layout
+        state
             .bytes
             .checked_mul(state_slots_v1(served))
             .ok_or_else(|| BundleError::validation("per-item state bytes overflow u64"))
@@ -4161,6 +4208,22 @@ impl BundleManifestV1 {
                     "bundle KV layout {} differs from {} in more than its pages",
                     layout.id, primary.id
                 )));
+            }
+            if let Some(state) = &format.state_layout {
+                if state.id != self.state_layout.id || state.lifetime != self.state_layout.lifetime
+                {
+                    return Err(BundleError::validation(format!(
+                        "bundle KV layout {} declares state {}; a format's state is the \
+                         manifest's {} with its own size",
+                        layout.id, state.id, self.state_layout.id
+                    )));
+                }
+                if *layout == *primary && *state != self.state_layout {
+                    return Err(BundleError::validation(format!(
+                        "bundle KV layout {} is the preferred one and runs the manifest's state",
+                        layout.id
+                    )));
+                }
             }
             let earlier = &self.kv_formats[..index];
             if index > 0 && earlier[index - 1].dtype >= format.dtype
@@ -6215,6 +6278,85 @@ mod tests {
             );
         }
         assert_eq!(plane("p", Bf16, 7, None).bytes_per_token(), 14);
+    }
+
+    /// A KV format may run the manifest's state at its own size, which the
+    /// host creates the bundle with when it serves that format.
+    #[test]
+    fn a_kv_format_may_size_the_manifests_state_for_itself() {
+        let manifest = test_manifest();
+        let primary = manifest.kv_layout().clone();
+        let state = manifest.state_layout().clone();
+        let resized = |bytes: u64| {
+            BundleStateLayoutV1::new(
+                state.id().clone(),
+                bytes,
+                state.alignment_bytes(),
+                state.lifetime(),
+            )
+            .unwrap()
+        };
+        let wide = kv_layout("fixture.kv-wide.v1", 64, 1_024);
+        let larger = resized(state.bytes() * 2);
+        let formats = |own: BundleStateLayoutV1, preferred: Option<BundleStateLayoutV1>| {
+            let mut bf16 = BundleKvFormatV1::new(BundleKvDtypeV1::Bf16, primary.clone());
+            if let Some(preferred) = preferred {
+                bf16 = bf16.with_state_layout(preferred).unwrap();
+            }
+            let fp8 = BundleKvFormatV1::new(BundleKvDtypeV1::Fp8E4m3, wide.clone())
+                .with_state_layout(own)
+                .unwrap();
+            manifest.clone().with_kv_formats(vec![bf16, fp8])
+        };
+        let both = formats(larger.clone(), None).unwrap();
+        assert_eq!(both.state_layout_for_v1(&wide), &larger);
+        assert_eq!(both.state_layout_for_v1(&primary), &state);
+        assert_eq!(
+            both.state_bytes_for_v1(&wide, None).unwrap(),
+            state.bytes() * 2
+        );
+        assert_eq!(both.state_bytes_v1(None).unwrap(), state.bytes());
+        // Only the resized format carries a state in the canonical bytes.
+        let canonical = both.to_canonical_json().unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&canonical).unwrap();
+        assert!(value["kv_formats"][0].get("state_layout").is_none());
+        assert_eq!(
+            value["kv_formats"][1]["state_layout"],
+            serde_json::to_value(&larger).unwrap()
+        );
+        assert_eq!(
+            BundleManifestV1::from_canonical_json(&canonical).unwrap(),
+            both
+        );
+        // The preferred layout may restate the manifest's state, never
+        // another; no format names another state or lifetime.
+        formats(larger.clone(), Some(state.clone())).unwrap();
+        let error = formats(larger.clone(), Some(resized(state.bytes() * 4)))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("preferred"), "{error}");
+        let other = BundleStateLayoutV1::new(
+            id("fixture.other-state.v1"),
+            state.bytes(),
+            state.alignment_bytes(),
+            state.lifetime(),
+        )
+        .unwrap();
+        let error = formats(other, None).unwrap_err().to_string();
+        assert!(error.contains("with its own size"), "{error}");
+        let lifetime = if state.lifetime() == BundleStateLifetimeV1::Request {
+            BundleStateLifetimeV1::Process
+        } else {
+            BundleStateLifetimeV1::Request
+        };
+        let other = BundleStateLayoutV1::new(
+            state.id().clone(),
+            state.bytes(),
+            state.alignment_bytes(),
+            lifetime,
+        )
+        .unwrap();
+        assert!(formats(other, None).is_err());
     }
 
     #[test]

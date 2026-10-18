@@ -114,6 +114,14 @@ pub fn tensors(geometry: &Geometry) -> Result<Vec<Tensor>, String> {
                 projection.id
             ));
         };
+        // A grouped dense projection's checkpoint tensor stacks its groups
+        // along rows.
+        let rows = match &projection.kind {
+            ProjectionKind::GroupedDense { groups } => {
+                rows * groups.resolve(&keys).map_err(|e| e.0)?
+            }
+            _ => rows,
+        };
         let experts = match &projection.kind {
             ProjectionKind::ExpertBank { experts, .. } => {
                 Some(experts.resolve(&keys).map_err(|e| e.0)?)
@@ -440,7 +448,21 @@ mod tests {
             .into_iter()
             .map(|t| (t.name, (t.dtype.to_owned(), t.shape)))
             .collect();
-        assert_eq!(generated, official);
+        // Name the tensors that differ rather than print both catalogs.
+        let differing: Vec<_> = official
+            .keys()
+            .chain(generated.keys())
+            .filter(|name| official.get(*name) != generated.get(*name))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .map(|name| (name, official.get(name), generated.get(name)))
+            .collect();
+        assert!(
+            differing.is_empty(),
+            "{} tensors differ (name, official, generated), first: {:?}",
+            differing.len(),
+            &differing[..differing.len().min(8)]
+        );
     }
 
     #[test]

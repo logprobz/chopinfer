@@ -43,7 +43,7 @@ pub mod shape;
         reason = "only the tests export the bundle API that serves the instance"
     )
 )]
-mod sm120;
+pub mod sm120;
 
 pub use model_deepseek41_contract::BUNDLE_ID;
 

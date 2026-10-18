@@ -14,6 +14,7 @@ license.workspace = true
 # when CHOPINFER_KERNEL_GPU or CHOPINFER_KERNEL_GPUS names idle GPUs.
 
 [dev-dependencies]
+bundle-deepseek41 = { path = "../bundle" }
 kernel-build.workspace = true
 kernel-core.workspace = true
 kernel-harness.workspace = true

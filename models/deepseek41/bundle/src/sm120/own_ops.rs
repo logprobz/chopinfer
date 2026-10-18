@@ -11,6 +11,7 @@ use model_deepseek41_contract::own_ops::engram::{EngramGate, EngramGateBuffers};
 use model_deepseek41_contract::own_ops::rope::{
     MAX_POSITIONS, PAIRS, RopeCosSin, RopeCosSinBuffers, RopeRows, check_geometry,
 };
+use model_deepseek41_contract::own_ops::widen::{WidenRows, WidenRowsBuffers};
 
 /// The model's own kernels as its build compiles them for one geometry.
 #[derive(Clone, Copy, Debug)]
@@ -81,6 +82,14 @@ impl OwnOps for Sm120Own {
             symbol,
             info,
         }))
+    }
+
+    fn widen_rows(
+        &self,
+        op: &WidenRows,
+        need: Need,
+    ) -> Result<Prepared<WidenRowsBuffers<View>>, Refused> {
+        super::widen::prepare(op, need, self.geometry)
     }
 }
 

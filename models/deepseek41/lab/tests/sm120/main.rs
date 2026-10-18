@@ -2,8 +2,17 @@
 //! and encoder, on `kernel_harness`. Each engine adds its test file and its
 //! module line here.
 
+mod f32_head;
+mod head_artifacts;
+mod head_probes;
 // The own ops: the bundle's entries, cubin specification and `OwnOps`
 // implementation, and their tests.
+#[path = "../../../bundle/src/sm120/dspark_entries.rs"]
+#[allow(
+    dead_code,
+    reason = "the row widening reads the drafter's rounding symbol"
+)]
+mod dspark_entries;
 mod own;
 #[path = "../../../bundle/src/sm120/own_cubin.rs"]
 mod own_cubin;
@@ -11,9 +20,25 @@ mod own_cubin;
 mod own_entries;
 #[path = "../../../bundle/src/sm120/own_ops.rs"]
 mod own_ops;
+// The row widening own op and the rounding rows it launches; the lab
+// builds none of the all-reduce's cubins.
+#[path = "../../../bundle/src/sm120/reduce.rs"]
+#[allow(dead_code)]
+mod reduce;
+#[path = "../../../bundle/src/sm120/widen.rs"]
+mod widen;
 
 // The vision encoder: the bundle's catalog and its conformance cases.
 mod encoder;
 #[path = "../../../bundle/src/sm120/encoder.rs"]
 #[allow(dead_code, reason = "the cases read the catalog and cubin specs")]
 mod encoder_catalog;
+
+// Shared lab specs validate their names without linking the shared lab.
+fn declared(names: &[&str], specs: Vec<kernel_build::CubinSpec>) -> Vec<kernel_build::CubinSpec> {
+    assert_eq!(
+        names,
+        specs.iter().map(|s| s.name.as_str()).collect::<Vec<_>>()
+    );
+    specs
+}

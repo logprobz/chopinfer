@@ -1,0 +1,81 @@
+[
+  {
+    "name": "row_final_norm_deepseek41_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_row_rmsnorm_deepseek41_f32_w5120_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "x",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "residual_out",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "y",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "4f9ab2148492efdeb2122840e3b8076cc6cc473e02e3b1c5bf19c78c48aea2e6",
+    "resources": [
+      {
+        "symbol": "chop_row_rmsnorm_deepseek41_f32_w5120_v1",
+        "registers": 36,
+        "shared_static_bytes": 1060,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

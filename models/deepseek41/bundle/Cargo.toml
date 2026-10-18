@@ -22,6 +22,7 @@ runtime-bundle-sdk.workspace = true
 
 [build-dependencies]
 kernel-build.workspace = true
+kernel-core.workspace = true
 kernels-sm120.workspace = true
 model-deepseek41-contract.workspace = true
 

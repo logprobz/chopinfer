@@ -14,10 +14,22 @@ use model_deepseek41_contract::geometry::GEOMETRIES;
 #[path = "encoder.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod encoder;
+#[path = "hc.rs"]
+#[allow(dead_code, reason = "the bundle registers the entries")]
+mod hc;
 mod own_cubin;
 // The build compiles the entries; the bundle launches them.
+#[path = "f32_dense.rs"]
+#[allow(dead_code, reason = "the bundle registers the entries")]
+mod f32_dense;
+#[path = "f32_head.rs"]
+#[allow(dead_code, reason = "the bundle registers the entries")]
+mod f32_head;
 #[allow(dead_code)]
 mod own_entries;
+#[path = "reduce.rs"]
+#[allow(dead_code, reason = "the bundle registers the entries")]
+mod reduce;
 #[path = "rows.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod rows;
@@ -35,6 +47,11 @@ fn main() {
         ));
     }
     specs.extend(rows::cubins(GEOMETRIES).expect("deepseek41 row cubins"));
+    specs.extend(reduce::cubins(GEOMETRIES));
+    specs.extend(hc::cubins(GEOMETRIES));
+    specs.extend(f32_head::cubins(GEOMETRIES).expect("deepseek41 F32 head cubins"));
+    specs.extend(f32_dense::cubins(GEOMETRIES).expect("deepseek41 F32 dense cubins"));
+    specs.push(("dependencies", kernels_sm120::probes::cubin_spec()));
     specs.extend(encoder::cubins().expect("deepseek41 encoder cubins"));
     let mut families: Vec<(&str, Vec<&str>)> = Vec::new();
     for (family, spec) in &specs {
@@ -63,4 +80,25 @@ fn main() {
     .expect("locked deepseek41 cubin build and audit");
     // Every cubin serves each rank count it holds entries for.
     kernel_build::write_embedded(&out, &built, |_| 0).expect("write embedded cubin list");
+    // The exact F32 projection cubins' identity, which authenticates their
+    // offer: each cubin's name, digest and source closure digest.
+    let f32: String = built
+        .iter()
+        .filter(|cubin| {
+            GEOMETRIES.iter().any(|g| {
+                cubin.name == f32_head::cubin_name(g) || cubin.name == f32_dense::cubin_name(g)
+            })
+        })
+        .map(|cubin| {
+            format!(
+                "{} {} {}\n",
+                cubin.name, cubin.sha256, cubin.source_closure_sha256
+            )
+        })
+        .collect();
+    std::fs::write(
+        out.join("f32_dependency.txt"),
+        kernel_build::digest(format!("deepseek41.f32-projections.v1\n{f32}").as_bytes()),
+    )
+    .expect("write the F32 projection dependency");
 }

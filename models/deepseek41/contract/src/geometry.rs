@@ -259,8 +259,46 @@ impl Geometry {
 include!(concat!(env!("OUT_DIR"), "/geometries.rs"));
 
 #[cfg(test)]
+#[path = "geometry_catalog.rs"]
+mod catalog;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn catalog_rejects_geometries_with_the_same_admission_key() {
+        let flash: serde_json::Value = serde_json::from_str(FLASH.document).unwrap();
+        let existing = [("flash", flash.clone())];
+        for (top_k, blocks) in [(256, 2048), (1024, 2048), (512, 1024), (256, 1024)] {
+            let mut collision = flash.clone();
+            collision["text_config"]["index_topk"] = top_k.into();
+            collision["text_config"]["candidate_topk_blocks"] = blocks.into();
+            assert_eq!(
+                catalog::check_unique("flash_collision", &collision, &existing, COMPILE_FIELDS),
+                Err("duplicate geometry admission key flash_collision: matches flash".into())
+            );
+        }
+        // Match admission's numerical equality, not JSON number spelling.
+        let mut collision = flash.clone();
+        collision["text_config"]["rope_theta"] = 10000.into();
+        assert!(
+            catalog::check_unique("same_numbers", &collision, &existing, COMPILE_FIELDS).is_err()
+        );
+        assert!(catalog::check_unique("flash", &flash, &[], COMPILE_FIELDS).is_ok());
+        for path in ["text_config.hidden_size", "dtype"] {
+            let mut distinct = flash.clone();
+            if path == "dtype" {
+                distinct["dtype"] = "float32".into();
+            } else {
+                distinct["text_config"]["hidden_size"] = 4096.into();
+            }
+            assert!(
+                catalog::check_unique("distinct", &distinct, &existing, COMPILE_FIELDS).is_ok(),
+                "{path}"
+            );
+        }
+    }
 
     #[test]
     fn candidate_pool_bounds_include_the_partial_newest_block() {

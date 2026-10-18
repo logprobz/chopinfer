@@ -4,6 +4,8 @@
 use model_compiler_sdk::geometry_build::{
     Catalog, Kind, Schema, merged_aliases, render_aliases, validate_name,
 };
+#[path = "src/geometry_catalog.rs"]
+mod geometry_catalog;
 #[path = "src/structure.rs"]
 mod structure;
 use std::{collections::BTreeSet, env, fs, path::PathBuf};
@@ -313,14 +315,27 @@ fn main() {
             )
         })
         .collect::<Vec<_>>();
-    output += &Schema {
+    let compile_schema = Schema {
         fields: &compile_fields,
         groups: GROUPS,
-    }
-    .compile_fields(&directories[0].supported);
+    };
+    // Emit and check the same admission key, including semantic fields.
+    let compile_paths = compile_schema
+        .paths()
+        .chain(
+            directories[0].supported["semantic_rules"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str),
+        )
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    output += &format!("pub const COMPILE_FIELDS: &[&str] = &{compile_paths:?};\n");
     let mut values = Vec::new();
     let mut tags = BTreeSet::new();
-    let mut shapes = BTreeSet::new();
+    let mut documents = Vec::new();
     for (directory_index, directory) in directories.iter().enumerate() {
         for geometry in &directory.geometries {
             let (id, path, config) = (geometry.id.as_str(), &geometry.path, &geometry.config);
@@ -336,10 +351,9 @@ fn main() {
             SCHEMA.check_leaves(config, &geometry.rules, path);
             let fields = fields.into_iter().collect::<Vec<_>>();
             let shape = SCHEMA.grouped_value("shape", &fields);
-            assert!(
-                shapes.insert(shape.clone()),
-                "duplicate geometry shape {id}"
-            );
+            geometry_catalog::check_unique(id, config, &documents, &compile_paths)
+                .unwrap_or_else(|error| panic!("{error}"));
+            documents.push((id, config.clone()));
             let base = directory_index == 0;
             let rules = geometry.rules.to_string();
             let document = &geometry.document;

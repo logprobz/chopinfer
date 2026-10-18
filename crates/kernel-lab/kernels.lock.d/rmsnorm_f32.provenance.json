@@ -1,9 +1,5 @@
 [
   {
-    "name": "dependency_probes_sm120",
-    "source_closure_sha256": "47b2fdd4dfdc0914776fa664b421c2e31285c3573cc4721fa6f6c3531663d47e"
-  },
-  {
     "name": "rmsnorm_f32_sm120",
     "source_closure_sha256": "08634cb5804be42fe6e7d06d95699adb7fe3992296d1b8ad6b2ac61788c5361b"
   }

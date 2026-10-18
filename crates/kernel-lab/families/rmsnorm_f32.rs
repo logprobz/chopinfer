@@ -20,5 +20,5 @@ pub fn cubins() -> Vec<CubinSpec> {
     let norm = |req| RmsNorm::new(req, 32, RmsNormTarget::SM120F).unwrap();
     let mut spec = norm(entries[0].0).cubin_spec("rmsnorm_f32_sm120", &entries[0].1);
     spec.entries = entries.into_iter().map(|(req, symbol)| norm(req).entry(symbol)).collect();
-    vec![spec, kernels_sm120::probes::cubin_spec()]
+    vec![spec]
 }

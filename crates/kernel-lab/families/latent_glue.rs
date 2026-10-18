@@ -41,6 +41,5 @@ pub fn cubins() -> Vec<CubinSpec> {
     vec![
         glue::cubin_spec("chop_latent_glue_lab", &entries()),
         block_quantize::cubin_spec("chop_latent_glue_quantize_lab", &quantizers()).unwrap(),
-        kernels_sm120::probes::cubin_spec(),
     ]
 }

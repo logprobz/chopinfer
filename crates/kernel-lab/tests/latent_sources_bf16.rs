@@ -99,6 +99,8 @@ fn bf16_native_sources_preserve_served_and_partial_bits() {
                 let images = case.images();
                 let actual = case.launch(session, functions.as_ref(), &images, 4)?;
                 case.judge_outputs(&images, 4, &actual)?;
+                // The oracle checks empty partials as (-inf, 0, 0).
+                // Compare those sentinels byte for byte with the finite rows.
                 let names = if output == LatentAttentionOutput::Partial {
                     &["partial.max", "partial.den", "partial.num"][..]
                 } else {

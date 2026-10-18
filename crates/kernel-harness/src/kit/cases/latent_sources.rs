@@ -717,14 +717,27 @@ mod tests {
 
     #[test]
     fn native_partial_oracle_accepts_empty_sentinels_and_rejects_corruption() {
+        for kv in [LatentKvFormat::Fp8E4M3Ue8M0Block32, LatentKvFormat::Bf16] {
+            for phase in [
+                AttentionPhase::Prefill,
+                AttentionPhase::Decode,
+                AttentionPhase::Verify,
+            ] {
+                check_partial_sentinels(kv, phase);
+            }
+        }
+    }
+
+    fn check_partial_sentinels(kv: LatentKvFormat, phase: AttentionPhase) {
+        let (heads, width) = (16, 512);
         let query = LatentAttentionQuery::Attention {
-            heads: 4,
-            latent: 128,
+            heads: heads as u32,
+            latent: width as u32,
             max_keys: 128,
-            softmax_scale_bits: (128_f32).powf(-0.5).to_bits(),
+            softmax_scale_bits: (width as f32).powf(-0.5).to_bits(),
             page_size: 16,
-            kv: LatentKvFormat::Fp8E4M3Ue8M0Block32,
-            phase: AttentionPhase::Prefill,
+            kv,
+            phase,
             output: LatentAttentionOutput::Partial,
             sink: true,
             tail_rope_dims: 64,
@@ -747,12 +760,12 @@ mod tests {
         let case = &op_case.case;
         let images = case
             .images()
-            .with("q", vec![0; CAPACITY as usize * 4 * 128 * 2]);
+            .with("q", vec![0; CAPACITY as usize * heads * width * 2]);
         let mut result = std::collections::BTreeMap::new();
         for (name, expected) in case.expected(&images, CAPACITY).unwrap() {
             let bytes = if name == "partial.max" {
-                let mut maxima = vec![0.0_f32; 16];
-                maxima[4..8].fill(f32::NEG_INFINITY);
+                let mut maxima = vec![0.0_f32; CAPACITY as usize * heads];
+                maxima[heads..2 * heads].fill(f32::NEG_INFINITY);
                 f32_bytes(&maxima)
             } else {
                 let Expected::Values(values) = expected else {
@@ -771,15 +784,28 @@ mod tests {
                 result,
             )
         };
+        case.check_unit_writes(&images, CAPACITY, &result).unwrap();
         judge(&result).unwrap();
         let mut outputs = result.clone();
         outputs.remove("workspace");
         op_case.judge_outputs(&images, CAPACITY, &outputs).unwrap();
         for value in [0.0_f32, f32::INFINITY, f32::NAN] {
             let mut bad = result.clone();
-            bad.get_mut("partial.max").unwrap()[16..20].copy_from_slice(&value.to_le_bytes());
+            bad.get_mut("partial.max").unwrap()[heads * 4..heads * 4 + 4]
+                .copy_from_slice(&value.to_le_bytes());
             assert!(judge(&bad).is_err());
             assert!(op_case.judge_outputs(&images, CAPACITY, &bad).is_err());
+            if !value.is_finite() {
+                assert!(case.check_unit_writes(&images, CAPACITY, &bad).is_err());
+            }
+        }
+        let mut bad = result.clone();
+        bad.get_mut("partial.max").unwrap()[0..4].copy_from_slice(&f32::NEG_INFINITY.to_le_bytes());
+        assert!(case.check_unit_writes(&images, CAPACITY, &bad).is_err());
+        for name in ["partial.den", "partial.num"] {
+            let mut bad = result.clone();
+            bad.get_mut(name).unwrap()[0..4].copy_from_slice(&f32::NEG_INFINITY.to_le_bytes());
+            assert!(case.check_unit_writes(&images, CAPACITY, &bad).is_err());
         }
         let mut bad = result;
         bad.get_mut("partial.max").unwrap()[0..4].copy_from_slice(&0.25_f32.to_le_bytes());

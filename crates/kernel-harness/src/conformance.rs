@@ -1290,7 +1290,8 @@ impl<'a> Case<'a> {
     /// Checks a launch's `results` at `live` over `images` (whose state
     /// maps [`Case::poison_state_maps`] poisoned), for the invariance
     /// adapters: every element of an output's or state's write map is
-    /// written (no longer its fill) and, for BF16 and F32 elements, finite;
+    /// written (no longer its fill) and, for BF16 and F32 elements, finite
+    /// unless the oracle's exact or custom check accepts the buffer;
     /// every other byte of an output keeps its fill, and of a state its
     /// image, but for the state's read-modify-write ranges.
     pub(crate) fn check_unit_writes(
@@ -1358,13 +1359,27 @@ impl<'a> Case<'a> {
                     }
                 }
             }
-            for range in map.ranges() {
-                for element in range.clone().step_by(map.element_bytes()) {
-                    let end = element + map.element_bytes();
-                    if !finite(buffer.dtype, &actual[element..end]) {
-                        return Err(format!("{name} element at byte {element} is not finite"));
-                    }
-                }
+            let nonfinite = map.ranges().iter().find_map(|range| {
+                range.clone().step_by(map.element_bytes()).find(|&element| {
+                    !finite(
+                        buffer.dtype,
+                        &actual[element..element + map.element_bytes()],
+                    )
+                })
+            });
+            if let Some(element) = nonfinite {
+                // Some contracts store exact non-finite sentinels. Validate
+                // the whole buffer with its declared oracle before admitting
+                // one, including every element that must remain finite.
+                let expected = self
+                    .expected(images, live)?
+                    .into_iter()
+                    .find(|(path, _)| path == name);
+                let Some((_, expected @ (Expected::Bits(_) | Expected::Judge(_)))) = expected
+                else {
+                    return Err(format!("{name} element at byte {element} is not finite"));
+                };
+                self.check_expected(name, expected, actual, images, live, &mut BTreeMap::new())?;
             }
         }
         Ok(())
@@ -3323,6 +3338,58 @@ mod tests {
         let mut stray = written.clone();
         stray[3 * WIDTH * 2] = 0;
         assert!(check(&output, &stray).is_err());
+    }
+
+    #[test]
+    fn unit_write_checks_require_an_oracle_for_nonfinite_sentinels() {
+        for kind in ["bits", "judge", "values", "absent"] {
+            let entry = Gather;
+            let mut case =
+                Case::new(&entry, 3).output("output", DType::F32, (Rows::Live, 1), Write::LiveRows);
+            if kind != "absent" {
+                case = case.oracle(move |_, _| {
+                    let expected = match kind {
+                        "bits" => Expected::Bits(f32_bytes(&[1.0, f32::NEG_INFINITY, 0.0])),
+                        "judge" => Expected::Judge(Box::new(|bytes| {
+                            if bytes.len() == 12
+                                && bytes[..8] == f32_bytes(&[1.0, f32::NEG_INFINITY])
+                            {
+                                Ok(())
+                            } else {
+                                Err("finite row or exact sentinel differs".into())
+                            }
+                        })),
+                        "values" => Expected::Values(OracleOutput {
+                            values: vec![1.0, f64::NEG_INFINITY, 0.0],
+                            sum_abs_products: vec![1.0; 3],
+                            reduction_lengths: vec![1; 3],
+                        }),
+                        _ => unreachable!(),
+                    };
+                    Ok(vec![("output".into(), expected)])
+                });
+            }
+            let images = case.images();
+            let mut output = f32_bytes(&[1.0, f32::NEG_INFINITY]);
+            output.extend([POISON; 4]);
+            let check = |bytes: Vec<u8>| {
+                case.check_unit_writes(&images, 2, &Results::from([("output".into(), bytes)]))
+            };
+            assert_eq!(
+                check(output.clone()).is_ok(),
+                matches!(kind, "bits" | "judge")
+            );
+            for (at, value) in [(0, f32::NAN), (1, f32::NAN), (1, f32::INFINITY)] {
+                let mut bad = output.clone();
+                bad[at * 4..at * 4 + 4].copy_from_slice(&value.to_le_bytes());
+                assert!(check(bad).is_err(), "{kind}: {at}, {value}");
+            }
+            let mut unwritten = output.clone();
+            unwritten[4..8].fill(POISON);
+            assert!(check(unwritten).is_err());
+            output[8] = 0;
+            assert!(check(output).is_err());
+        }
     }
 
     fn refused(case: Case<'_>, reason: &str) {

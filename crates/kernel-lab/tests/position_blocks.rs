@@ -11,6 +11,8 @@ use kernel_harness::kit::{
 use kernel_lab::families::position_blocks as family;
 use kernels_sm120::{backend::Sm120, pooled_indexer::position_blocks::control_symbol};
 
+#[path = "position_blocks/bf16.rs"]
+mod bf16;
 #[path = "position_blocks/chain.rs"]
 mod chain;
 

@@ -8,7 +8,8 @@ use kernel_core::{
     contract::DType,
     oracle::check_numeric,
     pooled_indexer::{
-        CandidateBlocksBuffers, IndexerCandidates, PositionKeyPages, PositionSelectBuffers,
+        CandidateBlocksBuffers, IndexerCandidates, IndexerKeyFormat, PositionKeyPages,
+        PositionSelectBuffers,
     },
     position_blocks::{CandidateBlockIds, CandidateBlockIdsBuffers, PositionBlockSelectBuffers},
     position_blocks_oracle, position_indexer_oracle,
@@ -36,6 +37,7 @@ fn floats(v: &[u8]) -> Vec<f32> {
 }
 struct Arena<'a> {
     session: &'a Session,
+    module: &'static str,
     buffers: Vec<DeviceBuffer>,
     outputs: Vec<(String, View, DType)>,
 }
@@ -43,6 +45,7 @@ impl<'a> Arena<'a> {
     fn new(session: &'a Session) -> Self {
         Self {
             session,
+            module: family::CUBIN,
             buffers: Vec::new(),
             outputs: Vec::new(),
         }
@@ -80,7 +83,7 @@ impl<'a> Arena<'a> {
                 .map(|(i, b)| (i as u64 + 1, b))
                 .collect(),
         };
-        let module = self.session.module(family::CUBIN)?;
+        let module = self.session.module(self.module)?;
         let functions = launches
             .iter()
             .map(|l| module.function(&l.symbol).map_err(|e| e.to_string()))
@@ -121,7 +124,9 @@ impl<'a> Arena<'a> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct ResultRow {
+pub(super) struct ResultRow {
+    source_score_bits: Vec<u32>,
+    source_selection: Vec<i32>,
     ids: Vec<i32>,
     selections: Vec<Vec<i32>>,
     score_bits: Vec<Vec<u32>>,
@@ -209,9 +214,35 @@ fn chain_with_fixture(
     chunk: usize,
     fixture: Option<&std::path::Path>,
 ) -> LabResult<Vec<ResultRow>> {
-    let backend = backend();
+    chain_impl(session, entry, chunk, fixture, None)
+}
+
+pub(super) fn comparison_chain(
+    session: &Session,
+    entry: &kernels_sm120::pooled_indexer::position_blocks::Entry,
+    chunk: usize,
+    storage: IndexerKeyFormat,
+    round: bool,
+) -> LabResult<Vec<ResultRow>> {
+    chain_impl(session, entry, chunk, None, Some((storage, round)))
+}
+
+fn chain_impl(
+    session: &Session,
+    entry: &kernels_sm120::pooled_indexer::position_blocks::Entry,
+    chunk: usize,
+    fixture: Option<&std::path::Path>,
+    comparison: Option<(IndexerKeyFormat, bool)>,
+) -> LabResult<Vec<ResultRow>> {
+    let backend = if comparison.is_some() {
+        super::bf16::backend()
+    } else {
+        backend()
+    };
+    let storage = comparison.map_or(IndexerKeyFormat::Fp4, |v| v.0);
     let cq = entry.query;
     let q = cq.indexer;
+    let (code_page_stride, scale_page_stride) = q.storage_page_bytes(storage).map_err(|e| e.0)?;
     let width = if fixture.is_some() { 32776 } else { 1u32 << 20 };
     let dim = q.head_dim as usize;
     let heads = q.heads as usize;
@@ -250,6 +281,9 @@ fn chain_with_fixture(
             .map(|&p| ((p as u32 + 1) / q.compression_ratio) as i32)
             .collect::<Vec<_>>();
         let mut arena = Arena::new(session);
+        if comparison.is_some() {
+            arena.module = kernel_lab::families::position_bf16::CUBIN;
+        }
         let positions_gpu = arena.input(&i32s(positions))?;
         let batches_gpu = arena.input(&vec![0; rows * 4])?;
         let live = arena.input(&(rows as u32).to_le_bytes())?;
@@ -259,12 +293,27 @@ fn chain_with_fixture(
             .collect::<Vec<_>>();
         let tags_gpu = arena.input(&tags)?;
         let visible_gpu = arena.input(&i32s(&visible))?;
+        let values = (0..physical_pages * page * dim)
+            .flat_map(|i| {
+                let code = (codes[i / 2] >> ((i % 2) * 4)) & 15;
+                let value = SmallFloat::E2M1.decode_f64(code) * decode_ue8m0_f64(scales[i / 32]);
+                f32_to_bf16(value as f32).to_le_bytes()
+            })
+            .collect::<Vec<_>>();
         let keys = PositionKeyPages {
-            codes: arena.input(&codes)?,
-            scales: arena.input(&scales)?,
+            codes: arena.input(if storage == IndexerKeyFormat::Fp4 {
+                &codes
+            } else {
+                &values
+            })?,
+            scales: if storage == IndexerKeyFormat::Fp4 {
+                arena.input(&scales)?
+            } else {
+                View::EMPTY
+            },
             pages: physical_pages as u32,
-            code_page_stride: (page * dim / 2) as u64,
-            scale_page_stride: (page * dim / 32) as u64,
+            code_page_stride: code_page_stride,
+            scale_page_stride: scale_page_stride,
             page_tables: BlockTables {
                 tables: arena.input(&i32s(&tables))?,
                 sequences: 1,
@@ -278,17 +327,29 @@ fn chain_with_fixture(
             .indexer_candidate_block_ids(&cq.filter(), width, Need::rows(rows as u32))
             .map_err(|e| e.to_string())?;
         let full = backend
-            .position_indexer(&q, q.max_top_k, width, Need::rows(rows as u32))
+            .position_indexer_with_storage(&q, storage, q.max_top_k, width, Need::rows(rows as u32))
             .map_err(|e| e.to_string())?;
         let masked_q = kernel_core::pooled_indexer::PositionIndexerQuery {
             candidates: IndexerCandidates::Mask,
             ..q
         };
         let dense = backend
-            .position_indexer(&masked_q, q.max_top_k, width, Need::rows(rows as u32))
+            .position_indexer_with_storage(
+                &masked_q,
+                storage,
+                q.max_top_k,
+                width,
+                Need::rows(rows as u32),
+            )
             .map_err(|e| e.to_string())?;
         let compact = backend
-            .position_block_indexer(&cq, q.max_top_k, width, Need::rows(rows as u32))
+            .position_block_indexer_with_storage(
+                &cq,
+                storage,
+                q.max_top_k,
+                width,
+                Need::rows(rows as u32),
+            )
             .map_err(|e| e.to_string())?;
         let record = CandidateBlockIds {
             ids: arena.output("ids", rows * kept * 4, DType::I32)?,
@@ -431,6 +492,17 @@ fn chain_with_fixture(
         }
         // Poison every produced plane and both block workspaces; replay the
         // complete Full -> candidates -> four Reindex graph on the same storage.
+        if comparison.is_some_and(|v| v.1) {
+            for launch in &mut launches {
+                if launch.symbol.starts_with("chop_position_blocks_")
+                    && launch.symbol.ends_with("_bf16_scores_v3")
+                {
+                    launch.symbol = kernels_sm120::pooled_indexer::position_bf16::rounded_symbol(
+                        &launch.symbol,
+                    );
+                }
+            }
+        }
         arena.run(&launches, chunk == 4)?;
         let ids = indices(&arena.read(record.ids)?);
         let dense_mask = arena.read(mask)?;
@@ -438,6 +510,11 @@ fn chain_with_fixture(
         assert_eq!(indices(&arena.read(record.visible_positions)?), visible);
         assert_eq!(indices(&arena.read(record.status)?), vec![0; rows]);
         let source_scores = floats(&arena.read(dense_buffers[0].scores)?);
+        let source_selection = indices(&arena.read(dense_buffers[0].output)?);
+        assert_eq!(
+            indices(&arena.read(dense_buffers[0].status)?),
+            vec![0; rows]
+        );
         for row in 0..rows {
             let row_ids = ids[row * kept..(row + 1) * kept].to_vec();
             let expected = position_blocks_oracle::candidate_ids(
@@ -463,6 +540,13 @@ fn chain_with_fixture(
                 );
             }
             result.push(ResultRow {
+                source_score_bits: source_scores[row * width as usize..(row + 1) * width as usize]
+                    .iter()
+                    .map(|v| v.to_bits())
+                    .collect(),
+                source_selection: source_selection
+                    [row * q.max_top_k as usize..(row + 1) * q.max_top_k as usize]
+                    .to_vec(),
                 ids: row_ids,
                 selections: Vec::new(),
                 score_bits: Vec::new(),
@@ -474,11 +558,6 @@ fn chain_with_fixture(
             let dense_scores = floats(&arena.read(b.scores)?);
             let compact_scores = floats(&arena.read(cb.scores)?);
             let dense_out = indices(&arena.read(b.output)?);
-            assert_eq!(
-                arena.read(b.output)?,
-                arena.read(cb.output)?,
-                "dense/compact pass {pass}"
-            );
             assert_eq!(arena.read(b.status)?, arena.read(cb.status)?);
             assert_eq!(indices(&arena.read(cb.status)?), vec![0; rows]);
             for row in 0..rows {
@@ -496,11 +575,11 @@ fn chain_with_fixture(
                     } else {
                         f32::NEG_INFINITY
                     };
-                    assert_eq!(
-                        compact_scores[row * slots + slot].to_bits(),
-                        expected.to_bits(),
-                        "mapped score row {row} pass {pass} slot {slot}"
-                    );
+                    if compact_scores[row * slots + slot].to_bits() != expected.to_bits() {
+                        return Err(format!(
+                            "mapped score bits row {row} pass {pass} slot {slot}"
+                        ));
+                    }
                     allowed[slot] = index < visible[row] as usize && tables[index / page] >= 0;
                     // Bound every score in the 128-chain fixture, and samples
                     // distributed across the list for the wide-head fixture.
@@ -537,6 +616,11 @@ fn chain_with_fixture(
                         .map_err(|e| format!("compact score f64 bound: {e:?}"))?;
                     }
                 }
+                assert_eq!(
+                    arena.read(b.output)?,
+                    arena.read(cb.output)?,
+                    "dense/compact pass {pass}"
+                );
                 let expected = position_blocks_oracle::select(
                     cq,
                     q.max_top_k,

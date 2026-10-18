@@ -1,6 +1,10 @@
 [
   {
+    "name": "probe_expf_error_sm120",
+    "source_closure_sha256": "9aa2533e238ed61f08e6d82d558cd3f20ae0c3808bb21a4e766d8e659ce15d76"
+  },
+  {
     "name": "silu_mul_quantize_sm120",
-    "source_closure_sha256": "a9ec594297e4a9db3011282dc5f63ff975346c1e00fe5f647179d82107c20114"
+    "source_closure_sha256": "071abdbf2a589585c50c56e62db120565d71b80a146880d913eb07af18f59115"
   }
 ]

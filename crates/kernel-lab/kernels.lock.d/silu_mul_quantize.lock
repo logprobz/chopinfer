@@ -1,5 +1,76 @@
 [
   {
+    "name": "probe_expf_error_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_probe_expf_error_v1",
+        "params": [
+          {
+            "kind": "U32",
+            "name": "start"
+          },
+          {
+            "kind": "U64",
+            "name": "count"
+          },
+          {
+            "kind": "U32",
+            "name": "clamp_bits"
+          },
+          {
+            "kind": "U32",
+            "name": "flag_steps"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "results",
+            "cxx_type": "unsigned long long"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "flagged",
+            "cxx_type": "unsigned long long"
+          },
+          {
+            "kind": "U32",
+            "name": "flag_capacity"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "values",
+            "cxx_type": "float"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "3d88d61ec0fed23360a9643fac2010b314b95167a4b159e9ab92a61c748d6650",
+    "resources": [
+      {
+        "symbol": "chop_probe_expf_error_v1",
+        "registers": 56,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
     "name": "silu_mul_quantize_sm120",
     "line_info": false,
     "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
@@ -113,11 +184,11 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "fa71599b640554650f0da26c111185dcc79dc824d84c4df0ec51791b40636c2a",
+    "cubin_sha256": "c41fc06cd49bf17d43e1c3e4cb9c85d31d913c3c64bc86a1ac0a3522c7727d56",
     "resources": [
       {
         "symbol": "chop_silu_mul_quantize_c10_w32_v1",
-        "registers": 24,
+        "registers": 25,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,

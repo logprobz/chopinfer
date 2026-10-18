@@ -704,7 +704,10 @@ impl Steps for Instance {
         self.dspark_cancel()
     }
 
-    fn before_retire(&mut self, _request: u64) -> Result<(), BundleStatusV1> {
+    /// Taps retire the request even when the ledger refuses it; a drafter
+    /// with a pending or poisoned runtime refuses the retire.
+    fn before_retire(&mut self, request: u64) -> Result<(), BundleStatusV1> {
+        self.taps.retire(request);
         if self.dspark.as_ref().is_some_and(|device| {
             device
                 .runtime
@@ -742,12 +745,6 @@ impl Steps for Instance {
                 Ok(())
             }
         }
-    }
-
-    /// Taps retire the request even when the ledger refuses it.
-    fn before_retire(&mut self, request: u64) -> Result<(), BundleStatusV1> {
-        self.taps.retire(request);
-        Ok(())
     }
 
     fn retired(&mut self, request: u64) {

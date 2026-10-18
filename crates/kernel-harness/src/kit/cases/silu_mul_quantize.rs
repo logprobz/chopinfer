@@ -13,11 +13,12 @@
 //! the kernel's code must be one of the two adjacent outcomes. A group's
 //! scale is exact unless its amax enclosure crosses a scale-selection
 //! boundary, when it must be one of the two scales. [`Outcomes::check`]
-//! counts both kinds.
+//! judges codes and scales together and counts both kinds. A product whose
+//! enclosure reaches a BF16 infinity is refused, as the contract refuses it.
 
 use super::super::{OpCase, Required, Spec};
 use crate::LabResult;
-use crate::conformance::{Expected, Images, Rows};
+use crate::conformance::{Expected, Images, Judge, Rows};
 use kernel_core::backend::{Need, Prepared, View};
 use kernel_core::codec::{SmallFloat, bf16_to_f32, f32_to_bf16};
 use kernel_core::contract::DType;
@@ -25,6 +26,8 @@ use kernel_core::gated_mlp::SwigluClamp;
 use kernel_core::gated_mlp::quantized::{SiluMulQuantizeBuffers, SiluMulQuantizeQuery};
 use kernels_sm120::backend::Sm120;
 use kernels_sm120::row::silu_mul_quantize as row;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// The documented error of CUDA's `expf`, 2 ulp, plus half an ulp for the
 /// distance of the oracle's correctly rounded exponential from the exact
@@ -48,10 +51,12 @@ fn step(value: f32, ulps: u32, up: bool) -> f32 {
     v
 }
 
-/// The lowest and highest F32 `expf(-g)` within [`EXP_ULPS`] of the exact
-/// exponential. Past the overflow threshold by more than that many ulps of
-/// the largest finite F32 (2^104 each), every such result is infinite.
-fn exp_ends(g: f32) -> [f32; 2] {
+/// The lowest and highest F32 `expf(-g)` within [`EXP_ULPS`] of the
+/// correctly rounded exponential. Past the overflow threshold by more than
+/// that many ulps of the largest finite F32 (2^104 each), every such result
+/// is infinite. kernel-lab's expf error probe checks a kernel's `expf`
+/// against these ends.
+pub fn exp_ends(g: f32) -> [f32; 2] {
     let exact = (-f64::from(g)).exp();
     let ulps = f64::from(EXP_ULPS);
     if exact >= f64::from(f32::MAX) + ulps * 2_f64.powi(104) {
@@ -93,7 +98,8 @@ fn code(value: f32, scale: u8) -> u8 {
     SmallFloat::E4M3.encode_f32(value / f32::from_bits(u32::from(scale) << 23))
 }
 
-/// The admissible outcomes of `gate` and `up` `[rows, width]` (finite F32).
+/// The admissible outcomes of `gate` and `up` `[rows, width]` (finite F32),
+/// refused where a product's enclosure reaches a BF16 infinity.
 pub fn outcomes(
     query: SiluMulQuantizeQuery,
     gate: &[f32],
@@ -118,6 +124,11 @@ pub fn outcomes(
             let g = gate.min(gate_max);
             let u = up.clamp(-limit, limit);
             let ends = exp_ends(g).map(|t| bf16(product_with(g, u, t)));
+            if !ends.iter().all(|v| v.is_finite()) {
+                return Err(format!(
+                    "quantized SwiGLU product of gate {gate:e} and up {up:e} rounds to a BF16 infinity"
+                ));
+            }
             Ok((ends[0].min(ends[1]), ends[0].max(ends[1])))
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -176,7 +187,7 @@ impl Outcomes {
     }
 
     /// Checks each scale code (`[rows, width / 32]`) is admissible.
-    pub fn check_scales(&self, scales: &[u8]) -> LabResult<()> {
+    fn check_scales(&self, scales: &[u8]) -> LabResult<()> {
         if scales.len() != self.groups() {
             return Err("quantized SwiGLU scale count mismatch".into());
         }
@@ -190,29 +201,25 @@ impl Outcomes {
         Ok(())
     }
 
-    /// Checks each code is an admissible value's code at `scale_of(group)`.
-    fn check_codes_with(
-        &self,
-        codes: &[u8],
-        scales_of: impl Fn(usize) -> Vec<u8>,
-    ) -> LabResult<usize> {
+    /// Checks each code is an admissible value's code at the scale written
+    /// for its group. Returns how many took the upper outcome.
+    fn check_codes(&self, codes: &[u8], scales: &[u8]) -> LabResult<usize> {
         if codes.len() != self.values.len() {
             return Err("quantized SwiGLU code count mismatch".into());
         }
         let mut high = 0;
         for (i, (&written, &(lo, hi))) in codes.iter().zip(&self.values).enumerate() {
-            let scales = scales_of(i / GROUP);
-            let low_codes = scales.iter().map(|&s| code(lo, s)).collect::<Vec<_>>();
-            let high_codes = scales.iter().map(|&s| code(hi, s)).collect::<Vec<_>>();
-            if low_codes.contains(&written) {
+            let scale = scales[i / GROUP];
+            let (low_code, high_code) = (code(lo, scale), code(hi, scale));
+            if written == low_code {
                 continue;
             }
-            if lo != hi && high_codes.contains(&written) {
+            if lo != hi && written == high_code {
                 high += 1;
                 continue;
             }
             return Err(format!(
-                "element {i} (row {}, column {}): code {written:#04x}, admissible {low_codes:02x?} or {high_codes:02x?}",
+                "element {i} (row {}, column {}): code {written:#04x} at scale {scale:#04x}, admissible {low_code:#04x} or {high_code:#04x}",
                 i / self.width,
                 i % self.width
             ));
@@ -220,27 +227,46 @@ impl Outcomes {
         Ok(high)
     }
 
-    /// Checks codes alone: each an admissible value's code at some
-    /// admissible scale of its group.
-    pub fn check_codes(&self, codes: &[u8]) -> LabResult<()> {
-        self.check_codes_with(codes, |group| {
-            let (lo, hi) = self.scales[group];
-            (lo..=hi).collect()
-        })
-        .map(drop)
-    }
-
     /// Checks a kernel's codes `[rows, width]` and scales together: every
     /// scale admissible, every code an admissible value's code at the
     /// scale the kernel wrote. Returns the boundary counts.
     pub fn check(&self, codes: &[u8], scales: &[u8]) -> LabResult<Boundaries> {
         self.check_scales(scales)?;
-        let high = self.check_codes_with(codes, |group| vec![scales[group]])?;
+        let high = self.check_codes(codes, scales)?;
         Ok(Boundaries {
             elements_taken_high: high,
             ..self.boundaries()
         })
     }
+}
+
+/// The judges of one launch's `live` rows: the scales', which keeps the
+/// bytes it saw, then the codes', which checks the codes and those scales
+/// together ([`Outcomes::check`]), since a code is only right at the scale
+/// written beside it. A conformance run calls an oracle's judges in the
+/// order the oracle lists them; a codes judge that runs without the
+/// scales' first refuses.
+fn judges(admissible: Outcomes, live: usize) -> Vec<(String, Expected)> {
+    let width = admissible.width;
+    let seen = Rc::new(RefCell::new(None::<Vec<u8>>));
+    let (kept, scales_of) = (Rc::clone(&seen), admissible.clone());
+    let scales: Judge = Box::new(move |bytes: &[u8]| {
+        let scales = bytes[..live * width / GROUP].to_vec();
+        scales_of.check_scales(&scales)?;
+        *kept.borrow_mut() = Some(scales);
+        Ok(())
+    });
+    let codes: Judge = Box::new(move |bytes: &[u8]| {
+        let scales = seen
+            .borrow_mut()
+            .take()
+            .ok_or("quantized SwiGLU codes judged before their scales")?;
+        admissible.check(&bytes[..live * width], &scales).map(drop)
+    });
+    vec![
+        ("scales".into(), Expected::Judge(scales)),
+        ("codes".into(), Expected::Judge(codes)),
+    ]
 }
 
 fn f32_bytes(values: &[f32]) -> Vec<u8> {
@@ -261,8 +287,8 @@ pub fn spread(seed: u64, len: usize, span: f32) -> Vec<f32> {
 }
 
 /// The case of a quantized SwiGLU over `capacity` rows: F32 gate and up in
-/// `[-12, 12)`, past both clamps, and the admissible outcomes as judges of
-/// the codes and the scales.
+/// `[-12, 12)`, past both clamps, and the admissible outcomes as one joint
+/// judge of the codes and the scales ([`judges`]).
 pub fn case<'a>(
     op: SiluMulQuantizeQuery,
     capacity: u32,
@@ -289,21 +315,7 @@ pub fn case<'a>(
         let gate = images.f32s("gate")?;
         let up = images.f32s("up")?;
         let admissible = outcomes(op, &gate[..live * width], &up[..live * width], live)?;
-        let codes = admissible.clone();
-        Ok(vec![
-            (
-                "codes".into(),
-                Expected::Judge(Box::new(move |bytes: &[u8]| {
-                    codes.check_codes(&bytes[..live * width])
-                })),
-            ),
-            (
-                "scales".into(),
-                Expected::Judge(Box::new(move |bytes: &[u8]| {
-                    admissible.check_scales(&bytes[..live * width / GROUP])
-                })),
-            ),
-        ])
+        Ok(judges(admissible, live))
     };
     Ok(OpCase::new(prepared, capacity, roles)?.oracle(oracle))
 }
@@ -358,6 +370,18 @@ mod tests {
         (out.codes, scales)
     }
 
+    /// Runs the case's judges of one launch in the order the oracle lists
+    /// them, as a conformance run does.
+    fn judged(admissible: &Outcomes, codes: &[u8], scales: &[u8]) -> LabResult<()> {
+        for (name, expected) in judges(admissible.clone(), admissible.rows) {
+            let Expected::Judge(judge) = expected else {
+                panic!("{name} is judged");
+            };
+            judge(if name == "codes" { codes } else { scales })?;
+        }
+        Ok(())
+    }
+
     #[test]
     fn the_contracts_own_evaluation_is_admissible() {
         let q = query(576);
@@ -366,7 +390,7 @@ mod tests {
         let (codes, scales) = quantized(q, &gate, &up, 4);
         let counts = admissible.check(&codes, &scales).unwrap();
         assert_eq!(counts.groups, admissible.boundaries().groups);
-        admissible.check_codes(&codes).unwrap();
+        judged(&admissible, &codes, &scales).unwrap();
     }
 
     #[test]
@@ -388,7 +412,7 @@ mod tests {
         let mut wrong = codes.clone();
         wrong[at] += 1;
         assert!(admissible.check(&wrong, &scales).is_err());
-        assert!(admissible.check_codes(&wrong).is_err());
+        assert!(judged(&admissible, &wrong, &scales).is_err());
         // A product one BF16 ulp off whose code differs fails.
         let (value, _) = admissible.values[at];
         let off = bf16_to_f32(f32_to_bf16(value).wrapping_add(1));
@@ -402,7 +426,53 @@ mod tests {
         let mut wrong = scales.clone();
         wrong[group] += 1;
         assert!(admissible.check(&codes, &wrong).is_err());
-        assert!(admissible.check_scales(&wrong).is_err());
+        assert!(judged(&admissible, &codes, &wrong).is_err());
+    }
+
+    #[test]
+    fn codes_are_judged_at_the_scale_written_beside_them() {
+        // Products of 7 and 7.03125 at the two ends of the exponential's
+        // interval, whose ceil scales are 2^-6 (0x79) and 2^-5 (0x7a).
+        let q = query(32);
+        let up = vec![f32::from_bits(0x40b7_0fd4); 32];
+        let admissible = outcomes(q, &[1.5; 32], &up, 1).unwrap();
+        assert!(admissible.values.iter().all(|&v| v == (7.0, 7.03125)));
+        assert_eq!(admissible.scales, vec![(0x79, 0x7a)]);
+        let (codes, scales) = quantized(q, &[1.5; 32], &up, 1);
+        judged(&admissible, &codes, &scales).unwrap();
+        // Either outcome at either scale passes, each code at its own scale.
+        for (value, scale) in [(7.0, 0x79), (7.03125, 0x79), (7.0, 0x7a), (7.03125, 0x7a)] {
+            let codes = vec![code(value, scale); 32];
+            judged(&admissible, &codes, &[scale]).unwrap();
+        }
+        // A code admissible only at 0x7a, written beside 0x79, decodes to
+        // 3.5 and fails, jointly and through the case's judges.
+        assert_eq!(code(7.0, 0x7a), 0x76);
+        assert_eq!(code(7.0, 0x79), 0x7e);
+        let wrong = vec![0x76; 32];
+        assert!(admissible.check(&wrong, &[0x79]).is_err());
+        assert!(judged(&admissible, &wrong, &[0x79]).is_err());
+        // A codes judge that runs before the scales' refuses.
+        let (_, Expected::Judge(codes_judge)) = judges(admissible, 1).remove(1) else {
+            panic!("codes are judged");
+        };
+        assert!(codes_judge(&codes).is_err());
+    }
+
+    #[test]
+    fn a_product_that_rounds_to_a_bf16_infinity_is_refused() {
+        // The F32 product of 2e19 and 1.7e19 is finite; its BF16 rounding
+        // is not, which the contract refuses.
+        let q = SiluMulQuantizeQuery {
+            clamp: SwigluClamp::symmetric(2e19),
+            ..query(32)
+        };
+        let (gate, up) = ([2e19_f32; 32], [1.7e19_f32; 32]);
+        assert!((gate[0] * up[0]).is_finite());
+        assert!(q.apply(&gate, &up, 1).is_err());
+        let refusal = outcomes(q, &gate, &up, 1).unwrap_err();
+        assert!(refusal.contains("BF16 infinity"), "{refusal}");
+        outcomes(q, &[2e19; 32], &[1e19; 32], 1).unwrap();
     }
 
     #[test]

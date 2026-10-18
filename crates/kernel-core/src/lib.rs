@@ -41,6 +41,8 @@ pub mod per_channel_decay_delta_rule_oracle;
 pub mod pooled_indexer;
 pub mod pooled_indexer_head_sum_oracle;
 pub mod pooled_indexer_oracle;
+pub mod position_blocks;
+pub mod position_blocks_oracle;
 pub mod position_indexer_oracle;
 pub mod precision;
 pub mod properties;

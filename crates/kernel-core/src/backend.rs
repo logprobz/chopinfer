@@ -62,6 +62,9 @@ use crate::pooled_indexer::{
     IndexerSelectBuffers, PooledIndexerQuery, PositionIndexerQuery, PositionKeyWriteBuffers,
     PositionQueryBuffers, PositionSelectBuffers, SelectionCompactBuffers,
 };
+use crate::position_blocks::{
+    CandidateBlockIdsBuffers, PositionBlockIndexerQuery, PositionBlockSelectBuffers,
+};
 use crate::precision::buffers::ProjectionBuffers;
 use crate::precision::execution::Binding;
 use crate::precision::{OperationSpec, OperationUse, WeightLayout};
@@ -1139,6 +1142,35 @@ pub trait Backend: Send + Sync {
         Err(Refused::Unsupported)
     }
 
+    /// Compact candidate producer. Same maxima, pinning and ties as the
+    /// dense filter; writes sorted IDs plus row provenance and source status.
+    /// Counts::rows bounds rows. Inputs and outputs occupy distinct storage.
+    fn indexer_candidate_block_ids(
+        &self,
+        op: &CandidateBlocksQuery,
+        position_capacity: u32,
+        need: Need,
+    ) -> Result<Prepared<CandidateBlockIdsBuffers<View>>, Refused> {
+        let _ = (op, position_capacity, need);
+        Err(Refused::Unsupported)
+    }
+
+    /// Direct compact Position v3 scoring and selection. Position capacity
+    /// bounds the original key coordinates, not the compact score slots.
+    /// Uses Counts::rows only; page-table and row bounds match position_indexer.
+    /// All input planes are read-only and distinct from scores/status/output.
+    /// See position_blocks for provenance and malformed-list failure rules.
+    fn position_block_indexer(
+        &self,
+        op: &PositionBlockIndexerQuery,
+        top_k: u32,
+        position_capacity: u32,
+        need: Need,
+    ) -> Result<Prepared<PositionBlockSelectBuffers<View>>, Refused> {
+        let _ = (op, top_k, position_capacity, need);
+        Err(Refused::Unsupported)
+    }
+
     // Recurrent layers: convolution, gated delta rule, per-channel decay,
     // gated norm (`crate::recurrent`).
 
@@ -2210,6 +2242,16 @@ mod tests {
         indexer_candidate_blocks: Empty.indexer_candidate_blocks(&CandidateBlocksQuery {
             block_size: 8, top_k_blocks: 2048, capacity: 4,
         }, 16392, Need::rows(4));
+        indexer_candidate_block_ids: Empty.indexer_candidate_block_ids(&CandidateBlocksQuery {
+            block_size: 8, top_k_blocks: 2048, capacity: 4,
+        }, 1 << 20, Need::rows(4));
+        position_block_indexer: Empty.position_block_indexer(&PositionBlockIndexerQuery {
+            indexer: PositionIndexerQuery {
+                heads: 3, head_dim: 160, compression_ratio: 2, tail_rope_dims: 64,
+                key_norm_eps_bits: 1e-20_f32.to_bits(), max_top_k: 7, page_size: 64,
+                candidates: crate::pooled_indexer::IndexerCandidates::All, capacity: 4,
+            }, block_size: 8, top_k_blocks: 2048,
+        }, 7, 1 << 20, Need::rows(4));
         causal_conv1d: Empty.causal_conv1d(&recurrent(), 4, Need::rows(4));
         gated_delta_rule: Empty.gated_delta_rule(&recurrent(), 4, Need::rows(4));
         gated_rmsnorm: Empty.gated_rmsnorm(&recurrent(), Need::rows(4));

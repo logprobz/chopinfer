@@ -3241,6 +3241,7 @@ fn window_block_visibility_rejects_causal_and_truncated_block_controls() {
 fn retained_window_stage_contract_requires_complete_independent_planes() {
     use kernel_core::latent_window_stage::LatentWindowStage;
     let query = LatentWindowStage {
+        kv: kernel_core::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32,
         latent: 512,
         window: 128,
         ring_slots: 136,
@@ -3249,8 +3250,13 @@ fn retained_window_stage_contract_requires_complete_independent_planes() {
     query.validate().unwrap();
     let id = query.numerical_contract_id().unwrap();
     for invalid in [
-        LatentWindowStage { latent: 0, ..query },
         LatentWindowStage {
+            kv: kernel_core::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32,
+            latent: 0,
+            ..query
+        },
+        LatentWindowStage {
+            kv: kernel_core::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32,
             latent: 33,
             ..query
         },
@@ -3314,6 +3320,55 @@ fn staged_window_lists_bind_the_retained_prefix_before_slot_mapping() {
         LatentStagedWindowKeys {
             ring_slots: 160,
             ..q
+        }
+        .numerical_contract_id()
+        .unwrap()
+    );
+}
+
+#[test]
+fn window_bf16_storage_is_an_explicit_contract_with_no_scale_plane() {
+    use kernel_core::latent_attention::LatentKvFormat;
+    use kernel_core::latent_glue::{LatentWindowWrite, WindowAddressing, window_storage_width};
+    use kernel_core::latent_window_stage::LatentWindowStage;
+    let write = LatentWindowWrite {
+        kv: LatentKvFormat::Bf16,
+        latent: 512,
+        rotary: 64,
+        epsilon_bits: 1e-20_f32.to_bits(),
+        addressing: WindowAddressing::Circular { slots: 136 },
+    };
+    assert!(write.validate().is_ok());
+    let native = LatentWindowWrite {
+        kv: LatentKvFormat::Fp8E4M3Ue8M0Block32,
+        ..write
+    };
+    assert_ne!(
+        write.numerical_contract_id().unwrap(),
+        native.numerical_contract_id().unwrap()
+    );
+    assert_eq!(window_storage_width(write.kv, 512).unwrap(), 1024);
+    assert!(
+        LatentWindowWrite {
+            kv: LatentKvFormat::Fp4E2M1E4M3Block16,
+            ..write
+        }
+        .validate()
+        .is_err()
+    );
+    let stage = LatentWindowStage {
+        kv: write.kv,
+        latent: 512,
+        window: 128,
+        ring_slots: 136,
+        staged_slots: 256,
+    };
+    assert!(stage.validate().is_ok());
+    assert_ne!(
+        stage.numerical_contract_id().unwrap(),
+        LatentWindowStage {
+            kv: native.kv,
+            ..stage
         }
         .numerical_contract_id()
         .unwrap()

@@ -30,6 +30,7 @@ impl Mutation {
 }
 #[derive(Clone, Debug)]
 pub struct Entry {
+    pub kv: kernel_core::latent_attention::LatentKvFormat,
     pub capacity: u32,
     pub symbol: String,
     pub mutation: Option<Mutation>,
@@ -80,7 +81,12 @@ impl Entry {
             self.symbol.clone(),
             params,
             format!(
-                "chop::latent::window_stage<{}>(ring_codes,ring_scales,item_slots,first_positions,last_positions,codes,scales,live_items,items,sequences,window,ring_slots,read_codes,read_scales,write_codes,write_scales);",
+                "chop::latent::{}<{}>(ring_codes,ring_scales,item_slots,first_positions,last_positions,codes,scales,live_items,items,sequences,window,ring_slots,read_codes,read_scales,write_codes,write_scales);",
+                if self.kv == kernel_core::latent_attention::LatentKvFormat::Bf16 {
+                    "window_stage_bf16"
+                } else {
+                    "window_stage"
+                },
                 self.mutation.map_or(0, Mutation::code)
             ),
             128,

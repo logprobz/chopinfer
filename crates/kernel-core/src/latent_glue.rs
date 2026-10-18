@@ -8,7 +8,7 @@
 //! the shared trained quantizer's input, after its F32 rotation.
 
 use crate::contract::{NumericalContract, NumericalContractId, Refusal, Validate};
-use crate::latent_attention::LatentWindowBuffers;
+use crate::latent_attention::{LatentKvFormat, LatentWindowBuffers};
 
 /// Adjacent pairs in the final `rotary` channels of each F32 head. Each
 /// product and the following sum or difference rounds separately to F32.
@@ -129,6 +129,9 @@ impl Validate for WindowAddressing {
 /// so a write cannot overwrite any key needed by another query in the step.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct LatentWindowWrite {
+    /// Native code/scale planes or their exact BF16 products in one plane.
+    /// BF16 has no scale plane; its scale view and stride are ignored.
+    pub kv: LatentKvFormat,
     pub latent: u32,
     pub rotary: u32,
     pub addressing: WindowAddressing,
@@ -142,6 +145,7 @@ pub struct LatentWindowWrite {
 
 impl Validate for LatentWindowWrite {
     fn validate(&self) -> Result<(), Refusal> {
+        window_storage_width(self.kv, self.latent)?;
         LatentQueryRope {
             heads: 1,
             latent: self.latent,
@@ -167,13 +171,34 @@ impl NumericalContract for LatentWindowWrite {
     fn numerical_contract_id(&self) -> Result<NumericalContractId, Refusal> {
         self.validate()?;
         Ok(NumericalContractId::new(format!(
-            "latent.window-write.input-f32.norm-f32.post-rope-bf16.ceil32.v1.d{}.r{}.{}.s{}.eps{:08x}",
+            "latent.window-write.input-f32.norm-f32.post-rope-bf16.ceil32{}.v1.d{}.r{}.{}.s{}.eps{:08x}",
+            if self.kv == LatentKvFormat::Bf16 {
+                ".bf16"
+            } else {
+                ""
+            },
             self.latent,
             self.rotary,
             self.addressing.tag(),
             self.addressing.slots(),
             self.epsilon_bits
         )))
+    }
+}
+
+/// Bytes in each stored row. Both modes use the same trained ceil quantizer.
+/// BF16 stores exact code-times-scale products, including the zero sign. A
+/// nonzero product must be normal, finite and exactly BF16. Invalid products
+/// set `UNREPRESENTABLE_OUTPUT` and preserve the previous destination cell.
+pub fn window_storage_width(kv: LatentKvFormat, latent: u32) -> Result<u32, Refusal> {
+    match kv {
+        LatentKvFormat::Fp8E4M3Ue8M0Block32 => Ok(latent),
+        LatentKvFormat::Bf16 => latent
+            .checked_mul(2)
+            .ok_or(Refusal("BF16 window width overflows")),
+        _ => Err(Refusal(
+            "window storage requires native ceil32 or exact BF16 products",
+        )),
     }
 }
 

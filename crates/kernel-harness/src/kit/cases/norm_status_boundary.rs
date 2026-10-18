@@ -49,6 +49,7 @@ mod tests {
             ..RmsNormRequirement::bf16_backend_chosen(512, 1e-20, RmsNormKind::Plain, false)
         };
         let window = LatentWindowWrite {
+            kv: kernel_core::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32,
             latent: 512,
             rotary: 64,
             epsilon_bits: 1e-20_f32.to_bits(),

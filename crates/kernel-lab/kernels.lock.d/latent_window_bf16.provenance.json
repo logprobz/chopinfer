@@ -1,0 +1,14 @@
+[
+  {
+    "name": "latent_sources_window_bf16_chain_sm120",
+    "source_closure_sha256": "d64026e6e7a2694ddc49652ffd4f391470530d15c4c0b89760c98f280528f2ad"
+  },
+  {
+    "name": "latent_window_bf16_stage_sm120",
+    "source_closure_sha256": "f48dcb60ad211653cc46902919dbb9a274804f15791dc9f4c50eb0326b4ef331"
+  },
+  {
+    "name": "latent_window_bf16_store_sm120",
+    "source_closure_sha256": "265de3c85d9c2f19c7aa8cdde0b1df2f7451db9074460652a8af02f06f9cf442"
+  }
+]

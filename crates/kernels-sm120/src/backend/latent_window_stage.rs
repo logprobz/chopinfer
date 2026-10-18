@@ -3,7 +3,7 @@ use super::select::{Candidate, choose};
 use crate::latent::window_stage::Entry;
 use kernel_core::backend::{Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View};
 use kernel_core::contract::{Argument as A, ArgumentList, NumericalContract, Refusal, Validate};
-use kernel_core::latent_attention::{LatentWindowBuffers, LatentWindowStorage};
+use kernel_core::latent_attention::{LatentKvFormat, LatentWindowBuffers, LatentWindowStorage};
 use kernel_core::latent_window_stage::{LatentWindowStage, LatentWindowStageBuffers};
 use kernel_core::properties::Invariance;
 
@@ -20,15 +20,18 @@ pub(super) fn prepare(
     }
     let entry = choose(
         "window stage",
-        entries.iter().filter(|e| e.mutation.is_none()).map(|e| {
-            Candidate::new(
-                e.clone(),
-                &e.symbol,
-                format!("{:?}", e.spec()),
-                Invariance::any_rows(e.capacity),
-            )
-            .capacity(e.capacity)
-        }),
+        entries
+            .iter()
+            .filter(|e| e.mutation.is_none() && e.kv == query.kv)
+            .map(|e| {
+                Candidate::new(
+                    e.clone(),
+                    &e.symbol,
+                    format!("{:?}", e.spec()),
+                    Invariance::any_rows(e.capacity),
+                )
+                .capacity(e.capacity)
+            }),
         need,
     )?
     .entry;
@@ -39,17 +42,20 @@ pub(super) fn prepare(
         vec![(entry.symbol.clone(), 0)],
     );
     let n = u64::from(need.capacity);
+    let bf16 = query.kv == LatentKvFormat::Bf16;
+    let cw = if bf16 { 1024 } else { 512 };
+    let sw = if bf16 { 0 } else { 16 };
     info.bytes = vec![
-        ("ring.codes".into(), u64::from(query.ring_slots) * 512),
-        ("ring.scales".into(), u64::from(query.ring_slots) * 16),
+        ("ring.codes".into(), u64::from(query.ring_slots) * cw),
+        ("ring.scales".into(), u64::from(query.ring_slots) * sw),
         ("ring.item_slots".into(), n * 4),
         (
             "staged.codes".into(),
-            n * u64::from(query.staged_slots) * 512,
+            n * u64::from(query.staged_slots) * cw,
         ),
         (
             "staged.scales".into(),
-            n * u64::from(query.staged_slots) * 16,
+            n * u64::from(query.staged_slots) * sw,
         ),
         ("first_positions".into(), n * 4),
         ("last_positions".into(), 4),
@@ -69,7 +75,7 @@ struct Stage {
     capacity: u32,
     info: OpInfo,
 }
-fn extent(view: LatentWindowBuffers<View>, slots: u32) -> Result<(), Refusal> {
+fn extent(view: LatentWindowBuffers<View>, slots: u32, bf16: bool) -> Result<(), Refusal> {
     let actual = match view.storage {
         LatentWindowStorage::Ring128 => 128,
         LatentWindowStorage::Staged { slots } => slots,
@@ -80,9 +86,12 @@ fn extent(view: LatentWindowBuffers<View>, slots: u32) -> Result<(), Refusal> {
         ));
     }
     for (buffer, stride, width) in [
-        (view.codes, view.code_stride, 512),
-        (view.scales, view.scale_stride, 16),
+        (view.codes, view.code_stride, if bf16 { 1024 } else { 512 }),
+        (view.scales, view.scale_stride, if bf16 { 0 } else { 16 }),
     ] {
+        if width == 0 {
+            continue;
+        }
         let plane = u64::from(slots) * width;
         if stride < plane {
             return Err(Refusal("window stage plane stride is too short"));
@@ -122,20 +131,31 @@ impl PreparedOp<LatentWindowStageBuffers<View>> for Stage {
         {
             return Err(Refusal("window stage destination must use staged storage"));
         }
-        extent(b.ring, self.query.ring_slots)?;
-        extent(b.staged, self.query.staged_slots)?;
+        let bf16 = self.query.kv == LatentKvFormat::Bf16;
+        extent(b.ring, self.query.ring_slots, bf16)?;
+        extent(b.staged, self.query.staged_slots, bf16)?;
+        if bf16
+            && (!b.ring.code_stride.is_multiple_of(2) || !b.staged.code_stride.is_multiple_of(2))
+        {
+            return Err(Refusal(
+                "BF16 window stage strides must preserve reader alignment",
+            ));
+        }
         workspace.covers(self.info.workspace)?;
-        let reads = [
+        let mut reads = vec![
             b.ring.codes.handle,
-            b.ring.scales.handle,
             b.ring.item_slots.handle,
             b.first_positions.handle,
             b.last_positions.handle,
             b.live_items.handle,
         ];
-        if b.staged.codes.handle == b.staged.scales.handle
-            || reads.contains(&b.staged.codes.handle)
-            || reads.contains(&b.staged.scales.handle)
+        if !bf16 {
+            reads.push(b.ring.scales.handle);
+        }
+        if reads.contains(&b.staged.codes.handle)
+            || (!bf16
+                && (b.staged.codes.handle == b.staged.scales.handle
+                    || reads.contains(&b.staged.scales.handle)))
         {
             return Err(Refusal(
                 "window stage source, metadata and destination must not alias",
@@ -144,21 +164,29 @@ impl PreparedOp<LatentWindowStageBuffers<View>> for Stage {
         let n = u64::from(counts.rows);
         let arguments = ArgumentList(vec![
             A::DeviceBuffer(b.ring.codes.handle),
-            A::DeviceBuffer(b.ring.scales.handle),
+            if bf16 {
+                A::NullDevicePointer
+            } else {
+                A::DeviceBuffer(b.ring.scales.handle)
+            },
             ptr(b.ring.item_slots, n * 4)?,
             ptr(b.first_positions, n * 4)?,
             ptr(b.last_positions, u64::from(b.ring.sequences) * 4)?,
             A::DeviceBuffer(b.staged.codes.handle),
-            A::DeviceBuffer(b.staged.scales.handle),
+            if bf16 {
+                A::NullDevicePointer
+            } else {
+                A::DeviceBuffer(b.staged.scales.handle)
+            },
             ptr(b.live_items, 4)?,
             A::U32(counts.rows),
             A::U32(b.ring.sequences),
             A::U32(self.query.window),
             A::U32(self.query.ring_slots),
             A::U64(b.ring.code_stride),
-            A::U64(b.ring.scale_stride),
+            A::U64(if bf16 { 0 } else { b.ring.scale_stride }),
             A::U64(b.staged.code_stride),
-            A::U64(b.staged.scale_stride),
+            A::U64(if bf16 { 0 } else { b.staged.scale_stride }),
         ]);
         arguments.validate()?;
         Ok(vec![Launch {
@@ -179,6 +207,7 @@ mod tests {
     use kernel_core::backend::Backend;
     fn query() -> LatentWindowStage {
         LatentWindowStage {
+            kv: kernel_core::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32,
             latent: 512,
             window: 128,
             ring_slots: 136,
@@ -212,6 +241,7 @@ mod tests {
     #[test]
     fn gather_keeps_four_u64_strides_and_refuses_invalid_extents_and_aliases() {
         let backend = Sm120::new().with_latent_window_stage(Entry {
+            kv: kernel_core::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32,
             capacity: 16,
             symbol: "stage".into(),
             mutation: None,
@@ -251,5 +281,35 @@ mod tests {
         bad.first_positions = view(6, 4);
         assert!(op.launches(&bad, View::EMPTY, Counts::rows(2)).is_err());
         assert!(op.launches(&b, View::EMPTY, Counts::rows(3)).is_err());
+    }
+    #[test]
+    fn bf16_gather_needs_no_scale_views_and_keeps_u64_offsets() {
+        let backend = Sm120::new().with_latent_window_stage(Entry {
+            kv: LatentKvFormat::Bf16,
+            capacity: 16,
+            symbol: "bf16_stage".into(),
+            mutation: None,
+        });
+        let op = backend
+            .latent_window_stage(
+                &LatentWindowStage {
+                    kv: LatentKvFormat::Bf16,
+                    ..query()
+                },
+                Need::rows(2),
+            )
+            .unwrap();
+        let mut b = buffers();
+        b.ring.scales = View::EMPTY;
+        b.staged.scales = View::EMPTY;
+        b.ring.scale_stride = u64::MAX;
+        b.staged.scale_stride = u64::MAX;
+        let calls = op.launches(&b, View::EMPTY, Counts::rows(2)).unwrap();
+        assert_eq!(calls[0].arguments.0[1], A::NullDevicePointer);
+        assert_eq!(calls[0].arguments.0[6], A::NullDevicePointer);
+        assert_eq!(calls[0].arguments.0[12], A::U64(b.ring.code_stride));
+        assert_eq!(calls[0].arguments.0[13], A::U64(0));
+        b.ring.code_stride = 136 * 1024 - 2;
+        assert!(op.launches(&b, View::EMPTY, Counts::rows(2)).is_err());
     }
 }

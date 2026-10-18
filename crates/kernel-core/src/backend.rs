@@ -2326,10 +2326,10 @@ mod tests {
             &crate::latent_staged_window_keys::LatentStagedWindowKeys { window: 128, ring_slots: 136, staged_slots: 256 }, Need::rows(32)
         );
         latent_window_stage: Empty.latent_window_stage(
-            &crate::latent_window_stage::LatentWindowStage { latent: 512, window: 128, ring_slots: 136, staged_slots: 512 }, Need::rows(4)
+            &crate::latent_window_stage::LatentWindowStage { kv: crate::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32, latent: 512, window: 128, ring_slots: 136, staged_slots: 512 }, Need::rows(4)
         );
         latent_window_write: Empty.latent_window_write(
-            &crate::latent_glue::LatentWindowWrite { latent: 512, rotary: 64, epsilon_bits: 1e-20_f32.to_bits(), addressing: crate::latent_glue::WindowAddressing::Circular { slots: 136 } }, Need::rows(32)
+            &crate::latent_glue::LatentWindowWrite { kv: crate::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32, latent: 512, rotary: 64, epsilon_bits: 1e-20_f32.to_bits(), addressing: crate::latent_glue::WindowAddressing::Circular { slots: 136 } }, Need::rows(32)
         );
         latent_window_keys: Empty.latent_window_keys(
             &crate::latent_glue::LatentWindowKeys { window: 128, addressing: crate::latent_glue::WindowAddressing::Circular { slots: 136 } }, Need::rows(32)

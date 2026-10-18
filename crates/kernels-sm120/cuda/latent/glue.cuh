@@ -179,3 +179,50 @@ __device__ void keys(const int32_t* positions, const int32_t* row_batch,
 }
 
 } // namespace chop::latent::glue
+
+namespace chop::latent::glue {
+// Decode the same trained codes used by native attention. No scale plane is
+// stored, and a flagged row preserves the previous cell. Mutants are lab-only.
+template<int Mutation = 0>
+__device__ void store_bf16(const uint8_t* input_codes, const uint8_t* input_scales,
+    const int32_t* positions, const int32_t* row_batch,
+    const int32_t* first_positions, const int32_t* last_positions,
+    uint8_t* codes, uint8_t* scales, const uint32_t* live_rows,
+    uint32_t sequences, uint32_t slots, uint32_t circular,
+    uint64_t code_stride, uint64_t scale_stride, uint32_t* status, uint64_t status_row_offset, const float* unquantized = nullptr) {
+  ptx::griddep_wait();
+  const uint32_t row = blockIdx.x, col = 2 * threadIdx.x;
+  if (row >= *live_rows) { ptx::griddep_launch_dependents(); return; }
+  const int32_t p = positions[row], sequence = row_batch[row];
+  if (p < 0 || sequence < 0 || uint32_t(sequence) >= sequences) { ptx::griddep_launch_dependents(); return; }
+  const int32_t last = last_positions[sequence];
+  if (p > last || (circular && int64_t(p) + slots <= last) ||
+      (!circular && first_positions[sequence] < 0)) { ptx::griddep_launch_dependents(); return; }
+  const int64_t slot = circular ? uint32_t(p) % slots : int64_t(p) - first_positions[sequence];
+  if (slot < 0 || slot >= slots) { ptx::griddep_launch_dependents(); return; }
+  uint32_t flags = 0;
+  uint16_t result[2];
+  for (uint32_t i = 0; i < 2; ++i) {
+    if constexpr (Mutation == 1) {
+      // The fixture binds the unquantized F32 scratch for this control.
+      result[i] = __float_as_uint(unquantized[uint64_t(row)*512+col+i]) >> 16;
+    } else {
+      uint8_t code = input_codes[uint64_t(row)*512+col+i];
+      uint8_t scale_code = input_scales[uint64_t(row)*16+(col+i)/32];
+      if constexpr (Mutation == 2) { uint8_t tmp = code; code = scale_code; scale_code = tmp; }
+      const float scale = convert::unpack_f32_ue8m0(uint16_t(scale_code)).lo;
+      const float value = __fmul_rn(convert::unpack_f32_e4m3(uint16_t(code)).lo, scale);
+      result[i] = convert::bf16_from_f32(value);
+      const float exact = convert::bf16_to_f32(result[i]);
+      if (scale_code == 255 || !isfinite(value) || __float_as_uint(value) != __float_as_uint(exact) ||
+          ((result[i] & 0x7fff) != 0 && (result[i] & 0x7f80) == 0)) flags |= 4;
+    }
+  }
+  const uint32_t failed = chop::row_status::commit(flags,status,status_row_offset+row);
+  if (!failed) {
+    auto* out = reinterpret_cast<uint16_t*>(codes + uint64_t(sequence)*code_stride + uint64_t(slot)*1024);
+    out[col] = result[0]; out[col+1] = result[1];
+  }
+  ptx::griddep_launch_dependents();
+}
+} // namespace chop::latent::glue

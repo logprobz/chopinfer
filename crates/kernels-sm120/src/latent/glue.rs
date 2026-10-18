@@ -8,6 +8,7 @@ pub enum Kernel {
     QueryRope,
     WindowRotate,
     WindowStore,
+    WindowStoreBf16,
     WindowKeys,
 }
 
@@ -68,7 +69,7 @@ impl Entry {
                 ptr("values", "float"), ptr("cos_sin", "const float"),
                 ptr("live_rows", "const uint32_t"), u32_arg("eps_bits"),
             ], "chop::latent::glue::norm_rotate(input,weight,values,cos_sin,live_rows,__uint_as_float(eps_bits));".into()),
-            Kernel::WindowStore => (vec![
+            Kernel::WindowStore | Kernel::WindowStoreBf16 => (vec![
                 ptr("input_codes", "const uint8_t"), ptr("input_scales", "const uint8_t"),
                 ptr("positions", "const int32_t"), ptr("row_batch", "const int32_t"),
                 ptr("first_positions", "const int32_t"), ptr("last_positions", "const int32_t"),
@@ -83,6 +84,9 @@ impl Entry {
                 u32_arg("slots"), u32_arg("circular"),
             ], "chop::latent::glue::keys(positions,row_batch,first_positions,output,live_rows,sequences,window,slots,circular);".into()),
         };
+        if self.kernel == Kernel::WindowStoreBf16 {
+            body = body.replace("::store(", "::store_bf16<>(");
+        }
         if self.kernel != Kernel::WindowKeys {
             params.extend([
                 ptr(

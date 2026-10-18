@@ -66,6 +66,7 @@ fn required() -> Vec<Required<'static>> {
     ] {
         cases.push(latent_glue::window_write(
             LatentWindowWrite {
+                kv: kernel_core::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32,
                 epsilon_bits: 1e-20_f32.to_bits(),
                 latent: 512,
                 rotary: 64,
@@ -76,6 +77,7 @@ fn required() -> Vec<Required<'static>> {
         ));
     }
     let write = LatentWindowWrite {
+        kv: kernel_core::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32,
         latent: 512,
         rotary: 64,
         epsilon_bits: 1e-20_f32.to_bits(),
@@ -189,6 +191,7 @@ fn check(report: &kit::Report, expected: usize, gpu: bool) {
 fn retained_ring_store_is_observable_at_every_nonzero_live_count() {
     use kernel_core::backend::{Backend, Need};
     let query = LatentWindowWrite {
+        kv: kernel_core::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32,
         latent: 512,
         rotary: 64,
         epsilon_bits: 1e-20_f32.to_bits(),
@@ -447,6 +450,7 @@ fn isolated_window_write_passes_poison_graph_and_pdl_on_gpu() {
             .and_then(|r| r.verify_current())
             .map_err(|e| e.to_string())?;
         let query = LatentWindowWrite {
+            kv: kernel_core::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32,
             latent: 512,
             rotary: 64,
             epsilon_bits: 1e-20_f32.to_bits(),

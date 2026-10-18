@@ -3,7 +3,7 @@ use kernel_core::backend::{Backend, Counts, Need, PreparedOp, View};
 use kernel_core::codec::{bf16_to_f32, f32_to_bf16};
 use kernel_core::contract::DType;
 use kernel_core::latent_attention::{
-    LatentSourcesBuffers, LatentWindowBuffers, LatentWindowStorage,
+    LatentKvFormat, LatentSourcesBuffers, LatentWindowBuffers, LatentWindowStorage,
 };
 use kernel_core::latent_attention_oracle::{
     EncodedLatent, LatentAttentionResult, LatentKeyLists, LatentSourcesInput, LatentWindowInput,
@@ -27,9 +27,7 @@ use std::collections::BTreeMap;
 const D: usize = 512;
 const H: usize = 16;
 const N: usize = 32;
-const RC: usize = 136 * D + 66;
 const RS: usize = 136 * 16 + 23;
-const SC: usize = 256 * D + 34;
 const SS: usize = 256 * 16 + 11;
 const KQ: LatentStagedWindowKeys = LatentStagedWindowKeys {
     window: 128,
@@ -59,8 +57,9 @@ fn weights() -> Vec<u16> {
         .map(|i| f32_to_bf16(1.0 + (i % 9) as f32 / 16.0))
         .collect()
 }
-fn query(addressing: WindowAddressing) -> LatentWindowWrite {
+fn query(kv: LatentKvFormat, addressing: WindowAddressing) -> LatentWindowWrite {
     LatentWindowWrite {
+        kv,
         latent: 512,
         rotary: 64,
         epsilon_bits: 1e-20_f32.to_bits(),
@@ -69,7 +68,10 @@ fn query(addressing: WindowAddressing) -> LatentWindowWrite {
 }
 fn history(last: i32) -> Vec<EncodedLatent> {
     kernel_core::latent_glue_oracle::window_rows(
-        query(WindowAddressing::Circular { slots: 136 }),
+        query(
+            LatentKvFormat::Fp8E4M3Ue8M0Block32,
+            WindowAddressing::Circular { slots: 136 },
+        ),
         &input(0, last as usize + 1),
         &weights(),
         &[1.0, 0.0].repeat((last as usize + 1) * 32),
@@ -77,7 +79,12 @@ fn history(last: i32) -> Vec<EncodedLatent> {
     .unwrap()
     .1
 }
-fn copy_row(c: &mut [u8], s: &mut [u8], slot: usize, row: &EncodedLatent) {
+fn copy_row(kv: LatentKvFormat, c: &mut [u8], s: &mut [u8], slot: usize, row: &EncodedLatent) {
+    if kv == LatentKvFormat::Bf16 {
+        c[slot * D * 2..(slot + 1) * D * 2]
+            .copy_from_slice(&kernel_core::latent_glue_oracle::exact_window_bf16(row, D).unwrap());
+        return;
+    }
     c[slot * D..(slot + 1) * D].copy_from_slice(&row.values);
     s[slot * 16..(slot + 1) * 16].copy_from_slice(&row.scale_bytes);
 }
@@ -163,7 +170,12 @@ fn execute(
     modules: &super::FamilyModules,
     hole_case: bool,
     fault: Fault,
-) -> LabResult<()> {
+    kv: LatentKvFormat,
+) -> LabResult<Vec<u8>> {
+    let bf16 = kv == LatentKvFormat::Bf16;
+    let width = D * if bf16 { 2 } else { 1 };
+    let (rc, _rs, sc, _ss) = (136 * width + 66, RS, 256 * width + 34, SS);
+    let mut outputs = Vec::new();
     let lookup = modules.load(session)?;
     let mut d = Device {
         session,
@@ -174,6 +186,7 @@ fn execute(
     let gather = backend
         .latent_window_stage(
             &LatentWindowStage {
+                kv,
                 latent: 512,
                 window: 128,
                 ring_slots: 136,
@@ -184,13 +197,13 @@ fn execute(
         .map_err(|e| e.to_string())?;
     let staged_write = backend
         .latent_window_write(
-            &query(WindowAddressing::Staged { slots: 256 }),
+            &query(kv, WindowAddressing::Staged { slots: 256 }),
             Need::rows(N as u32),
         )
         .map_err(|e| e.to_string())?;
     let circular_write = backend
         .latent_window_write(
-            &query(WindowAddressing::Circular { slots: 136 }),
+            &query(kv, WindowAddressing::Circular { slots: 136 }),
             Need::rows(N as u32),
         )
         .map_err(|e| e.to_string())?;
@@ -206,15 +219,21 @@ fn execute(
             Need::rows(N as u32),
         )
         .map_err(|e| e.to_string())?;
-    let aq = kernel_lab_families::latent_window_chain::query();
+    let mut aq = kernel_lab_families::latent_window_chain::query();
+    if let kernel_core::latent_attention::LatentAttentionQuery::Attention { kv: format, .. } =
+        &mut aq
+    {
+        *format = kv;
+    }
     let attention = backend
         .latent_attention_sources(&aq, Need::rows(N as u32))
         .map_err(|e| e.to_string())?;
     let reference = history(200);
     let initial_last = if hole_case { 200 } else { 139 };
-    let (mut expected_ring_codes, mut expected_ring_scales) = (vec![0xff; RC], vec![0xff; RS]);
+    let (mut expected_ring_codes, mut expected_ring_scales) = (vec![0xff; rc], vec![0xff; RS]);
     for p in initial_last - 135..=initial_last {
         copy_row(
+            kv,
             &mut expected_ring_codes,
             &mut expected_ring_scales,
             p as usize % 136,
@@ -224,7 +243,7 @@ fn execute(
     // These are the only uploads of ring payloads in this run.
     let ring_codes = d.add(&expected_ring_codes)?;
     let ring_scales = d.add(&expected_ring_scales)?;
-    let stage_codes = d.fill(SC, 0xff)?;
+    let stage_codes = d.fill(sc, 0xff)?;
     let stage_scales = d.fill(SS, 0xff)?;
     let item_slots = d.add(&ints(&[0]))?;
     let positions = d.fill(N * 4, 0x80)?;
@@ -276,8 +295,8 @@ fn execute(
         key_stride: 128,
         budget: 128,
     };
-    let ring = plane(ring_codes, ring_scales, RC as u64, RS as u64, 136);
-    let staged = plane(stage_codes, stage_scales, SC as u64, SS as u64, 256);
+    let ring = plane(ring_codes, ring_scales, rc as u64, RS as u64, 136);
+    let staged = plane(stage_codes, stage_scales, sc as u64, SS as u64, 256);
     let steps = if hole_case {
         vec![(8, 1)]
     } else {
@@ -325,10 +344,11 @@ fn execute(
             View::EMPTY,
             1,
         )?;
-        let (mut expected_codes, mut expected_scales) = (vec![0xff; SC], vec![0xff; SS]);
+        let (mut expected_codes, mut expected_scales) = (vec![0xff; sc], vec![0xff; SS]);
         for p in base..begin {
             if p <= retained && p + 136 > retained {
                 copy_row(
+                    kv,
                     &mut expected_codes,
                     &mut expected_scales,
                     (p - base) as usize,
@@ -362,6 +382,7 @@ fn execute(
         d.call(staged_write.as_ref(), &write, workspace, rows as u32)?;
         for p in begin..=end {
             copy_row(
+                kv,
                 &mut expected_codes,
                 &mut expected_scales,
                 (p - base) as usize,
@@ -425,7 +446,7 @@ fn execute(
             )?;
         }
         if hole_case {
-            assert!(d.read(stage_codes)?[..8 * D].iter().all(|&v| v == 0xff));
+            assert!(d.read(stage_codes)?[..8 * width].iter().all(|&v| v == 0xff));
             assert!(d.read(stage_scales)?[..8 * 16].iter().all(|&v| v == 0xff));
         }
         d.call(
@@ -455,7 +476,7 @@ fn execute(
                     scales: &expected_scales,
                     item_slots: &[0],
                     sequences: 1,
-                    code_stride: SC,
+                    code_stride: sc,
                     scale_stride: SS,
                     storage: LatentWindowStorage::Staged { slots: 256 },
                     lists: LatentKeyLists {
@@ -472,6 +493,7 @@ fn execute(
         let LatentAttentionResult::Normalized(reference_attention) = expected else {
             unreachable!()
         };
+        outputs.extend_from_slice(&d.read(out)?[..rows * H * D * 2]);
         let actual = d.read(out)?[..rows * H * D * 2]
             .chunks_exact(2)
             .map(|b| bf16_to_f32(u16::from_le_bytes(b.try_into().unwrap())))
@@ -493,6 +515,7 @@ fn execute(
         }
         for p in begin..=end {
             copy_row(
+                kv,
                 &mut expected_ring_codes,
                 &mut expected_ring_scales,
                 p as usize % 136,
@@ -512,21 +535,46 @@ fn execute(
         &d.read(ring_scales)?,
         &expected_ring_scales,
     )?;
-    Ok(())
+    Ok(outputs)
 }
+#[allow(dead_code)]
 pub(super) fn run(session: &Session, modules: &super::FamilyModules) -> LabResult<()> {
-    execute(session, modules, true, Fault::None)?;
-    let bad = execute(session, modules, true, Fault::UnboundedLists)
-        .expect_err("unbounded lists read poisoned prefix cells");
+    execute(
+        session,
+        modules,
+        true,
+        Fault::None,
+        LatentKvFormat::Fp8E4M3Ue8M0Block32,
+    )?;
+    let bad = execute(
+        session,
+        modules,
+        true,
+        Fault::UnboundedLists,
+        LatentKvFormat::Fp8E4M3Ue8M0Block32,
+    )
+    .expect_err("unbounded lists read poisoned prefix cells");
     assert!(
         bad.contains("attention consumed an unavailable cell")
             && !bad.contains("CUDA")
             && !bad.contains("trap"),
         "{bad}"
     );
-    execute(session, modules, false, Fault::None)?;
-    let omitted = execute(session, modules, false, Fault::SkipFirstCircularWrite)
-        .expect_err("circular write omission must break the next gather");
+    execute(
+        session,
+        modules,
+        false,
+        Fault::None,
+        LatentKvFormat::Fp8E4M3Ue8M0Block32,
+    )?;
+    let omitted = execute(
+        session,
+        modules,
+        false,
+        Fault::SkipFirstCircularWrite,
+        LatentKvFormat::Fp8E4M3Ue8M0Block32,
+    )
+    .expect_err("circular write omission must break the next gather");
     assert!(omitted.contains("second prefix 45..171"), "{omitted}");
     session.receipt(
         "window-stage-real-prefill-chain",
@@ -561,4 +609,45 @@ fn trained_payloads_distinguish_every_uncommitted_circular_cell() {
             .collect::<Vec<_>>(),
         vec![8]
     );
+}
+
+#[allow(dead_code)]
+pub(super) fn compare_bf16(session: &Session, modules: &super::FamilyModules) -> LabResult<()> {
+    for holes in [false, true] {
+        let native = execute(
+            session,
+            modules,
+            holes,
+            Fault::None,
+            LatentKvFormat::Fp8E4M3Ue8M0Block32,
+        )?;
+        let bf16 = execute(session, modules, holes, Fault::None, LatentKvFormat::Bf16)?;
+        equal(
+            "native/BF16 attention bits after real writes and gathers",
+            &bf16,
+            &native,
+        )?;
+    }
+    let missing = execute(
+        session,
+        modules,
+        false,
+        Fault::SkipFirstCircularWrite,
+        LatentKvFormat::Bf16,
+    )
+    .unwrap_err();
+    assert!(missing.contains("second prefix 45..171"), "{missing}");
+    let holes = execute(
+        session,
+        modules,
+        true,
+        Fault::UnboundedLists,
+        LatentKvFormat::Bf16,
+    )
+    .unwrap_err();
+    assert!(
+        holes.contains("attention consumed an unavailable cell") && !holes.contains("CUDA"),
+        "{holes}"
+    );
+    Ok(())
 }

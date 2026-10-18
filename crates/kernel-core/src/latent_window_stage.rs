@@ -1,6 +1,7 @@
 //! Bitwise gathering of the retained window prefix before a prefill write.
 use crate::contract::{NumericalContract, NumericalContractId, Refusal, Validate};
-use crate::latent_attention::LatentWindowBuffers;
+use crate::latent_attention::{LatentKvFormat, LatentWindowBuffers};
+use crate::latent_glue::window_storage_width;
 
 /// Gather positions `[max(0, first - window + 1), first)` for each item.
 /// The item maps to a ring state slot; `first` is its first new token and
@@ -20,6 +21,9 @@ use crate::latent_attention::LatentWindowBuffers;
 /// The staged chunk and all padding remain untouched. No two items write the same staged block.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct LatentWindowStage {
+    /// BF16 copies a single plane of native products, with no scale plane.
+    /// Scale views and strides are ignored. Key lists are storage independent.
+    pub kv: LatentKvFormat,
     pub latent: u32,
     pub window: u32,
     pub ring_slots: u32,
@@ -27,6 +31,7 @@ pub struct LatentWindowStage {
 }
 impl Validate for LatentWindowStage {
     fn validate(&self) -> Result<(), Refusal> {
+        window_storage_width(self.kv, self.latent)?;
         if self.latent == 0
             || !self.latent.is_multiple_of(32)
             || self.window < 2
@@ -46,8 +51,16 @@ impl NumericalContract for LatentWindowStage {
     fn numerical_contract_id(&self) -> Result<NumericalContractId, Refusal> {
         self.validate()?;
         Ok(NumericalContractId::new(format!(
-            "latent.window-stage.prefix-bits.v1.d{}.w{}.ring{}.stage{}",
-            self.latent, self.window, self.ring_slots, self.staged_slots
+            "latent.window-stage.prefix-bits{}.v1.d{}.w{}.ring{}.stage{}",
+            if self.kv == LatentKvFormat::Bf16 {
+                ".bf16"
+            } else {
+                ""
+            },
+            self.latent,
+            self.window,
+            self.ring_slots,
+            self.staged_slots
         )))
     }
 }
@@ -95,15 +108,23 @@ pub fn gather_bits(
     {
         return Err(Refusal("window staging metadata is too short"));
     }
-    let d = query.latent as usize;
+    let d = window_storage_width(query.kv, query.latent)? as usize;
+    let scale_width = if query.kv == LatentKvFormat::Bf16 {
+        0
+    } else {
+        query.latent as usize / 32
+    };
     for (view, slots) in [
         (&ring, query.ring_slots as usize),
         (&staged, query.staged_slots as usize),
     ] {
         for (bytes, stride, width) in [
             (view.codes, view.code_stride, d),
-            (view.scales, view.scale_stride, d / 32),
+            (view.scales, view.scale_stride, scale_width),
         ] {
+            if width == 0 {
+                continue;
+            }
             let row = slots
                 .checked_mul(width)
                 .ok_or(Refusal("window plane extent overflows"))?;
@@ -148,9 +169,12 @@ pub fn gather_bits(
                     &mut scales,
                     ring.scale_stride,
                     staged.scale_stride,
-                    d / 32,
+                    scale_width,
                 ),
             ] {
+                if width == 0 {
+                    continue;
+                }
                 let from = slot * read_stride + source_row * width;
                 let to = item * write_stride + output_row * width;
                 destination[to..to + width].copy_from_slice(&source[from..from + width]);
@@ -166,6 +190,7 @@ mod tests {
     const D: usize = 32;
     fn query() -> LatentWindowStage {
         LatentWindowStage {
+            kv: crate::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32,
             latent: D as u32,
             window: 128,
             ring_slots: 136,
@@ -265,5 +290,63 @@ mod tests {
         let (next_c, next_s, _, _) = run(&[172, 7], &[2, 0], &[6, 999, 171]);
         assert_eq!(&next_c[..127 * D], &whole_c[32 * D..159 * D]);
         assert_eq!(&next_s[..127], &whole_s[32..159]);
+    }
+}
+
+#[cfg(test)]
+mod bf16_tests {
+    use super::*;
+    #[test]
+    fn bf16_prefix_uses_one_plane_and_preserves_retained_holes() {
+        let q = LatentWindowStage {
+            kv: LatentKvFormat::Bf16,
+            latent: 512,
+            window: 128,
+            ring_slots: 136,
+            staged_slots: 256,
+        };
+        let rc = 136 * 1024 + 66;
+        let sc = 256 * 1024 + 34;
+        let mut ring = vec![0xff; rc * 2];
+        for (sequence, last) in [139i32, 200].into_iter().enumerate() {
+            for p in last - 135..=last {
+                for col in 0..512 {
+                    let bits = crate::codec::f32_to_bf16((p as f32 + col as f32 / 512.0) / 128.0);
+                    let at = sequence * rc + (p as usize % 136) * 1024 + col * 2;
+                    ring[at..at + 2].copy_from_slice(&bits.to_le_bytes());
+                }
+            }
+        }
+        let staged = vec![0xa5; sc * 2];
+        let (out, scales) = gather_bits(
+            q,
+            PlaneImages {
+                codes: &ring,
+                scales: &[],
+                code_stride: rc,
+                scale_stride: usize::MAX,
+                sequences: 2,
+            },
+            PlaneImages {
+                codes: &staged,
+                scales: &[],
+                code_stride: sc,
+                scale_stride: usize::MAX,
+                sequences: 2,
+            },
+            &[0, 1],
+            &[140, 8],
+            &[139, 200],
+            2,
+        )
+        .unwrap();
+        assert!(scales.is_empty());
+        for p in 13..140 {
+            assert_eq!(
+                &out[(p - 13) * 1024..(p - 12) * 1024],
+                &ring[(p % 136) * 1024..(p % 136 + 1) * 1024]
+            );
+        }
+        assert!(out[127 * 1024..].iter().all(|&v| v == 0xa5));
     }
 }

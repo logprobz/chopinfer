@@ -237,6 +237,29 @@ pub fn check_window_keys(
     Ok(())
 }
 
+/// Exact BF16 bytes in native channel order. This is a decoder, not a second
+/// quantizer. The native product admission is retained, including finite,
+/// exact and normal-or-zero BF16 products.
+pub fn exact_window_bf16(encoded: &EncodedLatent, width: usize) -> Result<Vec<u8>, Refusal> {
+    use crate::latent_attention::LatentKvFormat;
+    use crate::latent_attention_oracle::decode_native_page;
+    if encoded.values.len() != width || encoded.scale_bytes.len() != width / 32 {
+        return Err(Refusal("native window encoded row shape mismatch"));
+    }
+    let mut page = encoded.values.clone();
+    page.extend_from_slice(&encoded.scale_bytes);
+    let values = decode_native_page(LatentKvFormat::Fp8E4M3Ue8M0Block32, width, 1, &page, 0)?;
+    let mut bytes = Vec::with_capacity(width * 2);
+    for value in values {
+        let bits = crate::codec::f32_to_bf16(value as f32);
+        if bits & 0x7fff != 0 && bits & 0x7f80 == 0 {
+            return Err(Refusal("window native product must be zero or normal BF16"));
+        }
+        bytes.extend_from_slice(&bits.to_le_bytes());
+    }
+    Ok(bytes)
+}
+
 /// Write through independent code/scale sequence strides. The oracle
 /// validates every destination before changing either plane. Padding and
 /// all slots absent from the write set preserve their original bytes.
@@ -255,22 +278,25 @@ pub fn store_window_rows(
 ) -> Result<(), Refusal> {
     query.validate()?;
     let width = query.latent as usize;
+    let bf16 = query.kv == crate::latent_attention::LatentKvFormat::Bf16;
+    let stored_width = crate::latent_glue::window_storage_width(query.kv, query.latent)? as usize;
     let slots = query.addressing.slots() as usize;
     let sequences = first_positions.len();
     if encoded.len() != positions.len()
         || positions.len() != row_batch.len()
         || sequences == 0
         || last_positions.len() != sequences
-        || code_sequence_stride < slots * width
-        || scale_sequence_stride < slots * width / 32
+        || code_sequence_stride < slots * stored_width
+        || (!bf16 && scale_sequence_stride < slots * width / 32)
         || code_sequence_stride
             .checked_mul(sequences.saturating_sub(1))
-            .and_then(|n| n.checked_add(slots * width))
+            .and_then(|n| n.checked_add(slots * stored_width))
             .is_none_or(|n| codes.len() < n)
-        || scale_sequence_stride
-            .checked_mul(sequences.saturating_sub(1))
-            .and_then(|n| n.checked_add(slots * width / 32))
-            .is_none_or(|n| scales.len() < n)
+        || (!bf16
+            && scale_sequence_stride
+                .checked_mul(sequences.saturating_sub(1))
+                .and_then(|n| n.checked_add(slots * width / 32))
+                .is_none_or(|n| scales.len() < n))
     {
         return Err(Refusal("native window write storage or row shape mismatch"));
     }
@@ -298,11 +324,28 @@ pub fn store_window_rows(
         }
         destinations.push((
             row,
-            sequence * code_sequence_stride + slot * width,
-            sequence * scale_sequence_stride + slot * width / 32,
+            sequence * code_sequence_stride + slot * stored_width,
+            if bf16 {
+                0
+            } else {
+                sequence * scale_sequence_stride + slot * width / 32
+            },
         ));
     }
-    for (row, code, scale) in destinations {
+    // Validate every exact product before committing any destination.
+    let products = if bf16 {
+        destinations
+            .iter()
+            .map(|&(row, _, _)| exact_window_bf16(&encoded[row], width))
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        Vec::new()
+    };
+    for (index, (row, code, scale)) in destinations.into_iter().enumerate() {
+        if bf16 {
+            codes[code..code + stored_width].copy_from_slice(&products[index]);
+            continue;
+        }
         codes[code..code + width].copy_from_slice(&encoded[row].values);
         scales[scale..scale + width / 32].copy_from_slice(&encoded[row].scale_bytes);
     }
@@ -375,6 +418,7 @@ mod tests {
     #[test]
     fn projection_stays_f32_until_the_trained_quantizer() {
         let op = LatentWindowWrite {
+            kv: crate::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32,
             latent: 512,
             rotary: 64,
             epsilon_bits: 1e-20_f32.to_bits(),
@@ -410,6 +454,7 @@ mod tests {
     fn window_quantizer_matches_native_encoder_after_rotation() {
         let (input, table) = operands(1);
         let op = LatentWindowWrite {
+            kv: crate::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32,
             epsilon_bits: 1e-20_f32.to_bits(),
             latent: 512,
             rotary: 64,
@@ -449,6 +494,7 @@ mod tests {
         let tiny = vec![1e-11; 512];
         let exact_eps = window_rows(op, &tiny, &weight, &table[..64]).unwrap().1;
         let wrong_eps = LatentWindowWrite {
+            kv: crate::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32,
             epsilon_bits: 1e-6_f32.to_bits(),
             ..op
         };
@@ -571,6 +617,7 @@ mod tests {
     #[test]
     fn ring_seeding_uses_independent_planes_and_preserves_poisoned_padding() {
         let op = LatentWindowWrite {
+            kv: crate::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32,
             epsilon_bits: 1e-20_f32.to_bits(),
             latent: 512,
             rotary: 64,
@@ -804,6 +851,7 @@ mod status_tests {
             input.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
         );
         let q = LatentWindowWrite {
+            kv: crate::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32,
             latent: 512,
             rotary: 64,
             epsilon_bits: 1e-20_f32.to_bits(),
@@ -826,6 +874,7 @@ mod status_boundary_tests {
     use super::*;
     fn query() -> LatentWindowWrite {
         LatentWindowWrite {
+            kv: crate::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32,
             latent: 512,
             rotary: 64,
             epsilon_bits: 1e-20_f32.to_bits(),
@@ -884,5 +933,111 @@ mod status_boundary_tests {
         input[2 * 512 + 511] = f32::NAN;
         let (_, _, status) = query_rope_status(q, &input, &[1.0, 0.0].repeat(32), &[0]).unwrap();
         assert_eq!(status, [5]);
+    }
+}
+
+#[cfg(test)]
+mod bf16_window_tests {
+    use super::*;
+    use crate::codec::{bf16_to_f32, f32_to_bf16};
+    use crate::latent_attention::LatentKvFormat;
+    use crate::latent_attention_oracle::{decode_native_page, encode_latent_row};
+    #[test]
+    fn bf16_store_is_exact_native_product_with_signed_zero_and_no_scale_plane() {
+        let native = LatentKvFormat::Fp8E4M3Ue8M0Block32;
+        let input = (0..512)
+            .map(|i| {
+                f32_to_bf16(if i == 0 {
+                    -0.0
+                } else {
+                    ((i * 13) % 127) as f32 / 17.0 - 3.5
+                })
+            })
+            .collect::<Vec<_>>();
+        let row = encode_latent_row(native, &input).unwrap();
+        let query = LatentWindowWrite {
+            kv: LatentKvFormat::Bf16,
+            latent: 512,
+            rotary: 64,
+            epsilon_bits: 1e-20_f32.to_bits(),
+            addressing: WindowAddressing::Circular { slots: 136 },
+        };
+        let stride = 136 * 1024 + 66;
+        let mut out = vec![0xa5; stride * 2];
+        store_window_rows(
+            query,
+            std::slice::from_ref(&row),
+            &[137],
+            &[1],
+            &[0, 0],
+            &[-1, 137],
+            &mut out,
+            &mut [],
+            stride,
+            usize::MAX,
+        )
+        .unwrap();
+        let mut page = row.values.clone();
+        page.extend_from_slice(&row.scale_bytes);
+        let decoded = decode_native_page(native, 512, 1, &page, 0).unwrap();
+        let begin = stride + 1024;
+        for (i, value) in decoded.iter().enumerate() {
+            let bits =
+                u16::from_le_bytes(out[begin + i * 2..begin + i * 2 + 2].try_into().unwrap());
+            assert_eq!(bf16_to_f32(bits).to_bits(), (*value as f32).to_bits());
+        }
+        assert_eq!(out[begin..begin + 2], [0, 128]);
+        assert!(
+            out[..begin]
+                .iter()
+                .chain(&out[begin + 1024..])
+                .all(|&v| v == 0xa5)
+        );
+    }
+    #[test]
+    fn bf16_products_keep_native_refusals_and_do_not_partially_commit() {
+        for (code, scale) in [(0x7f, 127), (0x7e, 254), (0x01, 0), (0x08, 1), (0x38, 255)] {
+            let row = EncodedLatent {
+                values: vec![code; 512],
+                scales: vec![],
+                scale_bytes: vec![scale; 16],
+            };
+            assert!(
+                exact_window_bf16(&row, 512).is_err(),
+                "code {code} scale {scale}"
+            );
+        }
+        let row = EncodedLatent {
+            values: vec![0; 512],
+            scales: vec![],
+            scale_bytes: vec![127; 16],
+        };
+        assert_eq!(exact_window_bf16(&row, 512).unwrap(), vec![0; 1024]);
+        let query = LatentWindowWrite {
+            kv: LatentKvFormat::Bf16,
+            latent: 512,
+            rotary: 64,
+            epsilon_bits: 1e-20_f32.to_bits(),
+            addressing: WindowAddressing::Staged { slots: 2 },
+        };
+        let mut bad = row.clone();
+        bad.values[511] = 0x7f;
+        let mut destination = vec![0xa5; 2048];
+        assert!(
+            store_window_rows(
+                query,
+                &[row, bad],
+                &[0, 1],
+                &[0, 0],
+                &[0],
+                &[1],
+                &mut destination,
+                &mut [],
+                2048,
+                0
+            )
+            .is_err()
+        );
+        assert_eq!(destination, vec![0xa5; 2048]);
     }
 }

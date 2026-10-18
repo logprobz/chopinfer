@@ -257,7 +257,7 @@ impl PreparedOp<LatentWindowKeyBuffers<View>> for KeysOp {
 
 use kernel_core::backend::Backend;
 use kernel_core::contract::DType;
-use kernel_core::latent_attention::{LATENT_WINDOW_SLOTS, LatentWindowStorage};
+use kernel_core::latent_attention::{LATENT_WINDOW_SLOTS, LatentKvFormat, LatentWindowStorage};
 use kernel_core::latent_glue::{LatentWindowWrite, LatentWindowWriteBuffers};
 use kernel_core::precision::quantizer::{
     BlockQuantization, BlockQuantizeBuffers, BlockQuantizeQuery, QuantizeOutput,
@@ -276,7 +276,16 @@ pub(super) fn window_write(
         );
     }
     let (rotate, mut info) = select(entries, Kernel::WindowRotate, need)?;
-    let (store, store_info) = select(entries, Kernel::WindowStore, need)?;
+    let bf16 = op.kv == LatentKvFormat::Bf16;
+    let (store, store_info) = select(
+        entries,
+        if bf16 {
+            Kernel::WindowStoreBf16
+        } else {
+            Kernel::WindowStore
+        },
+        need,
+    )?;
     let quantizer = backend
         .block_quantize(
             &BlockQuantizeQuery {
@@ -305,8 +314,8 @@ pub(super) fn window_write(
         ("positions".into(), r * 4),
         ("row_batch".into(), r * 4),
         ("last_positions".into(), 4),
-        ("window.codes".into(), slots * 512),
-        ("window.scales".into(), slots * 16),
+        ("window.codes".into(), slots * if bf16 { 1024 } else { 512 }),
+        ("window.scales".into(), if bf16 { 0 } else { slots * 16 }),
         ("quantized_codes".into(), r * 512),
         ("quantized_scales".into(), r * 16),
         ("status".into(), r * 4),
@@ -379,13 +388,25 @@ impl PreparedOp<LatentWindowWriteBuffers<View>> for WriteOp {
             LatentWindowStorage::Staged { slots } => slots,
         };
         let w = b.window;
+        let bf16 = self.query.kv == LatentKvFormat::Bf16;
         if view_slots != slots || w.sequences == 0 {
             return Err(Refusal("native window writer and reader extents differ"));
         }
         for (view, stride, plane) in [
-            (w.codes, w.code_stride, u64::from(slots) * 512),
-            (w.scales, w.scale_stride, u64::from(slots) * 16),
+            (
+                w.codes,
+                w.code_stride,
+                u64::from(slots) * if bf16 { 1024 } else { 512 },
+            ),
+            (
+                w.scales,
+                w.scale_stride,
+                if bf16 { 0 } else { u64::from(slots) * 16 },
+            ),
         ] {
+            if plane == 0 {
+                continue;
+            }
             if stride < plane {
                 return Err(Refusal("native window plane stride is too short"));
             }
@@ -410,13 +431,15 @@ impl PreparedOp<LatentWindowWriteBuffers<View>> for WriteOp {
             b.live_rows.handle,
             b.first_positions.map_or(0, |v| v.handle),
         ];
-        let outputs = [
+        let mut outputs = vec![
             b.latent.handle,
             b.quantized_codes.handle,
             b.quantized_scales.handle,
             w.codes.handle,
-            w.scales.handle,
         ];
+        if !bf16 {
+            outputs.push(w.scales.handle);
+        }
         for (index, handle) in outputs.iter().enumerate() {
             if inputs.contains(handle) || outputs[..index].contains(handle) {
                 return Err(Refusal(
@@ -483,13 +506,17 @@ impl PreparedOp<LatentWindowWriteBuffers<View>> for WriteOp {
                 first,
                 pointer(b.last_positions, u64::from(w.sequences) * 4)?,
                 Argument::DeviceBuffer(w.codes.handle),
-                Argument::DeviceBuffer(w.scales.handle),
+                if bf16 {
+                    Argument::NullDevicePointer
+                } else {
+                    Argument::DeviceBuffer(w.scales.handle)
+                },
                 pointer(b.live_rows, 4)?,
                 Argument::U32(w.sequences),
                 Argument::U32(slots),
                 Argument::U32(circular),
                 Argument::U64(w.code_stride),
-                Argument::U64(w.scale_stride),
+                Argument::U64(if bf16 { 0 } else { w.scale_stride }),
                 pointer(b.status, 4)?,
                 Argument::U64(b.status_row_offset),
             ],
@@ -514,6 +541,7 @@ mod tests {
             .into_iter()
             .fold(Sm120::new(), Sm120::with_latent_glue);
         let query = LatentWindowWrite {
+            kv: kernel_core::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32,
             latent: 512,
             rotary: 64,
             epsilon_bits: 1e-20_f32.to_bits(),
@@ -630,5 +658,31 @@ mod tests {
             }
             assert!(op.launches(&bad, View::EMPTY, Counts::rows(2)).is_err());
         }
+        let bf16 = backend.with_latent_glue(Entry {
+            kernel: Kernel::WindowStoreBf16,
+            capacity: 2,
+            symbol: "store_bf16".into(),
+        });
+        let op = bf16
+            .latent_window_write(
+                &LatentWindowWrite {
+                    kv: LatentKvFormat::Bf16,
+                    ..query
+                },
+                Need::rows(2),
+            )
+            .unwrap();
+        let mut b = b;
+        b.window.code_stride = (1u64 << 32) + 136 * 1024 + 66;
+        b.window.codes.bytes = b.window.code_stride + 136 * 1024;
+        b.window.scales = View::EMPTY;
+        b.window.scale_stride = u64::MAX;
+        let calls = op.launches(&b, View::EMPTY, Counts::rows(2)).unwrap();
+        assert_eq!(calls[1].symbol, "shared_quantize");
+        assert_eq!(calls[2].symbol, "store_bf16");
+        assert_eq!(calls[2].arguments.0[7], Argument::NullDevicePointer);
+        assert_eq!(calls[2].arguments.0[13], Argument::U64(0));
+        b.window.codes.bytes -= 1;
+        assert!(op.launches(&b, View::EMPTY, Counts::rows(2)).is_err());
     }
 }

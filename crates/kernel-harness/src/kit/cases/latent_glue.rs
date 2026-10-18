@@ -682,6 +682,8 @@ fn write_case_impl<'a>(
         query.rotary as usize,
         query.addressing.slots() as usize,
     );
+    let bf16 = query.kv == kernel_core::latent_attention::LatentKvFormat::Bf16;
+    let stored_width = width * if bf16 { 2 } else { 1 };
     let staged = matches!(query.addressing, WindowAddressing::Staged { .. });
     let starts = [first, first + if staged { 257 } else { 0 }];
     let mut batches = (0..capacity)
@@ -714,7 +716,7 @@ fn write_case_impl<'a>(
             cos_sin.swap(channel, retained * tail + channel);
         }
     }
-    let (code_stride, scale_stride) = (slots * width + 66, slots * width / 32 + 7);
+    let (code_stride, scale_stride) = (slots * stored_width + 66, slots * width / 32 + 7);
     let mut input = latent_values(capacity, width);
     // A tiny row exposes the norm epsilon; a zero row checks the quantizer's
     // scale convention on zero blocks. Other rows vary token, channel and magnitude.
@@ -787,7 +789,7 @@ fn write_case_impl<'a>(
                 (Rows::Fixed(1), 2 * code_stride),
                 vec![0xa5; 2 * code_stride],
                 Write::Map(Box::new(move |images, live| {
-                    plane_map(query, images, live, code_stride, width)
+                    plane_map(query, images, live, code_stride, stored_width)
                 })),
             ),
             scales: Spec::state(
@@ -795,7 +797,13 @@ fn write_case_impl<'a>(
                 (Rows::Fixed(1), 2 * scale_stride),
                 vec![0xff; 2 * scale_stride],
                 Write::Map(Box::new(move |images, live| {
-                    plane_map(query, images, live, scale_stride, width / 32)
+                    plane_map(
+                        query,
+                        images,
+                        live,
+                        scale_stride,
+                        if bf16 { 0 } else { width / 32 },
+                    )
                 })),
             ),
             // The writer addresses sequences by row; it reads neither the
@@ -903,6 +911,19 @@ fn write_case_impl<'a>(
         })
         .omission_guard(&producer, "latent")
         .omission_guard(&quantizer, "quantized_codes");
+    let mut case = case;
+    if bf16 {
+        for live in crate::poison::live_counts(capacity)
+            .into_iter()
+            .filter(|&live| live > 0)
+        {
+            case = case.no_write(
+                "window.scales",
+                live,
+                "BF16 storage has no scale plane; this guard must remain untouched",
+            );
+        }
+    }
     Ok(case)
 }
 
@@ -1014,6 +1035,7 @@ pub fn device_mutant<'a>(mutation: kernels_sm120::latent::glue::Mutation) -> Req
         addressing: WindowAddressing::Circular { slots: 136 },
     };
     let write = LatentWindowWrite {
+        kv: kernel_core::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32,
         latent: 512,
         rotary: 64,
         epsilon_bits: 1e-20_f32.to_bits(),
@@ -1110,6 +1132,7 @@ mod window_status_control_tests {
     #[test]
     fn dropped_window_flags_survive_as_a_status_mismatch_after_shared_quantization() {
         let query = LatentWindowWrite {
+            kv: kernel_core::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32,
             latent: 512,
             rotary: 64,
             epsilon_bits: 1e-20_f32.to_bits(),

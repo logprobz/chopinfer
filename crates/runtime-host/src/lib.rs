@@ -111,10 +111,10 @@ pub use frontend_check::{
     read_streaming_vectors_v1, read_tokenizer_vectors_v1,
 };
 pub use generation::{
-    EngineBackendConfig, EngineBackendConfigError, EngineBackendStartupError,
+    CENTERED_PAD_TAG_V1, EngineBackendConfig, EngineBackendConfigError, EngineBackendStartupError,
     EngineGenerationBackend, EngineModelPolicyV1, NativeRuntimeMetricsV1, TOKEN_BUDGET_TAG_V1,
-    WorkerWatchdogV1, audio_recipe_v1, image_recipe_v1, token_budget_recipe_v1,
-    validate_media_recipes_v1,
+    WorkerWatchdogV1, audio_recipe_v1, centered_pad_recipe_v1, image_recipe_v1,
+    token_budget_recipe_v1, validate_media_recipes_v1,
 };
 pub use install::{
     BundleSelectionV1, HostLoadErrorV1, InstalledBundleHostV1, ResolvedOperationV1,

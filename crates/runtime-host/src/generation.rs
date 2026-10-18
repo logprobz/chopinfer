@@ -2409,6 +2409,16 @@ fn modality_emits_v1(
                         _ => false,
                     },
                 ),
+                ImageRecipeV1::CenteredPad(recipe, _) => (
+                    1,
+                    recipe.downsample,
+                    match (h.checked_mul(recipe.patch), w.checked_mul(recipe.patch)) {
+                        (Some(h), Some(w)) => {
+                            runtime_media::recipe::centered_pad_emits_size(h, w, recipe, limits)
+                        }
+                        _ => false,
+                    },
+                ),
             };
             t == 1
                 && rest == 0
@@ -2508,13 +2518,15 @@ fn validate_multimodal_recipes_v1(media: &FrontendMultimodalV1) -> Result<(), St
     let has = |matches: &dyn Fn(&runtime_frontend::FrontendMediaModalityV1) -> bool| {
         media.modalities.iter().any(matches)
     };
-    if has(&|modality| modality.recipe.tag == TOKEN_BUDGET_TAG_V1)
-        && has(&|modality| modality.kind == runtime_frontend::FrontendMediaKindV1::Video)
-    {
-        return Err(format!(
-            "{TOKEN_BUDGET_TAG_V1} prepares single images and has no video form: video is not \
-             supported alongside it"
-        ));
+    for tag in [TOKEN_BUDGET_TAG_V1, CENTERED_PAD_TAG_V1] {
+        if has(&|modality| modality.recipe.tag == tag)
+            && has(&|modality| modality.kind == runtime_frontend::FrontendMediaKindV1::Video)
+        {
+            return Err(format!(
+                "{tag} prepares single images and has no video form: video is not supported \
+                 alongside it"
+            ));
+        }
     }
     for modality in &media.modalities {
         validate_media_recipe_v1(&modality.recipe)?;
@@ -2542,6 +2554,10 @@ fn validate_recipe_outputs_v1(
             }
             Ok(ImageRecipeV1::TokenBudget(recipe, _)) => {
                 validate_token_budget_outputs_v1(modality, recipe)
+                    .map_err(|error| format!("{tag}: {error}"))
+            }
+            Ok(ImageRecipeV1::CenteredPad(recipe, _)) => {
+                validate_centered_pad_outputs_v1(modality, recipe)
                     .map_err(|error| format!("{tag}: {error}"))
             }
             Err(error) => Err(unreadable(error)),
@@ -2597,18 +2613,64 @@ fn validate_token_budget_outputs_v1(
     Ok(())
 }
 
+/// Refuses a centered-pad recipe the host cannot prepare every image of
+/// as declared: one the recipe check refuses, a modality without learned
+/// delimiters (the budget counts their rows, `rows * (columns + 1) + 2`),
+/// a budget above the modality's token limit, or a largest canvas above
+/// the decoded pixel limit. A canvas within the budget has at most
+/// `maximum_tokens - 3` cells of `(patch * downsample)^2` pixels.
+fn validate_centered_pad_outputs_v1(
+    modality: &runtime_frontend::FrontendMediaModalityV1,
+    recipe: runtime_media::recipe::CenteredPadRecipe,
+) -> Result<(), String> {
+    runtime_media::recipe::check_centered_pad_recipe(recipe).map_err(|error| error.to_string())?;
+    if modality.layout != Some(runtime_frontend::FrontendMediaLayoutV1::LearnedDelimitersV1) {
+        return Err(
+            "the token budget counts learned delimiter rows: the modality must declare the \
+             learned-delimiters.v1 layout"
+                .to_owned(),
+        );
+    }
+    if recipe.maximum_tokens > u64::from(modality.maximum_tokens) {
+        return Err(format!(
+            "maximum_tokens {} exceeds the modality's {} tokens",
+            recipe.maximum_tokens, modality.maximum_tokens
+        ));
+    }
+    // `check_centered_pad_recipe` bounds a cell's side by `u32::MAX` over
+    // the budget, so the product stays within u128.
+    let cell = u128::from(recipe.patch) * u128::from(recipe.downsample);
+    let canvas = u128::from(recipe.maximum_tokens - 3) * cell * cell;
+    let limits = part_limits_v1(modality);
+    if canvas > u128::from(limits.maximum_pixels) {
+        return Err(format!(
+            "a canvas of up to {canvas} pixels exceeds the host's {} decoded pixels",
+            limits.maximum_pixels
+        ));
+    }
+    Ok(())
+}
+
 /// Refuses token-budget parameters it does not read, a missing or unknown
 /// alpha policy, and a supplied aspect limit that is not a finite number of
 /// at least 1 (an omitted one is the host default).
 fn validate_token_budget_parameters_v1(parameters: &serde_json::Value) -> Result<(), String> {
-    let tag = TOKEN_BUDGET_TAG_V1;
+    validate_padded_parameters_v1(TOKEN_BUDGET_TAG_V1, &TOKEN_BUDGET_PARAMETERS_V1, parameters)
+}
+
+/// Refuses parameters of `tag` outside `known`, a missing or unknown alpha
+/// policy, and a supplied aspect limit that is not a finite number of at
+/// least 1 (an omitted one is the host default).
+fn validate_padded_parameters_v1(
+    tag: &str,
+    known: &[&str],
+    parameters: &serde_json::Value,
+) -> Result<(), String> {
     // The resize, padding and interpolation are fixed: an annotation that
     // would describe another would be silently ignored.
-    let unknown = parameters.as_object().and_then(|parameters| {
-        parameters
-            .keys()
-            .find(|key| !TOKEN_BUDGET_PARAMETERS_V1.contains(&key.as_str()))
-    });
+    let unknown = parameters
+        .as_object()
+        .and_then(|parameters| parameters.keys().find(|key| !known.contains(&key.as_str())));
     if let Some(key) = unknown {
         return Err(format!("{tag} has no parameter {key}"));
     }
@@ -2630,7 +2692,7 @@ fn validate_token_budget_parameters_v1(parameters: &serde_json::Value) -> Result
     Ok(())
 }
 
-/// The declared `alpha_background` of a token-budget recipe: "white"
+/// The declared `alpha_background` of a padded recipe: "white"
 /// composites transparency onto white, "none" discards alpha as PIL's
 /// `convert("RGB")` does.
 fn declared_alpha_v1(parameters: &serde_json::Value) -> Option<runtime_media::Alpha> {
@@ -2655,6 +2717,13 @@ fn validate_media_recipe_v1(
             return validate_image_fixed_parameters_v1(parameters);
         }
         TOKEN_BUDGET_TAG_V1 => return validate_token_budget_parameters_v1(parameters),
+        CENTERED_PAD_TAG_V1 => {
+            return validate_padded_parameters_v1(
+                CENTERED_PAD_TAG_V1,
+                &CENTERED_PAD_PARAMETERS_V1,
+                parameters,
+            );
+        }
         _ => return Ok(()),
     };
     for (key, expected) in supported.as_object().expect("object literal") {
@@ -2915,6 +2984,9 @@ fn prepare_image_v1(
         ImageRecipeV1::TokenBudget(recipe, _) => {
             runtime_media::recipe::padded_preparation_bytes(width, height, recipe, limits)
         }
+        ImageRecipeV1::CenteredPad(recipe, _) => {
+            runtime_media::recipe::centered_pad_preparation_bytes(width, height, recipe, limits)
+        }
     };
     let reserved = bytes
         .map_err(rejected)?
@@ -2922,7 +2994,7 @@ fn prepare_image_v1(
     memory.reserve(reserved)?;
     let alpha = match recipe {
         ImageRecipeV1::PatchGrid(_) => runtime_media::Alpha::CompositeWhite,
-        ImageRecipeV1::TokenBudget(_, alpha) => alpha,
+        ImageRecipeV1::TokenBudget(_, alpha) | ImageRecipeV1::CenteredPad(_, alpha) => alpha,
     };
     let decoded = decode_image_v1(source, limits, alpha)?;
     let grid = match recipe {
@@ -2931,6 +3003,9 @@ fn prepare_image_v1(
         }
         ImageRecipeV1::TokenBudget(recipe, _) => {
             runtime_media::recipe::padded_token_budget_grid(&decoded, recipe, limits)
+        }
+        ImageRecipeV1::CenteredPad(recipe, _) => {
+            runtime_media::recipe::centered_pad_grid(&decoded, recipe, limits)
         }
     };
     Ok((grid.map_err(rejected)?, reserved))
@@ -2970,13 +3045,37 @@ const TOKEN_BUDGET_PARAMETERS_V1: [&str; 10] = [
     "maximum_aspect_ratio",
 ];
 
+/// The tag of images fitted at their aspect ratio into a patch-aligned
+/// canvas within a delimited token budget and centered on a constant color
+/// (`runtime_media::recipe::centered_pad_grid`).
+pub const CENTERED_PAD_TAG_V1: &str = "image.centered-pad.v1";
+
+/// Every parameter [`CENTERED_PAD_TAG_V1`] reads, `maximum_aspect_ratio`
+/// through the part limits.
+const CENTERED_PAD_PARAMETERS_V1: [&str; 10] = [
+    "alpha_background",
+    "patch",
+    "downsample",
+    "minimum_pixels",
+    "maximum_tokens",
+    "pad",
+    "value_divisor",
+    "mean",
+    "std",
+    "maximum_aspect_ratio",
+];
+
 /// An image modality's recipe, by its tag. The patch grid composites
-/// transparency onto white; the token budget handles it as declared.
+/// transparency onto white; the padded recipes handle it as declared.
 #[derive(Clone, Copy, Debug)]
 enum ImageRecipeV1 {
     PatchGrid(runtime_media::recipe::ImageRecipe),
     TokenBudget(
         runtime_media::recipe::TokenBudgetRecipe,
+        runtime_media::Alpha,
+    ),
+    CenteredPad(
+        runtime_media::recipe::CenteredPadRecipe,
         runtime_media::Alpha,
     ),
 }
@@ -3012,6 +3111,7 @@ fn recipe_merge_v1(recipe: ImageRecipeV1) -> u32 {
     match recipe {
         ImageRecipeV1::PatchGrid(recipe) => recipe.merge,
         ImageRecipeV1::TokenBudget(recipe, _) => recipe.merge,
+        ImageRecipeV1::CenteredPad(recipe, _) => recipe.downsample,
     }
 }
 
@@ -3031,6 +3131,10 @@ fn planned_image_grid_v1(
         ImageRecipeV1::TokenBudget(recipe, _) => {
             let size = runtime_media::recipe::padded_size(height, width, recipe, limits)?;
             (size.canvas.0, size.canvas.1, recipe.patch)
+        }
+        ImageRecipeV1::CenteredPad(recipe, _) => {
+            let plan = runtime_media::recipe::centered_pad_plan(height, width, recipe, limits)?;
+            (plan.canvas.0, plan.canvas.1, recipe.patch)
         }
     };
     Ok([1, h / patch, w / patch])
@@ -3077,6 +3181,12 @@ fn declared_image_recipe_v1(
             token_budget_recipe_v1(&recipe.parameters)?,
             alpha,
         ))
+    } else if recipe.tag == CENTERED_PAD_TAG_V1 {
+        let alpha = declared_alpha_v1(&recipe.parameters).ok_or(AdmissionError::InvalidPrompt)?;
+        Ok(ImageRecipeV1::CenteredPad(
+            centered_pad_recipe_v1(&recipe.parameters)?,
+            alpha,
+        ))
     } else {
         image_recipe_v1(&recipe.parameters).map(ImageRecipeV1::PatchGrid)
     }
@@ -3114,6 +3224,41 @@ pub fn token_budget_recipe_v1(
             .get("value_scale")
             .and_then(serde_json::Value::as_f64)
             .ok_or(AdmissionError::InvalidPrompt)?,
+        mean: media_vector_v1(parameters, "mean")?,
+        std: media_vector_v1(parameters, "std")?,
+    })
+}
+
+/// Parse the parameters of [`CENTERED_PAD_TAG_V1`]: `pad` is three 8-bit
+/// values, `value_divisor` a number.
+pub fn centered_pad_recipe_v1(
+    parameters: &serde_json::Value,
+) -> Result<runtime_media::recipe::CenteredPadRecipe, AdmissionError> {
+    let u32_at = |name| {
+        u32::try_from(media_u64_v1(parameters, name)?).map_err(|_| AdmissionError::InvalidPrompt)
+    };
+    let pad = parameters
+        .get("pad")
+        .and_then(serde_json::Value::as_array)
+        .ok_or(AdmissionError::InvalidPrompt)?
+        .iter()
+        .map(|value| {
+            value
+                .as_u64()
+                .and_then(|value| u8::try_from(value).ok())
+                .ok_or(AdmissionError::InvalidPrompt)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(runtime_media::recipe::CenteredPadRecipe {
+        patch: u32_at("patch")?,
+        downsample: u32_at("downsample")?,
+        minimum_pixels: media_u64_v1(parameters, "minimum_pixels")?,
+        maximum_tokens: media_u64_v1(parameters, "maximum_tokens")?,
+        pad: pad.try_into().map_err(|_| AdmissionError::InvalidPrompt)?,
+        value_divisor: parameters
+            .get("value_divisor")
+            .and_then(serde_json::Value::as_f64)
+            .ok_or(AdmissionError::InvalidPrompt)? as f32,
         mean: media_vector_v1(parameters, "mean")?,
         std: media_vector_v1(parameters, "std")?,
     })
@@ -5003,6 +5148,160 @@ mod tests {
             let error = validate_multimodal_recipes_v1(&media).unwrap_err();
             assert!(error.contains(message), "{error}");
         }
+    }
+
+    /// The centered-pad recipe prepares a part as runtime-media centers it,
+    /// with transparency handled as declared, counts its span under learned
+    /// delimiters, admits its canvases as prepared media (one that rounding
+    /// leaves below the minimum pixels and past the source's aspect
+    /// included), and refuses declarations the host cannot honor.
+    #[test]
+    fn centered_pad_images_prepare_and_admit_their_canvases() {
+        let declared = |parameters: serde_json::Value, layout: bool, video: bool| {
+            let modality = |kind: &str, tag: &str, parameters: serde_json::Value| {
+                let mut modality = serde_json::json!({
+                    "kind": kind, "part_types": [format!("{kind}_url")], "maximum_items": 1,
+                    "maximum_bytes": 1 << 20, "maximum_tokens": 1024, "encoder": 0,
+                    "recipe": {"tag": tag, "parameters": parameters},
+                    "render": {"pad": format!("<{kind}>")}
+                });
+                if layout && kind == "image" {
+                    modality["layout"] = "learned-delimiters.v1".into();
+                }
+                modality
+            };
+            let mut modalities = vec![modality("image", CENTERED_PAD_TAG_V1, parameters)];
+            if video {
+                modalities.push(modality(
+                    "video",
+                    "video.timestamped-grids.v1",
+                    serde_json::json!({}),
+                ));
+            }
+            serde_json::from_value::<FrontendMultimodalV1>(serde_json::json!({
+                "arena": {"rows": 64, "page_rows": 64, "hidden": 8, "element": "bf16"},
+                "encoders": [],
+                "modalities": modalities
+            }))
+            .unwrap()
+        };
+        let parameters = serde_json::json!({
+            "patch": 14, "downsample": 3, "minimum_pixels": 295_936, "maximum_tokens": 1024,
+            "pad": [127, 127, 127], "value_divisor": 255.0, "mean": [0.5, 0.5, 0.5],
+            "std": [0.5, 0.5, 0.5], "alpha_background": "none"
+        });
+        let with = |key: &str, value: serde_json::Value| {
+            let mut parameters = parameters.clone();
+            parameters[key] = value;
+            declared(parameters, true, false)
+        };
+        let media = declared(parameters.clone(), true, false);
+        validate_multimodal_recipes_v1(&media).unwrap();
+        let modality = &media.modalities[0];
+        let limits = part_limits_v1(modality);
+        let ImageRecipeV1::CenteredPad(recipe, alpha) =
+            declared_image_recipe_v1(&modality.recipe).unwrap()
+        else {
+            panic!("the tag selects the centered-pad recipe");
+        };
+        assert_eq!(alpha, runtime_media::Alpha::Discard);
+        assert_eq!(recipe.pad, [127; 3]);
+        assert_eq!(recipe.value_divisor, 255.0);
+        // A PNG whose tRNS color key is its own color: fully transparent
+        // when composited, its color kept when alpha is discarded.
+        let png = solid_png(301, 199, [200, 100, 50]);
+        let mut keyed = png[..33].to_vec();
+        png_chunk(b"tRNS", &[0, 200, 0, 100, 0, 50], &mut keyed);
+        keyed.extend_from_slice(&png[33..]);
+        let source = runtime_media::MediaSource {
+            mime: "image/png".to_owned(),
+            bytes: keyed,
+        };
+        let pool = Arc::new(MediaMemoryV1::new(1 << 30));
+        let mut memory = RequestMediaMemoryV1::new(Arc::clone(&pool), u64::MAX);
+        let mut prepared = |modality: &runtime_frontend::FrontendMediaModalityV1| {
+            let recipe = declared_image_recipe_v1(&modality.recipe).unwrap();
+            prepare_image_v1(&source, recipe, part_limits_v1(modality), &mut memory)
+                .unwrap()
+                .0
+        };
+        let centered = |alpha| {
+            let decoded = decode_image_v1(&source, limits, alpha).unwrap();
+            runtime_media::recipe::centered_pad_grid(&decoded, recipe, limits).unwrap()
+        };
+        let grid = prepared(modality);
+        assert_eq!(grid, centered(runtime_media::Alpha::Discard));
+        let declared_white = with("alpha_background", "white".into());
+        let white = prepared(&declared_white.modalities[0]);
+        assert_eq!(white, centered(runtime_media::Alpha::CompositeWhite));
+        assert_ne!(white, grid);
+        // 301 x 199 scales up to 448 x 672 pixels, as the reference plans
+        // it: 32 x 48 patches and 11 x 16 tokens.
+        assert_eq!((grid.grid, grid.tokens), ([1, 32, 48], 176));
+        let wrapped = ImageRecipeV1::CenteredPad(recipe, alpha);
+        assert_eq!(recipe_merge_v1(wrapped), 3);
+        assert_eq!(
+            planned_image_grid_v1(301, 199, wrapped, limits).unwrap(),
+            grid.grid
+        );
+        // The span is the recipe's budget count: 11 * (16 + 1) + 2.
+        assert_eq!(image_span_rows_v1(modality, 3, grid.grid), Some(189));
+        check_image_span_v1(&source, modality, wrapped, limits).unwrap();
+        let emits = |geometry| modality_emits_v1(modality, geometry);
+        assert!(emits([1, 32, 48, 0]));
+        // A 79 x 15000 source solves to 569 x 2 patches (7966 x 28 pixels):
+        // under the minimum pixels and past the 200:1 aspect limit, it is
+        // still admitted.
+        let tall = runtime_media::recipe::centered_pad_plan(15000, 79, recipe, limits).unwrap();
+        assert_eq!(tall.canvas, (7966, 28));
+        assert!(emits([1, 569, 2, 0]));
+        // Over the budget (34 x 30 tokens span 1,056), two grids, or a
+        // nonzero unused field.
+        for geometry in [
+            [1, 102, 90, 0],
+            [2, 32, 48, 0],
+            [1, 32, 48, 1],
+            [1, 0, 48, 0],
+        ] {
+            assert!(!emits(geometry), "{geometry:?}");
+        }
+        // Declarations the host cannot honor are refused at load.
+        let mut missing = parameters.clone();
+        missing.as_object_mut().unwrap().remove("alpha_background");
+        let mut narrow = declared(parameters.clone(), true, false);
+        narrow.modalities[0].maximum_tokens = 1000;
+        let mut wide = with("maximum_tokens", 100_000.into());
+        wide.modalities[0].maximum_tokens = 200_000;
+        let refusals = [
+            (declared(missing, true, false), "requires alpha_background"),
+            (
+                with("interpolation", "bicubic".into()),
+                "has no parameter interpolation",
+            ),
+            (
+                declared(parameters.clone(), false, false),
+                "learned-delimiters.v1 layout",
+            ),
+            (narrow, "exceeds the modality's 1000 tokens"),
+            (with("patch", 0.into()), "invalid centered pad recipe"),
+            (
+                with("std", serde_json::json!([0.5, 0.0, 0.5])),
+                "normalization",
+            ),
+            (wide, "decoded pixels"),
+            (
+                declared(parameters.clone(), true, true),
+                "has no video form",
+            ),
+        ];
+        for (media, message) in refusals {
+            let error = validate_multimodal_recipes_v1(&media).unwrap_err();
+            assert!(error.contains(message), "{error}");
+        }
+        // Parameters that do not parse never select a recipe.
+        let mut bad_pad = modality.recipe.clone();
+        bad_pad.parameters["pad"] = serde_json::json!([127, 127, 300]);
+        assert!(declared_image_recipe_v1(&bad_pad).is_err());
     }
 
     /// A descriptor whose recipe can emit a size that is not its own resize

@@ -352,11 +352,19 @@ pub fn write_case_with_table<'a>(
         })
         .collect::<Vec<_>>();
     let (code_stride, scale_stride) = (slots * width + 66, slots * width / 32 + 7);
+    let mut input = latent_values(capacity, width);
+    // A tiny row exposes the norm epsilon; a zero row checks the quantizer's
+    // scale convention on zero blocks. Other rows vary token, channel and magnitude.
+    input[..width].fill(1e-11);
+    if capacity > 1 {
+        input[width..2 * width].fill(0.0);
+    }
+
     let roles = LatentWindowWriteBuffers {
         input: Spec::input(
             DType::Bf16,
             (Rows::Live, width),
-            latent_values(capacity, width)
+            input
                 .iter()
                 .flat_map(|&v| kernel_core::codec::f32_to_bf16(v).to_le_bytes())
                 .collect(),

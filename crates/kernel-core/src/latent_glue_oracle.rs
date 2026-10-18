@@ -408,6 +408,25 @@ mod tests {
                 .flat_map(|r| r.scale_bytes.clone())
                 .collect::<Vec<_>>()
         );
+        let tiny = vec![f32_to_bf16(1e-11); 512];
+        let exact_eps = window_rows(op, &tiny, &weight, &table[..64]).unwrap().1;
+        let wrong_eps = LatentWindowWrite {
+            epsilon_bits: 1e-6_f32.to_bits(),
+            ..op
+        };
+        assert_ne!(
+            exact_eps,
+            window_rows(wrong_eps, &tiny, &weight, &table[..64])
+                .unwrap()
+                .1
+        );
+        let zero = window_rows(op, &[0; 512], &weight, &table[..64]).unwrap().1;
+        let positive_zero =
+            encode_latent_row(LatentKvFormat::Fp8E4M3Ue8M0Block32, &[0; 512]).unwrap();
+        assert_eq!(zero[0].scale_bytes, positive_zero.scale_bytes);
+        assert!(zero[0].values.iter().all(|v| v & 0x7f == 0));
+        // Rotation can create negative zero. Clearing its sign is a mutant.
+        assert_ne!(zero[0].values, positive_zero.values);
         let pre_rope = BlockQuantization::E4M3_CEIL32
             .apply(&normed, 2, 512)
             .unwrap();

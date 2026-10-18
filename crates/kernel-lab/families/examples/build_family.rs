@@ -43,6 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "latent_staged_window_keys",
             "latent_window_chain",
         ][..],
+        "moe_chained_down_rows" => &["moe_chained_quantized"][..],
         "latent_glue" => &["dependency_probes", "latent_glue_mutants"][..],
         "latent_window_stage" => &[
             "dependency_probes",

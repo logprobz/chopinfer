@@ -393,6 +393,34 @@ fn a_half_open_number_keeps_every_integer_digit() {
     assert!(!admitted("0", &format!("-{}", fraction(309))));
 }
 
+/// Nested arrays of numbers share the number and each array's item, so
+/// their grammar stays within its budgets.
+#[test]
+fn nested_arrays_of_numbers_compile() {
+    for depth in [8, 12] {
+        let mut schema = serde_json::json!({"type": "number"});
+        for _ in 0..depth {
+            schema = serde_json::json!({"type": "array", "items": schema});
+        }
+        let tools = [tool(serde_json::json!({
+            "type": "object",
+            "properties": {"x": schema},
+            "required": ["x"],
+            "additionalProperties": false
+        }))];
+        let value = |number: &str| format!("{}{number}{}", "[".repeat(depth), "]".repeat(depth));
+        let admitted = |number: &str| {
+            admits(
+                &tools,
+                &FrontendToolChoiceV1::Required,
+                &block(&[call("f", &[("x", true, &value(number))])]),
+            )
+        };
+        assert!(admitted("1.5e300"), "{depth}");
+        assert!(!admitted("1e400"), "{depth}");
+    }
+}
+
 #[test]
 fn a_function_element_outside_a_call_block_is_text() {
     let completion = format!("Hi{}[EOS]", call("f", &[("x", false, "1")]));

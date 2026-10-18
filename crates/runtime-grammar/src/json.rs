@@ -94,6 +94,8 @@ pub struct SchemaCompiler<'a> {
     /// Whether a number with a fraction or exponent stays a finite binary64
     /// ([`Self::finite_numbers`]).
     finite_numbers: bool,
+    /// The finite number's rule, shared by every number.
+    finite_number_rule: Option<RuleId>,
 }
 
 impl<'a> SchemaCompiler<'a> {
@@ -108,28 +110,48 @@ impl<'a> SchemaCompiler<'a> {
             depth: 0,
             budget: Budget::default(),
             finite_numbers: false,
+            finite_number_rule: None,
         }
     }
 
     /// Admits a number with a fraction or exponent only when it is a finite
     /// binary64, at any depth, for a reader that keeps any other such
     /// number as text. An integer keeps every digit. Magnitudes from 1e308,
-    /// just below the largest finite one, are refused.
+    /// just below the largest finite one, are refused. The number is one
+    /// shared rule, and so is each array's item, so nesting does not copy
+    /// them.
     #[must_use]
     pub fn finite_numbers(mut self) -> Self {
         self.finite_numbers = true;
         self
     }
 
-    fn number_expr(&self) -> Expr {
-        if self.finite_numbers {
-            finite_number_expr()
-        } else {
-            number_expr()
+    fn number_expr(&mut self) -> Expr {
+        if !self.finite_numbers {
+            return number_expr();
         }
+        let rule = match self.finite_number_rule {
+            Some(rule) => rule,
+            None => {
+                let rule = self.builder.declare();
+                // A reference to itself after `Nothing` never matches, but
+                // makes the rule recursive: the automaton builds a recursive
+                // rule once and calls it, instead of building the number
+                // again at every place it stands.
+                self.builder.define(
+                    rule,
+                    Expr::Alt(vec![
+                        finite_number_expr(),
+                        Expr::Seq(vec![Expr::Nothing, Expr::Rule(rule)]),
+                    ]),
+                );
+                *self.finite_number_rule.insert(rule)
+            }
+        };
+        Expr::Rule(rule)
     }
 
-    fn number(&self, fields: &serde_json::Map<String, Value>) -> Result<Expr, GrammarError> {
+    fn number(&mut self, fields: &serde_json::Map<String, Value>) -> Result<Expr, GrammarError> {
         let (lower, upper) = numeric_bounds(fields, false)?;
         if lower.is_none() && upper.is_none() {
             return Ok(self.number_expr());
@@ -746,7 +768,13 @@ impl<'a> SchemaCompiler<'a> {
     }
 
     /// Every prefix item, then `items` until the counts are met.
-    fn array_of(&self, prefix: &[Expr], items: Option<Expr>, min: u64, max: Option<u64>) -> Expr {
+    fn array_of(
+        &mut self,
+        prefix: &[Expr],
+        items: Option<Expr>,
+        min: u64,
+        max: Option<u64>,
+    ) -> Expr {
         if max.is_some_and(|max| max < min || max < prefix.len() as u64) {
             return Expr::Nothing;
         }
@@ -754,7 +782,12 @@ impl<'a> SchemaCompiler<'a> {
             .iter()
             .map(|item| Expr::seq([item.clone(), self.whitespace()]))
             .collect();
-        let items = items.map(|item| Expr::seq([item, self.whitespace()]));
+        let mut items = items.map(|item| Expr::seq([item, self.whitespace()]));
+        if self.finite_numbers {
+            // One rule for the item, so its copies below, and the automaton
+            // after the first item and after each comma, share it.
+            items = items.map(|item| Expr::Rule(self.builder.rule(item)));
+        }
         let rest_min = min.saturating_sub(prefix.len() as u64) as u32;
         let rest_max = max.map(|max| (max - prefix.len() as u64) as u32);
         let comma = self.comma();

@@ -727,6 +727,7 @@ dependencies = [
  "model-compiler-sdk",
  "model-deepseek41-contract",
  "projection-spec",
+ "runtime-bundle",
  "runtime-frontend",
  "runtime-frontend-contract",
  "runtime-host",

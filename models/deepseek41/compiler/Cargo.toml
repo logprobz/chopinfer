@@ -10,6 +10,7 @@ license.workspace = true
 model-compiler-sdk.workspace = true
 model-deepseek41-contract.workspace = true
 projection-spec.workspace = true
+runtime-bundle.workspace = true
 runtime-frontend-contract.workspace = true
 runtime-tokenizer.workspace = true
 runtime-weights.workspace = true

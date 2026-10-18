@@ -3194,6 +3194,9 @@
       ],
       "timeout_seconds": 3600,
       "receipt": "*-deepseek41-multimodal.json",
+      "files": [
+        "server_log"
+      ],
       "rules": [
         {
           "path": [

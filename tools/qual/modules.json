@@ -23,6 +23,7 @@
    "TAIL_SAMPLES": "dict"
   },
   "agentic_mixed": {
+   "FUNCTION_GRAMMARS": "list",
    "MARKUP": "null",
    "MAX_REQUEST": "number",
    "MAX_RESPONSE": "number",
@@ -31,7 +32,8 @@
    "RAW_TURN_IDS": "int",
    "REVISION": "str",
    "SPREAD_FIGURES": "list",
-   "TOOL_GRAMMARS": "list"
+   "TOOL_GRAMMARS": "list",
+   "TYPED": "str"
   },
   "agentic_server": {
    "MODES": "list",

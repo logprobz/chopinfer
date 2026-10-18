@@ -1,4 +1,6 @@
 //! Bitwise retained-window staging through poisoned graph and PDL replay.
+#[path = "latent_window_stage/chain.rs"]
+mod chain;
 use kernel_core::backend::{Backend, Need};
 use kernel_harness::conformance::Probes;
 use kernel_harness::kit::cases::latent_window_stage::{self as cases, Scenario};
@@ -12,7 +14,19 @@ use kernels_sm120::latent::window_stage::Mutation;
 use runtime_cuda::Module;
 use std::{cell::RefCell, collections::BTreeMap, path::PathBuf};
 fn backend() -> Sm120 {
-    Sm120::new().with_latent_window_stage(family::entry())
+    let mut b = Sm120::new()
+        .with_latent_window_stage(family::entry())
+        .with_latent_staged_window_keys(kernel_lab_families::latent_staged_window_keys::entry());
+    for e in kernel_lab_families::latent_glue::entries() {
+        b = b.with_latent_glue(e);
+    }
+    for e in kernel_lab_families::latent_glue::quantizers() {
+        b = b.with_block_quantize(e);
+    }
+    for e in kernel_lab_families::latent_window_chain::entries() {
+        b = b.with_latent_sources(e);
+    }
+    b
 }
 struct FamilyModules {
     directory: PathBuf,
@@ -20,7 +34,12 @@ struct FamilyModules {
 impl Modules for FamilyModules {
     fn load<'s>(&'s self, session: &'s Session) -> LabResult<Functions<'s>> {
         let mut lookup = BTreeMap::new();
-        for spec in family::cubins() {
+        for spec in family::cubins()
+            .into_iter()
+            .chain(kernel_lab_families::latent_staged_window_keys::cubins())
+            .chain(kernel_lab_families::latent_window_chain::cubins())
+            .chain(kernel_lab_families::latent_glue::cubins())
+        {
             for entry in spec.entries {
                 lookup.insert(entry.symbol, spec.name.clone());
             }
@@ -94,6 +113,15 @@ fn stage_cases_prepare_and_preserve_tail_padding() {
         &kit::conform(&backend(), &modules, None, &required()).unwrap(),
         false,
     );
+    let bounded = kit::conform(
+        &backend(),
+        &modules,
+        None,
+        &[kit::cases::latent_staged_window_keys::required()],
+    )
+    .unwrap();
+    assert_eq!(bounded.prepared().len(), 1);
+    assert!(bounded.failures().is_empty(), "{:?}", bounded.failures());
     for mutation in Mutation::ALL {
         let report = kit::conform(&backend(), &modules, None, &[cases::mutant(mutation)]).unwrap();
         assert_eq!(report.prepared().len(), 1);
@@ -163,40 +191,27 @@ fn window_stage_passes_poison_graph_pdl_and_device_controls_on_gpu() {
                 }
             }
         }
-        // Two prefill steps: append the first chunk's already encoded rows
-        // to the observed first stage, then compare the next gathered prefix.
-        let functions = modules.load(session)?;
-        let mut stages = Vec::new();
-        for scenario in [Scenario::SplitFirst, Scenario::SplitSecond] {
-            let case = cases::case(
-                scenario,
-                backend()
-                    .latent_window_stage(&cases::QUERY, Need::rows(2))
-                    .unwrap(),
-            )?;
-            let images = case.images();
-            let output = case.launch(session, &*functions, &images, 2)?;
-            case.judge_outputs(&images, 2, &output)?;
-            stages.push(output);
-        }
-        let mut first = stages.remove(0);
-        let next = stages.remove(0);
-        for (plane, width) in [("staged.codes", 512), ("staged.scales", 16)] {
-            let bytes = first.get_mut(plane).unwrap();
-            for p in 140..172 {
-                for col in 0..width {
-                    bytes[(p - 13) as usize * width + col] = cases::payload(p, col, width == 16);
-                }
-            }
-            assert_eq!(&next[plane][..127 * width], &bytes[32 * width..159 * width]);
-        }
-        session.receipt(
-            "window-stage-split-prefill",
-            BTreeMap::from([
-                ("prefix_rows".into(), serde_json::json!(127)),
-                ("chunk_rows".into(), serde_json::json!(32)),
-            ]),
+        let bounded = kit::conform(
+            &backend(),
+            &modules,
+            Some(session),
+            &[kit::cases::latent_staged_window_keys::required()],
         )?;
+        session.receipt(
+            "staged-window-keys",
+            BTreeMap::from([("report".into(), bounded.json())]),
+        )?;
+        assert!(bounded.failures().is_empty(), "{:?}", bounded.failures());
+        let OpResult::Prepared { checks, .. } = &bounded.ops[0].result else {
+            panic!("bounded lists refused")
+        };
+        assert!(
+            checks
+                .iter()
+                .all(|c| matches!(c.outcome, Outcome::Passed(_))),
+            "{checks:?}"
+        );
+        chain::run(session, &modules)?;
         Ok(())
     })
     .unwrap();

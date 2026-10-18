@@ -100,6 +100,7 @@ mod hc_all_reduce;
 mod latent;
 mod latent_glue;
 mod latent_sources;
+mod latent_staged_window_keys;
 mod latent_window_stage;
 mod moe_chained;
 mod moe_experts;
@@ -178,6 +179,7 @@ pub struct Sm120 {
     latent: latent::Selection,
     latent_glue: Vec<crate::latent::glue::Entry>,
     window_stages: Vec<crate::latent::window_stage::Entry>,
+    staged_window_keys: Vec<crate::latent::staged_window_keys::Entry>,
     latent_sources: Vec<crate::latent::sources::Entry>,
     recurrent: recurrent::Entries,
     experts: moe_experts::Selection,
@@ -260,6 +262,14 @@ impl Sm120 {
     /// amax floor at preparation.
     pub fn with_silu_mul_quantize(mut self, entry: crate::row::silu_mul_quantize::Entry) -> Self {
         self.silu_mul_quantizers.push(entry);
+        self
+    }
+
+    pub fn with_latent_staged_window_keys(
+        mut self,
+        entry: crate::latent::staged_window_keys::Entry,
+    ) -> Self {
+        self.staged_window_keys.push(entry);
         self
     }
 
@@ -1315,6 +1325,17 @@ impl Backend for Sm120 {
         need: Need,
     ) -> Result<Prepared<kernel_core::latent_glue::LatentQueryRopeBuffers<View>>, Refused> {
         latent_glue::query_rope(&self.latent_glue, op, need)
+    }
+
+    fn latent_staged_window_keys(
+        &self,
+        op: &kernel_core::latent_staged_window_keys::LatentStagedWindowKeys,
+        need: Need,
+    ) -> Result<
+        Prepared<kernel_core::latent_staged_window_keys::LatentStagedWindowKeyBuffers<View>>,
+        Refused,
+    > {
+        latent_staged_window_keys::prepare(&self.staged_window_keys, op, need)
     }
 
     fn latent_window_stage(

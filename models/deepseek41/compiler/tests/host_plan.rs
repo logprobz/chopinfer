@@ -17,38 +17,20 @@
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use model_deepseek41::synthetic;
 use model_deepseek41_contract::admission::{SUPPORTED_RANKS, admit, check_ranks};
-use model_deepseek41_contract::geometry::{GEOMETRIES, Geometry};
+use model_deepseek41_contract::geometry::GEOMETRIES;
 use model_deepseek41_contract::serving::{INDEX_SCHEMA, RANK_IMAGE_ROLE};
 use model_deepseek41_contract::weight_plan::plan;
 use runtime_bundle_abi::weight_plan::WeightPlanV1;
 use runtime_host::direct::{
     DirectCheckpointV1, DirectLoadOptionsV1, PlannedImageV1, implementation_v1,
 };
-use serde_json::{Value, json};
+use serde_json::Value;
 
-fn config(geometry: &Geometry) -> Value {
-    let mut config: Value = serde_json::from_str(geometry.document).unwrap();
-    config["architectures"] = json!(["DeepseekV41ForCausalLM"]);
-    config["model_type"] = json!("deepseek_v41");
-    config["transformers_version"] = json!("5.6.0");
-    config["text_config"]["model_type"] = json!("deepseek_v41_text");
-    config["text_config"]["initializer_range"] = json!(0.02);
-    config["text_config"]["use_cache"] = json!(true);
-    config["text_config"]["attention_dropout"] = json!(0.0);
-    config["vision_config"]["model_type"] = json!("deepseek_v41_vision");
-    config["quantization_config"] = json!({
-        "quant_method": "fp8",
-        "activation_scheme": "dynamic",
-        "weight_block_size": [32, 32],
-        "scale_fmt": "ue8m0",
-        "expert_dtype": "fp4"
-    });
-    config
-}
+mod support;
+use support::sparse;
 
 /// Every rank's plan of the checkpoint at `root`, prepared as the host
 /// prepares it before create.
@@ -74,38 +56,6 @@ fn prepare(root: &Path, ranks: u32) -> Result<(PlannedImageV1, Vec<WeightPlanV1>
         },
     )?;
     Ok((image, plans))
-}
-
-/// A new directory holding `geometry`'s synthetic checkpoint, its file
-/// sparse past the header.
-fn sparse(geometry: &Geometry) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "deepseek41-host-plan-{}-{}-{}",
-        geometry.id,
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&root).unwrap();
-    let tensors = synthetic::tensors(geometry).unwrap();
-    let (header, index, payload) = synthetic::header(&tensors).unwrap();
-    let mut bytes = (header.len() as u64).to_le_bytes().to_vec();
-    bytes.extend_from_slice(&header);
-    let file = root.join(synthetic::FILE);
-    std::fs::write(&file, &bytes).unwrap();
-    std::fs::OpenOptions::new()
-        .write(true)
-        .open(&file)
-        .unwrap()
-        .set_len(8 + header.len() as u64 + payload)
-        .unwrap();
-    std::fs::write(root.join("model.safetensors.index.json"), index).unwrap();
-    std::fs::write(
-        root.join("config.json"),
-        serde_json::to_vec(&config(geometry)).unwrap(),
-    )
-    .unwrap();
-    root
 }
 
 #[test]

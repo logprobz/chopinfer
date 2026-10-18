@@ -769,10 +769,21 @@ pub fn rows(session: &Session, case: &Case) -> LabResult<()> {
                     .map_err(|e| e.to_string())?;
             let actual = lab.read_f32(&output, (rows + 1) * kernel * channels)?;
             let (written, past) = actual.split_at(rows * kernel * channels);
-            check_exact(&widen(written), &expected.values)
-                .map_err(|index| format!("{name} differs at {index}"))?;
-            if past.iter().any(|x| !x.is_nan()) {
-                return Err(format!("{name}: wrote past its output rows"));
+            // An unfold moves bits: each tap, a padding +0 included, is the
+            // oracle's bit for bit, and past the output rows the poison's
+            // exact bits remain.
+            if written.len() != expected.values.len() {
+                return Err(format!("{name}: the oracle's rows differ"));
+            }
+            if let Some(index) = written
+                .iter()
+                .zip(&expected.values)
+                .position(|(x, &e)| x.to_bits() != (e as f32).to_bits())
+            {
+                return Err(format!("{name} differs at {index}"));
+            }
+            if let Some(index) = past.iter().position(|x| x.to_bits() != u32::MAX) {
+                return Err(format!("{name}: wrote past its output rows at {index}"));
             }
         }
         MultimodalQuery::PadColumnsF32 { input, output, .. } => {

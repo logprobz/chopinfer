@@ -55,6 +55,12 @@ class ModelConfigTests(unittest.TestCase):
                 policy = check.get('constants', {}).get('teacher', {})
                 if not policy.get('ALLOW_FLOOR_ONLY', {}).get('value'):
                     continue
+                if name == 'long_context':
+                    # A model can declare its base long-context check as
+                    # floor-only; only extensions have a prior check to compare.
+                    self.assertIn(name, raw['cohorts']['full']['checks'])
+                    self.assertEqual(raw['references'][name]['variants'], ['exact'])
+                    continue
                 found.append((raw['model'], name))
                 self.assertEqual(name, 'long_context_128k')
                 old = raw['checks']['long_context']

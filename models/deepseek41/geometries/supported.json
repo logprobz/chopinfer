@@ -21,6 +21,11 @@
     }
   ],
   "runtime_fields": {
+    "text_config.candidate_topk_blocks": {
+      "overridable": true,
+      "reason": "the runtime producer pads candidate IDs to the compiled maximum stride",
+      "minimum": 1
+    },
     "text_config.index_topk": {
       "overridable": true,
       "reason": "the position indexer selects individual compressed positions up to its compiled maximum",

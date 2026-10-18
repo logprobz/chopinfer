@@ -284,7 +284,7 @@ pub(crate) mod tests {
             Some(items),
         );
         bytes.extend_from_slice(&shape.geometry.context_tokens().to_le_bytes());
-        let options = serde_json::json!({"text_config.index_topk": shape.runtime.index_topk});
+        let options = serde_json::json!({"text_config.index_topk": shape.runtime.index_topk, "text_config.candidate_topk_blocks": shape.runtime.candidate_topk_blocks});
         append_options(&mut bytes, &options);
         bytes
     }
@@ -301,6 +301,23 @@ pub(crate) mod tests {
         let shape = crate::shape::topologies()[0];
         let mut bytes = record(&shape, KV_LAYOUTS[0], 1, false);
         let shared = shared_length(&bytes).unwrap();
+        for options in [
+            serde_json::json!({"text_config.candidate_topk_blocks": 0}),
+            serde_json::json!({"text_config.candidate_topk_blocks": 2049}),
+            serde_json::json!({"text_config.index_topk": 512, "text_config.candidate_topk_blocks": 64}),
+        ] {
+            bytes.truncate(shared);
+            append_options(&mut bytes, &options);
+            let logs = std::cell::RefCell::new(Vec::new());
+            assert_eq!(
+                decode(&bytes, |line| logs.borrow_mut().push(line.to_owned())).unwrap_err(),
+                BundleStatusV1::InvalidArgument
+            );
+            assert!(
+                logs.borrow()[0]
+                    .starts_with("unsupported runtime text_config.candidate_topk_blocks:")
+            );
+        }
         for value in [
             serde_json::json!(0),
             serde_json::json!(513),

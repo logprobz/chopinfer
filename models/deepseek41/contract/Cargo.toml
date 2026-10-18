@@ -40,3 +40,7 @@ workspace = true
 [[example]]
 name = "build_window_bf16"
 path = "examples/sm120/build_window_bf16.rs"
+
+[[example]]
+name = "build_position_candidates_runtime"
+path = "examples/sm120/build_position_candidates_runtime.rs"

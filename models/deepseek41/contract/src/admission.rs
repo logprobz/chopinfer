@@ -173,9 +173,10 @@ mod tests {
     #[test]
     fn the_flash_config_selects_the_flash_geometry() {
         assert_eq!(admit(&flash_config()).unwrap().id, "flash");
-        for top_k in [1, 255, 256, 512] {
+        for (top_k, blocks) in [(1, 1), (255, 1024), (256, 33), (512, 2048)] {
             let mut config = flash_config();
             config["text_config"]["index_topk"] = top_k.into();
+            config["text_config"]["candidate_topk_blocks"] = blocks.into();
             let geometry = admit(&config).unwrap();
             assert_eq!(geometry.id, "flash");
             assert_eq!(geometry.check_runtime(&config).unwrap().index_topk, top_k);

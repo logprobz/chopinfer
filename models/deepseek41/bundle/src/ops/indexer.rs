@@ -213,7 +213,17 @@ impl SelectOps {
             .ok_or_else(|| Refused::Rule(format!("layer {source} selects nothing")))?;
         let need = exact::need(FULL_BLOCK, exact::every_phase(FULL_BLOCK));
         let producer = asks.ask("indexer.candidate_block_ids", need, |need| {
-            backend.indexer_candidate_block_ids(&indexer::candidates(g, FULL_BLOCK), width, need)
+            let query = indexer::candidates(g, FULL_BLOCK);
+            if shape.runtime.candidate_topk_blocks == query.top_k_blocks {
+                backend.indexer_candidate_block_ids(&query, width, need)
+            } else {
+                backend.indexer_candidate_block_ids_runtime(
+                    &query,
+                    shape.runtime.candidate_topk_blocks,
+                    width,
+                    need,
+                )
+            }
         })?;
         Ok(SelectOps {
             full,

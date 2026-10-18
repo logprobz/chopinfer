@@ -5,7 +5,9 @@
 
 use kernel_build::CubinSpec;
 use kernels_sm120::backend::Sm120;
-use kernels_sm120::pooled_indexer::{position, position_bf16, position_blocks};
+use kernels_sm120::pooled_indexer::{
+    position, position_bf16, position_blocks, position_candidates_runtime,
+};
 use model_deepseek41_contract::{geometry::Geometry, indexer, serving::PREFILL_TOKENS};
 
 pub const FAMILY: &str = "position_indexer";
@@ -122,6 +124,28 @@ pub fn bf16_cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSp
     Ok(result)
 }
 
+/// Separately locked runtime producers; defaults never load these cubins.
+pub const RUNTIME_CANDIDATES_FAMILY: &str = "position_candidates_runtime";
+pub fn runtime_candidates_cubin_name(g: &Geometry) -> String {
+    format!("position_candidates_runtime_{}_sm120", g.kernel_tag)
+}
+pub fn runtime_candidates_cubins(
+    geometries: &[Geometry],
+) -> Result<Vec<(&'static str, CubinSpec)>, String> {
+    geometries
+        .iter()
+        .map(|g| {
+            Ok((
+                RUNTIME_CANDIDATES_FAMILY,
+                position_candidates_runtime::cubin_spec(
+                    runtime_candidates_cubin_name(g),
+                    position_candidates_runtime::specs(&candidates(g)).map_err(|e| e.0)?,
+                ),
+            ))
+        })
+        .collect()
+}
+
 pub fn register(sm120: Sm120, g: &Geometry) -> Sm120 {
     sm120
         .with_position_indexer(entries(g))
@@ -129,6 +153,7 @@ pub fn register(sm120: Sm120, g: &Geometry) -> Sm120 {
         .with_position_block_indexer(block_entries(g))
         .with_position_block_indexer_bf16(block_entries(g))
         .with_indexer_candidate_block_ids(vec![candidates(g)])
+        .with_indexer_candidate_block_ids_runtime(vec![candidates(g)])
 }
 
 #[cfg(test)]

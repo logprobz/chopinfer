@@ -306,7 +306,12 @@ fn main() {
     let compile_fields = FIELDS
         .iter()
         .copied()
-        .filter(|(_, path, _)| *path != "text_config.index_topk")
+        .filter(|(_, path, _)| {
+            !matches!(
+                *path,
+                "text_config.index_topk" | "text_config.candidate_topk_blocks"
+            )
+        })
         .collect::<Vec<_>>();
     output += &Schema {
         fields: &compile_fields,

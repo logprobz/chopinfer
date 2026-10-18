@@ -35,6 +35,47 @@ const IDENTITY_COMPONENT: u32 = 200;
 const VIEW_ALIGNMENT: u64 = 4096;
 
 #[test]
+fn runtime_candidate_pool_reaches_its_separate_producer() {
+    for kv in KV_LAYOUTS {
+        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+        let host = FakeHost::new(shape, kv);
+        let mut record = crate::config::tests::record(&shape, kv, 1, false);
+        let at = record
+            .windows(MODEL_OPTIONS_TAG_V1.len())
+            .position(|w| w == MODEL_OPTIONS_TAG_V1)
+            .unwrap();
+        record.truncate(at);
+        let options = br#"{"text_config.index_topk":256,"text_config.candidate_topk_blocks":1024}"#;
+        record.extend_from_slice(MODEL_OPTIONS_TAG_V1);
+        record.extend_from_slice(&(options.len() as u32).to_le_bytes());
+        record.extend_from_slice(options);
+        let mut instance = api()
+            .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
+            .unwrap_or_else(|error| panic!("{error:?}: {:?}", host.logs.borrow()));
+        instance
+            .execute(&prompt(11, 0, 0, 70, true), &mut Views::default())
+            .unwrap();
+        let lines = host.device.journal.borrow();
+        let producers: Vec<_> = lines
+            .iter()
+            .filter(|line| {
+                line.starts_with("launch ")
+                    && line.contains("chop_candidate_block_ids_")
+                    && line.contains("_gather_v3")
+            })
+            .collect();
+        assert_eq!(producers.len(), 8);
+        for line in producers {
+            assert!(line.contains("_runtime_gather_v3"), "{line}");
+            assert!(line.ends_with("U32(1024)]"), "{line}");
+        }
+        drop(lines);
+        instance.cancel().unwrap();
+        instance.destroy().unwrap();
+    }
+}
+
+#[test]
 fn runtime_index_topk_reaches_dense_and_compact_launches() {
     for kv in KV_LAYOUTS {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
@@ -669,6 +710,10 @@ fn every_geometry_topology_runs_the_fake_host_journal_and_lifecycle() {
             );
             // Each loaded cubin serves the topology's geometry.
             for cubin in host.device.module_cubins.borrow().values() {
+                assert!(
+                    !cubin.starts_with("position_candidates_runtime_"),
+                    "default loaded {cubin}"
+                );
                 assert!(
                     crate::serves(cubin, shape.geometry.id),
                     "{topology}: {cubin}"

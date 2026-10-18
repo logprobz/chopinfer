@@ -379,11 +379,19 @@ impl Instance {
             let mut resolved = BTreeMap::new();
             // The cubins of this geometry and the shared ones.
             let geometry = shape.geometry.id;
-            for cubin in crate::CUBINS.iter().filter(|cubin| {
-                crate::serves(cubin.name, geometry)
-                    && (self.dspark.is_some()
-                        || !crate::Kernels::drafter_only(cubin.name, shape.geometry))
-            }) {
+            for cubin in crate::CUBINS
+                .iter()
+                .filter(|cubin| crate::serves(cubin.name, geometry))
+                .filter(|cubin| {
+                    self.dspark.is_some()
+                        || !crate::Kernels::drafter_only(cubin.name, shape.geometry)
+                })
+                .filter(|cubin| {
+                    !cubin.name.starts_with("position_candidates_runtime_")
+                        || shape.runtime.candidate_topk_blocks
+                            != shape.geometry.shape.candidates.top_blocks
+                })
+            {
                 acquire::load_module(
                     log,
                     context,

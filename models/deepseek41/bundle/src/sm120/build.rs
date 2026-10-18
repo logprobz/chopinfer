@@ -117,6 +117,10 @@ pub fn selection(
             geometry.id,
         ));
         owners.push((indexer::blocks_cubin_name(geometry), geometry.id));
+        owners.push((
+            indexer::runtime_candidates_cubin_name(geometry),
+            geometry.id,
+        ));
         owners.extend(indexer::bf16_cubin_names(geometry).map(|name| (name, geometry.id)));
         for part in ["compute", "routes", "quantize"] {
             owners.push((
@@ -152,6 +156,7 @@ pub fn selection(
     specs.extend(reduce::cubins(geometries));
     specs.extend(hc::cubins(geometries));
     specs.extend(latent::cubins(geometries).expect("deepseek41 latent cubins"));
+    specs.extend(indexer::runtime_candidates_cubins(geometries).expect("runtime candidate cubins"));
     specs.extend(indexer::cubins(geometries).expect("deepseek41 indexer cubins"));
     specs.extend(indexer::bf16_cubins(geometries).expect("deepseek41 BF16 indexer cubins"));
     specs.extend(compressor::cubins(geometries).expect("deepseek41 compressor cubins"));

@@ -43,6 +43,7 @@ pub struct RuntimeField {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RuntimeValues {
     pub index_topk: u32,
+    pub candidate_topk_blocks: u32,
 }
 
 const fn count(length: usize) -> u32 {
@@ -63,19 +64,29 @@ const fn contains(ids: &[u32], id: u32) -> bool {
 
 impl Geometry {
     /// The compiled selection limit and its qualified checkpoint value.
-    pub const fn runtime_fields(&self) -> [RuntimeField; 1] {
-        [RuntimeField {
-            name: "text_config.index_topk",
-            overridable: true,
-            minimum: 1,
-            maximum: self.shape.indexer.top_k,
-            qualified: self.shape.indexer.top_k,
-        }]
+    pub const fn runtime_fields(&self) -> [RuntimeField; 2] {
+        [
+            RuntimeField {
+                name: "text_config.candidate_topk_blocks",
+                overridable: true,
+                minimum: 1,
+                maximum: self.shape.candidates.top_blocks,
+                qualified: self.shape.candidates.top_blocks,
+            },
+            RuntimeField {
+                name: "text_config.index_topk",
+                overridable: true,
+                minimum: 1,
+                maximum: self.shape.indexer.top_k,
+                qualified: self.shape.indexer.top_k,
+            },
+        ]
     }
 
     pub const fn runtime_defaults(&self) -> RuntimeValues {
         RuntimeValues {
             index_topk: self.shape.indexer.top_k,
+            candidate_topk_blocks: self.shape.candidates.top_blocks,
         }
     }
 
@@ -105,6 +116,7 @@ impl Geometry {
                 Some(value) if field.overridable => value.clone(),
                 _ => match field.name {
                     "text_config.index_topk" => checkpoint.index_topk.into(),
+                    "text_config.candidate_topk_blocks" => checkpoint.candidate_topk_blocks.into(),
                     _ => return Err(format!("unsupported runtime field {}", field.name)),
                 },
             };
@@ -121,6 +133,7 @@ impl Geometry {
     ) -> Result<RuntimeValues, String> {
         let mut values = RuntimeValues {
             index_topk: self.shape.indexer.top_k,
+            candidate_topk_blocks: self.shape.candidates.top_blocks,
         };
         for field in self.runtime_fields() {
             let value = lookup(&field);
@@ -144,8 +157,21 @@ impl Geometry {
             }
             match field.name {
                 "text_config.index_topk" => values.index_topk = number as u32,
+                "text_config.candidate_topk_blocks" => values.candidate_topk_blocks = number as u32,
                 _ => return Err(format!("unsupported runtime field {}", field.name)),
             }
+        }
+        // The newest candidate block is pinned even when only its first
+        // position is visible. Keep enough finite positions in that case;
+        // the reference refuses filling top-k with filtered -inf scores.
+        let minimum_positions = u64::from(values.candidate_topk_blocks - 1)
+            * u64::from(self.shape.candidates.block)
+            + 1;
+        if u64::from(values.index_topk) > minimum_positions {
+            return Err(format!(
+                "unsupported runtime text_config.candidate_topk_blocks: {} blocks of {} must retain at least text_config.index_topk={} positions when the newest block holds one position",
+                values.candidate_topk_blocks, self.shape.candidates.block, values.index_topk
+            ));
         }
         Ok(values)
     }
@@ -163,6 +189,7 @@ impl Geometry {
             .map(|field| {
                 let default = match field.name {
                     "text_config.index_topk" => checkpoint.index_topk,
+                    "text_config.candidate_topk_blocks" => checkpoint.candidate_topk_blocks,
                     _ => panic!("unsupported runtime field {}", field.name),
                 };
                 ModelOptionV1 {
@@ -236,6 +263,55 @@ mod tests {
     use super::*;
 
     #[test]
+    fn candidate_pool_bounds_include_the_partial_newest_block() {
+        use std::collections::BTreeMap;
+        let checkpoint = FLASH.runtime_defaults();
+        let resolve = |top_k: u32, blocks: u32| {
+            FLASH.resolve_model_options(
+                checkpoint,
+                &BTreeMap::from([
+                    ("text_config.index_topk".into(), top_k.into()),
+                    ("text_config.candidate_topk_blocks".into(), blocks.into()),
+                ]),
+            )
+        };
+        for (top_k, blocks) in [(1, 1), (9, 2), (256, 33), (512, 65), (512, 2048)] {
+            let values = resolve(top_k, blocks).unwrap();
+            assert_eq!(values.candidate_topk_blocks, blocks);
+            let options = FLASH.model_options(values);
+            assert_eq!(options[0].name, "text_config.candidate_topk_blocks");
+            assert_eq!(options[0].default_is_qualified, blocks == 2048);
+        }
+        for (top_k, blocks) in [(2, 1), (10, 2), (256, 32), (512, 64)] {
+            let error = resolve(top_k, blocks).unwrap_err();
+            assert!(
+                error.contains("when the newest block holds one position"),
+                "{error}"
+            );
+        }
+        for value in [
+            serde_json::json!(0),
+            serde_json::json!(2049),
+            serde_json::json!(-1),
+            serde_json::json!(1.5),
+            serde_json::json!(true),
+        ] {
+            let error = FLASH
+                .resolve_model_options(
+                    checkpoint,
+                    &BTreeMap::from([("text_config.candidate_topk_blocks".into(), value.clone())]),
+                )
+                .unwrap_err();
+            assert_eq!(
+                error,
+                format!(
+                    "unsupported runtime text_config.candidate_topk_blocks: expected 1..=2048, received {value}"
+                )
+            );
+        }
+    }
+
+    #[test]
     fn index_topk_options_are_bounded_by_the_compiled_selection() {
         use runtime_bundle::model_options::{CAPABILITY, ModelOptionsV1, OptionDefinitionV1};
         use std::collections::BTreeMap;
@@ -243,10 +319,10 @@ mod tests {
         let checkpoint = FLASH.check_runtime(&config).unwrap();
         assert_eq!(checkpoint.index_topk, 512);
         let options = FLASH.model_options(checkpoint);
-        assert_eq!(options.len(), 1);
-        assert_eq!(options[0].name, "text_config.index_topk");
+        assert_eq!(options.len(), 2);
+        assert_eq!(options[1].name, "text_config.index_topk");
         assert_eq!(
-            options[0].definition,
+            options[1].definition,
             OptionDefinitionV1::Integer {
                 default: 512,
                 minimum: 1,
@@ -272,7 +348,7 @@ mod tests {
             config["text_config"]["index_topk"] = top_k.into();
             let runtime = FLASH.check_runtime(&config).unwrap();
             assert_eq!(
-                FLASH.model_options(runtime)[0].default_is_qualified,
+                FLASH.model_options(runtime)[1].default_is_qualified,
                 top_k == 512
             );
         }

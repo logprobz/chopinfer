@@ -225,13 +225,14 @@ fn flash_manifest() -> runtime_bundle::BundleManifestV1 {
 fn serve_lists_flash_checkpoint_options_without_loading_weights() {
     let module = native_fixture();
     let root = config_only(&config(&FLASH));
-    for top_k in [512, 256] {
+    for (top_k, blocks) in [(512, 2048), (256, 2048), (256, 1024)] {
         let components = vec![
             package_draft::tokenizer_definition(StagedContentV1::bytes(b"{}".to_vec())).unwrap(),
             package_draft::tokenizer_configuration(StagedContentV1::bytes(b"{}".to_vec())).unwrap(),
         ];
         let mut checkpoint = config(&FLASH);
         checkpoint["text_config"]["index_topk"] = top_k.into();
+        checkpoint["text_config"]["candidate_topk_blocks"] = blocks.into();
         let runtime = FLASH.check_runtime(&checkpoint).unwrap();
         let draft = draft(
             &FLASH,
@@ -243,7 +244,7 @@ fn serve_lists_flash_checkpoint_options_without_loading_weights() {
         .unwrap();
         let package = model_compiler_sdk::emit_bundle_directory_v1(
             &draft,
-            &root.join(format!("package-{top_k}")),
+            &root.join(format!("package-{top_k}-{blocks}")),
         )
         .unwrap();
         let args = [
@@ -263,7 +264,9 @@ fn serve_lists_flash_checkpoint_options_without_loading_weights() {
             options,
             serde_json::json!({
                 "schema": "chop.model-options.v1",
-                "options": [{"name": "text_config.index_topk", "default_is_qualified": top_k == 512,
+                "options": [{"name": "text_config.candidate_topk_blocks", "default_is_qualified": blocks == 2048,
+                         "definition": {"type": "integer", "default": blocks, "minimum": 1, "maximum": 2048}},
+                        {"name": "text_config.index_topk", "default_is_qualified": top_k == 512,
                              "definition": {"type": "integer", "default": top_k, "minimum": 1, "maximum": 512}}]
             })
         );

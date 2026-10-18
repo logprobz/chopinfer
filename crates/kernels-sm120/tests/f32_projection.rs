@@ -198,3 +198,14 @@ fn conservative_tensor_guard_is_inside_the_exact_product_domain() {
         }
     }
 }
+
+#[test]
+fn dimensions_cannot_overflow_cuda_fold_indices() {
+    let e = entry(WeightFormat::Bf16);
+    let mut query = e.query();
+    query.k = i32::MAX as u32;
+    assert!(Entry::new(query, e.usage(), "overflow").is_err());
+    query = e.query();
+    query.n = u32::MAX;
+    assert!(Entry::new(query, e.usage(), "overflow").is_err());
+}

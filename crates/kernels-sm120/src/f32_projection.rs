@@ -35,6 +35,11 @@ impl Entry {
                 "exact F32 projection requires matching bounded F32 capacity",
             ));
         }
+        if query.n > i32::MAX as u32 || query.k > (i32::MAX as u32 - 127) {
+            return Err(Refusal(
+                "exact F32 projection dimensions exceed CUDA loop indices",
+            ));
+        }
         if stem.is_empty()
             || !stem
                 .bytes()

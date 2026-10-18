@@ -181,6 +181,72 @@ pub trait FormatPlugin: Sync {
         }
     }
 
+    /// `slice` of a 32x32 UE8M0 matrix as its lossless MXFP8 rows: each kept
+    /// row reads its own block's scales by its absolute source row, so a
+    /// block may straddle the slice's ends. Only the kept rows are read; one
+    /// run of kept rows borrows its codes, and the matrix is never expanded
+    /// whole.
+    fn repack_mxfp8_rows_slice(
+        &self,
+        matrix: MatrixView<'_>,
+        slice: &MatrixSlice,
+    ) -> Result<PackedMatrix, PrecisionError> {
+        if self.id() != FormatId::Fp8Block32 || matrix.format != WeightFormat::Fp8Block32x32 {
+            return Err(error(
+                "repack",
+                "row scale expansion requires E4M3/UE8M0 32x32 blocks",
+            ));
+        }
+        matrix.validate()?;
+        if slice.rows.iter().any(|&row| row >= matrix.rows) {
+            return Err(error("repack", "kept row outside the source matrix"));
+        }
+        let (_, columns) = matrix.scale_shape()?;
+        let source = matrix
+            .local
+            .ok_or_else(|| error("repack", "missing block scales"))?;
+        let mut scales = Vec::with_capacity(slice.rows.len() * columns);
+        for &row in &slice.rows {
+            let start = matrix.scale_index(row, 0)?;
+            scales.extend_from_slice(&source.bytes[start..start + columns]);
+        }
+        let run = slice.rows.windows(2).all(|pair| pair[1] == pair[0] + 1);
+        let gathered;
+        let codes = match (run, slice.rows.first()) {
+            (true, Some(&first)) => {
+                &matrix.codes[first * matrix.k..(first + slice.rows.len()) * matrix.k]
+            }
+            _ => {
+                gathered = slice
+                    .rows
+                    .iter()
+                    .flat_map(|&row| &matrix.codes[row * matrix.k..(row + 1) * matrix.k])
+                    .copied()
+                    .collect::<Vec<_>>();
+                &gathered
+            }
+        };
+        let rows = MatrixView {
+            tensor: matrix.tensor,
+            format: WeightFormat::Mxfp8,
+            rows: slice.rows.len(),
+            k: matrix.k,
+            row_origin: 0,
+            k_origin: matrix.k_origin,
+            nibble_order: matrix.nibble_order,
+            codes,
+            local: Some(super::packed::ScaleBytes {
+                dtype: DType::Ue8M0,
+                bytes: &scales,
+            }),
+            global: None,
+        };
+        rows.repack(&MatrixSlice {
+            rows: (0..slice.rows.len()).collect(),
+            ..slice.clone()
+        })
+    }
+
     /// Repeat each 32x32 block scale on its rows, preserving every code and
     /// source K origin. No quantization or scaled-weight rounding takes place.
     fn repack_mxfp8_rows(&self, matrix: MatrixView<'_>) -> Result<PackedMatrix, PrecisionError> {

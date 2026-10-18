@@ -365,6 +365,64 @@ fn block32_dense_operands_are_resident_as_mxfp8_rows() {
     }
 }
 
+/// A slice's MXFP8 rows, gathered by absolute source row without expanding
+/// the matrix, equal the whole matrix's expansion sliced the same way: one
+/// run straddling blocks, scattered rows, and a K window with padding.
+#[test]
+fn block32_row_slices_equal_the_sliced_whole_expansion() {
+    let (rows, k) = (96, 64);
+    let codes: Vec<u8> = (0..rows * k)
+        .map(|i| ((i * 37 + 5) % 251) as u8 & 0x7e)
+        .collect();
+    let scales: Vec<u8> = (0..(rows / 32) * (k / 32)).map(|i| 110 + i as u8).collect();
+    let matrix = MatrixView {
+        tensor: "block32",
+        format: WeightFormat::Fp8Block32x32,
+        rows,
+        k,
+        row_origin: 0,
+        k_origin: 0,
+        nibble_order: NibbleOrder::EvenLow,
+        codes: &codes,
+        local: Some(ScaleBytes {
+            dtype: DType::Ue8M0,
+            bytes: &scales,
+        }),
+        global: None,
+    };
+    let plugin = registry::by_id(FormatId::Fp8Block32).unwrap();
+    let whole = plugin.repack_mxfp8_rows(matrix).unwrap();
+    for (kept, k_start, width, padded_rows, padded_k) in [
+        ((24..72).collect::<Vec<_>>(), 0, 64, 48, 64),
+        (vec![3, 40, 41, 90], 0, 64, 8, 64),
+        ((30..34).collect(), 32, 32, 16, 64),
+    ] {
+        let slice = MatrixSlice {
+            rows: kept,
+            k_start,
+            k: width,
+            padded_rows,
+            padded_k,
+            nibble_order: NibbleOrder::EvenLow,
+        };
+        let direct = plugin.repack_mxfp8_rows_slice(matrix, &slice).unwrap();
+        let expected = whole.view("block32").repack(&slice).unwrap();
+        assert_eq!(
+            (direct.codes, direct.scales, direct.format),
+            (expected.codes, expected.scales, expected.format)
+        );
+    }
+    let outside = MatrixSlice {
+        rows: vec![rows],
+        k_start: 0,
+        k,
+        padded_rows: 1,
+        padded_k: k,
+        nibble_order: NibbleOrder::EvenLow,
+    };
+    assert!(plugin.repack_mxfp8_rows_slice(matrix, &outside).is_err());
+}
+
 #[test]
 fn every_format_slices_exact_codes_scales_and_origins() {
     for (id, format, group_rows, group_k, dtype) in [

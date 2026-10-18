@@ -97,28 +97,6 @@ impl PackedWeightBuilder {
         if self.written[index] {
             return Err(context("matrix was already supplied"));
         }
-        // A 32x32 UE8M0 source is resident as its lossless MXFP8 rows, as
-        // the host's packed operand expands it: the whole matrix, then the
-        // slice.
-        let expanded = match (source.format, self.plan.format) {
-            (WeightFormat::Fp8Block32x32, WeightFormat::Mxfp8) => Some(
-                kernel_core::precision::format::registry::by_id(
-                    kernel_core::precision::format::FormatId::Fp8Block32,
-                )
-                .and_then(|plugin| plugin.repack_mxfp8_rows(source))
-                .map_err(error)?,
-            ),
-            (format, resident) if format == resident => None,
-            _ => {
-                return Err(context(
-                    "encoding, slice or padding differs from the prepared physical contract",
-                ));
-            }
-        };
-        let source = match &expanded {
-            Some(rows) => rows.view(source.tensor),
-            None => source,
-        };
         if slice.padded_rows != self.plan.rows as usize
             || slice.padded_k != self.plan.k as usize
             || slice.nibble_order != NibbleOrder::EvenLow
@@ -127,7 +105,23 @@ impl PackedWeightBuilder {
                 "encoding, slice or padding differs from the prepared physical contract",
             ));
         }
-        let packed = source.repack(slice).map_err(error)?;
+        // A 32x32 UE8M0 source is resident as its lossless MXFP8 rows, as
+        // the host's packed operand repacks it.
+        let packed = match (source.format, self.plan.format) {
+            (WeightFormat::Fp8Block32x32, WeightFormat::Mxfp8) => {
+                kernel_core::precision::format::registry::by_id(
+                    kernel_core::precision::format::FormatId::Fp8Block32,
+                )
+                .and_then(|plugin| plugin.repack_mxfp8_rows_slice(source, slice))
+            }
+            (format, resident) if format == resident => source.repack(slice),
+            _ => {
+                return Err(context(
+                    "encoding, slice or padding differs from the prepared physical contract",
+                ));
+            }
+        }
+        .map_err(error)?;
         let (rn, rk) = self.plan.groups();
         if (rn != u32::MAX && packed.row_origin % rn as usize != 0)
             || (rk != u32::MAX && packed.k_origin % rk as usize != 0)

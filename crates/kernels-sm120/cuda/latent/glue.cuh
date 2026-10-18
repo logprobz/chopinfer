@@ -214,8 +214,7 @@ __device__ void store_bf16(const uint8_t* input_codes, const uint8_t* input_scal
       const float value = __fmul_rn(convert::unpack_f32_e4m3(uint16_t(code)).lo, scale);
       result[i] = convert::bf16_from_f32(value);
       const float exact = convert::bf16_to_f32(result[i]);
-      if (scale_code == 255 || !isfinite(value) || __float_as_uint(value) != __float_as_uint(exact) ||
-          ((result[i] & 0x7fff) != 0 && (result[i] & 0x7f80) == 0)) flags |= 4;
+      if (scale_code == 255 || !isfinite(value) || __float_as_uint(value) != __float_as_uint(exact)) flags |= 4;
     }
   }
   const uint32_t failed = chop::row_status::commit(flags,status,status_row_offset+row);

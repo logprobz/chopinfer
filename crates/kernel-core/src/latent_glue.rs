@@ -188,7 +188,7 @@ impl NumericalContract for LatentWindowWrite {
 
 /// Bytes in each stored row. Both modes use the same trained ceil quantizer.
 /// BF16 stores exact code-times-scale products, including the zero sign. A
-/// nonzero product must be normal, finite and exactly BF16. Invalid products
+/// product must be finite and exactly BF16, including subnormals. Invalid products
 /// set `UNREPRESENTABLE_OUTPUT` and preserve the previous destination cell.
 pub fn window_storage_width(kv: LatentKvFormat, latent: u32) -> Result<u32, Refusal> {
     match kv {

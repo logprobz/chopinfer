@@ -612,11 +612,11 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "8435ea28a311cb58bf52a1474e4177ac291ea57c90e0254f6309a127c7e16071",
+    "cubin_sha256": "aadabe8d5ea4fdcc54472a81cb5e817255cb95b91709cd8717c46283a5df2224",
     "resources": [
       {
         "symbol": "chop_window_store_bf16_v1",
-        "registers": 20,
+        "registers": 21,
         "shared_static_bytes": 1028,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -634,7 +634,7 @@
       },
       {
         "symbol": "chop_window_bf16_planes_mutant_v1",
-        "registers": 22,
+        "registers": 21,
         "shared_static_bytes": 1028,
         "local_bytes": 0,
         "stack_bytes": 0,

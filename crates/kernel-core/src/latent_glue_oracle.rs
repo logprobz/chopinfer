@@ -239,7 +239,7 @@ pub fn check_window_keys(
 
 /// Exact BF16 bytes in native channel order. This is a decoder, not a second
 /// quantizer. The native product admission is retained, including finite,
-/// exact and normal-or-zero BF16 products.
+/// exact BF16 products, including signed zero and exact subnormals.
 pub fn exact_window_bf16(encoded: &EncodedLatent, width: usize) -> Result<Vec<u8>, Refusal> {
     use crate::latent_attention::LatentKvFormat;
     use crate::latent_attention_oracle::decode_native_page;
@@ -252,9 +252,6 @@ pub fn exact_window_bf16(encoded: &EncodedLatent, width: usize) -> Result<Vec<u8
     let mut bytes = Vec::with_capacity(width * 2);
     for value in values {
         let bits = crate::codec::f32_to_bf16(value as f32);
-        if bits & 0x7fff != 0 && bits & 0x7f80 == 0 {
-            return Err(Refusal("window native product must be zero or normal BF16"));
-        }
         bytes.extend_from_slice(&bits.to_le_bytes());
     }
     Ok(bytes)
@@ -995,8 +992,36 @@ mod bf16_window_tests {
         );
     }
     #[test]
+    fn bf16_raw_products_admit_exact_subnormals_like_native_rows() {
+        for (code, scale, expected) in [
+            (0x01, 3, 0x0001),
+            (0x81, 3, 0x8001),
+            (0x08, 1, 0x0002),
+            (0x0f, 6, 0x0078),
+            (0x10, 6, 0x0080),
+            (0x00, 0, 0x0000),
+            (0x80, 0, 0x8000),
+        ] {
+            let row = EncodedLatent {
+                values: vec![code; 512],
+                scales: vec![],
+                scale_bytes: vec![scale; 16],
+            };
+            let mut page = row.values.clone();
+            page.extend_from_slice(&row.scale_bytes);
+            let native =
+                decode_native_page(LatentKvFormat::Fp8E4M3Ue8M0Block32, 512, 1, &page, 0).unwrap();
+            assert_eq!(f32_to_bf16(native[0] as f32), expected);
+            let bf16 = exact_window_bf16(&row, 512).unwrap();
+            assert!(
+                bf16.chunks_exact(2)
+                    .all(|b| u16::from_le_bytes(b.try_into().unwrap()) == expected)
+            );
+        }
+    }
+    #[test]
     fn bf16_products_keep_native_refusals_and_do_not_partially_commit() {
-        for (code, scale) in [(0x7f, 127), (0x7e, 254), (0x01, 0), (0x08, 1), (0x38, 255)] {
+        for (code, scale) in [(0x7f, 127), (0x7e, 254), (0x01, 0), (0x01, 2), (0x38, 255)] {
             let row = EncodedLatent {
                 values: vec![code; 512],
                 scales: vec![],

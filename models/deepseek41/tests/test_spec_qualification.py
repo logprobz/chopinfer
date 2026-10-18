@@ -3,14 +3,16 @@ import copy
 import json
 from pathlib import Path
 import unittest
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'tools/qual'))
 
 import kinds
 import spec_verify
 from test_spec_verify import bound, copy_records
 
 
-ROOT = Path(__file__).resolve().parents[2]
-PATH = ROOT / 'models/deepseek41/qual.json'
+PATH = Path(__file__).resolve().parents[1] / 'qual.json'
 
 
 class DsparkEvidenceTests(unittest.TestCase):

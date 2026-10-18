@@ -2058,7 +2058,7 @@ mod tests {
         let pre = [1.0; 4];
         let out = weighted_head_f32(q, &x, &pre).unwrap();
         let bits = |v: &[f32]| v.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
-        assert_eq!(bits(&out), [0, 1.00390625_f32.to_bits(), 0]);
+        assert_eq!(bits(&out), [0, 0x3f80_8000, 0]);
         let rounded = out
             .iter()
             .map(|&v| bf16_to_f32(f32_to_bf16(v)))

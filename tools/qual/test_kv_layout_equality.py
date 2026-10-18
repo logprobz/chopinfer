@@ -117,7 +117,8 @@ class CommandTests(unittest.TestCase):
 
 class RunnerTests(unittest.TestCase):
     def test_the_native_arm_replaces_the_configuration_kv_dtype_and_the_check_runs_offline(self):
-        facts = runner.model_facts("glm5next")
+        # Any previewed model: the check replaces its suite and KV arms.
+        facts = runner.model_facts(sorted(runner.declaration.previewed(runner.ROOT))[0])
         facts = dict(facts, full=["kv_layout_equality"],
                      checks={"kv_layout_equality": {"module": "kv_layout_equality",
                                                     "files": ["kv_layout_native", "kv_layout_comparison"]}})

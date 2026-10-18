@@ -65,6 +65,10 @@ crate::scratch_record! {
     /// never written.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct GatedMlpScratch {
+        /// Caller-owned sticky U32 status for shared output quantization.
+        /// Absent for projections without a status-reporting quantizer.
+        pub quantizer_status: option,
+        pub quantizer_status_row_offset: scalar(u64),
         pub partial: option,
         pub output_codes: option,
         pub output_scales: option,

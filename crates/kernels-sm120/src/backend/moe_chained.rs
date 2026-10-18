@@ -160,12 +160,17 @@ pub(super) fn projection(
             "scratch.output_scales".into(),
             product(&[r, u64::from(entry.columns()) / 32])?,
         ));
+        info.bytes.push((
+            "scratch.quantizer_status".into(),
+            u64::from(need.capacity) * 4,
+        ));
         for (path, bytes) in &quantizer.info().bytes {
             let target = match path.as_str() {
                 "input" => "output",
                 "output" => "scratch.output_codes",
                 "scales" => "scratch.output_scales",
                 "live_rows" => "live_tokens",
+                "status" => "scratch.quantizer_status",
                 _ => {
                     return Err(Refusal("chained output quantizer declared an unknown role").into());
                 }
@@ -265,7 +270,25 @@ impl PreparedOp<GatedMlpBuffers<View>> for ProjectionOp {
                         .expect("gate/up scales"),
                 )?;
                 workspace.covers(self.info.workspace)?;
+                let status = required(b.scratch.quantizer_status)?;
+                status.covers(kernel_core::precision::quantizer::status_extent(
+                    b.scratch.quantizer_status_row_offset,
+                    rows,
+                )?)?;
+                if views.iter().any(|v| v.handle == status.handle)
+                    || [
+                        codes.handle,
+                        scales.handle,
+                        routing.weights.handle,
+                        workspace.handle,
+                    ]
+                    .contains(&status.handle)
+                {
+                    return Err(Refusal("chained quantizer status overlaps another operand"));
+                }
                 Ok(BlockQuantizeBuffers {
+                    status,
+                    status_row_offset: b.scratch.quantizer_status_row_offset,
                     input: b.output,
                     output: codes,
                     scales: Some(scales),
@@ -690,6 +713,7 @@ mod tests {
                 ("output".into(), elements),
                 ("scales".into(), elements / 32),
                 ("live_rows".into(), 4),
+                ("status".into(), u64::from(need.capacity) * 4),
             ];
             info.workspace = 128;
             Ok(Box::new(QuantizerOpProbe {
@@ -725,10 +749,18 @@ mod tests {
                     cluster: [1, 1, 1],
                     pdl: true,
                 },
-                [b.input, b.output, b.scales.unwrap(), b.live_rows, workspace]
-                    .into_iter()
-                    .map(|v| Argument::DeviceBuffer(v.handle))
-                    .collect(),
+                [
+                    b.input,
+                    b.output,
+                    b.scales.unwrap(),
+                    b.live_rows,
+                    b.status,
+                    workspace,
+                ]
+                .into_iter()
+                .map(|v| Argument::DeviceBuffer(v.handle))
+                .chain(std::iter::once(Argument::U64(b.status_row_offset)))
+                .collect(),
             )?])
         }
     }
@@ -823,6 +855,8 @@ mod tests {
                     routes: metadata(),
                 }),
                 scratch: GatedMlpScratch {
+                    quantizer_status: Some(sized("scratch.quantizer_status", 11)),
+                    quantizer_status_row_offset: 3,
                     partial: None,
                     output_codes: Some(sized("scratch.output_codes", 8)),
                     output_scales: Some(sized("scratch.output_scales", 9)),
@@ -839,9 +873,29 @@ mod tests {
             assert_eq!(launches[0].arguments.0[9], Argument::DeviceBuffer(4));
             assert_eq!(
                 launches[1].arguments.0,
-                [4, 8, 9, 3, 10].map(Argument::DeviceBuffer)
+                [4, 8, 9, 3, 11, 10]
+                    .map(Argument::DeviceBuffer)
+                    .into_iter()
+                    .chain(std::iter::once(Argument::U64(3)))
+                    .collect::<Vec<_>>()
             );
             assert_eq!(launches[1].rows, 1);
+            assert_eq!(op.info().bytes_of("scratch.quantizer_status"), Some(32 * 4));
+            for status in [
+                None,
+                Some(View {
+                    handle: 11,
+                    bytes: 15,
+                }),
+                Some(buffers.activation),
+            ] {
+                let mut bad = buffers;
+                bad.scratch.quantizer_status = status;
+                assert!(op.launches(&bad, workspace, Counts::rows(1)).is_err());
+            }
+            let mut bad = buffers;
+            bad.scratch.quantizer_status_row_offset = u64::MAX;
+            assert!(op.launches(&bad, workspace, Counts::rows(1)).is_err());
             let mut short = buffers;
             short.scratch.output_scales.as_mut().unwrap().bytes -= 1;
             assert!(op.launches(&short, workspace, Counts::rows(1)).is_err());
@@ -1144,6 +1198,8 @@ mod tests {
                 routes: metadata(),
             }),
             scratch: GatedMlpScratch {
+                quantizer_status: None,
+                quantizer_status_row_offset: 0,
                 partial: None,
                 output_codes: None,
                 output_scales: None,

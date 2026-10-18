@@ -75,6 +75,8 @@ impl Experts {
                 },
             }),
             scratch: GatedMlpScratch {
+                quantizer_status: None,
+                quantizer_status_row_offset: 0,
                 partial: Some(bind.view(views.partials)),
                 output_codes: None,
                 output_scales: None,

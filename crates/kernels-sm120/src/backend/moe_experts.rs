@@ -1393,6 +1393,8 @@ mod tests {
                 },
             }),
             scratch: GatedMlpScratch {
+                quantizer_status: None,
+                quantizer_status_row_offset: 0,
                 partial: Some(v(PARTIAL)),
                 output_codes: Some(v(OUTPUT_CODES)),
                 output_scales: Some(v(OUTPUT_SCALES)),

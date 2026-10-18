@@ -1740,6 +1740,8 @@ impl RankStage<'_> {
                 routes: self.route_metadata(&mut bind),
             }),
             scratch: GatedMlpScratch {
+                quantizer_status: None,
+                quantizer_status_row_offset: 0,
                 partial: None,
                 output_codes: None,
                 output_scales: None,

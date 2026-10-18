@@ -35,6 +35,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -63,6 +72,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -70,11 +88,11 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "43dc1666ec50310d26d17685323aae6d6ee5ed81a0b88272acd1d47191d7e29f",
+    "cubin_sha256": "3321da486ebfd9d878cb686477a1e8d31a46eee52a0f6d95d22a5e1b2fa41c79",
     "resources": [
       {
         "symbol": "chop_moe_chain_output_ceil_top3_v1",
-        "registers": 24,
+        "registers": 25,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -83,7 +101,7 @@
       },
       {
         "symbol": "chop_moe_chain_output_ceil_top6_v1",
-        "registers": 24,
+        "registers": 25,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,

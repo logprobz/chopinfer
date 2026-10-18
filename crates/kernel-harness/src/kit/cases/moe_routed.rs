@@ -165,6 +165,8 @@ impl PreparedOp<RoutedBuffers<View>> for Routed {
                 routes: route.routes,
             }),
             scratch: GatedMlpScratch {
+                quantizer_status: None,
+                quantizer_status_row_offset: 0,
                 partial: None,
                 output_codes: None,
                 output_scales: None,

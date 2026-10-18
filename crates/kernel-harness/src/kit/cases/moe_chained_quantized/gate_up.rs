@@ -276,6 +276,11 @@ pub fn gate_up_case<'a>(
         output: Spec::output(DType::Bf16, (Rows::Live, top * n)),
         output_codes: Some(Spec::output(DType::U8, (Rows::Live, top * n))),
         output_scales: Some(Spec::output(DType::U8, (Rows::Live, top * n / 32))),
+        quantizer_status: Some(crate::kit::cases::block_quantize::status_role(&vec![
+            0;
+            tokens
+        ])),
+        quantizer_status_row_offset: 0,
         unit_weights,
         unused: Spec::scratch(4),
     };
@@ -400,6 +405,10 @@ pub fn gate_up_case<'a>(
                 })),
             ));
         }
+        expected.push((
+            "quantizer_status".into(),
+            Expected::Bits(vec![0; tokens * 4]),
+        ));
         Ok(expected)
     };
     let mut case = OpCase::new(prepared, capacity, roles)?.oracle(oracle);

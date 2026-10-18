@@ -197,6 +197,8 @@ kernel_core::scratch_record! {
         pub output: value,
         pub output_codes: option,
         pub output_scales: option,
+        pub quantizer_status: option,
+        pub quantizer_status_row_offset: scalar(u64),
         pub unit_weights: option,
         pub unused: value,
     }
@@ -229,6 +231,7 @@ impl Routed {
                 "routing.weights" => "route.route.weights".into(),
                 "scratch.output_codes" => "output_codes".into(),
                 "scratch.output_scales" => "output_scales".into(),
+                "scratch.quantizer_status" => "quantizer_status".into(),
                 _ if path.starts_with("routing.routes.") => {
                     path.replacen("routing.routes.", "route.route.routes.", 1)
                 }
@@ -271,6 +274,8 @@ impl PreparedOp<RoutedBuffers<View>> for Routed {
                 routes: r.routes,
             }),
             scratch: GatedMlpScratch {
+                quantizer_status: b.quantizer_status,
+                quantizer_status_row_offset: b.quantizer_status_row_offset,
                 partial: None,
                 output_codes: b.output_codes,
                 output_scales: b.output_scales,
@@ -518,6 +523,8 @@ pub fn down_case<'a>(
         output: Spec::output(DType::F32, (Rows::Live, top_k * n)),
         output_codes: None,
         output_scales: None,
+        quantizer_status: None,
+        quantizer_status_row_offset: 0,
         unit_weights: None,
         unused: Spec::scratch(4),
     };

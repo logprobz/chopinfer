@@ -100,11 +100,14 @@ native KV layout, which `/health` reports as `mixed` (what
   the teacher rule over the last 1,024 positions with BF16 the only spread
   variant; its values follow those references by that rule.
 - per-layer taps (`taps.json`) within the same spread;
-- evals_gsm8k: the 1,319 GSM8K items, workload sha256
-  6ea6ef1611f1d9121f83a0c9292ef39850a4cb1253418cfb539d2a455667ea11 (the
-  frontend enables thinking with `enable_thinking`, so the request bodies
-  equal GLM's); gsm8k_regression compares it with the stored run at
-  significance 0.05 and reports no baseline until one exists.
+- evals_gsm8k: the 1,319 GSM8K items with the recipe sampling (temperature
+  1.0, top_p 1.0, max_tokens 262,144), workload sha256
+  bb39334b089e2861ec26b6c700c74951e8293e61268b5acef3b64b93fc73fe76;
+  gsm8k_regression compares it with the stored run, the same sampled
+  bodies, at significance 0.05 and reports no baseline until one exists.
+  evals_gsm8k gates coverage, identity and errors, gsm8k_regression gates
+  against the stored baseline, and the absolute GSM8K floor is
+  spec_verify's.
 - frontend_goldens: the served tokenizer agrees with
   `fixtures/deepseek41/frontend/tokenizer-golden.json`; chat renders join
   with their captures.

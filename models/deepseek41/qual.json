@@ -914,6 +914,18 @@
       "files": [
         "server_log"
       ],
+      "constants": {
+        "evals": {
+          "SAMPLING": {
+            "value": {
+              "temperature": 1.0,
+              "top_p": 1.0,
+              "max_tokens": 262144
+            },
+            "source": "models/deepseek41/README.md#qualification"
+          }
+        }
+      },
       "rules": [
         {
           "path": [
@@ -946,7 +958,7 @@
             "workload_sha256"
           ],
           "op": "eq",
-          "value": "6ea6ef1611f1d9121f83a0c9292ef39850a4cb1253418cfb539d2a455667ea11",
+          "value": "bb39334b089e2861ec26b6c700c74951e8293e61268b5acef3b64b93fc73fe76",
           "source": "models/deepseek41/README.md#qualification"
         },
         {
@@ -1049,6 +1061,26 @@
           "op": "eq",
           "value": 1319,
           "source": "tools/qual/README.md#correctness-runner"
+        },
+        {
+          "path": [
+            "server",
+            "workload_sha256",
+            "candidate"
+          ],
+          "op": "eq",
+          "value": "bb39334b089e2861ec26b6c700c74951e8293e61268b5acef3b64b93fc73fe76",
+          "source": "models/deepseek41/README.md#qualification"
+        },
+        {
+          "path": [
+            "server",
+            "workload_sha256",
+            "reference"
+          ],
+          "op": "eq",
+          "value": "bb39334b089e2861ec26b6c700c74951e8293e61268b5acef3b64b93fc73fe76",
+          "source": "models/deepseek41/README.md#qualification"
         }
       ]
     },

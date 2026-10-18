@@ -370,9 +370,10 @@ fn fill(tensor: &Tensor, seed: u64, out: &mut impl Write) -> std::io::Result<()>
     out.write_all(&chunk)
 }
 
-/// Writes `tensors` with values from `seed` as `model.safetensors` and its
-/// index into `dir`, and returns the payload bytes.
-pub fn write(dir: &Path, tensors: &[Tensor], seed: u64) -> Result<u64, String> {
+/// The single-file checkpoint's safetensors header (padded to 8 bytes, as
+/// written) and its `model.safetensors.index.json`, with every tensor laid
+/// out back to back in order, and the payload bytes.
+pub fn header(tensors: &[Tensor]) -> Result<(Vec<u8>, Vec<u8>, u64), String> {
     let mut header = serde_json::Map::new();
     let mut weight_map = serde_json::Map::new();
     let mut offset = 0_u64;
@@ -383,13 +384,26 @@ pub fn write(dir: &Path, tensors: &[Tensor], seed: u64) -> Result<u64, String> {
             serde_json::json!({"dtype": tensor.dtype, "shape": tensor.shape,
                 "data_offsets": [offset, end]}),
         );
-        weight_map.insert(tensor.name.clone(), "model.safetensors".into());
+        weight_map.insert(tensor.name.clone(), FILE.into());
         offset = end;
     }
     let mut header = serde_json::to_vec(&header).map_err(|e| e.to_string())?;
     header.resize(header.len().next_multiple_of(8), b' ');
+    let index = serde_json::json!({"metadata": {"total_size": offset}, "weight_map": weight_map});
+    let index = serde_json::to_vec_pretty(&index).map_err(|e| e.to_string())?;
+    Ok((header, index, offset))
+}
+
+/// The one safetensors file a written checkpoint holds.
+pub const FILE: &str = "model.safetensors";
+
+/// Writes `tensors` at `dir` as one safetensors file with its index; each
+/// tensor's values come from `seed` and its name. Returns the payload
+/// bytes.
+pub fn write(dir: &Path, tensors: &[Tensor], seed: u64) -> Result<u64, String> {
+    let (header, index, offset) = header(tensors)?;
     let io = |e: std::io::Error| e.to_string();
-    let mut file = BufWriter::new(File::create(dir.join("model.safetensors")).map_err(io)?);
+    let mut file = BufWriter::new(File::create(dir.join(FILE)).map_err(io)?);
     file.write_all(&(header.len() as u64).to_le_bytes())
         .map_err(io)?;
     file.write_all(&header).map_err(io)?;
@@ -397,12 +411,7 @@ pub fn write(dir: &Path, tensors: &[Tensor], seed: u64) -> Result<u64, String> {
         fill(tensor, seed, &mut file).map_err(io)?;
     }
     file.flush().map_err(io)?;
-    let index = serde_json::json!({"metadata": {"total_size": offset}, "weight_map": weight_map});
-    std::fs::write(
-        dir.join("model.safetensors.index.json"),
-        serde_json::to_vec_pretty(&index).map_err(|e| e.to_string())?,
-    )
-    .map_err(io)?;
+    std::fs::write(dir.join("model.safetensors.index.json"), index).map_err(io)?;
     Ok(offset)
 }
 

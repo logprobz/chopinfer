@@ -48,7 +48,7 @@ fn latent_values(capacity: u32, width: usize) -> Vec<f32> {
         })
         .collect()
 }
-fn rotated_state<'a>(query: LatentQueryRope, capacity: u32) -> Spec<'a> {
+fn rotated_state<'a>(query: LatentQueryRope, values: Vec<f32>) -> Spec<'a> {
     let (heads, width, tail) = (
         query.heads as usize,
         query.latent as usize,
@@ -57,7 +57,7 @@ fn rotated_state<'a>(query: LatentQueryRope, capacity: u32) -> Spec<'a> {
     Spec::state_updating(
         DType::F32,
         (Rows::Live, heads * width),
-        f32_bytes(&latent_values(capacity, heads * width)),
+        f32_bytes(&values),
         Write::Map(Box::new(|_, _| WriteMap::of(DType::F32).none())),
         move |_, live| {
             Ok((0..live as usize * heads)
@@ -97,13 +97,29 @@ pub fn query_case_with_table<'a>(
     prepared: Prepared<LatentQueryRopeBuffers<View>>,
     cos_sin: Vec<f32>,
 ) -> LabResult<OpCase<'a>> {
+    query_case_with_values(
+        query,
+        capacity,
+        prepared,
+        cos_sin,
+        latent_values(capacity, query.heads as usize * query.latent as usize),
+    )
+}
+
+fn query_case_with_values<'a>(
+    query: LatentQueryRope,
+    capacity: u32,
+    prepared: Prepared<LatentQueryRopeBuffers<View>>,
+    cos_sin: Vec<f32>,
+    values: Vec<f32>,
+) -> LabResult<OpCase<'a>> {
     if cos_sin.len() != capacity as usize * query.rotary as usize {
         return Err("query fixture table shape mismatch".into());
     }
     let width = query.heads as usize * query.latent as usize;
     let tail = query.rotary as usize;
     let roles = LatentQueryRopeBuffers {
-        query: rotated_state(query, capacity),
+        query: rotated_state(query, values),
         native_q: Spec::output(DType::Bf16, (Rows::Live, width)),
         cos_sin: Spec::input(DType::F32, (Rows::Live, tail), f32_bytes(&cos_sin)),
         live_rows: Spec::live(),
@@ -128,6 +144,58 @@ pub fn query_case_with_table<'a>(
             ])
         }),
     )
+}
+
+fn pairing_values(query: LatentQueryRope) -> Vec<f32> {
+    let mut values = vec![0.0; query.heads as usize * query.latent as usize];
+    for head in values.chunks_exact_mut(query.latent as usize) {
+        head[448] = 1.0;
+        head[480] = 2.0;
+    }
+    values
+}
+
+/// Exact quarter-turn inputs separate adjacent pairs from split-half pairs.
+pub fn query_pairing_regression<'a>() -> Required<'a> {
+    let query = LatentQueryRope {
+        heads: 3,
+        latent: 512,
+        rotary: 64,
+    };
+    Required::new(
+        "query adjacent-pair regression",
+        Need::rows(1),
+        move |b, n| b.latent_query_rope(&query, n),
+        move |op| {
+            query_case_with_values(query, 1, op, [0.0, 1.0].repeat(32), pairing_values(query))
+        },
+    )
+    .required()
+}
+
+#[cfg(test)]
+mod pairing_tests {
+    use super::*;
+    #[test]
+    fn quarter_turn_distinguishes_adjacent_and_split_half_pairs() {
+        let query = LatentQueryRope {
+            heads: 3,
+            latent: 512,
+            rotary: 64,
+        };
+        let values = pairing_values(query);
+        let (rotated, _) = oracle::query_rope_f32(query, &values, &[0.0, 1.0].repeat(32)).unwrap();
+        for head in 0..query.heads as usize {
+            let at = head * 512;
+            assert_eq!(rotated[at + 448], 0.0);
+            assert_eq!(rotated[at + 449], 1.0);
+            assert_eq!(rotated[at + 480], 0.0);
+            assert_eq!(rotated[at + 481], 2.0);
+            let split_half = values[at + 448] * 0.0 - values[at + 480] * 1.0;
+            assert_eq!(split_half, -2.0);
+            assert_ne!(rotated[at + 448], split_half);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -671,6 +739,13 @@ pub fn device_mutant<'a>(mutation: kernels_sm120::latent::glue::Mutation) -> Req
         addressing: keys.addressing,
     };
     match mutation {
+        Mutation::SplitHalf => Required::new(
+            format!("mutant {mutation:?}"),
+            Need::rows(1),
+            move |b, n| b.latent_query_rope(&q, n).map(|op| mutant(op, mutation)),
+            move |op| query_case_with_values(q, 1, op, [0.0, 1.0].repeat(32), pairing_values(q)),
+        )
+        .required(),
         Mutation::WindowEdge => Required::new(
             format!("mutant {mutation:?}"),
             Need::rows(17),

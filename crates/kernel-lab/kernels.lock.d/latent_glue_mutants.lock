@@ -78,6 +78,38 @@
         "allowed_local_bytes": 0
       },
       {
+        "symbol": "chop_latent_glue_mutant_SplitHalf_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "values",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "native_q",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "heads"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
         "symbol": "chop_latent_glue_mutant_DoubleRound_v1",
         "params": [
           {
@@ -196,7 +228,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "9b780a0c4f97e0297cd8e725d24f7667d0948319d4da83501b25e7392055a965",
+    "cubin_sha256": "ed3ca20e820768eb812694fc2fc8ad6052df4b305afa0655c83193dd56bd1e86",
     "resources": [
       {
         "symbol": "chop_latent_glue_mutant_WrongTail_v1",
@@ -210,6 +242,15 @@
       {
         "symbol": "chop_latent_glue_mutant_ReversedPair_v1",
         "registers": 16,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_latent_glue_mutant_SplitHalf_v1",
+        "registers": 14,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,

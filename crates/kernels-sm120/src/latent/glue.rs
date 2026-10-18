@@ -121,14 +121,16 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> CubinSpec {
 pub enum Mutation {
     WrongTail,
     ReversedPair,
+    SplitHalf,
     DoubleRound,
     WindowEdge,
     InputRound,
 }
 impl Mutation {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::WrongTail,
         Self::ReversedPair,
+        Self::SplitHalf,
         Self::DoubleRound,
         Self::WindowEdge,
         Self::InputRound,
@@ -151,6 +153,7 @@ impl Mutation {
         spec.body = match self {
             Self::WrongTail => spec.body.replace("rotate<true>", "rotate<true,1>"),
             Self::ReversedPair => spec.body.replace("rotate<true>", "rotate<true,2>"),
+            Self::SplitHalf => spec.body.replace("rotate<true>", "rotate_split_half"),
             Self::DoubleRound => spec.body.replace("rotate<true>", "rotate<true,3>"),
             Self::WindowEdge => spec.body.replace("::keys(", "::keys<true>("),
             Self::InputRound => spec.body.replace("::norm_rotate(", "::norm_rotate<true>("),

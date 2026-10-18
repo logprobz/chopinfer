@@ -44,6 +44,7 @@ fn required() -> Vec<Required<'static>> {
             )
         })
         .collect::<Vec<_>>();
+    cases.push(latent_glue::query_pairing_regression());
     for addressing in [
         WindowAddressing::Circular { slots: 136 },
         WindowAddressing::Staged { slots: 160 },
@@ -168,7 +169,7 @@ fn all_latent_glue_cases_prepare_and_declare() {
     };
     check(
         &kit::conform(&backend(), &modules, None, &required()).unwrap(),
-        14,
+        15,
         false,
     );
     for mutation in Mutation::ALL {
@@ -193,6 +194,40 @@ fn all_latent_glue_cases_prepare_and_declare() {
         );
     }
 }
+fn numerical_failure(mutation: Mutation, error: &str) -> bool {
+    if error.contains("CUDA") || error.contains("trap") {
+        return false;
+    }
+    match mutation {
+        Mutation::WindowEdge => {
+            error.contains("window-key oracle: visible positions or order differ")
+        }
+        Mutation::WrongTail => {
+            error.contains("query")
+                && (error.contains("outside the write map")
+                    || error.contains("outside the written state changed")
+                    || error.contains("the reference"))
+        }
+        Mutation::ReversedPair | Mutation::SplitHalf | Mutation::DoubleRound => {
+            (error.contains("query byte") || error.contains("native_q byte"))
+                && error.contains("the reference")
+        }
+        Mutation::InputRound => error.contains("latent byte") && error.contains("the reference"),
+    }
+}
+
+#[test]
+fn wrong_tail_accepts_state_write_rejection_but_never_device_faults() {
+    let error = "query eager: byte 1664 outside the written state changed";
+    assert!(numerical_failure(Mutation::WrongTail, error));
+    for fault in ["CUDA", "trap"] {
+        assert!(!numerical_failure(
+            Mutation::WrongTail,
+            &format!("{error}: {fault}")
+        ));
+    }
+}
+
 #[test]
 fn latent_glue_passes_poison_graph_pdl_and_controls_on_gpu() {
     let result = kernel_harness::gpu_test(256 << 20, |session| {
@@ -208,7 +243,7 @@ fn latent_glue_passes_poison_graph_pdl_and_controls_on_gpu() {
             "latent-glue",
             BTreeMap::from([("report".into(), report.json())]),
         )?;
-        check(&report, 14, true);
+        check(&report, 15, true);
         for (mutation, reason) in [
             (KeyMutation::Outside, "outside slot domain"),
             (KeyMutation::Stale, "visible positions or order differ"),
@@ -252,26 +287,9 @@ fn latent_glue_passes_poison_graph_pdl_and_controls_on_gpu() {
             let OpResult::Prepared { checks, .. } = &report.ops[0].result else {
                 panic!("mutant refused")
             };
-            let numerical_failure = |error: &str| match mutation {
-                Mutation::WindowEdge => {
-                    error.contains("window-key oracle: visible positions or order differ")
-                }
-                Mutation::WrongTail => {
-                    error.contains("query")
-                        && (error.contains("outside the write map")
-                            || error.contains("the reference"))
-                }
-                Mutation::ReversedPair | Mutation::DoubleRound => {
-                    (error.contains("query byte") || error.contains("native_q byte"))
-                        && error.contains("the reference")
-                }
-                Mutation::InputRound => {
-                    error.contains("latent byte") && error.contains("the reference")
-                }
-            };
             assert!(
                 checks.iter().any(|c| c.name == "conformance"
-                    && matches!(&c.outcome,Outcome::Failed(error) if numerical_failure(error))),
+                    && matches!(&c.outcome,Outcome::Failed(error) if numerical_failure(mutation, error))),
                 "mutant escaped: {checks:?}"
             );
             for c in checks {

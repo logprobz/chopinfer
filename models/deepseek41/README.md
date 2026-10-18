@@ -109,8 +109,26 @@ native KV layout, which `/health` reports as `mixed` (what
   against the stored baseline, and the absolute GSM8K floor is
   spec_verify's.
 - frontend_goldens: the served tokenizer agrees with
-  `fixtures/deepseek41/frontend/tokenizer-golden.json`; chat renders join
-  with their captures.
+  the 49 rows of `fixtures/deepseek41/frontend/tokenizer-golden.json`.
+  Its live input, `$CHOPINFER_DATA/deepseek41/frontend-agentic/tokenizer-golden.json`,
+  materializes the five checkpoint-file texts after checking their SHA-256
+  and re-encoding them with the pinned tokenizer; every token ID stays the
+  same. The 61 `chat-renders.json` rows use the fixed conversations from
+  `fixtures/mimo26/capture/conversations.py`, with tool arguments serialized
+  as the live capture sends them. `tools.refrun.frontend_corpus.Model`,
+  `template_source` and `model_reference` render and tokenize them on CPU
+  through `frontend_cases.py` and the pinned checkpoint encoder. API reads
+  the same `tools-00` conversation; the frontend gate requires equality
+  for both the tokenizer and chat files.
+- prefix_exact: the `deepseek41` policy uses the teacher reference's schema,
+  64-token pages and a 64-token prefill granule from
+  `contract/src/serving.rs`. It checks page and prompt-end anchors, image
+  isolation and continuations after a hit, as the shared prefix check does
+  for GLM, MiMo and Qwen. The `anchor_in_window` and `anchor_past_window`
+  report groups split at Flash's 128-token sliding window
+  (`geometries/flash.json`); `bundle/src/instance/prefix.rs` captures and
+  restores those rings and compressor tails. These settings describe the
+  source contract, not a served result.
 - determinism: the AR and DSpark records of one run are identical; it runs
   once the DSpark profile is declared.
 - kv_offload_plain and kv_offload_pressure: native-KV offload with a 16 GiB

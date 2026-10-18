@@ -874,6 +874,8 @@
         "{run}/capture",
         "--required-file",
         "tokenizer-golden.json",
+        "--required-file",
+        "chat-renders.json",
         "--json",
         "{run}/frontend.json"
       ],
@@ -889,6 +891,15 @@
           "op": "eq",
           "value": true,
           "source": "docs/check-kinds.md"
+        },
+        {
+          "path": [
+            "chat-renders.json",
+            "agrees"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/check-kinds.md#frontend_goldens-frontend_goldensv1"
         }
       ]
     },
@@ -1138,7 +1149,11 @@
     }
   },
   "inputs": {
-    "tokenizer_goldens": "fixtures/deepseek41/frontend/tokenizer-golden.json",
+    "chat_renders": "fixtures/deepseek41/frontend/chat-renders.json",
+    "tokenizer_goldens": {
+      "env": "CHOPINFER_DATA",
+      "path": "deepseek41/frontend-agentic/tokenizer-golden.json"
+    },
     "needle": {
       "env": "CHOPINFER_DATA",
       "path": "deepseek41/needle/prompts.json"
@@ -1236,6 +1251,20 @@
       "served_model_name": "DeepSeek-V4.1-Flash",
       "source_lock_sha256": "e07153915448929eee0310cb97f76acb5d79555f85459cbfba604f8e5ef88606",
       "checkpoint_identity": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b"
+    },
+    "prefix": {
+      "family": "deepseek41",
+      "prompt_end": true,
+      "media": true,
+      "acceptance": true,
+      "block_tokens": 64,
+      "prefill_granule": 64,
+      "anchor_boundary": 128,
+      "anchor_labels": [
+        "anchor_in_window",
+        "anchor_past_window"
+      ],
+      "reference_schema": "chopinfer.deepseek41.teacher-reference.v1"
     }
   },
   "receipts": {

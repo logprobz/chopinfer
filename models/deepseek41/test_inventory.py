@@ -34,6 +34,31 @@ class DeepseekInventory(ModelRequirements):
         self.assertEqual((pin['repository'], pin['revision']),
                          ('deepseek-ai/DeepSeek-V4.1-Flash-1017', '1bae0e1088993b9b82de08f59de5be5a34e42170'))
 
+    def test_agentic_prefix_capture_has_its_policy(self):
+        sys.path.insert(0, str(ROOT / 'tools' / 'qual'))
+        from unittest.mock import patch
+        import prefix_exact
+        facts = self.qual()
+        with patch.object(prefix_exact, 'qualification_config', return_value=facts):
+            prefix_exact.validate_policy({'schema': facts['references']['teacher']['schema']})
+            self.assertEqual(prefix_exact.anchor_group(127), 'anchor_in_window')
+            self.assertEqual(prefix_exact.anchor_group(128), 'anchor_past_window')
+            self.assertEqual(prefix_exact.prefix_policy()['block_tokens'], 64)
+            self.assertEqual(prefix_exact.prefix_policy()['prefill_granule'], 64)
+            for check in ('prompt_end', 'media', 'acceptance'):
+                self.assertIs(prefix_exact.prefix_policy()[check], True)
+
+    def test_agentic_api_has_a_locked_tool_conversation(self):
+        facts = self.qual()
+        path = facts['inputs']['chat_renders']
+        rows = json.loads((ROOT / path).read_text())
+        [tool] = [row for row in rows if row['id'] == 'tools-00']
+        self.assertTrue(tool['messages'])
+        self.assertTrue(tool['tools'])
+        self.assertTrue(tool['token_ids'])
+        lock = json.loads((ROOT / 'models/deepseek41/qual-references.lock.json').read_text())
+        self.assertEqual(lock['entries']['chat_renders']['path'], path)
+
     def test_the_kernel_test_crate_never_links_kernel_lab(self):
         # The model tests its kernels on kernel-harness from its lab crate,
         # by every edge including the dev edges its tests build.

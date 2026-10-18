@@ -1,11 +1,21 @@
 {
   "entries": {
+    "chat_renders": {
+      "directory": false,
+      "members": {
+        ".": "32f5d64d7c74e562b91d0bb0e761d146e86094264f6551c64bf068db6242e76e"
+      },
+      "path": "fixtures/deepseek41/frontend/chat-renders.json"
+    },
     "tokenizer_goldens": {
       "directory": false,
       "members": {
-        ".": "68ed31564260e7013fa284531dfe74ae449d8a7e2bd2b042687a2f7d2ac96891"
+        ".": "9e7a837ae2185511a4a93baf5808a6e4a02fc402bce034da4c8ec59825ede5fc"
       },
-      "path": "fixtures/deepseek41/frontend/tokenizer-golden.json"
+      "path": {
+        "env": "CHOPINFER_DATA",
+        "path": "deepseek41/frontend-agentic/tokenizer-golden.json"
+      }
     },
     "needle": {
       "directory": false,
@@ -54,9 +64,9 @@
     "frontend_capture": {
       "directory": true,
       "members": {
-        "corpus-coverage.json": "b4886d292bdc9ba3410066e0b3d856abfa000b2c865a33e603af51c80b589457",
-        "corpus-rounds.json": "412394789bae50eb08a418d00e03b4084db3641ef80c1a3255104a5c34e72899",
-        "corpus.json": "444e45c8b82c0a13b8d8dac12d0761e08159f1b4ebe22e9344bf083c3d72aa11",
+        "corpus-coverage.json": "ea2002c8d11ea4e1c0c055363c96bf50c805a4068fa1c13c7459220f4f94519e",
+        "corpus-rounds.json": "a12c814a2ec083de6cc0f7cd406665cec10f1d3328e957b70c695b369483e222",
+        "corpus.json": "ebbe6204917beaed2c093360330dc85d521ac2a5c9330a9c11b8443fec5e2e68",
         "encoder-tests/LICENSE": "f2c6c602815669d292889e5be8c802f2ed950653b77999b1584e8e6aed25d040",
         "encoder-tests/README.md": "d0ed3e2f6258c01a41cc6a73781889293a124250311839adcf659c494cbd584b",
         "encoder-tests/test_input_1.json": "6a5a86694e47169c8f0c9243a7e24cc5db05447be0d3d3a9891034e913c518de",
@@ -69,7 +79,8 @@
         "encoder-tests/test_output_3.txt": "cf2b801d0738c88abb691bf4a096000c0e0737faab8a54a4ba5243c5513a3711",
         "encoder-tests/test_output_4.txt": "94433b68370dcc69fa61efc5011b5d0e28685e4716fee1ee77fbbfc0c9935b54",
         "encoder-tests/test_output_5.txt": "4d673091746553d1cb2e40a3fc01dc09a7c53c40627096a3e49c97a269a81f64",
-        "tokenizer-golden.json": "68ed31564260e7013fa284531dfe74ae449d8a7e2bd2b042687a2f7d2ac96891"
+        "tokenizer-golden.json": "68ed31564260e7013fa284531dfe74ae449d8a7e2bd2b042687a2f7d2ac96891",
+        "chat-renders.json": "32f5d64d7c74e562b91d0bb0e761d146e86094264f6551c64bf068db6242e76e"
       },
       "path": "fixtures/deepseek41/frontend"
     },
@@ -163,13 +174,7 @@
     "26c8c1add533868bd8d3875cb7ddba3b8c2f0d47f1c6cb79127beb704b1d596f": {
       "schema": "legacy-json-array"
     },
-    "412394789bae50eb08a418d00e03b4084db3641ef80c1a3255104a5c34e72899": {
-      "schema": "legacy-json-array"
-    },
     "4207613f15c79b95ad92074bdb8b2b81c5ce9cfdf15b7a67f58ded6bb3ec4fa5": {
-      "schema": "legacy-json-array"
-    },
-    "444e45c8b82c0a13b8d8dac12d0761e08159f1b4ebe22e9344bf083c3d72aa11": {
       "schema": "legacy-json-array"
     },
     "4c3890a7bc042ec6396d98d024a39a73cdcffbe1d0253e852da0c35e65296f3e": {
@@ -212,9 +217,6 @@
       },
       "schema": "chopinfer.refrun.workload.v1"
     },
-    "b4886d292bdc9ba3410066e0b3d856abfa000b2c865a33e603af51c80b589457": {
-      "schema": "chop-frontend-corpus-coverage-v1"
-    },
     "cf2b801d0738c88abb691bf4a096000c0e0737faab8a54a4ba5243c5513a3711": {
       "schema": "legacy-txt"
     },
@@ -240,6 +242,21 @@
       "schema": "chopinfer.deepseek41.teacher-reference.v1"
     },
     "fd985cda88e8640b8e2404d8e659f7006cad204eb41f73c9e6662b1f218c01aa": {
+      "schema": "legacy-json-array"
+    },
+    "32f5d64d7c74e562b91d0bb0e761d146e86094264f6551c64bf068db6242e76e": {
+      "schema": "legacy-json-array"
+    },
+    "9e7a837ae2185511a4a93baf5808a6e4a02fc402bce034da4c8ec59825ede5fc": {
+      "schema": "legacy-json-array"
+    },
+    "a12c814a2ec083de6cc0f7cd406665cec10f1d3328e957b70c695b369483e222": {
+      "schema": "legacy-json-array"
+    },
+    "ea2002c8d11ea4e1c0c055363c96bf50c805a4068fa1c13c7459220f4f94519e": {
+      "schema": "chop-frontend-corpus-coverage-v1"
+    },
+    "ebbe6204917beaed2c093360330dc85d521ac2a5c9330a9c11b8443fec5e2e68": {
       "schema": "legacy-json-array"
     }
   },

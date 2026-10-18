@@ -14,7 +14,7 @@
     "defines": [],
     "entries": [
       {
-        "symbol": "chop_position_query_h3_d160_rotate_v2",
+        "symbol": "chop_position_query_h3_d160_rotate_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -40,6 +40,19 @@
             "kind": "DevicePointer",
             "name": "rotated",
             "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          },
+          {
+            "kind": "U32",
+            "name": "table_positions"
           }
         ],
         "max_threads": 128,
@@ -47,7 +60,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_position_query_h32_d128_rotate_v2",
+        "symbol": "chop_position_query_h32_d128_rotate_v3",
         "params": [
           {
             "kind": "DevicePointer",
@@ -73,6 +86,19 @@
             "kind": "DevicePointer",
             "name": "rotated",
             "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          },
+          {
+            "kind": "U32",
+            "name": "table_positions"
           }
         ],
         "max_threads": 128,
@@ -152,12 +178,104 @@
         "max_threads": 32,
         "min_blocks": 1,
         "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_position_query_h3_d160_rotate_ignore_bounds_v3",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float2"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "rotated",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          },
+          {
+            "kind": "U32",
+            "name": "table_positions"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_position_query_h32_d128_rotate_ignore_bounds_v3",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float2"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "rotated",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          },
+          {
+            "kind": "U32",
+            "name": "table_positions"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "fb8c977f60cea2911338a0375cbed72fb21741950d8cb06925752ed31de01926",
+    "cubin_sha256": "eef8aadff368e5bb1a447b47835c549915ab510af5cd59d0f00f050d5fb58c84",
     "resources": [
       {
-        "symbol": "chop_position_query_h3_d160_rotate_v2",
+        "symbol": "chop_position_query_h3_d160_rotate_v3",
         "registers": 38,
         "shared_static_bytes": 0,
         "local_bytes": 0,
@@ -166,7 +284,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_position_query_h32_d128_rotate_v2",
+        "symbol": "chop_position_query_h32_d128_rotate_v3",
         "registers": 40,
         "shared_static_bytes": 0,
         "local_bytes": 0,
@@ -190,6 +308,24 @@
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_position_query_h3_d160_rotate_ignore_bounds_v3",
+        "registers": 38,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_position_query_h32_d128_rotate_ignore_bounds_v3",
+        "registers": 40,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
         "min_blocks": 1
       }
     ]

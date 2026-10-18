@@ -9,16 +9,26 @@ fn report(session: Option<&kernel_lab::Session>) -> kernel_lab::LabResult<kit::R
     for quantizer in family::quantizers() {
         backend = backend.with_block_quantize(quantizer);
     }
-    kit::conform(
-        &backend,
-        &kernel_lab::kit::LabModules,
-        session,
-        &position_query::family(&family::queries()),
-    )
+    kit::conform(&backend, &kernel_lab::kit::LabModules, session, &cases())
+}
+
+fn cases() -> Vec<kit::Required<'static>> {
+    let queries = family::queries();
+    let mut cases = position_query::family(&queries);
+    for q in queries {
+        for kind in [
+            position_query::Witness::Bounds,
+            position_query::Witness::Extreme,
+            position_query::Witness::Prior,
+        ] {
+            cases.push(position_query::witness(q, kind));
+        }
+    }
+    cases
 }
 
 fn check(report: &kit::Report, gpu: bool) {
-    assert_eq!(report.prepared().len(), 2, "{:#?}", report.ops);
+    assert_eq!(report.prepared().len(), 8, "{:#?}", report.ops);
     assert!(report.failures().is_empty(), "{:#?}", report.failures());
     if gpu {
         for op in &report.ops {
@@ -59,7 +69,7 @@ fn position_query_cubin_has_f32_rotation_and_no_tf32_spills_or_stack() {
     std::fs::write(&path, kernel_lab::cubin(family::CUBIN).unwrap()).unwrap();
     let specs = family::cubins();
     let resources = kernel_build::audit_cubin(&toolchain, &specs[0], &path).unwrap();
-    assert_eq!(resources.len(), 4);
+    assert_eq!(resources.len(), 6);
     for entry in resources {
         assert_eq!(
             (entry.stack_bytes, entry.local_bytes),
@@ -82,10 +92,10 @@ fn position_query_cubin_has_f32_rotation_and_no_tf32_spills_or_stack() {
         for required in ["PREEXIT", "ACQBULK"] {
             assert!(body.contains(required), "{} lacks {required}", spec.symbol);
         }
-        for forbidden in ["TF32", "LDL", "STL"] {
+        for forbidden in ["TF32", "LDL", "STL", "TRAP"] {
             assert!(!body.contains(forbidden), "{} has {forbidden}", spec.symbol);
         }
-        if spec.symbol.ends_with("_rotate_v2") {
+        if spec.symbol.contains("_rotate") {
             assert!(
                 !body.contains("BF16"),
                 "rotation prematurely rounds to BF16"
@@ -107,4 +117,77 @@ fn position_query_cases_pass_on_a_gpu() {
         Ok(())
     })
     .expect("query preparation GPU conformance");
+}
+
+struct IgnoreBounds {
+    inner: Sm120,
+}
+struct IgnoreBoundsOp {
+    inner: kernel_core::backend::Prepared<
+        kernel_core::pooled_indexer::PositionQueryBuffers<kernel_core::backend::View>,
+    >,
+    info: kernel_core::backend::OpInfo,
+}
+fn ignored(symbol: &str) -> String {
+    symbol.replace("_rotate_v3", "_rotate_ignore_bounds_v3")
+}
+impl
+    kernel_core::backend::PreparedOp<
+        kernel_core::pooled_indexer::PositionQueryBuffers<kernel_core::backend::View>,
+    > for IgnoreBoundsOp
+{
+    fn info(&self) -> &kernel_core::backend::OpInfo {
+        &self.info
+    }
+    fn launches(
+        &self,
+        b: &kernel_core::pooled_indexer::PositionQueryBuffers<kernel_core::backend::View>,
+        workspace: kernel_core::backend::View,
+        counts: kernel_core::backend::Counts,
+    ) -> Result<Vec<kernel_core::backend::Launch>, kernel_core::contract::Refusal> {
+        let mut launches = self.inner.launches(b, workspace, counts)?;
+        launches[0].symbol = ignored(&launches[0].symbol);
+        Ok(launches)
+    }
+}
+impl kernel_core::backend::Backend for IgnoreBounds {
+    fn name(&self) -> &str {
+        "query-bounds-control"
+    }
+    fn position_indexer_query(
+        &self,
+        q: &kernel_core::pooled_indexer::PositionIndexerQuery,
+        need: kernel_core::backend::Need,
+    ) -> Result<
+        kernel_core::backend::Prepared<
+            kernel_core::pooled_indexer::PositionQueryBuffers<kernel_core::backend::View>,
+        >,
+        kernel_core::backend::Refused,
+    > {
+        let inner = self.inner.position_indexer_query(q, need)?;
+        let mut info = inner.info().clone();
+        info.symbols[0].0 = ignored(&info.symbols[0].0);
+        Ok(Box::new(IgnoreBoundsOp { inner, info }))
+    }
+}
+#[test]
+fn position_query_bounds_mutant_fails_on_a_gpu() {
+    kernel_lab::gpu_test(1 << 30, |session| {
+        let mut inner=Sm120::new().with_position_queries(family::entries());
+        for q in family::quantizers() { inner=inner.with_block_quantize(q); }
+        let mutant=IgnoreBounds {inner};
+        for query in family::queries() {
+            for kind in [position_query::Witness::Bounds,position_query::Witness::Extreme] {
+                let cases=vec![position_query::witness(query,kind)];
+                let report=kit::conform(&mutant,&kernel_lab::kit::LabModules,Some(session),&cases)?;
+                assert_eq!(report.prepared().len(),1);
+                assert!(report.ops.iter().any(|op| {
+                    let OpResult::Prepared { checks,.. }=&op.result else { return false; };
+                    checks.iter().any(|c| c.name=="conformance" && matches!(&c.outcome,Outcome::Failed(reason) if reason.contains("quantizer_status") && reason.contains("byte")))
+                }),"bounds mutant missed status assertion: {report:?}");
+                session.receipt(&format!("position-query-control-h{}-{kind:?}",query.heads), std::collections::BTreeMap::from([("report".into(),report.json())]))?;
+            }
+        }
+        Ok(())
+    }).expect("position query bounds control");
 }

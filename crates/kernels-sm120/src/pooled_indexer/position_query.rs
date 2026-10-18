@@ -61,7 +61,7 @@ impl Entry {
     }
 
     pub fn symbol(&self) -> String {
-        format!("chop_position_query_{}_rotate_v2", self.name)
+        format!("chop_position_query_{}_rotate_v3", self.name)
     }
 
     pub fn guarantees(&self) -> Invariance {
@@ -69,22 +69,44 @@ impl Entry {
     }
 
     pub fn spec(&self) -> Result<EntrySpec, Refusal> {
+        self.spec_with_control(false)
+    }
+
+    /// Lab-only bounds-check omission. Invalid positions clamp to zero,
+    /// avoiding an out-of-range read while exposing missing error flags.
+    pub fn ignored_bounds_spec(&self) -> Result<EntrySpec, Refusal> {
+        self.spec_with_control(true)
+    }
+
+    fn spec_with_control(&self, ignore_bounds: bool) -> Result<EntrySpec, Refusal> {
         self.validate()?;
         let ptr = |name: &str, cxx_type: &str| EntryParam::DevicePointer {
             name: name.into(),
             cxx_type: cxx_type.into(),
         };
         Ok(EntrySpec::new(
-            self.symbol(),
+            if ignore_bounds {
+                self.symbol()
+                    .replace("_rotate_v3", "_rotate_ignore_bounds_v3")
+            } else {
+                self.symbol()
+            },
             vec![
                 ptr("input", "const float"),
                 ptr("cos_sin", "const float2"),
                 ptr("positions", "const int32_t"),
                 ptr("live_rows", "const uint32_t"),
                 ptr("rotated", "float"),
+                ptr("status", "uint32_t"),
+                EntryParam::U64 {
+                    name: "status_row_offset".into(),
+                },
+                EntryParam::U32 {
+                    name: "table_positions".into(),
+                },
             ],
             format!(
-                "chop::position_query::rotate<{},{},{}>(input,cos_sin,positions,live_rows,rotated);",
+                "chop::position_query::rotate<{},{},{},{ignore_bounds}>(input,cos_sin,positions,live_rows,rotated,status,status_row_offset,table_positions);",
                 self.heads, self.head_dim, self.rotary_dim
             ),
             THREADS,

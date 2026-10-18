@@ -10,7 +10,9 @@ use crate::{
 use kernel_core::backend::{Counts, Launch, Need, OpInfo, Prepared, PreparedOp, View};
 use kernel_core::contract::{DType, Refusal};
 use kernel_core::oracle::{OracleOutput, check_numeric};
-use kernel_core::pooled_indexer::{PositionIndexerQuery, PositionQueryBuffers};
+use kernel_core::pooled_indexer::{
+    PositionIndexerQuery, PositionQueryBuffers, position_query_status,
+};
 use kernel_core::position_indexer_oracle::rotate_tail;
 use std::{cell::RefCell, rc::Rc};
 
@@ -65,9 +67,35 @@ pub fn family(queries: &[PositionIndexerQuery]) -> Vec<Required<'static>> {
         .collect()
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum Witness {
+    Valid,
+    Bounds,
+    Extreme,
+    Prior,
+}
+
+pub fn witness(query: PositionIndexerQuery, kind: Witness) -> Required<'static> {
+    Required::new(
+        format!("position query h{} {kind:?}", query.heads),
+        Need::rows(CAPACITY),
+        move |backend, need| backend.position_indexer_query(&query, need),
+        move |op| case_with(query, op, kind),
+    )
+    .required()
+}
+
 pub fn case(
     query: PositionIndexerQuery,
     prepared: Prepared<PositionQueryBuffers<View>>,
+) -> LabResult<OpCase<'static>> {
+    case_with(query, prepared, Witness::Valid)
+}
+
+fn case_with(
+    query: PositionIndexerQuery,
+    prepared: Prepared<PositionQueryBuffers<View>>,
+    kind: Witness,
 ) -> LabResult<OpCase<'static>> {
     let width = (query.heads * query.head_dim) as usize;
     let dim = query.head_dim as usize;
@@ -82,8 +110,28 @@ pub fn case(
         head[dim - tail] = 1.0038;
         head[dim - tail + 1] = 0.8164;
     }
+    let positions = match kind {
+        Witness::Bounds => [0, -1, TABLE_POSITIONS as i32, TABLE_POSITIONS as i32 - 1],
+        Witness::Extreme => [0, i32::MIN, i32::MAX, TABLE_POSITIONS as i32 - 1],
+        _ => [0, 2, 1, 3],
+    };
+    let prior = match kind {
+        Witness::Prior => vec![0, 4, 128, 0],
+        Witness::Bounds => vec![0, 0, 4, 0],
+        Witness::Extreme => vec![0, 128, 0, 0],
+        Witness::Valid => vec![0; CAPACITY as usize],
+    };
+    // Invalid rows must be zeroed before reading these operands, otherwise
+    // the quantizer would add NONFINITE_INPUT instead of only the position bit.
+    for (row, &position) in positions.iter().enumerate() {
+        if position_query_status(position, TABLE_POSITIONS) != 0 {
+            q[row * width..(row + 1) * width].fill(f32::NAN);
+        }
+    }
     let table = (0..TABLE_POSITIONS as usize * tail / 2)
-        .flat_map(|i| [[0.8_f32, 0.6], [0.0, 1.0], [1.0, 0.0], [-0.6, 0.8]][i % 4])
+        .flat_map(|i| {
+            [[0.8_f32, 0.6], [0.0, 1.0], [1.0, 0.0], [-0.6, 0.8]][(i + i / (tail / 2)) % 4]
+        })
         .collect::<Vec<_>>();
     let f32_bytes = |values: &[f32]| values.iter().flat_map(|v| v.to_le_bytes()).collect();
     let roles = ObservedBuffers {
@@ -98,13 +146,10 @@ pub fn case(
             positions: Spec::input(
                 DType::I32,
                 (Rows::Live, 1),
-                [0_i32, 2, 1, 3]
-                    .into_iter()
-                    .flat_map(i32::to_le_bytes)
-                    .collect(),
+                positions.into_iter().flat_map(i32::to_le_bytes).collect(),
             ),
             live_rows: Spec::live(),
-            quantizer_status: super::block_quantize::status_role(&vec![0; CAPACITY as usize]),
+            quantizer_status: super::block_quantize::status_role(&prior),
             output: Spec::output(DType::Bf16, (Rows::Live, width)),
         },
         // A finite poison lets the quantizer run when the omission test
@@ -135,13 +180,33 @@ pub fn case(
             sum_abs_products: Vec::new(),
             reduction_lengths: Vec::new(),
         };
+        let mut flags = images.i32s("query.quantizer_status")?.into_iter().map(|v| v as u32).collect::<Vec<_>>();
+        let mut exact_rotation = vec![0.0_f32; live as usize * width];
         for (row, &position) in positions.iter().enumerate().take(live as usize) {
+            let invalid = position_query_status(position, TABLE_POSITIONS);
+            flags[row] |= invalid;
+            if invalid != 0 {
+                reference.values.extend(vec![0.0; width]);
+                reference.sum_abs_products.extend(vec![0.0; width]);
+                reference.reduction_lengths.extend(vec![0; width]);
+                continue;
+            }
             let start = position as usize * tail;
             let pairs = table[start..start + tail]
                 .chunks_exact(2)
                 .map(|p| [p[0], p[1]])
                 .collect::<Vec<_>>();
-            for head in input[row * width..(row + 1) * width].chunks_exact(dim) {
+            for (h, head) in input[row * width..(row + 1) * width].chunks_exact(dim).enumerate() {
+                let at = row * width + h * dim;
+                exact_rotation[at..at + dim].copy_from_slice(head);
+                for (pair, cs) in pairs.iter().enumerate() {
+                    let c = dim - tail + 2 * pair;
+                    let (a, b) = (head[c], head[c + 1]);
+                    // Match the previous rotation's separate RN multiplies
+                    // and add/subtract, with no fused multiply-add.
+                    exact_rotation[at + c] = a * cs[0] - b * cs[1];
+                    exact_rotation[at + c + 1] = a * cs[1] + b * cs[0];
+                }
                 let values = head.iter().map(|&v| f64::from(v)).collect::<Vec<_>>();
                 let head = rotate_tail(query, &values, &pairs).map_err(|e| e.0)?;
                 reference.values.extend(head.values);
@@ -163,10 +228,16 @@ pub fn case(
             let actual = values[..n].iter().map(|&v| f64::from(v)).collect::<Vec<_>>();
             check_numeric(&actual, &reference, DType::F32)
                 .map_err(|e| format!("F32 query tail rotation: {e:?}"))?;
+            for (i, (&actual, &expected)) in values[..n].iter().zip(&exact_rotation).enumerate() {
+                if actual.to_bits() != expected.to_bits() {
+                    return Err(format!("query rotation bits differ at {i}: {actual:?} versus {expected:?}"));
+                }
+            }
             *rotated.borrow_mut() = Some(values);
             Ok(())
         };
-        let quantizer = query.query_quantization().map_err(|e| e.0)?.format;
+        let quantizer = query.query_quantization().map_err(|e| e.0)?;
+        let quantizer_flags = flags.clone();
         let judge_quantization = move |bytes: &[u8]| -> LabResult<()> {
             let saved = saved.borrow();
             let values = saved
@@ -175,20 +246,14 @@ pub fn case(
             if live == 0 {
                 return Ok(());
             }
-            let expected = quantizer
-                .fake_quant(&values[..n], live as usize, width)
-                .map_err(|e| e.0)?;
-            let expected = expected
-                .iter()
-                .flat_map(|v| v.to_le_bytes())
-                .collect::<Vec<_>>();
-            if bytes.len() != CAPACITY as usize * width * 2 || bytes[..n * 2] != expected {
+            let (expected, _, _) = super::block_quantize::expected_rows(quantizer, values, &quantizer_flags, live)?;
+            if bytes.len() != CAPACITY as usize * width * 2 || bytes[..n * 2] != expected[..n * 2] {
                 return Err("query quantization differs from the shared quantizer on this run's F32 rotation".into());
             }
             Ok(())
         };
         Ok(vec![
-            ("query.quantizer_status".into(),Expected::Bits(vec![0;CAPACITY as usize*4])),
+            ("query.quantizer_status".into(),Expected::Bits(flags.iter().flat_map(|v| v.to_le_bytes()).collect())),
             ("rotated".into(), Expected::Judge(Box::new(judge_rotation))),
             (
                 "query.output".into(),

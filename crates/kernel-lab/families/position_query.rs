@@ -47,8 +47,11 @@ pub fn quantizers() -> Vec<block_quantize::Entry> {
 }
 
 pub fn cubins() -> Vec<CubinSpec> {
-    crate::declared(
-        &[CUBIN],
-        vec![position_query::cubin_spec(CUBIN, &entries(), &quantizers()).unwrap()],
-    )
+    let mut spec = position_query::cubin_spec(CUBIN, &entries(), &quantizers()).unwrap();
+    spec.entries.extend(
+        entries()
+            .iter()
+            .map(|entry| entry.ignored_bounds_spec().unwrap()),
+    );
+    crate::declared(&[CUBIN], vec![spec])
 }

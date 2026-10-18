@@ -6,7 +6,7 @@ use crate::pooled_indexer::position_query::Entry;
 use kernel_core::backend::{
     Backend, Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View,
 };
-use kernel_core::contract::{Refusal, Validate};
+use kernel_core::contract::{Argument, Refusal, Validate};
 use kernel_core::pooled_indexer::{PositionIndexerQuery, PositionQueryBuffers};
 use kernel_core::precision::quantizer::BlockQuantizeBuffers;
 
@@ -50,7 +50,7 @@ pub(super) fn prepare(
         kernel_build::digest(format!("{:?} {}", entry, quantizer.info().implementation).as_bytes());
     let mut info = OpInfo::new(
         format!(
-            "sm120.position-query.f32-tail-rope-mxfp4.v2#{}",
+            "sm120.position-query.f32-tail-rope-mxfp4.v3#{}",
             &digest[..16]
         ),
         chosen.guarantees.meet(quantizer.info().guarantees),
@@ -149,6 +149,9 @@ impl PreparedOp<PositionQueryBuffers<View>> for Query {
                 buffer(b.positions),
                 buffer(b.live_rows),
                 buffer(workspace),
+                buffer(b.quantizer_status),
+                Argument::U64(b.quantizer_status_row_offset),
+                Argument::U32(counts.positions),
             ],
         )];
         launches.extend(self.quantizer.launches(
@@ -234,7 +237,16 @@ mod tests {
         let (b, workspace, counts) = buffers();
         let launches = op.launches(&b, workspace, counts).unwrap();
         assert_eq!(launches.len(), 2);
-        assert_eq!(launches[0].symbol, "chop_position_query_query_rotate_v2");
+        assert_eq!(
+            &launches[0].arguments.0[5..],
+            &[
+                buffer(b.quantizer_status),
+                Argument::U64(0),
+                Argument::U32(counts.positions)
+            ]
+        );
+
+        assert_eq!(launches[0].symbol, "chop_position_query_query_rotate_v3");
         let quantize = backend
             .block_quantize(&q.query_quantization().unwrap(), need)
             .unwrap();
@@ -265,12 +277,18 @@ mod tests {
             .unwrap();
         let (b, workspace, counts) = buffers();
         let mut shifted = b;
-        shifted.quantizer_status_row_offset = 9;
-        shifted.quantizer_status.bytes = (9 + 4) * 4;
+        shifted.quantizer_status_row_offset = (1_u64 << 32) + 9;
+        shifted.quantizer_status.bytes = (shifted.quantizer_status_row_offset + 4) * 4;
         let launches = op.launches(&shifted, workspace, counts).unwrap();
         assert_eq!(
             launches[1].arguments.0.last(),
-            Some(&kernel_core::contract::Argument::U64(9))
+            Some(&kernel_core::contract::Argument::U64(
+                shifted.quantizer_status_row_offset
+            ))
+        );
+        assert_eq!(
+            launches[0].arguments.0[6],
+            Argument::U64(shifted.quantizer_status_row_offset)
         );
         shifted.quantizer_status.bytes -= 1;
         assert!(op.launches(&shifted, workspace, counts).is_err());

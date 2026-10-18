@@ -814,7 +814,7 @@ pub struct BundleKvFormatV1 {
     planes: Vec<BundleKvPlaneV1>,
     /// The per-request state a host creates the bundle with when it serves
     /// this format, when that differs from the manifest's `state_layout`:
-    /// the same state, sized for this element. Absent for every format that
+    /// the same state (id, lifetime and alignment), sized for this element. Absent for every format that
     /// predates it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     state_layout: Option<BundleStateLayoutV1>,
@@ -4210,11 +4210,13 @@ impl BundleManifestV1 {
                 )));
             }
             if let Some(state) = &format.state_layout {
-                if state.id != self.state_layout.id || state.lifetime != self.state_layout.lifetime
+                if state.id != self.state_layout.id
+                    || state.lifetime != self.state_layout.lifetime
+                    || state.alignment_bytes != self.state_layout.alignment_bytes
                 {
                     return Err(BundleError::validation(format!(
                         "bundle KV layout {} declares state {}; a format's state is the \
-                         manifest's {} with its own size",
+                         manifest's {} with its own size, the same id, lifetime and alignment",
                         layout.id, state.id, self.state_layout.id
                     )));
                 }
@@ -6357,6 +6359,16 @@ mod tests {
         )
         .unwrap();
         assert!(formats(other, None).is_err());
+        // Nor its own alignment: only the size changes.
+        let aligned = BundleStateLayoutV1::new(
+            state.id().clone(),
+            state.bytes() * 2,
+            state.alignment_bytes() / 2,
+            state.lifetime(),
+        )
+        .unwrap();
+        let error = formats(aligned, None).unwrap_err().to_string();
+        assert!(error.contains("alignment"), "{error}");
     }
 
     #[test]

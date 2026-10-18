@@ -89,6 +89,15 @@ pub fn decode_native_page(
     }
     let codes = &page[slot * bytes..(slot + 1) * bytes];
     let scales = &page[slots * bytes + slot * blocks..slots * bytes + (slot + 1) * blocks];
+    decode_native_row(kv, width, codes, scales)
+}
+
+fn decode_native_row(
+    kv: LatentKvFormat,
+    width: usize,
+    codes: &[u8],
+    scales: &[u8],
+) -> Result<Vec<f64>, Refusal> {
     let fp8 = kv == LatentKvFormat::Fp8E4M3Ue8M0Block32;
     let mut decoded = Vec::with_capacity(width);
     for column in 0..width {
@@ -116,6 +125,22 @@ pub fn decode_native_page(
         decoded.push(value);
     }
     Ok(decoded)
+}
+
+fn plane<'a>(
+    view: &'a [u8],
+    sequence: usize,
+    stride: usize,
+    size: usize,
+    short: &'static str,
+) -> Result<&'a [u8], Refusal> {
+    let base = sequence
+        .checked_mul(stride)
+        .ok_or(Refusal("latent window offset overflows"))?;
+    let end = base
+        .checked_add(size)
+        .ok_or(Refusal("latent window offset overflows"))?;
+    view.get(base..end).ok_or(Refusal(short))
 }
 
 /// A source's row-major index lists. Only `budget` entries per row are read.
@@ -151,13 +176,16 @@ impl LatentKeyLists<'_> {
     }
 }
 
-/// Each sequence holds all its native FP8 code rows followed by scale rows.
+/// Separate FP8 code and UE8M0 scale views with independent byte strides.
+/// The views may be slices of a single allocation or separate allocations.
 /// Attention only reads this source; ring updates and verify rollback are
 /// explicit caller-owned operations. The lists alone specify visibility.
 #[derive(Clone, Copy, Debug)]
 pub struct LatentWindowInput<'a> {
-    pub pool: &'a [u8],
-    pub sequence_stride: usize,
+    pub codes: &'a [u8],
+    pub scales: &'a [u8],
+    pub code_stride: usize,
+    pub scale_stride: usize,
     pub storage: LatentWindowStorage,
     pub lists: LatentKeyLists<'a>,
 }
@@ -264,11 +292,17 @@ pub fn latent_attention_with_sources(
         LatentWindowStorage::Ring128 => LATENT_WINDOW_SLOTS as usize,
         LatentWindowStorage::Staged { slots } => slots as usize,
     };
-    let window_bytes = slots
-        .checked_mul(kv.token_bytes(latent) as usize)
+    let code_bytes = slots
+        .checked_mul(d)
         .ok_or(Refusal("latent window size overflows"))?;
-    if slots == 0 || input.window.sequence_stride < window_bytes {
-        return Err(Refusal("latent window stride is too short"));
+    let scale_bytes = slots
+        .checked_mul(d / 32)
+        .ok_or(Refusal("latent window size overflows"))?;
+    if slots == 0 || input.window.code_stride < code_bytes {
+        return Err(Refusal("latent window code stride is too short"));
+    }
+    if input.window.scale_stride < scale_bytes {
+        return Err(Refusal("latent window scale stride is too short"));
     }
     let layout = Layout {
         latent: d,
@@ -302,18 +336,29 @@ pub fn latent_attention_with_sources(
         for position in input.window.lists.row(row)? {
             let sequence = usize::try_from(input.row_batch[row])
                 .map_err(|_| Refusal("latent sequence is negative"))?;
-            let base = sequence
-                .checked_mul(input.window.sequence_stride)
-                .ok_or(Refusal("latent window offset overflows"))?;
-            let end = base
-                .checked_add(window_bytes)
-                .ok_or(Refusal("latent window offset overflows"))?;
-            let page = input
-                .window
-                .pool
-                .get(base..end)
-                .ok_or(Refusal("latent window outside storage"))?;
-            keys.push(decode_native_page(kv, d, slots, page, position)?);
+            if position >= slots {
+                return Err(Refusal("latent window slot outside storage"));
+            }
+            let codes = plane(
+                input.window.codes,
+                sequence,
+                input.window.code_stride,
+                code_bytes,
+                "latent window codes outside storage",
+            )?;
+            let scales = plane(
+                input.window.scales,
+                sequence,
+                input.window.scale_stride,
+                scale_bytes,
+                "latent window scales outside storage",
+            )?;
+            keys.push(decode_native_row(
+                kv,
+                d,
+                &codes[position * d..(position + 1) * d],
+                &scales[position * (d / 32)..(position + 1) * (d / 32)],
+            )?);
         }
         if let Some(source) = input.compressed {
             for position in source.lists.row(row)? {

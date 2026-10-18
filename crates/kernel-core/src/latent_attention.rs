@@ -25,11 +25,12 @@ use crate::contract::{
 
 /// Latent elements covered by one FP8 scale.
 pub const LATENT_FP8_SCALE_BLOCK: u32 = 128;
-/// Slots in the native window ring, independently owned by each layer.
+/// Slots in the fixed-size native window ring, independently owned by each layer.
 pub const LATENT_WINDOW_SLOTS: u32 = 128;
 
-/// The window's index space. Staged prefill retains the whole chunk while
-/// each query attends its own window; a ring retains the latest 128 rows.
+/// The window's physical slot index space. `Ring128` fixes its size at 128.
+/// `Staged` accepts a caller-sized space in every phase: a whole prefill
+/// chunk, or a larger ring with spare slots for cancellable verify writes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum LatentWindowStorage {
     Ring128,
@@ -437,16 +438,20 @@ crate::scratch_record! {
 }
 
 crate::scratch_record! {
-    /// Per-layer native FP8 window: each sequence holds all code rows,
-    /// followed by all UE8M0 scale rows. Lists name physical ring slots or
-    /// staged rows, with `key_stride` entries per query and `budget` live.
-    /// The pool base is at least two-byte aligned; pair-loading backends
-    /// also require an even byte `sequence_stride`.
+    /// Per-layer native FP8 window, with separate code and UE8M0 scale
+    /// views. Sequence s starts at `s * code_stride` bytes in `codes` and
+    /// `s * scale_stride` bytes in `scales`. Each holds contiguous slot rows
+    /// of `latent` codes and `latent / 32` scales. Lists name physical ring
+    /// slots or staged rows, with `key_stride` entries and `budget` live.
+    /// Code bases are two-byte aligned; pair-loading backends also require
+    /// an even code stride. Scale bases and strides need only byte alignment.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct LatentWindowBuffers {
-        pub pool: value,
+        pub codes: value,
+        pub scales: value,
         pub sequences: scalar(u32),
-        pub sequence_stride: scalar(u64),
+        pub code_stride: scalar(u64),
+        pub scale_stride: scalar(u64),
         pub storage: scalar(LatentWindowStorage),
         pub key_lists: value,
         pub key_stride: scalar(u32),
@@ -474,7 +479,7 @@ crate::scratch_record! {
     /// `compressed` is present exactly when `second_fp4_keys` is set.
     /// Role bases have their scalar element alignment. The normalized
     /// BF16 output base is four-byte aligned for paired stores. Window
-    /// pool alignment is stated on [`LatentWindowBuffers`]; compressed
+    /// plane alignment is stated on [`LatentWindowBuffers`]; compressed
     /// codes and scales need only byte alignment.
     /// The original paged attention buffer record and ABI stay unchanged.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]

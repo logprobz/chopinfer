@@ -1705,8 +1705,10 @@ mod latent_parameters {
                 row_batch: &[0],
                 sinks: Some(&self.sinks),
                 window: LatentWindowInput {
-                    pool: &self.window,
-                    sequence_stride: self.window.len(),
+                    codes: &self.window[..128 * D],
+                    scales: &self.window[128 * D..],
+                    code_stride: self.window.len(),
+                    scale_stride: self.window.len(),
                     storage: LatentWindowStorage::Ring128,
                     lists: LatentKeyLists {
                         indices: window,
@@ -1772,6 +1774,62 @@ mod latent_parameters {
                 );
                 assert_eq!(x, bf16(x));
             }
+        }
+    }
+
+    #[test]
+    fn latent_window_planes_have_independent_strides_and_136_slots() {
+        let source = Sources::new();
+        let slots = 136;
+        let code_stride = slots * D + 18;
+        let scale_stride = slots * (D / 32) + 3;
+        let mut codes = vec![0xa5; code_stride + slots * D];
+        let scales = vec![128; scale_stride + slots * (D / 32)];
+        for slot in 0..slots {
+            codes[code_stride + slot * D..code_stride + (slot + 1) * D].fill(if slot == 135 {
+                0x40
+            } else {
+                0x38
+            });
+        }
+        let mut input = source.input(&[135, 0], &[]);
+        input.row_batch = &[1];
+        input.compressed = None;
+        input.window = LatentWindowInput {
+            codes: &codes,
+            scales: &scales,
+            code_stride,
+            scale_stride,
+            storage: LatentWindowStorage::Staged {
+                slots: slots as u32,
+            },
+            lists: input.window.lists,
+        };
+        for phase in [AttentionPhase::Decode, AttentionPhase::Verify] {
+            let mut query = query(Output::Normalized);
+            if let Query::Attention {
+                second_fp4_keys,
+                phase: p,
+                ..
+            } = &mut query
+            {
+                *second_fp4_keys = false;
+                *p = phase;
+            }
+            let out = normalized(latent_attention_with_sources(query, input).unwrap());
+            assert!(out[..D].iter().all(|&v| v == 2.0));
+            let mut short = input;
+            short.window.codes = &codes[..codes.len() - 1];
+            assert!(latent_attention_with_sources(query, short).is_err());
+            short = input;
+            short.window.scales = &scales[..scales.len() - 1];
+            assert!(latent_attention_with_sources(query, short).is_err());
+            short = input;
+            short.window.code_stride = slots * D - 1;
+            assert!(latent_attention_with_sources(query, short).is_err());
+            short = input;
+            short.window.scale_stride = slots * (D / 32) - 1;
+            assert!(latent_attention_with_sources(query, short).is_err());
         }
     }
 
@@ -1884,7 +1942,8 @@ mod latent_parameters {
         let mut source = Sources::new();
         source.sinks = [1000.0, -1000.0];
         let mut input = source.input(&[-1, -1], &[-1]);
-        input.window.pool = &[];
+        input.window.codes = &[];
+        input.window.scales = &[];
         input.compressed.as_mut().unwrap().pool = &[];
         input.compressed.as_mut().unwrap().paging.block_tables = &[];
         assert_eq!(
@@ -1937,8 +1996,10 @@ mod latent_parameters {
         staged.extend(vec![127; 129 * (D / 32)]);
         staged[128 * D..129 * D].fill(0x40);
         let mut input = source.input(&[0, 128], &[]);
-        input.window.pool = &staged;
-        input.window.sequence_stride = staged.len();
+        input.window.codes = &staged[..129 * D];
+        input.window.scales = &staged[129 * D..];
+        input.window.code_stride = staged.len();
+        input.window.scale_stride = staged.len();
         input.window.storage = LatentWindowStorage::Staged { slots: 129 };
         let out =
             normalized(latent_attention_with_sources(query(Output::Normalized), input).unwrap());

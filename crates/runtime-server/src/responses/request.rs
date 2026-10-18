@@ -200,9 +200,7 @@ impl Request {
                     continue;
                 }
                 supported_fields(tool, &["type", "name", "description", "tools"], "tools")?;
-                let name = tool["name"]
-                    .as_str()
-                    .ok_or_else(|| invalid("a namespace tool needs a string name", "tools"))?;
+                let name = bare_name(&tool["name"], "a namespace")?;
                 if !namespaces.insert(name) {
                     return Err(invalid(
                         format!("duplicate namespace name '{name}'"),
@@ -221,8 +219,10 @@ impl Request {
                     .as_array()
                     .ok_or_else(|| invalid("a namespace tool needs a tools list", "tools"))?;
                 for function in functions {
+                    let function = function_tool(function)?;
+                    bare_name(&function["name"], "a function in a namespace")?;
                     converted.push(json!({"type":"function", "namespace":namespace,
-                        "function":function_tool(function)?}));
+                        "function":function}));
                 }
             }
             chat["tools"] = json!(converted);
@@ -253,6 +253,27 @@ impl Request {
             chat["top_logprobs"] = json!(top);
         }
         Ok(chat)
+    }
+}
+
+/// The name of a `namespace` tool or of a function in one: 1 to 128 bytes of
+/// ASCII letters, digits, `_` or `-`. It is checked before the functions are
+/// flattened, so neither a namespace without functions nor a function name
+/// that already holds a separator escapes it.
+fn bare_name<'a>(name: &'a Value, what: &str) -> Result<&'a str, ApiError> {
+    match name.as_str() {
+        Some(name)
+            if (1..=128).contains(&name.len())
+                && name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')) =>
+        {
+            Ok(name)
+        }
+        _ => Err(invalid(
+            format!("{what} name must be 1 to 128 ASCII letters, digits, '_' or '-'"),
+            "tools",
+        )),
     }
 }
 

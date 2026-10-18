@@ -1043,6 +1043,31 @@ async fn namespace_tools_qualify_names_and_calls_return_them_apart() {
     );
     let duplicate = create(&server, json!({"input":"x","tools":[namespace, namespace]})).await;
     assert_eq!(duplicate.status, 400, "{}", duplicate.body);
+    // A namespace and the functions in it have bare names, checked even
+    // when the namespace offers no function.
+    let function = |name: &str| json!({"type":"function","name":name});
+    for (name, tools) in [
+        ("bad::ns", json!([])),
+        ("bad.ns", json!([])),
+        ("", json!([])),
+        (&"n".repeat(129), json!([])),
+        ("fixture", json!([function("fixture.lookup")])),
+        ("fixture", json!([function("bad::f")])),
+        ("fixture", json!([function(&"f".repeat(129))])),
+    ] {
+        let tool = json!({"type":"namespace","name":name,"tools":tools});
+        let refused = create(&server, json!({"input":"x","tools":[tool]})).await;
+        assert_eq!(refused.status, 400, "{tool}: {}", refused.body);
+        assert!(
+            refused.body.contains("name must be 1 to 128"),
+            "{}",
+            refused.body
+        );
+    }
+    let longest = json!({"type":"namespace","name":"n".repeat(128),
+        "tools":[function(&"f".repeat(128))]});
+    let response = create(&server, json!({"input":"x","tools":[longest]})).await;
+    assert_eq!(response.status, 200, "{}", response.body);
     // A frontend that does not qualify names refuses both.
     let plain = TestServerV1::start(ScriptedBackendV1::new(tool_events())).await;
     let refused = create(&plain, json!({"input":"x","tools":[namespace]})).await;

@@ -140,11 +140,12 @@ function's description on its own line; a function name already spelled
 `ns::f` keeps its namespace, and a different given one is refused. Calls, a
 named `tool_choice` and history use the qualified name, which chat returns
 whole in `function.name`. In the Responses API a `namespace` tool
-(`name`, `description`, `tools`) offers its functions that way, a
-`function_call` returns as its `name` and `namespace`, and an input
-`function_call` may carry a `namespace`. For other models a chat tool's
-`namespace` is not read, and a Responses `namespace` tool or a call's
-`namespace` is refused.
+(`name`, `description`, `tools`) offers its functions that way; its name
+and each function's are 1 to 128 ASCII letters, digits, `_` or `-`, even
+when it offers no function. A `function_call` returns as its `name` and
+`namespace`, and an input `function_call` may carry a `namespace`. For
+other models a chat tool's `namespace` is not read, and a Responses
+`namespace` tool or a call's `namespace` is refused.
 
 Tool names
 can stream before a call closes; argument deltas wait for the close, since a

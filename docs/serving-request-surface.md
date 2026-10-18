@@ -153,7 +153,8 @@ prompt IDs.
 optional non-negative integer `budget_tokens` that is checked and not read.
 Without it, `reasoning_effort` `none` disables thinking and any other effort
 enables it; an explicit object overrides the effort. The thinking keywords
-and the effort in `chat_template_kwargs` are ignored for such a model. Other
+and the effort in `chat_template_kwargs` are ignored for such a model, and
+their values are not checked. Other
 models ignore a top-level `thinking` field.
 
 **Template keywords and roles.** The server reads the `chat_template_kwargs`

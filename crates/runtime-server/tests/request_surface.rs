@@ -2567,6 +2567,45 @@ async fn a_declared_vendor_mapping_shapes_constraints_choices_and_thinking() {
                 assert_eq!(response.status, 200, "{body}: {}", response.body);
             }
         }
+        // The thinking keywords a mapped frontend ignores are not checked;
+        // the keywords it still reads are, positionally too.
+        for (kwargs, mapped_status, unmapped_status) in [
+            (
+                r#"{"enable_thinking":"ignored","thinking":1,"reasoning_effort":3}"#,
+                200,
+                400,
+            ),
+            (r#"[1, "x", 2, true, null, null]"#, 200, 400),
+            (
+                r#"{"enable_thinking":"ignored","preserve_thinking":"x"}"#,
+                400,
+                400,
+            ),
+            (r#"[null, null, null, "x", null, null]"#, 400, 400),
+        ] {
+            let body = format!(
+                r#"{{"messages":[{{"role":"user","content":"hi"}}],"thinking":{{"type":"enabled"}},"chat_template_kwargs":{kwargs}}}"#
+            );
+            let response = server.post("/v1/chat/completions", &body).await;
+            let expected = if mapped {
+                mapped_status
+            } else {
+                unmapped_status
+            };
+            assert_eq!(
+                response.status, expected,
+                "{mapped}: {body}: {}",
+                response.body
+            );
+            if expected == 200 {
+                let requests = server.frontend.requests.lock().unwrap();
+                let request = requests.last().unwrap();
+                assert_eq!(
+                    (request.enable_thinking, request.thinking),
+                    (Some(true), Some(true))
+                );
+            }
+        }
     }
 }
 

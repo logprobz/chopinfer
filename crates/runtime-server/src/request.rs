@@ -119,6 +119,67 @@ struct ChatTemplateKwargs {
     add_vision_id: Option<FrontendJsonV1>,
 }
 
+/// The typed keywords of [`ChatTemplateKwargs`] for a frontend that switches
+/// thinking by the thinking object ([`ServerFrontendV1::reads_thinking_object`]):
+/// its thinking keywords and effort are ignored unread, in their places, so
+/// a positional array still reads the others where they stand. The struct
+/// keeps the typed one's name, which a refusal names.
+mod object_switch {
+    use serde::Deserialize;
+    use serde::de::IgnoredAny;
+
+    use crate::frontend::FrontendJsonV1;
+
+    #[derive(Deserialize)]
+    pub(super) struct ChatTemplateKwargs {
+        #[serde(rename = "thinking")]
+        _thinking: Option<IgnoredAny>,
+        #[serde(rename = "enable_thinking")]
+        _enable_thinking: Option<IgnoredAny>,
+        #[serde(rename = "reasoning_effort")]
+        _reasoning_effort: Option<IgnoredAny>,
+        pub(super) preserve_thinking: Option<bool>,
+        pub(super) clear_thinking: Option<FrontendJsonV1>,
+        pub(super) add_vision_id: Option<FrontendJsonV1>,
+    }
+}
+
+thread_local! {
+    /// Set while a chat request is read for a frontend that switches
+    /// thinking by the thinking object, so [`TemplateKwargsInput`] ignores
+    /// the thinking keywords instead of checking their types.
+    static THINKING_KEYWORDS_IGNORED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Reads `body` as `T` with the thinking keywords ignored when `ignored`.
+fn decode_chat<'a, T: Deserialize<'a>>(body: &'a [u8], ignored: bool) -> Result<T, ApiError> {
+    THINKING_KEYWORDS_IGNORED.set(ignored);
+    let decoded = decode(body);
+    THINKING_KEYWORDS_IGNORED.set(false);
+    decoded
+}
+
+/// The typed `chat_template_kwargs`: every typed keyword checked, or, while
+/// the thinking keywords are ignored ([`decode_chat`]), all but those.
+struct TemplateKwargsInput(ChatTemplateKwargs);
+
+impl<'de> Deserialize<'de> for TemplateKwargsInput {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        if !THINKING_KEYWORDS_IGNORED.get() {
+            return ChatTemplateKwargs::deserialize(deserializer).map(Self);
+        }
+        let kwargs = object_switch::ChatTemplateKwargs::deserialize(deserializer)?;
+        Ok(Self(ChatTemplateKwargs {
+            thinking: None,
+            enable_thinking: None,
+            reasoning_effort: None,
+            preserve_thinking: kwargs.preserve_thinking,
+            clear_thinking: kwargs.clear_thinking,
+            add_vision_id: kwargs.add_vision_id,
+        }))
+    }
+}
+
 #[derive(Deserialize)]
 struct FunctionDefinition {
     name: String,
@@ -271,7 +332,7 @@ struct ChatRequest {
     response_format: Option<FrontendJsonV1>,
     structured_outputs: Option<FrontendJsonV1>,
     reasoning_effort: Option<String>,
-    chat_template_kwargs: Option<ChatTemplateKwargs>,
+    chat_template_kwargs: Option<TemplateKwargsInput>,
     #[serde(default)]
     continue_final_message: bool,
     add_generation_prompt: Option<bool>,
@@ -406,7 +467,7 @@ pub(crate) fn parse(
             if plain {
                 validate_single_turn_plain_chat_shape(body)?;
             }
-            let request: ChatRequest = decode(body)?;
+            let request: ChatRequest = decode_chat(body, frontend.reads_thinking_object())?;
             if plain {
                 validate_single_turn_plain_chat(&request)?;
             }
@@ -1002,7 +1063,7 @@ fn prepare_chat(
         preserve_thinking,
         clear_thinking,
         add_vision_id,
-    ) = match request.chat_template_kwargs {
+    ) = match request.chat_template_kwargs.map(|options| options.0) {
         Some(options) => (
             options.enable_thinking,
             options.thinking,

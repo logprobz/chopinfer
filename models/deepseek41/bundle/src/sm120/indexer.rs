@@ -5,7 +5,7 @@
 
 use kernel_build::CubinSpec;
 use kernels_sm120::backend::Sm120;
-use kernels_sm120::pooled_indexer::{position, position_blocks};
+use kernels_sm120::pooled_indexer::{position, position_bf16, position_blocks};
 use model_deepseek41_contract::{geometry::Geometry, indexer, serving::PREFILL_TOKENS};
 
 pub const FAMILY: &str = "position_indexer";
@@ -93,10 +93,41 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
     Ok(specs)
 }
 
+/// Separate comparison readers leave the native cubins and locks unchanged.
+pub const BF16_FAMILY: &str = "position_indexer_bf16";
+pub fn bf16_cubin_names(g: &Geometry) -> [String; 2] {
+    [
+        format!("position_indexer_{}_bf16_sm120", g.kernel_tag),
+        format!("position_blocks_{}_bf16_sm120", g.kernel_tag),
+    ]
+}
+pub fn bf16_cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {
+    let mut result = Vec::new();
+    for g in geometries {
+        let [dense_name, compact_name] = bf16_cubin_names(g);
+        let mut dense = Vec::new();
+        for e in entries(g) {
+            dense.extend(position_bf16::dense_specs(&e).map_err(|e| e.0)?);
+        }
+        let mut compact = Vec::new();
+        for e in block_entries(g) {
+            compact.extend(position_bf16::compact_specs(&e).map_err(|e| e.0)?);
+        }
+        result.push((BF16_FAMILY, position_bf16::cubin_spec(dense_name, dense)));
+        result.push((
+            BF16_FAMILY,
+            position_bf16::cubin_spec(compact_name, compact),
+        ));
+    }
+    Ok(result)
+}
+
 pub fn register(sm120: Sm120, g: &Geometry) -> Sm120 {
     sm120
         .with_position_indexer(entries(g))
+        .with_position_indexer_bf16(entries(g))
         .with_position_block_indexer(block_entries(g))
+        .with_position_block_indexer_bf16(block_entries(g))
         .with_indexer_candidate_block_ids(vec![candidates(g)])
 }
 
@@ -161,6 +192,59 @@ mod tests {
                 );
                 for (symbol, _) in &producer.info().symbols {
                     assert!(registered(symbol), "{symbol}");
+                }
+            }
+        }
+    }
+    #[test]
+    fn bf16_index_sources_prepare_from_separate_cubins_at_every_rank_count() {
+        use kernel_core::pooled_indexer::IndexerKeyFormat;
+        for g in GEOMETRIES {
+            let cubins = bf16_cubins(&[*g]).unwrap();
+            assert_eq!(cubins.len(), 2);
+            for &ranks in admission::SUPPORTED_RANKS {
+                if admission::check_ranks(g, ranks).is_err() {
+                    continue;
+                }
+                let backend = register(Sm120::new(), g);
+                for layer in 0..g.layers() {
+                    let Some(q) = indexer::selection(g, layer, 8) else {
+                        continue;
+                    };
+                    let width = indexer::position_capacity(g, layer).unwrap();
+                    let info = match indexer::block_selection(g, layer, 8) {
+                        None => backend
+                            .position_indexer_with_storage(
+                                &q,
+                                IndexerKeyFormat::Bf16,
+                                q.max_top_k,
+                                width,
+                                Need::rows(8),
+                            )
+                            .unwrap()
+                            .info()
+                            .clone(),
+                        Some(c) => backend
+                            .position_block_indexer_with_storage(
+                                &c,
+                                IndexerKeyFormat::Bf16,
+                                q.max_top_k,
+                                width,
+                                Need::rows(8),
+                            )
+                            .unwrap()
+                            .info()
+                            .clone(),
+                    };
+                    assert_eq!(info.guarantees.ties, Ties::LowerIndex);
+                    for (symbol, _) in info.symbols {
+                        assert!(
+                            cubins
+                                .iter()
+                                .any(|(_, c)| c.entries.iter().any(|e| e.symbol == symbol)),
+                            "{symbol}"
+                        );
+                    }
                 }
             }
         }

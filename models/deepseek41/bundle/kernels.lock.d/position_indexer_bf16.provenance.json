@@ -1,0 +1,10 @@
+[
+  {
+    "name": "position_blocks_deepseek41_bf16_sm120",
+    "source_closure_sha256": "73f087144a8b19291e0e6dc131a93612550bd014fac677eb64401212cb611f68"
+  },
+  {
+    "name": "position_indexer_deepseek41_bf16_sm120",
+    "source_closure_sha256": "e3626b0760afac30f52afcfeeb1a0d5a843fa048ce43b916fc4e770bc836fa3b"
+  }
+]

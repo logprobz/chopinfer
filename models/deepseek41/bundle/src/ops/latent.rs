@@ -103,14 +103,27 @@ pub(crate) struct Ring {
 
 /// A prefill's staged window on one rank: one block of `cells` cells an
 /// item, read as a ring of `slots` sequences, one per item.
-pub(crate) fn staged(shape: &Shape, codes: DeviceBufferSpanV1, scales: DeviceBufferSpanV1) -> Ring {
+pub(crate) fn staged(
+    shape: &Shape,
+    storage: KvStorage,
+    codes: DeviceBufferSpanV1,
+    scales: Option<DeviceBufferSpanV1>,
+) -> Ring {
     let cells = crate::buffers::staged_slots(shape);
     let latent = u64::from(shape.geometry.shape.attention.head_dim);
     Ring {
         codes,
-        scales: Some(scales),
-        code_stride: u64::from(cells) * latent,
-        scale_stride: u64::from(cells) * latent / 32,
+        scales: if storage == KvStorage::Native {
+            scales
+        } else {
+            None
+        },
+        code_stride: u64::from(cells) * latent * if storage == KvStorage::Bf16 { 2 } else { 1 },
+        scale_stride: if storage == KvStorage::Bf16 {
+            0
+        } else {
+            u64::from(cells) * latent / 32
+        },
         slots: DECODE_BATCH,
         cells,
         window: shape.geometry.shape.attention.window,
@@ -162,6 +175,7 @@ impl GlueOps {
         own: &dyn OwnOps,
         shape: &Shape,
         asks: &Asks,
+        storage: KvStorage,
     ) -> Result<GlueOps, Refused> {
         let g = shape.geometry;
         let every = exact::need(PREFILL_TOKENS, exact::every_phase(super::verify_rows()));
@@ -174,7 +188,7 @@ impl GlueOps {
             backend.latent_query_rope(&query, need)
         })?;
         let ring = latent_glue::ring(g);
-        let write = latent_glue::window_write(g, ring);
+        let write = latent_glue::window_write_for_storage(g, ring, storage);
         let window_write = asks.ask("glue.window_write", every, |need| {
             backend.latent_window_write(&write, need)
         })?;
@@ -184,12 +198,17 @@ impl GlueOps {
         })?;
         // A prefill's staging: its items, then its rows.
         let cells = crate::buffers::staged_slots(shape);
-        let stage = latent_glue::window_stage(g, cells).map_err(Refused::Rule)?;
+        let stage =
+            latent_glue::window_stage_for_storage(g, cells, storage).map_err(Refused::Rule)?;
         let prefill = |capacity| exact::need(capacity, exact::PREFILL);
         let stage = asks.ask("glue.window_stage", prefill(DECODE_BATCH), |need| {
             backend.latent_window_stage(&stage, need)
         })?;
-        let write = latent_glue::window_write(g, WindowAddressing::Staged { slots: cells });
+        let write = latent_glue::window_write_for_storage(
+            g,
+            WindowAddressing::Staged { slots: cells },
+            storage,
+        );
         let staged_write = asks.ask(
             "glue.staged_window_write",
             prefill(PREFILL_TOKENS),

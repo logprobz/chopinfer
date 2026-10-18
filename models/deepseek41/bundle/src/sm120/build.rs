@@ -27,6 +27,8 @@ mod own_cubin;
 // The build compiles the entries; the bundle launches them.
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod compressor;
+#[allow(dead_code, reason = "the bundle registers the entries")]
+mod compressor_bf16;
 #[path = "dense.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod dense;
@@ -44,6 +46,8 @@ mod indexer;
 mod indexer_query;
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod latent_glue;
+#[allow(dead_code)]
+mod latent_window_bf16;
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod latent_window_stage;
 #[allow(dead_code, reason = "the bundle registers the entries")]
@@ -107,6 +111,7 @@ pub fn selection(
             geometry.id,
         ));
         owners.push((indexer::blocks_cubin_name(geometry), geometry.id));
+        owners.extend(indexer::bf16_cubin_names(geometry).map(|name| (name, geometry.id)));
         for part in ["compute", "routes", "quantize"] {
             owners.push((
                 format!("moe_{}_{part}_sm120", geometry.kernel_tag),
@@ -129,6 +134,7 @@ pub fn selection(
             format!("position_query_{}_sm120", geometry.kernel_tag),
             geometry.id,
         ));
+        owners.push((compressor_bf16::cubin_name(geometry), geometry.id));
         for part in ["pooling", "keys", "ratio_one"] {
             owners.push((
                 format!("{}_compressor_{part}_v1", geometry.kernel_tag),
@@ -141,7 +147,9 @@ pub fn selection(
     specs.extend(hc::cubins(geometries));
     specs.extend(latent::cubins(geometries).expect("deepseek41 latent cubins"));
     specs.extend(indexer::cubins(geometries).expect("deepseek41 indexer cubins"));
+    specs.extend(indexer::bf16_cubins(geometries).expect("deepseek41 BF16 indexer cubins"));
     specs.extend(compressor::cubins(geometries).expect("deepseek41 compressor cubins"));
+    specs.extend(compressor_bf16::cubins(geometries).expect("deepseek41 BF16 index-key cubins"));
     specs.extend(moe::cubins(geometries).expect("deepseek41 routed MoE cubins"));
     specs.extend(routed_sum::cubins(geometries).expect("deepseek41 routed sum cubins"));
     specs.extend(dense::cubins(geometries).expect("deepseek41 dense quantizer cubins"));
@@ -152,6 +160,7 @@ pub fn selection(
     specs.extend(indexer_query::cubins(geometries).expect("deepseek41 query preparation cubins"));
     specs.extend(latent_glue::cubins(geometries).expect("deepseek41 latent glue cubins"));
     specs.extend(latent_window_stage::cubins(geometries).expect("window stage cubins"));
+    specs.extend(latent_window_bf16::cubins(geometries).expect("BF16 window cubins"));
     specs.extend(latent_window_stage::key_cubins(geometries).expect("staged window key cubins"));
     specs.extend(mxfp8_fold::cubins(geometries).expect("deepseek41 MXFP8 fold cubins"));
     specs.extend(encoder::cubins().expect("deepseek41 encoder cubins"));

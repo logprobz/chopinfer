@@ -61,8 +61,27 @@ impl SourceBinding {
         }
     }
 
-    /// The position indexer's native MXFP4 cache record. A BF16 cache needs
-    /// a BF16 reader/writer contract and cannot masquerade as packed codes.
+    /// Read keys in the selected storage layout. BF16 values keep their
+    /// shared page stride and have no scale plane to bind.
+    pub fn index_pages(self, tables: BlockTables<Span>) -> Result<PositionKeyPages<Span>, Refusal> {
+        if self.storage == KvStorage::Native {
+            return self.native_index_pages(tables);
+        }
+        if self.index.scales.is_some() {
+            return Err(Refusal("BF16 index keys have no scale plane"));
+        }
+        Ok(PositionKeyPages {
+            codes: self.index.values,
+            scales: Span::new(self.index.values.buffer, self.index.values.offset, 0),
+            pages: self.index.pages,
+            code_page_stride: self.index.page_stride,
+            scale_page_stride: 0,
+            page_tables: tables,
+        })
+    }
+
+    /// The native MXFP4 record used by native key writes. BF16 readers
+    /// use index_pages; this adapter still requires the native scale plane.
     pub fn native_index_pages(
         self,
         tables: BlockTables<Span>,

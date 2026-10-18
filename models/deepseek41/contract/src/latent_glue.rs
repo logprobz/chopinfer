@@ -18,12 +18,6 @@ pub fn query_rope(g: &Geometry, ranks: u32) -> Result<LatentQueryRope, String> {
     Ok(query)
 }
 
-/// The window ring's storage the glue writes and stages: the native E4M3
-/// codes with their UE8M0 scales (`latent::query`'s); the BF16 ring is not
-/// registered yet.
-const NATIVE_KV: kernel_core::latent_attention::LatentKvFormat =
-    kernel_core::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32;
-
 pub fn ring(g: &Geometry) -> WindowAddressing {
     WindowAddressing::Circular {
         slots: crate::state::ring_cells(crate::state::Widths::of(g)) as u32,
@@ -31,8 +25,16 @@ pub fn ring(g: &Geometry) -> WindowAddressing {
 }
 
 pub fn window_write(g: &Geometry, addressing: WindowAddressing) -> LatentWindowWrite {
+    window_write_for_storage(g, addressing, crate::state::KvStorage::Native)
+}
+
+pub fn window_write_for_storage(
+    g: &Geometry,
+    addressing: WindowAddressing,
+    storage: crate::state::KvStorage,
+) -> LatentWindowWrite {
     LatentWindowWrite {
-        kv: NATIVE_KV,
+        kv: window_format(storage),
         epsilon_bits: (g.shape.eps as f32).to_bits(),
         latent: g.shape.attention.head_dim,
         rotary: g.shape.attention.rope_dim,
@@ -76,8 +78,16 @@ pub fn window_stage(
     g: &Geometry,
     staged_slots: u32,
 ) -> Result<kernel_core::latent_window_stage::LatentWindowStage, String> {
+    window_stage_for_storage(g, staged_slots, crate::state::KvStorage::Native)
+}
+
+pub fn window_stage_for_storage(
+    g: &Geometry,
+    staged_slots: u32,
+    storage: crate::state::KvStorage,
+) -> Result<kernel_core::latent_window_stage::LatentWindowStage, String> {
     let query = kernel_core::latent_window_stage::LatentWindowStage {
-        kv: NATIVE_KV,
+        kv: window_format(storage),
         latent: g.shape.attention.head_dim,
         window: g.shape.attention.window,
         ring_slots: ring(g).slots(),
@@ -100,4 +110,41 @@ pub fn staged_window_keys(
     };
     query.validate().map_err(|e| e.to_string())?;
     Ok(query)
+}
+
+fn window_format(
+    storage: crate::state::KvStorage,
+) -> kernel_core::latent_attention::LatentKvFormat {
+    match storage {
+        crate::state::KvStorage::Native => {
+            kernel_core::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32
+        }
+        crate::state::KvStorage::Bf16 => kernel_core::latent_attention::LatentKvFormat::Bf16,
+    }
+}
+
+#[cfg(test)]
+mod bf16_tests {
+    use super::*;
+    use crate::state::KvStorage;
+    use kernel_core::latent_attention::LatentKvFormat;
+    #[test]
+    fn bf16_writer_and_staging_share_the_attention_layout() {
+        for g in crate::geometry::GEOMETRIES {
+            assert_eq!(
+                window_write_for_storage(g, ring(g), KvStorage::Bf16).kv,
+                LatentKvFormat::Bf16
+            );
+            assert_eq!(
+                window_stage_for_storage(g, crate::serving::PREFILL_TOKENS + 127, KvStorage::Bf16)
+                    .unwrap()
+                    .kv,
+                LatentKvFormat::Bf16
+            );
+            assert_eq!(
+                window_write(g, ring(g)).kv,
+                LatentKvFormat::Fp8E4M3Ue8M0Block32
+            );
+        }
+    }
 }

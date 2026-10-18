@@ -1,0 +1,10 @@
+[
+  {
+    "name": "latent_window_bf16_stage_deepseek41_sm120",
+    "source_closure_sha256": "b1aa767c2d3d2a74e053a1bc2da29506911ef3a86e6110bafbbc4918bb245372"
+  },
+  {
+    "name": "latent_window_bf16_store_deepseek41_sm120",
+    "source_closure_sha256": "90d2537f36cdd85e16c9703082962ef315b18000b61544a66c9fda19bcedbfe9"
+  }
+]

@@ -5,7 +5,6 @@
 
 use kernel_core::attention::BlockTables;
 use model_deepseek41_contract::indexer;
-use model_deepseek41_contract::state::KvStorage;
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
 use super::{Lowering, rows};
@@ -56,7 +55,7 @@ impl Lowering<'_> {
 
     /// Layer `layer`'s selection of each row's top-k compressed positions:
     /// a Full source over every visible key, a Reindex source inside the
-    /// candidate source's blocks. BF16 pages have no index-key reader.
+    /// candidate source's blocks, using the selected KV storage layout.
     pub(super) fn index_select(
         &self,
         phase: Phase,
@@ -65,9 +64,6 @@ impl Lowering<'_> {
         let Some(ops) = &self.ops.select else {
             return Ok(None);
         };
-        if self.kv.storage != KvStorage::Native {
-            return Ok(None);
-        }
         let g = self.shape.geometry;
         let error = |refusal: kernel_core::contract::Refusal| {
             format!("index selection of layer {layer}: {refusal}")
@@ -83,7 +79,7 @@ impl Lowering<'_> {
             .ok_or_else(|| format!("layer {layer} selects nothing"))?;
         let keys = self
             .source(layer)?
-            .native_index_pages(BlockTables {
+            .index_pages(BlockTables {
                 tables: self.inputs.block_tables,
                 sequences: self.kv.sequences,
                 max_pages: self.kv.max_pages,

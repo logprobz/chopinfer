@@ -16,13 +16,19 @@ fn position_model_cubins_match_locks() {
     let bundle = Path::new(env!("CARGO_MANIFEST_DIR")).join("../bundle");
     let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("position-model");
     std::fs::create_dir_all(&out).unwrap();
-    let specs = entries::cubins(GEOMETRIES)
-        .unwrap()
+    let native = entries::cubins(GEOMETRIES).unwrap();
+    let comparison = entries::bf16_cubins(GEOMETRIES).unwrap();
+    let lock = LockDir::new(bundle.join("kernels.lock.d"))
+        .family(entries::FAMILY, native.iter().map(|(_, s)| s.name.as_str()))
+        .family(
+            entries::BF16_FAMILY,
+            comparison.iter().map(|(_, s)| s.name.as_str()),
+        );
+    let specs = native
         .into_iter()
+        .chain(comparison)
         .map(|(_, s)| s)
         .collect::<Vec<_>>();
-    let lock = LockDir::new(bundle.join("kernels.lock.d"))
-        .family(entries::FAMILY, specs.iter().map(|s| s.name.as_str()));
     let built = kernel_build::build_in_families(
         &Toolchain::detect().unwrap(),
         &specs,
@@ -36,8 +42,8 @@ fn position_model_cubins_match_locks() {
         None,
     )
     .expect("registered indexer cubins match their locks");
-    // Each geometry's dense and compact cubins.
-    assert_eq!(built.len(), 2 * GEOMETRIES.len());
+    // Each geometry's native and comparison dense/compact cubins.
+    assert_eq!(built.len(), 4 * GEOMETRIES.len());
     for cubin in built {
         let bytes = std::fs::read(&cubin.path).unwrap();
         assert!(!bytes.is_empty());

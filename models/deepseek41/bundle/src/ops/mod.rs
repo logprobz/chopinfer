@@ -145,13 +145,19 @@ impl Ops {
             &mut missing,
             &names,
             "index selection",
-            indexer::SelectOps::prepare(kernels.backend.as_ref(), shape, &asks),
+            indexer::SelectOps::prepare(kernels.backend.as_ref(), shape, storage, &asks),
         );
         let glue = family(
             &mut missing,
             &names,
             "latent glue",
-            latent::GlueOps::prepare(kernels.backend.as_ref(), kernels.own.as_ref(), shape, &asks),
+            latent::GlueOps::prepare(
+                kernels.backend.as_ref(),
+                kernels.own.as_ref(),
+                shape,
+                &asks,
+                storage,
+            ),
         );
         let logits = family(
             &mut missing,
@@ -212,13 +218,6 @@ impl Ops {
                 )
             })
             .collect();
-        // Named refusals of what no contract serves yet.
-        if storage == KvStorage::Bf16 {
-            missing.push(format!(
-                "{NAME}'s bf16 KV layout has no BF16 window-ring writer or staging, BF16 \
-                 index-key writer or BF16 indexer read before M1"
-            ));
-        }
         Ops {
             rows,
             reduce,

@@ -31,6 +31,8 @@ pub(crate) mod own_ops;
 // their entries.
 #[allow(dead_code, reason = "the build compiles the entries and declarations")]
 mod compressor;
+#[allow(dead_code, reason = "the build compiles the entries and declarations")]
+mod compressor_bf16;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod dense;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
@@ -48,6 +50,8 @@ mod indexer;
 mod indexer_query;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod latent_glue;
+#[allow(dead_code)]
+mod latent_window_bf16;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod latent_window_stage;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
@@ -134,6 +138,7 @@ impl crate::Kernels {
         let sm120 = compressor::CompressorKernels::serving(shape.geometry)
             .map_err(|e| e.to_string())?
             .register(sm120);
+        let sm120 = compressor_bf16::register(sm120, shape.geometry)?;
         let sm120 = moe::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = routed_sum::register(sm120, shape.geometry);
         let sm120 = dense::register(sm120, shape.geometry, shape.ranks())?;
@@ -143,6 +148,7 @@ impl crate::Kernels {
         let sm120 = latent_glue::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = latent_window_stage::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = dspark_aux::register(sm120, shape.geometry, shape.ranks())?;
+        let sm120 = latent_window_bf16::register(sm120);
         let sm120 = register_f32_projections(sm120, shape.geometry, shape.ranks())?;
         // The vision encoder's shared entries (`crate::encoders`).
         let sm120 = encoder::register(sm120)?;
@@ -331,6 +337,40 @@ mod tests {
                     .count(),
                 1
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod window_bf16_tests {
+    use super::latent_window_bf16::*;
+    use kernel_core::backend::{Backend, Need};
+    use kernels_sm120::backend::Sm120;
+    use model_deepseek41_contract::{
+        geometry::GEOMETRIES, latent_glue, serving::PREFILL_TOKENS, state::KvStorage,
+    };
+    #[test]
+    fn bf16_windows_prepare_through_the_shared_backend() {
+        for g in GEOMETRIES {
+            let b = super::latent_glue::register(Sm120::new(), g, 4).unwrap();
+            let b = register(b);
+            let write =
+                latent_glue::window_write_for_storage(g, latent_glue::ring(g), KvStorage::Bf16);
+            let op = b.latent_window_write(&write, Need::rows(32)).unwrap();
+            assert!(op.info().symbols.iter().any(|(s, _)| s == &store().symbol));
+            assert_eq!(
+                op.info()
+                    .bytes
+                    .iter()
+                    .find(|(s, _)| s == "window.scales")
+                    .unwrap()
+                    .1,
+                0
+            );
+            let stage =
+                latent_glue::window_stage_for_storage(g, PREFILL_TOKENS + 127, KvStorage::Bf16)
+                    .unwrap();
+            assert!(b.latent_window_stage(&stage, Need::rows(32)).is_ok());
         }
     }
 }

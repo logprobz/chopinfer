@@ -255,9 +255,10 @@ impl Instance {
                     block_tables,
                 });
             }
-            let bound = bundle_runtime::scratch::bind(Scratch::of(&shape), |bytes| {
-                allocate_span(services, pool, stream, bytes, held)
-            })?;
+            let bound = bundle_runtime::scratch::bind(
+                Scratch::of_storage(&shape, self.config.kv.storage),
+                |bytes| allocate_span(services, pool, stream, bytes, held),
+            )?;
             services.copy_host_to_device(stream, bound.first_pre, &first_pre)?;
             scratch.push(bound);
             // The mixer scratch the mix-collapse lists; its tickets start

@@ -68,6 +68,27 @@ fn cache_sources_resolve_on_incomplete_steps_and_new_pool_bindings() {
                     u64::from(current.latent.positions_per_page * current.ratio),
                     state.page_tokens
                 );
+                let tables = BlockTables {
+                    tables: span(9, 0, 16),
+                    sequences: 1,
+                    max_pages: 4,
+                };
+                let keys = current.index_pages(tables).unwrap();
+                assert_eq!(keys.codes, current.index.values);
+                assert_eq!(keys.code_page_stride, state.page_bytes());
+                if storage == KvStorage::Bf16 {
+                    assert_eq!(keys.scales.length, 0);
+                    assert_eq!(keys.scale_page_stride, 0);
+                    assert_eq!(
+                        keys.codes.length,
+                        7 * state.page_bytes()
+                            + u64::from(current.index.positions_per_page)
+                                * u64::from(g.shape.indexer.dim)
+                                * 2
+                    );
+                } else {
+                    assert_eq!(keys.scale_page_stride, state.page_bytes());
+                }
                 let before = source_binding(g, layer, storage, pool, 8, 70)
                     .unwrap()
                     .unwrap();

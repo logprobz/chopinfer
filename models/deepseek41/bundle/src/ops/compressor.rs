@@ -14,7 +14,8 @@ use kernel_core::contract::{DType, RecurrentPhase, Refusal, RmsNormKind};
 use kernel_core::gated_pooling::{GatedPoolingBuffers, GatedPoolingQuery, GatedPoolingState};
 use kernel_core::latent_attention::BlockTables;
 use kernel_core::pooled_indexer::{
-    IndexerCandidates, PositionIndexerQuery, PositionKeyPages, PositionKeyWriteBuffers,
+    IndexerCandidates, IndexerKeyFormat, PositionIndexerQuery, PositionKeyPages,
+    PositionKeyWriteBuffers,
 };
 use kernel_core::rmsnorm::{RmsNormBuffers, RmsNormRequirement};
 use model_deepseek41_contract::own_ops::OwnOps;
@@ -107,12 +108,11 @@ fn kind_of(phase: Phase) -> usize {
 }
 
 /// The writes of the sources of one ratio: the latents', and the index
-/// keys'. The index keys of BF16 pages have no writer contract yet: only
-/// MXFP4 pages do.
+/// keys'. Both physical layouts store the same native products.
 struct Writes {
     ratio: u32,
     latent: Prepared<CompressedKvWriteBuffers<View>>,
-    keys: Option<Prepared<PositionKeyWriteBuffers<View>>>,
+    keys: Prepared<PositionKeyWriteBuffers<View>>,
 }
 
 pub(crate) struct CompressorOps {
@@ -170,7 +170,7 @@ impl PlaneViews {
     }
 }
 
-/// A step's spans of a write: the rows (the BF16 latent or F32 index key),
+/// A step's spans of a write: the F32 latent or projected index-key rows,
 /// the index key's norm weight, the compressed RoPE table, each row's
 /// compressed position (negative for none) and item, the plane, and the
 /// rank's backend workspace.
@@ -233,12 +233,22 @@ impl CompressorOps {
                         backend.compressed_kv_write(&latent_write(shape, ratio, storage), need)
                     })?;
                 let keys = match storage {
-                    KvStorage::Native => Some(asks.ask(
+                    KvStorage::Native => asks.ask(
                         format!("compressor.index_key_write r{ratio}"),
                         every,
                         |need| backend.position_indexer_key_write(&index_keys(shape, ratio), need),
-                    )?),
-                    KvStorage::Bf16 => None,
+                    )?,
+                    KvStorage::Bf16 => asks.ask(
+                        format!("compressor.index_key_write.bf16 r{ratio}"),
+                        every,
+                        |need| {
+                            backend.position_indexer_key_write_with_storage(
+                                &index_keys(shape, ratio),
+                                IndexerKeyFormat::Bf16,
+                                need,
+                            )
+                        },
+                    )?,
                 };
                 Ok(Writes {
                     ratio,
@@ -352,11 +362,9 @@ impl CompressorOps {
             .ok_or(Refusal("DeepSeek V4.1 writes no source of this ratio"))
     }
 
-    /// Whether the index keys of a source of `ratio` have a write: only
-    /// MXFP4 pages do.
+    /// Whether a source of `ratio` has a writer for the selected storage.
     pub(crate) fn writes_index_keys(&self, ratio: u32) -> bool {
-        self.write_ops(ratio)
-            .is_ok_and(|writes| writes.keys.is_some())
+        self.write_ops(ratio).is_ok()
     }
 
     /// The compressed latents' write of a source of `ratio`.
@@ -397,16 +405,10 @@ impl CompressorOps {
         rows: u32,
         views: &WriteViews,
     ) -> Result<Vec<Lowered>, Refusal> {
-        let op = self
-            .write_ops(ratio)?
-            .keys
-            .as_ref()
-            .ok_or(Refusal("DeepSeek V4.1 writes no BF16 index keys"))?;
+        let op = &self.write_ops(ratio)?.keys;
         let mut bind = Bind::default();
         let plane = &views.plane;
-        let scales = plane
-            .scales
-            .ok_or(Refusal("DeepSeek V4.1's index keys are MXFP4 with scales"))?;
+
         let norm_weight = views
             .norm_weight
             .ok_or(Refusal("the index key write reads its norm weight"))?;
@@ -421,10 +423,17 @@ impl CompressorOps {
             status_row_offset: 0,
             keys: PositionKeyPages {
                 codes: bind.view(plane.values),
-                scales: bind.view(scales),
+                scales: plane
+                    .scales
+                    .map(|scales| bind.view(scales))
+                    .unwrap_or(View::EMPTY),
                 pages: plane.pages,
                 code_page_stride: plane.page_stride,
-                scale_page_stride: plane.page_stride,
+                scale_page_stride: if plane.scales.is_some() {
+                    plane.page_stride
+                } else {
+                    0
+                },
                 page_tables: plane.tables(&mut bind),
             },
         };
@@ -438,5 +447,117 @@ fn kind(phase: RecurrentPhase) -> exact::Kind {
         RecurrentPhase::Prefill => exact::Kind::Prefill,
         RecurrentPhase::Decode => exact::Kind::Decode,
         RecurrentPhase::Verify { .. } => exact::Kind::Verify,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bundle_runtime::geometry::Ranks;
+    use kernel_core::contract::Argument;
+    use model_deepseek41_contract::geometry::FLASH;
+    use model_deepseek41_contract::state;
+    use runtime_bundle_abi::BundleDeviceBufferHandleV1;
+
+    fn span(id: u32, offset: u64, length: u64) -> DeviceBufferSpanV1 {
+        DeviceBufferSpanV1::new(
+            BundleDeviceBufferHandleV1::from_parts(id, 1),
+            offset,
+            length,
+        )
+    }
+
+    #[test]
+    fn both_storage_modes_bind_index_and_latent_streams_at_k2_offsets() {
+        for rank in [1, 2, 4] {
+            let shape = Shape::new(&FLASH, Ranks::new(rank).unwrap()).unwrap();
+            let kernels = crate::Kernels::new(&shape).unwrap();
+            for storage in [KvStorage::Native, KvStorage::Bf16] {
+                let asks = Asks::default();
+                let ops = CompressorOps::prepare(
+                    kernels.backend.as_ref(),
+                    kernels.own.as_ref(),
+                    &shape,
+                    storage,
+                    &asks,
+                )
+                .unwrap();
+                let state = state::request_state(&FLASH, storage, false);
+                let pool = span(100, 4096, 3 * state.page_bytes());
+                for (source, &layer) in FLASH.shape.csa.kv_sources.iter().enumerate() {
+                    let binding =
+                        crate::compressor::source_binding(&FLASH, layer, storage, pool, 3, 65)
+                            .unwrap()
+                            .unwrap();
+                    if storage == KvStorage::Bf16 {
+                        assert_eq!(state.page_bytes(), 204800);
+                        assert_eq!(
+                            binding.index.values.offset - pool.offset,
+                            [32768, 73728, 114688, 188416][source]
+                        );
+                        assert_eq!(
+                            binding.latent.values.offset - pool.offset,
+                            [0, 40960, 81920, 122880][source]
+                        );
+                    }
+                    for (index, plane, width) in
+                        [(true, binding.index, 128), (false, binding.latent, 512)]
+                    {
+                        let views = WriteViews {
+                            rows: span(1, 0, 3 * width * 4),
+                            norm_weight: index.then(|| span(2, 0, width * 2)),
+                            cos_sin: span(3, 0, ops.table_bytes()),
+                            positions: span(4, 0, 12),
+                            row_batch: span(5, 0, 12),
+                            live_rows: span(6, 0, 4),
+                            plane: PlaneViews {
+                                values: plane.values,
+                                scales: plane.scales,
+                                pages: 3,
+                                page_stride: plane.page_stride,
+                                tables: span(7, 0, 12),
+                                sequences: 1,
+                                max_pages: 3,
+                            },
+                            workspace: span(8, 0, 0),
+                            status: span(9, 0, 12),
+                        };
+                        let launches = if index {
+                            ops.write_index_keys(binding.ratio, 3, &views)
+                        } else {
+                            ops.write_latent(binding.ratio, 3, &views)
+                        }
+                        .unwrap();
+                        assert_eq!(launches.len(), 1);
+                        let call = &launches[0].launch;
+                        let value_argument = if index { 7 } else { 6 };
+                        let Argument::DeviceBuffer(handle) = call.arguments.0[value_argument]
+                        else {
+                            panic!("value pointer")
+                        };
+                        assert_eq!(call.bindings.get(handle).unwrap(), plane.values);
+                        let strides = call
+                            .arguments
+                            .0
+                            .iter()
+                            .filter_map(|a| {
+                                if let Argument::U64(v) = a {
+                                    Some(*v)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>();
+                        assert_eq!(strides[0], state.page_bytes());
+                        if index && storage == KvStorage::Bf16 {
+                            assert!(call.symbol.contains("index_key_bf16"));
+                            assert_eq!(strides, [state.page_bytes(), 0, 0]);
+                            assert_eq!(call.arguments.0.len(), 17);
+                        }
+                        assert_eq!(plane.positions_per_page, 64 / binding.ratio);
+                    }
+                }
+            }
+        }
     }
 }

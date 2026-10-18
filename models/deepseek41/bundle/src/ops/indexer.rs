@@ -10,12 +10,15 @@
 use kernel_core::attention::BlockTables;
 use kernel_core::backend::{Backend, Counts, Prepared, Refused, View};
 use kernel_core::contract::Refusal;
-use kernel_core::pooled_indexer::{PositionKeyPages, PositionQueryBuffers, PositionSelectBuffers};
+use kernel_core::pooled_indexer::{
+    IndexerKeyFormat, PositionKeyPages, PositionQueryBuffers, PositionSelectBuffers,
+};
 use kernel_core::position_blocks::{
     CandidateBlockIds, CandidateBlockIdsBuffers, PositionBlockSelectBuffers,
 };
 use model_deepseek41_contract::indexer;
 use model_deepseek41_contract::serving::PREFILL_TOKENS;
+use model_deepseek41_contract::state::KvStorage;
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
 use super::{Asks, Bind, Lowered, exact};
@@ -129,7 +132,11 @@ pub(crate) struct SelectViews {
 fn key_pages(bind: &mut Bind, keys: &KeyPages) -> PositionKeyPages<View> {
     PositionKeyPages {
         codes: bind.view(keys.codes),
-        scales: bind.view(keys.scales),
+        scales: if keys.scales.length == 0 {
+            View::EMPTY
+        } else {
+            bind.view(keys.scales)
+        },
         pages: keys.pages,
         code_page_stride: keys.code_page_stride,
         scale_page_stride: keys.scale_page_stride,
@@ -155,9 +162,14 @@ impl SelectOps {
     pub(crate) fn prepare(
         backend: &dyn Backend,
         shape: &Shape,
+        storage: KvStorage,
         asks: &Asks,
     ) -> Result<SelectOps, Refused> {
         let g = shape.geometry;
+        let storage = match storage {
+            KvStorage::Native => IndexerKeyFormat::Fp4,
+            KvStorage::Bf16 => IndexerKeyFormat::Bf16,
+        };
         let mut full = Vec::new();
         let mut reindex = Vec::new();
         for &layer in g.shape.csa.index_sources {
@@ -170,14 +182,26 @@ impl SelectOps {
                         .ok_or_else(|| Refused::Rule(format!("layer {layer} selects nothing")))?;
                     let need = exact::need(FULL_BLOCK, exact::every_phase(FULL_BLOCK));
                     let op = asks.ask(format!("indexer.select r{ratio}"), need, |need| {
-                        backend.position_indexer(&query, query.max_top_k, width, need)
+                        backend.position_indexer_with_storage(
+                            &query,
+                            storage,
+                            query.max_top_k,
+                            width,
+                            need,
+                        )
                     })?;
                     full.push((ratio, op));
                 }
                 Some(query) if !reindex.iter().any(|&(r, _)| r == ratio) => {
                     let need = exact::need(REINDEX_BLOCK, exact::every_phase(REINDEX_BLOCK));
                     let op = asks.ask(format!("indexer.reindex r{ratio}"), need, |need| {
-                        backend.position_block_indexer(&query, query.indexer.max_top_k, width, need)
+                        backend.position_block_indexer_with_storage(
+                            &query,
+                            storage,
+                            query.indexer.max_top_k,
+                            width,
+                            need,
+                        )
                     })?;
                     reindex.push((ratio, op));
                 }
@@ -288,5 +312,36 @@ impl SelectOps {
             output: bind.view(views.output),
         };
         bind.launch(op, &buffers, Counts::rows(rows))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use runtime_bundle_abi::BundleDeviceBufferHandleV1;
+    #[test]
+    fn bf16_index_pages_do_not_bind_an_absent_scale_plane() {
+        let values =
+            DeviceBufferSpanV1::new(BundleDeviceBufferHandleV1::from_parts(1, 1), 256, 16384);
+        let tables = DeviceBufferSpanV1::new(BundleDeviceBufferHandleV1::from_parts(2, 1), 0, 4);
+        let keys = KeyPages {
+            codes: values,
+            scales: DeviceBufferSpanV1::new(values.buffer, values.offset, 0),
+            pages: 1,
+            code_page_stride: 204800,
+            scale_page_stride: 0,
+            page_tables: BlockTables {
+                tables,
+                sequences: 1,
+                max_pages: 1,
+            },
+        };
+        let mut bind = Bind::default();
+        let b = key_pages(&mut bind, &keys);
+        assert_eq!(b.scales, View::EMPTY);
+        assert_eq!(b.scale_page_stride, 0);
+        assert_eq!(bind.0.get(b.codes.handle).unwrap(), values);
+        assert_eq!(bind.0.get(b.page_tables.tables.handle).unwrap(), tables);
+        assert!(bind.0.get(3).is_err(), "only values and tables are bound");
     }
 }

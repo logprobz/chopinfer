@@ -156,9 +156,10 @@ kernel_core::scratch_record! {
         /// A prefill's staged window, one block of `staged_slots` cells a
         /// phase item: each item's retained ring prefix, gathered, then its
         /// chunk's rows, E4M3 codes `[items, cells, head_dim]` and UE8M0
-        /// scales `[items, cells, head_dim / 32]`.
+        /// scales `[items, cells, head_dim / 32]`. BF16 comparison stores
+        /// twice as many code bytes and allocates no scale plane.
         pub stage_codes: value,
-        pub stage_scales: value,
+        pub stage_scales: option,
         /// Each phase item's chunk first and last position, the staged
         /// block's first position and the item itself (the staged
         /// attention's item map), I32 `[items]`; and each state slot's
@@ -268,6 +269,10 @@ kernel_core::scratch_record! {
 impl Scratch<Allocation> {
     /// Every buffer of one rank of `shape`.
     pub fn of(shape: &Shape) -> Self {
+        Self::of_storage(shape, model_deepseek41_contract::state::KvStorage::Native)
+    }
+    pub fn of_storage(shape: &Shape, storage: model_deepseek41_contract::state::KvStorage) -> Self {
+        let bf16_window = storage == model_deepseek41_contract::state::KvStorage::Bf16;
         let rows = u64::from(scratch_rows());
         let hidden = u64::from(shape.dims().hidden);
         let vocab = u64::from(shape.dims().vocab);
@@ -331,8 +336,10 @@ impl Scratch<Allocation> {
             window_rows: row(I32),
             // A slot's entry: at most one slot per row.
             window_last: row(I32),
-            stage_codes: Allocation::bytes(stage_cells * head_dim),
-            stage_scales: Allocation::bytes(stage_cells * head_dim / 32),
+            stage_codes: Allocation::bytes(
+                stage_cells * head_dim * if bf16_window { 2 } else { 1 },
+            ),
+            stage_scales: (!bf16_window).then(|| Allocation::bytes(stage_cells * head_dim / 32)),
             stage_first: Allocation::bytes(items * I32),
             stage_last: Allocation::bytes(items * I32),
             stage_base: Allocation::bytes(items * I32),
@@ -628,5 +635,19 @@ mod tests {
         );
         let short = DeviceBufferSpanV1::new(view.buffer, 256, total - 1);
         assert!(StateSpans::new(&state, extent, short).is_err());
+    }
+    #[test]
+    fn bf16_prefill_allocates_one_native_product_plane() {
+        use model_deepseek41_contract::state::KvStorage;
+        let shape = crate::shape::Shape::new(&FLASH, Ranks::TP4).unwrap();
+        let native = Scratch::of_storage(&shape, KvStorage::Native);
+        let bf16 = Scratch::of_storage(&shape, KvStorage::Bf16);
+        assert_eq!(
+            bf16.stage_codes.allocation_bytes(),
+            native.stage_codes.allocation_bytes() * 2
+        );
+        assert!(bf16.stage_scales.is_none());
+        assert!(native.stage_scales.unwrap().allocation_bytes() > 0);
+        bf16.visit(&mut |a: &Allocation| assert!(a.allocation_bytes() > 0));
     }
 }

@@ -174,7 +174,12 @@ impl Lowering<'_> {
     /// A prefill's staged window on this rank.
     fn staged(&self) -> Ring {
         let scratch = &self.buffers.scratch;
-        staged(self.shape, scratch.stage_codes, scratch.stage_scales)
+        staged(
+            self.shape,
+            self.kv.storage,
+            scratch.stage_codes,
+            scratch.stage_scales,
+        )
     }
 
     /// A prefill's staging spans: the phase's items' slots, chunk bounds
@@ -197,8 +202,8 @@ impl Lowering<'_> {
     }
 
     /// The window write of layer `layer`'s rows into its ring, or with
-    /// `staged` into a prefill's staged window. A BF16 ring has no native
-    /// write.
+    /// `staged` into a prefill's staged window, in the instance's KV
+    /// storage.
     fn ring_write(
         &self,
         phase: Phase,
@@ -208,9 +213,6 @@ impl Lowering<'_> {
         let Some(glue) = &self.ops.glue else {
             return Ok(None);
         };
-        if self.kv.storage != KvStorage::Native {
-            return Ok(None);
-        }
         let scratch = &self.buffers.scratch;
         let rows_of = |span| rows(span, phase.rows());
         let stage = self.stage_views();
@@ -326,11 +328,6 @@ impl Lowering<'_> {
         layer: u32,
     ) -> Result<Option<Vec<Lowered>>, String> {
         let g = self.shape.geometry;
-        // A BF16 prefill would read its staged window, which no BF16
-        // staging writes yet.
-        if self.kv.storage != KvStorage::Native && matches!(phase, Phase::Prefill { .. }) {
-            return Ok(None);
-        }
         // A window-only layer has no sources; a compressing layer reads its
         // KV source at that source's ratio.
         let sources = model_deepseek41_contract::indexer::sources(g, layer);

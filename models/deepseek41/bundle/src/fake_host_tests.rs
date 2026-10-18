@@ -554,32 +554,32 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (12663, 0x9777bf80403f9f3c),
+        (12688, 0x51c9b43e9389abc1),
     ),
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (10601, 0x24ecba2c438cdedf),
+        (12686, 0x39a1e78cf50ee7c1),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (25203, 0x8929220a0835fd4d),
+        (25253, 0x3c1c1fedd5b86298),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (21079, 0xe2f4810a0e142ca4),
+        (25249, 0x5e019ea4ac2303f3),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
-        (50291, 0x0adf0119b7e01fce),
+        (50391, 0x8ebc11564f1167da),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (42043, 0x32eea25f4c65ad64),
+        (50383, 0x0ec3ac5c45aadf36),
     ),
 ];
 
@@ -711,30 +711,11 @@ fn create_refuses_a_weight_view_its_op_reads_in_another_layout() {
     }
 }
 
-/// Create refuses a KV layout whose families are missing: the BF16 layout
-/// has no BF16 window-ring writer or staging, index-key writer or indexer
-/// read yet. An
-/// instance that runs the lowered stages alone launches the prepared ops
-/// through their cubins' entries in program order.
+/// An instance that runs the lowered stages alone launches the prepared
+/// ops through their cubins' entries in program order.
 #[test]
-fn create_refuses_while_a_family_is_missing() {
+fn a_partial_instance_launches_the_lowered_stages_in_program_order() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
-    let host = FakeHost::new(shape, KV_LAYOUTS[1]);
-    let record = crate::config::tests::record(&shape, KV_LAYOUTS[1], 4, false);
-    let refused = api()
-        .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
-        .map(|_| ())
-        .unwrap_err();
-    assert_eq!(refused, BundleAbiError::Status(BundleStatusV1::Unsupported));
-    assert!(
-        host.logs
-            .borrow()
-            .iter()
-            .any(|line| line.contains("bf16 KV layout has no BF16 window-ring writer")),
-        "{:?}",
-        host.logs.borrow()
-    );
-    assert_eq!(host.acquired.get(), host.released.get());
     // The partial instance launches the row ops', the all-reduce's and the
     // mixers' entries: the embedding widened, reduced through the F32 pair
     // and rounded, before the streams take it; the first sublayer's mixer
@@ -772,35 +753,58 @@ fn create_refuses_while_a_family_is_missing() {
     instance.destroy().unwrap();
 }
 
-/// The native layout lowers every stage: a full instance, not the lowered
+/// Both KV layouts lower every stage: a full instance, not the lowered
 /// stages alone, creates, prefills and decodes, decoding each Engram
-/// layer's rows in each step.
+/// layer's rows in each step. The BF16 layout launches the same stages
+/// through its BF16 window writes and staging, index-key writes and indexer
+/// reads, and never the native ones.
 #[test]
-fn the_native_layout_lowers_every_stage() {
+fn every_kv_layout_lowers_every_stage() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
-    let host = FakeHost::new(shape, KV_LAYOUTS[0]);
-    let record = crate::config::tests::record(&shape, KV_LAYOUTS[0], 4, false);
-    let mut instance = api()
-        .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
-        .unwrap_or_else(|error| panic!("create: {error:?} {:?}", host.logs.borrow()));
-    for batch in [prompt(7, 0, 0, 3, true), decode(&[(7, 0, 3, 3)])] {
-        if let Err(error) = instance.execute(&batch, &mut Views::default()) {
-            panic!("{error:?}: {:?}", host.logs.borrow());
+    let mut counts = Vec::new();
+    for kv in KV_LAYOUTS {
+        let host = FakeHost::new(shape, kv);
+        let record = crate::config::tests::record(&shape, kv, 4, false);
+        let mut instance = api()
+            .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "{:?} create: {error:?} {:?}",
+                    kv.storage,
+                    host.logs.borrow()
+                )
+            });
+        for batch in [prompt(7, 0, 0, 3, true), decode(&[(7, 0, 3, 3)])] {
+            if let Err(error) = instance.execute(&batch, &mut Views::default()) {
+                panic!("{:?} {error:?}: {:?}", kv.storage, host.logs.borrow());
+            }
+            instance.commit().unwrap();
         }
-        instance.commit().unwrap();
+        let journal = host.device.journal.borrow().clone();
+        let launches = |symbol: &str| {
+            journal
+                .iter()
+                .filter(|line| line.starts_with("launch") && line.contains(symbol))
+                .count()
+        };
+        // Two Engram layers in each of the two steps, on each of four ranks.
+        assert_eq!(launches("chop_row_mxfp8_decode_v1"), 2 * 2 * 4);
+        let bf16 = launches("bf16");
+        match kv.storage {
+            KvStorage::Native => assert_eq!(launches("window_store_bf16"), 0),
+            KvStorage::Bf16 => assert!(launches("window_store_bf16") > 0),
+        }
+        counts.push((
+            kv.storage,
+            journal.iter().filter(|l| l.starts_with("launch")).count(),
+            bf16,
+        ));
+        instance.retire_request(7).unwrap();
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
     }
-    let journal = host.device.journal.borrow().clone();
-    let launches = |symbol: &str| {
-        journal
-            .iter()
-            .filter(|line| line.starts_with("launch") && line.contains(symbol))
-            .count()
-    };
-    // Two Engram layers in each of the two steps, on each of four ranks.
-    assert_eq!(launches("chop_row_mxfp8_decode_v1"), 2 * 2 * 4);
-    instance.retire_request(7).unwrap();
-    instance.destroy().unwrap();
-    assert_eq!(host.acquired.get(), host.released.get());
+    // One launch for one: the layouts differ in which entries they launch.
+    assert_eq!(counts[0].1, counts[1].1, "{counts:?}");
 }
 
 /// The shared stream broadcast's symbol.

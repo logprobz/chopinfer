@@ -63,29 +63,23 @@ __device__ void run(const float* activation,
   __shared__ uint32_t eligible[8];
   __shared__ uint32_t weights_ok;
   bool valid_weights = true;
-  bool finite_weights = true;
   for (uint64_t at = lane; at < uint64_t(16) * K; at += 32) {
     const uint32_t feature = feature0 + at / K;
     if (feature >= N) continue;
     const float value = F32Weight ? float(weight[uint64_t(feature) * K + at % K])
         : widen(uint16_t(weight[uint64_t(feature) * K + at % K]));
-    finite_weights &= isfinite(value);
     valid_weights &= tensor_operand(value);
   }
-  if (!__all_sync(0xffffffff, finite_weights)) asm volatile("trap;");
   const bool weight_domain = __all_sync(0xffffffff, valid_weights);
   if (lane == 0) weights_ok = !F32Weight && weight_domain;
   for (int r = 0; r < 8; ++r) {
     bool valid = true;
-    bool finite = true;
     if (token0 + r < live) {
       for (int k = lane; k < K; k += 32) {
         const float value = activation[uint64_t(token0 + r) * K + k];
-        finite &= isfinite(value);
         valid &= tensor_operand(value);
       }
     }
-    if (!__all_sync(0xffffffff, finite)) asm volatile("trap;");
     const bool domain = __all_sync(0xffffffff, valid);
     if (lane == 0) eligible[r] = domain;
   }
@@ -165,7 +159,9 @@ __device__ void run(const float* activation,
         result = __fadd_rn(result,partial);
       }
     }
-    if (!isfinite(result)) asm volatile("trap;");
+    // Out-of-contract non-finite operands take SIMT and retain IEEE F32
+    // propagation. A downstream status-reporting quantizer can flag them;
+    // device data never traps or contaminates another activation row.
     output[uint64_t(token) * N + feature] = result;
   }
   ptx::griddep_launch_dependents();

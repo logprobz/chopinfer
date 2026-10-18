@@ -24,6 +24,10 @@ pub enum Witness {
     SeparateChains,
     FoldBoundary,
     Fallback,
+    Underflow,
+    NonfiniteInput,
+    NonfiniteWeight,
+    Overflow,
 }
 
 pub fn operation(entry: &Entry) -> precision::OperationSpec {
@@ -115,6 +119,36 @@ fn operands(entry: &Entry, witness: Witness) -> (Vec<f32>, Vec<f32>) {
                     256 => -1.,
                     _ => 0.,
                 },
+                Witness::Underflow => {
+                    if c == 0 {
+                        f32::from_bits(1 + (r % 4) as u32)
+                    } else {
+                        0.
+                    }
+                }
+                Witness::NonfiniteInput => {
+                    if c == 0 {
+                        [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 1.][r % 4]
+                    } else {
+                        0.
+                    }
+                }
+                Witness::NonfiniteWeight => {
+                    if c == 0 {
+                        1.
+                    } else {
+                        0.
+                    }
+                }
+                Witness::Overflow => {
+                    if c == 0 && r % 4 == 0 {
+                        f32::MAX
+                    } else if c == 0 {
+                        1.
+                    } else {
+                        0.
+                    }
+                }
                 Witness::Fallback => {
                     if c == 0 {
                         match r % 4 {
@@ -134,6 +168,34 @@ fn operands(entry: &Entry, witness: Witness) -> (Vec<f32>, Vec<f32>) {
         for c in 0..k {
             let v = match witness {
                 Witness::General => ((r * 31 + c * 17) % 251) as f32 / 131.7 - 0.94,
+                Witness::Underflow => {
+                    if c == 0 {
+                        0.5
+                    } else {
+                        0.
+                    }
+                }
+                Witness::NonfiniteInput => {
+                    if c == 0 {
+                        1.
+                    } else {
+                        0.
+                    }
+                }
+                Witness::NonfiniteWeight => {
+                    if c == 0 {
+                        [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 1.][r % 4]
+                    } else {
+                        0.
+                    }
+                }
+                Witness::Overflow => {
+                    if c == 0 {
+                        2.
+                    } else {
+                        0.
+                    }
+                }
                 Witness::Fallback => {
                     if c == 0 {
                         2_f32.powi(100)
@@ -213,10 +275,50 @@ pub fn case<'a>(
         row_offset: 0,
         shard_rows: 0,
     };
-    let cached =
-        RefCell::new(None::<(Vec<u8>, kernel_core::oracle::OracleOutput, Option<Vec<u8>>)>);
+    let cached = RefCell::new(None::<(Vec<u8>, f32_gemm::Oracle, Option<Vec<u8>>)>);
     Ok(OpCase::new(op, q.m_capacity, roles)?
         .oracle(move |images: &Images, live| {
+            if matches!(
+                witness,
+                Witness::NonfiniteInput | Witness::NonfiniteWeight | Witness::Overflow
+            ) {
+                // Exceptional operands are outside the finite numerical contract.
+                // Require IEEE propagation and isolation, never a device trap.
+                let a = images.f32s("activation")?;
+                let mut expected = Vec::new();
+                for row in a.chunks_exact(q.k as usize).take(live as usize) {
+                    for weight in b.chunks_exact(q.k as usize) {
+                        let mut total = 0_f32;
+                        for (a, b) in row.chunks(128).zip(weight.chunks(128)) {
+                            let partial =
+                                a.iter().zip(b).fold(0_f32, |v, (&a, &b)| a.mul_add(b, v));
+                            total += partial;
+                        }
+                        expected.push(total);
+                    }
+                }
+                return Ok(vec![(
+                    "output".into(),
+                    Expected::Judge(Box::new(move |bytes| {
+                        if bytes.len() < expected.len() * 4 {
+                            return Err("output extent differs".into());
+                        }
+                        for (i, (&expected, raw)) in
+                            expected.iter().zip(bytes.chunks_exact(4)).enumerate()
+                        {
+                            let actual = f32::from_le_bytes(raw.try_into().unwrap());
+                            if !(expected.is_nan() && actual.is_nan())
+                                && actual.to_bits() != expected.to_bits()
+                            {
+                                return Err(format!(
+                                    "output[{i}] exceptional propagation or row isolation differs"
+                                ));
+                            }
+                        }
+                        Ok(())
+                    })),
+                )]);
+            }
             let input = images.bytes("activation")?;
             if cached
                 .borrow()
@@ -272,19 +374,15 @@ pub fn case<'a>(
         ))
 }
 
-fn judge(
-    reference: &kernel_core::oracle::OracleOutput,
-    bytes: &[u8],
-    count: usize,
-) -> LabResult<()> {
+fn judge(reference: &f32_gemm::Oracle, bytes: &[u8], count: usize) -> LabResult<()> {
     if bytes.len() < count * 4 || reference.values.len() < count {
         return Err("F32 oracle output length differs".into());
     }
     for (i, bytes) in bytes.chunks_exact(4).take(count).enumerate() {
         let value = f32::from_le_bytes(bytes.try_into().expect("four bytes")) as f64;
-        let bound = f32_gemm::bound(reference.sum_abs_products[i]);
+        let bound = f32_gemm::bound(reference.k, reference.sum_abs_products[i]);
         let error = (value - reference.values[i]).abs();
-        if !value.is_finite() || error > bound {
+        if !value.is_finite() || !bound.is_finite() || error > bound {
             return Err(format!(
                 "output[{i}] differs from F64: error={error}, bound={bound}"
             ));

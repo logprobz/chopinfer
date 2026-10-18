@@ -110,11 +110,11 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "dc88fb44a3b516df579dd296f81fc0734a77d1abd7378fd78489ea904926d16a",
+    "cubin_sha256": "fbb1a3a4ce06811f41a96179c9f94bb134e1dc70033ad616bd632c8eb95aa144",
     "resources": [
       {
         "symbol": "chop_exact_f32_bf16_m9_n17_k257_drop_lo_v1",
-        "registers": 56,
+        "registers": 60,
         "shared_static_bytes": 5156,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -123,7 +123,7 @@
       },
       {
         "symbol": "chop_exact_f32_bf16_m9_n17_k257_merged_chains_v1",
-        "registers": 45,
+        "registers": 46,
         "shared_static_bytes": 5156,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -132,7 +132,7 @@
       },
       {
         "symbol": "chop_exact_f32_bf16_m9_n17_k257_tf32_v1",
-        "registers": 68,
+        "registers": 69,
         "shared_static_bytes": 5156,
         "local_bytes": 0,
         "stack_bytes": 0,

@@ -38,11 +38,21 @@ fn required() -> Vec<kit::Required<'static>> {
     for witness in [Witness::WeightBits, Witness::Fallback] {
         ops.push(cases::required(raw.clone(), witness));
     }
+    for weight in [WeightFormat::Bf16, WeightFormat::F32] {
+        for witness in [
+            Witness::Underflow,
+            Witness::NonfiniteInput,
+            Witness::NonfiniteWeight,
+            Witness::Overflow,
+        ] {
+            ops.push(cases::required(family::entry(17, 257, 9, weight), witness));
+        }
+    }
     ops
 }
 fn run(session: Option<&Session>) -> LabResult<()> {
     let report = kit::conform(&backend(), &LabModules, session, &required())?;
-    assert_eq!(report.prepared().len(), 28);
+    assert_eq!(report.prepared().len(), 36);
     assert!(report.failures().is_empty(), "{:?}", report.failures());
     if let Some(session) = session {
         assert!(
@@ -131,7 +141,7 @@ fn faulty_device_arithmetic_is_rejected_by_unchanged_cases() {
             assert_eq!(report.ops.len(),1);
             let OpResult::Prepared {checks,..} = &report.ops[0].result else {panic!("mutant did not prepare")};
             assert!(checks.iter().any(|check| check.name == "conformance" && matches!(&check.outcome, Outcome::Failed(error) if error.contains("output") && !error.contains("CUDA") && !error.contains("unbound"))),"{fault}: {checks:?}");
-            session.receipt(&format!("f32-mutant-{fault}"),BTreeMap::from([("report".into(),report.json())]))?;
+            session.receipt(&format!("f32-mutant-{}", fault.replace('_', "-")),BTreeMap::from([("report".into(),report.json())]))?;
         }
         Ok(())
     }).unwrap();
@@ -153,6 +163,7 @@ fn compiled_entries_have_pdl_bf16_mma_and_no_tf32() {
     assert!(sass.status.success());
     let text = String::from_utf8(sass.stdout).unwrap();
     assert!(!text.contains("TF32"));
+    assert!(!text.contains("TRAP"), "device data must never trap");
     for entry in family::entries() {
         let header = format!("Function : {}\n", entry.symbol());
         let body = text

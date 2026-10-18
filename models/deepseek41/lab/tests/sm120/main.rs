@@ -37,8 +37,11 @@ mod reduce;
 #[path = "../../../bundle/src/sm120/widen.rs"]
 mod widen;
 
+mod moe;
+
 mod latent_glue;
 
+mod mxfp8_fold;
 mod window_stage;
 
 // The vision encoder: the bundle's catalog and its conformance cases.

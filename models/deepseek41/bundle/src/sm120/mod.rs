@@ -6,6 +6,7 @@
 
 pub mod dspark_entries;
 pub mod latent;
+pub mod mxfp8_fold;
 use kernels_sm120::backend::{F32ProjectionOffers, Sm120};
 
 /// The build's identity of the exact F32 projection cubins (`f32_head`,
@@ -28,6 +29,8 @@ pub(crate) mod own_ops;
 #[allow(dead_code, reason = "the build compiles the entries and declarations")]
 mod compressor;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
+mod dense;
+#[allow(dead_code, reason = "the build script compiles the cubin specs")]
 pub(crate) mod encoder;
 #[allow(
     dead_code,
@@ -49,9 +52,15 @@ mod latent_glue;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod latent_window_stage;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
+mod moe;
+#[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod reduce;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
+mod routed_sum;
+#[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod rows;
+#[allow(dead_code, reason = "the build script compiles the cubin specs")]
+mod shared;
 mod widen;
 
 /// The serving latent cubins and symbols, for the model's kernel lab.
@@ -118,6 +127,11 @@ impl crate::Kernels {
         let sm120 = compressor::CompressorKernels::serving(shape.geometry)
             .map_err(|e| e.to_string())?
             .register(sm120);
+        let sm120 = moe::register(sm120, shape.geometry, shape.ranks())?;
+        let sm120 = routed_sum::register(sm120, shape.geometry);
+        let sm120 = dense::register(sm120, shape.geometry, shape.ranks())?;
+        let sm120 = shared::register(sm120, shape.geometry, shape.ranks())?;
+        let sm120 = mxfp8_fold::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = indexer_query::register(sm120, shape.geometry);
         let sm120 = latent_glue::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = latent_window_stage::register(sm120, shape.geometry, shape.ranks())?;

@@ -1,0 +1,133 @@
+//! Model-owned registrations over the shared chained engine and row quantizer.
+
+use kernel_build::CubinSpec;
+use kernel_core::gated_mlp::GatedMlpProjection;
+use kernels_sm120::backend::Sm120;
+use kernels_sm120::moe::chained::{LocalRoute, quantized, row_bias};
+use kernels_sm120::row::block_quantize::{self, Entry};
+use model_deepseek41_contract::admission::SUPPORTED_RANKS;
+use model_deepseek41_contract::geometry::Geometry;
+use model_deepseek41_contract::moe::{self, Experts};
+use model_deepseek41_contract::serving::{DECODE_BATCH, PREFILL_TOKENS};
+
+pub const FAMILY: &str = "routed_moe";
+
+pub fn projections(g: &Geometry, ranks: u32) -> Result<Vec<quantized::Projection>, String> {
+    let mut entries = Vec::new();
+    for set in moe::expert_sets(g) {
+        for (tile, tokens) in [(16, DECODE_BATCH), (64, PREFILL_TOKENS)] {
+            for kind in [GatedMlpProjection::GateUp, GatedMlpProjection::Down] {
+                let query = moe::projection(g, ranks, set, kind, tokens)?;
+                let mut entry =
+                    quantized::Projection::new(query, tile, tokens).map_err(|e| e.to_string())?;
+                entry.symbol = format!("{}_{}", g.kernel_tag, entry.symbol);
+                entries.push(entry);
+            }
+        }
+    }
+    Ok(entries)
+}
+
+pub fn routers(g: &Geometry) -> Vec<row_bias::Router> {
+    moe::expert_sets(g)
+        .into_iter()
+        .flat_map(|set| {
+            [DECODE_BATCH, PREFILL_TOKENS].map(|capacity| row_bias::Router {
+                experts: set.count,
+                top_k: set.top_k,
+                capacity,
+            })
+        })
+        .collect()
+}
+
+pub fn routes(g: &Geometry) -> Vec<row_bias::Route> {
+    moe::expert_sets(g)
+        .into_iter()
+        .flat_map(|Experts { count, top_k }| {
+            [(16, DECODE_BATCH), (64, PREFILL_TOKENS)].map(|(pad, capacity)| row_bias::Route {
+                local: LocalRoute {
+                    experts: count,
+                    local_experts: count,
+                    top_k,
+                    capacity,
+                    pad,
+                },
+            })
+        })
+        .collect()
+}
+
+pub fn quantizers(g: &Geometry, ranks: u32) -> Result<Vec<Entry>, String> {
+    model_deepseek41_contract::admission::check_ranks(g, ranks)?;
+    let mut widths = vec![g.shape.hidden];
+    widths.extend(
+        moe::expert_sets(g)
+            .iter()
+            .map(|set| set.top_k * (g.shape.moe.intermediate / ranks)),
+    );
+    widths.sort_unstable();
+    widths.dedup();
+    widths
+        .into_iter()
+        .map(|width| {
+            Entry::new(
+                moe::quantizer(width),
+                PREFILL_TOKENS,
+                format!("chop_{}_moe_ceil_w{width}_v1", g.kernel_tag),
+            )
+            .map_err(|e| e.to_string())
+        })
+        .collect()
+}
+
+pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {
+    let mut specs = Vec::new();
+    for g in geometries {
+        let mut compute = Vec::new();
+        let mut quant = Vec::new();
+        for &ranks in SUPPORTED_RANKS {
+            compute.extend(projections(g, ranks)?);
+            for entry in quantizers(g, ranks)? {
+                if !quant.iter().any(|e: &Entry| e.symbol == entry.symbol) {
+                    quant.push(entry);
+                }
+            }
+        }
+        specs.push((
+            FAMILY,
+            quantized::cubin_spec(&format!("moe_{}_compute_sm120", g.kernel_tag), &compute),
+        ));
+        specs.push((
+            FAMILY,
+            row_bias::cubin_spec(
+                &format!("moe_{}_routes_sm120", g.kernel_tag),
+                &routers(g),
+                &routes(g),
+            )
+            .map_err(|e| e.to_string())?,
+        ));
+        specs.push((
+            FAMILY,
+            block_quantize::cubin_spec(&format!("moe_{}_quantize_sm120", g.kernel_tag), &quant)
+                .map_err(|e| e.to_string())?,
+        ));
+    }
+    Ok(specs)
+}
+
+pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
+    for entry in quantizers(g, ranks)? {
+        backend = backend.with_block_quantize(entry);
+    }
+    for entry in projections(g, ranks)? {
+        backend = backend.with_quantized_chained_projection(entry);
+    }
+    for entry in routers(g) {
+        backend = backend.with_row_bias_router(entry);
+    }
+    for entry in routes(g) {
+        backend = backend.with_row_bias_route(entry);
+    }
+    Ok(backend)
+}

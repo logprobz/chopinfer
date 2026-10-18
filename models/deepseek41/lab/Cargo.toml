@@ -30,6 +30,10 @@ name = "sm120"
 path = "tests/sm120/main.rs"
 
 [[example]]
+name = "build_moe"
+path = "examples/sm120/build_moe.rs"
+
+[[example]]
 name = "build_latent_glue"
 path = "examples/sm120/build_latent_glue.rs"
 

@@ -25,5 +25,13 @@ serde_json.workspace = true
 kernel-build.workspace = true
 kernels-sm120.workspace = true
 
+[[test]]
+name = "kernel_moe"
+path = "tests/sm120/moe.rs"
+
+[[test]]
+name = "kernel_mxfp8_fold"
+path = "tests/sm120/kernel_mxfp8_fold.rs"
+
 [lints]
 workspace = true

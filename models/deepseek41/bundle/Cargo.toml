@@ -17,6 +17,7 @@ kernel-build.workspace = true
 kernel-core.workspace = true
 kernels-sm120.workspace = true
 model-deepseek41-contract.workspace = true
+projection-spec.workspace = true
 runtime-bundle-abi.workspace = true
 runtime-bundle-sdk.workspace = true
 
@@ -25,6 +26,7 @@ kernel-build.workspace = true
 kernel-core.workspace = true
 kernels-sm120.workspace = true
 model-deepseek41-contract.workspace = true
+projection-spec.workspace = true
 
 [dev-dependencies]
 bundle-runtime = { workspace = true, features = ["test-support"] }

@@ -1,0 +1,14 @@
+[
+  {
+    "name": "moe_deepseek41_compute_sm120",
+    "source_closure_sha256": "cf576c96d21bc088187ce1ed7566f0e6260a34b4e3008685c9f80e480afa29cf"
+  },
+  {
+    "name": "moe_deepseek41_quantize_sm120",
+    "source_closure_sha256": "597081781baf21cd6f0a18bb90db53a068a8b4afd14c1d375421eb7f0646b92a"
+  },
+  {
+    "name": "moe_deepseek41_routes_sm120",
+    "source_closure_sha256": "52e5c6c41e694da638269ab43f95f9ef19928133099314cf84b7f71149f51c92"
+  }
+]

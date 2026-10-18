@@ -136,6 +136,7 @@ dependencies = [
  "kernel-core",
  "kernels-sm120",
  "model-deepseek41-contract",
+ "projection-spec",
  "runtime-bundle-abi",
  "runtime-bundle-sdk",
  "serde_json",

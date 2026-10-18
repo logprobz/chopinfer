@@ -1,0 +1,127 @@
+[
+  {
+    "name": "chop_moe_deepseek41_route",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_moe_deepseek41_sum_f32_k6_w5120_l384_t8192_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "routed",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_tokens",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "3310cc8ebb58183c06c2a84017fb86356f731727be760a129684cb4cb646788d",
+    "resources": [
+      {
+        "symbol": "chop_moe_deepseek41_sum_f32_k6_w5120_l384_t8192_v1",
+        "registers": 40,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "chop_moe_deepseek41_sum_add",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_moe_deepseek41_sum_add_f32_k6_w5120_l384_t8192_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "routed",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_tokens",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "addend",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "ccc9b13de50cafad0296b9ed36d4c24851d23c3313ce6f1014f88265df744878",
+    "resources": [
+      {
+        "symbol": "chop_moe_deepseek41_sum_add_f32_k6_w5120_l384_t8192_v1",
+        "registers": 43,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

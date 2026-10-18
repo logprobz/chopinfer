@@ -169,7 +169,7 @@ impl<'a> Fixture<'a> {
         }
         buffers.insert(LIVE, session.allocate(4)?);
         buffers.insert(STATUS, session.allocate(ROWS * 4)?);
-        poison::write(session, &buffers[&STATUS], 0, &vec![0; ROWS * 4])?;
+        poison::write(session, &buffers[&STATUS], 0, &[0; ROWS * 4])?;
         let fixture = Self {
             entry,
             function,

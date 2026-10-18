@@ -334,7 +334,7 @@ pub fn case_with_status<'a>(
     let mut up = spread(52, rows * width, 12.0);
     let mut prior = vec![0; rows];
     if invalid {
-        for row in 0..rows {
+        for (row, flag) in prior.iter_mut().enumerate() {
             let at = row * width + if row % 2 == 0 { 0 } else { width - 1 };
             match row % 8 {
                 0 => gate[at] = f32::NAN,
@@ -343,7 +343,7 @@ pub fn case_with_status<'a>(
                 3 => up[at] = f32::NAN,
                 4 => up[at] = f32::INFINITY,
                 5 => up[at] = f32::NEG_INFINITY,
-                6 => prior[row] = 0x8000_0002,
+                6 => *flag = 0x8000_0002,
                 _ => {}
             }
         }

@@ -4,6 +4,80 @@ use kernel_core::precision::*;
 use kernels_sm120::{gemm, moe, precision::*, row::precision as row};
 
 #[test]
+fn legacy_projection_entries_refuse_unquantized_f32_operands() {
+    for weight in [WeightFormat::Bf16, WeightFormat::F32] {
+        let request = gemm::DenseRequest {
+            query: GemmQuery {
+                m_capacity: 1,
+                n: 256,
+                k: 256,
+                weight,
+                activation: ActivationFormat::F32,
+                output: DType::F32,
+                epilogues: Epilogues::default(),
+                grouped: None,
+            },
+            kernel: DenseKernel::Tiled { splits: 1 },
+            target: Target::Sm120f,
+            symbol: "f32_unregistered_v1".into(),
+            knobs: None,
+        };
+        request.query.validate().unwrap();
+        let error = KernelOffer::dense(
+            request.clone(),
+            usage(),
+            row::Nvfp4Global::Absent,
+            "invalid_quantizer_v1",
+        )
+        .unwrap_err();
+        assert!(error.0.contains("registered F32 implementation"));
+        let mut source = operation(OperationKind::Dense, ActivationFormat::Bf16);
+        let dtype = if weight == WeightFormat::F32 {
+            DType::F32
+        } else {
+            DType::Bf16
+        };
+        source.weights = vec![WeightSpec {
+            codes: tensor("matrix", dtype, vec![256, 256]),
+            logical_shape: vec![256, 256],
+            format: weight,
+            encoding: if weight == WeightFormat::F32 {
+                CodeEncoding::F32LittleEndian
+            } else {
+                CodeEncoding::Bf16LittleEndian
+            },
+            layout: WeightLayout::row_major(),
+            local_scale: None,
+            global_scale: None,
+            transforms: vec![],
+        }];
+        source.activations = vec![ActivationSpec::f32()];
+        source.arithmetic.weight_operand = DType::F32;
+        source.arithmetic.output = DType::F32;
+        source.arithmetic.decode_order = DecodeOrder::ExactF32Operands;
+        source.arithmetic.numerical_contract =
+            request.query.numerical_contract_id().unwrap().to_string();
+        source.validate().unwrap();
+        let error = generated::offer(
+            generated::Request {
+                operation: &source,
+                format: format::registry::by_format(weight).unwrap().id(),
+                usage: usage(),
+                implementation: generated::Implementation::Dense {
+                    kernel: request.kernel,
+                    capacity: 1,
+                    knobs: None,
+                },
+            },
+            &[],
+        )
+        .unwrap_err();
+        assert!(error.contains("registered F32 implementation"), "{error}");
+        assert!(gemm::instantiate(request).is_err());
+    }
+}
+
+#[test]
 fn mx_offers_bind_scale_rules_and_refuse_false_execution_claims() {
     use kernel_core::precision::capability::ActivationCapability;
     use kernel_core::precision::execution::BlockScaledExecution as Execution;

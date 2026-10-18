@@ -26,12 +26,14 @@ pub enum ActivationCapability {
     Nvfp4StaticScalar,
     Nvfp4TensorAmax,
     Mxfp8Ceil { amax_floor_bits: u32 },
+    F32,
 }
 
 impl ActivationCapability {
     pub fn format(self) -> ActivationFormat {
         match self {
             Self::Bf16 => ActivationFormat::Bf16,
+            Self::F32 => ActivationFormat::F32,
             Self::Fp8Group128(mode) => ActivationFormat::Fp8Group128(mode),
             Self::Mxfp8 | Self::Mxfp8Ceil { .. } => ActivationFormat::Mxfp8,
             Self::Nvfp4StaticScalar | Self::Nvfp4TensorAmax => ActivationFormat::Nvfp4,
@@ -39,17 +41,30 @@ impl ActivationCapability {
     }
 
     fn require(self, activation: &ActivationSpec) -> Result<(), String> {
+        let storage = if self == Self::F32 {
+            DType::F32
+        } else {
+            DType::Bf16
+        };
         if activation.format != self.format()
-            || activation.storage != DType::Bf16
+            || activation.storage != storage
             || !activation.transforms.is_empty()
         {
             return Err(format!(
-                "requested {:?} activation operands with {:?} storage and {} transforms; supplied composition requires {:?} operands, BF16 storage and no transforms",
+                "requested {:?} activation operands with {:?} storage and {} transforms; supplied composition requires {:?} operands, {} storage and no transforms",
                 activation.format,
                 activation.storage,
                 activation.transforms.len(),
-                self.format()
+                self.format(),
+                if storage == DType::F32 { "F32" } else { "BF16" }
             ));
+        }
+        if self == Self::F32 {
+            return if activation.is_f32() {
+                Ok(())
+            } else {
+                Err("F32 binding cannot quantize or round activation operands".into())
+            };
         }
         if self == Self::Bf16 {
             return if activation.is_bf16() {
@@ -151,11 +166,29 @@ impl OperationCapability {
             || (self.kind == OperationKind::Lookup) != self.activation.is_none()
             || self.weight == WeightFormat::Nvfp4 && self.globals == GlobalScaleCapability::Absent
             || self.weight != WeightFormat::Nvfp4 && self.globals != GlobalScaleCapability::Absent
-            || self.weight == WeightFormat::Bf16 && !self.local_scale_dtypes.is_empty()
-            || self.weight != WeightFormat::Bf16 && self.local_scale_dtypes.is_empty()
+            || matches!(self.weight, WeightFormat::Bf16 | WeightFormat::F32)
+                && !self.local_scale_dtypes.is_empty()
+            || !matches!(self.weight, WeightFormat::Bf16 | WeightFormat::F32)
+                && self.local_scale_dtypes.is_empty()
             || self.arithmetic.accumulator != DType::F32
         {
             return Err("invalid supplied operation capability".into());
+        }
+        if self.activation == Some(ActivationCapability::F32) {
+            if self.kind != OperationKind::Dense
+                || self.operands != 1
+                || !matches!(self.weight, WeightFormat::Bf16 | WeightFormat::F32)
+                || self.arithmetic.weight_operand != DType::F32
+                || self.arithmetic.output != DType::F32
+                || self.arithmetic.decode_order != super::DecodeOrder::ExactF32Operands
+                || self.epilogues != Epilogues::default()
+            {
+                return Err("F32 capability must preserve exact F32 inputs and F32 output".into());
+            }
+        } else if self.weight == WeightFormat::F32
+            || self.arithmetic.decode_order == super::DecodeOrder::ExactF32Operands
+        {
+            return Err("raw F32 weights and exact F32 arithmetic require F32 activations".into());
         }
         if self.operands == 2 && self.epilogues.swiglu.is_none() {
             return Err("two supplied operands require a declared projection fusion".into());

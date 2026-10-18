@@ -113,6 +113,16 @@ The links lead to each rule's details.
    formats](../crates/kernels-sm120/cuda/gemm/README.md#formats-and-mma-paths),
    [BF16
    accumulation](../crates/kernels-sm120/cuda/gemm/README.md#bf16-accumulation)).
+   Unquantized F32 projections preserve their input values and write F32.
+   With BF16 weights, the tensor path splits each activation exactly into
+   three BF16 components. Each component has its own 128-K F32 chain; the
+   hi, mid and lo partials merge in that order, then enter the outer sum in
+   increasing K order. Components and weights must be normal or zero, and
+   each component product must be finite, normal or zero, and exact in F32.
+   Finite values outside that domain use SIMT F32 FMA. Raw F32 weights also
+   use SIMT. The f64 oracle uses the original inputs and the bound
+   `2^-22 * 128 * S`, with no BF16 output-rounding allowance. Casting the
+   activation to BF16 or TF32 is not an implementation of this contract.
    Attention PV, the encoder's pair GEMMs and PV, and the MXFP4 expert
    mainloops keep one MMA chain into their F32 accumulator over the whole
    reduction, by a measured decision of 2026-10-04 ([persistent BF16

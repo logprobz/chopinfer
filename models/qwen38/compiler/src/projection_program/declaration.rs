@@ -145,6 +145,7 @@ impl Definitions {
             activations,
             arithmetic: ArithmeticSpec {
                 weight_operand: match activation {
+                    ActivationFormat::F32 => DType::F32,
                     ActivationFormat::Bf16 => DType::Bf16,
                     ActivationFormat::Fp8Group128(_) | ActivationFormat::Mxfp8 => DType::Fp8E4M3,
                     ActivationFormat::Nvfp4 => DType::Fp4E2M1,

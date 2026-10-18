@@ -610,12 +610,22 @@ impl GroupedScales {
         unused: View,
     ) -> Result<GroupedScales, Refusal> {
         let (activation_bytes, activation_f32) = match query.activation {
+            ActivationFormat::F32 => {
+                return Err(Refusal(
+                    "legacy grouped projections do not support F32 activations",
+                ));
+            }
             ActivationFormat::Bf16 => (unused, unused),
             ActivationFormat::Mxfp8 => (required(activation_scales)?, unused),
             ActivationFormat::Nvfp4 => (required(activation_scales)?, required(activation_global)?),
             ActivationFormat::Fp8Group128(_) => (unused, required(activation_scales)?),
         };
         let (weight_bytes, weight_f32) = match query.weight {
+            WeightFormat::F32 => {
+                return Err(Refusal(
+                    "legacy grouped projections do not support F32 weights",
+                ));
+            }
             WeightFormat::Fp8Block32x32 => {
                 return Err(Refusal(
                     "32x32 UE8M0 weights require a lossless per-row repack before grouped execution",

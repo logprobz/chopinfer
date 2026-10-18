@@ -376,6 +376,11 @@ fn quantizer(
     scale_rule: Option<DynamicScale>,
 ) -> Result<Option<row::Quantizer>, Refusal> {
     let output = match format {
+        ActivationFormat::F32 => {
+            return Err(Refusal(
+                "F32 projections require a registered F32 implementation; no activation quantizer is permitted",
+            ));
+        }
         ActivationFormat::Bf16 => {
             if global != row::Nvfp4Global::Absent || scale_rule.is_some() {
                 return Err(Refusal("BF16 operands cannot bind an activation global"));
@@ -495,6 +500,13 @@ impl KernelOffer {
         global: row::Nvfp4Global,
         quantizer_symbol: &str,
     ) -> Result<Self, Refusal> {
+        if request.query.activation == ActivationFormat::F32
+            || request.query.weight == WeightFormat::F32
+        {
+            return Err(Refusal(
+                "F32 projections require a registered F32 implementation",
+            ));
+        }
         if usage.capacity > request.query.m_capacity {
             return Err(Refusal(
                 "dense offer does not cover its advertised capacity",
@@ -822,6 +834,11 @@ impl KernelOffer {
                 };
                 let activation = match (query.activation, self.nv_global) {
                     (ActivationFormat::Bf16, _) => ActivationCapability::Bf16,
+                    (ActivationFormat::F32, _) => {
+                        return Err(Refusal(
+                            "legacy projection entries do not implement F32 activations",
+                        ));
+                    }
                     (ActivationFormat::Fp8Group128(mode), _) => {
                         ActivationCapability::Fp8Group128(mode)
                     }
@@ -916,6 +933,7 @@ impl KernelOffer {
 
 pub fn dense_decode_order(query: &GemmQuery, fragment: bool) -> DecodeOrder {
     match query.activation {
+        ActivationFormat::F32 => DecodeOrder::ExactF32Operands,
         ActivationFormat::Bf16 => {
             if query.weight == WeightFormat::Nvfp4 {
                 return DecodeOrder::ExactLocalThenGlobal;
@@ -943,6 +961,7 @@ pub fn dense_decode_order(query: &GemmQuery, fragment: bool) -> DecodeOrder {
 
 fn grouped_decode_order(activation: ActivationFormat, weight: WeightFormat) -> DecodeOrder {
     match activation {
+        ActivationFormat::F32 => DecodeOrder::ExactF32Operands,
         ActivationFormat::Bf16 if weight == WeightFormat::Nvfp4 => {
             DecodeOrder::ExactLocalThenGlobal
         }

@@ -116,6 +116,8 @@ pub enum WeightFormat {
     /// E4M3 with one multiplicative UE8M0 scale per 32 rows and 32 K.
     /// A lossless repack repeats each block scale for each of its rows.
     Fp8Block32x32,
+    /// Unquantized F32 weights, including routers with F32 activations.
+    F32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -128,6 +130,8 @@ pub enum ActivationFormat {
     Fp8Group128(ScaleMode),
     Mxfp8,
     Nvfp4,
+    /// Unquantized F32 values. BF16 input rounding is not permitted.
+    F32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -1157,6 +1161,17 @@ impl Validate for GemmQuery {
                 "GEMM output must be BF16 or F32 before output quantization",
             ));
         }
+        if (self.activation == ActivationFormat::F32
+            && (!matches!(self.weight, WeightFormat::Bf16 | WeightFormat::F32)
+                || self.output != DType::F32
+                || self.grouped.is_some()
+                || self.epilogues != Epilogues::default()))
+            || (self.weight == WeightFormat::F32 && self.activation != ActivationFormat::F32)
+        {
+            return Err(Refusal(
+                "F32 activations require dense BF16 or F32 weights, F32 output and no epilogue",
+            ));
+        }
         let w_block = match self.weight {
             WeightFormat::Fp8Block32x32 | WeightFormat::Mxfp8 | WeightFormat::Mxfp4 => 32,
             WeightFormat::Nvfp4 => 16,
@@ -1167,7 +1182,7 @@ impl Validate for GemmQuery {
             ActivationFormat::Mxfp8 => 32,
             ActivationFormat::Nvfp4 => 16,
             ActivationFormat::Fp8Group128(_) => 128,
-            ActivationFormat::Bf16 => 1,
+            ActivationFormat::Bf16 | ActivationFormat::F32 => 1,
         };
         if !self.k.is_multiple_of(w_block) || !self.k.is_multiple_of(a_block) {
             return Err(Refusal(
@@ -1951,6 +1966,7 @@ impl Validate for CommQuery {
 fn gemm_numerical_id(query: &GemmQuery) -> String {
     let weight = match query.weight {
         WeightFormat::Bf16 => "bf16",
+        WeightFormat::F32 => "f32",
         WeightFormat::Fp8PerTensor => "fp8-tensor",
         WeightFormat::Fp8PerChannel => "fp8-channel",
         WeightFormat::Fp8Block128x128(ScaleMode::ExactF32) => "fp8-block128-f32",
@@ -1964,6 +1980,7 @@ fn gemm_numerical_id(query: &GemmQuery) -> String {
     };
     let activation = match query.activation {
         ActivationFormat::Bf16 => "bf16",
+        ActivationFormat::F32 => "f32",
         ActivationFormat::Fp8Group128(ScaleMode::ExactF32) => "fp8-group128-f32",
         ActivationFormat::Fp8Group128(ScaleMode::PowerOfTwoF32) => "fp8-group128-pow2",
         ActivationFormat::Mxfp8 => "mxfp8",
@@ -1983,7 +2000,9 @@ fn gemm_numerical_id(query: &GemmQuery) -> String {
         Some(GeluMode::Erf) => ".gelu-erf",
         Some(GeluMode::Tanh) => ".gelu-tanh",
     };
-    let version = if query.activation == ActivationFormat::Bf16 {
+    let version = if query.activation == ActivationFormat::F32 {
+        "exact-input.fold128.v1"
+    } else if query.activation == ActivationFormat::Bf16 {
         match query.weight {
             WeightFormat::Nvfp4 => "exact-local-global-after-mma.v2",
             WeightFormat::Mxfp8 => "exact-scaled-operand.v2",

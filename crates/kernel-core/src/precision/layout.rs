@@ -66,13 +66,16 @@ impl PackingPlan {
     pub fn code_bytes(&self) -> u64 {
         match self.format {
             WeightFormat::Bf16 => u64::from(self.k) * 2,
+            WeightFormat::F32 => u64::from(self.k) * 4,
             WeightFormat::Mxfp4 | WeightFormat::Nvfp4 => u64::from(self.k) / 2,
             _ => u64::from(self.k),
         }
     }
     pub fn groups(&self) -> (u32, u32) {
         match self.format {
-            WeightFormat::Bf16 | WeightFormat::Fp8PerTensor => (u32::MAX, u32::MAX),
+            WeightFormat::Bf16 | WeightFormat::F32 | WeightFormat::Fp8PerTensor => {
+                (u32::MAX, u32::MAX)
+            }
             WeightFormat::Fp8PerChannel => (1, u32::MAX),
             WeightFormat::Fp8Block128x128(_) => (128, 128),
             WeightFormat::Fp8Rows64x128(_) => (64, 128),
@@ -144,7 +147,7 @@ impl PackingPlan {
             )));
         }
         let dtype_ok = match self.format {
-            WeightFormat::Bf16 => self.local_scale_dtype.is_none(),
+            WeightFormat::Bf16 | WeightFormat::F32 => self.local_scale_dtype.is_none(),
             WeightFormat::Nvfp4 => {
                 matches!(self.local_scale_dtype, Some(DType::Fp8E4M3 | DType::Ue4M3))
             }

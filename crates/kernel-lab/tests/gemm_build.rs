@@ -185,6 +185,9 @@ fn catalog_builds_with_mma_and_tma() {
             unreachable!()
         };
         let mma = match query.activation {
+            kernel_core::contract::ActivationFormat::F32 => {
+                panic!("legacy GEMM catalog must refuse F32 activations")
+            }
             kernel_core::contract::ActivationFormat::Bf16 => "HMMA.16816",
             kernel_core::contract::ActivationFormat::Mxfp8
                 if query.weight == kernel_core::contract::WeightFormat::Mxfp4 =>

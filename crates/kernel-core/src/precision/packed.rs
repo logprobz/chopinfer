@@ -97,6 +97,7 @@ impl MatrixView<'_> {
     pub fn code_bits(self) -> usize {
         match self.format {
             WeightFormat::Bf16 => 16,
+            WeightFormat::F32 => 32,
             WeightFormat::Nvfp4 | WeightFormat::Mxfp4 => 4,
             _ => 8,
         }
@@ -104,7 +105,9 @@ impl MatrixView<'_> {
 
     pub fn groups(self) -> (usize, usize) {
         match self.format {
-            WeightFormat::Bf16 | WeightFormat::Fp8PerTensor => (usize::MAX, usize::MAX),
+            WeightFormat::Bf16 | WeightFormat::F32 | WeightFormat::Fp8PerTensor => {
+                (usize::MAX, usize::MAX)
+            }
             WeightFormat::Fp8PerChannel => (1, usize::MAX),
             WeightFormat::Fp8Block128x128(_) => (128, 128),
             WeightFormat::Fp8Rows64x128(_) => (64, 128),
@@ -141,9 +144,12 @@ impl MatrixView<'_> {
             .checked_mul(sk)
             .ok_or_else(|| self.error("scale grid", "element count overflow"))?;
         match (self.format, self.local, self.global) {
-            (WeightFormat::Bf16, None, None) => {}
+            (WeightFormat::Bf16 | WeightFormat::F32, None, None) => {}
             (WeightFormat::Bf16, _, _) => {
                 return Err(self.error("scales", "BF16 weights have no quantization scales"));
+            }
+            (WeightFormat::F32, _, _) => {
+                return Err(self.error("scales", "F32 weights have no quantization scales"));
             }
             (WeightFormat::Nvfp4, Some(local), Some(global)) => {
                 if !matches!(local.dtype, DType::Fp8E4M3 | DType::Ue4M3)
@@ -191,6 +197,14 @@ impl MatrixView<'_> {
             {
                 return Err(self.error("codes", "non-finite BF16 weight"));
             }
+        } else if self.format == WeightFormat::F32 {
+            if self
+                .codes
+                .chunks_exact(4)
+                .any(|v| !f32::from_le_bytes(v.try_into().unwrap()).is_finite())
+            {
+                return Err(self.error("codes", "non-finite F32 weight"));
+            }
         } else if self.code_bits() == 8 && self.codes.iter().any(|c| c & 0x7f == 0x7f) {
             return Err(self.error("codes", "non-finite E4M3 weight"));
         }
@@ -213,6 +227,14 @@ impl MatrixView<'_> {
                 SmallFloat::E2M1.decode_f32(if low { byte & 15 } else { byte >> 4 })
             }
             8 => SmallFloat::E4M3.decode_f32(*self.codes.get(index).ok_or_else(missing)?),
+            32 => {
+                let start = index.checked_mul(4).ok_or_else(missing)?;
+                let bytes = self
+                    .codes
+                    .get(start..start.checked_add(4).ok_or_else(missing)?)
+                    .ok_or_else(missing)?;
+                f32::from_le_bytes(bytes.try_into().unwrap())
+            }
             _ => {
                 let start = index.checked_mul(2).ok_or_else(missing)?;
                 let bytes = self
@@ -252,6 +274,9 @@ impl MatrixView<'_> {
         col: usize,
         order: DecodeOrder,
     ) -> Result<u16, PrecisionError> {
+        if self.format == WeightFormat::F32 {
+            return Err(self.error("operand", "raw F32 weights cannot be narrowed to BF16"));
+        }
         let code = self.raw(row, col)?;
         let local = match self.local {
             Some(scale) => scale
@@ -321,6 +346,9 @@ impl MatrixView<'_> {
         col: usize,
         order: DecodeOrder,
     ) -> Result<f64, PrecisionError> {
+        if order == DecodeOrder::ExactF32Operands {
+            return self.f32_operand(row, col).map(f64::from);
+        }
         let operand = f64::from(bf16_to_f32(self.bf16_operand(row, col, order)?));
         if order == DecodeOrder::ExactLocalThenGlobal {
             let global = self
@@ -334,11 +362,32 @@ impl MatrixView<'_> {
         }
     }
 
+    /// Exact widening of an unquantized BF16 weight or unchanged raw F32.
+    pub fn f32_operand(self, row: usize, col: usize) -> Result<f32, PrecisionError> {
+        if !matches!(self.format, WeightFormat::Bf16 | WeightFormat::F32)
+            || self.local.is_some()
+            || self.global.is_some()
+        {
+            return Err(self.error(
+                "operand",
+                "exact F32 operands require unquantized BF16 or F32 weights",
+            ));
+        }
+        let value = self.raw(row, col)?;
+        if !value.is_finite() {
+            return Err(self.error("operand", "F32 weight operand must be finite"));
+        }
+        Ok(value)
+    }
+
     /// Check the operand conversion bound for engines that scale each weight
     /// before BF16 MMA. Ordinary scales need only a scale-grid scan; extreme
     /// scales check actual codes so a valid zero group is not rejected by a
     /// worst-case nonzero code. No expanded weight buffer is allocated.
     pub fn validate_bf16_operands(self, order: DecodeOrder) -> Result<(), PrecisionError> {
+        if self.format == WeightFormat::F32 {
+            return Err(self.error("operand", "raw F32 weights cannot be narrowed to BF16"));
+        }
         if !order.has_bf16_weight_operand() {
             return Err(self.error(
                 "decode order",
@@ -583,10 +632,12 @@ impl PackedMatrix {
             k_origin: self.k_origin,
             nibble_order: self.nibble_order,
             codes: &self.codes,
-            local: (self.format != WeightFormat::Bf16).then_some(ScaleBytes {
-                dtype: self.scale_dtype,
-                bytes: &self.scales,
-            }),
+            local: (!matches!(self.format, WeightFormat::Bf16 | WeightFormat::F32)).then_some(
+                ScaleBytes {
+                    dtype: self.scale_dtype,
+                    bytes: &self.scales,
+                },
+            ),
             global: self.global.as_ref().map(|bytes| ScaleBytes {
                 dtype: DType::F32,
                 bytes,

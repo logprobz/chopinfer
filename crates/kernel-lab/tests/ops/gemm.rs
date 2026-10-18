@@ -293,6 +293,7 @@ fn weight(
 ) -> LabResult<Encoded> {
     let quantized = match format {
         WeightFormat::Bf16 => return Ok(encoded_bf16(values, oracle)),
+        WeightFormat::F32 => Err(Refusal("legacy GEMM probe has no F32 weight encoder")),
         WeightFormat::Fp8PerTensor => {
             quantize::fp8_weight_per_tensor(values, rows, k, ScaleMode::ExactF32)
         }
@@ -321,6 +322,7 @@ fn activation(
 ) -> LabResult<Encoded> {
     let quantized = match format {
         ActivationFormat::Bf16 => return Ok(encoded_bf16(values, oracle)),
+        ActivationFormat::F32 => Err(Refusal("legacy GEMM probe has no F32 activation encoder")),
         ActivationFormat::Fp8Group128(mode) => {
             quantize::fp8_activation_1x128(values, rows, k, mode)
         }

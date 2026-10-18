@@ -83,12 +83,13 @@ pub fn section_record(
     mut record: WeightRecord,
 ) -> Result<WeightRecord, CompilerError> {
     let dtype_ok = match (section, plugin.id()) {
+        (PackedSection::Codes, FormatId::F32) => source_dtype == DType::F32,
         (PackedSection::Codes, FormatId::Bf16) => source_dtype == DType::Bf16,
         (PackedSection::Codes, FormatId::Mxfp4 | FormatId::Nvfp4 | FormatId::Nvfp4WeightOnly) => {
             source_dtype == DType::U8
         }
         (PackedSection::Codes, _) => source_dtype == DType::Fp8E4M3,
-        (PackedSection::LocalScales, FormatId::Bf16) => false,
+        (PackedSection::LocalScales, FormatId::Bf16 | FormatId::F32) => false,
         (PackedSection::LocalScales, FormatId::Fp8Block32 | FormatId::Mxfp4 | FormatId::Mxfp8) => {
             matches!(source_dtype, DType::U8 | DType::Ue8M0)
         }

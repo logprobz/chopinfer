@@ -11,6 +11,7 @@ use kernel_core::precision::{
 
 fn fixture(id: FormatId) -> (WeightSpec, Vec<Vec<u8>>) {
     let (format, dtype, groups) = match id {
+        FormatId::F32 => (WeightFormat::F32, None, (0, 0)),
         FormatId::Bf16 => (WeightFormat::Bf16, None, (0, 0)),
         FormatId::Fp8PerTensor => (WeightFormat::Fp8PerTensor, Some(DType::Bf16), (0, 0)),
         FormatId::Fp8PerChannel => (WeightFormat::Fp8PerChannel, Some(DType::F32), (1, 0)),
@@ -32,7 +33,11 @@ fn fixture(id: FormatId) -> (WeightSpec, Vec<Vec<u8>>) {
         }
     };
     let nibble = matches!(format, WeightFormat::Mxfp4 | WeightFormat::Nvfp4);
-    let codes: Vec<_> = if format == WeightFormat::Bf16 {
+    let codes: Vec<_> = if format == WeightFormat::F32 {
+        (0..128 * 128)
+            .flat_map(|i| (1.0039_f32 + i as f32).to_le_bytes())
+            .collect()
+    } else if format == WeightFormat::Bf16 {
         (0..128 * 128)
             .flat_map(|_| 0x3f80_u16.to_le_bytes())
             .collect()
@@ -97,7 +102,9 @@ fn fixture(id: FormatId) -> (WeightSpec, Vec<Vec<u8>>) {
     let weight = WeightSpec {
         codes: span(
             "weight",
-            if format == WeightFormat::Bf16 {
+            if format == WeightFormat::F32 {
+                DType::F32
+            } else if format == WeightFormat::Bf16 {
                 DType::Bf16
             } else if nibble {
                 DType::U8
@@ -109,7 +116,9 @@ fn fixture(id: FormatId) -> (WeightSpec, Vec<Vec<u8>>) {
         ),
         logical_shape: vec![128, 128],
         format,
-        encoding: if format == WeightFormat::Bf16 {
+        encoding: if format == WeightFormat::F32 {
+            CodeEncoding::F32LittleEndian
+        } else if format == WeightFormat::Bf16 {
             CodeEncoding::Bf16LittleEndian
         } else if nibble {
             CodeEncoding::E2M1(NibbleOrder::EvenHigh)
@@ -141,7 +150,7 @@ fn registry_and_companions_cover_all_imported_formats() {
         let bindings = plugin.companions(&weight).unwrap();
         assert_eq!(
             bindings.len(),
-            if plugin.id() == FormatId::Bf16 {
+            if matches!(plugin.id(), FormatId::Bf16 | FormatId::F32) {
                 0
             } else if weight.format == WeightFormat::Nvfp4 {
                 2
@@ -180,7 +189,7 @@ fn every_plugin_reproduces_packed_records_and_builder_bytes() {
             if family == KernelFamily::GroupedExpert
                 && matches!(
                     plugin.id(),
-                    FormatId::Fp8PerTensor | FormatId::Fp8PerChannel
+                    FormatId::Fp8PerTensor | FormatId::Fp8PerChannel | FormatId::F32
                 )
             {
                 continue;
@@ -205,7 +214,11 @@ fn every_plugin_reproduces_packed_records_and_builder_bytes() {
             let order = plugin
                 .decode_order(
                     family,
-                    ActivationFormat::Bf16,
+                    if plugin.id() == FormatId::F32 {
+                        ActivationFormat::F32
+                    } else {
+                        ActivationFormat::Bf16
+                    },
                     if family == KernelFamily::GroupedExpert && plugin.id() == FormatId::Fp8Block128
                     {
                         A16Recipe::ScaleAfterBlockMma
@@ -308,6 +321,21 @@ fn every_plugin_reproduces_packed_records_and_builder_bytes() {
                     operand.section
                 );
                 assert_eq!(record.output_bytes().unwrap(), bytes.len() as u64);
+                if plugin.id() == FormatId::F32 {
+                    assert_eq!(bytes, payloads[0]);
+                    assert_eq!(
+                        operand.code_row_sources(&record, 3..5),
+                        [(0, 3 * 128 * 4, 2 * 128 * 4)]
+                    );
+                    let streamed = operand
+                        .execute_code_rows(&record, 3..5, &mut |index, offset, out| {
+                            let start = offset as usize;
+                            out.copy_from_slice(&payloads[index][start..start + out.len()]);
+                            Ok(())
+                        })
+                        .unwrap();
+                    assert_eq!(streamed, payloads[0][3 * 128 * 4..5 * 128 * 4]);
+                }
             }
         }
     }

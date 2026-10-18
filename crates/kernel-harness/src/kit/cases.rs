@@ -241,6 +241,7 @@ fn quantized_weight(
             "32x32 UE8M0 fixtures require explicit codes and scales",
         )),
         WeightFormat::Bf16 => Err(Refusal("BF16 weights are not quantized")),
+        WeightFormat::F32 => Err(Refusal("F32 weights are not quantized")),
     }
     .map_err(|e| e.0.to_string())
 }

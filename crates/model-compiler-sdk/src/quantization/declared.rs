@@ -527,6 +527,11 @@ pub fn admitted_activations(
     // the BF16 activation policy then binds a weight-reuse order instead.
     let grouped = matches!(operation.kind, OperationKind::Grouped { .. });
     operation.arithmetic.decode_order = match format {
+        ActivationFormat::F32 => {
+            return Err(error(
+                "source activation restoration requires a registered F32 derivation",
+            ));
+        }
         ActivationFormat::Bf16 => unreachable!("handled above"),
         ActivationFormat::Fp8Group128(_) if grouped => DecodeOrder::SuccessiveScalesAfterBlockMma,
         ActivationFormat::Fp8Group128(_) => DecodeOrder::ScaleProductAfterBlockMma,

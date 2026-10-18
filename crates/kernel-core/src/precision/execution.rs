@@ -216,7 +216,7 @@ impl WeightReuse {
                 Some(Self::PlainMxBf16V1)
             }
             WeightFormat::Nvfp4 => Some(Self::PlainNvfp4Bf16V1),
-            WeightFormat::Bf16 => None,
+            WeightFormat::Bf16 | WeightFormat::F32 => None,
         }
     }
 }

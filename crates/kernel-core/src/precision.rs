@@ -6,6 +6,7 @@ pub mod capability;
 #[cfg(feature = "precision-serde")]
 pub mod component;
 pub mod execution;
+pub mod f32_gemm;
 pub mod format;
 pub mod layout;
 pub mod packed;
@@ -144,6 +145,7 @@ pub enum CodeEncoding {
     Bf16LittleEndian,
     E4M3,
     E2M1(NibbleOrder),
+    F32LittleEndian,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -321,6 +323,7 @@ impl WeightSpec {
         }
         let (encoding, dtype, local, global) = match self.format {
             WeightFormat::Bf16 => (CodeEncoding::Bf16LittleEndian, DType::Bf16, false, false),
+            WeightFormat::F32 => (CodeEncoding::F32LittleEndian, DType::F32, false, false),
             WeightFormat::Nvfp4 => (
                 CodeEncoding::E2M1(NibbleOrder::EvenLow),
                 DType::U8,
@@ -387,7 +390,7 @@ impl WeightSpec {
         let fail = |reason| PrecisionError::new(&self.codes.tensor, "scale grid", reason);
         let rank = self.logical_shape.len();
         let (rows, k) = match self.format {
-            WeightFormat::Bf16 => unreachable!(),
+            WeightFormat::Bf16 | WeightFormat::F32 => unreachable!(),
             WeightFormat::Fp8PerTensor => (0, 0),
             WeightFormat::Fp8PerChannel => (1, 0),
             WeightFormat::Fp8Block128x128(_) => (128, 128),
@@ -571,6 +574,17 @@ pub struct ActivationSpec {
 }
 
 impl ActivationSpec {
+    /// Unquantized F32 input. Implementations must preserve all input bits.
+    pub fn f32() -> Self {
+        Self {
+            format: ActivationFormat::F32,
+            storage: DType::F32,
+            compute: DType::F32,
+            quantizer: None,
+            transforms: Vec::new(),
+        }
+    }
+
     /// Trained E4M3/32 quantization with BF16 input rounding and a ceil scale.
     pub fn mxfp8_ceil(amax_floor_bits: u32) -> Self {
         Self {
@@ -608,16 +622,27 @@ impl ActivationSpec {
             && self.quantizer.is_none()
     }
 
+    pub fn is_f32(&self) -> bool {
+        self.format == ActivationFormat::F32
+            && self.storage == DType::F32
+            && self.compute == DType::F32
+            && self.quantizer.is_none()
+    }
+
     pub fn validate(&self, tensor: &str, shape: &[u64]) -> Result<(), PrecisionError> {
         shape_elements(tensor, shape)?;
         let expected = match self.format {
             ActivationFormat::Bf16 => DType::Bf16,
+            ActivationFormat::F32 => DType::F32,
             ActivationFormat::Fp8Group128(_) | ActivationFormat::Mxfp8 => DType::Fp8E4M3,
             ActivationFormat::Nvfp4 => DType::Fp4E2M1,
         };
         if self.compute != expected
             || (self.storage != expected && self.storage != DType::Bf16)
-            || (self.format == ActivationFormat::Bf16) != self.quantizer.is_none()
+            || (matches!(self.format, ActivationFormat::Bf16 | ActivationFormat::F32))
+                != self.quantizer.is_none()
+            || (self.format == ActivationFormat::F32
+                && (self.storage != DType::F32 || !self.transforms.is_empty()))
         {
             return Err(PrecisionError::new(
                 tensor,
@@ -636,7 +661,7 @@ impl ActivationSpec {
                 ActivationFormat::Fp8Group128(_) => 128,
                 ActivationFormat::Mxfp8 => 32,
                 ActivationFormat::Nvfp4 => 16,
-                ActivationFormat::Bf16 => unreachable!(),
+                ActivationFormat::Bf16 | ActivationFormat::F32 => unreachable!(),
             };
             if quantizer.groups.len() != 1
                 || quantizer.groups[0].size != size
@@ -712,6 +737,9 @@ pub enum DecodeOrder {
     /// Native block-scaled MMA followed by the F32 product of the tensor-global
     /// weight and activation scales, before the output epilogue.
     NativeBlockScaledMmaThenGlobals,
+    /// F32 activations and exactly widened BF16 or raw F32 weights. No
+    /// quantizer or reduced-precision operand rounding is permitted.
+    ExactF32Operands,
 }
 
 impl DecodeOrder {
@@ -920,6 +948,35 @@ impl OperationSpec {
                 &self.id,
                 "arithmetic",
                 "unsupported accumulator or output precision",
+            ));
+        }
+        if self
+            .activations
+            .iter()
+            .any(|a| a.format == ActivationFormat::F32)
+        {
+            if self.kind != OperationKind::Dense
+                || self.weights.len() != 1
+                || !matches!(first.format, WeightFormat::Bf16 | WeightFormat::F32)
+                || self.activations.iter().any(|a| !a.is_f32())
+                || self.arithmetic.weight_operand != DType::F32
+                || self.arithmetic.output != DType::F32
+                || self.arithmetic.decode_order != DecodeOrder::ExactF32Operands
+                || self.epilogues != Epilogues::default()
+            {
+                return Err(PrecisionError::new(
+                    &self.id,
+                    "F32 arithmetic",
+                    "F32 inputs require a dense unquantized BF16 or F32 matrix, exact F32 operands and F32 output without epilogues",
+                ));
+            }
+        } else if first.format == WeightFormat::F32
+            || self.arithmetic.decode_order == DecodeOrder::ExactF32Operands
+        {
+            return Err(PrecisionError::new(
+                &self.id,
+                "F32 arithmetic",
+                "raw F32 weights and exact F32 arithmetic require F32 activations",
             ));
         }
         validate_name(&self.arithmetic.numerical_contract)?;

@@ -24,6 +24,7 @@ pub enum FormatId {
     Nvfp4,
     Nvfp4WeightOnly,
     Fp8Block32,
+    F32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -125,7 +126,7 @@ pub trait FormatPlugin: Sync {
     /// Local scale group sizes. Zero means the complete tensor or K axis.
     fn local_scale_groups(&self) -> (u64, u64) {
         match self.id() {
-            FormatId::Bf16 | FormatId::Fp8PerTensor => (0, 0),
+            FormatId::Bf16 | FormatId::F32 | FormatId::Fp8PerTensor => (0, 0),
             FormatId::Fp8PerChannel => (1, 0),
             FormatId::Fp8Block128 => (128, 128),
             FormatId::Fp8Rows64 => (64, 128),
@@ -362,6 +363,7 @@ impl FormatPlugin for Plugin {
         matches!(
             (self.0, format),
             (FormatId::Bf16, WeightFormat::Bf16)
+                | (FormatId::F32, WeightFormat::F32)
                 | (FormatId::Fp8PerTensor, WeightFormat::Fp8PerTensor)
                 | (FormatId::Fp8PerChannel, WeightFormat::Fp8PerChannel)
                 | (FormatId::Fp8Block128, WeightFormat::Fp8Block128x128(_))
@@ -384,6 +386,22 @@ impl FormatPlugin for Plugin {
     ) -> Result<DecodeOrder, PrecisionError> {
         use DecodeOrder::*;
         use FormatId::*;
+        if activation == ActivationFormat::F32 {
+            return if family == KernelFamily::Dense && matches!(self.0, Bf16 | F32) {
+                Ok(ExactF32Operands)
+            } else {
+                Err(error(
+                    "activation",
+                    "F32 inputs require dense unquantized BF16 or F32 weights",
+                ))
+            };
+        }
+        if self.0 == F32 {
+            return Err(error(
+                "activation",
+                "raw F32 weights require F32 activations",
+            ));
+        }
         if self.0 == Nvfp4WeightOnly && activation != ActivationFormat::Bf16 {
             return Err(error(
                 "activation",
@@ -398,6 +416,7 @@ impl FormatPlugin for Plugin {
             ActivationFormat::Fp8Group128(_) => matches!(self.0, Fp8Block128 | Fp8Rows64),
             ActivationFormat::Mxfp8 => matches!(self.0, Fp8Block32 | Mxfp8 | Mxfp4),
             ActivationFormat::Nvfp4 => self.0 == Nvfp4,
+            ActivationFormat::F32 => unreachable!("handled above"),
         };
         if !compatible {
             return Err(error(
@@ -421,6 +440,7 @@ impl FormatPlugin for Plugin {
             ActivationFormat::Fp8Group128(_) => ScaleProductAfterBlockMma,
             ActivationFormat::Mxfp8 => NativeBlockScaledMma,
             ActivationFormat::Nvfp4 => NativeBlockScaledMmaThenGlobals,
+            ActivationFormat::F32 => unreachable!("handled above"),
         })
     }
 
@@ -433,6 +453,7 @@ impl FormatPlugin for Plugin {
         let grouped = family == KernelFamily::GroupedExpert;
         let fragment = matches!(family, KernelFamily::Dense | KernelFamily::GroupedExpert);
         let (id, codes, local) = match self.0 {
+            F32 => ("row-major", "f32_row_major_v1", None),
             Bf16 if fragment => ("bf16-fragment", "bf16_mma_fragments_16x16_v1", None),
             Bf16 => ("row-major", "bf16_row_major_v1", None),
             Fp8Block128 if grouped => (
@@ -544,7 +565,7 @@ impl FormatPlugin for Plugin {
 pub mod registry {
     use super::*;
 
-    pub static PLUGINS: [Plugin; 10] = [
+    pub static PLUGINS: [Plugin; 11] = [
         Plugin(FormatId::Bf16),
         Plugin(FormatId::Fp8PerTensor),
         Plugin(FormatId::Fp8PerChannel),
@@ -555,6 +576,7 @@ pub mod registry {
         Plugin(FormatId::Nvfp4),
         Plugin(FormatId::Nvfp4WeightOnly),
         Plugin(FormatId::Fp8Block32),
+        Plugin(FormatId::F32),
     ];
 
     fn require_plugin(

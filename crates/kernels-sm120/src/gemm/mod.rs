@@ -611,6 +611,11 @@ fn dense_supported(kernel: DenseKernel, query: &GemmQuery) -> Result<(), Refusal
             | WeightFormat::Fp8Rows64x128(_)
     );
     match query.activation {
+        ActivationFormat::F32 => {
+            return Err(Refusal(
+                "F32 projections require a registered F32 implementation",
+            ));
+        }
         ActivationFormat::Bf16
             if query.weight == WeightFormat::Bf16
                 || fp8_weight
@@ -1561,6 +1566,11 @@ pub fn cubin_spec(instantiations: &[InstantiationSpec]) -> Result<CubinSpec, Ref
         }
         let (kernel, query, knobs, decode) = shape(&item.key)?;
         let kind = match query.weight {
+            WeightFormat::F32 => {
+                return Err(Refusal(
+                    "F32 projections require a registered F32 implementation",
+                ));
+            }
             WeightFormat::Fp8Block32x32 => {
                 return Err(Refusal("32x32 UE8M0 weights require the MXFP8 fold engine"));
             }

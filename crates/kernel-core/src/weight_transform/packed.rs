@@ -457,6 +457,7 @@ impl PackedOperand {
 
     fn code_bits(format: WeightFormat) -> u64 {
         match format {
+            WeightFormat::F32 => 32,
             WeightFormat::Bf16 => 16,
             WeightFormat::Nvfp4 | WeightFormat::Mxfp4 => 4,
             _ => 8,

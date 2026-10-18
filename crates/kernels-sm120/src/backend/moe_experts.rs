@@ -798,6 +798,9 @@ fn grouped_bytes(
     // Quantized activations' scales, row-major over the padded rows: bytes
     // per 32 (MXFP8) or 16 (NVFP4) values, F32 per 128 (FP8 groups).
     match query.activation {
+        ActivationFormat::F32 => {
+            return Err(Refusal("grouped experts do not support F32 activations"));
+        }
         ActivationFormat::Bf16 => {}
         ActivationFormat::Mxfp8 => bytes.push(("activation_scales", product(&[padded, k / 32])?)),
         ActivationFormat::Nvfp4 => {
@@ -1408,6 +1411,7 @@ mod tests {
         let q = v.query;
         let pick = |read: bool, handle| if read { handle } else { UNUSED };
         let (activation_bytes, activation_f32) = match q.activation {
+            ActivationFormat::F32 => panic!("legacy grouped test has no F32 implementation"),
             ActivationFormat::Bf16 => (UNUSED, UNUSED),
             ActivationFormat::Mxfp8 => (ACTIVATION_SCALES, UNUSED),
             ActivationFormat::Nvfp4 => (ACTIVATION_SCALES, ACTIVATION_GLOBAL),

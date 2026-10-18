@@ -653,6 +653,7 @@ pub(crate) fn offered_operation(
         activations,
         arithmetic: ArithmeticSpec {
             weight_operand: match activation {
+                ActivationFormat::F32 => CodeDType::F32,
                 ActivationFormat::Bf16 => CodeDType::Bf16,
                 _ if matches!(weight, WeightFormat::Nvfp4 | WeightFormat::Mxfp4) => {
                     CodeDType::Fp4E2M1
@@ -662,6 +663,7 @@ pub(crate) fn offered_operation(
             accumulator: CodeDType::F32,
             output: projection.output(),
             decode_order: match activation {
+                ActivationFormat::F32 => DecodeOrder::ExactF32Operands,
                 // MiMo's block-FP8 GEMMs scale each 128-K block's BF16
                 // MMA partial sum, whatever recipe the export states.
                 ActivationFormat::Bf16

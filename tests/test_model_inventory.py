@@ -50,6 +50,12 @@ def exports_bundle_api(root, model):
     return any(EXPORTS_API.search(path.read_text()) for path in sorted((root / bundle).rglob('*.rs')))
 
 
+def tests_kernels_on_gpu(model):
+    """Whether a released model's kernels have GPU tests: in kernel-lab's
+    catalog, or in the model's own lab crate on kernel-harness."""
+    return bool(model.kernel_lab.catalog or model.lab is not None)
+
+
 def conformance_suite(root, model):
     """The one bundle source file of `model` that invokes the conformance
     suite; refuses none, several, or a direct call of its scenario runner."""
@@ -527,7 +533,7 @@ class InventoryTests(unittest.TestCase):
                 self.assertTrue(path.startswith(model.directory + '/'), path)
             qual = json.loads((root / model.directory / 'qual.json').read_text())
             self.assertEqual(qual['qualification']['checkpoint']['lock'], f'{model.directory}/checkpoint-files.json')
-            self.assertTrue(model.kernel_lab.catalog)
+            self.assertTrue(tests_kernels_on_gpu(model))
         self.assertEqual(self.ci_module(root, 'kernel_lab_inventory').check(root, declared), [])
 
     def ci_module(self, root, name):
@@ -543,11 +549,18 @@ class InventoryTests(unittest.TestCase):
         models = inventory.load(root)
         self.released_facts(root, contributor, models)
         first = next(model.name for model in models if model.release.enabled)
-        broken = [dataclasses.replace(model, kernel_lab=dataclasses.replace(model.kernel_lab, catalog=False))
+        broken = [dataclasses.replace(model, kernel_lab=dataclasses.replace(model.kernel_lab, catalog=False), lab=None)
                   if model.name == first else model for model in models]
-        # Only one released model's catalog flag differs, and its check fails.
+        # Only one released model has neither a catalog nor a lab, and its check fails.
         with self.assertRaisesRegex(AssertionError, '^False is not true$'):
             self.released_facts(root, contributor, broken)
+        # A model's own lab crate stands in for the catalog, and only it:
+        # the released models without one keep the catalog.
+        model = next(model for model in models if model.name == first)
+        uncatalogued = dataclasses.replace(model, kernel_lab=dataclasses.replace(model.kernel_lab, catalog=False))
+        self.assertTrue(tests_kernels_on_gpu(dataclasses.replace(uncatalogued, lab=f'{model.directory}/lab/Cargo.toml')))
+        self.assertFalse(tests_kernels_on_gpu(dataclasses.replace(uncatalogued, lab=None)))
+        self.assertTrue(all(model.kernel_lab.catalog for model in models if model.release.enabled and model.lab is None))
 
     def test_released_and_shipped_follow_the_release_flag(self):
         self.load(VALID + '[release]\nenabled = false\n')

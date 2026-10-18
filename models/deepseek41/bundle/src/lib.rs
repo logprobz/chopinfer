@@ -41,6 +41,10 @@ runtime_bundle_abi::export_bundle_api_v1!(
     entry::restore_prefix_state_in_slot::<Instance>,
 );
 
+// Direct checkpoint loading: each rank's text image planned from the
+// checkpoint's headers (`model_deepseek41_contract::weight_plan`).
+runtime_bundle_abi::export_weight_plan_v1!(model_deepseek41_contract::weight_plan::plan);
+
 /// The kernels an instance prepares its ops on: a backend of the shared
 /// contracts and one of the model's own ops. The target's module supplies
 /// them (`Kernels::new` in `sm120`).

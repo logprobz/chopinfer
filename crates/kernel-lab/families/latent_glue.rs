@@ -18,7 +18,7 @@ pub fn entries() -> Vec<Entry> {
     .map(|(kernel, tag)| Entry {
         kernel,
         capacity: CAPACITY,
-        symbol: format!("chop_latent_glue_{tag}_v1"),
+        symbol: format!("chop_latent_glue_{tag}_v{}", if kernel == Kernel::WindowKeys {1} else {2}),
     })
     .collect()
 }
@@ -32,7 +32,7 @@ pub fn quantizers() -> Vec<block_quantize::Entry> {
                 output: QuantizeOutput::Codes,
             },
             CAPACITY,
-            "chop_latent_glue_ceil32_v1",
+            "chop_latent_glue_ceil32_v2",
         )
         .unwrap(),
     ]

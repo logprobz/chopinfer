@@ -113,12 +113,58 @@ fn query_case_with_values<'a>(
     cos_sin: Vec<f32>,
     values: Vec<f32>,
 ) -> LabResult<OpCase<'a>> {
+    query_case_with_status(
+        query,
+        capacity,
+        prepared,
+        cos_sin,
+        values,
+        vec![0; capacity as usize],
+    )
+}
+
+fn query_case_with_status<'a>(
+    query: LatentQueryRope,
+    capacity: u32,
+    prepared: Prepared<LatentQueryRopeBuffers<View>>,
+    cos_sin: Vec<f32>,
+    values: Vec<f32>,
+    initial: Vec<u32>,
+) -> LabResult<OpCase<'a>> {
+    query_case_status_offset(query, capacity, prepared, cos_sin, values, initial, 0)
+}
+
+fn query_case_status_offset<'a>(
+    query: LatentQueryRope,
+    capacity: u32,
+    prepared: Prepared<LatentQueryRopeBuffers<View>>,
+    cos_sin: Vec<f32>,
+    values: Vec<f32>,
+    initial: Vec<u32>,
+    offset: usize,
+) -> LabResult<OpCase<'a>> {
     if cos_sin.len() != capacity as usize * query.rotary as usize {
         return Err("query fixture table shape mismatch".into());
     }
     let width = query.heads as usize * query.latent as usize;
     let tail = query.rotary as usize;
     let roles = LatentQueryRopeBuffers {
+        status: if offset == 0 {
+            super::block_quantize::status_role(&initial)
+        } else {
+            Spec::state_updating(
+                DType::I32,
+                (Rows::Fixed(1), initial.len()),
+                initial.iter().flat_map(|v| v.to_le_bytes()).collect(),
+                Write::Map(Box::new(|_, _| WriteMap::of(DType::I32).none())),
+                move |_, live| {
+                    Ok((offset..offset + live as usize)
+                        .map(|r| 4 * r..4 * r + 4)
+                        .collect())
+                },
+            )
+        },
+        status_row_offset: offset as u64,
         query: rotated_state(query, values),
         native_q: Spec::output(DType::Bf16, (Rows::Live, width)),
         cos_sin: Spec::input(DType::F32, (Rows::Live, tail), f32_bytes(&cos_sin)),
@@ -127,16 +173,26 @@ fn query_case_with_values<'a>(
     Ok(
         OpCase::new(prepared, capacity, roles)?.oracle(move |images, live| {
             let mut whole = images.f32s("query")?;
-            let (rotated, mut native) = oracle::query_rope_f32(
+            let mut status = i32s(images, "status")?
+                .iter()
+                .map(|&v| v as u32)
+                .collect::<Vec<_>>();
+            let (rotated, mut native, flags) = oracle::query_rope_status(
                 query,
                 &whole[..live as usize * width],
                 &images.f32s("cos_sin")?[..live as usize * tail],
+                &status[offset..offset + live as usize],
             )
             .map_err(|e| e.to_string())?;
+            status[offset..offset + live as usize].copy_from_slice(&flags);
             whole[..rotated.len()].copy_from_slice(&rotated);
             native.resize(capacity as usize * width, 0);
             Ok(vec![
                 ("query".into(), Expected::Bits(f32_bytes(&whole))),
+                (
+                    "status".into(),
+                    Expected::Bits(status.iter().flat_map(|v| v.to_le_bytes()).collect()),
+                ),
                 (
                     "native_q".into(),
                     Expected::Bits(native.iter().flat_map(|v| v.to_le_bytes()).collect()),
@@ -144,6 +200,59 @@ fn query_case_with_values<'a>(
             ])
         }),
     )
+}
+
+/// Separate offset replay uses fixed guard words, outside the row-property suite.
+pub fn query_status_offset_case<'a>(
+    prepared: Prepared<LatentQueryRopeBuffers<View>>,
+) -> LabResult<OpCase<'a>> {
+    let query = LatentQueryRope {
+        heads: 3,
+        latent: 512,
+        rotary: 64,
+    };
+    let mut values = latent_values(8, 3 * 512);
+    values[2 * 512 + 17] = f32::NAN;
+    let mut initial = vec![0x5a5a5a5a; 13];
+    initial[3..11].fill(0);
+    initial[5] = 0x80;
+    query_case_status_offset(query, 8, prepared, table(8, 64), values, initial, 3)
+}
+
+pub fn query_status_case<'a>(
+    query: LatentQueryRope,
+    prepared: Prepared<LatentQueryRopeBuffers<View>>,
+) -> LabResult<OpCase<'a>> {
+    let width = query.heads as usize * 512;
+    let mut values = latent_values(8, width);
+    values[width - 1] = f32::NAN;
+    values[width + 17] = f32::INFINITY;
+    values[2 * width + 5] = f32::MAX;
+    let mut angles = table(8, 64);
+    angles[6 * 64] = f32::NAN;
+    query_case_with_status(
+        query,
+        8,
+        prepared,
+        angles,
+        values,
+        vec![0, 0, 0, 0x80, 2, 0, 0, 0],
+    )
+}
+
+pub fn query_status<'a>(heads: u32) -> Required<'a> {
+    let query = LatentQueryRope {
+        heads,
+        latent: 512,
+        rotary: 64,
+    };
+    Required::new(
+        format!("query status heads{heads}"),
+        Need::rows(8),
+        move |b, n| b.latent_query_rope(&query, n),
+        move |op| query_status_case(query, op),
+    )
+    .required()
 }
 
 fn pairing_values(query: LatentQueryRope) -> Vec<f32> {
@@ -447,6 +556,25 @@ fn key_case_data<'a>(
     )
 }
 
+fn checked_window(
+    query: LatentWindowWrite,
+    images: &Images,
+    live: u32,
+) -> LabResult<oracle::WindowStatusRows> {
+    let prior = i32s(images, "status")?
+        .iter()
+        .map(|&v| v as u32)
+        .collect::<Vec<_>>();
+    oracle::window_rows_status(
+        query,
+        &images.f32s("input")?[..live as usize * query.latent as usize],
+        &images.u16s("weight")?,
+        &images.f32s("cos_sin")?[..live as usize * query.rotary as usize],
+        &prior[..live as usize],
+    )
+    .map_err(|e| e.to_string())
+}
+
 fn plane_map(
     query: LatentWindowWrite,
     images: &Images,
@@ -462,10 +590,11 @@ fn plane_map(
     } else {
         vec![0; last.len()]
     };
+    let (_, _, flags) = checked_window(query, images, live)?;
     let mut ranges = Vec::new();
     for row in 0..live as usize {
         let (p, b) = (positions[row], batches[row] as usize);
-        if b >= last.len() || p < 0 || p > last[b] {
+        if flags[row] != 0 || b >= last.len() || p < 0 || p > last[b] {
             continue;
         }
         if matches!(query.addressing, WindowAddressing::Circular { slots } if i64::from(p) + i64::from(slots) <= i64::from(last[b]))
@@ -532,6 +661,7 @@ enum WindowFixture {
     Varying,
     F32Boundary,
     InvalidData,
+    Status,
 }
 fn write_case_impl<'a>(
     query: LatentWindowWrite,
@@ -607,7 +737,18 @@ fn write_case_impl<'a>(
         positions[6] = starts[0] - 1;
         positions[7] = starts[1] + slots as i32;
     }
+    let mut initial = vec![0u32; capacity as usize];
+    if matches!(fixture, WindowFixture::Status) {
+        input[width] = f32::NAN;
+        input[2 * width] = f32::NAN;
+        positions[2] = -1;
+        input[3 * width] = f32::INFINITY;
+        initial[4] = 0x80;
+        initial[5] = 2;
+    }
     let roles = LatentWindowWriteBuffers {
+        status: super::block_quantize::status_role(&initial),
+        status_row_offset: 0,
         input: Spec::input(DType::F32, (Rows::Live, width), f32_bytes(&input)),
         weight: Spec::input(
             DType::Bf16,
@@ -676,13 +817,12 @@ fn write_case_impl<'a>(
         .clone();
     let case = OpCase::new(prepared, capacity, roles)?
         .oracle(move |images, live| {
-            let (mut latent, encoded) = oracle::window_rows(
-                query,
-                &images.f32s("input")?[..live as usize * width],
-                &images.u16s("weight")?,
-                &images.f32s("cos_sin")?[..live as usize * tail],
-            )
-            .map_err(|e| e.to_string())?;
+            let (mut latent, encoded, flags) = checked_window(query, images, live)?;
+            let mut status = i32s(images, "status")?
+                .iter()
+                .map(|&v| v as u32)
+                .collect::<Vec<_>>();
+            status[..live as usize].copy_from_slice(&flags);
             if live > 0 && matches!(fixture, WindowFixture::F32Boundary) {
                 assert_eq!(
                     (encoded[0].values[0], encoded[0].scale_bytes[0]),
@@ -701,10 +841,16 @@ fn write_case_impl<'a>(
                 .iter()
                 .map(|&b| b as u32)
                 .collect::<Vec<_>>();
+            let mut positions = i32s(images, "positions")?;
+            for (position, flag) in positions.iter_mut().zip(&flags) {
+                if *flag != 0 {
+                    *position = -1;
+                }
+            }
             oracle::store_window_rows(
                 query,
                 &encoded,
-                &i32s(images, "positions")?[..live as usize],
+                &positions[..live as usize],
                 &batch[..live as usize],
                 &first,
                 &i32s(images, "last_positions")?,
@@ -726,6 +872,10 @@ fn write_case_impl<'a>(
             qscales.resize(capacity as usize * width / 32, 0);
             Ok(vec![
                 ("latent".into(), Expected::Bits(f32_bytes(&latent))),
+                (
+                    "status".into(),
+                    Expected::Bits(status.iter().flat_map(|v| v.to_le_bytes()).collect()),
+                ),
                 ("window.codes".into(), Expected::Bits(codes)),
                 ("window.scales".into(), Expected::Bits(scales)),
                 ("quantized_codes".into(), Expected::Bits(qcodes)),
@@ -735,6 +885,16 @@ fn write_case_impl<'a>(
         .omission_guard(&producer, "latent")
         .omission_guard(&quantizer, "quantized_codes");
     Ok(case)
+}
+
+pub fn window_status<'a>(query: LatentWindowWrite) -> Required<'a> {
+    Required::new(
+        format!("window status {:?}", query.addressing),
+        Need::rows(8),
+        move |b, n| b.latent_window_write(&query, n),
+        move |op| write_case_impl(query, 8, 0, op, table(8, 64), WindowFixture::Status),
+    )
+    .required()
 }
 
 pub fn window_f32_regression<'a>(query: LatentWindowWrite) -> Required<'a> {
@@ -815,6 +975,24 @@ pub fn device_mutant<'a>(mutation: kernels_sm120::latent::glue::Mutation) -> Req
         addressing: keys.addressing,
     };
     match mutation {
+        Mutation::DropQueryFlag => Required::new(
+            "dropped query flag",
+            Need::rows(8),
+            move |b, n| b.latent_query_rope(&q, n).map(|op| mutant(op, mutation)),
+            move |op| query_status_case(q, op),
+        )
+        .required(),
+        Mutation::DropWindowFlag => Required::new(
+            "dropped window flag",
+            Need::rows(8),
+            move |b, n| {
+                b.latent_window_write(&write, n)
+                    .map(|op| mutant(op, mutation))
+            },
+            move |op| write_case_impl(write, 8, 0, op, table(8, 64), WindowFixture::Status),
+        )
+        .required(),
+
         Mutation::SplitHalf => Required::new(
             format!("mutant {mutation:?}"),
             Need::rows(1),

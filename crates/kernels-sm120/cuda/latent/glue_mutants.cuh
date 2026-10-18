@@ -2,15 +2,21 @@
 #include "glue.cuh"
 
 namespace chop::latent::glue {
+struct DropFlags {
+  __device__ static uint32_t update(uint32_t* status, uint64_t row, uint32_t) {
+    return atomicOr(status + row, 0);
+  }
+};
 
 // Lab-only control: pair the first half of the tail with the second half.
 __device__ void rotate_split_half(float* values, uint16_t* native_q,
                                   const float* cos_sin,
-                                  const uint32_t* live_rows, uint32_t heads) {
+                                  const uint32_t* live_rows, uint32_t heads, uint32_t*, uint64_t) {
   ptx::griddep_launch_dependents();
   ptx::griddep_wait();
-  const uint32_t row = blockIdx.x, head = blockIdx.y;
+  const uint32_t row = blockIdx.x;
   if (row >= *live_rows) return;
+  for (uint32_t head=0; head<heads; ++head) {
   const uint64_t base = (uint64_t(row) * heads + head) * 512;
   if (threadIdx.x < 224) {
     const uint32_t column = 2 * threadIdx.x;
@@ -28,6 +34,7 @@ __device__ void rotate_split_half(float* values, uint16_t* native_q,
     values[second] = y;
     native_q[first] = convert::bf16_from_f32(x);
     native_q[second] = convert::bf16_from_f32(y);
+  }
   }
 }
 

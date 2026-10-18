@@ -28,15 +28,7 @@ impl Entry {
             return Err(Refusal("latent glue launch exceeds registered capacity"));
         }
         let plan = LaunchPlan {
-            grid: [
-                rows.max(1),
-                if self.kernel == Kernel::QueryRope {
-                    heads
-                } else {
-                    1
-                },
-                1,
-            ],
+            grid: [rows.max(1), 1, 1],
             block: [
                 if self.kernel == Kernel::WindowKeys {
                     128
@@ -66,7 +58,7 @@ impl Entry {
         };
         let u32_arg = |name: &str| P::U32 { name: name.into() };
         let u64_arg = |name: &str| P::U64 { name: name.into() };
-        let (params, body) = match self.kernel {
+        let (mut params, mut body) = match self.kernel {
             Kernel::QueryRope => (vec![
                 ptr("values", "float"), ptr("native_q", "uint16_t"), ptr("cos_sin", "const float"),
                 ptr("live_rows", "const uint32_t"), u32_arg("heads"),
@@ -91,6 +83,20 @@ impl Entry {
                 u32_arg("slots"), u32_arg("circular"),
             ], "chop::latent::glue::keys(positions,row_batch,first_positions,output,live_rows,sequences,window,slots,circular);".into()),
         };
+        if self.kernel != Kernel::WindowKeys {
+            params.extend([
+                ptr(
+                    "status",
+                    if self.kernel == Kernel::WindowStore {
+                        "const uint32_t"
+                    } else {
+                        "uint32_t"
+                    },
+                ),
+                u64_arg("status_row_offset"),
+            ]);
+            body = body.replacen(");", ",status,status_row_offset);", 1);
+        }
         EntrySpec::new(
             self.symbol.clone(),
             params,
@@ -125,15 +131,19 @@ pub enum Mutation {
     DoubleRound,
     WindowEdge,
     InputRound,
+    DropQueryFlag,
+    DropWindowFlag,
 }
 impl Mutation {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 8] = [
         Self::WrongTail,
         Self::ReversedPair,
         Self::SplitHalf,
         Self::DoubleRound,
         Self::WindowEdge,
         Self::InputRound,
+        Self::DropQueryFlag,
+        Self::DropWindowFlag,
     ];
     pub fn symbol(self) -> String {
         format!("chop_latent_glue_mutant_{self:?}_v1")
@@ -141,7 +151,7 @@ impl Mutation {
     pub fn spec(self) -> EntrySpec {
         let kernel = match self {
             Self::WindowEdge => Kernel::WindowKeys,
-            Self::InputRound => Kernel::WindowRotate,
+            Self::InputRound | Self::DropWindowFlag => Kernel::WindowRotate,
             _ => Kernel::QueryRope,
         };
         let mut spec = Entry {
@@ -156,6 +166,14 @@ impl Mutation {
             Self::SplitHalf => spec.body.replace("rotate<true>", "rotate_split_half"),
             Self::DoubleRound => spec.body.replace("rotate<true>", "rotate<true,3>"),
             Self::WindowEdge => spec.body.replace("::keys(", "::keys<true>("),
+            Self::DropQueryFlag => spec.body.replace(
+                "rotate<true>",
+                "rotate<true,0,chop::latent::glue::DropFlags>",
+            ),
+            Self::DropWindowFlag => spec.body.replace(
+                "::norm_rotate(",
+                "::norm_rotate<false,chop::latent::glue::DropFlags>(",
+            ),
             Self::InputRound => spec.body.replace("::norm_rotate(", "::norm_rotate<true>("),
         };
         spec

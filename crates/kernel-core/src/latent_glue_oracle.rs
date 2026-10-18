@@ -621,3 +621,178 @@ mod tests {
         assert_eq!(codes, before);
     }
 }
+
+/// Rotated F32 rows, native BF16 rows and their sticky status words.
+pub type QueryStatusRows = (Vec<f32>, Vec<u16>, Vec<u32>);
+/// Normalized F32 rows, encoded cache rows and their sticky status words.
+pub type WindowStatusRows = (Vec<f32>, Vec<EncodedLatent>, Vec<u32>);
+
+/// Sticky status reference. Failed query rows preserve every input bit and
+/// produce positive-zero native Q, including when another head raised the flag.
+pub fn query_rope_status(
+    query: LatentQueryRope,
+    input: &[f32],
+    table: &[f32],
+    prior: &[u32],
+) -> Result<QueryStatusRows, Refusal> {
+    use crate::precision::quantizer::{NONFINITE_INPUT, UNREPRESENTABLE_OUTPUT};
+    query.validate()?;
+    let width = query.heads as usize * query.latent as usize;
+    let tail = query.rotary as usize;
+    if input.len() != prior.len() * width || table.len() != prior.len() * tail {
+        return Err(Refusal("query status operand shape mismatch"));
+    }
+    let mut rotated = input.to_vec();
+    let mut native = vec![0; input.len()];
+    let mut status = prior.to_vec();
+    for row in 0..prior.len() {
+        let at = row * width..(row + 1) * width;
+        let angles = &table[row * tail..(row + 1) * tail];
+        if input[at.clone()]
+            .iter()
+            .chain(angles)
+            .any(|v| !v.is_finite())
+        {
+            status[row] |= NONFINITE_INPUT;
+            continue;
+        }
+        match query_rope_f32(query, &input[at.clone()], angles) {
+            Ok((values, bits)) => {
+                if bits.iter().any(|&v| !bf16_to_f32(v).is_finite()) {
+                    status[row] |= UNREPRESENTABLE_OUTPUT;
+                }
+                if status[row] == 0 {
+                    rotated[at.clone()].copy_from_slice(&values);
+                    native[at].copy_from_slice(&bits);
+                }
+            }
+            Err(_) => status[row] |= UNREPRESENTABLE_OUTPUT,
+        }
+    }
+    Ok((rotated, native, status))
+}
+
+/// The same norm/rotation boundary followed by the shared quantizer's
+/// independent status oracle. The caller skips storage for nonzero flags.
+pub fn window_rows_status(
+    query: LatentWindowWrite,
+    input: &[f32],
+    weight: &[u16],
+    table: &[f32],
+    prior: &[u32],
+) -> Result<WindowStatusRows, Refusal> {
+    use crate::contract::DType;
+    use crate::precision::quantizer::{
+        BlockQuantization, BlockQuantizeQuery, NONFINITE_INPUT, QuantizeOutput,
+        UNREPRESENTABLE_OUTPUT,
+    };
+    query.validate()?;
+    let width = query.latent as usize;
+    let tail = query.rotary as usize;
+    if input.len() != prior.len() * width
+        || table.len() != prior.len() * tail
+        || weight.len() != width
+    {
+        return Err(Refusal("window status operand shape mismatch"));
+    }
+    let quantizer = BlockQuantizeQuery {
+        width: query.latent,
+        input: DType::F32,
+        format: BlockQuantization::E4M3_CEIL32,
+        output: QuantizeOutput::Codes,
+    };
+    let mut latent = vec![0.0; input.len()];
+    let mut status = prior.to_vec();
+    let mut encoded = Vec::new();
+    for row in 0..prior.len() {
+        let at = row * width..(row + 1) * width;
+        let angles = &table[row * tail..(row + 1) * tail];
+        if input[at.clone()]
+            .iter()
+            .chain(angles)
+            .any(|v| !v.is_finite())
+            || weight.iter().any(|&v| !bf16_to_f32(v).is_finite())
+        {
+            status[row] |= NONFINITE_INPUT;
+        } else if input[at.clone()]
+            .iter()
+            .map(|&v| f64::from(v) * f64::from(v))
+            .sum::<f64>()
+            > f64::from(f32::MAX)
+        {
+            status[row] |= UNREPRESENTABLE_OUTPUT;
+        } else {
+            let result = window_norm_f32(query, &input[at.clone()], weight).and_then(|norm| {
+                query_rope_f32(
+                    LatentQueryRope {
+                        heads: 1,
+                        latent: query.latent,
+                        rotary: query.rotary,
+                    },
+                    &norm,
+                    angles,
+                )
+            });
+            match result {
+                Ok((values, _)) if status[row] == 0 => latent[at.clone()].copy_from_slice(&values),
+                Ok(_) => {}
+                Err(_) => status[row] |= UNREPRESENTABLE_OUTPUT,
+            }
+        }
+        status[row] = quantizer.row_status(&latent[at.clone()], &[status[row]])?[0];
+        encoded.push(if status[row] == 0 {
+            encode_latent_row(
+                LatentKvFormat::Fp8E4M3Ue8M0Block32,
+                &latent[at]
+                    .iter()
+                    .map(|&v| f32_to_bf16(v))
+                    .collect::<Vec<_>>(),
+            )?
+        } else {
+            EncodedLatent {
+                values: vec![0; width],
+                scales: vec![],
+                scale_bytes: vec![127; width / 32],
+            }
+        });
+    }
+    Ok((latent, encoded, status))
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+    #[test]
+    fn nonfinite_glue_reports_flags_without_changing_query_or_storing_a_key() {
+        let q = LatentQueryRope {
+            heads: 3,
+            latent: 512,
+            rotary: 64,
+        };
+        let mut input = vec![1.0; 3 * 512];
+        input[2 * 512 + 17] = f32::NAN;
+        let (kept, native, status) =
+            query_rope_status(q, &input, &[1.0, 0.0].repeat(32), &[0x80]).unwrap();
+        assert_eq!(status, [0x81]);
+        assert!(native.iter().all(|&v| v == 0));
+        assert_eq!(
+            kept.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            input.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+        );
+        let q = LatentWindowWrite {
+            latent: 512,
+            rotary: 64,
+            epsilon_bits: 1e-20_f32.to_bits(),
+            addressing: WindowAddressing::Circular { slots: 136 },
+        };
+        input.truncate(512);
+        input[0] = f32::NAN;
+        let (latent, encoded, status) =
+            window_rows_status(q, &input, &vec![0x3f80; 512], &[1.0, 0.0].repeat(32), &[0])
+                .unwrap();
+        assert_eq!(status, [1]);
+        assert!(latent.iter().all(|v| v.to_bits() == 0));
+        assert!(encoded[0].values.iter().all(|&v| v == 0));
+        assert!(encoded[0].scale_bytes.iter().all(|&v| v == 127));
+    }
+}

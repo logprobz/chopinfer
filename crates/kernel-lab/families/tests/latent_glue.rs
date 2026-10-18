@@ -1,4 +1,5 @@
 //! Poison, graph, PDL and numerical controls for native latent glue.
+use kernel_core::backend::{Backend, Need};
 use kernel_core::latent_glue::{
     LatentQueryRope, LatentWindowKeys, LatentWindowWrite, WindowAddressing,
 };
@@ -90,6 +91,14 @@ fn required() -> Vec<Required<'static>> {
     cases.push(latent_glue::key_invalid_data(LatentWindowKeys {
         addressing: WindowAddressing::Staged { slots: 160 },
         ..ring_keys()
+    }));
+    for heads in [1, 3, 64] {
+        cases.push(latent_glue::query_status(heads));
+    }
+    cases.push(latent_glue::window_status(write));
+    cases.push(latent_glue::window_status(LatentWindowWrite {
+        addressing: WindowAddressing::Staged { slots: 160 },
+        ..write
     }));
     cases
 }
@@ -235,7 +244,7 @@ fn all_latent_glue_cases_prepare_and_declare() {
     };
     check(
         &kit::conform(&backend(), &modules, None, &required()).unwrap(),
-        15,
+        20,
         false,
     );
     for mutation in Mutation::ALL {
@@ -265,6 +274,10 @@ fn numerical_failure(mutation: Mutation, error: &str) -> bool {
         return false;
     }
     match mutation {
+        Mutation::DropQueryFlag | Mutation::DropWindowFlag => {
+            (error.contains("status") && error.contains("the reference"))
+                || (error.contains("window.codes") && error.contains("outside the write"))
+        }
         Mutation::WindowEdge => {
             error.contains("window-key oracle: visible positions or order differ")
         }
@@ -309,7 +322,17 @@ fn latent_glue_passes_poison_graph_pdl_and_controls_on_gpu() {
             "latent-glue",
             BTreeMap::from([("report".into(), report.json())]),
         )?;
-        check(&report, 15, true);
+        check(&report, 20, true);
+        let q=LatentQueryRope{heads:3,latent:512,rotary:64};
+        let case=latent_glue::query_status_offset_case(backend().latent_query_rope(&q,Need::rows(8)).map_err(|e|e.to_string())?)?;
+        let functions=modules.load(session)?;
+        for live in [1,3,8] {
+            let images=case.images();
+            let outputs=case.launch(session,&*functions,&images,live)?;
+            case.judge_outputs(&images,live,&outputs)?;
+        }
+        session.receipt("query-status-offset-guards",BTreeMap::from([("offset_words".into(),serde_json::json!(3)),("live_counts".into(),serde_json::json!([1,3,8]))]))?;
+
         for (mutation, reason) in [
             (KeyMutation::Outside, "outside slot domain"),
             (KeyMutation::Stale, "visible positions or order differ"),

@@ -40,6 +40,16 @@ fn pointer(view: View, bytes: u64) -> Result<Argument, Refusal> {
     Ok(Argument::DeviceBuffer(view.handle))
 }
 
+fn status_view(status: View, offset: u64, rows: u32, others: &[u64]) -> Result<(), Refusal> {
+    status.covers(kernel_core::precision::quantizer::status_extent(
+        offset, rows,
+    )?)?;
+    if others.contains(&status.handle) {
+        return Err(Refusal("latent glue status must not alias another role"));
+    }
+    Ok(())
+}
+
 fn launch(
     entry: &Entry,
     capacity: u32,
@@ -79,6 +89,7 @@ pub(super) fn query_rope(
     info.bytes = vec![
         ("query".into(), elements * 4),
         ("native_q".into(), elements * 2),
+        ("status".into(), u64::from(need.capacity) * 4),
         ("cos_sin".into(), u64::from(need.capacity) * 64 * 4),
         ("live_rows".into(), 4),
     ];
@@ -117,6 +128,17 @@ impl PreparedOp<LatentQueryRopeBuffers<View>> for QueryOp {
                 "latent query F32 input, BF16 output and tables must not overlap",
             ));
         }
+        status_view(
+            b.status,
+            b.status_row_offset,
+            counts.rows,
+            &[
+                b.query.handle,
+                b.native_q.handle,
+                b.cos_sin.handle,
+                b.live_rows.handle,
+            ],
+        )?;
         let elements = u64::from(counts.rows) * u64::from(self.heads) * 512;
         launch(
             &self.entry,
@@ -129,6 +151,8 @@ impl PreparedOp<LatentQueryRopeBuffers<View>> for QueryOp {
                 pointer(b.cos_sin, u64::from(counts.rows) * 256)?,
                 pointer(b.live_rows, 4)?,
                 Argument::U32(self.heads),
+                pointer(b.status, 4)?,
+                Argument::U64(b.status_row_offset),
             ],
         )
     }
@@ -285,6 +309,7 @@ pub(super) fn window_write(
         ("window.scales".into(), slots * 16),
         ("quantized_codes".into(), r * 512),
         ("quantized_scales".into(), r * 16),
+        ("status".into(), r * 4),
         ("live_rows".into(), 4),
     ];
     if matches!(op.addressing, WindowAddressing::Staged { .. }) {
@@ -296,6 +321,7 @@ pub(super) fn window_write(
             "output" => "quantized_codes",
             "scales" => "quantized_scales",
             "live_rows" => "live_rows",
+            "status" => "status",
             _ => return Err(Refusal("native window quantizer declares an unknown role").into()),
         };
         let (_, count) = info
@@ -398,6 +424,10 @@ impl PreparedOp<LatentWindowWriteBuffers<View>> for WriteOp {
                 ));
             }
         }
+        let mut all_roles = inputs.to_vec();
+        all_roles.extend(outputs);
+        all_roles.extend([w.item_slots.handle, w.key_lists.handle, workspace.handle]);
+        status_view(b.status, b.status_row_offset, counts.rows, &all_roles)?;
         let (first, circular) = match (self.query.addressing, b.first_positions) {
             (WindowAddressing::Circular { .. }, None) => (Argument::NullDevicePointer, 1),
             (WindowAddressing::Staged { .. }, Some(first)) => {
@@ -424,6 +454,8 @@ impl PreparedOp<LatentWindowWriteBuffers<View>> for WriteOp {
                 pointer(b.cos_sin, r * 64 * 4)?,
                 pointer(b.live_rows, 4)?,
                 Argument::U32(self.query.epsilon_bits),
+                pointer(b.status, 4)?,
+                Argument::U64(b.status_row_offset),
             ],
         )?;
         launches.extend(self.quantizer.launches(
@@ -431,6 +463,8 @@ impl PreparedOp<LatentWindowWriteBuffers<View>> for WriteOp {
                 input: b.latent,
                 output: b.quantized_codes,
                 scales: Some(b.quantized_scales),
+                status: b.status,
+                status_row_offset: b.status_row_offset,
                 live_rows: b.live_rows,
             },
             workspace,
@@ -456,6 +490,8 @@ impl PreparedOp<LatentWindowWriteBuffers<View>> for WriteOp {
                 Argument::U32(circular),
                 Argument::U64(w.code_stride),
                 Argument::U64(w.scale_stride),
+                pointer(b.status, 4)?,
+                Argument::U64(b.status_row_offset),
             ],
         )?);
         Ok(launches)
@@ -507,6 +543,8 @@ mod tests {
         let codes = 136 * 512;
         let scales = 136 * 16;
         let b = LatentWindowWriteBuffers {
+            status: view(50, 128),
+            status_row_offset: 0,
             input: view(1, 2 * 512 * 4),
             weight: view(2, 512 * 2),
             latent: view(3, 2 * 512 * 4),
@@ -546,6 +584,43 @@ mod tests {
         let launches = op.launches(&b, View::EMPTY, Counts::rows(2)).unwrap();
         assert_eq!(launches.len(), 3);
         assert_eq!(launches[1].symbol, "shared_quantize");
+        let mut shifted = b;
+        shifted.status_row_offset = (1u64 << 32) + 5;
+        shifted.status.bytes = (shifted.status_row_offset + 2) * 4;
+        for launch in op.launches(&shifted, View::EMPTY, Counts::rows(2)).unwrap() {
+            assert_eq!(
+                launch.arguments.0.last(),
+                Some(&Argument::U64(shifted.status_row_offset))
+            );
+        }
+        shifted.status.bytes -= 1;
+        assert!(op.launches(&shifted, View::EMPTY, Counts::rows(2)).is_err());
+        shifted.status_row_offset = u64::MAX;
+        assert!(op.launches(&shifted, View::EMPTY, Counts::rows(2)).is_err());
+        for role in [
+            b.input,
+            b.weight,
+            b.latent,
+            b.cos_sin,
+            b.positions,
+            b.row_batch,
+            b.last_positions,
+            b.window.codes,
+            b.window.scales,
+            b.quantized_codes,
+            b.quantized_scales,
+            b.live_rows,
+        ] {
+            let alias = LatentWindowWriteBuffers {
+                status: View {
+                    handle: role.handle,
+                    bytes: 128,
+                },
+                ..b
+            };
+            assert!(op.launches(&alias, View::EMPTY, Counts::rows(2)).is_err());
+        }
+
         for (variant, mut bad) in [b; 4].into_iter().enumerate() {
             match variant {
                 0 => bad.window.codes.bytes -= 1,

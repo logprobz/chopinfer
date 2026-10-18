@@ -1,10 +1,10 @@
 [
   {
     "name": "chop_latent_glue_lab",
-    "source_closure_sha256": "029465b8fafb39d92373c94136268ac370fd77773f2ef12a9f1096c54a83cd95"
+    "source_closure_sha256": "eef58807fbcbd75ba46375de2b009924dd699410cc16f31bcb213be47bfc1e67"
   },
   {
     "name": "chop_latent_glue_quantize_lab",
-    "source_closure_sha256": "86974344a9fa1f41a7e7d5589fc0825d546967b12dac8085283b727dc662f107"
+    "source_closure_sha256": "cc1014be56c264348376b075f992951e19a4130289dcdaea31a8d7c5de760c09"
   }
 ]

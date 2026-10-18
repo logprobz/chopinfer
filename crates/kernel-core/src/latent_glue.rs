@@ -15,6 +15,10 @@ use crate::latent_attention::LatentWindowBuffers;
 /// The unrotated prefix stays unchanged. The op rotates the F32 input in
 /// place and writes the entire head to a separate BF16 Q output, rounding
 /// exactly once after rotation. The input and BF16 output must not overlap.
+/// Nonfinite inputs or tables set `NONFINITE_INPUT`; nonfinite arithmetic or
+/// BF16 conversion sets `UNREPRESENTABLE_OUTPUT`. Any previous or new row
+/// flag preserves the entire F32 query and writes positive-zero native Q.
+/// Status uses the shared quantizer flags and sticky OR protocol.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct LatentQueryRope {
     pub heads: u32,
@@ -115,6 +119,12 @@ impl Validate for WindowAddressing {
 /// writes every valid supplied position. Invalid sequence ids, negative
 /// positions, positions after the supplied last position, and positions
 /// outside staging write neither plane. Valid destinations are unique.
+/// Nonfinite source values set `NONFINITE_INPUT`; nonfinite norm or rotation
+/// results set `UNREPRESENTABLE_OUTPUT`. The shared quantizer adds its flags.
+/// Any prior or new flag preserves both destination planes, including the
+/// previous circular cell. It is not a valid new key. The caller clears the
+/// selected status words once per ordered step and rejects the step before
+/// accepting outputs or advancing retained bounds if any word is nonzero.
 /// The caller stages attention inputs or reserves enough circular headroom
 /// so a write cannot overwrite any key needed by another query in the step.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -222,6 +232,9 @@ crate::scratch_record! {
         pub native_q: value,
         pub cos_sin: value,
         pub live_rows: value,
+        /// Sticky U32 status per input row; the offset is in words.
+        pub status: value,
+        pub status_row_offset: scalar(u64),
     }
 }
 
@@ -267,5 +280,8 @@ crate::scratch_record! {
         pub quantized_codes: value,
         pub quantized_scales: value,
         pub live_rows: value,
+        /// Sticky U32 status per input row; the offset is in words.
+        pub status: value,
+        pub status_row_offset: scalar(u64),
     }
 }

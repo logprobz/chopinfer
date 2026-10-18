@@ -39,6 +39,15 @@
           {
             "kind": "U32",
             "name": "heads"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 256,
@@ -71,6 +80,15 @@
           {
             "kind": "U32",
             "name": "heads"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 256,
@@ -103,6 +121,15 @@
           {
             "kind": "U32",
             "name": "heads"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 256,
@@ -135,6 +162,15 @@
           {
             "kind": "U32",
             "name": "heads"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 256,
@@ -221,6 +257,102 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_latent_glue_mutant_DropQueryFlag_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "values",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "native_q",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "heads"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_latent_glue_mutant_DropWindowFlag_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "values",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "cos_sin",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 256,
@@ -228,12 +360,12 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "ed3ca20e820768eb812694fc2fc8ad6052df4b305afa0655c83193dd56bd1e86",
+    "cubin_sha256": "d7c9192735678cceb058b5a2b67dc89d9814ce44dae0e70a183629eb53a5b790",
     "resources": [
       {
         "symbol": "chop_latent_glue_mutant_WrongTail_v1",
-        "registers": 16,
-        "shared_static_bytes": 0,
+        "registers": 30,
+        "shared_static_bytes": 1028,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 256,
@@ -241,8 +373,8 @@
       },
       {
         "symbol": "chop_latent_glue_mutant_ReversedPair_v1",
-        "registers": 16,
-        "shared_static_bytes": 0,
+        "registers": 26,
+        "shared_static_bytes": 1028,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 256,
@@ -250,7 +382,7 @@
       },
       {
         "symbol": "chop_latent_glue_mutant_SplitHalf_v1",
-        "registers": 14,
+        "registers": 28,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -259,8 +391,8 @@
       },
       {
         "symbol": "chop_latent_glue_mutant_DoubleRound_v1",
-        "registers": 16,
-        "shared_static_bytes": 0,
+        "registers": 27,
+        "shared_static_bytes": 1028,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 256,
@@ -277,8 +409,26 @@
       },
       {
         "symbol": "chop_latent_glue_mutant_InputRound_v1",
-        "registers": 21,
-        "shared_static_bytes": 1056,
+        "registers": 28,
+        "shared_static_bytes": 1060,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_latent_glue_mutant_DropQueryFlag_v1",
+        "registers": 26,
+        "shared_static_bytes": 1028,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_latent_glue_mutant_DropWindowFlag_v1",
+        "registers": 28,
+        "shared_static_bytes": 1060,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 256,

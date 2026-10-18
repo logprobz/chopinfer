@@ -2,13 +2,14 @@
 #include <stdint.h>
 #include "../common/convert.cuh"
 #include "../common/ptx.cuh"
+#include "../common/row_status.cuh"
 
 namespace chop::latent::glue {
 
-template<bool NarrowInput = false>
+template<bool NarrowInput = false, class Status = chop::row::block_quantize::StatusOr>
 __device__ void norm_rotate(const float* input, const uint16_t* weight,
                             float* output, const float* cos_sin,
-                            const uint32_t* live_rows, float eps) {
+                            const uint32_t* live_rows, float eps, uint32_t* status, uint64_t status_row_offset) {
   ptx::griddep_launch_dependents();
   __shared__ float sums[8];
   ptx::griddep_wait();
@@ -17,6 +18,9 @@ __device__ void norm_rotate(const float* input, const uint16_t* weight,
   const uint32_t col = 2 * threadIdx.x;
   const uint64_t base = uint64_t(row) * 512 + col;
   float a = input[base], b = input[base + 1];
+  uint32_t flags = (!isfinite(a) || !isfinite(b) ||
+      !isfinite(convert::bf16_to_f32(weight[col])) ||
+      !isfinite(convert::bf16_to_f32(weight[col + 1]))) ? 1 : 0;
   if constexpr (NarrowInput) {
     a = convert::bf16_to_f32(convert::bf16_from_f32(a));
     b = convert::bf16_to_f32(convert::bf16_from_f32(b));
@@ -38,26 +42,29 @@ __device__ void norm_rotate(const float* input, const uint16_t* weight,
   if (col >= 448) {
     const uint64_t at = uint64_t(row) * 64 + col - 448;
     const float c = cos_sin[at], s = cos_sin[at + 1];
+    if (!isfinite(c) || !isfinite(s)) flags |= 1;
     const float next_x = __fsub_rn(__fmul_rn(x, c), __fmul_rn(y, s));
     y = __fadd_rn(__fmul_rn(x, s), __fmul_rn(y, c));
     x = next_x;
   }
-  output[base] = x;
-  output[base + 1] = y;
+  if (!isfinite(total) || !isfinite(mean) || !isfinite(inv) || !isfinite(x) || !isfinite(y)) {
+    if (flags == 0) flags |= 4;
+  }
+  // Do not report a second arithmetic flag caused solely by invalid inputs
+  // on another lane; the row-wide input failure already describes it.
+  if (__syncthreads_or((flags & 1) != 0)) flags = 1;
+  const uint32_t failed = chop::row_status::commit<Status>(flags, status, status_row_offset + row);
+  output[base] = failed ? 0.f : x;
+  output[base + 1] = failed ? 0.f : y;
 }
 
 // F32 producers remain F32 through rotation. Only the query variant emits
 // a BF16 operand; the KV path passes F32 to the shared trained quantizer.
-template<bool Query, int Mutation = 0>
-__device__ void rotate(float* values, uint16_t* native_q, const float* cos_sin,
-                       const uint32_t* live_rows, uint32_t heads) {
-  ptx::griddep_launch_dependents();
-  ptx::griddep_wait();
-  const uint32_t row = blockIdx.x, head = blockIdx.y;
-  if (row >= *live_rows) return;
-  const uint32_t column = 2 * threadIdx.x;
-  const uint64_t at = (uint64_t(row) * heads + head) * 512 + column;
-  float a = values[at], b = values[at + 1];
+template<int Mutation>
+__device__ void rotated_pair(float a, float b, uint32_t column, const float* table,
+                             float& x, float& y, uint32_t& flags) {
+  x = a; y = b;
+  if (!isfinite(a) || !isfinite(b)) flags |= 1;
   constexpr uint32_t tail = Mutation == 1 ? 416 : 448;
   if (column >= tail && column < tail + 64) {
     if constexpr (Mutation == 2) { const float saved = a; a = b; b = saved; }
@@ -65,16 +72,48 @@ __device__ void rotate(float* values, uint16_t* native_q, const float* cos_sin,
       a = convert::bf16_to_f32(convert::bf16_from_f32(a));
       b = convert::bf16_to_f32(convert::bf16_from_f32(b));
     }
-    const uint64_t angle = uint64_t(row) * 64 + column - tail;
-    const float c = cos_sin[angle], s = cos_sin[angle + 1];
-    const float x = __fsub_rn(__fmul_rn(a, c), __fmul_rn(b, s));
-    const float y = __fadd_rn(__fmul_rn(a, s), __fmul_rn(b, c));
-    values[at] = a = x;
-    values[at + 1] = b = y;
+    const float c = table[column - tail], s = table[column - tail + 1];
+    if (!isfinite(c) || !isfinite(s)) flags |= 1;
+    x = __fsub_rn(__fmul_rn(a,c),__fmul_rn(b,s));
+    y = __fadd_rn(__fmul_rn(a,s),__fmul_rn(b,c));
   }
-  if constexpr (Query) {
-    native_q[at] = convert::bf16_from_f32(a);
-    native_q[at + 1] = convert::bf16_from_f32(b);
+  if (flags == 0 && (!isfinite(x) || !isfinite(y) ||
+      !isfinite(convert::bf16_to_f32(convert::bf16_from_f32(x))) ||
+      !isfinite(convert::bf16_to_f32(convert::bf16_from_f32(y))))) flags |= 4;
+}
+
+// All heads of a row share one CTA so a failure in any head is observed
+// before another head writes. Failed rows preserve the F32 state.
+template<bool Query, int Mutation = 0, class Status = chop::row::block_quantize::StatusOr>
+__device__ void rotate(float* values, uint16_t* native_q, const float* cos_sin,
+                       const uint32_t* live_rows, uint32_t heads,
+                       uint32_t* status, uint64_t status_row_offset) {
+  ptx::griddep_launch_dependents();
+  ptx::griddep_wait();
+  const uint32_t row = blockIdx.x;
+  if (row >= *live_rows) return;
+  const uint32_t column = 2 * threadIdx.x;
+  const float* table = cos_sin + uint64_t(row) * 64;
+  uint32_t flags = 0;
+  for (uint32_t head=0; head<heads; ++head) {
+    const uint64_t at = (uint64_t(row) * heads + head) * 512 + column;
+    float x,y; uint32_t pair_flags=0;
+    rotated_pair<Mutation>(values[at],values[at+1],column,table,x,y,pair_flags);
+    flags |= pair_flags;
+  }
+  const uint32_t failed = chop::row_status::commit<Status>(flags,status,status_row_offset+row);
+  for (uint32_t head=0; head<heads; ++head) {
+    const uint64_t at = (uint64_t(row) * heads + head) * 512 + column;
+    float x=0.f,y=0.f; uint32_t ignored=0;
+    if (!failed) {
+      rotated_pair<Mutation>(values[at],values[at+1],column,table,x,y,ignored);
+      constexpr uint32_t tail = Mutation == 1 ? 416 : 448;
+      if (column >= tail && column < tail+64) { values[at]=x; values[at+1]=y; }
+    }
+    if constexpr (Query) {
+      native_q[at]=convert::bf16_from_f32(x);
+      native_q[at+1]=convert::bf16_from_f32(y);
+    }
   }
 }
 
@@ -85,11 +124,12 @@ __device__ void store(const uint8_t* input_codes, const uint8_t* input_scales,
                       const int32_t* first_positions, const int32_t* last_positions,
                       uint8_t* codes, uint8_t* scales, const uint32_t* live_rows,
                       uint32_t sequences, uint32_t slots, uint32_t circular,
-                      uint64_t code_stride, uint64_t scale_stride) {
+                      uint64_t code_stride, uint64_t scale_stride, const uint32_t* status, uint64_t status_row_offset) {
   ptx::griddep_launch_dependents();
   ptx::griddep_wait();
   const uint32_t row = blockIdx.x;
   if (row >= *live_rows) return;
+  if (status[status_row_offset + row] != 0) return;
   const int32_t p = positions[row], sequence = row_batch[row];
   if (p < 0 || sequence < 0 || uint32_t(sequence) >= sequences) return;
   const int32_t last = last_positions[sequence];

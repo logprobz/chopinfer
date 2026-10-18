@@ -234,6 +234,7 @@ fn execute(
     let ring_last = d.add(&ints(&[initial_last]))?;
     let stage_first = d.add(&ints(&[0]))?;
     let live = d.add(&(0_u32).to_le_bytes())?;
+    let status = d.fill(N * 4, 0)?;
     let live_items = d.add(&(1_u32).to_le_bytes())?;
     let input_view = d.fill(N * D * 4, 0)?;
     let weight = d.add(&halves(&weights()))?;
@@ -286,6 +287,7 @@ fn execute(
     for (step, (begin, rows)) in steps.into_iter().enumerate() {
         let end = begin + rows as i32 - 1;
         let base = (begin - 127).max(0);
+        d.upload(status, &[0; N * 4])?;
         d.upload(first, &ints(&[begin]))?;
         d.upload(chunk_last, &ints(&[end]))?;
         d.upload(ring_last, &ints(&[retained]))?;
@@ -342,6 +344,8 @@ fn execute(
         equal(label, &d.read(stage_codes)?, &expected_codes)?;
         equal(label, &d.read(stage_scales)?, &expected_scales)?;
         let write = LatentWindowWriteBuffers {
+            status,
+            status_row_offset: 0,
             input: input_view,
             weight,
             latent,
@@ -495,6 +499,7 @@ fn execute(
                 &reference[p as usize],
             );
         }
+        equal("step status", &d.read(status)?, &[0; N * 4])?;
         retained = end;
     }
     equal(

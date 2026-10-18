@@ -14,7 +14,7 @@
     "defines": [],
     "entries": [
       {
-        "symbol": "chop_latent_glue_query_rope_v1",
+        "symbol": "chop_latent_glue_query_rope_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -39,6 +39,15 @@
           {
             "kind": "U32",
             "name": "heads"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 256,
@@ -46,7 +55,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_glue_window_rope_v1",
+        "symbol": "chop_latent_glue_window_rope_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -76,6 +85,15 @@
           {
             "kind": "U32",
             "name": "eps_bits"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 256,
@@ -83,7 +101,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_latent_glue_window_store_v1",
+        "symbol": "chop_latent_glue_window_store_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -149,6 +167,15 @@
           {
             "kind": "U64",
             "name": "scale_stride"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 256,
@@ -205,29 +232,29 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "5a9626671461fedc7775532e0a751e0a065b6ce14525f8ffd0d7c0ab91e75611",
+    "cubin_sha256": "62e4d4317dd83f383af7cbb698e00284384f4233cf1772ea8a321bd4e2d7c5e4",
     "resources": [
       {
-        "symbol": "chop_latent_glue_query_rope_v1",
-        "registers": 16,
-        "shared_static_bytes": 0,
+        "symbol": "chop_latent_glue_query_rope_v2",
+        "registers": 26,
+        "shared_static_bytes": 1028,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 256,
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_glue_window_rope_v1",
-        "registers": 21,
-        "shared_static_bytes": 1056,
+        "symbol": "chop_latent_glue_window_rope_v2",
+        "registers": 28,
+        "shared_static_bytes": 1060,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 256,
         "min_blocks": 1
       },
       {
-        "symbol": "chop_latent_glue_window_store_v1",
-        "registers": 16,
+        "symbol": "chop_latent_glue_window_store_v2",
+        "registers": 18,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -260,7 +287,7 @@
     "defines": [],
     "entries": [
       {
-        "symbol": "chop_latent_glue_ceil32_v1",
+        "symbol": "chop_latent_glue_ceil32_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -281,6 +308,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -288,11 +324,11 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "b9520cd439c177aff43e0f13abf435ed67e8122b71f74016b5d33f31b5102c20",
+    "cubin_sha256": "a87bdfa4248610d7c66c34310c1f6f6e34ae8a0768855543d1f1d95075d110ca",
     "resources": [
       {
-        "symbol": "chop_latent_glue_ceil32_v1",
-        "registers": 24,
+        "symbol": "chop_latent_glue_ceil32_v2",
+        "registers": 25,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,

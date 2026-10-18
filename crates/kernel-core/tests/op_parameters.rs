@@ -549,13 +549,20 @@ fn plain_f32_output_keeps_weight_products_without_bf16_rounding() {
     };
     let reference = requirement.oracle(&x, &w, 3).unwrap();
     let arithmetic = RmsNorm {
+        eps: 1e-20,
+        offset: NormOffset::Plain,
+        arithmetic: NormArithmetic::F32,
+        scale: NormScale::MultiplyReciprocal,
+        before_weight: None,
         output: None,
-        ..DEEPSEEK_NORM
     };
     let actual = arithmetic.apply(&x, &w, width).unwrap();
     kernel_core::oracle::check_numeric(&actual.values, &reference, DType::F32).unwrap();
     for mutant in [
-        DEEPSEEK_NORM,
+        RmsNorm {
+            output: Some(DType::Bf16),
+            ..arithmetic
+        },
         RmsNorm {
             before_weight: Some(DType::Bf16),
             ..arithmetic

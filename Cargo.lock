@@ -722,12 +722,14 @@ dependencies = [
 name = "model-deepseek41"
 version = "0.1.0-alpha.3"
 dependencies = [
+ "bundle-runtime",
  "frontend-format",
  "kernel-core",
  "model-compiler-sdk",
  "model-deepseek41-contract",
  "projection-spec",
  "runtime-bundle",
+ "runtime-bundle-abi",
  "runtime-frontend",
  "runtime-frontend-contract",
  "runtime-host",

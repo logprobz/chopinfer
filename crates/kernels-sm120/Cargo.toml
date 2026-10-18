@@ -18,5 +18,6 @@ serde_json.workspace = true
 sha2.workspace = true
 
 [dev-dependencies]
+projection-spec.workspace = true
 runtime-kv.workspace = true
 runtime-sampling.workspace = true

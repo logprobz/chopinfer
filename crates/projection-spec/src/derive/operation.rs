@@ -850,12 +850,7 @@ pub(super) fn ordinary(
         ));
     }
     let experts = selection.experts.end - selection.experts.start;
-    // Each group of a grouped dense operation is a dense matrix; this spec
-    // stays internal to the derivation, which never exports it as one.
-    let kind = match p.kind {
-        ProjectionKind::GroupedDense { .. } => OperationKind::Dense,
-        _ => p.operation_kind(g, selection)?,
-    };
+    let kind = p.operation_kind(g, selection)?;
     // Several groups stack as independent row-major matrices.
     if matches!(p.kind, ProjectionKind::GroupedDense { .. })
         && experts > 1
@@ -1676,8 +1671,10 @@ impl DerivedOperation {
     /// `g * rows..(g + 1) * rows` of each row. A rank with one group runs it
     /// as the dense matrix it is.
     pub fn dense_groups(&self) -> Option<u32> {
-        (self.family == KernelFamily::Dense && self.packing.experts > 1)
-            .then_some(self.packing.experts)
+        match self.operation.kind {
+            OperationKind::GroupedDense { groups } => Some(groups),
+            _ => None,
+        }
     }
 
     /// The grouped fold GEMM query (`kernel_core::mxfp8_gemm`) of this
@@ -1753,8 +1750,9 @@ impl RankDerivation {
     }
 
     /// Collect equal operation recipes into their original multi-use coverage.
-    /// A grouped dense operation is refused: its spec describes one group, and
-    /// it runs on the grouped fold GEMM contract, never a dense kernel.
+    /// A grouped dense operation is refused: it runs on the grouped fold GEMM
+    /// contract (`DerivedOperation::fold_gemm_query`), never a generated
+    /// kernel.
     pub fn operation_specs(&self) -> Result<Vec<OperationSpec>, Error> {
         let mut result: Vec<OperationSpec> = Vec::new();
         for derived in self.selected_operations() {

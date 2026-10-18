@@ -413,10 +413,11 @@ impl Projection {
         }
     }
     /// The operation kind of one rank's selection: an expert bank keeps the
-    /// selected experts and its declared top-k. A selection of several
-    /// groups of a grouped dense projection has none: it runs on the grouped
-    /// fold GEMM contract (`DerivedOperation::fold_gemm_query`), never as a
-    /// dense operation. One group is the dense matrix it is.
+    /// selected experts and its declared top-k, and several groups of a
+    /// grouped dense projection are `GroupedDense`, which no dense capability
+    /// admits (the grouped fold GEMM contract,
+    /// `DerivedOperation::fold_gemm_query`). One group is the dense matrix it
+    /// is.
     pub fn operation_kind(
         &self,
         geometry: &Geometry,
@@ -424,12 +425,9 @@ impl Projection {
     ) -> Result<OperationKind, Error> {
         Ok(match &self.kind {
             ProjectionKind::GroupedDense { .. } if selection.experts.len() > 1 => {
-                return Err(Error(format!(
-                    "projection `{}` selects {} groups, which run on the grouped fold GEMM \
-                     contract, not as a dense operation",
-                    self.id,
-                    selection.experts.len()
-                )));
+                OperationKind::GroupedDense {
+                    groups: selection.experts.end - selection.experts.start,
+                }
             }
             ProjectionKind::Dense {} | ProjectionKind::GroupedDense { .. } => OperationKind::Dense,
             ProjectionKind::ExpertBank { top_k, .. } => OperationKind::Grouped {

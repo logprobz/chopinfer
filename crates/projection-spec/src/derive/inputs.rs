@@ -2,16 +2,17 @@
 use super::{DerivedInput, DerivedOperation, InputSegment, ProjectionContext, ViewRole};
 use crate::Error;
 
-/// A grouped dense input's segments: local group `j` reads its global
-/// group's K columns of each source segment, placed at `j` times the packed
-/// K in the view. Every local group's live K is covered exactly once.
+/// A grouped dense input's segments and padding: local group `j` reads its
+/// global group's K columns of each source segment, placed at `j` times the
+/// packed K in the view, and the rest of its slot is padding. Every local
+/// group's live K is covered exactly once.
 fn grouped(
     ctx: &ProjectionContext<'_>,
     operation: &DerivedOperation,
     input: &crate::inputs::ActivationInput,
     operand: usize,
     width: u64,
-) -> Result<Vec<InputSegment>, Error> {
+) -> Result<(Vec<InputSegment>, Vec<std::ops::Range<u64>>), Error> {
     let selected = match ctx.selections {
         Some(selections) => selections
             .get(operand)
@@ -81,7 +82,11 @@ fn grouped(
             ));
         }
     }
-    Ok(segments)
+    let padding = (0..local)
+        .filter(|_| k < packed)
+        .map(|j| j * packed + k..(j + 1) * packed)
+        .collect();
+    Ok((segments, padding))
 }
 
 pub(super) fn lower(
@@ -111,12 +116,13 @@ pub(super) fn lower(
                     "activation view disagrees with its storage/geometry contract".into(),
                 ));
             }
-            let segments = grouped(ctx, operation, input, operand, view.shape[1])?;
+            let (segments, padding) = grouped(ctx, operation, input, operand, view.shape[1])?;
             operation.inputs.push(DerivedInput {
                 operand: operand as u32,
                 binding: input.binding.clone(),
                 view,
                 segments,
+                padding,
             });
             continue;
         }
@@ -234,6 +240,7 @@ pub(super) fn lower(
             binding: input.binding.clone(),
             view,
             segments,
+            padding: Vec::new(),
         });
     }
     Ok(())

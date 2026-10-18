@@ -183,6 +183,10 @@ pub struct DerivedInput {
     pub binding: String,
     pub view: RequiredView,
     pub segments: Vec<InputSegment>,
+    /// View columns between segments that hold zero padding, such as the
+    /// packed tail of each group's K-wide slot of a grouped input. Any
+    /// other hole between segments is refused.
+    pub padding: Vec<Range<u64>>,
 }
 
 /// One operation for one requested use, retaining compiled row and view contracts.

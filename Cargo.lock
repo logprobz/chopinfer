@@ -618,6 +618,7 @@ dependencies = [
  "encoder-spec",
  "kernel-build",
  "kernel-core",
+ "projection-spec",
  "runtime-kv",
  "runtime-sampling",
  "serde",

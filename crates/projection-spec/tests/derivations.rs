@@ -335,13 +335,19 @@ fn grouped_dense_ranks_own_whole_groups_and_map_onto_the_fold_contract() {
                 .unwrap_err()
                 .0;
             assert!(refusal.contains("MXFP8 rows"), "{refusal}");
-            // Several groups have no public dense operation kind.
+            // Several groups are their own kind, in the projection's kind and
+            // in the derived spec alike; no dense capability admits it.
             let selection =
                 derive::rank_selection(&d.projections[0], &g, Topology { ranks, rank }, 0).unwrap();
+            let kind = match groups {
+                Some(groups) => OperationKind::GroupedDense { groups },
+                None => OperationKind::Dense,
+            };
             assert_eq!(
-                d.projections[0].operation_kind(&g, &selection).is_err(),
-                groups.is_some()
+                d.projections[0].operation_kind(&g, &selection).unwrap(),
+                kind
             );
+            assert_eq!(op.operation.kind, kind);
             // One group is the dense matrix it is; more never lower to a
             // dense kernel.
             let specs = r.operation_specs();
@@ -1124,6 +1130,7 @@ fn grouped_activation_bindings_cover_every_local_group() {
             .collect::<Vec<_>>(),
         vec![(16..24, 0..8), (24..32, 16..24)]
     );
+    assert_eq!(input.padding, vec![8..16, 24..32]);
     let bytes = (0..128 * 32u16)
         .flat_map(u16::to_le_bytes)
         .collect::<Vec<_>>();
@@ -1159,6 +1166,61 @@ fn grouped_activation_bindings_cover_every_local_group() {
             .0
             .contains("cover live K")
     );
+}
+
+/// A hole between gathered segments is zero only where the input declares
+/// padding; segments out of order or overlapping are refused.
+#[test]
+fn activation_gathers_leave_holes_only_in_declared_padding() {
+    let input =
+        |segments: &[(std::ops::Range<u64>, std::ops::Range<u64>)], padding| derive::DerivedInput {
+            operand: 0,
+            binding: "row".into(),
+            view: derive::RequiredView {
+                id: "row".into(),
+                role: ViewRole::Input,
+                dtype: DType::Bf16,
+                interpretation: None,
+                shape: vec![1, 4],
+                bytes: 8,
+                layout: "row-major".into(),
+            },
+            segments: segments
+                .iter()
+                .map(|(columns, target)| derive::InputSegment {
+                    source: "hidden".into(),
+                    source_columns: None,
+                    columns: columns.clone(),
+                    target_columns: target.clone(),
+                })
+                .collect(),
+            padding,
+        };
+    let bytes = (1..=4u16).flat_map(u16::to_le_bytes).collect::<Vec<_>>();
+    let buffers = std::collections::BTreeMap::from([(
+        "hidden".into(),
+        derive::payload::ActivationBuffer {
+            dtype: DType::Bf16,
+            rows: 1,
+            columns: 4,
+            bytes: &bytes,
+        },
+    )]);
+    let gather = |input: &derive::DerivedInput| derive::payload::input(input, &buffers);
+    let holed = [(0..1, 0..1), (2..4, 2..4)];
+    assert!(gather(&input(&holed, vec![])).is_err());
+    assert_eq!(
+        gather(&input(&holed, std::iter::once(1..2).collect())).unwrap(),
+        [1, 0, 0, 0, 3, 0, 4, 0]
+    );
+    // A trailing tail stays zero, as before.
+    assert_eq!(
+        gather(&input(&[(0..2, 0..2)], vec![])).unwrap(),
+        [1, 0, 2, 0, 0, 0, 0, 0]
+    );
+    for refused in [[(2..4, 2..4), (0..1, 0..1)], [(0..2, 0..2), (2..4, 1..3)]] {
+        assert!(gather(&input(&refused, std::iter::once(0..4).collect())).is_err());
+    }
 }
 
 #[test]

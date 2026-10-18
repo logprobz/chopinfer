@@ -29,5 +29,17 @@ serde_json.workspace = true
 name = "sm120"
 path = "tests/sm120/main.rs"
 
+[[example]]
+name = "build_latent_glue"
+path = "examples/sm120/build_latent_glue.rs"
+
+[[example]]
+name = "build_window_stage"
+path = "examples/sm120/build_window_stage.rs"
+
+[[example]]
+name = "build_staged_window_keys"
+path = "examples/sm120/build_staged_window_keys.rs"
+
 [lints]
 workspace = true

@@ -21,5 +21,9 @@ sha2.workspace = true
 model-compiler-sdk.workspace = true
 serde_json.workspace = true
 
+[dev-dependencies]
+kernel-build.workspace = true
+kernels-sm120.workspace = true
+
 [lints]
 workspace = true

@@ -1,0 +1,14 @@
+[
+  {
+    "name": "latent_glue_deepseek41_sm120",
+    "source_closure_sha256": "f3598f3e4646b4699909db625ed9e9bf92b4ae6a145af678516e504943d219f3"
+  },
+  {
+    "name": "latent_glue_quantize_deepseek41_sm120",
+    "source_closure_sha256": "dc0ae3cdc27bcc9b6db23f6ef109ea6668329147947d8c92f99b52541e87457c"
+  },
+  {
+    "name": "latent_q_norm_deepseek41_sm120",
+    "source_closure_sha256": "545289f508adedccb4d8de22c2e463ab9e5ca1dafaa5f826613d5359b193a20c"
+  }
+]

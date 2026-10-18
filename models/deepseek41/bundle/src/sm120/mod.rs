@@ -5,6 +5,7 @@
 //! backend and the own ops.
 
 pub mod dspark_entries;
+pub mod latent;
 use kernels_sm120::backend::{F32ProjectionOffers, Sm120};
 
 /// The build's identity of the exact F32 projection cubins (`f32_head`,
@@ -38,10 +39,25 @@ pub mod f32_head;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod hc;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
+mod indexer_query;
+#[allow(dead_code, reason = "the build script compiles the cubin specs")]
+mod latent_glue;
+#[allow(dead_code, reason = "the build script compiles the cubin specs")]
+mod latent_window_stage;
+#[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod reduce;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod rows;
 mod widen;
+
+/// The serving latent cubins and symbols, for the model's kernel lab.
+pub fn latent_cubins()
+-> impl Iterator<Item = (&'static str, &'static [u8], &'static [&'static str])> {
+    crate::CUBINS
+        .iter()
+        .filter(|cubin| cubin.name.starts_with("latent_sources_"))
+        .map(|cubin| (cubin.name, cubin.bytes, cubin.symbols))
+}
 
 /// The model-owned module holding a selected fold entry, for module loading
 /// and the model's kernel tests. Rank-independent cubins serve every topology.
@@ -93,6 +109,10 @@ impl crate::Kernels {
         let sm120 = rows::register(Sm120::new(), shape.geometry, shape.ranks());
         let sm120 = reduce::register(sm120, shape.geometry);
         let sm120 = hc::register(sm120, shape.geometry);
+        let sm120 = latent::register(sm120, shape.geometry, shape.ranks())?;
+        let sm120 = indexer_query::register(sm120, shape.geometry);
+        let sm120 = latent_glue::register(sm120, shape.geometry, shape.ranks())?;
+        let sm120 = latent_window_stage::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = register_f32_projections(sm120, shape.geometry, shape.ranks())?;
         // The vision encoder's shared entries (`crate::encoders`).
         let sm120 = encoder::register(sm120)?;

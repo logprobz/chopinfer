@@ -25,6 +25,15 @@ mod f32_dense;
 #[path = "f32_head.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod f32_head;
+#[path = "indexer_query.rs"]
+#[allow(dead_code, reason = "the bundle registers the entries")]
+mod indexer_query;
+#[allow(dead_code, reason = "the bundle registers the entries")]
+mod latent;
+#[allow(dead_code, reason = "the bundle registers the entries")]
+mod latent_glue;
+#[allow(dead_code, reason = "the bundle registers the entries")]
+mod latent_window_stage;
 #[allow(dead_code)]
 mod own_entries;
 #[path = "reduce.rs"]
@@ -49,9 +58,14 @@ fn main() {
     specs.extend(rows::cubins(GEOMETRIES).expect("deepseek41 row cubins"));
     specs.extend(reduce::cubins(GEOMETRIES));
     specs.extend(hc::cubins(GEOMETRIES));
+    specs.extend(latent::cubins(GEOMETRIES).expect("deepseek41 latent cubins"));
     specs.extend(f32_head::cubins(GEOMETRIES).expect("deepseek41 F32 head cubins"));
     specs.extend(f32_dense::cubins(GEOMETRIES).expect("deepseek41 F32 dense cubins"));
     specs.push(("dependencies", kernels_sm120::probes::cubin_spec()));
+    specs.extend(indexer_query::cubins(GEOMETRIES).expect("deepseek41 query preparation cubins"));
+    specs.extend(latent_glue::cubins(GEOMETRIES).expect("deepseek41 latent glue cubins"));
+    specs.extend(latent_window_stage::cubins(GEOMETRIES).expect("window stage cubins"));
+    specs.extend(latent_window_stage::key_cubins(GEOMETRIES).expect("staged window key cubins"));
     specs.extend(encoder::cubins().expect("deepseek41 encoder cubins"));
     let mut families: Vec<(&str, Vec<&str>)> = Vec::new();
     for (family, spec) in &specs {

@@ -5,6 +5,8 @@
 mod f32_head;
 mod head_artifacts;
 mod head_probes;
+mod latent;
+mod latent_bf16;
 // The own ops: the bundle's entries, cubin specification and `OwnOps`
 // implementation, and their tests.
 #[path = "../../../bundle/src/sm120/dspark_entries.rs"]
@@ -27,6 +29,10 @@ mod own_ops;
 mod reduce;
 #[path = "../../../bundle/src/sm120/widen.rs"]
 mod widen;
+
+mod latent_glue;
+
+mod window_stage;
 
 // The vision encoder: the bundle's catalog and its conformance cases.
 mod encoder;

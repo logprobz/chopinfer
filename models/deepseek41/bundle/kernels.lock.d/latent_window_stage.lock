@@ -1,0 +1,110 @@
+[
+  {
+    "name": "latent_window_stage_deepseek41_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_deepseek41_window_stage_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "ring_codes",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ring_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "item_slots",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "first_positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "last_positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "codes",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_items",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "items"
+          },
+          {
+            "kind": "U32",
+            "name": "sequences"
+          },
+          {
+            "kind": "U32",
+            "name": "window"
+          },
+          {
+            "kind": "U32",
+            "name": "ring_slots"
+          },
+          {
+            "kind": "U64",
+            "name": "read_codes"
+          },
+          {
+            "kind": "U64",
+            "name": "read_scales"
+          },
+          {
+            "kind": "U64",
+            "name": "write_codes"
+          },
+          {
+            "kind": "U64",
+            "name": "write_scales"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "846cdabc36131ce96e513bfb548a89164cd2886d5e7df3c6c1c18eb8935931d5",
+    "resources": [
+      {
+        "symbol": "chop_deepseek41_window_stage_v1",
+        "registers": 32,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

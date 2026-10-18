@@ -9,6 +9,7 @@ pub mod comm;
 pub mod context_parallel;
 pub mod device;
 pub mod encoder;
+pub mod f32_projection;
 pub mod gated_pooling;
 pub mod gemm;
 pub mod invariance;

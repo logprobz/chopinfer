@@ -90,6 +90,7 @@ mod attention;
 mod bf16_all_reduce;
 mod block_quantize;
 mod context_parallel;
+mod f32_projection;
 mod fp4_key_write;
 mod fused_all_reduce;
 mod gated_pooling;
@@ -126,6 +127,7 @@ pub use bf16_all_reduce::{
     LOW_LATENCY_ROWS as BF16_LOW_LATENCY_ROWS, TURNS_ROWS as BF16_TURNS_ROWS, Tuned as Bf16Tuned,
     phased_admission_plans as bf16_phased_admission_plans, tuned as bf16_tuned,
 };
+pub use f32_projection::F32ProjectionOffers;
 pub use gated_sparse::GatedSparseEntries;
 pub use moe_experts::{TILE_PAIR_MIN_ROWS, grouped_contract, locked_resources};
 pub use moe_route::FusedRouterEntry;
@@ -166,6 +168,7 @@ pub struct Sm120 {
     f32_norms: Vec<(crate::gated_pooling::F32Norm, String)>,
     rmsnorms: Vec<(RmsNormRequirement, String)>,
     projections: Option<Box<dyn ProjectionOffers>>,
+    f32_projections: Option<F32ProjectionOffers>,
     rows: rows::Selection,
     encoders: Vec<Entry>,
     rope_kv: Vec<RopeKvEntry>,
@@ -205,6 +208,13 @@ impl Sm120 {
         self.mxfp8_folds.push(entry);
         self
     }
+
+    /// Register authenticated exact F32 projection entries.
+    pub fn with_f32_projections(mut self, offers: F32ProjectionOffers) -> Self {
+        self.f32_projections = Some(offers);
+        self
+    }
+
     /// Register a compiled block quantizer. The backend matches its complete
     /// input rounding, scale rule, output form and width at preparation.
     pub fn with_block_quantize(mut self, entry: crate::row::block_quantize::Entry) -> Self {
@@ -1164,7 +1174,15 @@ impl Backend for Sm120 {
         usage: OperationUse,
         need: Need,
     ) -> Result<Binding<Prepared<ProjectionBuffers<View>>>, Refused> {
-        projection::prepare(self.projections.as_deref(), op, usage, need)
+        if op
+            .activations
+            .iter()
+            .any(|a| a.format == kernel_core::contract::ActivationFormat::F32)
+        {
+            f32_projection::prepare(self.f32_projections.as_ref(), op, usage, need)
+        } else {
+            projection::prepare(self.projections.as_deref(), op, usage, need)
+        }
     }
 
     // Attention.

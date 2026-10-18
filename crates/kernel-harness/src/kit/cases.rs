@@ -408,6 +408,8 @@ pub fn projection_case<'a>(
         activation_global: None,
         routing: None,
         scratch: ProjectionScratch {
+            quantizer_status_row_offset: 0,
+            quantizer_status: None,
             partial: bytes("scratch.partial").map_or_else(|| Spec::untouched(16), Spec::scratch),
             semaphores: bytes("scratch.semaphores")
                 .map_or_else(|| Spec::untouched(16), Spec::zeroed),

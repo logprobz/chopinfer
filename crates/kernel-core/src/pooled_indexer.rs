@@ -706,6 +706,10 @@ crate::scratch_record! {
         pub positions: value,
         pub live_rows: value,
         pub output: value,
+        /// Caller-owned U32 sticky quantizer flags, one per row. Keep this
+        /// separate from the score/select status, which overwrites its rows.
+        pub quantizer_status: value,
+        pub quantizer_status_row_offset: scalar(u64),
     }
 }
 

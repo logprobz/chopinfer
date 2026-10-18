@@ -277,10 +277,9 @@ pub fn cubin_spec(name: &str, stages: &[RowStage]) -> Result<CubinSpec, Refusal>
     if stages.iter().any(|s| s.shapes == ShapeBinding::Launch) {
         headers.push("#include \"row/precision_launch.cuh\"".into());
     }
-    if stages
-        .iter()
-        .any(|s| s.numerical_contract == "quantize.bf16-input.e4m3-ceil-ue8m0-32.codes.v1")
-    {
+    if stages.iter().any(|s| {
+        s.numerical_contract == "quantize.bf16-input.e4m3-ceil-ue8m0-32.codes.status-or-zero.v2"
+    }) {
         headers.push(format!("#include \"{}\"", super::block_quantize::HEADER));
     }
     Ok(CubinSpec {
@@ -310,6 +309,8 @@ pub struct QuantizerBuffers {
     pub live_rows: u64,
     pub global_scale: Option<u64>,
     pub row_amax: Option<u64>,
+    pub status: Option<u64>,
+    pub status_row_offset: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -513,9 +514,9 @@ impl Quantizer {
             selected.stages = vec![RowStage::new(
                 entry.spec_with_shapes(stage.shapes),
                 stage.capacity,
-                Grid::rows_by(self.width / 32, "width / group"),
+                Grid::rows(1),
                 self.width,
-                "quantize.bf16-input.e4m3-ceil-ue8m0-32.codes.v1",
+                "quantize.bf16-input.e4m3-ceil-ue8m0-32.codes.status-or-zero.v2",
                 stage.shapes,
                 self.resources,
             )?];
@@ -526,6 +527,14 @@ impl Quantizer {
             ));
         }
         Ok(selected)
+    }
+
+    pub fn status_bytes(&self) -> u64 {
+        if matches!(self.scale_rule, Some(DynamicScale::CeilPowerOfTwo { .. })) {
+            u64::from(self.stages[0].capacity) * 4
+        } else {
+            0
+        }
     }
 
     pub fn scale_rule(&self) -> Option<DynamicScale> {
@@ -581,13 +590,23 @@ impl Quantizer {
             }
         }
         if matches!(self.scale_rule, Some(DynamicScale::CeilPowerOfTwo { .. })) {
-            let values = [ptr(b.input), ptr(b.codes), ptr(b.scales), ptr(b.live_rows)]
-                .into_iter()
-                .chain(
-                    (self.stages[0].shapes == ShapeBinding::Launch)
-                        .then_some(Argument::U32(self.width)),
-                )
-                .collect();
+            let status = b
+                .status
+                .ok_or(Refusal("trained block quantizer needs row status"))?;
+            let values = [
+                ptr(b.input),
+                ptr(b.codes),
+                ptr(b.scales),
+                ptr(b.live_rows),
+                ptr(status),
+                Argument::U64(b.status_row_offset),
+            ]
+            .into_iter()
+            .chain(
+                (self.stages[0].shapes == ShapeBinding::Launch)
+                    .then_some(Argument::U32(self.width)),
+            )
+            .collect();
             return Ok(vec![self.stages[0].arguments(values)?]);
         }
         let mut values = Vec::new();

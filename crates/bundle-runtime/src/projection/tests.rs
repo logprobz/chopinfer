@@ -45,6 +45,8 @@ fn buffers() -> (Input<'static>, Span, Scratch) {
         },
         span(8, 1 << 20),
         Scratch {
+            quantizer_status: None,
+            quantizer_status_row_offset: 0,
             partial: span(9, 1 << 24),
             semaphores: span(10, 8192),
             unused: span(11, 4),

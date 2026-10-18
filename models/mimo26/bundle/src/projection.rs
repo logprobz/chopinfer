@@ -591,6 +591,8 @@ pub fn launch(
         },
         output,
         &shared::Scratch {
+            quantizer_status: None,
+            quantizer_status_row_offset: 0,
             partial,
             semaphores,
             // Registered entries read no unused argument; it may name any

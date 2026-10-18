@@ -101,6 +101,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -129,6 +138,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -136,7 +154,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "6cc2f78e5af9d9a5ca5b01e74eb6a3231128d763bf29029efa6c7507edafa6e3",
+    "cubin_sha256": "fb8c977f60cea2911338a0375cbed72fb21741950d8cb06925752ed31de01926",
     "resources": [
       {
         "symbol": "chop_position_query_h3_d160_rotate_v2",
@@ -158,7 +176,7 @@
       },
       {
         "symbol": "chop_position_query_h3_d160_mxfp4_v2",
-        "registers": 21,
+        "registers": 26,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -167,7 +185,7 @@
       },
       {
         "symbol": "chop_position_query_h32_d128_mxfp4_v2",
-        "registers": 21,
+        "registers": 24,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,

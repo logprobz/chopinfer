@@ -54,8 +54,9 @@ impl BlockQuantization {
 
     /// The exact code/scale rule. F32 inputs round to BF16 before amax and
     /// element quantization. NaNs, infinities and BF16 overflow are refused.
-    /// E2M1 with E4M3 scales also refuses a group whose BF16 amax exceeds
-    /// 6 * 448, so its required scale stays within the finite E4M3 range.
+    /// E2M1/E4M3 scales saturate at 448, then payloads clamp to +/-6,
+    /// matching the pinned TileLang SATFINITE cast. See
+    /// `docs/block-quantization.md` for the lowering evidence.
     pub fn apply(self, values: &[f32], rows: usize, width: usize) -> Result<Quantized, Refusal> {
         if !width.is_multiple_of(self.group_size() as usize) {
             return Err(Refusal("block quantization requires complete row groups"));
@@ -67,11 +68,6 @@ impl BlockQuantization {
             .iter()
             .map(|&v| bf16_to_f32(f32_to_bf16(v)))
             .collect();
-        if self == Self::E2M1E4M3Scale16 && rounded.iter().any(|v| v.abs() > 6.0 * 448.0) {
-            return Err(Refusal(
-                "E2M1/E4M3 group scale exceeds the finite E4M3 range",
-            ));
-        }
         quantize(&rounded, rows, width, self.quantizer()?)
     }
 
@@ -106,6 +102,19 @@ pub enum QuantizeOutput {
     Codes,
     Bf16,
 }
+
+/// Sticky row status bits. Callers clear the status plane once before an
+/// ordered sequence of launches and check it before consuming the results.
+pub const NONFINITE_INPUT: u32 = 1;
+/// Reserved for caller-reported scale failures. Finite Format-1 scale
+/// saturation is defined and does not raise this bit.
+pub const SCALE_OVERFLOW: u32 = 2;
+pub const UNREPRESENTABLE_OUTPUT: u32 = 4;
+/// Invalid code rows use positive zero codes and finite scale 1 in either
+/// encoding, never NaN scale 255. Every shared downstream decoder accepts
+/// this pair, including the MXFP4 and chained E4M3 decode guards.
+pub const INVALID_UE8M0_SCALE: u8 = 127;
+pub const INVALID_E4M3_SCALE: u8 = 0x38;
 
 /// Each live row is independent. `Bf16` writes the fake-quantized values;
 /// `Codes` writes E4M3 bytes or even-low E2M1 nibbles plus scale bytes.
@@ -145,14 +154,14 @@ impl NumericalContract for BlockQuantizeQuery {
             QuantizeOutput::Bf16 => "bf16",
         };
         Ok(NumericalContractId::new(format!(
-            "quantize.bf16-input.{format}.{output}.v1"
+            "quantize.bf16-input.{format}.{output}.status-or-zero.v2"
         )))
     }
 }
 
 crate::scratch_record! {
     /// Dense input/output rows, one optional scale byte per group and an
-    /// I32 device live count. Fake-quant output has no scale buffer. No row
+    /// U32 device live count. Fake-quant output has no scale buffer. No row
     /// at or past `live_rows` may be read or written.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct BlockQuantizeBuffers {
@@ -160,5 +169,65 @@ crate::scratch_record! {
         pub output: value,
         pub scales: option,
         pub live_rows: value,
+        /// U32 words, one per launch row, with atomic OR updates. Distinct
+        /// from input, output, scales and the live count. Non-live words
+        /// stay unchanged. A nonzero prior or newly raised status makes the
+        /// whole row positive zero; code output uses the fixed scale 1.
+        pub status: value,
+        /// Word offset into status. Only offset..offset+live_rows changes.
+        pub status_row_offset: scalar(u64),
     }
+}
+
+impl BlockQuantizeQuery {
+    /// Status oracle over decoded input rows. F32-to-BF16 overflow is a
+    /// non-finite quantizer input. Finite E2M1/E4M3 scales saturate at 448.
+    /// Both output forms report values not finite and exact in BF16, so
+    /// packed results cannot trip the shared decoders' range guards.
+    /// Each flag is independent and ORs with all caller-supplied bits.
+    pub fn row_status(self, values: &[f32], prior: &[u32]) -> Result<Vec<u32>, Refusal> {
+        self.validate()?;
+        let width = self.width as usize;
+        if prior.len().checked_mul(width) != Some(values.len()) {
+            return Err(Refusal("quantizer status extent differs from input rows"));
+        }
+        values
+            .chunks_exact(width)
+            .zip(prior)
+            .map(|(row, &prior)| {
+                let mut status = prior;
+                for group in row.chunks_exact(self.format.group_size() as usize) {
+                    let mut safe = Vec::with_capacity(group.len());
+                    for &value in group {
+                        let rounded = bf16_to_f32(f32_to_bf16(value));
+                        if !value.is_finite() || !rounded.is_finite() {
+                            status |= NONFINITE_INPUT;
+                            safe.push(0.0);
+                        } else {
+                            safe.push(rounded);
+                        }
+                    }
+                    if self.format.fake_quant(&safe, 1, safe.len()).is_err() {
+                        status |= UNREPRESENTABLE_OUTPUT;
+                    }
+                }
+                Ok(status)
+            })
+            .collect()
+    }
+
+    pub const fn invalid_scale_code(self) -> u8 {
+        match self.format {
+            BlockQuantization::E2M1E4M3Scale16 => INVALID_E4M3_SCALE,
+            _ => INVALID_UE8M0_SCALE,
+        }
+    }
+}
+
+/// The caller-owned status plane must cover offset plus every planned row.
+pub fn status_extent(row_offset: u64, rows: u32) -> Result<u64, Refusal> {
+    row_offset
+        .checked_add(u64::from(rows))
+        .and_then(|n| n.checked_mul(4))
+        .ok_or(Refusal("quantizer status extent overflows"))
 }

@@ -30,7 +30,7 @@ pub(super) fn prepare(
     let entry = chosen.entry;
     entry.validate()?;
     let mut info = OpInfo::new(
-        format!("sm120.block-quantize.v1:{query:?}"),
+        format!("sm120.block-quantize.status-or-zero.v2:{query:?}"),
         chosen
             .guarantees
             .meet(kernel_core::properties::Invariance::any_rows(need.capacity)),
@@ -40,6 +40,7 @@ pub(super) fn prepare(
         ("input".into(), entry.input_bytes(need.capacity)),
         ("output".into(), entry.output_bytes(need.capacity)),
         ("live_rows".into(), 4),
+        ("status".into(), u64::from(need.capacity) * 4),
     ];
     if query.output == QuantizeOutput::Codes {
         info.bytes
@@ -75,10 +76,31 @@ impl PreparedOp<BlockQuantizeBuffers<View>> for Op {
                 "block quantization launch exceeds prepared capacity",
             ));
         }
+        if counts.rows == 0 {
+            return Ok(Vec::new());
+        }
         let entry = &self.entry;
         buffers.input.covers(entry.input_bytes(counts.rows))?;
         buffers.output.covers(entry.output_bytes(counts.rows))?;
         buffers.live_rows.covers(4)?;
+        buffers
+            .status
+            .covers(kernel_core::precision::quantizer::status_extent(
+                buffers.status_row_offset,
+                counts.rows,
+            )?)?;
+        if [
+            buffers.input.handle,
+            buffers.output.handle,
+            buffers.live_rows.handle,
+        ]
+        .contains(&buffers.status.handle)
+            || buffers
+                .scales
+                .is_some_and(|v| v.handle == buffers.status.handle)
+        {
+            return Err(Refusal("quantizer status must not alias another role"));
+        }
         match (entry.query.output, buffers.scales) {
             (QuantizeOutput::Codes, Some(scales)) => {
                 scales.covers(entry.scale_bytes(counts.rows))?
@@ -98,6 +120,7 @@ impl PreparedOp<BlockQuantizeBuffers<View>> for Op {
                     buffers.input.handle,
                     buffers.output.handle,
                     buffers.live_rows.handle,
+                    buffers.status.handle,
                 ]
                 .contains(&s.handle)
             })
@@ -115,6 +138,8 @@ impl PreparedOp<BlockQuantizeBuffers<View>> for Op {
                 buffers.output.handle,
                 buffers.scales.map(|v| v.handle),
                 buffers.live_rows.handle,
+                buffers.status.handle,
+                buffers.status_row_offset,
             )?,
             collective: false,
             persistent: false,
@@ -148,10 +173,12 @@ mod tests {
             bytes: 16 * 576 * 4,
         };
         BlockQuantizeBuffers {
+            status_row_offset: 0,
             input: v(1),
             output: v(2),
             scales: Some(v(3)),
             live_rows: v(4),
+            status: v(5),
         }
     }
     #[test]
@@ -168,14 +195,39 @@ mod tests {
                 let launches = op
                     .launches(&buffers, View::EMPTY, Counts::rows(rows))
                     .unwrap();
+                if rows == 0 {
+                    assert!(launches.is_empty());
+                    continue;
+                }
                 assert_eq!(launches.len(), 1);
                 assert!(launches[0].plan.pdl);
-                assert_eq!(
-                    launches[0].plan.grid[1],
-                    query.width / query.format.group_size()
-                );
+                assert_eq!(launches[0].plan.grid[1], 1);
             }
             assert!(op.launches(&buffers, View::EMPTY, Counts::rows(9)).is_err());
+            let mut shifted = buffers;
+            shifted.status_row_offset = 3;
+            shifted.status.bytes = 44;
+            let calls = op.launches(&shifted, View::EMPTY, Counts::rows(8)).unwrap();
+            assert_eq!(
+                calls[0].arguments.0.last(),
+                Some(&kernel_core::contract::Argument::U64(3))
+            );
+            shifted.status.bytes -= 1;
+            assert!(op.launches(&shifted, View::EMPTY, Counts::rows(8)).is_err());
+            shifted.status_row_offset = u64::MAX;
+            assert!(op.launches(&shifted, View::EMPTY, Counts::rows(8)).is_err());
+            let mut short = buffers;
+            short.status.bytes = 8 * 4 - 1;
+            assert!(op.launches(&short, View::EMPTY, Counts::rows(8)).is_err());
+            for alias in [
+                buffers.input.handle,
+                buffers.output.handle,
+                buffers.live_rows.handle,
+            ] {
+                let mut aliased = buffers;
+                aliased.status.handle = alias;
+                assert!(op.launches(&aliased, View::EMPTY, Counts::rows(8)).is_err());
+            }
             buffers.output.bytes = 1;
             assert!(op.launches(&buffers, View::EMPTY, Counts::rows(8)).is_err());
         }

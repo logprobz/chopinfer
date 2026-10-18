@@ -36,25 +36,41 @@ fn ceil_quantizer_keeps_its_rule_when_shapes_are_rebound() {
             .any(|h| h.contains("block_quantize"))
     );
     assert_eq!(legacy.scale_rule(), Some(DynamicScale::MxPowerOfTwo));
+    assert_eq!(legacy.status_bytes(), 0);
+    assert_eq!(ceil.status_bytes(), 16 * 4);
     for shapes in [ShapeBinding::Compiled, ShapeBinding::Launch] {
         let selected = ceil.with_shapes(shapes, "rebound_v1").unwrap();
         assert_eq!(selected.scale_rule(), Some(DynamicScale::MXFP8_CEIL));
-        let args = selected
-            .arguments(QuantizerBuffers {
-                input: 1,
-                codes: 2,
-                scales: 3,
-                live_rows: 4,
-                global_scale: None,
-                row_amax: None,
-            })
-            .unwrap();
+        let buffers = QuantizerBuffers {
+            status_row_offset: 7,
+            status: Some(7),
+            input: 1,
+            codes: 2,
+            scales: 3,
+            live_rows: 4,
+            global_scale: None,
+            row_amax: None,
+        };
+        assert!(
+            selected
+                .arguments(QuantizerBuffers {
+                    status: None,
+                    ..buffers
+                })
+                .is_err()
+        );
+        let args = selected.arguments(buffers).unwrap();
+        assert_eq!(
+            args[0].0[4],
+            kernel_core::contract::Argument::DeviceBuffer(7)
+        );
+        assert_eq!(args[0].0[5], kernel_core::contract::Argument::U64(7));
         assert_eq!(args.len(), 1);
         assert_eq!(
             args[0].0.len(),
-            if shapes == ShapeBinding::Launch { 5 } else { 4 }
+            if shapes == ShapeBinding::Launch { 7 } else { 6 }
         );
-        assert_eq!(selected.stages()[0].plan(7).unwrap().grid, [16, 18, 1]);
+        assert_eq!(selected.stages()[0].plan(7).unwrap().grid, [16, 1, 1]);
     }
     assert!(
         legacy
@@ -100,6 +116,8 @@ fn quantizers_keep_supplied_and_dynamic_globals_separate() {
     assert_eq!(supplied.codes_bytes(), 8192);
     assert_eq!(supplied.scales_bytes(), 1024);
     let buffers = QuantizerBuffers {
+        status_row_offset: 0,
+        status: None,
         input: 1,
         codes: 2,
         scales: 3,
@@ -724,6 +742,8 @@ fn launch_shape_stages_take_their_shapes_as_arguments() {
             assert_eq!(a.declaration(), b.declaration());
         }
         let buffers = QuantizerBuffers {
+            status_row_offset: 0,
+            status: None,
             input: 1,
             codes: 2,
             scales: 3,

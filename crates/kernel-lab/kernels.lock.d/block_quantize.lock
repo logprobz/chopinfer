@@ -14,7 +14,7 @@
     "defines": [],
     "entries": [
       {
-        "symbol": "chop_block_quantize_e4m3_bf16_codes_w32_v1",
+        "symbol": "chop_block_quantize_e4m3_bf16_codes_w32_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -35,6 +35,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -42,7 +51,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e4m3_bf16_fake_w32_v1",
+        "symbol": "chop_block_quantize_e4m3_bf16_fake_w32_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -63,6 +72,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -70,7 +88,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e4m3_f32_codes_w32_v1",
+        "symbol": "chop_block_quantize_e4m3_f32_codes_w32_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -91,6 +109,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -98,7 +125,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e4m3_f32_fake_w32_v1",
+        "symbol": "chop_block_quantize_e4m3_f32_fake_w32_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -119,6 +146,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -126,7 +162,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_codes_w32_v1",
+        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_codes_w32_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -147,6 +183,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -154,7 +199,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_fake_w32_v1",
+        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_fake_w32_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -175,6 +220,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -182,7 +236,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_f32_codes_w32_v1",
+        "symbol": "chop_block_quantize_e2m1_e4m3_f32_codes_w32_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -203,6 +257,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -210,7 +273,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_f32_fake_w32_v1",
+        "symbol": "chop_block_quantize_e2m1_e4m3_f32_fake_w32_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -231,6 +294,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -238,7 +310,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_codes_w32_v1",
+        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_codes_w32_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -259,6 +331,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -266,7 +347,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_fake_w32_v1",
+        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_fake_w32_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -287,6 +368,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -294,7 +384,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_codes_w32_v1",
+        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_codes_w32_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -315,6 +405,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -322,7 +421,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_fake_w32_v1",
+        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_fake_w32_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -343,6 +442,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -350,7 +458,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e4m3_bf16_codes_w128_v1",
+        "symbol": "chop_block_quantize_e4m3_bf16_codes_w128_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -371,6 +479,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -378,7 +495,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e4m3_bf16_fake_w128_v1",
+        "symbol": "chop_block_quantize_e4m3_bf16_fake_w128_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -399,6 +516,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -406,7 +532,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e4m3_f32_codes_w128_v1",
+        "symbol": "chop_block_quantize_e4m3_f32_codes_w128_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -427,6 +553,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -434,7 +569,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e4m3_f32_fake_w128_v1",
+        "symbol": "chop_block_quantize_e4m3_f32_fake_w128_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -455,6 +590,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -462,7 +606,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_codes_w128_v1",
+        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_codes_w128_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -483,6 +627,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -490,7 +643,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_fake_w128_v1",
+        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_fake_w128_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -511,6 +664,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -518,7 +680,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_f32_codes_w128_v1",
+        "symbol": "chop_block_quantize_e2m1_e4m3_f32_codes_w128_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -539,6 +701,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -546,7 +717,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_f32_fake_w128_v1",
+        "symbol": "chop_block_quantize_e2m1_e4m3_f32_fake_w128_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -567,6 +738,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -574,7 +754,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_codes_w128_v1",
+        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_codes_w128_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -595,6 +775,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -602,7 +791,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_fake_w128_v1",
+        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_fake_w128_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -623,6 +812,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -630,7 +828,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_codes_w128_v1",
+        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_codes_w128_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -651,6 +849,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -658,7 +865,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_fake_w128_v1",
+        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_fake_w128_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -679,6 +886,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -686,7 +902,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e4m3_bf16_codes_w512_v1",
+        "symbol": "chop_block_quantize_e4m3_bf16_codes_w512_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -707,6 +923,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -714,7 +939,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e4m3_bf16_fake_w512_v1",
+        "symbol": "chop_block_quantize_e4m3_bf16_fake_w512_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -735,6 +960,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -742,7 +976,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e4m3_f32_codes_w512_v1",
+        "symbol": "chop_block_quantize_e4m3_f32_codes_w512_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -763,6 +997,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -770,7 +1013,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e4m3_f32_fake_w512_v1",
+        "symbol": "chop_block_quantize_e4m3_f32_fake_w512_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -791,6 +1034,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -798,7 +1050,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_codes_w512_v1",
+        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_codes_w512_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -819,6 +1071,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -826,7 +1087,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_fake_w512_v1",
+        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_fake_w512_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -847,6 +1108,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -854,7 +1124,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_f32_codes_w512_v1",
+        "symbol": "chop_block_quantize_e2m1_e4m3_f32_codes_w512_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -875,6 +1145,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -882,7 +1161,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_f32_fake_w512_v1",
+        "symbol": "chop_block_quantize_e2m1_e4m3_f32_fake_w512_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -903,6 +1182,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -910,7 +1198,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_codes_w512_v1",
+        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_codes_w512_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -931,6 +1219,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -938,7 +1235,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_fake_w512_v1",
+        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_fake_w512_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -959,6 +1256,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -966,7 +1272,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_codes_w512_v1",
+        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_codes_w512_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -987,6 +1293,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -994,7 +1309,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_fake_w512_v1",
+        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_fake_w512_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1015,6 +1330,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -1022,7 +1346,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e4m3_bf16_codes_w576_v1",
+        "symbol": "chop_block_quantize_e4m3_bf16_codes_w576_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1043,6 +1367,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -1050,7 +1383,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e4m3_bf16_fake_w576_v1",
+        "symbol": "chop_block_quantize_e4m3_bf16_fake_w576_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1071,6 +1404,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -1078,7 +1420,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e4m3_f32_codes_w576_v1",
+        "symbol": "chop_block_quantize_e4m3_f32_codes_w576_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1099,6 +1441,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -1106,7 +1457,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e4m3_f32_fake_w576_v1",
+        "symbol": "chop_block_quantize_e4m3_f32_fake_w576_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1127,6 +1478,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -1134,7 +1494,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_codes_w576_v1",
+        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_codes_w576_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1155,6 +1515,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -1162,7 +1531,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_fake_w576_v1",
+        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_fake_w576_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1183,6 +1552,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -1190,7 +1568,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_f32_codes_w576_v1",
+        "symbol": "chop_block_quantize_e2m1_e4m3_f32_codes_w576_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1211,6 +1589,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -1218,7 +1605,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_f32_fake_w576_v1",
+        "symbol": "chop_block_quantize_e2m1_e4m3_f32_fake_w576_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1239,6 +1626,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -1246,7 +1642,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_codes_w576_v1",
+        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_codes_w576_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1267,6 +1663,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -1274,7 +1679,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_fake_w576_v1",
+        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_fake_w576_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1295,6 +1700,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -1302,7 +1716,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_codes_w576_v1",
+        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_codes_w576_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1323,6 +1737,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -1330,7 +1753,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_fake_w576_v1",
+        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_fake_w576_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -1351,6 +1774,15 @@
             "kind": "DevicePointer",
             "name": "live_rows",
             "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
           }
         ],
         "max_threads": 32,
@@ -1358,118 +1790,10 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "48b6f32258d3e2550132602b4523f8dfa3de18ad05537abc74c5adbac3c70a94",
+    "cubin_sha256": "c24d70fe971ccfc11e5a03b3388eb92239e58c1e9f2f04524c65e05b43e2caa4",
     "resources": [
       {
-        "symbol": "chop_block_quantize_e4m3_bf16_codes_w32_v1",
-        "registers": 22,
-        "shared_static_bytes": 0,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 32,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_block_quantize_e4m3_bf16_fake_w32_v1",
-        "registers": 19,
-        "shared_static_bytes": 0,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 32,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_block_quantize_e4m3_f32_codes_w32_v1",
-        "registers": 20,
-        "shared_static_bytes": 0,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 32,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_block_quantize_e4m3_f32_fake_w32_v1",
-        "registers": 19,
-        "shared_static_bytes": 0,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 32,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_codes_w32_v1",
-        "registers": 23,
-        "shared_static_bytes": 0,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 32,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_fake_w32_v1",
-        "registers": 21,
-        "shared_static_bytes": 0,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 32,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_block_quantize_e2m1_e4m3_f32_codes_w32_v1",
-        "registers": 23,
-        "shared_static_bytes": 0,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 32,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_block_quantize_e2m1_e4m3_f32_fake_w32_v1",
-        "registers": 21,
-        "shared_static_bytes": 0,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 32,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_codes_w32_v1",
-        "registers": 22,
-        "shared_static_bytes": 0,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 32,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_fake_w32_v1",
-        "registers": 21,
-        "shared_static_bytes": 0,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 32,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_codes_w32_v1",
-        "registers": 20,
-        "shared_static_bytes": 0,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 32,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_fake_w32_v1",
-        "registers": 21,
-        "shared_static_bytes": 0,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 32,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_block_quantize_e4m3_bf16_codes_w128_v1",
+        "symbol": "chop_block_quantize_e4m3_bf16_codes_w32_v2",
         "registers": 24,
         "shared_static_bytes": 0,
         "local_bytes": 0,
@@ -1478,8 +1802,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e4m3_bf16_fake_w128_v1",
-        "registers": 19,
+        "symbol": "chop_block_quantize_e4m3_bf16_fake_w32_v2",
+        "registers": 26,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1487,7 +1811,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e4m3_f32_codes_w128_v1",
+        "symbol": "chop_block_quantize_e4m3_f32_codes_w32_v2",
         "registers": 24,
         "shared_static_bytes": 0,
         "local_bytes": 0,
@@ -1496,8 +1820,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e4m3_f32_fake_w128_v1",
-        "registers": 19,
+        "symbol": "chop_block_quantize_e4m3_f32_fake_w32_v2",
+        "registers": 26,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1505,8 +1829,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_codes_w128_v1",
-        "registers": 23,
+        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_codes_w32_v2",
+        "registers": 27,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1514,34 +1838,7 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_fake_w128_v1",
-        "registers": 21,
-        "shared_static_bytes": 0,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 32,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_block_quantize_e2m1_e4m3_f32_codes_w128_v1",
-        "registers": 23,
-        "shared_static_bytes": 0,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 32,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_block_quantize_e2m1_e4m3_f32_fake_w128_v1",
-        "registers": 21,
-        "shared_static_bytes": 0,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 32,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_codes_w128_v1",
+        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_fake_w32_v2",
         "registers": 24,
         "shared_static_bytes": 0,
         "local_bytes": 0,
@@ -1550,8 +1847,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_fake_w128_v1",
-        "registers": 21,
+        "symbol": "chop_block_quantize_e2m1_e4m3_f32_codes_w32_v2",
+        "registers": 27,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1559,8 +1856,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_codes_w128_v1",
-        "registers": 24,
+        "symbol": "chop_block_quantize_e2m1_e4m3_f32_fake_w32_v2",
+        "registers": 26,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1568,8 +1865,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_fake_w128_v1",
-        "registers": 21,
+        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_codes_w32_v2",
+        "registers": 25,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1577,8 +1874,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e4m3_bf16_codes_w512_v1",
-        "registers": 24,
+        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_fake_w32_v2",
+        "registers": 25,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1586,8 +1883,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e4m3_bf16_fake_w512_v1",
-        "registers": 19,
+        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_codes_w32_v2",
+        "registers": 25,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1595,8 +1892,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e4m3_f32_codes_w512_v1",
-        "registers": 24,
+        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_fake_w32_v2",
+        "registers": 25,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1604,8 +1901,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e4m3_f32_fake_w512_v1",
-        "registers": 19,
+        "symbol": "chop_block_quantize_e4m3_bf16_codes_w128_v2",
+        "registers": 25,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1613,8 +1910,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_codes_w512_v1",
-        "registers": 23,
+        "symbol": "chop_block_quantize_e4m3_bf16_fake_w128_v2",
+        "registers": 27,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1622,8 +1919,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_fake_w512_v1",
-        "registers": 21,
+        "symbol": "chop_block_quantize_e4m3_f32_codes_w128_v2",
+        "registers": 25,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1631,8 +1928,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_f32_codes_w512_v1",
-        "registers": 23,
+        "symbol": "chop_block_quantize_e4m3_f32_fake_w128_v2",
+        "registers": 25,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1640,8 +1937,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_f32_fake_w512_v1",
-        "registers": 21,
+        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_codes_w128_v2",
+        "registers": 26,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1649,8 +1946,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_codes_w512_v1",
-        "registers": 24,
+        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_fake_w128_v2",
+        "registers": 28,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1658,8 +1955,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_fake_w512_v1",
-        "registers": 21,
+        "symbol": "chop_block_quantize_e2m1_e4m3_f32_codes_w128_v2",
+        "registers": 26,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1667,8 +1964,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_codes_w512_v1",
-        "registers": 24,
+        "symbol": "chop_block_quantize_e2m1_e4m3_f32_fake_w128_v2",
+        "registers": 26,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1676,8 +1973,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_fake_w512_v1",
-        "registers": 21,
+        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_codes_w128_v2",
+        "registers": 26,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1685,8 +1982,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e4m3_bf16_codes_w576_v1",
-        "registers": 24,
+        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_fake_w128_v2",
+        "registers": 28,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1694,8 +1991,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e4m3_bf16_fake_w576_v1",
-        "registers": 19,
+        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_codes_w128_v2",
+        "registers": 26,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1703,8 +2000,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e4m3_f32_codes_w576_v1",
-        "registers": 24,
+        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_fake_w128_v2",
+        "registers": 26,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1712,8 +2009,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e4m3_f32_fake_w576_v1",
-        "registers": 19,
+        "symbol": "chop_block_quantize_e4m3_bf16_codes_w512_v2",
+        "registers": 25,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1721,8 +2018,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_codes_w576_v1",
-        "registers": 23,
+        "symbol": "chop_block_quantize_e4m3_bf16_fake_w512_v2",
+        "registers": 27,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1730,8 +2027,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_fake_w576_v1",
-        "registers": 21,
+        "symbol": "chop_block_quantize_e4m3_f32_codes_w512_v2",
+        "registers": 25,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1739,8 +2036,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_f32_codes_w576_v1",
-        "registers": 23,
+        "symbol": "chop_block_quantize_e4m3_f32_fake_w512_v2",
+        "registers": 25,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1748,8 +2045,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e2m1_e4m3_f32_fake_w576_v1",
-        "registers": 21,
+        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_codes_w512_v2",
+        "registers": 26,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1757,8 +2054,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_codes_w576_v1",
-        "registers": 24,
+        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_fake_w512_v2",
+        "registers": 28,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1766,8 +2063,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_fake_w576_v1",
-        "registers": 21,
+        "symbol": "chop_block_quantize_e2m1_e4m3_f32_codes_w512_v2",
+        "registers": 26,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1775,8 +2072,8 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_codes_w576_v1",
-        "registers": 24,
+        "symbol": "chop_block_quantize_e2m1_e4m3_f32_fake_w512_v2",
+        "registers": 26,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -1784,8 +2081,143 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_fake_w576_v1",
-        "registers": 21,
+        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_codes_w512_v2",
+        "registers": 26,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_fake_w512_v2",
+        "registers": 28,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_codes_w512_v2",
+        "registers": 26,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_fake_w512_v2",
+        "registers": 26,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_block_quantize_e4m3_bf16_codes_w576_v2",
+        "registers": 25,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_block_quantize_e4m3_bf16_fake_w576_v2",
+        "registers": 27,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_block_quantize_e4m3_f32_codes_w576_v2",
+        "registers": 25,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_block_quantize_e4m3_f32_fake_w576_v2",
+        "registers": 25,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_codes_w576_v2",
+        "registers": 26,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_block_quantize_e2m1_e4m3_bf16_fake_w576_v2",
+        "registers": 28,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_block_quantize_e2m1_e4m3_f32_codes_w576_v2",
+        "registers": 26,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_block_quantize_e2m1_e4m3_f32_fake_w576_v2",
+        "registers": 26,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_codes_w576_v2",
+        "registers": 26,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_block_quantize_e2m1_ue8m0_bf16_fake_w576_v2",
+        "registers": 28,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_codes_w576_v2",
+        "registers": 26,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_block_quantize_e2m1_ue8m0_f32_fake_w576_v2",
+        "registers": 26,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,

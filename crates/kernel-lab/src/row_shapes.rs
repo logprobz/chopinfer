@@ -107,6 +107,8 @@ impl Stage {
                 .cloned()
                 .zip(
                     q.arguments(QuantizerBuffers {
+                        status_row_offset: 0,
+                        status: None,
                         input: INPUT,
                         codes: CODES,
                         scales: SCALES,

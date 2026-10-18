@@ -58,11 +58,7 @@ impl Entry {
             return Err(Refusal("block quantization rows exceed capacity"));
         }
         let plan = LaunchPlan {
-            grid: [
-                rows.max(1),
-                self.query.width / self.query.format.group_size(),
-                1,
-            ],
+            grid: [rows.max(1), 1, 1],
             block: [32, 1, 1],
             dynamic_shared_bytes: 0,
             workspace_bytes: 0,
@@ -130,6 +126,10 @@ impl Entry {
             ),
             ptr("scales", "uint8_t"),
             ptr("live_rows", "const uint32_t"),
+            ptr("status", "uint32_t"),
+            kernel_build::EntryParam::U64 {
+                name: "status_row_offset".into(),
+            },
         ];
         let (width, extra) = if shapes == ShapeBinding::Launch {
             params.push(u32_arg("width"));
@@ -141,7 +141,7 @@ impl Entry {
             self.symbol.clone(),
             params,
             format!(
-                "chop::row::block_quantize::run<{width},{format},{},{},{floor}u>(input,output,scales,live_rows{extra});",
+                "chop::row::block_quantize::run<{width},{format},{},{},{floor}u>(input,output,scales,live_rows,status,status_row_offset{extra});",
                 query.input == DType::F32,
                 query.output == QuantizeOutput::Bf16
             ),
@@ -157,7 +157,7 @@ impl Entry {
             symbol: self.symbol.clone(),
             operation: "block quantize".into(),
             contract: self.query.numerical_contract_id()?.to_string(),
-            implementation: "sm120.block-quantize.v1".into(),
+            implementation: "sm120.block-quantize.status-or-zero.v2".into(),
             requirements: [
                 ("query".into(), format!("{:?}", self.query)),
                 ("arguments".into(), format!("{:?}", entry.params)),
@@ -175,6 +175,8 @@ impl Entry {
         output: u64,
         scales: Option<u64>,
         live: u64,
+        status: u64,
+        status_row_offset: u64,
     ) -> Result<ArgumentList, Refusal> {
         if scales.is_some() != (self.query.output == QuantizeOutput::Codes) {
             return Err(Refusal(
@@ -188,6 +190,8 @@ impl Entry {
                 Argument::DeviceBuffer(output),
                 scales.map_or(Argument::NullDevicePointer, Argument::DeviceBuffer),
                 Argument::DeviceBuffer(live),
+                Argument::DeviceBuffer(status),
+                Argument::U64(status_row_offset),
             ],
         )
     }
@@ -237,7 +241,7 @@ pub fn lab_entries() -> Vec<Entry> {
                             },
                             LAB_CAPACITY,
                             format!(
-                                "chop_block_quantize_{tag}_{input_name}_{output_name}_w{width}_v1"
+                                "chop_block_quantize_{tag}_{input_name}_{output_name}_w{width}_v2"
                             ),
                         )
                         .unwrap(),

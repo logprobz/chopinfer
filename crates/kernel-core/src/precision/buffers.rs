@@ -115,5 +115,10 @@ crate::scratch_record! {
         pub row_amax: option,
         pub output_codes: option,
         pub output_scales: option,
+        /// Optional caller-owned U32 sticky status words for a trained
+        /// block quantizer, one per row. Clear before a launch sequence and
+        /// check before using its outputs; legacy quantizers do not use it.
+        pub quantizer_status: option,
+        pub quantizer_status_row_offset: scalar(u64),
     }
 }

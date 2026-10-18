@@ -61,6 +61,7 @@ pub(super) fn prepare(
         ("q".into(), info.workspace),
         ("positions".into(), u64::from(need.capacity) * 4),
         ("live_rows".into(), 4),
+        ("quantizer_status".into(), u64::from(need.capacity) * 4),
         ("output".into(), info.workspace / 2),
     ];
     need.check(&info)?;
@@ -104,6 +105,23 @@ impl PreparedOp<PositionQueryBuffers<View>> for Query {
         b.output.covers(bytes / 2)?;
         b.positions.covers(u64::from(counts.rows) * 4)?;
         b.live_rows.covers(4)?;
+        b.quantizer_status
+            .covers(kernel_core::precision::quantizer::status_extent(
+                b.quantizer_status_row_offset,
+                counts.rows,
+            )?)?;
+        if [
+            b.q.handle,
+            b.cos_sin.handle,
+            b.positions.handle,
+            b.live_rows.handle,
+            b.output.handle,
+            workspace.handle,
+        ]
+        .contains(&b.quantizer_status.handle)
+        {
+            return Err(Refusal("position query status must not alias another role"));
+        }
         b.cos_sin
             .covers(u64::from(counts.positions) * u64::from(self.entry.rotary_dim) * 4)?;
         workspace.covers(self.info.workspace)?;
@@ -139,6 +157,8 @@ impl PreparedOp<PositionQueryBuffers<View>> for Query {
                 output: b.output,
                 scales: None,
                 live_rows: b.live_rows,
+                status: b.quantizer_status,
+                status_row_offset: b.quantizer_status_row_offset,
             },
             View::EMPTY,
             counts,
@@ -186,11 +206,13 @@ mod tests {
         let view = |handle, bytes| View { handle, bytes };
         (
             PositionQueryBuffers {
+                quantizer_status_row_offset: 0,
                 q: view(1, 4 * 3 * 160 * 4),
                 cos_sin: view(2, 8 * 64 * 4),
                 positions: view(3, 16),
                 live_rows: view(4, 4),
                 output: view(5, 4 * 3 * 160 * 2),
+                quantizer_status: view(7, 16),
             },
             view(6, 4 * 3 * 160 * 4),
             Counts {
@@ -223,6 +245,8 @@ mod tests {
                     output: b.output,
                     scales: None,
                     live_rows: b.live_rows,
+                    status: b.quantizer_status,
+                    status_row_offset: b.quantizer_status_row_offset,
                 },
                 View::EMPTY,
                 counts,
@@ -240,6 +264,31 @@ mod tests {
             .position_indexer_query(&query(), Need::rows(4))
             .unwrap();
         let (b, workspace, counts) = buffers();
+        let mut shifted = b;
+        shifted.quantizer_status_row_offset = 9;
+        shifted.quantizer_status.bytes = (9 + 4) * 4;
+        let launches = op.launches(&shifted, workspace, counts).unwrap();
+        assert_eq!(
+            launches[1].arguments.0.last(),
+            Some(&kernel_core::contract::Argument::U64(9))
+        );
+        shifted.quantizer_status.bytes -= 1;
+        assert!(op.launches(&shifted, workspace, counts).is_err());
+        shifted.quantizer_status_row_offset = u64::MAX;
+        assert!(op.launches(&shifted, workspace, counts).is_err());
+        for alias in [b.q, b.output, b.positions, b.live_rows, workspace] {
+            assert!(
+                op.launches(
+                    &PositionQueryBuffers {
+                        quantizer_status: alias,
+                        ..b
+                    },
+                    workspace,
+                    counts
+                )
+                .is_err()
+            );
+        }
         for bad in [
             PositionQueryBuffers {
                 q: View {

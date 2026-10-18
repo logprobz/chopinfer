@@ -88,6 +88,7 @@ pub fn case(
     let f32_bytes = |values: &[f32]| values.iter().flat_map(|v| v.to_le_bytes()).collect();
     let roles = ObservedBuffers {
         query: PositionQueryBuffers {
+            quantizer_status_row_offset: 0,
             q: Spec::input(DType::F32, (Rows::Live, width), f32_bytes(&q)),
             cos_sin: Spec::input(
                 DType::F32,
@@ -103,6 +104,7 @@ pub fn case(
                     .collect(),
             ),
             live_rows: Spec::live(),
+            quantizer_status: super::block_quantize::status_role(&vec![0; CAPACITY as usize]),
             output: Spec::output(DType::Bf16, (Rows::Live, width)),
         },
         // A finite poison lets the quantizer run when the omission test
@@ -186,6 +188,7 @@ pub fn case(
             Ok(())
         };
         Ok(vec![
+            ("query.quantizer_status".into(),Expected::Bits(vec![0;CAPACITY as usize*4])),
             ("rotated".into(), Expected::Judge(Box::new(judge_rotation))),
             (
                 "query.output".into(),

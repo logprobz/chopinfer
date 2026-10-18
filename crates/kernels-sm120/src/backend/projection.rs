@@ -432,6 +432,7 @@ impl ProjectionOp {
             bytes.codes = q.codes_bytes();
             bytes.scales = q.scales_bytes();
             bytes.quantizer_scratch = q.scratch_bytes();
+            bytes.quantizer_status = q.status_bytes();
         }
         let medium_symbol;
         let (symbol, plan) = match &operation.compute {
@@ -546,6 +547,7 @@ struct Bytes {
     /// Per-row amax and, after them, the tensor global of a dynamic NVFP4
     /// quantizer.
     quantizer_scratch: u64,
+    quantizer_status: u64,
 }
 
 impl Bytes {
@@ -564,6 +566,7 @@ impl Bytes {
             ("scratch.scales", self.scales),
             ("scratch.row_amax", row_amax),
             ("scratch.activation_global", global),
+            ("scratch.quantizer_status", self.quantizer_status),
         ]
         .into_iter()
         .filter(|&(_, bytes)| bytes > 0)
@@ -766,7 +769,33 @@ impl PreparedOp<ProjectionBuffers<View>> for ProjectionOp {
                 covers(required(row_amax)?, q.scratch_bytes() - 4)?;
                 covers(required(activation_global)?, 4)?;
             }
+            let status = if q.status_bytes() > 0 {
+                let status = required(scratch.quantizer_status)?;
+                covers(
+                    status,
+                    scratch
+                        .quantizer_status_row_offset
+                        .checked_mul(4)
+                        .and_then(|n| n.checked_add(q.status_bytes()))
+                        .ok_or(Refusal("projection status extent overflows"))?,
+                )?;
+                if [
+                    activation.handle,
+                    codes.handle,
+                    scales.handle,
+                    routed_live.handle,
+                ]
+                .contains(&status.handle)
+                {
+                    return Err(Refusal("projection quantizer status overlaps an operand"));
+                }
+                Some(status.handle)
+            } else {
+                None
+            };
             let args = q.arguments(QuantizerBuffers {
+                status,
+                status_row_offset: scratch.quantizer_status_row_offset,
                 input: activation.handle,
                 codes: codes.handle,
                 scales: scales.handle,
@@ -1157,6 +1186,8 @@ mod tests {
             activation_global: None,
             routing: None,
             scratch: ProjectionScratch {
+                quantizer_status_row_offset: 0,
+                quantizer_status: None,
                 partial: any,
                 semaphores: any,
                 unused: any,
@@ -1388,6 +1419,8 @@ mod tests {
             activation_global: None,
             routing: None,
             scratch: ProjectionScratch {
+                quantizer_status_row_offset: 0,
+                quantizer_status: None,
                 partial: any,
                 semaphores: any,
                 unused: any,
@@ -1684,6 +1717,8 @@ mod tests {
             activation_global: None,
             routing: None,
             scratch: ProjectionScratch {
+                quantizer_status_row_offset: 0,
+                quantizer_status: None,
                 partial: any(5),
                 semaphores: any(6),
                 unused: any(7),

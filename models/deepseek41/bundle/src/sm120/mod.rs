@@ -21,6 +21,11 @@ pub(crate) mod own_ops;
 // their entries.
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 pub(crate) mod encoder;
+#[allow(
+    dead_code,
+    reason = "the program acquires the encoder once media steps land"
+)]
+pub(crate) mod encoders;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod rows;
 

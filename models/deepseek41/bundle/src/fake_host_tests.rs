@@ -7,6 +7,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use bundle_runtime::fake_host::dump::{Memory, Origin};
 use bundle_runtime::fake_host::{Backend, FakeDevice, FakeIndex, FakePackage, Handle, NoObserver};
 use bundle_runtime::geometry::Ranks;
 use model_deepseek41_contract::geometry::FLASH;
@@ -37,6 +38,9 @@ pub(crate) struct FakeHost {
     /// Every upload's bytes by its destination, which a download of the
     /// same span reads back (a snapshot's header).
     uploads: RefCell<std::collections::BTreeMap<(u64, u64), Vec<u8>>>,
+    /// Device memory as the origins of its bytes: every device copy moves
+    /// them, so a test can tell where a span's bytes came from.
+    memory: RefCell<Memory>,
 }
 
 pub(crate) type Host = Backend<FakeHost>;
@@ -95,6 +99,7 @@ impl FakeHost {
             speculation: Cell::new(None),
             state_bytes: Cell::new(0),
             uploads: RefCell::new(std::collections::BTreeMap::new()),
+            memory: RefCell::new(Memory::default()),
         }))
     }
 
@@ -144,6 +149,15 @@ impl FakePackage for FakeHost {
             (destination.buffer.raw, destination.offset),
             source.to_vec(),
         );
+        Ok(())
+    }
+    fn on_copy(
+        &self,
+        _stream: BundleStreamHandleV1,
+        destination: DeviceBufferSpanV1,
+        source: DeviceBufferSpanV1,
+    ) -> HostServiceResultV1<()> {
+        self.memory.borrow_mut().copy(source, destination);
         Ok(())
     }
     fn open_compiled_image(&self, role: &[u8]) -> HostServiceResultV1<BundleCompiledImageHandleV1> {
@@ -446,40 +460,130 @@ fn kernels_sm120_broadcast() -> &'static str {
     "chop_row_copy_broadcast_streams_v1"
 }
 
+/// Checks that every captured piece of `to`'s request state on each rank
+/// holds exactly the bytes of the same piece of `from`'s, moved through the
+/// snapshot pages, and that `from`'s state is still its own: every layer,
+/// plane and slot lands where it belongs, and no byte of `to` is stale.
+fn assert_state_moved(host: &FakeHost, items: u32, from: u32, to: u32) {
+    let state = model_deepseek41_contract::state::request_state(
+        host.shape.geometry,
+        host.kv.storage,
+        false,
+    );
+    let extent = bundle_runtime::state::Extent {
+        served: items,
+        bucket: bundle_runtime::geometry::Items::new(items)
+            .unwrap()
+            .capacity(),
+        verify_rows: 0,
+    };
+    let holder = |slot| bundle_runtime::state::Holder::Slot(slot);
+    let sources = state.pieces(extent, holder(from)).unwrap();
+    let targets = state.pieces(extent, holder(to)).unwrap();
+    assert_eq!(sources.len(), targets.len());
+    let captured: std::collections::BTreeSet<usize> =
+        sources.iter().map(|piece| piece.buffer).collect();
+    // The rings and tails are captured whole: every layer's and plane's
+    // complete entry of the slot.
+    for name in ["window.ring", "compressor.tail"] {
+        let index = state.buffers.iter().position(|b| b.name == name).unwrap();
+        assert!(captured.contains(&index), "{name} is not captured");
+        let bytes: u64 = sources
+            .iter()
+            .filter(|piece| piece.buffer == index)
+            .map(|piece| piece.length)
+            .sum();
+        assert_eq!(bytes, state.buffers[index].entry_bytes(), "{name}");
+    }
+    // Each buffer's offset in the state view, end to end.
+    let mut starts = Vec::new();
+    let mut at = 0;
+    for buffer in &state.buffers {
+        starts.push(at);
+        at += buffer.bytes(extent);
+    }
+    let memory = host.memory.borrow();
+    for rank in 0..host.shape.ranks() {
+        let view = BundleDeviceBufferHandleV1::from_parts(1, STATE_SLOT + rank);
+        let span = |piece: &bundle_runtime::state::Piece| {
+            assert!(!piece.spare);
+            DeviceBufferSpanV1::new(view, starts[piece.buffer] + piece.offset, piece.length)
+        };
+        for (source, target) in sources.iter().zip(&targets) {
+            assert_eq!(
+                (source.buffer, source.length),
+                (target.buffer, target.length)
+            );
+            let (from_span, to_span) = (span(source), span(target));
+            let mut expected = from_span.offset;
+            for (length, origin) in memory.read(to_span) {
+                assert_eq!(
+                    origin,
+                    Origin::Held(view.raw, expected),
+                    "rank {rank} {}: a restored byte did not come from slot {from}",
+                    state.buffers[target.buffer].name
+                );
+                expected += length;
+            }
+            assert_eq!(expected, from_span.offset + from_span.length);
+            assert_eq!(
+                memory.read(from_span),
+                [(from_span.length, Origin::Held(view.raw, from_span.offset))]
+            );
+        }
+    }
+}
+
 /// A request's rings and tails reach snapshot pages after a prompt and
 /// come back into another slot under a new request, which then decodes; a
 /// restore that names other tokens is refused and leaves the slot free.
+/// The capture ends at an odd position past the 136-cell ring's wrap, and
+/// the restored slot holds exactly the captured slot's bytes, in both KV
+/// layouts.
 #[test]
 fn prefix_snapshots_round_trip_through_the_pages() {
-    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
-    let host = FakeHost::new(shape, KV_LAYOUTS[0]);
-    let mut instance = create(&host, 4);
-    let mut views = Views::default();
-    instance
-        .execute(&prompt(7, 0, 0, 70, true), &mut views)
-        .unwrap();
-    instance.commit().unwrap();
-    let count = instance.describe_prefix_state().unwrap();
-    // 40 rings of 128 cells and three tails' open rows.
-    assert!(count > 0);
-    let pages = (0..count).map(|page| 32 + page).collect::<Vec<_>>();
-    instance.capture_prefix_state(7, 70, &pages).unwrap();
-    instance.retire_request(7).unwrap();
-    let tokens = (0..70).collect::<Vec<u32>>();
-    assert!(
+    let shape = Shape::new(&FLASH, Ranks::TP2).unwrap();
+    for kv in KV_LAYOUTS {
+        let host = FakeHost::new(shape, kv);
+        let mut instance = create(&host, 4);
+        let mut views = Views::default();
+        let tokens = 141;
         instance
-            .restore_prefix_state_in_slot(9, &tokens[..69], &pages, 1)
-            .is_err()
-    );
-    instance
-        .restore_prefix_state_in_slot(9, &tokens, &pages, 1)
-        .unwrap();
-    instance
-        .execute(&decode(&[(9, 1, 70, 5)]), &mut views)
-        .unwrap();
-    instance.commit().unwrap();
-    assert_eq!(views.rows(), 2);
-    instance.retire_request(9).unwrap();
-    instance.destroy().unwrap();
-    assert_eq!(host.acquired.get(), host.released.get());
+            .execute(&prompt(7, 0, 0, tokens, true), &mut views)
+            .unwrap();
+        instance.commit().unwrap();
+        let count = instance.describe_prefix_state().unwrap();
+        assert!(count > 0);
+        let pages = (0..count).map(|page| 40 + page).collect::<Vec<_>>();
+        instance.capture_prefix_state(7, tokens, &pages).unwrap();
+        instance.retire_request(7).unwrap();
+        let ids = (0..tokens as u32).collect::<Vec<u32>>();
+        assert!(
+            instance
+                .restore_prefix_state_in_slot(9, &ids[..tokens as usize - 1], &pages, 2)
+                .is_err()
+        );
+        instance
+            .restore_prefix_state_in_slot(9, &ids, &pages, 2)
+            .unwrap();
+        assert_state_moved(&host, 4, 0, 2);
+        instance
+            .execute(&decode(&[(9, 2, tokens, 5)]), &mut views)
+            .unwrap();
+        instance.commit().unwrap();
+        assert_eq!(views.rows(), 2);
+        instance.retire_request(9).unwrap();
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
+}
+
+/// The origin check itself fails when a restore moves nothing: a slot's
+/// own bytes are not another slot's.
+#[test]
+#[should_panic(expected = "a restored byte did not come from slot 0")]
+fn the_state_check_catches_a_restore_that_moved_nothing() {
+    let shape = Shape::new(&FLASH, Ranks::TP2).unwrap();
+    let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+    assert_state_moved(&host, 4, 0, 2);
 }

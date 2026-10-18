@@ -270,6 +270,34 @@ fn serve_lists_flash_checkpoint_options_without_loading_weights() {
                              "definition": {"type": "integer", "default": top_k, "minimum": 1, "maximum": 512}}]
             })
         );
+        // The serving host resolves the complete declaration before encoding
+        // create, including checkpoint defaults absent from the overrides.
+        for override_top_k in [None, Some(128)] {
+            let overrides = override_top_k
+                .map(|k| ("text_config.index_topk".to_owned(), k.to_string()))
+                .into_iter()
+                .collect();
+            let resolved = package
+                .manifest()
+                .resolve_model_options(&overrides)
+                .unwrap();
+            let expected = serde_json::json!({
+                "text_config.index_topk": override_top_k.unwrap_or(top_k),
+                "text_config.candidate_topk_blocks": blocks,
+            });
+            assert_eq!(serde_json::to_value(&resolved).unwrap(), expected);
+            let host_config = runtime_host::HostInstanceConfigV1::new(
+                runtime_host::HostTopologyV1::new(vec![0, 1, 2, 3]).unwrap(),
+            )
+            .with_model_options(resolved);
+            let bytes = host_config.encode_v1(b"deepseek41-flash-tp4");
+            let tag = runtime_bundle_abi::MODEL_OPTIONS_TAG_V1;
+            let at = bytes.windows(tag.len()).position(|w| w == tag).unwrap() + tag.len();
+            let length = u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()) as usize;
+            let tail: serde_json::Value = serde_json::from_slice(&bytes[at + 4..]).unwrap();
+            assert_eq!(bytes.len(), at + 4 + length);
+            assert_eq!(tail, expected);
+        }
         for (ranks, _) in FLASH_TOPOLOGIES {
             let topology = package
                 .manifest()

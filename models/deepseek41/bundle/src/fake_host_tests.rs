@@ -81,15 +81,26 @@ fn runtime_index_topk_reaches_dense_and_compact_launches() {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let host = FakeHost::new(shape, kv);
         let mut record = crate::config::tests::record(&shape, kv, 1, false);
-        if let Some(at) = record
+        let at = record
             .windows(MODEL_OPTIONS_TAG_V1.len())
             .position(|w| w == MODEL_OPTIONS_TAG_V1)
-        {
-            record.truncate(at);
-        } else {
-            record.extend_from_slice(&FLASH.context_tokens().to_le_bytes());
-        }
+            .unwrap();
+        record.truncate(at);
         let options = br#"{"text_config.index_topk":256}"#;
+        record.extend_from_slice(MODEL_OPTIONS_TAG_V1);
+        record.extend_from_slice(&(options.len() as u32).to_le_bytes());
+        record.extend_from_slice(options);
+        let acquired = host.acquired.get();
+        assert!(matches!(
+            api().create(HostServicesTableV1::new(Rc::clone(&host)), &record),
+            Err(BundleAbiError::Status(BundleStatusV1::InvalidArgument))
+        ));
+        assert_eq!(host.acquired.get(), acquired);
+        assert!(host.logs.borrow().iter().any(|line| line.contains(
+            "the create record is missing resolved model option text_config.candidate_topk_blocks"
+        )));
+        record.truncate(at);
+        let options = br#"{"text_config.index_topk":256,"text_config.candidate_topk_blocks":2048}"#;
         record.extend_from_slice(MODEL_OPTIONS_TAG_V1);
         record.extend_from_slice(&(options.len() as u32).to_le_bytes());
         record.extend_from_slice(options);

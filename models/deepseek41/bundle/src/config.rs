@@ -1,8 +1,9 @@
 //! The create record of a `deepseek41.v1` instance.
 //!
-//! The package requires the served item count and served context; an
-//! optional tap producer may follow. The topology names the geometry and the
-//! rank count; the KV layout names the storage of the pages and rings.
+//! The package requires the served item count, served context and every
+//! resolved model option; an optional tap producer may follow. The topology
+//! names the geometry and rank count; the KV layout names the storage of the
+//! pages and rings.
 
 use bundle_runtime::config::Topology;
 use bundle_runtime::config::{CreateConfig, MAGIC};
@@ -119,7 +120,22 @@ pub fn decode(bytes: &[u8], log: impl Fn(&str)) -> Result<Configuration, BundleS
         log("the create record carries no model options");
         return Err(BundleStatusV1::InvalidArgument);
     }
-    let options = runtime_bundle_sdk::model_options::read(&mut reader)?;
+    let options = runtime_bundle_sdk::model_options::read(&mut reader)
+        .inspect_err(|_| log("the create record carries invalid or empty model options"))?;
+    for field in shape
+        .geometry
+        .runtime_fields()
+        .iter()
+        .filter(|field| field.overridable)
+    {
+        if !options.contains_key(field.name) {
+            log(&format!(
+                "the create record is missing resolved model option {}",
+                field.name
+            ));
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+    }
     shape.runtime = shape
         .geometry
         .resolve_model_options(shape.geometry.runtime_defaults(), &options)
@@ -297,13 +313,62 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn create_requires_the_complete_resolved_option_set() {
+        let mut shape = crate::shape::topologies()[0];
+        shape.runtime.candidate_topk_blocks = 1024;
+        let complete = record(&shape, KV_LAYOUTS[0], 1, false);
+        assert_eq!(
+            decode(&complete, |_| {}).unwrap().shape.runtime,
+            shape.runtime
+        );
+        let shared = shared_length(&complete).unwrap();
+        for (options, missing) in [
+            (
+                serde_json::json!({"text_config.index_topk": 512}),
+                "text_config.candidate_topk_blocks",
+            ),
+            (
+                serde_json::json!({"text_config.candidate_topk_blocks": 1024}),
+                "text_config.index_topk",
+            ),
+        ] {
+            let mut bytes = complete[..shared].to_vec();
+            append_options(&mut bytes, &options);
+            let logs = std::cell::RefCell::new(Vec::new());
+            assert_eq!(
+                decode(&bytes, |line| logs.borrow_mut().push(line.to_owned())).unwrap_err(),
+                BundleStatusV1::InvalidArgument
+            );
+            assert_eq!(
+                logs.borrow().as_slice(),
+                [format!(
+                    "the create record is missing resolved model option {missing}"
+                )]
+            );
+        }
+        for options in [
+            serde_json::json!({}),
+            serde_json::json!({"text_config.index_topk": 512, "text_config.candidate_topk_blocks": 1024, "unknown": 1}),
+        ] {
+            let mut bytes = complete[..shared].to_vec();
+            append_options(&mut bytes, &options);
+            let logs = std::cell::RefCell::new(Vec::new());
+            assert_eq!(
+                decode(&bytes, |line| logs.borrow_mut().push(line.to_owned())).unwrap_err(),
+                BundleStatusV1::InvalidArgument
+            );
+            assert!(!logs.borrow().is_empty());
+        }
+    }
+
+    #[test]
     fn runtime_options_are_checked_before_create_and_keep_the_tap_tail() {
         let shape = crate::shape::topologies()[0];
         let mut bytes = record(&shape, KV_LAYOUTS[0], 1, false);
         let shared = shared_length(&bytes).unwrap();
         for options in [
-            serde_json::json!({"text_config.candidate_topk_blocks": 0}),
-            serde_json::json!({"text_config.candidate_topk_blocks": 2049}),
+            serde_json::json!({"text_config.index_topk": 512, "text_config.candidate_topk_blocks": 0}),
+            serde_json::json!({"text_config.index_topk": 512, "text_config.candidate_topk_blocks": 2049}),
             serde_json::json!({"text_config.index_topk": 512, "text_config.candidate_topk_blocks": 64}),
         ] {
             bytes.truncate(shared);
@@ -328,7 +393,7 @@ pub(crate) mod tests {
             bytes.truncate(shared);
             append_options(
                 &mut bytes,
-                &serde_json::json!({"text_config.index_topk": value}),
+                &serde_json::json!({"text_config.index_topk": value, "text_config.candidate_topk_blocks": 2048}),
             );
             let logs = std::cell::RefCell::new(Vec::new());
             assert_eq!(
@@ -346,11 +411,21 @@ pub(crate) mod tests {
             &mut bytes,
             &serde_json::json!({"text_config.index_topk": 256}),
         );
+        assert_eq!(
+            decode(&bytes, |_| {}).unwrap_err(),
+            BundleStatusV1::InvalidArgument
+        );
+        bytes.truncate(shared);
+        append_options(
+            &mut bytes,
+            &serde_json::json!({"text_config.index_topk": 256, "text_config.candidate_topk_blocks": 1024}),
+        );
         bytes.extend_from_slice(runtime_bundle_sdk::taps::PRODUCER_TAG);
         bytes.extend_from_slice(&5_u32.to_le_bytes());
         bytes.extend_from_slice(b"nonce");
         let config = decode(&bytes, |_| {}).unwrap();
         assert_eq!(config.shape.runtime.index_topk, 256);
+        assert_eq!(config.shape.runtime.candidate_topk_blocks, 1024);
         assert_eq!(config.create.tap_producer.as_deref(), Some("nonce"));
         bytes.push(0);
         assert!(decode(&bytes, |_| {}).is_err());

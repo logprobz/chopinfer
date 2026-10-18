@@ -98,9 +98,10 @@ native KV layout, which `/health` reports as `mixed` (what
   margins, 1% top-one delta, Holm alpha 0.05, eight clusters, two net tail
   positions above 0.5 nats), reviewed on 2026-10-18 (its approval line is
   in `qual.json`). It activates once a stored teacher receipt exists.
-- long_context (131,072 tokens), pending its F32-TQ and BF16 references:
-  the teacher rule over the last 1,024 positions with BF16 the only spread
-  variant; its values follow those references by that rule.
+- long_context (131,072 tokens): the teacher rule over the last 1,024
+  positions against the F32-TQ reference alone, under the floor-only policy
+  of `docs/check-kinds.md` (mean |dlogprob| 0.10, decisive and near-tie
+  top-1 0.08, all top-1 flips 0.10).
 - per-layer taps (`taps.json`) within the same spread;
 - evals_gsm8k: the 1,319 GSM8K items with the recipe sampling (temperature
   1.0, top_p 1.0, max_tokens 262,144), workload sha256

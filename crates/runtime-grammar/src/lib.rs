@@ -10,6 +10,7 @@
 
 mod automaton;
 mod budget;
+mod decimal;
 mod expr;
 mod heap;
 mod json;

@@ -20,7 +20,7 @@ use serde_json::Map;
 use crate::automaton::Automaton;
 use crate::budget::Budget;
 use crate::expr::{CharClass, Expr, Grammar, GrammarBuilder, GrammarError, RuleId};
-use crate::range::{Bound, integer_range, number_range, unsigned_range};
+use crate::range::{Bound, integer_range, number_range};
 use crate::regex::{digits, regex_expr};
 use crate::stack::Config;
 
@@ -94,8 +94,9 @@ pub struct SchemaCompiler<'a> {
     /// Whether a number with a fraction or exponent stays a finite binary64
     /// ([`Self::finite_numbers`]).
     finite_numbers: bool,
-    /// The finite number's rule, shared by every number.
-    finite_number_rule: Option<RuleId>,
+    /// The rule of each finite number's bounds, shared by every number with
+    /// those bounds.
+    finite_number_rules: HashMap<(Option<Bound>, Option<Bound>), RuleId>,
 }
 
 impl<'a> SchemaCompiler<'a> {
@@ -110,16 +111,16 @@ impl<'a> SchemaCompiler<'a> {
             depth: 0,
             budget: Budget::default(),
             finite_numbers: false,
-            finite_number_rule: None,
+            finite_number_rules: HashMap::new(),
         }
     }
 
     /// Admits a number with a fraction or exponent only when it is a finite
     /// binary64, at any depth, for a reader that keeps any other such
-    /// number as text. An integer keeps every digit. Magnitudes from 1e308,
-    /// just below the largest finite one, are refused. The number is one
+    /// number as text, and compares one with an exponent with the schema's
+    /// bounds by value. An integer keeps every digit. Each number is one
     /// shared rule, and so is each array's item, so nesting does not copy
-    /// them.
+    /// them. The rules and the spellings refused are in `decimal.rs`.
     #[must_use]
     pub fn finite_numbers(mut self) -> Self {
         self.finite_numbers = true;
@@ -127,40 +128,43 @@ impl<'a> SchemaCompiler<'a> {
     }
 
     fn number_expr(&mut self) -> Expr {
-        if !self.finite_numbers {
-            return number_expr();
+        if self.finite_numbers {
+            self.finite_number(None, None)
+        } else {
+            number_expr()
         }
-        let rule = match self.finite_number_rule {
-            Some(rule) => rule,
+    }
+
+    fn number(&mut self, fields: &serde_json::Map<String, Value>) -> Result<Expr, GrammarError> {
+        let (lower, upper) = numeric_bounds(fields, false)?;
+        if self.finite_numbers {
+            return Ok(self.finite_number(lower, upper));
+        }
+        if lower.is_none() && upper.is_none() {
+            return Ok(number_expr());
+        }
+        Ok(number_range(lower, upper, None))
+    }
+
+    fn finite_number(&mut self, lower: Option<Bound>, upper: Option<Bound>) -> Expr {
+        let rule = match self.finite_number_rules.get(&(lower, upper)) {
+            Some(&rule) => rule,
             None => {
                 let rule = self.builder.declare();
+                let body = crate::decimal::finite_number(self.builder, lower, upper);
                 // A reference to itself after `Nothing` never matches, but
                 // makes the rule recursive: the automaton builds a recursive
                 // rule once and calls it, instead of building the number
                 // again at every place it stands.
                 self.builder.define(
                     rule,
-                    Expr::Alt(vec![
-                        finite_number_expr(),
-                        Expr::Seq(vec![Expr::Nothing, Expr::Rule(rule)]),
-                    ]),
+                    Expr::Alt(vec![body, Expr::Seq(vec![Expr::Nothing, Expr::Rule(rule)])]),
                 );
-                *self.finite_number_rule.insert(rule)
+                self.finite_number_rules.insert((lower, upper), rule);
+                rule
             }
         };
         Expr::Rule(rule)
-    }
-
-    fn number(&mut self, fields: &serde_json::Map<String, Value>) -> Result<Expr, GrammarError> {
-        let (lower, upper) = numeric_bounds(fields, false)?;
-        if lower.is_none() && upper.is_none() {
-            return Ok(self.number_expr());
-        }
-        Ok(number_range(
-            lower,
-            upper,
-            self.finite_numbers.then_some(FINITE_INTEGER_DIGITS),
-        ))
     }
 
     /// Cumulative construction costs, including nested literal validation.
@@ -1176,91 +1180,6 @@ fn number_expr() -> Expr {
             Expr::Class(digits()).plus(),
         ])
         .optional(),
-    ])
-}
-
-/// The most integer digits a finite number admits with a fraction or a
-/// negative exponent ([`SchemaCompiler::finite_numbers`]), so its magnitude
-/// stays below 1e308.
-const FINITE_INTEGER_DIGITS: u32 = 308;
-
-/// The most integer digits a finite number admits with a positive exponent:
-/// the significant digits a binary64 holds.
-const FINITE_SCALED_DIGITS: u32 = 17;
-
-/// [`number_expr`] less the numbers a binary64 cannot hold. An integer keeps
-/// every digit. A number with a fraction or exponent is admitted when it is
-/// zero or its magnitude is below 1e308, under any negative exponent since
-/// underflow is finite. The boundary is conservative by less than one decade:
-/// magnitudes from 1e308 to the largest finite 1.7976931348623157e308 are
-/// refused with those that overflow.
-///
-/// Three rarer finite spellings are refused too. A finite automaton cannot
-/// weigh an unbounded digit count against an unbounded exponent, which rules
-/// out an integer part of more than 308 digits with a negative exponent and a
-/// fraction below 1 with a positive exponent above 308, such as `0.001e309`.
-/// And an integer part under a positive exponent has at most
-/// [`FINITE_SCALED_DIGITS`] digits: weighing each of 308 lengths against the
-/// exponent would multiply the automaton of every number.
-fn finite_number_expr() -> Expr {
-    let digit = || Expr::Class(digits());
-    let nonzero = || Expr::Class(CharClass::from_ranges([('1' as u32, '9' as u32)]));
-    let fraction = || Expr::seq([Expr::literal("."), digit().plus()]);
-    let mark = || Expr::Class(CharClass::of("eE"));
-    let negative = || Expr::seq([mark(), Expr::literal("-"), digit().plus()]);
-    // A positive exponent of at most `high`, with any leading zeros.
-    let positive = |high: u32| {
-        Expr::seq([
-            mark(),
-            Expr::literal("+").optional(),
-            Expr::literal("0").star(),
-            unsigned_range(0, Some(u128::from(high))),
-        ])
-    };
-    // After `length` integer digits, a positive exponent reaches at most
-    // 308 - `length`, which keeps the magnitude below 1e308.
-    let mut scaled = Expr::Nothing;
-    for length in (1..=FINITE_SCALED_DIGITS).rev() {
-        let first = if length == 1 { nonzero() } else { digit() };
-        let exponent = positive(FINITE_INTEGER_DIGITS - length);
-        scaled = Expr::seq([
-            first,
-            Expr::alt([Expr::seq([fraction().optional(), exponent]), scaled]),
-        ]);
-    }
-    let integer_part = Expr::alt([
-        Expr::literal("0"),
-        Expr::seq([
-            nonzero(),
-            digit().repeat(0, Some(FINITE_INTEGER_DIGITS - 1)),
-        ]),
-    ]);
-    Expr::alt([
-        integer_expr(),
-        Expr::seq([
-            Expr::literal("-").optional(),
-            Expr::alt([
-                Expr::seq([
-                    integer_part,
-                    Expr::alt([Expr::seq([fraction(), negative().optional()]), negative()]),
-                ]),
-                scaled,
-                // A fraction below 1 under a positive exponent of at most 308.
-                Expr::seq([
-                    Expr::literal("0"),
-                    fraction().optional(),
-                    positive(FINITE_INTEGER_DIGITS),
-                ]),
-                // Zero under any exponent.
-                Expr::seq([
-                    Expr::literal("0"),
-                    Expr::seq([Expr::literal("."), Expr::literal("0").plus()]).optional(),
-                    mark(),
-                    Expr::Class(CharClass::of("+-")).optional(),
-                    digit().plus(),
-                ]),
-            ]),
-        ]),
     ])
 }
 

@@ -11,7 +11,7 @@ fn any_digits(count: usize) -> Expr {
 }
 
 /// Digit strings of `low.len()` digits between `low` and `high` inclusive.
-fn same_length(low: &[u8], high: &[u8]) -> Expr {
+pub(crate) fn same_length(low: &[u8], high: &[u8]) -> Expr {
     let Some((&first_low, rest_low)) = low.split_first() else {
         return Expr::Empty;
     };
@@ -111,7 +111,7 @@ fn unsigned_range_digits(low: u128, high: Option<u128>, max_digits: Option<u32>)
 }
 
 /// One end of a range: the bound and whether it is included.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct Bound {
     pub(crate) value: i128,
     pub(crate) inclusive: bool,

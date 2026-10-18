@@ -304,6 +304,18 @@ fn a_constrained_number_keeps_its_type() {
         format!("{}e291", long(17)),
         "1234567890.5e298".to_owned(),
         format!("{}e-400", long(308)),
+        // Long significands: the integer digits and the exponent together.
+        format!("{}e1", long(18)),
+        format!("{}e1", long(19)),
+        format!("{}e0", long(19)),
+        format!("{}e-0", long(19)),
+        format!("{}E+00", long(19)),
+        format!("{}e288", long(19)),
+        format!("{}e0", long(308)),
+        format!("{}.5e7", long(300)),
+        // Zeros leading a fraction lower its order.
+        "0.001e309".to_owned(),
+        format!("0.{}1e349", "0".repeat(41)),
     ] {
         assert!(admitted(&[("x", true, &value)]), "{value}");
     }
@@ -320,10 +332,15 @@ fn a_constrained_number_keeps_its_type() {
         format!("{}.5", long(309)),
         format!("{}e292", long(17)),
         "1234567890.5e299".to_owned(),
-        // A digit count weighed against an exponent is refused past them.
+        format!("{}e290", long(19)),
+        format!("{}e1", long(308)),
+        format!("{}.5e9", long(300)),
+        "0.001e311".to_owned(),
+        // Past the counted digits a digit count is not weighed against an
+        // exponent: more than 308 integer digits under a negative one, and
+        // more than 40 zeros leading a fraction under one above 349.
         format!("{}e-1", long(309)),
-        "0.001e309".to_owned(),
-        format!("{}e1", long(18)),
+        format!("0.{}1e350", "0".repeat(60)),
     ] {
         assert!(!admitted(&[("x", true, &value)]), "{value}");
     }
@@ -418,6 +435,66 @@ fn nested_arrays_of_numbers_compile() {
         };
         assert!(admitted("1.5e300"), "{depth}");
         assert!(!admitted("1e400"), "{depth}");
+    }
+}
+
+/// A bounded number with an exponent is compared with its bounds by value,
+/// and zero, signed or not, is admitted where the bounds contain it.
+#[test]
+fn a_bounded_number_is_compared_by_value() {
+    let tools = [tool(serde_json::json!({
+        "type": "object",
+        "properties": {
+            "x": {"type": "number", "minimum": 0},
+            "y": {"type": "number", "maximum": -1},
+            "z": {"type": "number", "minimum": -1, "maximum": 1},
+            "w": {"type": "number", "exclusiveMinimum": 0}
+        },
+        "additionalProperties": false
+    }))];
+    let admitted = |name: &str, value: &str| {
+        admits(
+            &tools,
+            &FrontendToolChoiceV1::Named("f".into()),
+            &block(&[call("f", &[(name, true, value)])]),
+        )
+    };
+    for (name, value) in [
+        ("x", "1e-100"),
+        ("x", "1e300"),
+        ("x", "-0"),
+        ("x", "-0.0e5"),
+        ("x", "0E-7"),
+        ("y", "-1e1"),
+        ("y", "-1"),
+        ("y", "-10e-1"),
+        ("y", "-0.5e1"),
+        ("z", "-0"),
+        ("z", "0e5"),
+        ("z", "1e0"),
+        ("z", "10e-1"),
+        ("z", "-0.1e1"),
+        ("z", "-9.99e-1"),
+        ("w", "1e-400"),
+        ("w", "5E+2"),
+    ] {
+        assert!(admitted(name, value), "{name}: {value}");
+    }
+    for (name, value) in [
+        ("x", "-1e-100"),
+        ("x", "1e308"),
+        ("y", "-1e-1"),
+        ("y", "-0"),
+        ("y", "-0.9e0"),
+        ("z", "1.5e0"),
+        ("z", "-1.0001e0"),
+        ("z", "11e-1"),
+        ("w", "0"),
+        ("w", "-0"),
+        ("w", "0e1"),
+        ("w", "-1e-400"),
+    ] {
+        assert!(!admitted(name, value), "{name}: {value}");
     }
 }
 

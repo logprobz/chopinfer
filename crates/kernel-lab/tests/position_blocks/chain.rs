@@ -164,15 +164,55 @@ fn compact_dense_bits_match_across_chunks_and_reindex_on_a_gpu() {
     .expect("compact dense bit equality");
 }
 
+#[test]
+fn compact_agreement_fixture_on_a_gpu() {
+    kernel_lab::gpu_test(1 << 30, |session| {
+        let root = std::env::var_os("CHOPINFER_KERNEL_RECEIPTS")
+            .ok_or("agreement fixture needs a receipt directory")?;
+        let fixture = std::path::PathBuf::from(root).join("indexer-agreement");
+        let entry = &family::entries()[2];
+        assert_eq!(
+            (
+                entry.query.indexer.heads,
+                entry.query.indexer.head_dim,
+                entry.query.top_k_blocks
+            ),
+            (32, 128, 2048)
+        );
+        let rows = chain_with_fixture(session, entry, 1, Some(&fixture))?;
+        assert_eq!(rows.len(), 1);
+        session.receipt(
+            "compact-agreement-fixture",
+            BTreeMap::from([
+                ("heads".into(), serde_json::json!(32)),
+                ("dim".into(), serde_json::json!(128)),
+                ("visible".into(), serde_json::json!(32769)),
+                ("candidate_blocks".into(), serde_json::json!(2048)),
+            ]),
+        )?;
+        Ok(())
+    })
+    .expect("compact agreement fixture");
+}
+
 fn chain(
     session: &Session,
     entry: &kernels_sm120::pooled_indexer::position_blocks::Entry,
     chunk: usize,
 ) -> LabResult<Vec<ResultRow>> {
+    chain_with_fixture(session, entry, chunk, None)
+}
+
+fn chain_with_fixture(
+    session: &Session,
+    entry: &kernels_sm120::pooled_indexer::position_blocks::Entry,
+    chunk: usize,
+    fixture: Option<&std::path::Path>,
+) -> LabResult<Vec<ResultRow>> {
     let backend = backend();
     let cq = entry.query;
     let q = cq.indexer;
-    let width = 1u32 << 20;
+    let width = if fixture.is_some() { 32776 } else { 1u32 << 20 };
     let dim = q.head_dim as usize;
     let heads = q.heads as usize;
     let slots = cq.score_slots().map_err(|e| e.0)? as usize;
@@ -185,9 +225,9 @@ fn chain(
     let scales = (0..physical_pages * page * dim / 32)
         .map(|i| 124 + (i % 5) as u8)
         .collect::<Vec<_>>();
-    let tables = (0..width as usize / page)
+    let tables = (0..(width as usize).div_ceil(page))
         .map(|i| {
-            if i % 11 == 3 {
+            if fixture.is_none() && i % 11 == 3 {
                 -1
             } else {
                 (i % physical_pages) as i32
@@ -196,7 +236,11 @@ fn chain(
         .collect::<Vec<_>>();
     // Adjacent positions straddle complete/partial blocks and compression
     // groups. The later chunk shares the prior newest block then advances it.
-    let token_positions = [0, 7, 8, 16383, 16384, 16385, 32767, 32768, 32769];
+    let token_positions: &[i32] = if fixture.is_some() {
+        &[32768]
+    } else {
+        &[0, 7, 8, 16383, 16384, 16385, 32767, 32768, 32769]
+    };
     let mut result = Vec::new();
     for (chunk_index, positions) in token_positions.chunks(chunk).enumerate() {
         let rows = positions.len();
@@ -224,7 +268,7 @@ fn chain(
             page_tables: BlockTables {
                 tables: arena.input(&i32s(&tables))?,
                 sequences: 1,
-                max_pages: width / q.page_size,
+                max_pages: width.div_ceil(q.page_size),
             },
         };
         let filter = backend
@@ -515,6 +559,68 @@ fn chain(
                         .collect(),
                 );
             }
+        }
+        if let Some(path) = fixture {
+            assert_eq!(rows, 1);
+            let expected = position_indexer_oracle::select(
+                q,
+                q.max_top_k,
+                positions[0] as u64,
+                &source_scores,
+                None,
+            )
+            .map_err(|e| e.0)?;
+            assert_eq!(indices(&arena.read(dense_buffers[0].output)?), expected);
+            std::fs::create_dir_all(path).map_err(|e| e.to_string())?;
+            let mut decoded_keys = Vec::with_capacity(width as usize * dim * 2);
+            for index in 0..width as usize {
+                let physical = tables[index / page] as usize * page + index % page;
+                for c in 0..dim {
+                    let code = (codes[physical * dim / 2 + c / 2] >> ((c % 2) * 4)) & 15;
+                    let value = SmallFloat::E2M1.decode_f64(code)
+                        * decode_ue8m0_f64(scales[physical * dim / 32 + c / 32]);
+                    decoded_keys.extend(f32_to_bf16(value as f32).to_le_bytes());
+                }
+            }
+            let mut files = vec![
+                ("keys.bf16", decoded_keys),
+                ("candidate-mask.u8", dense_mask.clone()),
+                ("source-indices.i32", arena.read(dense_buffers[0].output)?),
+                (
+                    "reindex-indices.i32",
+                    arena.read(compact_buffers[0].output)?,
+                ),
+            ];
+            for (pass, q_name, w_name) in [
+                (0, "source-q.bf16", "source-w.f32"),
+                (1, "reindex-q.bf16", "reindex-w.f32"),
+            ] {
+                files.push((
+                    q_name,
+                    operands[pass]
+                        .0
+                        .iter()
+                        .flat_map(|v| v.to_le_bytes())
+                        .collect(),
+                ));
+                files.push((
+                    w_name,
+                    operands[pass]
+                        .1
+                        .iter()
+                        .flat_map(|v| v.to_le_bytes())
+                        .collect(),
+                ));
+            }
+            for (name, bytes) in files {
+                std::fs::write(path.join(name), bytes).map_err(|e| e.to_string())?;
+            }
+            let metadata = serde_json::json!({"heads":q.heads,"dim":q.head_dim,"width":width,"visible":visible[0],"ratio":q.compression_ratio,"top_k":q.max_top_k,"block_size":cq.block_size,"candidate_blocks":cq.top_k_blocks,"prepared_operands":true});
+            std::fs::write(
+                path.join("fixture.json"),
+                serde_json::to_vec_pretty(&metadata).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
         }
         if chunk == 4 && chunk_index == 0 {
             // A failed Full row must publish an empty retained record and

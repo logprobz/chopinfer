@@ -74,6 +74,17 @@ MAX_SEQ_LEN = 64
 VIT_GRID = (6, 6)  # an image of 6 x 6 patches, 2 x 2 tokens after the aligner: 8 span positions
 
 
+def checkpoint_directory():
+    """Keep sources alive while the adapter's cached vendor modules use them.
+
+    reference_memory authenticates mirrored functions with inspect.getsource
+    on every prefill, including when another test reused the vendor module.
+    """
+    directory = tempfile.TemporaryDirectory()
+    unittest.addModuleCleanup(directory.cleanup)
+    return directory.name
+
+
 def tokenizer_json(path):
     """96 WordLevel tokens, some of which normalize alike (case, accents,
     whitespace), so the Engram token map compresses them."""
@@ -238,8 +249,7 @@ class TinyCheckpoint(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         modes.prepare_environment(cuda=False)
-        cls.directory = tempfile.TemporaryDirectory()
-        cls.root = Path(cls.directory.name) / "checkpoint"
+        cls.root = Path(checkpoint_directory()) / "checkpoint"
         generator = torch.Generator().manual_seed(20261017)
         cls.reference, cls.reference_path = load_adapter(ROOT / "models/deepseek41/reference.py")
         cls.tensors = write_checkpoint(cls.root, generator, cls.reference)
@@ -251,7 +261,6 @@ class TinyCheckpoint(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         stamps.RACY_NS = cls.saved_racy
-        cls.directory.cleanup()
 
     def test_vendor_source_copy_reads_no_checkpoint_weights_and_refuses_changed_code(self):
         read = Path.read_bytes
@@ -476,7 +485,7 @@ class TinyCheckpoint(unittest.TestCase):
         self.assertEqual(files["deepseek41/inference/config.json"], self.root / "inference/config.json")
 
     def test_runner_scores_every_mode_with_taps(self):
-        root = Path(self.directory.name)
+        root = self.root.parent
         tokens = self.image_ids()[0].tolist()
         (root / "patches.bin").write_bytes(self.patches.view(torch.int16).numpy().tobytes())
         (root / "grid.bin").write_bytes(torch.tensor(VIT_GRID, dtype=torch.int64).numpy().tobytes())
@@ -618,19 +627,18 @@ class OfficialLayout(unittest.TestCase):
 class PureF32(unittest.TestCase):
     def test_pins_reference_and_quantizes_unrounded_inputs(self):
         modes.prepare_environment(cuda=False)
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory) / "checkpoint"
-            reference, _ = load_adapter(ROOT / "models/deepseek41/reference.py")
-            pure, _ = load_adapter(ROOT / "models/deepseek41/reference_pure_f32.py")
-            write_checkpoint(root, torch.Generator().manual_seed(3), reference)
-            ids = torch.randint(0, IMAGE, (1, 24), generator=torch.Generator().manual_seed(4))
-            logits = {}
-            for name, module in (("tq", reference), ("pure", pure)):
-                built, policy = adapter_reference(root, module, "f32")
-                self.assertEqual(built.layout["quantizer_inputs"], "bfloat16" if name == "tq" else "mode")
-                with modes.active(policy):
-                    logits[name] = built.forward(built.model, ids, 2, {})
-            self.assertFalse(torch.equal(logits["tq"], logits["pure"]))
-            with self.assertRaisesRegex(ValueError, "f32 mode only"):
-                adapter_reference(root, pure, "bf16")
-            reference.kernels().set_policy("bfloat16")
+        root = Path(checkpoint_directory()) / "checkpoint"
+        reference, _ = load_adapter(ROOT / "models/deepseek41/reference.py")
+        pure, _ = load_adapter(ROOT / "models/deepseek41/reference_pure_f32.py")
+        write_checkpoint(root, torch.Generator().manual_seed(3), reference)
+        ids = torch.randint(0, IMAGE, (1, 24), generator=torch.Generator().manual_seed(4))
+        logits = {}
+        for name, module in (("tq", reference), ("pure", pure)):
+            built, policy = adapter_reference(root, module, "f32")
+            self.assertEqual(built.layout["quantizer_inputs"], "bfloat16" if name == "tq" else "mode")
+            with modes.active(policy):
+                logits[name] = built.forward(built.model, ids, 2, {})
+        self.assertFalse(torch.equal(logits["tq"], logits["pure"]))
+        with self.assertRaisesRegex(ValueError, "f32 mode only"):
+            adapter_reference(root, pure, "bf16")
+        reference.kernels().set_policy("bfloat16")

@@ -1,6 +1,6 @@
 //! Model-owned compressor cases and frozen artifacts. The CPU test builds
-//! and checks locks; a GPU job only reads the artifacts its snapshot names,
-//! never compiles.
+//! and checks locks in its target directory. External GPU snapshots are
+//! read-only; in-tree GPU runs wait for the local build.
 
 #[path = "../../../bundle/src/sm120/compressor.rs"]
 #[allow(dead_code, reason = "the bundle consumes selection declarations")]
@@ -30,9 +30,7 @@ const ARTIFACTS: &str = "CHOPINFER_DEEPSEEK41_COMPRESSOR_ARTIFACTS";
 type Index = Vec<(String, String, String, Vec<String>)>;
 
 fn artifact_dir() -> PathBuf {
-    std::env::var_os(ARTIFACTS)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("deepseek41-compressor"))
+    PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("deepseek41-compressor")
 }
 
 fn specifications() -> LabResult<Vec<(&'static str, CubinSpec)>> {
@@ -112,8 +110,7 @@ struct Artifacts {
 }
 
 impl Artifacts {
-    fn read() -> LabResult<Self> {
-        let root = artifact_dir();
+    fn read(root: &Path) -> LabResult<Self> {
         let index: Index = serde_json::from_slice(
             &std::fs::read(root.join("index.json"))
                 .map_err(|e| format!("run the CPU artifact test before GPU tests: {e}"))?,
@@ -275,7 +272,39 @@ fn built() -> LabResult<()> {
 #[test]
 fn compressor_model_prepares_and_builds_required_cases() {
     built().unwrap();
-    run(None, &Artifacts::read().unwrap()).unwrap();
+    run(None, &Artifacts::read(&artifact_dir()).unwrap()).unwrap();
+}
+
+#[test]
+fn cpu_artifact_directory_ignores_gpu_snapshot() {
+    let target = PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
+    let snapshot = target.join("external-compressor-snapshot");
+    if std::env::var_os(ARTIFACTS).as_deref() == Some(snapshot.as_os_str()) {
+        assert_eq!(artifact_dir(), target.join("deepseek41-compressor"));
+        compressor_model_passes_on_a_gpu();
+        return;
+    }
+    // Isolate the override from the parallel test harness. The GPU test must
+    // skip before reading this absent snapshot when no GPU is selected.
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "compressor::cpu_artifact_directory_ignores_gpu_snapshot",
+            "--nocapture",
+        ])
+        .env(ARTIFACTS, snapshot)
+        .env_remove("CHOPINFER_KERNEL_GPU")
+        .env_remove("CHOPINFER_KERNEL_GPUS")
+        .env_remove("CHOPINFER_KERNEL_REQUIRE")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
 }
 
 /// Skips before reading anything when no GPU is selected. A GPU job reads
@@ -284,10 +313,13 @@ fn compressor_model_prepares_and_builds_required_cases() {
 #[test]
 fn compressor_model_passes_on_a_gpu() {
     kernel_harness::gpu_test(1 << 30, |session| {
-        if std::env::var_os(ARTIFACTS).is_none() {
+        let root = if let Some(root) = std::env::var_os(ARTIFACTS) {
+            PathBuf::from(root)
+        } else {
             built()?;
-        }
-        run(Some(session), &Artifacts::read()?)
+            artifact_dir()
+        };
+        run(Some(session), &Artifacts::read(&root)?)
     })
     .unwrap();
 }

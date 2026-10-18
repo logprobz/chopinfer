@@ -172,8 +172,10 @@ fn wide_addresses(
                     }
                 } else {
                     assert!(page_id > u16::MAX as usize && page_offset > u32::MAX as usize);
-                    for (offset, code) in [(page_offset, 0x44), (page_offset as u32 as usize, 0x22)]
-                    {
+                    for (offset, code, scale) in [
+                        (page_offset, 0x44, 0x38),
+                        (page_offset as u32 as usize, 0x22, 0x30),
+                    ] {
                         write(
                             "compressed",
                             offset + (position % page) * width / 2,
@@ -182,7 +184,7 @@ fn wide_addresses(
                         write(
                             "compressed",
                             offset + page * width / 2 + (position % page) * width / 16,
-                            &vec![0x38; width / 16],
+                            &vec![scale; width / 16],
                         )?;
                     }
                 }
@@ -290,6 +292,51 @@ fn wide_addresses(
                 replay.graph(&session.capture(run)?)?;
                 let mut receipt = BTreeMap::new();
                 replay.record(&mut receipt);
+                if million {
+                    let spec =
+                        kernel_lab::families::latent_sources_scale_narrow::entry_spec(&entry);
+                    let mutant = functions(&spec.symbol)?;
+                    mutant
+                        .set_max_dynamic_shared_memory(entry.dynamic_shared_bytes())
+                        .map_err(|e| e.to_string())?;
+                    for (index, (function, call)) in stages.iter().enumerate() {
+                        launch(
+                            &session.context,
+                            if index == 0 { &mutant } else { function },
+                            &session.stream,
+                            call.plan,
+                            &call.arguments,
+                            &bindings,
+                        )?;
+                    }
+                    let mut actual = vec![0; heads * width * 2];
+                    buffers["out"]
+                        .copy_to_bytes(&mut actual, &session.stream)
+                        .map_err(|e| e.to_string())?;
+                    assert_eq!(
+                        actual,
+                        kernel_lab::kit::bf16_bytes(&vec![f32_to_bf16(1.0); heads * width])
+                    );
+                    assert_ne!(actual, replay.expected("output").unwrap());
+                    let reference = kernel_core::oracle::OracleOutput::new(
+                        vec![2.0; heads * width],
+                        vec![2.0; heads * width],
+                        1,
+                    )
+                    .unwrap();
+                    assert!(
+                        kernel_core::oracle::check_numeric(
+                            &vec![1.0; heads * width],
+                            &reference,
+                            DType::Bf16
+                        )
+                        .is_err()
+                    );
+                    receipt.insert(
+                        "scale_only_narrowing".into(),
+                        serde_json::json!({"output":1.0,"rejected":true}),
+                    );
+                }
                 receipt.insert("window_code_stride".into(), serde_json::json!(code_stride));
                 receipt.insert(
                     "window_scale_stride".into(),

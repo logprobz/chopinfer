@@ -43,9 +43,17 @@ __device__ __forceinline__ uint64_t partial_index(uint32_t row, uint32_t split, 
   return ((uint64_t(row) * T::splits + split) * T::heads + head) * T::partial_width;
 }
 
+struct NativeAddress {
+  __device__ __forceinline__ static const uint8_t* scale_row(
+      const uint8_t* base, const uint8_t*, uint64_t,
+      uint64_t rows, uint32_t slot, uint32_t width) {
+    return base + rows * (width / 2) + uint64_t(slot) * (width / 16);
+  }
+};
+
 // One CTA per row, 8-head group and fixed split. Both lists contribute to
 // a single 64-key tile stream. Holes neither read codes nor read scales.
-template<class T>
+template<class T, class Address = NativeAddress>
 __device__ void attention(
     const uint16_t* q, const int32_t* row_batch, const uint32_t* live_rows,
     const uint8_t* window_codes, const uint8_t* window_scales,
@@ -137,7 +145,7 @@ __device__ void attention(
               const uint8_t* base = compressed_pool + uint64_t(page) * page_stride;
               const uint32_t slot = uint32_t(position) % T::page;
               codes = base + uint64_t(slot) * (T::latent / 2);
-              scales = base + uint64_t(T::page) * (T::latent / 2) + uint64_t(slot) * (T::latent / 16);
+              scales = Address::scale_row(base, compressed_pool, uint64_t(page) * page_stride, uint64_t(T::page), slot, T::latent);
               kind = 2;
             }
           }

@@ -3438,6 +3438,10 @@
         "env": "CHOPINFER_DATA",
         "path": "refrun/deepseek41/m1/teacher-reference.json"
       },
+      "workload": {
+        "env": "CHOPINFER_DATA",
+        "path": "refrun/deepseek41/m1/teacher-reference.workload.json"
+      },
       "sha256": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
       "schema": "chopinfer.deepseek41.teacher-reference.v1",
       "workload_sha256": "cffb11fb163846c1613e71f87dcd0720d48042f5ebe93546eac67e7cc4552776",
@@ -3457,6 +3461,10 @@
       "path": {
         "env": "CHOPINFER_DATA",
         "path": "refrun/deepseek41/m1/chat-reference.json"
+      },
+      "workload": {
+        "env": "CHOPINFER_DATA",
+        "path": "refrun/deepseek41/m1/chat-reference.workload.json"
       },
       "sha256": "03c032377355616844f7910fe1cb38ca6cbe9ead8bf6a90028ef0ad162eb8e5a",
       "schema": "chopinfer.deepseek41.teacher-reference.v1",

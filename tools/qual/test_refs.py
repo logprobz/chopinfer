@@ -232,6 +232,15 @@ class ReferenceLockTests(unittest.TestCase):
             config = declaration.load(declaration.path(model))
             refs.verify_config(config)
 
+    def test_committed_lock_declarations_do_not_depend_on_external_files(self):
+        for path in declaration.shipped():
+            if path == declaration.MECHANICS:
+                continue
+            config = declaration.load(path)
+            with self.subTest(declaration=path.relative_to(declaration.ROOT).as_posix()):
+                with patch.dict(os.environ, {}, clear=True):
+                    self.assertIsNotNone(refs.load_lock(config))
+
     def test_an_unproven_object_records_only_its_schema(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -152,7 +152,16 @@ def bound_server(record):
             and type(speculation.get("tokens")) is int and speculation["tokens"] >= 0
             and (speculation["mode"] == "off") == (speculation["tokens"] == 0)):
         raise ValueError(f"a bound record names no consistent speculation: {speculation!r}")
-    return {"checkpoint_identity": identity, "model": model, "startup_nonce": nonce, "serving": serving}
+    # The package /health authenticated: its manifest fixes the layout and
+    # state each KV element runs with. A `mixed` label names no layout of its
+    # own, so a mixed-plane record must carry it.
+    package = checkpoint.get("package_identity")
+    if package is not None and not (isinstance(package, str) and re.fullmatch(r"[0-9a-f]{64}", package)):
+        raise ValueError(f"a bound record names a malformed package identity: {package!r}")
+    if kv == "mixed" and package is None:
+        raise ValueError("a bound record served on a mixed-plane KV layout names no package identity")
+    return {"checkpoint_identity": identity, "model": model, "startup_nonce": nonce, "serving": serving,
+            "package_identity": package}
 
 
 def compare_servers(spec, ar):
@@ -174,6 +183,9 @@ def compare_servers(spec, ar):
     if serving["spec"]["tensor_parallel_size"] != serving["ar"]["tensor_parallel_size"] \
             or serving["spec"]["kv_cache_dtype"] != serving["ar"]["kv_cache_dtype"]:
         raise ValueError("the arms served different topologies or KV dtypes")
+    # One package and one element label name one KV layout and state.
+    if servers["spec"]["package_identity"] != servers["ar"]["package_identity"]:
+        raise ValueError("the arms served different packages, so their KV layouts may differ")
     drafting = {arm: value["speculation"]["tokens"] for arm, value in serving.items()}
     if drafting["spec"] <= 0 or drafting["ar"] != 0:
         raise ValueError(f"the speculative arm must draft and the control must not: {drafting}")

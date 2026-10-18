@@ -109,6 +109,7 @@ mod rounded_all_reduce;
 mod row_copies;
 mod rows;
 mod select;
+mod silu_mul_quantize;
 mod sinkhorn;
 mod sinkhorn_lagged;
 
@@ -184,6 +185,7 @@ pub struct Sm120 {
     row_copies: Vec<crate::row::copy::Entry>,
     row_rmsnorms: Vec<crate::row::RowInstantiation>,
     block_quantizers: Vec<crate::row::block_quantize::Entry>,
+    silu_mul_quantizers: Vec<crate::row::silu_mul_quantize::Entry>,
 }
 
 impl Sm120 {
@@ -220,6 +222,14 @@ impl Sm120 {
 
     pub fn with_row_bias_route(mut self, route: crate::moe::chained::row_bias::Route) -> Self {
         self.chained_quantized.routes.push(route);
+        self
+    }
+
+    /// Register a compiled clamped SwiGLU with ceil E4M3/32 quantization
+    /// (`row::silu_mul_quantize`). The backend matches its width, clamp and
+    /// amax floor at preparation.
+    pub fn with_silu_mul_quantize(mut self, entry: crate::row::silu_mul_quantize::Entry) -> Self {
+        self.silu_mul_quantizers.push(entry);
         self
     }
 
@@ -902,6 +912,15 @@ impl Backend for Sm120 {
     ) -> Result<Prepared<kernel_core::precision::quantizer::BlockQuantizeBuffers<View>>, Refused>
     {
         block_quantize::prepare(&self.block_quantizers, op, need)
+    }
+
+    fn silu_mul_quantize(
+        &self,
+        op: &kernel_core::gated_mlp::quantized::SiluMulQuantizeQuery,
+        need: Need,
+    ) -> Result<Prepared<kernel_core::gated_mlp::quantized::SiluMulQuantizeBuffers<View>>, Refused>
+    {
+        silu_mul_quantize::prepare(&self.silu_mul_quantizers, op, need)
     }
 
     // Rows.

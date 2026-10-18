@@ -12,6 +12,7 @@ pub mod precision;
 pub mod rmsnorm;
 pub mod rmsnorm_tree;
 pub mod rounding;
+pub mod silu_mul_quantize;
 
 use crate::invariance::Invariance;
 use crate::{Catalogs, Profile};

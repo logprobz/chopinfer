@@ -58,5 +58,38 @@ class Workloads(unittest.TestCase):
                              json.loads((again / "manifest.json").read_text()))
 
 
+    def test_chat(self):
+        import reference_workloads as workloads
+        from tools.refrun import workload
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "chat"
+            workloads.build_chat(CHECKPOINT, output)
+            model, chat = workload.load(output / "chat.json")
+            self.assertEqual(model, "deepseek41")
+            self.assertEqual([s.name for s in chat], [*workloads.CHATS, *workloads.CHATS_EXTENDED])
+            bos = workloads.encode(workloads.tokenizer(CHECKPOINT), workloads.BOS)
+            for sequence in chat:
+                self.assertEqual(list(sequence.token_ids[:len(bos)]), bos, sequence.name)
+                self.assertEqual(sequence.score_from, 1)
+                self.assertLessEqual(len(sequence.token_ids), workloads.F64_TOKENS)
+
+
+class ExtendedChats(unittest.TestCase):
+    def test_specs_take_the_encoding_form(self):
+        import reference_workloads as workloads
+        retry = workloads.encode_spec(workloads.CHATS_EXTENDED["chat_tool_retry"])
+        self.assertEqual(retry["thinking_mode"], "thinking")
+        self.assertEqual(retry["reasoning_effort"], "low")
+        self.assertEqual(retry["messages"][0], {"role": "system", "content": "You can call tools.",
+                                                "tools": [workloads.CALENDAR]})
+        plan = workloads.encode_spec(workloads.CHATS_EXTENDED["chat_multi_turn_plan"])
+        self.assertEqual(plan["thinking_mode"], "chat")
+        self.assertNotIn("reasoning_effort", plan)
+        self.assertFalse(any("reasoning_content" in m for m in plan["messages"]))
+        support = workloads.encode_spec(workloads.CHATS_EXTENDED["chat_system_format"])
+        self.assertTrue(support["messages"][0]["content"].startswith("You are a support assistant"))
+        self.assertNotIn("tools", support["messages"][0])
+
+
 if __name__ == "__main__":
     unittest.main()

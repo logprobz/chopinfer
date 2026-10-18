@@ -5,6 +5,7 @@ long-context texts and image probes.
         --output DIR [--checkpoint CK] [--evals DIR] [--long-tokens 131072]
     CUDA_VISIBLE_DEVICES= $CHOPINFER_REFRUN_PYTHON -B models/deepseek41/reference_workloads.py \\
         --answers RUN/f32.json --output DIR [--lock LOCK]
+    CUDA_VISIBLE_DEVICES= $CHOPINFER_REFRUN_PYTHON -B models/deepseek41/reference_workloads.py --chat --output DIR
 
 Runs on CPU in the runner environment: the checkpoint's tokenizer.json
 (through `tokenizers`, which adds no special tokens for this tokenizer) and
@@ -37,6 +38,9 @@ model. Writes, in DIR (refused if it exists):
 - `manifest.json`: the digests of every input (tokenizer, encoding.py,
   image processor and config, wikitext, each probe PNG and its patches) and
   each sequence's length and token-ID SHA256.
+- `chat.json` (`--chat` alone, with its own manifest): the chat
+  reference's texts, CHATS and CHATS_EXTENDED rendered by `encode_messages`
+  and scored from their second token, the set the `chat` check gates.
 
 With `--answers RUN/f32.json`, DIR already holds those files and gains
 `probes.json`: the probes forcing the F32 run's greedy answers (checked to
@@ -121,6 +125,246 @@ CHATS = {
 }
 
 
+def tool_call(name, arguments):
+    return {"type": "function", "function": {"name": name, "arguments": arguments}}
+
+
+FORECAST = {"type": "function", "function": {
+    "name": "get_weather", "description": "Get the weather forecast for a city.",
+    "parameters": {"type": "object", "properties": {
+        "city": {"type": "string", "description": "City name"},
+        "days": {"type": "integer", "description": "Number of forecast days, 1 to 7"},
+        "metric": {"type": "boolean", "description": "Celsius when true, Fahrenheit when false"}},
+        "required": ["city"]}}}
+SEARCH = {"type": "function", "function": {
+    "name": "search_papers", "description": "Search a library catalog of research papers.",
+    "parameters": {"type": "object", "properties": {
+        "query": {"type": "string"},
+        "filters": {"type": "object", "properties": {
+            "year_from": {"type": "integer"}, "venues": {"type": "array", "items": {"type": "string"}}}},
+        "limit": {"type": "integer"}},
+        "required": ["query"]}}}
+CALENDAR = {"type": "function", "function": {
+    "name": "create_event", "description": "Create a calendar event.",
+    "parameters": {"type": "object", "properties": {
+        "title": {"type": "string"}, "start": {"type": "string", "description": "ISO 8601 date and time"},
+        "duration_minutes": {"type": "integer"}, "attendees": {"type": "array", "items": {"type": "string"}}},
+        "required": ["title", "start"]}}}
+
+
+# The extended chat set, the same conversations as GLM's (models/glm5next/
+# reference_workloads.py) in encode_messages' form: tools on the system
+# message (one is added where the conversation has none), thinking mode
+# where an assistant turn reasons, chat mode otherwise. With CHATS they form
+# the `chat` reference (`--chat`); the teacher set keeps CHATS alone.
+CHATS_EXTENDED = {
+    "chat_tool_two_cities": {"messages": [
+        {"role": "system", "content": "You are a travel assistant. Use the tools for live data and keep answers short."},
+        {"role": "user", "content": "I fly from Lisbon to Oslo on Friday. What weather should I pack for in both "
+                                    "cities over the next three days?"},
+        {"role": "assistant", "reasoning_content":
+            "The user needs a three-day forecast for Lisbon and Oslo. The two calls are independent, so I can "
+            "make both at once.",
+         "content": "", "tool_calls": [
+             tool_call("get_weather", {"city": "Lisbon", "days": 3, "metric": True}),
+             tool_call("get_weather", {"city": "Oslo", "days": 3, "metric": True})]},
+        {"role": "tool", "content": "{\"city\": \"Lisbon\", \"forecast\": [{\"day\": \"Fri\", \"high\": 24, \"low\": 16, "
+                                    "\"sky\": \"sunny\"}, {\"day\": \"Sat\", \"high\": 23, \"low\": 15, \"sky\": \"sunny\"}, "
+                                    "{\"day\": \"Sun\", \"high\": 21, \"low\": 15, \"sky\": \"cloudy\"}]}"},
+        {"role": "tool", "content": "{\"city\": \"Oslo\", \"forecast\": [{\"day\": \"Fri\", \"high\": 9, \"low\": 2, "
+                                    "\"sky\": \"rain\"}, {\"day\": \"Sat\", \"high\": 7, \"low\": 1, \"sky\": \"rain\"}, "
+                                    "{\"day\": \"Sun\", \"high\": 8, \"low\": 0, \"sky\": \"cloudy\"}]}"},
+        {"role": "assistant", "reasoning_content":
+            "Lisbon is warm and dry, 21 to 24 by day. Oslo is cold and wet, highs 7 to 9 and lows near freezing.",
+         "content": "Lisbon will be warm and mostly sunny (highs of 21 to 24 °C), so light clothes are enough there. "
+                    "Oslo will be cold and rainy, with highs of 7 to 9 °C and nights near freezing: pack a warm "
+                    "layer, a waterproof jacket and shoes that can take the rain."}],
+        "tools": [FORECAST]},
+    "chat_tool_nested_args": {"messages": [
+        {"role": "user", "content": "Find me three recent papers on speculative decoding for large language models, "
+                                    "from 2023 or later, published at NeurIPS or ICML."},
+        {"role": "assistant", "reasoning_content":
+            "I should search the catalog with a year filter and the two venues, limited to three results.",
+         "content": "", "tool_calls": [tool_call("search_papers", {
+             "query": "speculative decoding large language models",
+             "filters": {"year_from": 2023, "venues": ["NeurIPS", "ICML"]}, "limit": 3})]},
+        {"role": "tool", "content": "[{\"title\": \"Fast Inference from Transformers via Speculative Decoding\", "
+                                    "\"venue\": \"ICML\", \"year\": 2023}, {\"title\": \"Medusa: Simple LLM Inference "
+                                    "Acceleration Framework with Multiple Decoding Heads\", \"venue\": \"ICML\", "
+                                    "\"year\": 2024}, {\"title\": \"EAGLE: Speculative Sampling Requires Rethinking "
+                                    "Feature Uncertainty\", \"venue\": \"ICML\", \"year\": 2024}]"},
+        {"role": "assistant", "reasoning_content":
+            "The search returned three ICML papers that match. I will list them with one line each on the idea.",
+         "content": "Here are three that match:\n\n1. **Fast Inference from Transformers via Speculative Decoding** "
+                    "(ICML 2023): a small draft model proposes tokens and the large model verifies them in one pass, "
+                    "with output identical to sampling from the large model.\n2. **Medusa** (ICML 2024): extra "
+                    "decoding heads on the base model propose several future tokens, verified with tree attention.\n"
+                    "3. **EAGLE** (ICML 2024): drafting at the feature level, one layer above the output, which "
+                    "raises the acceptance rate.\n\nNone of the results were from NeurIPS; I can widen the search "
+                    "if you want more."}],
+        "tools": [SEARCH]},
+    "chat_tool_retry": {"messages": [
+        {"role": "user", "content": "Put a 45 minute design review with Ana and Wei on my calendar for next Tuesday at 3pm."},
+        {"role": "assistant", "reasoning_content":
+            "Next Tuesday is 2026-03-17. 3pm is 15:00. I will create the event with both attendees.",
+         "content": "", "tool_calls": [tool_call("create_event", {
+             "title": "Design review", "start": "2026-03-17 15:00", "duration_minutes": 45,
+             "attendees": ["Ana", "Wei"]})]},
+        {"role": "tool", "content": "{\"error\": \"invalid start: expected ISO 8601, for example 2026-03-17T15:00:00\"}"},
+        {"role": "assistant", "reasoning_content":
+            "The start time must use the ISO 8601 form with a T separator and seconds. I will retry with that.",
+         "content": "", "tool_calls": [tool_call("create_event", {
+             "title": "Design review", "start": "2026-03-17T15:00:00", "duration_minutes": 45,
+             "attendees": ["Ana", "Wei"]})]},
+        {"role": "tool", "content": "{\"id\": \"evt_8812\", \"status\": \"created\"}"},
+        {"role": "assistant", "reasoning_content": "The event was created.",
+         "content": "Done: \"Design review\" is on your calendar for Tuesday, March 17 at 15:00 for 45 minutes, "
+                    "with Ana and Wei invited."}],
+        "tools": [CALENDAR], "kwargs": {"reasoning_effort": "low"}},
+    "chat_code_fix": {"messages": [
+        {"role": "user", "content": "This function should return the median of a list, but it gives wrong answers "
+                                    "for some inputs. What is wrong?\n\n```python\ndef median(values):\n"
+                                    "    values.sort()\n    middle = len(values) / 2\n    if len(values) % 2:\n"
+                                    "        return values[middle]\n    return (values[middle] + values[middle + 1]) / 2\n```"},
+        {"role": "assistant", "reasoning_content":
+            "Three problems. First, len(values) / 2 is a float in Python 3, so indexing fails with a TypeError. "
+            "Second, for an even length n the two middle elements are at n // 2 - 1 and n // 2, not n // 2 and "
+            "n // 2 + 1; for [1, 2, 3, 4] the code would average 3 and 4 instead of 2 and 3. Third, sort() "
+            "changes the caller's list. Use sorted() and integer division.",
+         "content": "There are three bugs:\n\n1. `len(values) / 2` is a float in Python 3, so `values[middle]` "
+                    "raises a `TypeError`. Use `//`.\n2. For an even length the two middle elements are at "
+                    "`n // 2 - 1` and `n // 2`. The code averages the element after the middle instead, so "
+                    "`[1, 2, 3, 4]` would give 3.5 rather than 2.5.\n3. `values.sort()` reorders the caller's "
+                    "list as a side effect.\n\nA corrected version:\n\n```python\ndef median(values):\n"
+                    "    ordered = sorted(values)\n    n = len(ordered)\n    middle = n // 2\n    if n % 2:\n"
+                    "        return ordered[middle]\n    return (ordered[middle - 1] + ordered[middle]) / 2\n```\n\n"
+                    "It still raises an `IndexError` on an empty list, which is a reasonable signal that the "
+                    "median is undefined there."}],
+        "kwargs": {"reasoning_effort": "high"}},
+    "chat_math_reasoning": {"messages": [
+        {"role": "user", "content": "A bakery sells muffins at $3 each or a box of 6 for $15. Priya needs 20 muffins "
+                                    "for a party. What is the least she can pay?"},
+        {"role": "assistant", "reasoning_content":
+            "Boxes cost 15 / 6 = 2.50 per muffin, cheaper than 3. So buy as many boxes as make sense. "
+            "Three boxes give 18 muffins for 45, plus 2 single muffins for 6: 51 total. Four boxes give 24 muffins "
+            "for 60, which is more. Two boxes give 12 for 30 plus 8 singles for 24: 54. So three boxes and two "
+            "singles is cheapest, at $51. Check: 18 + 2 = 20 muffins.",
+         "content": "Boxes work out to $2.50 per muffin, cheaper than buying singly, so she should buy as many "
+                    "full boxes as she can use:\n\n- 3 boxes = 18 muffins for $45\n- 2 single muffins for $6\n\n"
+                    "That is 20 muffins for **$51**. A fourth box would cost $60, and only two boxes plus eight "
+                    "singles would cost $54."}],
+        "kwargs": {"reasoning_effort": "high"}},
+    "chat_multi_turn_plan": {"messages": [
+        {"role": "user", "content": "I want to start running. I can do about 10 minutes now without stopping. "
+                                    "Can you suggest a plan to get to 30 minutes?"},
+        {"role": "assistant", "reasoning_content": "",
+         "content": "A gradual plan over about six weeks works well. Run three days a week with a rest day between "
+                    "runs.\n\n- Weeks 1-2: 12 to 15 minutes of easy running, walking briefly if you need to.\n"
+                    "- Weeks 3-4: 18 to 22 minutes, keeping the pace conversational.\n- Weeks 5-6: 25 to 30 "
+                    "minutes.\n\nIncrease the time by no more than about 10% per week, and repeat a week if it "
+                    "felt hard."},
+        {"role": "user", "content": "My knees ache a bit after running. Should I stop?"},
+        {"role": "assistant", "reasoning_content": "",
+         "content": "Mild aching that fades within a day is common when you start. Sharp pain, swelling, or pain "
+                    "that gets worse while you run is a reason to stop and see a doctor or physiotherapist.\n\n"
+                    "To reduce the strain: run on softer surfaces such as trails or a track, check that your shoes "
+                    "are not worn out, shorten your stride slightly, and add two short strength sessions a week "
+                    "for your hips and thighs."},
+        {"role": "user", "content": "Thanks. How do I know if I'm going too fast?"},
+        {"role": "assistant", "reasoning_content": "",
+         "content": "Use the talk test: at an easy pace you can speak in full sentences. If you can only get out a "
+                    "few words at a time, slow down. Most of your running should feel easy enough that you could "
+                    "keep going a little longer when you finish."}]},
+    "chat_system_format": {"messages": [
+        {"role": "system", "content": "You are a support assistant for a home internet provider. Rules: answer in "
+                                      "at most four numbered steps; never ask for the customer's password; if the "
+                                      "problem is an outage, give the status page address status.example.net; end "
+                                      "every answer with the line \"Reply 'agent' to reach a person.\""},
+        {"role": "user", "content": "My wifi works on my phone but my laptop says connected, no internet. "
+                                    "I already restarted the laptop."},
+        {"role": "assistant", "reasoning_content":
+            "The phone works, so the line is up and this is not an outage. The laptop has a link but no internet, "
+            "which points to its network settings: renew the address, forget and rejoin the network, check DNS, "
+            "or disable a VPN.",
+         "content": "1. Turn wifi off and on again on the laptop, then forget the network and rejoin it.\n2. If it "
+                    "still fails, open a terminal and renew the address (on Windows, `ipconfig /release` and then "
+                    "`ipconfig /renew`).\n3. Turn off any VPN or proxy and set DNS back to automatic.\n4. Try a "
+                    "website by its address, for example 1.1.1.1; if that loads, the problem is DNS.\n\n"
+                    "Reply 'agent' to reach a person."}],
+        "kwargs": {"reasoning_effort": "low"}},
+    "chat_zh_explain": {"messages": [
+        {"role": "system", "content": "你是一位耐心的中学物理老师。"},
+        {"role": "user", "content": "为什么夏天柏油路面上方的空气看起来会抖动？"},
+        {"role": "assistant", "reasoning_content":
+            "这是光的折射。路面被晒热，贴近路面的空气温度高、密度小，折射率比上方的冷空气低。热空气不断上升并和冷空气混合，"
+            "折射率分布一直在变化，所以穿过这层空气的光线路径不断改变，看到的景物就在抖动。",
+         "content": "这是光的折射造成的。\n\n夏天路面被太阳晒得很热，贴近路面的空气也被加热，密度变小，折射率比上方较冷的"
+                    "空气低。光从冷空气进入热空气时会发生偏折。\n\n热空气还在不断上升，和冷空气混在一起，所以各处的折射率"
+                    "时刻在变化，光线的路径也跟着不停改变。我们透过这层空气看远处的景物，它的位置就会轻微晃动，看起来像"
+                    "在抖动。"},
+        {"role": "user", "content": "那远处路面上像水一样的反光也是同一个原因吗？"},
+        {"role": "assistant", "reasoning_content":
+            "是的，这是下蜃景。来自天空的光斜着射向路面，经过越来越热的空气层时不断向上弯曲，最后进入眼睛，"
+            "看起来像是从路面反射来的，所以像一滩水。",
+         "content": "是同一个原理，叫作下蜃景。天空的光斜着射向路面时，穿过越来越热的空气层，会一点点向上弯曲，"
+                    "最后进入你的眼睛。大脑以为光是沿直线传来的，就把天空的像看成在路面上，好像那里有一滩反光的水。"
+                    "走近之后角度变了，“水”也就不见了。"}]},
+    "chat_json_extract": {"messages": [
+        {"role": "user", "content": "Extract the orders from this message as a JSON list with fields customer, item, "
+                                    "quantity and deliver_by (YYYY-MM-DD, or null if not given).\n\n\"Hi, this is "
+                                    "Marta from Café Lumen. Please send 12 bags of the Ethiopian beans and 4 bottles of "
+                                    "oat milk by March 3rd, 2026. Also, my colleague Jonas at the Riverside shop needs "
+                                    "two grinders, no rush on those.\""},
+        {"role": "assistant", "reasoning_content":
+            "Two customers. Marta (Café Lumen): 12 bags Ethiopian beans and 4 bottles oat milk, both by 2026-03-03. "
+            "Jonas (Riverside shop): 2 grinders, no date, so null. Quantities as integers.",
+         "content": "```json\n[\n  {\"customer\": \"Marta (Café Lumen)\", \"item\": \"Ethiopian beans\", "
+                    "\"quantity\": 12, \"deliver_by\": \"2026-03-03\"},\n  {\"customer\": \"Marta (Café Lumen)\", "
+                    "\"item\": \"oat milk\", \"quantity\": 4, \"deliver_by\": \"2026-03-03\"},\n  {\"customer\": "
+                    "\"Jonas (Riverside shop)\", \"item\": \"grinder\", \"quantity\": 2, \"deliver_by\": null}\n]\n```"}]},
+    "chat_summary": {"messages": [
+        {"role": "user", "content": "Summarize this in two sentences for a newsletter:\n\nThe city council voted on "
+                                    "Tuesday to convert the old freight yard north of the river into a public park. The "
+                                    "site, about 14 hectares, has been empty since the rail company moved its operations "
+                                    "in 2019. Under the plan, the first section, with playgrounds, a community garden and "
+                                    "a cycling path along the water, would open in the spring of 2028. Two historic "
+                                    "warehouses will be kept and turned into a market hall and studio space. The project "
+                                    "is expected to cost 38 million euros, of which a regional fund covers about a third. "
+                                    "Some residents asked for more housing on the site instead, and the council agreed to "
+                                    "study a small residential strip along the eastern edge."},
+        {"role": "assistant", "reasoning_content":
+            "Key points: council approved turning the 14-hectare freight yard into a park; first section opens spring "
+            "2028 with playgrounds, garden, cycle path; warehouses become market hall and studios; 38 million euros, a "
+            "third from a regional fund; housing strip to be studied.",
+         "content": "The city council has approved turning the 14-hectare former freight yard north of the river "
+                    "into a public park, with playgrounds, a community garden and a riverside cycling path opening in "
+                    "spring 2028 and two historic warehouses becoming a market hall and studios. The project will "
+                    "cost 38 million euros, about a third of it from a regional fund, and the council will also "
+                    "study a small strip of housing along the site's eastern edge."}],
+        "kwargs": {"reasoning_effort": "low"}},
+}
+
+
+def encode_spec(spec):
+    """A CHATS_EXTENDED spec ({"messages", "tools", "kwargs"}) as a CHATS one:
+    thinking mode when an assistant turn reasons, else chat mode without the
+    empty reasoning; the tools on the system message (a short one is added
+    where the conversation has none); the reasoning effort from kwargs."""
+    messages = [dict(m) for m in spec["messages"]]
+    thinking = any(m.get("reasoning_content") for m in messages)
+    if not thinking:
+        for m in messages:
+            m.pop("reasoning_content", None)
+    if spec.get("tools"):
+        if messages[0]["role"] != "system":
+            messages.insert(0, {"role": "system", "content": "You can call tools."})
+        messages[0]["tools"] = spec["tools"]
+    result = {"thinking_mode": "thinking" if thinking else "chat", "messages": messages}
+    if "reasoning_effort" in spec.get("kwargs", {}):
+        result["reasoning_effort"] = spec["kwargs"]["reasoning_effort"]
+    return result
+
+
 def sha256(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -161,6 +405,12 @@ def chat_rows(renderer, chats):
 def scored(tok, rows):
     return [{"name": row["name"], "category": row["category"], "token_ids": encode(tok, row["text"]),
              "score_from": 1} for row in rows]
+
+
+def chat_texts(tok, renderer):
+    """The chat reference's texts: CHATS, then CHATS_EXTENDED, each scored from its second token."""
+    extended = {name: encode_spec(spec) for name, spec in CHATS_EXTENDED.items()}
+    return scored(tok, chat_rows(renderer, CHATS | extended))
 
 
 def short_texts(tok, renderer):
@@ -341,6 +591,29 @@ def build(checkpoint, evals, output, long_tokens):
     return manifest
 
 
+def build_chat(checkpoint, output):
+    """The chat reference's workload in `output` (refused if it exists):
+    `chat.json` and `manifest.json` with the tokenizer and encoding.py
+    digests and each sequence's length and token-ID SHA256."""
+    checkpoint = Path(checkpoint)
+    sequences = chat_texts(tokenizer(checkpoint), encoding(checkpoint))
+    for sequence in sequences:
+        if len(sequence["token_ids"]) > F64_TOKENS:
+            raise ValueError(f"{sequence['name']}: {len(sequence['token_ids'])} tokens exceed the f64 limit")
+    output.mkdir(parents=True)
+    write(output / "chat.json", sequences)
+    manifest = {
+        "schema": "chopinfer.deepseek41.reference-workloads.v1",
+        "generator": "models/deepseek41/reference_workloads.py",
+        "tokenizer_json_sha256": sha256((checkpoint / "tokenizer.json").read_bytes()),
+        "encoding_py_sha256": ENCODING_SHA256,
+        "sequences": {"chat": [{"name": s["name"], "tokens": len(s["token_ids"]), "score_from": s["score_from"],
+                                "token_ids_sha256": ids_sha256(s["token_ids"])} for s in sequences]}}
+    with (output / "manifest.json").open("x") as stream:
+        stream.write(json.dumps(manifest, ensure_ascii=False, indent=1) + "\n")
+    return manifest
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--checkpoint", default=os.environ.get("CHOPINFER_DEEPSEEK_CHECKPOINT"),
@@ -352,7 +625,15 @@ def main():
                                                      "writes probes.json into the existing --output")
     parser.add_argument("--lock", type=Path, default=LOCK, help="the checkpoint lock the run read")
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--chat", action="store_true",
+                        help="write only the chat reference's workload: chat.json and its manifest")
     args = parser.parse_args()
+    if args.chat:
+        if not args.checkpoint:
+            parser.error("set CHOPINFER_DEEPSEEK_CHECKPOINT or --checkpoint")
+        manifest = build_chat(args.checkpoint, args.output)
+        print(json.dumps([(s["name"], s["tokens"]) for s in manifest["sequences"]["chat"]]))
+        return
     if args.answers:
         write(args.output / "probes.json", answered(args.output, args.answers, args.lock))
         return

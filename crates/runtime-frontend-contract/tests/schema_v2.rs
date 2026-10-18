@@ -3,8 +3,9 @@
 //! blind to the format object.
 
 use runtime_frontend_contract::{
-    FRONTEND_FORMAT_MAX_BYTES, FrontendComponentErrorV1, FrontendDescriptorV1, FrontendNameBytesV1,
-    FrontendReasoningFieldV1, FrontendToolArgumentsV1,
+    FRONTEND_FORMAT_MAX_BYTES, FrontendComponentErrorV1, FrontendConstraintScopeV1,
+    FrontendDescriptorV1, FrontendNameBytesV1, FrontendReasoningFieldV1, FrontendThinkingSwitchV1,
+    FrontendToolArgumentsV1,
 };
 use serde_json::{Value, json};
 
@@ -147,6 +148,54 @@ fn defaults_hold_where_the_schema_names_them() {
     // An empty end-marker list leaves constraints ungated.
     value["reasoning"]["end_markers"] = json!([]);
     assert!(read(&value).unwrap().reasoning.end_markers.is_empty());
+}
+
+/// The request-mapping policies are optional, and a declaration without
+/// them writes back without them.
+#[test]
+fn request_mapping_policies_default_to_the_template_and_every_constraint() {
+    let descriptor = read(&declaration()).unwrap();
+    assert_eq!(
+        descriptor.reasoning.switch,
+        FrontendThinkingSwitchV1::TemplateKeywords
+    );
+    assert_eq!(
+        descriptor.response.constraint_scope,
+        FrontendConstraintScopeV1::Requested
+    );
+    let written = serde_json::to_value(&descriptor).unwrap();
+    assert!(written["reasoning"].get("switch").is_none());
+    assert!(written["response"].get("constraint_scope").is_none());
+    let mut value = declaration();
+    value["reasoning"]["switch"] = json!("thinking-object");
+    value["response"]["constraint_scope"] = json!("strict-only");
+    let descriptor = read(&value).unwrap();
+    assert_eq!(
+        descriptor.reasoning.switch,
+        FrontendThinkingSwitchV1::ThinkingObject
+    );
+    assert_eq!(
+        descriptor.response.constraint_scope,
+        FrontendConstraintScopeV1::StrictOnly
+    );
+    let written = serde_json::to_value(&descriptor).unwrap();
+    assert_eq!(read(&written).unwrap(), descriptor);
+    // The object's switch reaches the format through a thinking keyword.
+    refused(
+        |value| {
+            value["reasoning"]["switch"] = json!("thinking-object");
+            value["reasoning"]["thinking_keywords"] = json!([]);
+        },
+        invalid,
+    );
+    refused(
+        |value| value["reasoning"]["switch"] = json!("kwargs"),
+        syntax,
+    );
+    refused(
+        |value| value["response"]["constraint_scope"] = json!("strict"),
+        syntax,
+    );
 }
 
 #[test]

@@ -79,7 +79,12 @@ outside the supported subset) return 400 naming the field. JSON output allows
 at most 257 consecutive whitespace characters between tokens; set
 `structured_outputs.disable_any_whitespace` to `false` for vLLM's unbounded
 whitespace, or `true` for compact separators. In chat, the constraint starts
-after an open reasoning section.
+after an open reasoning section. A model whose declaration sets
+`response.constraint_scope` to `strict-only` constrains chat output only for
+a `json_schema` response format with `strict: true`, an explicit
+`structured_outputs` constraint, and a `required` or named `tool_choice`; it
+still renders a `json_object` or non-strict schema response format, and a
+strict tool under `auto`, and leaves their decoding unconstrained.
 
 The JSON Schema subset refuses unsupported assertions, and assertions beside
 `$ref` or combinators, instead of ignoring them. Provably vacuous assertions
@@ -124,7 +129,8 @@ without schema text; it never changes limits or refusals.
 with a strict tool constrains output to the model's call format. A model
 whose declaration has a `tools.choice` policy may also render no tools for
 `none`, only the named tool for a named choice, end a forced choice's prompt
-with the opening of its calls, and refuse a forced choice in thinking mode. Tool names
+with the opening of its calls, refuse a forced choice in thinking mode, and
+serve a forced choice without tools as `auto` instead of refusing it. Tool names
 can stream before a call closes; argument deltas wait for the close, since a
 later parameter can replace an earlier one. A generation that ends inside a
 call (length, stop token or client stop) finishes it with the same complete
@@ -140,6 +146,15 @@ undeclared function are raw text and still end at the first marker. `include_rea
 usage. Chat accepts `add_generation_prompt`, `continue_final_message` and
 `chat_template_kwargs`; `add_special_tokens` is accepted but does not change
 prompt IDs.
+
+**Thinking object.** A model whose declaration sets `reasoning.switch` to
+`thinking-object` switches thinking by the top-level `thinking` object:
+`{"type": "enabled"}` (or `adaptive`) or `{"type": "disabled"}`, with an
+optional non-negative integer `budget_tokens` that is checked and not read.
+Without it, `reasoning_effort` `none` disables thinking and any other effort
+enables it; an explicit object overrides the effort. The thinking keywords
+and the effort in `chat_template_kwargs` are ignored for such a model. Other
+models ignore a top-level `thinking` field.
 
 **Template keywords and roles.** The server reads the `chat_template_kwargs`
 keys it knows (`enable_thinking`, `thinking`, `reasoning_effort`,

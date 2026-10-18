@@ -634,6 +634,30 @@ frontend_with_alias_delegation! {
     fn tool_references(&self) -> bool {
         false
     }
+    /// Whether thinking switches by the top-level `thinking` object rather
+    /// than the template keywords. The transport then reads that object,
+    /// whose `type` is `enabled`, its alias `adaptive`, or `disabled`,
+    /// ignores the thinking keywords and the effort in
+    /// `chat_template_kwargs`, and passes the object's switch as both
+    /// thinking keywords. An explicit switch overrides the effort, so an
+    /// effort of `none` under an enabled object reaches the frontend as no
+    /// effort.
+    fn reads_thinking_object(&self) -> bool {
+        false
+    }
+    /// Whether decoding is constrained only for a JSON schema response
+    /// format marked `strict`, an explicit `structured_outputs` constraint
+    /// and a required or named tool choice. A `json_object` response
+    /// format, a schema without `strict: true` and a strict tool under
+    /// `auto` then leave decoding unconstrained.
+    fn constrains_strict_only(&self) -> bool {
+        false
+    }
+    /// Whether `required` or a named tool choice serves as `auto` when the
+    /// request offers no tools, rather than being refused.
+    fn forced_choice_without_tools_is_auto(&self) -> bool {
+        false
+    }
     /// The largest prompt-plus-completion token count this model serves.
     fn maximum_total_tokens(&self) -> usize;
 

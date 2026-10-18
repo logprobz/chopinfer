@@ -71,6 +71,12 @@ struct PermissiveFrontendV1 {
     /// The media kinds served, when not every kind media inputs declare.
     served_media: Mutex<Option<Vec<runtime_server::FrontendMediaPartKindV1>>>,
     local_media_root: Option<std::path::PathBuf>,
+    /// While set, every tool choice with tools constrains to one grammar.
+    constrains_tools: AtomicBool,
+    /// While set, the frontend declares a vendor API's request mapping: the
+    /// thinking object, strict-only constraints and forced choices without
+    /// tools served as auto.
+    vendor_mapping: AtomicBool,
 }
 
 impl PermissiveFrontendV1 {
@@ -85,6 +91,8 @@ impl PermissiveFrontendV1 {
             remote_media_enabled: AtomicBool::new(false),
             served_media: Mutex::new(None),
             local_media_root: Some(std::env::temp_dir().join("request-surface-local-media")),
+            constrains_tools: AtomicBool::new(false),
+            vendor_mapping: AtomicBool::new(false),
         })
     }
 
@@ -127,6 +135,36 @@ impl ServerFrontendV1 for PermissiveFrontendV1 {
 
     fn reasoning_field(&self) -> &'static str {
         self.reasoning_field
+    }
+
+    fn reads_thinking_object(&self) -> bool {
+        self.vendor_mapping.load(Ordering::Relaxed)
+    }
+
+    fn constrains_strict_only(&self) -> bool {
+        self.vendor_mapping.load(Ordering::Relaxed)
+    }
+
+    fn forced_choice_without_tools_is_auto(&self) -> bool {
+        self.vendor_mapping.load(Ordering::Relaxed)
+    }
+
+    fn tool_constraint(
+        &self,
+        tools: &[runtime_server::FrontendToolV1],
+        choice: &FrontendToolChoiceV1,
+    ) -> Result<Option<runtime_grammar::Grammar>, FrontendErrorV1> {
+        if !self.constrains_tools.load(Ordering::Relaxed) {
+            return match choice {
+                FrontendToolChoiceV1::Auto | FrontendToolChoiceV1::None => Ok(None),
+                _ => Err(FrontendErrorV1::new(
+                    "forced tool choices are not supported by this model's template",
+                    Some("tool_choice"),
+                )),
+            };
+        }
+        assert!(!tools.is_empty());
+        Ok(Some(tool_grammar()))
     }
 
     fn models(&self) -> &[FrontendModelV1] {
@@ -2284,6 +2322,203 @@ async fn unsupported_structured_outputs_are_refused_with_their_field() {
                 error["message"].as_str().unwrap().contains(message),
                 "{body}: {error}"
             );
+        }
+    }
+}
+
+/// What the fake frontend's tool choices constrain to, when it constrains.
+fn tool_grammar() -> runtime_grammar::Grammar {
+    runtime_grammar::choice_grammar(&["<call>".to_owned()]).unwrap()
+}
+
+/// A declared vendor mapping constrains only strict requests, serves a
+/// forced choice without tools as auto, and switches thinking by the
+/// top-level object alone; without it, the same requests are served as
+/// before.
+#[tokio::test]
+async fn a_declared_vendor_mapping_shapes_constraints_choices_and_thinking() {
+    let schema = serde_json::json!({"type": "object", "properties": {"a": {"type": "integer"}}});
+    let schema_grammar = runtime_grammar::json_schema_grammar(&schema, Default::default()).unwrap();
+    let object_grammar = runtime_grammar::json_object_grammar(Default::default());
+    let tools = r#""tools":[{"type":"function","function":{"name":"f","strict":true,"parameters":{"type":"object"}}}]"#;
+    let format = |strict: &str| {
+        format!(
+            r#""response_format":{{"type":"json_schema","json_schema":{{"name":"x"{strict},"schema":{schema}}}}}"#
+        )
+    };
+    // (request fields, constraint without the mapping, with it)
+    let cases = [
+        (
+            r#""response_format":{"type":"json_object"}"#.to_owned(),
+            Some(object_grammar.clone()),
+            None,
+        ),
+        (format(""), Some(schema_grammar.clone()), None),
+        (
+            format(r#","strict":false"#),
+            Some(schema_grammar.clone()),
+            None,
+        ),
+        (
+            format(r#","strict":true"#),
+            Some(schema_grammar.clone()),
+            Some(schema_grammar.clone()),
+        ),
+        (
+            format!(r#""structured_outputs":{{"json":{schema}}}"#),
+            Some(schema_grammar.clone()),
+            Some(schema_grammar.clone()),
+        ),
+        (
+            r#""structured_outputs":{"json_object":true}"#.to_owned(),
+            Some(object_grammar.clone()),
+            Some(object_grammar),
+        ),
+        (tools.to_owned(), Some(tool_grammar()), None),
+        (
+            format!(r#"{tools},"tool_choice":"auto",{}"#, format("")),
+            Some(tool_grammar()),
+            None,
+        ),
+        (
+            format!(r#"{tools},"tool_choice":"required""#),
+            Some(tool_grammar()),
+            Some(tool_grammar()),
+        ),
+        (
+            format!(r#"{tools},"tool_choice":{{"type":"function","function":{{"name":"f"}}}}"#),
+            Some(tool_grammar()),
+            Some(tool_grammar()),
+        ),
+    ];
+    for mapped in [false, true] {
+        let server = InProcessServerV1::full();
+        server
+            .frontend
+            .constrains_tools
+            .store(true, Ordering::Relaxed);
+        server
+            .frontend
+            .vendor_mapping
+            .store(mapped, Ordering::Relaxed);
+        for (extra, unmapped_constraint, mapped_constraint) in &cases {
+            let body = format!(
+                r#"{{"messages":[{{"role":"user","content":"hi"}}],"max_tokens":4,{extra}}}"#
+            );
+            let response = server.post("/v1/chat/completions", &body).await;
+            assert_eq!(response.status, 200, "{body}: {}", response.body);
+            let constraint = server
+                .backend
+                .prompts
+                .lock()
+                .unwrap()
+                .last()
+                .unwrap()
+                .constraint
+                .clone();
+            let expected = if mapped {
+                mapped_constraint
+            } else {
+                unmapped_constraint
+            };
+            assert_eq!(constraint.as_deref(), expected.as_ref(), "{mapped}: {body}");
+        }
+        // A forced choice without tools is auto, or refused as before.
+        for choice in [
+            r#""required""#,
+            r#"{"type":"function","function":{"name":"f"}}"#,
+        ] {
+            for tools in ["", r#","tools":[]"#] {
+                let body = format!(
+                    r#"{{"messages":[{{"role":"user","content":"hi"}}],"tool_choice":{choice}{tools}}}"#
+                );
+                let response = server.post("/v1/chat/completions", &body).await;
+                if mapped {
+                    assert_eq!(response.status, 200, "{body}: {}", response.body);
+                    let requests = server.frontend.requests.lock().unwrap();
+                    let request = requests.last().unwrap();
+                    assert_eq!(request.tool_choice, FrontendToolChoiceV1::Auto, "{body}");
+                    assert!(request.tools.is_empty());
+                    let prompts = server.backend.prompts.lock().unwrap();
+                    assert!(prompts.last().unwrap().constraint.is_none(), "{body}");
+                } else {
+                    assert_eq!(response.status, 400, "{body}: {}", response.body);
+                    assert_eq!(response.json()["error"]["param"], "tool_choice");
+                }
+            }
+        }
+        // The thinking object switches thinking, overriding the effort and
+        // the keywords, which a mapped frontend no longer reads.
+        let kwargs = r#""chat_template_kwargs":{"enable_thinking":true,"thinking":true,"reasoning_effort":"max","preserve_thinking":true}"#;
+        let thinking_cases = [
+            (
+                format!(r#""thinking":{{"type":"disabled","budget_tokens":8}},{kwargs}"#),
+                (Some(false), Some(false), None, None),
+                (Some(true), Some(true), Some("max"), None),
+            ),
+            (
+                r#""thinking":{"type":"adaptive"},"reasoning_effort":"none""#.to_owned(),
+                (Some(true), Some(true), None, None),
+                (None, None, None, Some("none")),
+            ),
+            (
+                r#""thinking":{"type":"enabled"},"reasoning_effort":"low""#.to_owned(),
+                (Some(true), Some(true), None, Some("low")),
+                (None, None, None, Some("low")),
+            ),
+            (
+                format!(r#""reasoning_effort":"none",{kwargs}"#),
+                (None, None, None, Some("none")),
+                (Some(true), Some(true), Some("max"), Some("none")),
+            ),
+            (
+                r#""thinking":null"#.to_owned(),
+                (None, None, None, None),
+                (None, None, None, None),
+            ),
+        ];
+        for (extra, mapped_switch, unmapped_switch) in &thinking_cases {
+            let body = format!(r#"{{"messages":[{{"role":"user","content":"hi"}}],{extra}}}"#);
+            let response = server.post("/v1/chat/completions", &body).await;
+            assert_eq!(response.status, 200, "{body}: {}", response.body);
+            let requests = server.frontend.requests.lock().unwrap();
+            let request = requests.last().unwrap();
+            let seen = (
+                request.enable_thinking,
+                request.thinking,
+                request.nested_reasoning_effort.as_deref(),
+                request.reasoning_effort.as_deref(),
+            );
+            assert_eq!(
+                &seen,
+                if mapped {
+                    mapped_switch
+                } else {
+                    unmapped_switch
+                },
+                "{mapped}: {body}"
+            );
+            if extra.contains("preserve_thinking") {
+                assert_eq!(request.preserve_thinking, Some(true));
+            }
+        }
+        for thinking in [
+            r#"{"type":"on"}"#,
+            r#"{"budget_tokens":8}"#,
+            r#"true"#,
+            r#"{"type":"enabled","budget_tokens":-1}"#,
+            r#"{"type":"enabled","budget_tokens":1.5}"#,
+        ] {
+            let body = format!(
+                r#"{{"messages":[{{"role":"user","content":"hi"}}],"thinking":{thinking}}}"#
+            );
+            let response = server.post("/v1/chat/completions", &body).await;
+            if mapped {
+                assert_eq!(response.status, 400, "{body}: {}", response.body);
+                assert_eq!(response.json()["error"]["param"], "thinking", "{body}");
+            } else {
+                assert_eq!(response.status, 200, "{body}: {}", response.body);
+            }
         }
     }
 }

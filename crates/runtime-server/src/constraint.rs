@@ -46,9 +46,20 @@ pub(crate) struct RequestedConstraint {
     /// Whether `structured_outputs` itself names `json`, `regex` or
     /// `choice`, which the reference refuses together with a named tool.
     pub(crate) excludes_named_tools: bool,
+    /// Whether the constraint is a `response_format` JSON schema marked
+    /// `strict: true`.
+    strict_schema: bool,
 }
 
 impl RequestedConstraint {
+    /// Whether a frontend that constrains only strict requests
+    /// ([`crate::ServerFrontendV1::constrains_strict_only`]) applies this
+    /// one: an explicit `structured_outputs` constraint, or a JSON schema
+    /// response format marked `strict: true`.
+    pub(crate) fn applies_when_strict(&self) -> bool {
+        self.source == STRUCTURED_OUTPUTS || self.strict_schema
+    }
+
     pub(crate) fn grammar(&self) -> Result<Arc<Grammar>, ApiError> {
         let grammar = match &self.kind {
             Kind::Json(schema) => json_schema_grammar(schema, self.options),
@@ -100,6 +111,7 @@ pub(crate) fn requested_constraint(
     let mut choice = None;
     let mut excludes_named_tools = false;
     let mut expects_constraint = false;
+    let mut strict_schema = false;
     if let Some(entries) = structured {
         if let Some((name, _)) = entries
             .iter()
@@ -253,13 +265,15 @@ pub(crate) fn requested_constraint(
                             RESPONSE_FORMAT,
                         ));
                     }
-                    if let Some(strict) = entry(format, "strict")
-                        && !matches!(strict, FrontendJsonV1::Bool(_))
-                    {
-                        return Err(invalid(
-                            "response_format.json_schema.strict must be a boolean",
-                            RESPONSE_FORMAT,
-                        ));
+                    match entry(format, "strict") {
+                        None | Some(FrontendJsonV1::Bool(false)) => {}
+                        Some(FrontendJsonV1::Bool(true)) => strict_schema = true,
+                        Some(_) => {
+                            return Err(invalid(
+                                "response_format.json_schema.strict must be a boolean",
+                                RESPONSE_FORMAT,
+                            ));
+                        }
                     }
                     kinds.retain(|(name, _)| *name != "json");
                     match entry(format, "schema") {
@@ -323,5 +337,6 @@ pub(crate) fn requested_constraint(
         source,
         options,
         excludes_named_tools,
+        strict_schema,
     }))
 }

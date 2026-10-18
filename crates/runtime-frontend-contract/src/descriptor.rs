@@ -147,6 +147,29 @@ pub enum FrontendEffortUseV1 {
     Ignored,
 }
 
+/// Which request controls switch thinking.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FrontendThinkingSwitchV1 {
+    /// The `chat_template_kwargs` keywords and the effort, as vLLM passes
+    /// them to a template.
+    #[default]
+    TemplateKeywords,
+    /// The top-level `thinking` object, whose `type` is `enabled` (or its
+    /// alias `adaptive`) or `disabled`, then the top-level effort: an
+    /// explicit object overrides the effort, an effort of `none` disables
+    /// thinking and any other enables it. The thinking keywords and the
+    /// effort in `chat_template_kwargs` are ignored.
+    ThinkingObject,
+}
+
+impl FrontendThinkingSwitchV1 {
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// What this model's reasoning controls mean.
 ///
 /// The controls reach the template as vLLM passes them: a top-level effort
@@ -175,6 +198,10 @@ pub struct FrontendReasoningPolicyV1 {
     pub thinking_keywords: Vec<String>,
     #[serde(default)]
     pub effort_use: FrontendEffortUseV1,
+    /// Which request controls switch thinking, which the transport reads
+    /// into the keywords above.
+    #[serde(default, skip_serializing_if = "FrontendThinkingSwitchV1::is_default")]
+    pub switch: FrontendThinkingSwitchV1,
     /// The texts that end a reasoning section, such as its close marker
     /// and a tool-call open that ends it implicitly. Each is a declared
     /// boundary token, so a constraint that waits for reasoning to end waits
@@ -273,6 +300,10 @@ pub struct FrontendToolChoicePolicyV1 {
     pub forced_prefill: String,
     /// Whether `required` and a named choice are refused in thinking mode.
     pub forced_refused_in_thinking: bool,
+    /// Whether `required` and a named choice serve as `auto` when the
+    /// request offers no tools, which the transport otherwise refuses.
+    #[serde(default)]
+    pub forced_without_tools_is_auto: bool,
 }
 
 /// The response field assistant reasoning is returned in, which history
@@ -300,6 +331,32 @@ impl FrontendReasoningFieldV1 {
 #[serde(deny_unknown_fields)]
 pub struct FrontendResponseV1 {
     pub reasoning_field: FrontendReasoningFieldV1,
+    /// Which requests constrain the response.
+    #[serde(default, skip_serializing_if = "FrontendConstraintScopeV1::is_default")]
+    pub constraint_scope: FrontendConstraintScopeV1,
+}
+
+/// Which requests the transport constrains decoding for.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FrontendConstraintScopeV1 {
+    /// Every structured output a request asks for, and a forced tool choice
+    /// or a strict tool, as vLLM serves them.
+    #[default]
+    Requested,
+    /// Only a JSON schema response format marked `strict`, an explicit
+    /// `structured_outputs` constraint, and a required or named tool
+    /// choice. A `json_object` response format, a schema without `strict:
+    /// true` and a strict tool under `auto` leave decoding unconstrained,
+    /// for a model whose vendor API renders them and constrains nothing.
+    StrictOnly,
+}
+
+impl FrontendConstraintScopeV1 {
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// Every bound the renderer charges one request against.
@@ -1224,6 +1281,13 @@ impl FrontendDescriptorV1 {
                     "thinking keyword {keyword:?} is declared twice"
                 )));
             }
+        }
+        if reasoning.switch == FrontendThinkingSwitchV1::ThinkingObject
+            && reasoning.thinking_keywords.is_empty()
+        {
+            return Err(invalid(
+                "reasoning switch thinking-object needs a thinking keyword to carry it",
+            ));
         }
         if reasoning.end_markers.len() > MAX_MARKERS {
             return Err(invalid(format!(

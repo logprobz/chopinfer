@@ -21,7 +21,8 @@ use runtime_server::{
 use crate::checks::{integral_numbers_v1, parse_json_value_v1, validate_name_v1};
 use crate::decode::PromptModeV1;
 use crate::descriptor::{
-    FrontendComponentErrorV1, FrontendDescriptorV1, FrontendMediaKindV1, FrontendToolArgumentsV1,
+    FrontendComponentErrorV1, FrontendConstraintScopeV1, FrontendDescriptorV1, FrontendMediaKindV1,
+    FrontendThinkingSwitchV1, FrontendToolArgumentsV1,
 };
 use crate::format::{FormatRenderRequestV1, FormatRendererV1};
 use crate::native::{BundleParserSourceV1, NativeFormatV1};
@@ -357,6 +358,19 @@ impl ServerFrontendV1 for BundleFrontendV1 {
     }
     fn reasoning_content_fallback(&self) -> bool {
         self.opened.reasoning_content_fallback
+    }
+    fn reads_thinking_object(&self) -> bool {
+        self.descriptor.reasoning.switch == FrontendThinkingSwitchV1::ThinkingObject
+    }
+    fn constrains_strict_only(&self) -> bool {
+        self.descriptor.response.constraint_scope == FrontendConstraintScopeV1::StrictOnly
+    }
+    fn forced_choice_without_tools_is_auto(&self) -> bool {
+        self.descriptor
+            .tools
+            .choice
+            .as_ref()
+            .is_some_and(|choice| choice.forced_without_tools_is_auto)
     }
     fn models(&self) -> &[FrontendModelV1] {
         &self.models

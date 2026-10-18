@@ -46,11 +46,12 @@ use crate::generation::{
 
 /// The request fields a render case or a streaming vector's request may
 /// carry besides `messages`, as an OpenAI chat request names them.
-const REQUEST_FIELDS_V1: [&str; 7] = [
+const REQUEST_FIELDS_V1: [&str; 8] = [
     "tools",
     "tool_choice",
     "chat_template_kwargs",
     "reasoning_effort",
+    "thinking",
     "response_format",
     "add_generation_prompt",
     "continue_final_message",

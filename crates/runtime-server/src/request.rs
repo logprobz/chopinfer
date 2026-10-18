@@ -933,7 +933,17 @@ fn prepare_chat(
         ));
     }
     let supplied_tools = request.tools.unwrap_or_default();
-    let tool_choice = parse_tool_choice(request.tool_choice, &supplied_tools)?;
+    let tool_choice = parse_tool_choice(
+        request.tool_choice,
+        &supplied_tools,
+        frontend.forced_choice_without_tools_is_auto(),
+    )?;
+    let thinking_switch = if frontend.reads_thinking_object() {
+        Some(thinking_object_switch(request.extra.get("thinking"))?)
+    } else {
+        None
+    };
+    let strict_only = frontend.constrains_strict_only();
     let requested = requested_output_constraint(
         request.structured_outputs.as_ref(),
         request.response_format.as_ref(),
@@ -949,6 +959,9 @@ fn prepare_chat(
             Some("structured_outputs"),
         ));
     }
+    // A frontend that constrains only strict requests renders the rest
+    // and leaves their decoding as its vendor API does.
+    let requested = requested.filter(|requested| !strict_only || requested.applies_when_strict());
     let messages = convert_messages(
         request.messages,
         frontend,
@@ -958,11 +971,13 @@ fn prepare_chat(
     let tools = convert_tools(supplied_tools, max_string_bytes)?;
     // A forced tool choice, or a strict tool, constrains the output in the
     // model's own call format and replaces any response format constraint,
-    // as the reference does.
+    // as the reference does. A frontend that constrains only strict
+    // requests leaves a strict tool under auto unconstrained.
     let tool_constraint = if matches!(
         tool_choice,
         FrontendToolChoiceV1::Required | FrontendToolChoiceV1::Named(_)
-    ) || (tool_choice == FrontendToolChoiceV1::Auto
+    ) || (!strict_only
+        && tool_choice == FrontendToolChoiceV1::Auto
         && tools.iter().any(|tool| tool.strict == Some(true)))
     {
         frontend
@@ -997,6 +1012,27 @@ fn prepare_chat(
         ),
         None => (None, None, None, None, None, None),
     };
+    // A frontend that reads the thinking object switches by it alone: the
+    // keywords and the effort in chat_template_kwargs are ignored, and an
+    // explicit switch overrides the effort, so the effort that disables
+    // thinking under an enabled object names no effort.
+    let (enable_thinking, thinking, nested_reasoning_effort, reasoning_effort) =
+        match thinking_switch {
+            Some(switch) => (
+                switch,
+                switch,
+                None,
+                request
+                    .reasoning_effort
+                    .filter(|effort| !(switch == Some(true) && effort == "none")),
+            ),
+            None => (
+                enable_thinking,
+                thinking,
+                nested_reasoning_effort,
+                request.reasoning_effort,
+            ),
+        };
     // What the reasoning controls mean, how a conversation renders, and which
     // tools survive a choice are all this model's decisions, not the
     // transport's.
@@ -1010,7 +1046,7 @@ fn prepare_chat(
             tools,
             tool_choice,
             response_format: request.response_format,
-            reasoning_effort: request.reasoning_effort,
+            reasoning_effort,
             enable_thinking,
             thinking,
             nested_reasoning_effort,
@@ -1708,9 +1744,56 @@ fn validate_json_strings(
     }
 }
 
+/// The top-level `thinking` object's switch, for a frontend that reads it
+/// ([`ServerFrontendV1::reads_thinking_object`]): a `type` of `enabled` or
+/// its alias `adaptive` is true and `disabled` false, and null or absent
+/// is no switch. `budget_tokens` is checked and not read.
+fn thinking_object_switch(value: Option<&FrontendJsonV1>) -> Result<Option<bool>, ApiError> {
+    let entries = match value {
+        None | Some(FrontendJsonV1::Null) => return Ok(None),
+        Some(FrontendJsonV1::Object(entries)) => entries,
+        Some(_) => {
+            return Err(ApiError::invalid(
+                "thinking must be an object",
+                Some("thinking"),
+            ));
+        }
+    };
+    let field = |name: &str| {
+        entries
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value)
+    };
+    match field("budget_tokens") {
+        None | Some(FrontendJsonV1::Null) => {}
+        Some(FrontendJsonV1::Number(number)) if number.as_u64().is_some() => {}
+        Some(_) => {
+            return Err(ApiError::invalid(
+                "thinking.budget_tokens must be a non-negative integer",
+                Some("thinking"),
+            ));
+        }
+    }
+    match field("type") {
+        Some(FrontendJsonV1::String(kind)) if kind == "enabled" || kind == "adaptive" => {
+            Ok(Some(true))
+        }
+        Some(FrontendJsonV1::String(kind)) if kind == "disabled" => Ok(Some(false)),
+        _ => Err(ApiError::invalid(
+            "thinking.type must be enabled, adaptive or disabled",
+            Some("thinking"),
+        )),
+    }
+}
+
+/// The request's tool choice. A frontend for which a forced choice with no
+/// offered tools serves as `auto` gets `auto` where the transport would
+/// otherwise refuse it.
 fn parse_tool_choice(
     choice: Option<FrontendJsonV1>,
     tools: &[ToolDefinition],
+    forced_without_tools_is_auto: bool,
 ) -> Result<FrontendToolChoiceV1, ApiError> {
     const USAGE: &str =
         r#"Correct usage: `{"type": "function", "function": {"name": "my_function"}}`"#;
@@ -1762,6 +1845,9 @@ fn parse_tool_choice(
             ));
         }
     };
+    if tools.is_empty() && forced_without_tools_is_auto {
+        return Ok(FrontendToolChoiceV1::Auto);
+    }
     if tools.is_empty() {
         return Err(ApiError::invalid(
             "When using `tool_choice`, `tools` must be set.",

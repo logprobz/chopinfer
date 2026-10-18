@@ -267,11 +267,13 @@ impl Ops {
 }
 
 impl Ops {
-    /// The backend workspace every rank holds: the most any op takes.
+    /// The shared workspace every rank holds: backend scratch and the
+    /// attention partials bound to the same span, used by successive ops.
     pub(crate) fn workspace(&self) -> u64 {
         self.asked
             .iter()
             .map(|asked| asked.workspace)
+            .chain(self.attention.iter().map(latent::AttentionOps::workspace))
             .max()
             .unwrap_or(0)
     }

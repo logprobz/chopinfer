@@ -17,6 +17,7 @@ use runtime_bundle_abi::*;
 
 use crate::config::{KV_LAYOUTS, KvLayout};
 
+mod batch_limits;
 mod conformance;
 mod dspark;
 mod media;
@@ -670,39 +671,39 @@ fn journal_steps(host: &Rc<Host>) {
     instance.destroy().unwrap();
 }
 
-/// The pinned journal digest of each Flash topology and KV layout: the
-/// launches of the families lowered so far while the other stages are
-/// not, so each family that lowers re-pins them.
+/// The pinned journal digest of each Flash topology and KV layout. The
+/// workspace includes attention partials at the full token budget; its
+/// allocation and bound span lengths are part of these journals.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (12688, 0x51c9b43e9389abc1),
+        (12688, 0xbb2f2941eb2d4350),
     ),
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (12686, 0x39a1e78cf50ee7c1),
+        (12686, 0xfaeb7a056e82d4b2),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (25253, 0x3c1c1fedd5b86298),
+        (25253, 0x5bac5ee6b0c2de70),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (25249, 0x5e019ea4ac2303f3),
+        (25249, 0x6d6c29eb8bb4eecb),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
-        (50391, 0x8ebc11564f1167da),
+        (50391, 0x80c58842d55a5f66),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (50383, 0x0ec3ac5c45aadf36),
+        (50383, 0xc8f58831e3f036ba),
     ),
 ];
 

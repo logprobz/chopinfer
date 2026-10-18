@@ -310,8 +310,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 
 /// The pinned journal digest of the image lifecycle at each rank count.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
-    (Ranks::TP2, (14077, 0x584ea74bfc2ea1ab)),
-    (Ranks::TP4, (28111, 0x1d85f3e2d1c540fc)),
+    (Ranks::TP2, (14077, 0xa9ca104832ea459b)),
+    (Ranks::TP4, (28111, 0x7e67d8d27861b164)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

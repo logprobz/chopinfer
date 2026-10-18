@@ -524,6 +524,17 @@ impl AttentionOps {
         Ok(AttentionOps { ratio, ops })
     }
 
+    /// The partial results of the widest prepared phase. Attention names
+    /// this role `workspace` in `OpInfo::bytes`; it is separate from the
+    /// backend's unnamed `OpInfo::workspace` scratch.
+    pub(crate) fn workspace(&self) -> u64 {
+        self.ops
+            .iter()
+            .filter_map(|(_, op)| op.info().bytes_of("workspace"))
+            .max()
+            .unwrap_or(0)
+    }
+
     /// One layer's attention over `rows` rows of a phase of `kind`.
     pub(crate) fn attend(
         &self,
@@ -617,5 +628,26 @@ mod tests {
             "{:?}",
             ops.missing
         );
+    }
+
+    #[test]
+    fn full_budget_workspace_covers_attention_roles() {
+        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+        let kernels = crate::Kernels::new(&shape).unwrap();
+        for storage in [KvStorage::Native, KvStorage::Bf16] {
+            let ops = super::super::Ops::prepare(&kernels, &shape, storage);
+            assert!(ops.missing.is_empty(), "{:?}", ops.missing);
+            for attention in &ops.attention {
+                for (kind, op) in &attention.ops {
+                    let required = op.info().bytes_of("workspace").unwrap();
+                    assert!(
+                        ops.workspace() >= required,
+                        "{storage:?} r{} {kind:?}: allocated {}, attention requires {required}",
+                        attention.ratio,
+                        ops.workspace(),
+                    );
+                }
+            }
+        }
     }
 }

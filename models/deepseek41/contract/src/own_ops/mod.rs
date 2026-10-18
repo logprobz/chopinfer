@@ -1,7 +1,8 @@
-//! DeepSeek V4.1's own kernels as contracts: the Engram gate and the RoPE
-//! cosine and sine rows, plus the Engram hash the host computes. No other
-//! model runs them, so they live here rather than in kernel-core (an op
-//! moves there when a second model needs it).
+//! DeepSeek V4.1's own kernels as contracts: the Engram gate, RoPE cosine
+//! and sine rows and embedding row widening, plus the Engram hash the host
+//! computes.
+//! No other model runs them, so they live here rather than in kernel-core
+//! (an op moves there when a second model needs it).
 //!
 //! Each device op is a contract type whose fields are the math the model
 //! needs, a role record of its buffers and a CPU oracle. A backend prepares
@@ -12,9 +13,11 @@ use kernel_core::backend::{Need, Prepared, Refused, View};
 
 pub mod engram;
 pub mod rope;
+pub mod widen;
 
 use engram::{EngramGate, EngramGateBuffers};
 use rope::{RopeCosSin, RopeCosSinBuffers};
+use widen::{WidenRows, WidenRowsBuffers};
 
 /// A backend of DeepSeek V4.1's own kernels. Each method prepares one op or
 /// refuses it; every method refuses by default, so a backend implements the
@@ -52,6 +55,21 @@ pub trait OwnOps: Send + Sync {
         let _ = (op, need);
         Err(Refused::Unsupported)
     }
+
+    /// BF16 rows widened to F32: the embedding's partials before its
+    /// all-reduce.
+    ///
+    /// Launches read `Counts::rows`, the rows of the step (at most the
+    /// prepared capacity); the device count of `live_rows` selects the rows
+    /// written.
+    fn widen_rows(
+        &self,
+        op: &WidenRows,
+        need: Need,
+    ) -> Result<Prepared<WidenRowsBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
 }
 
 #[cfg(test)]
@@ -75,7 +93,10 @@ mod tests {
     fn every_method_refuses_by_default() {
         let backend = Nothing;
         assert_eq!(backend.name(), "nothing");
-        unsupported(backend.engram_gate(&EngramGate::FLASH, Need::rows(32)));
+        unsupported(backend.engram_gate(
+            &EngramGate::of(&crate::geometry::FLASH, true),
+            Need::rows(32),
+        ));
         unsupported(backend.rope_cos_sin(
             &RopeCosSin {
                 table: RopeTable::Compressed,
@@ -83,5 +104,6 @@ mod tests {
             },
             Need::rows(32),
         ));
+        unsupported(backend.widen_rows(&widen::WidenRows { width: 4096 }, Need::rows(32)));
     }
 }

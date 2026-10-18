@@ -27,7 +27,13 @@ fn main() {
     let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest directory"));
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("output directory"));
     // (family, cubin) pairs; one family per engine or own-op set.
-    let mut specs = vec![(own_entries::FAMILY, own_cubin::cubin_spec(&manifest))];
+    let mut specs = vec![(own_entries::FAMILY, own_cubin::rope_cubin_spec(&manifest))];
+    for geometry in GEOMETRIES.iter().filter(|g| own_entries::has_gates(g)) {
+        specs.push((
+            own_entries::FAMILY,
+            own_cubin::gate_cubin_spec(&manifest, geometry),
+        ));
+    }
     specs.extend(rows::cubins(GEOMETRIES).expect("deepseek41 row cubins"));
     specs.extend(encoder::cubins().expect("deepseek41 encoder cubins"));
     let mut families: Vec<(&str, Vec<&str>)> = Vec::new();

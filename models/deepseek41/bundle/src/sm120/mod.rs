@@ -38,7 +38,7 @@ impl crate::Kernels {
         let sm120 = encoder::register(sm120)?;
         Ok(Self {
             backend: Box::new(sm120),
-            own: Box::new(own_ops::Sm120Own::new()),
+            own: Box::new(own_ops::Sm120Own::new(shape.geometry)),
         })
     }
 }

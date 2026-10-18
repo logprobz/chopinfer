@@ -22,7 +22,7 @@ use bundle_runtime::state::{
 };
 
 use crate::geometry::Geometry;
-use crate::serving::PAGE_TOKENS;
+use crate::serving::{MAX_VERIFY_ROWS, PAGE_TOKENS};
 
 /// Cells a window ring keeps beyond the window: at least the verify rows of
 /// one item, so a rejected row never overwrites a cell inside the window of
@@ -35,6 +35,26 @@ pub const TAIL_ROWS: u64 = 8;
 /// (`bundle_runtime::prefix::HeaderLayout::V1`). The Engram n-gram history
 /// needs no room: a restore names every prefix token.
 pub const HEADER_BYTES: u64 = bundle_runtime::prefix::HeaderLayout::V1.bytes();
+/// The alignment the KV kernels need of a page: every stream's code rows
+/// start on 16 bytes for vector loads, and scales need only bytes.
+pub const PAGE_ACCESS_ALIGNMENT: u64 = 16;
+
+/// The alignment a KV layout of `page_bytes` pages declares: the largest
+/// power of two up to 256 that divides the page, so pages tile the pool
+/// unpadded. A native Flash page (56,960 bytes, 890 a token) is 128-byte
+/// aligned. `None` when that falls short of [`PAGE_ACCESS_ALIGNMENT`].
+pub const fn page_alignment(page_bytes: u64) -> Option<u64> {
+    if page_bytes == 0 {
+        return None;
+    }
+    let natural = 1 << page_bytes.trailing_zeros();
+    let alignment = if natural < 256 { natural } else { 256 };
+    if alignment < PAGE_ACCESS_ALIGNMENT {
+        None
+    } else {
+        Some(alignment)
+    }
+}
 
 /// How the KV pages and rings store their values. Both hold the same
 /// values: every stored value is the reference's fake-quantized one, which
@@ -131,8 +151,8 @@ fn source_streams(storage: KvStorage, w: Widths, ratio: u64) -> Vec<KvStream> {
     ]
 }
 
-/// A window ring per layer: the cells of the last `window +
-/// RING_HEADROOM` positions, a snapshot capturing the window.
+/// A window ring per layer. Target rings retain rollback headroom;
+/// drafter rings receive only committed rows and use exactly the window.
 fn ring(
     name: &'static str,
     layers: u64,
@@ -140,7 +160,7 @@ fn ring(
     w: Widths,
     drafter: bool,
 ) -> StateBuffer {
-    let cells = ring_cells(w);
+    let cells = if drafter { w.window } else { ring_cells(w) };
     StateBuffer {
         name,
         layers,
@@ -228,11 +248,11 @@ pub fn request_state(g: &Geometry, storage: KvStorage, dspark: bool) -> RequestS
             w,
             true,
         ));
-        // The DSpark target layers' attention inputs (the mean of the
-        // streams, BF16) of the last window of rows, which the drafter
-        // projects into its rings.
+        // Committed raw attention inputs (mean of the streams, BF16).
+        // Keep window + verify rows; provisional target rows stay in
+        // separate staging. A snapshot captures only the window.
         let targets = g.shape.dspark.targets.len() as u64;
-        let rows = ring_cells(w);
+        let rows = w.window + u64::from(MAX_VERIFY_ROWS);
         buffers.push(StateBuffer {
             name: "dspark.features",
             layers: 1,
@@ -281,8 +301,28 @@ mod tests {
         }
     }
 
-    /// 43 rings of 128 positions are 2.9 MB per sequence natively (40 of
-    /// them without DSpark); the headroom adds 8 cells to each.
+    /// Every geometry's pages in both storages declare an alignment that
+    /// divides them and serves the kernels' access; a native Flash page is
+    /// 128-byte aligned, a BF16 one 256.
+    #[test]
+    fn every_page_declares_an_alignment_that_tiles_it() {
+        for g in crate::geometry::GEOMETRIES {
+            for storage in [KvStorage::Native, KvStorage::Bf16] {
+                let page = request_state(g, storage, false).page_bytes();
+                let alignment = page_alignment(page).unwrap();
+                assert!(page.is_multiple_of(alignment), "{} {storage:?}", g.id);
+                assert!(alignment >= PAGE_ACCESS_ALIGNMENT);
+            }
+        }
+        let page = |storage| request_state(&FLASH, storage, false).page_bytes();
+        assert_eq!(page_alignment(page(KvStorage::Native)), Some(128));
+        assert_eq!(page_alignment(page(KvStorage::Bf16)), Some(256));
+        assert_eq!(page_alignment(56_968), None);
+        assert_eq!(page_alignment(0), None);
+    }
+
+    /// 43 windows are 2.9 MB per sequence natively. Only the 40 target
+    /// rings need rollback headroom; the drafter rings are committed.
     #[test]
     fn rings_hold_the_window_and_the_headroom() {
         let state = request_state(&FLASH, KvStorage::Native, true);
@@ -292,7 +332,7 @@ mod tests {
             .filter(|b| b.name.ends_with(".ring"))
             .map(|b| b.entry_bytes())
             .sum();
-        assert_eq!(rings, 43 * 136 * (512 + 16));
+        assert_eq!(rings, (40 * 136 + 3 * 128) * (512 + 16));
         assert_eq!(43 * 128 * (512 + 16), 2_906_112);
         let tail = &state.buffers[1];
         assert_eq!((tail.name, tail.layers), ("compressor.tail", 3));

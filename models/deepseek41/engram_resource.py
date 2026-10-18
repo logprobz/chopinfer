@@ -1,28 +1,30 @@
-"""Generate DeepSeek V4.1 Flash's Engram hash resource from the pinned vendor code.
+"""Generate DeepSeek V4.1's Engram hash resource from the pinned vendor code.
 
 The Engram hash reads a compressed token map (129,280 raw ids onto 99,092
 normalized ids), one odd multiplier per (layer, lookback) and the bucket
 primes. The vendor builds them at load time from the tokenizer with
 `tokenizers` normalizers, numpy's PCG64 and sympy (`inference/engram.py`).
-This script runs that pinned code once, offline, and writes the result as one
-binary resource the package ships; the contract crate parses and verifies it
-(`own_ops::engram::HashTables`, `contract/resources/engram-hash.v1.bin`).
+This script runs that pinned code once, offline, and writes the token map
+and the multipliers of every layer id below 64 as one binary resource the
+package ships. The primes follow from a geometry's bucket base alone, so the
+contract crate draws them itself; it parses and verifies the resource
+(`own_ops::engram::HashTables`, `contract/resources/engram-hash.v2.bin`).
 
 Usage, with the reference interpreter (`$CHOPINFER_REFRUN_PYTHON`):
 
     CKPT="$CHOPINFER_DEEPSEEK_CHECKPOINT"
     python models/deepseek41/engram_resource.py "$CKPT" OUT.bin [--cases CASES.json]
     python models/deepseek41/engram_resource.py "$CKPT" \
-        --check models/deepseek41/contract/resources/engram-hash.v1.bin
+        --check models/deepseek41/contract/resources/engram-hash.v2.bin
 
 `--cases` also writes vendor `NgramHashState` outputs for fixed sequences
-(the contract test's fixture). `--check` regenerates and compares bytes.
+(the contract test's fixture): under the checkpoint's own layout and under
+two small layouts of other layer ids and bucket bases. `--check`
+regenerates and compares bytes.
 
-Layout (little-endian): magic `DS41ENG1`; u32 vocab size, compressed vocab
-size, raw pad id, compressed pad id, Engram bucket base (`engram_vocab_size`),
-layers, max n-gram size, heads; u32 layer ids; i64 multipliers
-`[layer][lookback]`; u32 primes `[layer][n-gram size - 2][head]`; u32 token
-map `[raw id]`.
+Layout (little-endian): magic `DS41ENG2`; u32 vocab size, compressed vocab
+size, raw pad id, compressed pad id, max n-gram size, layer ids (64); i64
+multipliers `[layer id][lookback]`; u32 token map `[raw id]`.
 """
 
 import argparse
@@ -35,7 +37,11 @@ from pathlib import Path
 # The versions the resource was generated with. The normalizers and the RNG
 # define the map and the multipliers, so another version refuses.
 PINNED = {"tokenizers": "0.23.2", "transformers": "5.16.1", "numpy": "2.5.3", "sympy": "1.14.0"}
-MAGIC = b"DS41ENG1"
+MAGIC = b"DS41ENG2"
+# Multipliers are written for every layer id below this.
+LAYER_IDS = 64
+# Small layouts the cases also cover: (layer ids, bucket base, table rows).
+LAYOUTS = {"layers-1-3-base-1000": ([1, 3], 1000), "layers-2-5-base-4000": ([2, 5], 4000)}
 
 
 def vendor(checkpoint: Path):
@@ -71,46 +77,47 @@ class Args:
         self.max_seq_len = 256
 
 
+def state_of(engram, config, tokenizer, layer_ids=None, base=None):
+    """The vendor's hash state under the config, or under a small layout."""
+    args = Args(config)
+    if layer_ids is not None:
+        args.engram_layer_ids = layer_ids
+        args.engram_vocab_size = base
+        args.engram_num_embeddings = [0] * len(layer_ids)
+    layout = engram.EngramLayout.from_args(args)
+    return engram.NgramHashState(args, layout, tokenizer), layout
+
+
 def generate(checkpoint: Path):
     engram, config, tokenizer = vendor(checkpoint)
-    args = Args(config)
-    layout = engram.EngramLayout.from_args(args)
-    state = engram.NgramHashState(args, layout, tokenizer)
+    state, layout = state_of(engram, config, tokenizer)
     token_map = state.token_map.tolist()
     if len(token_map) != config["vocab_size"]:
         sys.exit(f"token map has {len(token_map)} ids, config {config['vocab_size']}")
-    compressed = config["engram_compressed_vocab_size"]
-    head = struct.pack(
-        "<8I",
-        config["vocab_size"],
-        compressed,
-        config["engram_pad_id"],
-        int(state.pad_id),
-        config["engram_vocab_size"],
-        len(layout.layer_ids),
-        layout.max_ngram_size,
-        layout.n_heads,
-    )
-    body = bytearray(MAGIC + head)
-    body += struct.pack(f"<{len(layout.layer_ids)}I", *layout.layer_ids)
-    for row in state.multipliers.tolist():
-        body += struct.pack(f"<{len(row)}q", *row)
-    for layer in layout.primes:
-        for per_ngram in layer:
-            body += struct.pack(f"<{len(per_ngram)}I", *per_ngram)
-    body += struct.pack(f"<{len(token_map)}I", *token_map)
     for layer, rows in zip(layout.primes, layout.num_embeddings):
         if sum(p for per_ngram in layer for p in per_ngram) != rows:
             sys.exit("bucket primes do not sum to the table rows")
-    return bytes(body), state, config
+    compressed = config["engram_compressed_vocab_size"]
+    max_ngram = layout.max_ngram_size
+    multipliers = engram.compute_hash_multipliers(tuple(range(LAYER_IDS)), max_ngram, compressed)
+    if multipliers[list(layout.layer_ids)].tolist() != state.multipliers.tolist():
+        sys.exit("per-layer-id multipliers differ from the state's")
+    head = struct.pack(
+        "<6I", config["vocab_size"], compressed, config["engram_pad_id"], int(state.pad_id), max_ngram, LAYER_IDS
+    )
+    body = bytearray(MAGIC + head)
+    for row in multipliers.tolist():
+        body += struct.pack(f"<{len(row)}q", *row)
+    body += struct.pack(f"<{len(token_map)}I", *token_map)
+    return bytes(body), (engram, config, tokenizer, state)
 
 
-def cases(state, config):
+def cases(state, config, seed=20261017):
     """Vendor hashes of fixed sequences: chunk splits, pad ids and dead spans."""
     import numpy as np
     import torch
 
-    rng = np.random.default_rng(20261017)
+    rng = np.random.default_rng(seed)
     out = []
     for index in range(12):
         length = int(rng.integers(1, 48))
@@ -150,7 +157,7 @@ def main():
     parser.add_argument("--cases", type=Path)
     parser.add_argument("--check", type=Path)
     options = parser.parse_args()
-    data, state, config = generate(options.checkpoint)
+    data, (engram, config, tokenizer, state) = generate(options.checkpoint)
     digest = hashlib.sha256(data).hexdigest()
     if options.check:
         pinned = options.check.read_bytes()
@@ -161,10 +168,20 @@ def main():
         options.out.write_bytes(data)
         print(f"wrote {options.out}: {len(data)} bytes, sha256 {digest}")
     if options.cases:
+        layouts = {}
+        for index, (name, (layer_ids, base)) in enumerate(LAYOUTS.items()):
+            small, layout = state_of(engram, config, tokenizer, layer_ids, base)
+            layouts[name] = {
+                "layer_ids": layer_ids,
+                "bucket_base": base,
+                "table_rows": [sum(p for n in layer for p in n) for layer in layout.primes],
+                "cases": cases(small, config, seed=index + 1)[:4],
+            }
         document = {
             "resource_sha256": digest,
             "versions": PINNED,
             "cases": cases(state, config),
+            "layouts": layouts,
         }
         options.cases.write_text(json.dumps(document, separators=(",", ":")) + "\n")
         print(f"wrote {options.cases}")

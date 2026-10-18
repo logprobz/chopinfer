@@ -21,6 +21,7 @@
 //! uses the host's f64 `cos` and `sin`; the near cases are pinned in this
 //! module's tests.
 
+use crate::geometry::Geometry;
 use kernel_core::backend::Need;
 use kernel_core::contract::Refusal;
 
@@ -31,8 +32,8 @@ pub const PAIRS: usize = 32;
 /// positions and 65,536 beyond. A `Range` op refuses rows past it at
 /// launch. A `Positions` op cannot check device positions there: a position
 /// at or past it writes NaN cosine and sine. The host keeps positions below
-/// the served context, at most 1,048,576, so a served position never
-/// reaches it.
+/// the served context, which [`check_geometry`] keeps within the domain, so
+/// a served position never reaches it.
 pub const MAX_POSITIONS: u32 = 1_114_112;
 
 /// One of the two rotary tables.
@@ -91,6 +92,32 @@ impl RopeTable {
         let angle = f64::from(self.angle(position, pair));
         (angle.cos() as f32, angle.sin() as f32)
     }
+}
+
+/// Refuses a geometry whose rotary parameters are not the ones the pinned
+/// frequencies were captured for: a 64-dimension tail, theta 10000 for the
+/// window table, theta 160000 with YaRN factor 16 over 65,536 positions and
+/// betas 32 and 1 for the compressed table, and a context in the domain.
+pub fn check_geometry(geometry: &Geometry) -> Result<(), Refusal> {
+    let rope = geometry.shape.rope;
+    if geometry.shape.attention.rope_dim as usize != 2 * PAIRS
+        || rope.theta != 10_000.0
+        || rope.compress_theta != 160_000.0
+        || rope.factor != 16.0
+        || rope.original_context != 65_536
+        || rope.beta_fast != 32.0
+        || rope.beta_slow != 1.0
+    {
+        return Err(Refusal(
+            "the geometry's RoPE parameters are not the pinned tables'",
+        ));
+    }
+    if geometry.shape.context > MAX_POSITIONS {
+        return Err(Refusal(
+            "the geometry's context exceeds the RoPE position domain",
+        ));
+    }
+    Ok(())
 }
 
 /// Which positions an op's rows take.
@@ -235,6 +262,16 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn every_compiled_geometry_uses_the_pinned_tables() {
+        for geometry in crate::geometry::GEOMETRIES {
+            assert_eq!(check_geometry(geometry), Ok(()), "{}", geometry.id);
+        }
+        let mut other = crate::geometry::FLASH;
+        other.shape.rope.compress_theta = 40_000.0;
+        assert!(check_geometry(&other).is_err());
     }
 
     #[test]

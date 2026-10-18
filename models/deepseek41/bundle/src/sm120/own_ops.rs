@@ -1,23 +1,28 @@
 //! The model's own kernels on SM120: [`OwnOps`] over the entries the build
 //! compiles (`own_entries.rs`). Launches only plan and pack arguments.
 
-use super::own_entries::{THREADS, gate_compiled, gate_symbol, rope_symbol};
+use super::own_entries::{THREADS, gate_geometries, gate_symbol, gates, rope_symbol};
 use kernel_core::backend::{Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View};
 use kernel_core::contract::{Argument, ArgumentList, LaunchPlan, Refusal};
 use kernel_core::properties::Invariance;
+use model_deepseek41_contract::geometry::Geometry;
 use model_deepseek41_contract::own_ops::OwnOps;
 use model_deepseek41_contract::own_ops::engram::{EngramGate, EngramGateBuffers};
 use model_deepseek41_contract::own_ops::rope::{
-    MAX_POSITIONS, PAIRS, RopeCosSin, RopeCosSinBuffers, RopeRows,
+    MAX_POSITIONS, PAIRS, RopeCosSin, RopeCosSinBuffers, RopeRows, check_geometry,
 };
 
-/// The model's own kernels as its build compiles them.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Sm120Own;
+/// The model's own kernels as its build compiles them for one geometry.
+#[derive(Clone, Copy, Debug)]
+pub struct Sm120Own {
+    geometry: &'static Geometry,
+}
 
 impl Sm120Own {
-    pub fn new() -> Self {
-        Self
+    /// The own kernels of `geometry`: its Engram gates (when it has Engram
+    /// layers) and the RoPE rows, which its rotary parameters must match.
+    pub fn new(geometry: &'static Geometry) -> Self {
+        Self { geometry }
     }
 }
 
@@ -32,17 +37,18 @@ impl OwnOps for Sm120Own {
         need: Need,
     ) -> Result<Prepared<EngramGateBuffers<View>>, Refused> {
         op.validate(need)?;
-        if !gate_compiled(op) {
+        let compiled = gate_geometries().any(|g| g.id == self.geometry.id);
+        if !compiled || !gates(self.geometry).contains(op) {
             return Err(Refused::Rule(format!(
-                "sm120 compiles no Engram gate of width {} over {} streams",
-                op.width, op.streams
+                "sm120 compiles no Engram gate of width {} over {} streams for geometry {}",
+                op.width, op.streams, self.geometry.id
             )));
         }
-        let symbol = gate_symbol(op);
+        let symbol = gate_symbol(self.geometry.kernel_tag, op);
         // Every row is one block with a fixed reduction order, so a row's
         // bits depend on its inputs alone.
         let info = OpInfo::new(
-            "sm120.deepseek41.engram-gate.tree256.v1",
+            "sm120.deepseek41.engram-gate.tree256.v2",
             Invariance::any_rows(need.capacity),
             vec![(symbol.clone(), 0)],
         );
@@ -61,6 +67,7 @@ impl OwnOps for Sm120Own {
         need: Need,
     ) -> Result<Prepared<RopeCosSinBuffers<View>>, Refused> {
         op.validate(need)?;
+        check_geometry(self.geometry)?;
         let symbol = rope_symbol(op.table, op.rows);
         let info = OpInfo::new(
             "sm120.deepseek41.rope-cos-sin.f64-sincos.v1",
@@ -84,7 +91,8 @@ fn plan(grid: [u32; 2]) -> LaunchPlan {
         dynamic_shared_bytes: 0,
         workspace_bytes: 0,
         cluster: [1; 3],
-        pdl: false,
+        // Each own kernel waits for the previous grid first.
+        pdl: true,
     }
 }
 
@@ -122,7 +130,7 @@ impl PreparedOp<EngramGateBuffers<View>> for Gate {
         buffers.output.covers(u64::from(rows) * row)?;
         buffers
             .kv
-            .covers(u64::from(rows) * self.op.kv_elements() as u64 * 2)?;
+            .covers(u64::from(rows) * self.op.kv_elements() as u64 * 4)?;
         buffers.q_weight.covers(row)?;
         buffers.k_weight.covers(row)?;
         buffers.live_rows.covers(4)?;

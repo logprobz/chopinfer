@@ -1,6 +1,10 @@
 [
   {
-    "name": "deepseek41_own_sm120",
-    "source_closure_sha256": "fc3662882dbee46290d5e103be8b29a77e7f8a16267bc4e88ced48e9f6dfa2b5"
+    "name": "deepseek41_engram_gate_sm120",
+    "source_closure_sha256": "18bc1b1013bb84709e41fec6ddf6a049030896e4915d2c632c8f6069c758423e"
+  },
+  {
+    "name": "deepseek41_rope_sm120",
+    "source_closure_sha256": "f1718361be4031f42e90f52cc3fa6a4503799cf4598bde036397f2315c273560"
   }
 ]

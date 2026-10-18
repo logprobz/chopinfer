@@ -1,6 +1,6 @@
 [
   {
-    "name": "deepseek41_own_sm120",
+    "name": "deepseek41_engram_gate_sm120",
     "line_info": false,
     "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
     "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
@@ -275,7 +275,7 @@
     ],
     "entries": [
       {
-        "symbol": "chop_deepseek41_engram_gate_w5120_s4_masked_v1",
+        "symbol": "chop_deepseek41_engram_gate_w5120_s4_masked_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -285,7 +285,7 @@
           {
             "kind": "DevicePointer",
             "name": "kv",
-            "cxx_type": "const uint16_t"
+            "cxx_type": "const float"
           },
           {
             "kind": "DevicePointer",
@@ -318,7 +318,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_deepseek41_engram_gate_w5120_s4_open_v1",
+        "symbol": "chop_deepseek41_engram_gate_w5120_s4_open_v2",
         "params": [
           {
             "kind": "DevicePointer",
@@ -328,7 +328,7 @@
           {
             "kind": "DevicePointer",
             "name": "kv",
-            "cxx_type": "const uint16_t"
+            "cxx_type": "const float"
           },
           {
             "kind": "DevicePointer",
@@ -359,7 +359,305 @@
         "max_threads": 256,
         "min_blocks": 1,
         "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "214d1bd105d05d8aa7d20d4eb880655090d437ad87b00dcb6cdf6d7a84d08101",
+    "resources": [
+      {
+        "symbol": "chop_deepseek41_engram_gate_w5120_s4_masked_v2",
+        "registers": 96,
+        "shared_static_bytes": 1120,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
       },
+      {
+        "symbol": "chop_deepseek41_engram_gate_w5120_s4_open_v2",
+        "registers": 94,
+        "shared_static_bytes": 1120,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "deepseek41_rope_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "DS41_RW0",
+        "0x3f800000u"
+      ],
+      [
+        "DS41_RW1",
+        "0x3f3ff911u"
+      ],
+      [
+        "DS41_RW2",
+        "0x3f0ff59au"
+      ],
+      [
+        "DS41_RW3",
+        "0x3ed7e89bu"
+      ],
+      [
+        "DS41_RW4",
+        "0x3ea1e89bu"
+      ],
+      [
+        "DS41_RW5",
+        "0x3e72d423u"
+      ],
+      [
+        "DS41_RW6",
+        "0x3e361887u"
+      ],
+      [
+        "DS41_RW7",
+        "0x3e088d77u"
+      ],
+      [
+        "DS41_RW8",
+        "0x3dcccccdu"
+      ],
+      [
+        "DS41_RW9",
+        "0x3d99940du"
+      ],
+      [
+        "DS41_RW10",
+        "0x3d6655c2u"
+      ],
+      [
+        "DS41_RW11",
+        "0x3d2cba16u"
+      ],
+      [
+        "DS41_RW12",
+        "0x3d0186e3u"
+      ],
+      [
+        "DS41_RW13",
+        "0x3cc2434fu"
+      ],
+      [
+        "DS41_RW14",
+        "0x3c91ad39u"
+      ],
+      [
+        "DS41_RW15",
+        "0x3c5a7bf2u"
+      ],
+      [
+        "DS41_RW16",
+        "0x3c23d70au"
+      ],
+      [
+        "DS41_RW17",
+        "0x3bf5b9b0u"
+      ],
+      [
+        "DS41_RW18",
+        "0x3bb8449cu"
+      ],
+      [
+        "DS41_RW19",
+        "0x3b8a2e77u"
+      ],
+      [
+        "DS41_RW20",
+        "0x3b4f3e38u"
+      ],
+      [
+        "DS41_RW21",
+        "0x3b1b690du"
+      ],
+      [
+        "DS41_RW22",
+        "0x3ae91528u"
+      ],
+      [
+        "DS41_RW23",
+        "0x3aaec98eu"
+      ],
+      [
+        "DS41_RW24",
+        "0x3a83126fu"
+      ],
+      [
+        "DS41_RW25",
+        "0x3a44948du"
+      ],
+      [
+        "DS41_RW26",
+        "0x3a136a16u"
+      ],
+      [
+        "DS41_RW27",
+        "0x39dd1725u"
+      ],
+      [
+        "DS41_RW28",
+        "0x39a5cb60u"
+      ],
+      [
+        "DS41_RW29",
+        "0x3978a815u"
+      ],
+      [
+        "DS41_RW30",
+        "0x393a7753u"
+      ],
+      [
+        "DS41_RW31",
+        "0x390bd472u"
+      ],
+      [
+        "DS41_RC0",
+        "0x3f800000u"
+      ],
+      [
+        "DS41_RC1",
+        "0x3f300a3au"
+      ],
+      [
+        "DS41_RC2",
+        "0x3ef21c1fu"
+      ],
+      [
+        "DS41_RC3",
+        "0x3ea67d01u"
+      ],
+      [
+        "DS41_RC4",
+        "0x3e64f92eu"
+      ],
+      [
+        "DS41_RC5",
+        "0x3e1d7475u"
+      ],
+      [
+        "DS41_RC6",
+        "0x3dd88cb4u"
+      ],
+      [
+        "DS41_RC7",
+        "0x3d94e963u"
+      ],
+      [
+        "DS41_RC8",
+        "0x3d4ccccdu"
+      ],
+      [
+        "DS41_RC9",
+        "0x3d0cd4fbu"
+      ],
+      [
+        "DS41_RC10",
+        "0x3cc1b019u"
+      ],
+      [
+        "DS41_RC11",
+        "0x3c8530ceu"
+      ],
+      [
+        "DS41_RC12",
+        "0x3c372dbfu"
+      ],
+      [
+        "DS41_RC13",
+        "0x3bfbed88u"
+      ],
+      [
+        "DS41_RC14",
+        "0x3bad3d5eu"
+      ],
+      [
+        "DS41_RC15",
+        "0x3b6e4237u"
+      ],
+      [
+        "DS41_RC16",
+        "0x3b147ae1u"
+      ],
+      [
+        "DS41_RC17",
+        "0x3ab714e0u"
+      ],
+      [
+        "DS41_RC18",
+        "0x3a5ebdb6u"
+      ],
+      [
+        "DS41_RC19",
+        "0x3a0530ceu"
+      ],
+      [
+        "DS41_RC20",
+        "0x399bb3afu"
+      ],
+      [
+        "DS41_RC21",
+        "0x39305978u"
+      ],
+      [
+        "DS41_RC22",
+        "0x38be904du"
+      ],
+      [
+        "DS41_RC23",
+        "0x383e9b5fu"
+      ],
+      [
+        "DS41_RC24",
+        "0x37a3d708u"
+      ],
+      [
+        "DS41_RC25",
+        "0x36b443d0u"
+      ],
+      [
+        "DS41_RC26",
+        "0x3677eba6u"
+      ],
+      [
+        "DS41_RC27",
+        "0x362a7be8u"
+      ],
+      [
+        "DS41_RC28",
+        "0x35ea77ffu"
+      ],
+      [
+        "DS41_RC29",
+        "0x35a13bdcu"
+      ],
+      [
+        "DS41_RC30",
+        "0x355dbf30u"
+      ],
+      [
+        "DS41_RC31",
+        "0x35187c4du"
+      ],
+      [
+        "DS41_ROPE_POSITIONS",
+        "1114112u"
+      ]
+    ],
+    "entries": [
       {
         "symbol": "chop_deepseek41_rope_window_range_v1",
         "params": [
@@ -449,26 +747,8 @@
         "allowed_local_bytes": 40
       }
     ],
-    "cubin_sha256": "a1ded3015251a270b4070fb46ab5f9ee12a8d512f0a824aac54aaafa743a8f8e",
+    "cubin_sha256": "165c864534b6caaf79865317a37a061b6f9e0352b7891560e19732746ecb5cda",
     "resources": [
-      {
-        "symbol": "chop_deepseek41_engram_gate_w5120_s4_masked_v1",
-        "registers": 96,
-        "shared_static_bytes": 1120,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 256,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_deepseek41_engram_gate_w5120_s4_open_v1",
-        "registers": 95,
-        "shared_static_bytes": 1120,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 256,
-        "min_blocks": 1
-      },
       {
         "symbol": "chop_deepseek41_rope_window_range_v1",
         "registers": 28,

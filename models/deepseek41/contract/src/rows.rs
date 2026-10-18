@@ -6,7 +6,7 @@
 
 use kernel_core::contract::{DType, RmsNormKind, RowQuery};
 use kernel_core::rmsnorm::RmsNormRequirement;
-use kernel_core::row_copy::StreamBroadcast;
+use kernel_core::row_copy::{GatherByIndex, StreamBroadcast};
 
 use crate::geometry::Geometry;
 
@@ -30,6 +30,17 @@ pub fn norm(g: &Geometry, width: u32) -> RmsNormRequirement {
     RmsNormRequirement::bf16_backend_chosen(width, g.shape.eps as f32, RmsNormKind::Plain, false)
 }
 
+/// `g`'s final norm (F32-TQ): the hidden width's plain RMSNorm over the
+/// unrounded F32 collapse (`hc::head`) into F32 rows, normalized without a
+/// BF16 round, which the exact F32 LM head reads.
+pub fn final_norm(g: &Geometry) -> RmsNormRequirement {
+    RmsNormRequirement {
+        input: DType::F32,
+        output: DType::F32,
+        ..norm(g, g.shape.hidden)
+    }
+}
+
 /// The embedding gather of one rank's vocabulary shard at `ranks` ranks.
 pub const fn embedding(g: &Geometry, ranks: u32) -> RowQuery {
     RowQuery::EmbeddingGather {
@@ -44,6 +55,16 @@ pub const fn expand_streams(g: &Geometry) -> StreamBroadcast {
         dtype: DType::Bf16,
         width: g.shape.hidden,
         streams: g.shape.hc.streams,
+        alignment_bytes: ALIGNMENT_BYTES,
+    }
+}
+
+/// A prefill's F32 final-norm rows that need logits, gathered by index into
+/// the head's input.
+pub const fn head_rows(g: &Geometry) -> GatherByIndex {
+    GatherByIndex {
+        dtype: DType::F32,
+        width: g.shape.hidden,
         alignment_bytes: ALIGNMENT_BYTES,
     }
 }

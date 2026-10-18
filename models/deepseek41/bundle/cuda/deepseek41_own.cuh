@@ -18,6 +18,14 @@ namespace deepseek41 {
 
 constexpr int OWN_THREADS = 256;
 
+// Every own kernel launches with programmatic stream serialization, as the
+// step's other launches do: it waits for the previous grid's results before
+// it reads or writes anything. Without that attribute the wait returns at
+// once.
+__device__ __forceinline__ void wait_for_previous_grid() {
+    asm volatile("griddepcontrol.wait;" ::: "memory");
+}
+
 __device__ __forceinline__ float bf16_bits_to_f32(uint16_t bits) {
     return __uint_as_float(uint32_t(bits) << 16);
 }
@@ -60,7 +68,7 @@ __device__ __forceinline__ void block_sum3(float& a, float& b, float& c) {
 // writes them after it, so `output` may be `x`; neither is `__restrict__`.
 template <int WIDTH, int STREAMS, bool MASKED>
 __device__ __forceinline__ void engram_gate(const uint16_t* x_in,
-                                            const uint16_t* __restrict__ kv,
+                                            const float* __restrict__ kv,
                                             const uint16_t* __restrict__ q_weight,
                                             const uint16_t* __restrict__ k_weight,
                                             const uint8_t* __restrict__ text,
@@ -68,15 +76,16 @@ __device__ __forceinline__ void engram_gate(const uint16_t* x_in,
                                             uint16_t* output) {
     static_assert(WIDTH % OWN_THREADS == 0, "width is a multiple of the block");
     constexpr int PER = WIDTH / OWN_THREADS;
+    wait_for_previous_grid();
     const uint32_t row = blockIdx.x;
     const uint32_t stream = blockIdx.y;
     if (row >= *live_rows) {
         return;
     }
     const uint16_t* x = x_in + (size_t(row) * STREAMS + stream) * WIDTH;
-    const uint16_t* kv_row = kv + size_t(row) * (STREAMS + 1) * WIDTH;
-    const uint16_t* key = kv_row + size_t(stream) * WIDTH;
-    const uint16_t* value = kv_row + size_t(STREAMS) * WIDTH;
+    const float* kv_row = kv + size_t(row) * (STREAMS + 1) * WIDTH;
+    const float* key = kv_row + size_t(stream) * WIDTH;
+    const float* value = kv_row + size_t(STREAMS) * WIDTH;
     const uint16_t* qw = q_weight + size_t(stream) * WIDTH;
     const uint16_t* kw = k_weight + size_t(stream) * WIDTH;
 
@@ -86,9 +95,14 @@ __device__ __forceinline__ void engram_gate(const uint16_t* x_in,
     for (int j = 0; j < PER; ++j) {
         const int i = threadIdx.x + j * OWN_THREADS;
         h[j] = bf16_bits_to_f32(x[i]);
-        const float k = bf16_bits_to_f32(key[i]);
-        // BF16 times BF16 is exact in F32.
-        const float w = __fmul_rn(bf16_bits_to_f32(qw[i]), bf16_bits_to_f32(kw[i]));
+        const float k = key[i];
+        const float q = bf16_bits_to_f32(qw[i]);
+        const float kw_i = bf16_bits_to_f32(kw[i]);
+        // Non-finite gate inputs poison only this stream's reduction.
+        if (!isfinite(h[j]) || !isfinite(k) || !isfinite(q) || !isfinite(kw_i)) {
+            hh = __int_as_float(0x7fffffff);
+        }
+        const float w = __fmul_rn(q, kw_i);
         hh = __fmaf_rn(h[j], h[j], hh);
         kk = __fmaf_rn(k, k, kk);
         dot = __fmaf_rn(__fmul_rn(h[j], w), k, dot);
@@ -99,7 +113,9 @@ __device__ __forceinline__ void engram_gate(const uint16_t* x_in,
     const float r = __fmul_rn(__frcp_rn(__fsqrt_rn(__fadd_rn(__fdiv_rn(hh, n), 1e-20f))),
                               __frcp_rn(__fsqrt_rn(__fadd_rn(__fdiv_rn(kk, n), 1e-20f))));
     const float scaled = __fmul_rn(__fmul_rn(dot, r), __frsqrt_rn(n));
-    const float z = copysignf(__fsqrt_rn(fmaxf(fabsf(scaled), 1e-6f)), scaled);
+    // fmaxf would turn NaN into the finite clamp and invent an open gate.
+    const float z = isnan(scaled) ? scaled
+        : copysignf(__fsqrt_rn(fmaxf(fabsf(scaled), 1e-6f)), scaled);
     float gate = __frcp_rn(__fadd_rn(1.0f, expf(-z)));
     if (MASKED && text[row] == 0) {
         gate = 0.0f;
@@ -108,7 +124,7 @@ __device__ __forceinline__ void engram_gate(const uint16_t* x_in,
 #pragma unroll
     for (int j = 0; j < PER; ++j) {
         const int i = threadIdx.x + j * OWN_THREADS;
-        out[i] = f32_to_bf16_bits(__fmaf_rn(gate, bf16_bits_to_f32(value[i]), h[j]));
+        out[i] = f32_to_bf16_bits(__fmaf_rn(gate, value[i], h[j]));
     }
 }
 
@@ -140,6 +156,7 @@ __device__ __forceinline__ void rope_pair(uint32_t position, uint32_t pair, floa
 // Rows `first + r` for r below `rows`; one thread per (row, pair).
 template <bool COMPRESSED>
 __device__ __forceinline__ void rope_range(uint32_t first, uint32_t rows, float* output) {
+    wait_for_previous_grid();
     const uint32_t t = blockIdx.x * OWN_THREADS + threadIdx.x;
     const uint32_t row = t / 32;
     if (row >= rows) {
@@ -154,6 +171,7 @@ template <bool COMPRESSED>
 __device__ __forceinline__ void rope_positions(const uint32_t* __restrict__ positions,
                                                const uint32_t* __restrict__ live_rows,
                                                float* output) {
+    wait_for_previous_grid();
     const uint32_t t = blockIdx.x * OWN_THREADS + threadIdx.x;
     const uint32_t row = t / 32;
     if (row >= *live_rows) {

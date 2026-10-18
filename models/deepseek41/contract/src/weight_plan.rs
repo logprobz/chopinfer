@@ -37,6 +37,7 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::Arc;
 
+use kernel_core::contract::WeightFormat;
 use kernel_core::precision::format::{KernelFamily, registry};
 use kernel_core::weight_transform::{PackedSection, WeightTransform};
 use model_compiler_sdk::quantization::declared::{self, Admitted};
@@ -102,19 +103,26 @@ pub struct View {
 }
 
 /// The record policy of a derived operation of `family` reading `operands`
-/// source tensors: expert banks as expert-major packed pieces (a whole
-/// bank's sources would pass the 64 sources one record may name), fused
-/// dense operands (the shared expert's w1 and w3) as one packed piece per
-/// operand, which the bundle binds as its own view, lookup tables as rows,
-/// every other projection one packed operand per resident section. Call
+/// source tensors in `format`: expert banks as expert-major packed pieces
+/// (a whole bank's sources would pass the 64 sources one record may name),
+/// fused dense operands (the shared expert's w1 and w3) as one packed piece
+/// per operand, which the bundle binds as its own view, lookup tables as
+/// rows, every other projection one packed operand per resident section.
+///
+/// A BF16 dense projection is stored row-major too: the exact F32
+/// projection reads every one of them (the routers, the compressors' and
+/// indexers' projections and the head) as `[rows, k]` BF16 rows, not in the
+/// MMA fragment order a dense BF16 operand otherwise packs into. Call
 /// [`bind_policy`] to bind the consumer layout before emitting these records.
-pub fn policy(family: KernelFamily, operands: u32) -> Option<RecordPolicy> {
+pub fn policy(family: KernelFamily, operands: u32, format: WeightFormat) -> Option<RecordPolicy> {
+    use model_compiler_sdk::quantization::format::RecordLayout;
     match family {
         KernelFamily::GroupedExpert => Some(RecordPolicy::PackedPieces),
         KernelFamily::Dense if operands > 1 => Some(RecordPolicy::PackedPieces),
-        KernelFamily::Lookup => Some(RecordPolicy::Sections(
-            model_compiler_sdk::quantization::format::RecordLayout::Rows,
-        )),
+        KernelFamily::Dense if format == WeightFormat::Bf16 => {
+            Some(RecordPolicy::Sections(RecordLayout::Rows))
+        }
+        KernelFamily::Lookup => Some(RecordPolicy::Sections(RecordLayout::Rows)),
         _ => None,
     }
 }
@@ -155,7 +163,7 @@ pub fn bind_policy(
             view.layout = id.ok_or("expert section has no row layout")?.into();
         }
     }
-    match policy(operation.family, operands) {
+    match policy(operation.family, operands, operation.packing.format) {
         Some(policy) => bind_record_policy(operation, policy).map_err(|e| e.to_string()),
         None => Ok(operation),
     }

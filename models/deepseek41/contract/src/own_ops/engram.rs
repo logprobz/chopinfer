@@ -7,6 +7,7 @@
 //! the package's hash resource ([`HashTables`]), exact in integers. The gate
 //! is a device op ([`EngramGate`]) with an f64 oracle and bound.
 
+use crate::geometry::{Engram, Geometry};
 use kernel_core::backend::Need;
 use kernel_core::codec::bf16_to_f32;
 use kernel_core::contract::Refusal;
@@ -14,56 +15,32 @@ use kernel_core::oracle::{NeumaierSum, accumulation_bound};
 use sha2::{Digest, Sha256};
 
 /// The hash resource the package ships, generated offline from the pinned
-/// vendor code by `models/deepseek41/engram_resource.py`.
-pub const RESOURCE: &[u8] = include_bytes!("../../resources/engram-hash.v1.bin");
+/// vendor code by `models/deepseek41/engram_resource.py`: the compressed
+/// token map and the multipliers of every layer id below [`LAYER_IDS`].
+pub const RESOURCE: &[u8] = include_bytes!("../../resources/engram-hash.v2.bin");
 
-/// SHA-256 of [`RESOURCE`]. [`HashTables::parse`] refuses other bytes.
+/// SHA-256 of [`RESOURCE`]. [`HashTables::new`] refuses other bytes.
 pub const RESOURCE_SHA256: &str =
-    "cf13df82c09decf7e4cc51e90d86e71a8bd266f254dc833c67a85b544213469c";
+    "584e3b3950054ebbd372fadadccb8094c3630af2d8fe22c46b4a23787fd09869";
 
 /// The package component format of [`RESOURCE`].
-pub const RESOURCE_FORMAT: &str = "deepseek41.engram-hash.v1";
+pub const RESOURCE_FORMAT: &str = "deepseek41.engram-hash.v2";
 
-const MAGIC: &[u8; 8] = b"DS41ENG1";
+/// The resource holds multipliers for every Engram layer id below this.
+pub const LAYER_IDS: u32 = 64;
+
+const MAGIC: &[u8; 8] = b"DS41ENG2";
 
 /// A position's compressed token that takes no part in an n-gram: inside an
 /// image span (the vendor's `NgramHashState.DEAD`).
 pub const DEAD: i64 = -1;
 
-/// The flash geometry's hash: what [`HashTables::parse`] checks the
-/// resource against.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct HashGeometry {
-    pub vocab: u32,
-    pub compressed_vocab: u32,
-    pub pad_id: u32,
-    /// The value each (n-gram size, head) bucket prime search starts above
-    /// (`engram_vocab_size`).
-    pub bucket_base: u32,
-    pub layer_ids: [u32; 2],
-    pub max_ngram: u32,
-    pub heads: u32,
-    /// Table rows of each Engram layer, the sum of its bucket primes.
-    pub table_rows: [u64; 2],
-}
-
-/// DeepSeek V4.1 Flash's hash geometry (`inference/config.json`).
-pub const FLASH: HashGeometry = HashGeometry {
-    vocab: 129_280,
-    compressed_vocab: 99_092,
-    pad_id: 2,
-    bucket_base: 16_000_000,
-    layer_ids: [1, 14],
-    max_ngram: 4,
-    heads: 8,
-    table_rows: [384_006_168, 384_016_682],
-};
-
-/// The parsed hash resource: the compressed token map, one odd multiplier
-/// per (layer, lookback), and the bucket primes and offsets.
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// One geometry's hash: the compressed token map, one odd multiplier per
+/// (Engram layer, lookback), and the bucket primes and offsets.
+#[derive(Clone, Debug, PartialEq)]
 pub struct HashTables {
-    geometry: HashGeometry,
+    engram: Engram,
+    compressed_vocab: u32,
     pad: i64,
     /// `[layer][lookback]`.
     multipliers: Vec<i64>,
@@ -141,18 +118,19 @@ fn is_prime(n: u64) -> bool {
 }
 
 impl HashTables {
-    /// The resource the package ships, checked against [`FLASH`].
-    pub fn flash() -> Result<HashTables, String> {
-        HashTables::parse(RESOURCE, FLASH)
+    /// The shipped resource under `geometry`'s Engram layout.
+    pub fn of(geometry: &Geometry) -> Result<HashTables, String> {
+        HashTables::new(RESOURCE, geometry.shape.vocab, geometry.shape.engram)
     }
 
-    /// Parses `bytes` and checks them against `geometry` and
-    /// [`RESOURCE_SHA256`]: every token maps into the compressed vocabulary
-    /// and every compressed id is used; multipliers are odd and positive
-    /// and keep `id * multiplier` within i64; the primes are the vendor's
-    /// draw (each the least unused prime above the bucket base, in layer,
-    /// n-gram size and head order) and sum to each layer's table rows.
-    pub fn parse(bytes: &[u8], geometry: HashGeometry) -> Result<HashTables, String> {
+    /// Parses `bytes` (refusing any but [`RESOURCE_SHA256`]) for a
+    /// vocabulary of `vocab` ids and the Engram layout `engram`: every token
+    /// maps into the compressed vocabulary and every compressed id is used;
+    /// multipliers are odd and positive and keep `id * multiplier` within
+    /// i64. The bucket primes are the vendor's draw (each the least unused
+    /// prime above the bucket base, in layer, n-gram size and head order),
+    /// and must sum to each layer's table rows.
+    pub fn new(bytes: &[u8], vocab: u32, engram: Engram) -> Result<HashTables, String> {
         let digest: String = Sha256::digest(bytes)
             .iter()
             .map(|b| format!("{b:02x}"))
@@ -166,72 +144,58 @@ impl HashTables {
         if &r.take::<8>()? != MAGIC {
             return Err("not an Engram hash resource".into());
         }
-        let header = [
-            r.u32()?,
-            r.u32()?,
-            r.u32()?,
-            r.u32()?,
-            r.u32()?,
-            r.u32()?,
-            r.u32()?,
-            r.u32()?,
-        ];
-        let [
-            vocab,
-            compressed,
-            pad_raw,
-            pad,
-            base,
-            layers,
-            max_ngram,
-            heads,
-        ] = header;
-        if [vocab, compressed, pad_raw, base, layers, max_ngram, heads]
+        let header = [r.u32()?, r.u32()?, r.u32()?, r.u32()?, r.u32()?, r.u32()?];
+        let [resource_vocab, compressed, pad_raw, pad, max_ngram, ids] = header;
+        if [resource_vocab, compressed, pad_raw, max_ngram, ids]
             != [
-                geometry.vocab,
-                geometry.compressed_vocab,
-                geometry.pad_id,
-                geometry.bucket_base,
-                geometry.layer_ids.len() as u32,
-                geometry.max_ngram,
-                geometry.heads,
+                vocab,
+                engram.compressed_vocab,
+                engram.pad_token,
+                engram.max_ngram,
+                LAYER_IDS,
             ]
         {
             return Err(format!(
                 "Engram hash resource header {header:?} does not match the geometry"
             ));
         }
-        let layer_ids = [r.u32()?, r.u32()?];
-        if layer_ids != geometry.layer_ids {
-            return Err("Engram hash resource layer ids differ from the geometry".into());
+        if !(2..=8).contains(&max_ngram)
+            || engram.heads == 0
+            || engram.layers.len() != engram.rows.len()
+        {
+            return Err("Engram layout outside the hash's n-gram sizes or heads".into());
         }
-        let multipliers = (0..layers * max_ngram)
+        let all = (0..ids * max_ngram)
             .map(|_| r.i64())
             .collect::<Result<Vec<_>, _>>()?;
         let bound = i64::MAX / i64::from(compressed) / 2;
-        if let Some(m) = multipliers
+        if let Some(m) = all
             .iter()
             .find(|&&m| m <= 0 || m % 2 == 0 || m > 2 * bound + 1)
         {
             return Err(format!("Engram multiplier {m} is not odd within its bound"));
         }
-        let columns = (max_ngram - 1) * heads;
-        let primes = (0..layers * columns)
-            .map(|_| r.u32().map(u64::from))
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut drawn = Vec::with_capacity(primes.len());
-        for _ in 0..layers * (max_ngram - 1) {
-            let mut current = u64::from(base) - 1;
-            for _ in 0..heads {
+        let mut multipliers = Vec::new();
+        for &layer in engram.layers {
+            if layer >= LAYER_IDS {
+                return Err(format!(
+                    "Engram layer {layer} has no multipliers in the resource"
+                ));
+            }
+            multipliers
+                .extend_from_slice(&all[(layer * max_ngram) as usize..][..max_ngram as usize]);
+        }
+        let columns = (max_ngram - 1) * engram.heads;
+        let mut primes = Vec::new();
+        for _ in 0..engram.layers.len() as u32 * (max_ngram - 1) {
+            let mut current = u64::from(engram.vocab) - 1;
+            for _ in 0..engram.heads {
                 current += 1;
-                while !is_prime(current) || drawn.contains(&current) {
+                while !is_prime(current) || primes.contains(&current) {
                     current += 1;
                 }
-                drawn.push(current);
+                primes.push(current);
             }
-        }
-        if primes != drawn {
-            return Err("Engram bucket primes are not the vendor's draw".into());
         }
         let mut offsets = Vec::with_capacity(primes.len());
         for (layer, row) in primes.chunks(columns as usize).enumerate() {
@@ -240,9 +204,10 @@ impl HashTables {
                 offsets.push(start);
                 start += prime;
             }
-            if start != geometry.table_rows[layer] || start > u64::from(u32::MAX) {
+            if start != u64::from(engram.rows[layer]) {
                 return Err(format!(
-                    "Engram layer {layer} buckets sum to {start}, not its table rows"
+                    "Engram layer {layer} buckets sum to {start}, not its {} table rows",
+                    engram.rows[layer]
                 ));
             }
         }
@@ -259,11 +224,12 @@ impl HashTables {
         if used.contains(&false) {
             return Err("an Engram compressed id has no token".into());
         }
-        if token_map[pad_raw as usize] != pad {
+        if token_map.get(pad_raw as usize) != Some(&pad) {
             return Err("the Engram pad id is not the pad token's compressed id".into());
         }
         Ok(HashTables {
-            geometry,
+            engram,
+            compressed_vocab: compressed,
             pad: i64::from(pad),
             multipliers,
             primes,
@@ -272,13 +238,14 @@ impl HashTables {
         })
     }
 
-    pub fn geometry(&self) -> HashGeometry {
-        self.geometry
+    /// The Engram layout the tables hash for.
+    pub fn engram(&self) -> Engram {
+        self.engram
     }
 
     /// Hash ids per position and layer: `(max_ngram - 1) * heads`.
     pub fn columns(&self) -> usize {
-        ((self.geometry.max_ngram - 1) * self.geometry.heads) as usize
+        ((self.engram.max_ngram - 1) * self.engram.heads) as usize
     }
 
     /// The compressed id of raw `token`, or [`DEAD`] where the position
@@ -300,10 +267,10 @@ impl HashTables {
     /// XOR of `id * multiplier` over lookbacks 0..n-1 is the n-gram's hash,
     /// reduced modulo each head's prime, plus the head's offset.
     pub fn position(&self, recent: &[i64], out: &mut [u32]) -> Result<(), Refusal> {
-        let n = self.geometry.max_ngram as usize;
-        let heads = self.geometry.heads as usize;
+        let n = self.engram.max_ngram as usize;
+        let heads = self.engram.heads as usize;
         let columns = self.columns();
-        if out.len() != self.geometry.layer_ids.len() * columns {
+        if out.len() != self.engram.layers.len() * columns {
             return Err(Refusal("Engram hash output is not layers * columns"));
         }
         let mut tokens = [self.pad; 8];
@@ -314,7 +281,7 @@ impl HashTables {
             blocked |= source.is_none_or(|id| id == DEAD);
             if !blocked {
                 let id = source.unwrap_or(self.pad);
-                if !(0..i64::from(self.geometry.compressed_vocab)).contains(&id) {
+                if !(0..i64::from(self.compressed_vocab)).contains(&id) {
                     return Err(Refusal(
                         "an Engram history id is outside the compressed vocabulary",
                     ));
@@ -342,8 +309,8 @@ impl HashTables {
     /// its start (`[position][layer][column]`), as the vendor computes them
     /// over a prefill and any later chunks.
     pub fn sequence(&self, compressed: &[i64]) -> Result<Vec<u32>, Refusal> {
-        let width = self.geometry.layer_ids.len() * self.columns();
-        let n = self.geometry.max_ngram as usize;
+        let width = self.engram.layers.len() * self.columns();
+        let n = self.engram.max_ngram as usize;
         let mut out = vec![0; compressed.len() * width];
         let mut recent = Vec::with_capacity(n);
         for (p, row) in out.chunks_mut(width).enumerate() {
@@ -356,10 +323,10 @@ impl HashTables {
 }
 
 /// The Engram gate of one Engram layer over `streams` residual streams of
-/// `width`, numerical contract `deepseek41.engram-gate.v1`.
+/// `width`, numerical contract `deepseek41.engram-gate.v2`.
 ///
 /// Per row and stream s, with `h` the stream (BF16, widened), `key` the
-/// row's key s and `value` its value (BF16 halves of the `wkv` output),
+/// row's key s and `value` its value (F32 slices of the `wkv` output),
 /// `w = q_weight[s] * k_weight[s]` (BF16 products, exact in F32) and
 /// `n = width`:
 ///
@@ -371,7 +338,12 @@ impl HashTables {
 ///
 /// The reduction order is the backend's. A row with a closed gate computes
 /// `BF16(h + 0 * value)` exactly. Everything is computed as F32; the bound
-/// is [`gate_reference`]'s.
+/// is [`gate_reference`]'s. A non-finite `h`, key or weight makes that
+/// stream's open gate NaN. NaN gates propagate to every element of that
+/// stream. Values follow IEEE arithmetic: a NaN value produces NaN, and
+/// zero times an infinite value produces NaN even for a closed gate.
+/// NaN outputs compare by class, without prescribing sign or payload.
+/// Other rows and streams are unaffected. No data value causes a trap.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EngramGate {
     pub width: u32,
@@ -386,12 +358,14 @@ pub const GATE_EPS: f64 = 1e-20;
 pub const GATE_CLAMP: f64 = 1e-6;
 
 impl EngramGate {
-    /// The flash geometry's gate: 4 streams of 5120.
-    pub const FLASH: EngramGate = EngramGate {
-        width: 5120,
-        streams: 4,
-        masked: true,
-    };
+    /// The gate of `geometry`: its hidden width over its residual streams.
+    pub const fn of(geometry: &Geometry, masked: bool) -> EngramGate {
+        EngramGate {
+            width: geometry.shape.hidden,
+            streams: geometry.shape.hc.streams,
+            masked,
+        }
+    }
 
     pub fn validate(&self, need: Need) -> Result<(), Refusal> {
         if self.width == 0 || self.streams == 0 || need.capacity == 0 {
@@ -413,7 +387,7 @@ impl EngramGate {
 
 kernel_core::scratch_record! {
     /// An Engram gate's buffers, every view 16-byte aligned: the BF16
-    /// streams `x` (`[row][stream][width]`), the BF16 `kv` rows
+    /// streams `x` (`[row][stream][width]`), the F32 `kv` rows
     /// (`[row][(streams + 1) * width]`: key per stream, then the value),
     /// the BF16 `q_weight` and `k_weight` (`[stream][width]`), the U8 `text`
     /// flag per row (bound when the op is masked), the device U32 count of
@@ -436,7 +410,7 @@ kernel_core::scratch_record! {
 #[derive(Clone, Copy, Debug)]
 pub struct GateRow<'a> {
     pub x: &'a [u16],
-    pub kv: &'a [u16],
+    pub kv: &'a [f32],
     pub q_weight: &'a [u16],
     pub k_weight: &'a [u16],
     pub open: bool,
@@ -453,6 +427,9 @@ pub struct GateReference {
 }
 
 fn gate_of(dot: f64) -> f64 {
+    if dot.is_nan() {
+        return f64::NAN;
+    }
     let z = dot.abs().max(GATE_CLAMP).sqrt().copysign(dot);
     1.0 / (1.0 + (-z).exp())
 }
@@ -462,15 +439,22 @@ fn half_bf16_ulp(value: f64) -> f64 {
     2_f64.powi(magnitude.log2().floor() as i32 - 8)
 }
 
-/// The f64 oracle of one row and its bound. The gate is evaluated exactly
-/// in f64. Its error follows from the accumulation rule (2^-22 K S) for each
-/// F32 reduction: the dot's error is `2^-22 n sum|h w key| r n^-0.5` plus a
-/// relative `2^-22 n + 2^-19` for the two mean squares, reciprocal square
-/// roots and products. The gate error is the gate's largest change over
-/// that interval of `dot` (it is monotone) plus 2^-20 for evaluating it. An
-/// element may then differ from `h + gate * value` by `|value|` times the
-/// gate error, an F32 rounding of the sum, and half a BF16 ulp of the
-/// output. A closed gate is exact: bound zero.
+/// The f64 oracle over the original F32 keys and values and widened BF16
+/// streams and weights. Let `u = 2^-24`, `eta = 2^-150`, `a = 2^-22 n`,
+/// `b = a + u (1 + a)`, `S = sum|h w key|`, and `T = sum|key|`.
+/// The F32 key product and square can round, unlike BF16 products. Composing
+/// one product rounding with the reduction allowance gives `b` in place of
+/// v1's `a`. The dot error is `(b S + (T+n) eta (1+a)) r n^-0.5` plus
+/// `|dot| (b + 2^-19 + 2 eta (1+a)/eps)` for normalization and scaling.
+/// The eta terms cover gradual underflow in products, sums and mean squares.
+/// The gate error is its largest change over that interval (including the
+/// signed clamp's jump at zero), plus 2^-20 for its F32 evaluation.
+/// Output error is `|value| gate_error + 2u (|h|+|value|) + eta`, then
+/// half a BF16 ulp at the largest possible output magnitude. There is no
+/// BF16 rounding allowance for either key or value. This arithmetic bound
+/// assumes finite F32 intermediates; IEEE non-finite results compare by
+/// class and infinity sign. A closed gate has zero bound and compares the
+/// exact BF16 result of `h + 0 * value`, including signed zero.
 pub fn gate_reference(op: &EngramGate, row: GateRow<'_>) -> Result<GateReference, Refusal> {
     let (n, streams) = (op.width as usize, op.streams as usize);
     if row.x.len() != n * streams
@@ -497,19 +481,28 @@ pub fn gate_reference(op: &EngramGate, row: GateRow<'_>) -> Result<GateReference
             NeumaierSum::default(),
         );
         let mut magnitude = 0.0;
+        let mut key_magnitude = 0.0;
+        let finite = h.iter().chain(q).chain(k).all(|&v| f(v).is_finite())
+            && key.iter().all(|v| v.is_finite());
         for i in 0..n {
-            let term = f(h[i]) * (f(q[i]) * f(k[i])) * f(key[i]);
+            let term = f(h[i]) * (f(q[i]) * f(k[i])) * f64::from(key[i]);
             hh.add(f(h[i]) * f(h[i]));
-            kk.add(f(key[i]) * f(key[i]));
+            kk.add(f64::from(key[i]) * f64::from(key[i]));
             dot.add(term);
             magnitude += term.abs();
+            key_magnitude += f64::from(key[i]).abs();
         }
         let r = (hh.value() / n as f64 + GATE_EPS).sqrt().recip()
             * (kk.value() / n as f64 + GATE_EPS).sqrt().recip();
         let exact = dot.value() * r * scale;
-        let error = accumulation_bound(n, magnitude) * r * scale
-            + exact.abs() * (accumulation_bound(n, 1.0) + 2_f64.powi(-19));
-        let (gate, gate_error) = if row.open {
+        let a = accumulation_bound(n, 1.0);
+        let b = a + 2_f64.powi(-24) * (1.0 + a);
+        let eta = 2_f64.powi(-150);
+        let error = (b * magnitude + (key_magnitude + n as f64) * eta * (1.0 + a)) * r * scale
+            + exact.abs() * (b + 2_f64.powi(-19) + 2.0 * eta * (1.0 + a) / GATE_EPS);
+        let (gate, gate_error) = if row.open && !finite {
+            (f64::NAN, 0.0)
+        } else if row.open {
             let g = gate_of(exact);
             let spread = (gate_of(exact + error) - g)
                 .abs()
@@ -520,15 +513,15 @@ pub fn gate_reference(op: &EngramGate, row: GateRow<'_>) -> Result<GateReference
         };
         out.gates.push(gate);
         for i in 0..n {
-            let (x, v) = (f(h[i]), f(value[i]));
-            if row.open {
-                let y = x + gate * v;
-                let e = v.abs() * gate_error + 2_f64.powi(-23) * (x.abs() + v.abs());
+            let (x, v) = (f(h[i]), f64::from(value[i]));
+            let y = x + gate * v;
+            if row.open && y.is_finite() {
+                let e = v.abs() * gate_error + 2_f64.powi(-23) * (x.abs() + v.abs()) + eta;
                 out.values.push(y);
                 out.bounds.push(e + half_bf16_ulp(y.abs() + e));
             } else {
                 // F32 `x + 0 * v`: -0 + +0 is +0, as the kernel and the vendor add.
-                out.values.push(x + 0.0 * v);
+                out.values.push(y);
                 out.bounds.push(0.0);
             }
         }
@@ -549,7 +542,11 @@ pub fn check_gate_row(actual: &[u16], reference: &GateReference) -> Result<(), u
         .enumerate()
     {
         let y = f64::from(bf16_to_f32(bits));
-        let ok = if bound == 0.0 {
+        let ok = if r.is_nan() {
+            y.is_nan()
+        } else if r.is_infinite() {
+            y == r
+        } else if bound == 0.0 {
             kernel_core::codec::f32_to_bf16(r as f32) == bits
         } else {
             y.is_finite() && (y - r).abs() <= bound
@@ -574,9 +571,52 @@ mod tests {
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
     }
 
+    fn flash() -> HashTables {
+        HashTables::of(&crate::geometry::FLASH).unwrap()
+    }
+
+    fn ids(value: &serde_json::Value) -> Vec<u32> {
+        value
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_u64().unwrap() as u32)
+            .collect()
+    }
+
+    /// Every case's hashes under `tables` equal the vendor's.
+    fn check_cases(tables: &HashTables, cases: &serde_json::Value) {
+        let width = tables.engram().layers.len() * tables.columns();
+        for case in cases.as_array().unwrap() {
+            let tokens = ids(&case["ids"]);
+            let text: Vec<bool> = match case["text"].as_array() {
+                Some(t) => t.iter().map(|v| v.as_bool().unwrap()).collect(),
+                None => vec![true; tokens.len()],
+            };
+            let compressed: Vec<i64> = tokens
+                .iter()
+                .zip(&text)
+                .map(|(&id, &t)| tables.compress(id, t).unwrap())
+                .collect();
+            // The vendor hashed in two chunks; the hash of a position
+            // depends only on its history, so one pass gives the same ids.
+            let hashes = tables.sequence(&compressed).unwrap();
+            assert_eq!(hashes[..width], ids(&case["first_row"])[..]);
+            let bytes: Vec<u8> = hashes
+                .iter()
+                .flat_map(|&h| i64::from(h).to_le_bytes())
+                .collect();
+            let digest: String = Sha256::digest(&bytes)
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            assert_eq!(digest, case["sha256"].as_str().unwrap(), "{case}");
+        }
+    }
+
     #[test]
     fn the_resource_is_the_vendors_map_multipliers_and_primes() {
-        let tables = HashTables::flash().unwrap();
+        let tables = flash();
         assert_eq!(tables.columns(), 24);
         assert_eq!(tables.token_map.len(), 129_280);
         assert_eq!(tables.token_map.iter().max(), Some(&99_091));
@@ -602,69 +642,71 @@ mod tests {
 
     #[test]
     fn hashes_equal_the_vendors_ids() {
-        let tables = HashTables::flash().unwrap();
         let doc = vendor_cases();
-        let cases = doc["cases"].as_array().unwrap();
-        assert_eq!(cases.len(), 12);
-        for case in cases {
-            let ids: Vec<u32> = case["ids"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|v| v.as_u64().unwrap() as u32)
-                .collect();
-            let text: Vec<bool> = match case["text"].as_array() {
-                Some(t) => t.iter().map(|v| v.as_bool().unwrap()).collect(),
-                None => vec![true; ids.len()],
+        assert_eq!(doc["cases"].as_array().unwrap().len(), 12);
+        check_cases(&flash(), &doc["cases"]);
+    }
+
+    #[test]
+    fn other_layer_ids_and_bucket_bases_hash_as_the_vendor_does() {
+        let doc = vendor_cases();
+        let layouts = doc["layouts"].as_object().unwrap();
+        assert_eq!(layouts.len(), 2);
+        for layout in layouts.values() {
+            let leak = |v: &serde_json::Value| -> &'static [u32] { Box::leak(ids(v).into()) };
+            let engram = Engram {
+                layers: leak(&layout["layer_ids"]),
+                rows: leak(&layout["table_rows"]),
+                vocab: layout["bucket_base"].as_u64().unwrap() as u32,
+                ..crate::geometry::FLASH.shape.engram
             };
-            let compressed: Vec<i64> = ids
-                .iter()
-                .zip(&text)
-                .map(|(&id, &t)| tables.compress(id, t).unwrap())
-                .collect();
-            // The vendor hashed in two chunks; the hash of a position
-            // depends only on its history, so one pass gives the same ids.
-            let hashes = tables.sequence(&compressed).unwrap();
-            let first: Vec<u32> = case["first_row"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|v| v.as_u64().unwrap() as u32)
-                .collect();
-            assert_eq!(&hashes[..48], &first[..]);
-            let bytes: Vec<u8> = hashes
-                .iter()
-                .flat_map(|&h| i64::from(h).to_le_bytes())
-                .collect();
-            let digest: String = Sha256::digest(&bytes)
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect();
-            assert_eq!(digest, case["sha256"].as_str().unwrap(), "{case}");
+            let tables = HashTables::new(RESOURCE, 129_280, engram).unwrap();
+            check_cases(&tables, &layout["cases"]);
+            // Rows that are not the draw's sum refuse.
+            let rows: &'static [u32] = Box::leak(vec![engram.rows[0] + 1, engram.rows[1]].into());
+            let wrong = Engram { rows, ..engram };
+            assert!(
+                HashTables::new(RESOURCE, 129_280, wrong)
+                    .unwrap_err()
+                    .contains("table rows")
+            );
         }
     }
 
     #[test]
-    fn the_resource_refuses_other_bytes() {
+    fn the_resource_refuses_other_bytes_and_layouts() {
+        let engram = crate::geometry::FLASH.shape.engram;
         let mut bytes = RESOURCE.to_vec();
         bytes[100] ^= 1;
         assert!(
-            HashTables::parse(&bytes, FLASH)
+            HashTables::new(&bytes, 129_280, engram)
                 .unwrap_err()
                 .contains("sha256")
         );
-        let geometry = HashGeometry { heads: 4, ..FLASH };
+        let other = Engram {
+            max_ngram: 3,
+            ..engram
+        };
         assert!(
-            HashTables::parse(RESOURCE, geometry)
+            HashTables::new(RESOURCE, 129_280, other)
                 .unwrap_err()
                 .contains("header")
+        );
+        let late = Engram {
+            layers: &[1, 64],
+            ..engram
+        };
+        assert!(
+            HashTables::new(RESOURCE, 129_280, late)
+                .unwrap_err()
+                .contains("no multipliers")
         );
         assert!(!is_prime(16_000_000) && is_prime(16_000_057) && !is_prime(1));
     }
 
     #[test]
     fn look_back_stops_at_the_start_and_at_dead_tokens() {
-        let tables = HashTables::flash().unwrap();
+        let tables = flash();
         let mut a = vec![0; 48];
         let mut b = vec![0; 48];
         // A dead token one back equals the sequence starting here.
@@ -693,14 +735,14 @@ mod tests {
         f32_to_bf16(x)
     }
 
-    fn row(seed: u32, n: usize, streams: usize) -> (Vec<u16>, Vec<u16>, Vec<u16>, Vec<u16>) {
+    fn row(seed: u32, n: usize, streams: usize) -> (Vec<u16>, Vec<f32>, Vec<u16>, Vec<u16>) {
         let mut state = seed;
         let mut next = || {
             state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
             (state >> 8) as f32 / (1 << 24) as f32 * 2.0 - 1.0
         };
         let x = (0..n * streams).map(|_| bf(next() * 4.0)).collect();
-        let kv = (0..n * (streams + 1)).map(|_| bf(next())).collect();
+        let kv = (0..n * (streams + 1)).map(|_| next()).collect();
         let q = (0..n * streams).map(|_| bf(1.0 + next() * 0.25)).collect();
         let k = (0..n * streams).map(|_| bf(1.0 + next() * 0.25)).collect();
         (x, kv, q, k)
@@ -716,7 +758,7 @@ mod tests {
             let (mut hh, mut kk, mut d) = (0f32, 0f32, 0f32);
             for i in 0..n {
                 let h = f(r.x[s * n + i]);
-                let key = f(r.kv[s * n + i]);
+                let key = r.kv[s * n + i];
                 hh += h * h;
                 kk += key * key;
                 d += h * (f(r.q_weight[s * n + i]) * f(r.k_weight[s * n + i])) * key;
@@ -735,7 +777,7 @@ mod tests {
                 0.0
             };
             for i in 0..n {
-                let v = f(r.kv[streams * n + i]);
+                let v = r.kv[streams * n + i];
                 out.push(bf(g.mul_add(v, f(r.x[s * n + i]))));
             }
         }
@@ -744,7 +786,7 @@ mod tests {
 
     #[test]
     fn an_f32_gate_meets_the_bound_and_a_wrong_formula_does_not() {
-        let op = EngramGate::FLASH;
+        let op = EngramGate::of(&crate::geometry::FLASH, true);
         let (n, streams) = (5120, 4);
         for seed in 0..4 {
             let (x, kv, q, k) = row(seed, n, streams);
@@ -771,6 +813,106 @@ mod tests {
     }
 
     #[test]
+    fn rounding_f32_values_before_the_add_is_rejected() {
+        let op = EngramGate::of(&crate::geometry::FLASH, false);
+        let x = vec![bf(-1.0); op.row_elements()];
+        let w = vec![bf(1.0); op.row_elements()];
+        let mut kv = vec![-1.001; op.kv_elements()];
+        kv[op.row_elements()..].fill(1.002);
+        let row = GateRow {
+            x: &x,
+            kv: &kv,
+            q_weight: &w,
+            k_weight: &w,
+            open: true,
+        };
+        let reference = gate_reference(&op, row).unwrap();
+        assert_eq!(
+            check_gate_row(&f32_gate(&op, row, true), &reference),
+            Ok(())
+        );
+        let mut rounded = kv.clone();
+        rounded[op.row_elements()..]
+            .iter_mut()
+            .for_each(|v| *v = bf16_to_f32(bf(*v)));
+        let wrong = f32_gate(
+            &op,
+            GateRow {
+                kv: &rounded,
+                ..row
+            },
+            true,
+        );
+        assert!(check_gate_row(&wrong, &reference).is_err());
+    }
+
+    #[test]
+    fn non_finite_gate_inputs_and_values_have_local_ieee_results() {
+        let op = EngramGate {
+            width: 2,
+            streams: 2,
+            masked: true,
+        };
+        let x = [bf(1.0); 4];
+        let w = [bf(1.0); 4];
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            for operand in 0..4 {
+                let mut kv = [1.001; 6];
+                let mut h = x;
+                let mut q = w;
+                let mut k = w;
+                match operand {
+                    0 => kv[0] = bad,
+                    1 => h[0] = bf(bad),
+                    2 => q[0] = bf(bad),
+                    _ => k[0] = bf(bad),
+                }
+                let r = GateRow {
+                    x: &h,
+                    kv: &kv,
+                    q_weight: &q,
+                    k_weight: &k,
+                    open: true,
+                };
+                let reference = gate_reference(&op, r).unwrap();
+                assert!(reference.values[..2].iter().all(|v| v.is_nan()));
+                assert!(reference.values[2..].iter().all(|v| v.is_finite()));
+                let closed = gate_reference(&op, GateRow { open: false, ..r }).unwrap();
+                assert!(closed.bounds.iter().all(|&v| v == 0.0));
+            }
+            let kv = [1.001, 1.001, 1.001, 1.001, bad, 2.001];
+            for open in [true, false] {
+                let r = GateRow {
+                    x: &x,
+                    kv: &kv,
+                    q_weight: &w,
+                    k_weight: &w,
+                    open,
+                };
+                let reference = gate_reference(&op, r).unwrap();
+                assert_eq!(reference.values[0].is_nan(), !open || bad.is_nan());
+                assert_eq!(reference.values[0].is_infinite(), open && bad.is_infinite());
+                assert!(reference.values[1].is_finite());
+                let got: Vec<_> = reference.values.iter().map(|&v| bf(v as f32)).collect();
+                assert_eq!(check_gate_row(&got, &reference), Ok(()));
+            }
+        }
+    }
+
+    #[test]
+    fn nan_outputs_are_checked_by_class_without_accepting_finite_values() {
+        let reference = GateReference {
+            values: vec![f64::NAN],
+            bounds: vec![0.0],
+            gates: vec![f64::NAN],
+        };
+        assert_eq!(check_gate_row(&[0x7fff], &reference), Ok(()));
+        assert_eq!(check_gate_row(&[0xffc1], &reference), Ok(()));
+        assert_eq!(check_gate_row(&[bf(0.0)], &reference), Err(0));
+        assert_eq!(check_gate_row(&[bf(f32::INFINITY)], &reference), Err(0));
+    }
+
+    #[test]
     fn a_closed_gate_keeps_the_stream_bits_but_not_negative_zero() {
         let op = EngramGate {
             width: 2,
@@ -778,7 +920,7 @@ mod tests {
             masked: true,
         };
         let x = [0x8000, bf(3.5)];
-        let kv = [bf(1.0), bf(1.0), bf(2.0), bf(-2.0)];
+        let kv = [1.0, 1.0, 2.0, -2.0];
         let w = [bf(1.0); 2];
         let r = GateRow {
             x: &x,

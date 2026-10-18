@@ -8,9 +8,14 @@ pub mod encoder;
 pub mod encoder_plan;
 pub mod frontend;
 pub mod geometry;
+pub mod hc;
+pub mod indexer;
+pub mod latent;
+pub mod latent_glue;
 pub mod projections;
 pub mod structure;
 
+pub mod moe;
 pub mod own_ops;
 pub mod rows;
 pub mod serving;

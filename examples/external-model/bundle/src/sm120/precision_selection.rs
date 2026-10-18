@@ -115,6 +115,12 @@ fn offer(
             KernelFamily::GroupedExpert,
         ),
         ProjectionKind::LookupTable {} => (OperationKind::Lookup, KernelFamily::Lookup),
+        ProjectionKind::GroupedDense { .. } => {
+            return Err(format!(
+                "projection {}: the example offers no grouped dense kernels",
+                p.id
+            ));
+        }
     };
     let operands = u8::try_from(p.operand_count()).map_err(|e| e.to_string())?;
     let spec = match activation {

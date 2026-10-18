@@ -2993,7 +2993,7 @@ fn prepare_image_v1(
             runtime_media::recipe::padded_preparation_bytes(width, height, recipe, limits)
         }
         ImageRecipeV1::CenteredPad(recipe, _) => {
-            runtime_media::recipe::centered_pad_preparation_bytes(width, height, recipe, limits)
+            runtime_media::recipe::centered_pad_preparation_bytes(&source.bytes, recipe, limits)
         }
     };
     let reserved = bytes

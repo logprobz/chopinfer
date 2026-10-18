@@ -47,16 +47,7 @@ impl Frame {
         if u64::from(header.width) * u64::from(header.height) > super::MAX_JPEG_PIXELS {
             return Err(MediaError::new("JPEG decoded pixel hard limit exceeded"));
         }
-        let max_h = payload[6..]
-            .chunks_exact(3)
-            .map(|c| usize::from(c[1] >> 4))
-            .max()
-            .unwrap_or(1);
-        let max_v = payload[6..]
-            .chunks_exact(3)
-            .map(|c| usize::from(c[1] & 15))
-            .max()
-            .unwrap_or(1);
+        let (max_h, max_v) = header.maximum_sampling();
         let mcu_cols = div_ceil(usize::from(header.width), 8 * max_h)?;
         let mcu_rows = div_ceil(usize::from(header.height), 8 * max_v)?;
         let mut components = Vec::with_capacity(header.components as usize);
@@ -67,8 +58,7 @@ impl Frame {
             if max_h % h != 0 || max_v % v != 0 {
                 return Err(MediaError::new("unsupported fractional JPEG sampling"));
             }
-            let block_width = mcu_cols * h;
-            let block_height = mcu_rows * v;
+            let (block_width, block_height) = header.component_blocks(components.len());
             let logical_width = div_ceil(usize::from(header.width) * h, 8 * max_h)?;
             let logical_height = div_ceil(usize::from(header.height) * v, 8 * max_v)?;
             let count = block_width

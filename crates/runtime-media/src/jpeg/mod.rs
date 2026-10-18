@@ -17,9 +17,28 @@ pub(crate) struct Header {
     pub components: u8,
     pub orientation: u8,
     pub progressive: bool,
+    pub sampling: [(u8, u8); 4],
 }
 
 impl Header {
+    fn maximum_sampling(self) -> (usize, usize) {
+        let used = &self.sampling[..usize::from(self.components)];
+        (
+            usize::from(used.iter().map(|s| s.0).max().unwrap_or(1)),
+            usize::from(used.iter().map(|s| s.1).max().unwrap_or(1)),
+        )
+    }
+
+    /// Whole MCU padding used by both baseline and progressive decoding.
+    fn component_blocks(self, index: usize) -> (usize, usize) {
+        let (max_h, max_v) = self.maximum_sampling();
+        let (h, v) = self.sampling[index];
+        (
+            usize::from(self.width).div_ceil(8 * max_h) * usize::from(h),
+            usize::from(self.height).div_ceil(8 * max_v) * usize::from(v),
+        )
+    }
+
     fn oriented_size(self) -> (u32, u32) {
         if matches!(self.orientation, 5..=8) {
             (u32::from(self.height), u32::from(self.width))
@@ -105,7 +124,8 @@ pub(crate) fn frame(marker: u8, payload: &[u8], orientation: u8) -> MediaResult<
     }
     let mut seen = [false; 256];
     let mut sampling_units = 0_u32;
-    for entry in payload[6..].chunks_exact(3) {
+    let mut sampling = [(0, 0); 4];
+    for (index, entry) in payload[6..].chunks_exact(3).enumerate() {
         let h = entry[1] >> 4;
         let v = entry[1] & 15;
         if seen[entry[0] as usize] || !(1..=4).contains(&h) || !(1..=4).contains(&v) || entry[2] > 3
@@ -113,6 +133,7 @@ pub(crate) fn frame(marker: u8, payload: &[u8], orientation: u8) -> MediaResult<
             return Err(MediaError::new("invalid JPEG component descriptor"));
         }
         seen[entry[0] as usize] = true;
+        sampling[index] = (h, v);
         sampling_units += u32::from(h) * u32::from(v);
     }
     if sampling_units > 10 {
@@ -124,6 +145,7 @@ pub(crate) fn frame(marker: u8, payload: &[u8], orientation: u8) -> MediaResult<
         components,
         orientation,
         progressive: marker == 0xc2,
+        sampling,
     })
 }
 
@@ -233,6 +255,36 @@ pub fn probe_oriented(
     limits: MediaLimits,
     policy: Orientation,
 ) -> MediaResult<(u32, u32)> {
+    let mut header = probe_header(bytes, limits)?;
+    if policy == Orientation::Stored {
+        header.orientation = 1;
+    }
+    Ok(header.oriented_size())
+}
+
+/// Decoder storage derived from the SOF, before any coefficient allocation.
+/// Every component holds 64 i32 coefficients and 64 u8 samples per padded
+/// block alongside the RGB output. Baseline and progressive scans both
+/// retain full coefficient arrays. The fixed allowance covers component and
+/// plane descriptors, scan state, Huffman tables, quantizers and IDCT scratch.
+pub fn decode_storage_bytes(bytes: &[u8], limits: MediaLimits) -> MediaResult<u64> {
+    let header = probe_header(bytes, limits)?;
+    let (max_h, max_v) = header.maximum_sampling();
+    let mut blocks = 0_u64;
+    for index in 0..usize::from(header.components) {
+        let (h, v) = header.sampling[index];
+        if max_h % usize::from(h) != 0 || max_v % usize::from(v) != 0 {
+            return Err(MediaError::new("unsupported fractional JPEG sampling"));
+        }
+        let (w, h) = header.component_blocks(index);
+        blocks += w as u64 * h as u64;
+    }
+    Ok(blocks * 64 * (size_of::<i32>() as u64 + 1)
+        + u64::from(header.width) * u64::from(header.height) * 3
+        + 16 * 1024)
+}
+
+fn probe_header(bytes: &[u8], limits: MediaLimits) -> MediaResult<Header> {
     limits.check_bytes(bytes.len())?;
     let mut markers = Markers::new(bytes)?;
     let mut orientation = 1;
@@ -263,11 +315,7 @@ pub fn probe_oriented(
                 return Err(MediaError::new("unsupported JPEG frame coding"));
             }
             0xda => {
-                let mut header = header.ok_or_else(|| MediaError::new("JPEG SOF is missing"))?;
-                if policy == Orientation::Stored {
-                    header.orientation = 1;
-                }
-                return Ok(header.oriented_size());
+                return header.ok_or_else(|| MediaError::new("JPEG SOF is missing"));
             }
             0xd9 => return Err(MediaError::new("JPEG scan is missing")),
             _ => {}
@@ -366,6 +414,32 @@ mod tests {
             let image = decode(&bytes, limits()).unwrap();
             assert_eq!((image.width, image.height), (8, 8));
             assert_eq!(image.data, vec![128; 8 * 8 * 3]);
+        }
+    }
+
+    #[test]
+    fn storage_bound_counts_components_and_mcu_padding_in_both_scan_modes() {
+        // A 17 x 9 source needs 2 x 1 MCUs at 4:2:0, and 3 x 2
+        // blocks per full-resolution component at 4:4:4 or CMYK.
+        for marker in [0xc0, 0xc2] {
+            for (sampling, blocks) in [
+                (vec![0x11], 6),
+                (vec![0x11; 3], 18),
+                (vec![0x22, 0x11, 0x11], 12),
+                (vec![0x11; 4], 24),
+            ] {
+                let mut bytes = vec![0xff, 0xd8];
+                let mut sof = vec![8, 0, 9, 0, 17, sampling.len() as u8];
+                for (index, factors) in sampling.into_iter().enumerate() {
+                    sof.extend_from_slice(&[index as u8, factors, 0]);
+                }
+                segment(&mut bytes, marker, &sof);
+                segment(&mut bytes, 0xda, &[]);
+                assert_eq!(
+                    decode_storage_bytes(&bytes, limits()).unwrap(),
+                    blocks * 64 * 5 + 17 * 9 * 3 + 16 * 1024,
+                );
+            }
         }
     }
 

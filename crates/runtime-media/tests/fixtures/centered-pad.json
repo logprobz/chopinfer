@@ -807,6 +807,114 @@
    "bf16_sha256": "357f4da0d9b16414a8383b03e56ce647a7f4563e04475d2932118a3eb0e01686"
   },
   {
+   "name": "jpeg-cmyk-256x256",
+   "pattern": "blocks",
+   "width": 256,
+   "height": 256,
+   "file": "centered-pad-jpeg-cmyk-256x256.jpg",
+   "decoded_rgb_sha256": "083c01a102aff2fdf52ee6cdaa8a4fba72cec9eb44dd6a20e4904c5ea4cca566",
+   "plan": [
+    546,
+    546,
+    546,
+    546,
+    0,
+    0,
+    13,
+    13
+   ],
+   "grid": [
+    1,
+    39,
+    39
+   ],
+   "tokens": 169,
+   "span_tokens": 184,
+   "rows_sha256": "41d49d642fc855922d7b3f596ef635e7345114e069bc13733ef2713af5646cd6",
+   "bf16_sha256": "98ca7c6678279a73389329ac954d3bd0c3e4151627c64ef9e3d768f85f3dc0d7"
+  },
+  {
+   "name": "jpeg-cmyk-257x255",
+   "pattern": "noise",
+   "width": 257,
+   "height": 255,
+   "file": "centered-pad-jpeg-cmyk-257x255.jpg",
+   "decoded_rgb_sha256": "2bb5a1aecd0741f27cacc0111f1dcca642c9fcaa7f1a8db8598a7e0604adcbad",
+   "plan": [
+    546,
+    546,
+    542,
+    546,
+    2,
+    0,
+    13,
+    13
+   ],
+   "grid": [
+    1,
+    39,
+    39
+   ],
+   "tokens": 169,
+   "span_tokens": 184,
+   "rows_sha256": "f9cb22cdad70cc89a89d887b32c215685cbd25ed499653f605f1515f05ab4b69",
+   "bf16_sha256": "23e8dbb5f2fbd637a2b4561450961cc532a14e9f597d5d2c20f3e7c1480a391c"
+  },
+  {
+   "name": "jpeg-progressive-444-301x199",
+   "pattern": "blocks",
+   "width": 301,
+   "height": 199,
+   "file": "centered-pad-jpeg-progressive-444-301x199.jpg",
+   "decoded_rgb_sha256": "9488574787ea457bf9dcae16bf4e128b4d807a8b5281ebb3a83c404951307dba",
+   "plan": [
+    448,
+    672,
+    444,
+    672,
+    2,
+    0,
+    11,
+    16
+   ],
+   "grid": [
+    1,
+    32,
+    48
+   ],
+   "tokens": 176,
+   "span_tokens": 189,
+   "rows_sha256": "b6cd7066e47d43e9dc86c82c71abbe416cd20786e3e70c4c137171f9edc54b8f",
+   "bf16_sha256": "67a649dba9047838409a1247031462e85c8c6bf8150b638dcf8e542fc03877a3"
+  },
+  {
+   "name": "jpeg-progressive-420-161x97",
+   "pattern": "noise",
+   "width": 161,
+   "height": 97,
+   "file": "centered-pad-jpeg-progressive-420-161x97.jpg",
+   "decoded_rgb_sha256": "3b03681004eca57acac559b4974bddd1e06e4cc3fc6d47b1295d45a89d93b7e2",
+   "plan": [
+    434,
+    700,
+    422,
+    700,
+    6,
+    0,
+    11,
+    17
+   ],
+   "grid": [
+    1,
+    31,
+    50
+   ],
+   "tokens": 187,
+   "span_tokens": 200,
+   "rows_sha256": "91462bd7c7868359274ed30a51899a1c2a609e6a8ac909d8eebfc45f20444042",
+   "bf16_sha256": "bf1380be11b370d9d2dc5f286bab1a93b0db3a9d6db918ec83f4655e00a865c2"
+  },
+  {
    "name": "jpeg-exif6-8x16",
    "pattern": "blocks",
    "width": 8,

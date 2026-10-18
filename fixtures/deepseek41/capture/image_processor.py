@@ -80,6 +80,10 @@ CASES = [
     ("jpeg-444-301x199", "blocks", 301, 199, "JPEG444"),
     ("jpeg-420-160x96", "blocks", 160, 96, "JPEG420"),
     ("jpeg-gray-64x48", "blocks", 64, 48, "JPEG-L"),
+    ("jpeg-cmyk-256x256", "blocks", 256, 256, "JPEG-CMYK"),
+    ("jpeg-cmyk-257x255", "noise", 257, 255, "JPEG-CMYK"),
+    ("jpeg-progressive-444-301x199", "blocks", 301, 199, "JPEG-PROGRESSIVE444"),
+    ("jpeg-progressive-420-161x97", "noise", 161, 97, "JPEG-PROGRESSIVE420"),
     # An EXIF orientation of 6 (rotate 90) stays 8 x 16 as stored.
     ("jpeg-exif6-8x16", "blocks", 8, 16, "JPEG-EXIF6"),
     ("jpeg-exif6-64x40", "blocks", 64, 40, "JPEG-EXIF6"),
@@ -129,16 +133,20 @@ def encoded(name, kind, width, height, mode):
         color = 1 if mode in ("L", "LA") else 3
         pixels = pattern(kind, width, height, color + (mode != "L"))
         Image.fromarray(pixels[:, :, 0] if mode == "L" else pixels, mode).save(buffer, format="PNG")
-    elif mode in ("JPEG444", "JPEG420", "JPEG-EXIF6"):
+    elif mode in ("JPEG444", "JPEG420", "JPEG-EXIF6", "JPEG-PROGRESSIVE444", "JPEG-PROGRESSIVE420"):
         exif = Image.Exif()
         if mode == "JPEG-EXIF6":
             exif[0x0112] = 6
         Image.fromarray(pattern(kind, width, height), "RGB").save(
-            buffer, format="JPEG", quality=92, subsampling=2 if mode == "JPEG420" else 0, exif=exif
+            buffer, format="JPEG", quality=92, subsampling=2 if mode.endswith("420") else 0,
+            progressive=mode.startswith("JPEG-PROGRESSIVE"), exif=exif
         )
         return buffer.getvalue(), "jpg"
     elif mode == "JPEG-L":
         Image.fromarray(pattern(kind, width, height, 1)[:, :, 0], "L").save(buffer, format="JPEG", quality=92)
+        return buffer.getvalue(), "jpg"
+    elif mode == "JPEG-CMYK":
+        Image.fromarray(pattern(kind, width, height, 4), "CMYK").save(buffer, format="JPEG", quality=92)
         return buffer.getvalue(), "jpg"
     else:
         raise ValueError(mode)
@@ -180,6 +188,7 @@ def sha256(data):
 
 
 def main():
+    assert PIL.__version__ == "12.3.0", "capture requires Pillow 12.3.0"
     parser = argparse.ArgumentParser()
     parser.add_argument("checkpoint", type=Path)
     options = parser.parse_args()

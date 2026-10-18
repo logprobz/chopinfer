@@ -275,7 +275,7 @@ pub fn centered_pad_grid(
     })
 }
 
-/// A conservative bound on the host bytes an image of `width` x `height`
+/// A conservative bound on the host bytes an encoded image
 /// holds while it decodes and becomes patch rows with
 /// [`centered_pad_grid`], in the terms of
 /// [`super::image_preparation_bytes`]: the decoder's buffers, the
@@ -284,20 +284,48 @@ pub fn centered_pad_grid(
 /// the normalization table, the F32 patch rows and a payload of up to 4
 /// bytes per value.
 pub fn centered_pad_preparation_bytes(
+    bytes: &[u8],
+    recipe: CenteredPadRecipe,
+    limits: MediaLimits,
+) -> MediaResult<u64> {
+    let (width, height, decode) =
+        match crate::probe_oriented(bytes, limits, crate::Orientation::Stored)? {
+            crate::Probe::Jpeg { width, height } => (
+                width,
+                height,
+                crate::jpeg::decode_storage_bytes(bytes, limits)?,
+            ),
+            crate::Probe::Png { width, height } => {
+                // Scanlines, two filter rows and RGB, plus IDAT storage during
+                // growth and the inflater's fixed workspace. The encoded source
+                // itself is counted separately by the caller.
+                let decode = (u64::from(width) * u64::from(height))
+                    .checked_mul(super::DECODE_BYTES_PER_PIXEL)
+                    .and_then(|n| n.checked_add((bytes.len() as u64).checked_mul(2)?))
+                    .and_then(|n| n.checked_add(32 * 1024))
+                    .ok_or_else(|| MediaError::new("image preparation size overflow"))?;
+                (width, height, decode)
+            }
+            _ => return Err(MediaError::new("centered pad requires a PNG or JPEG image")),
+        };
+    centered_pad_buffer_bytes(width, height, decode, recipe, limits)
+}
+
+fn centered_pad_buffer_bytes(
     width: u32,
     height: u32,
+    decode_bytes: u64,
     recipe: CenteredPadRecipe,
     limits: MediaLimits,
 ) -> MediaResult<u64> {
     let plan = centered_pad_plan(height, width, recipe, limits)?;
     let (content_h, content_w) = plan.content;
-    let source = u64::from(width) * u64::from(height);
     let content = u64::from(content_h) * u64::from(content_w);
     let canvas = u64::from(plan.canvas.0) * u64::from(plan.canvas.1);
     let intermediate =
         (u64::from(height) * u64::from(content_w)).max(u64::from(content_h) * u64::from(width));
     [
-        source.checked_mul(super::DECODE_BYTES_PER_PIXEL),
+        Some(decode_bytes),
         Some(resample::coefficient_bytes(width, content_w)),
         Some(resample::coefficient_bytes(height, content_h)),
         intermediate.checked_mul(3),
@@ -435,7 +463,8 @@ mod tests {
         };
         let plan = centered_pad_plan(10_000, 1, recipe, limits()).unwrap();
         assert_eq!((plan.canvas, plan.content), ((7500, 1), (7500, 1)));
-        let bytes = centered_pad_preparation_bytes(1, 10_000, recipe, limits()).unwrap();
+        let decode = 10_000 * super::super::DECODE_BYTES_PER_PIXEL;
+        let bytes = centered_pad_buffer_bytes(1, 10_000, decode, recipe, limits()).unwrap();
         let weights = 7500 * (7 * 12 + 16);
         let buffers = 10_000 * super::super::DECODE_BYTES_PER_PIXEL
             + 10_000 * 3
@@ -444,6 +473,22 @@ mod tests {
             + 3 * 256 * 4
             + 7500 * 3 * 8;
         assert_eq!(bytes, weights + buffers);
+    }
+
+    #[test]
+    fn preparation_bytes_refuse_source_storage_overflow() {
+        // A readable header is enough to reserve before decoding. Even
+        // permissive callers must not wrap its source storage calculation.
+        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        png.extend_from_slice(&u32::MAX.to_be_bytes());
+        png.extend_from_slice(&u32::MAX.to_be_bytes());
+        png.extend_from_slice(&[8, 6, 0, 0, 0, 0, 0, 0, 0]);
+        let limits = MediaLimits {
+            maximum_pixels: u64::MAX,
+            ..limits()
+        };
+        let error = centered_pad_preparation_bytes(&png, recipe(), limits).unwrap_err();
+        assert_eq!(error.to_string(), "image preparation size overflow");
     }
 
     #[test]

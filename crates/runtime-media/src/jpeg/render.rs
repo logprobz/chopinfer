@@ -219,6 +219,61 @@ mod tests {
     use super::*;
 
     #[test]
+    fn centered_pad_bound_covers_cmyk_decode_peak() {
+        let bytes = include_bytes!("../../tests/fixtures/centered-pad-jpeg-cmyk-256x256.jpg");
+        let limits = MediaLimits {
+            maximum_bytes: 1 << 20,
+            maximum_pixels: 1 << 28,
+            maximum_audio_frames: 0,
+            maximum_frames: 1,
+            maximum_tokens: 4,
+            maximum_aspect_ratio: 200.0,
+        };
+        let recipe = crate::recipe::CenteredPadRecipe {
+            patch: 1,
+            downsample: 1,
+            minimum_pixels: 0,
+            maximum_tokens: 4,
+            pad: [127; 3],
+            value_divisor: 255.0,
+            mean: [0.5; 3],
+            std: [0.5; 3],
+        };
+        // Allocate the actual decoder's coefficient arrays and sample planes.
+        // They remain live when render allocates its RGB output.
+        let frame = super::super::decode::coefficients(bytes, limits).unwrap();
+        let coefficients: usize = frame
+            .components
+            .iter()
+            .map(|c| c.coeffs.capacity() * size_of::<[i32; 64]>())
+            .sum();
+        let planes: Vec<_> = frame
+            .components
+            .iter()
+            .map(|c| {
+                Plane::new(
+                    c,
+                    frame.quant[c.quant].as_ref().unwrap(),
+                    frame.max_h,
+                    frame.max_v,
+                    usize::from(frame.header.width),
+                    usize::from(frame.header.height),
+                )
+                .unwrap()
+            })
+            .collect();
+        let samples: usize = planes.iter().map(|p| p.pixels.capacity()).sum();
+        let rgb = crate::core::try_with_capacity::<u8>(256 * 256 * 3).unwrap();
+        assert_eq!(
+            (coefficients, samples, rgb.capacity()),
+            (1_048_576, 262_144, 196_608)
+        );
+        let peak = coefficients + samples + rgb.capacity();
+        let bound = crate::recipe::centered_pad_preparation_bytes(bytes, recipe, limits).unwrap();
+        assert!(bound >= peak as u64, "{bound} < {peak}");
+    }
+
+    #[test]
     fn orientation_maps_all_eight_exif_values() {
         let expected = [
             (0, 0),

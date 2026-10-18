@@ -332,8 +332,7 @@ impl Prepared {
     }
 
     /// The entries the drafter's ops launch, each with the dynamic shared
-    /// memory its op states, for loading their modules in the tests.
-    #[cfg(test)]
+    /// memory its op states, for loading their modules.
     pub(crate) fn symbols(&self) -> impl Iterator<Item = &(String, u32)> {
         [
             self.feature.info(),

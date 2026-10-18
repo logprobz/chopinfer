@@ -19,7 +19,7 @@ impl Lowering<'_> {
         phase: Phase,
         layer: u32,
     ) -> Result<Option<Vec<Lowered>>, String> {
-        let Some(ops) = &self.ops.engram else {
+        let Some(_) = &self.ops.engram else {
             return Ok(None);
         };
         let g = self.shape.geometry;
@@ -31,9 +31,26 @@ impl Lowering<'_> {
             .position(|&l| l == layer)
             .ok_or_else(|| format!("layer {layer} has no Engram rows"))?;
         let scratch = &self.buffers.scratch;
-        let views = RowsViews {
+        let destination = crate::engram_rows::Destination {
             codes: engram_staged(scratch.engram_codes, self.shape, index, phase.rows()),
             scales: engram_staged(scratch.engram_scales, self.shape, index, phase.rows()),
+        };
+        self.engram_rows_staged(phase, layer, destination)
+    }
+
+    pub(crate) fn engram_rows_staged(
+        &self,
+        phase: Phase,
+        layer: u32,
+        destination: crate::engram_rows::Destination,
+    ) -> Result<Option<Vec<Lowered>>, String> {
+        let Some(ops) = &self.ops.engram else {
+            return Ok(None);
+        };
+        let scratch = &self.buffers.scratch;
+        let views = RowsViews {
+            codes: destination.codes,
+            scales: destination.scales,
             output: rows(scratch.engram_rows, phase.rows()),
             live_rows: self.inputs.live_tokens,
         };

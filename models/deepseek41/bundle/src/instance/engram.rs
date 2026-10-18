@@ -59,6 +59,9 @@ fn text_flags(tokens: &[u32], image: Option<u32>) -> Option<Vec<bool>> {
 }
 
 impl Engram {
+    pub(super) fn tables(&self) -> Option<&[Table]> {
+        self.tables.as_deref()
+    }
     /// The Engram rows of `geometry`, `None` without Engram layers; with
     /// `images`, image positions take no part in an n-gram.
     pub(super) fn new(geometry: &Geometry, images: bool) -> Result<Option<Engram>, String> {

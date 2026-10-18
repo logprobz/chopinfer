@@ -18,6 +18,7 @@ use runtime_bundle_abi::*;
 use crate::config::{KV_LAYOUTS, KvLayout};
 
 mod conformance;
+mod dspark;
 mod media;
 use crate::shape::Shape;
 use model_deepseek41_contract::state::KvStorage;
@@ -43,6 +44,7 @@ pub(crate) struct FakeHost {
     speculation: Cell<Option<(u32, u32)>>,
     /// The per-item state bytes create asked for.
     state_bytes: Cell<u64>,
+    drafter: Cell<bool>,
     /// Every upload's bytes by its destination, which a download of the
     /// same span reads back (a snapshot's header).
     uploads: RefCell<std::collections::BTreeMap<(u64, u64), Vec<u8>>>,
@@ -219,12 +221,21 @@ impl FakeHost {
             kv,
             speculation: Cell::new(None),
             state_bytes: Cell::new(0),
+            drafter: Cell::new(false),
             uploads: RefCell::new(std::collections::BTreeMap::new()),
             injected: RefCell::new(None),
             injected_after: Cell::new(0),
             memory: RefCell::new(Memory::default()),
             layouts: RefCell::new(BTreeMap::new()),
         }))
+    }
+
+    fn rank_index(&self, rank: u32) -> (Vec<u8>, u64) {
+        if self.drafter.get() {
+            dspark::index(&self.shape, rank, &self.layouts.borrow())
+        } else {
+            index(&self.shape, rank, &self.layouts.borrow())
+        }
     }
 
     fn page_bytes(&self) -> u64 {
@@ -320,7 +331,16 @@ impl FakePackage for FakeHost {
         rank: u32,
         _view_id: &[u8],
     ) -> HostServiceResultV1<CompiledImageSpanV1> {
-        let (_, bytes) = index(&self.shape, rank, &self.layouts.borrow());
+        let (index, mut bytes) = self.rank_index(rank);
+        if self.drafter.get() {
+            let index = bundle_runtime::index::parse(&index, rank, INDEX_SCHEMA).unwrap();
+            bytes -= index
+                .views
+                .iter()
+                .filter(|(name, _)| name.contains(".engram.embed."))
+                .map(|(_, view)| view.bytes.next_multiple_of(VIEW_ALIGNMENT))
+                .sum::<u64>();
+        }
         let slot = IMAGE_SLOT + rank;
         self.device.extents.borrow_mut().insert(slot, bytes);
         Ok(CompiledImageSpanV1::new(
@@ -354,7 +374,7 @@ impl FakePackage for FakeHost {
     fn component(&self, slot: u32) -> (String, Vec<u8>) {
         if slot >= IDENTITY_COMPONENT {
             let rank = slot - IDENTITY_COMPONENT;
-            let (_, bytes) = index(&self.shape, rank, &self.layouts.borrow());
+            let (_, bytes) = self.rank_index(rank);
             let identity = serde_json::json!({"byte_length": bytes, "sha256": "a".repeat(64)});
             return (
                 format!("chop.compiled-image-identity.v1/{RANK_IMAGE_ROLE}/{rank}"),
@@ -362,10 +382,7 @@ impl FakePackage for FakeHost {
             );
         }
         let rank = slot - INDEX_COMPONENT;
-        (
-            index_role(rank),
-            index(&self.shape, rank, &self.layouts.borrow()).0,
-        )
+        (index_role(rank), self.rank_index(rank).0)
     }
     fn acquire_serving_kv(&self, layout_id: &[u8]) -> HostServiceResultV1<u64> {
         assert_eq!(layout_id, self.kv.layout_id);

@@ -120,6 +120,19 @@ impl PrefixInstance for Instance {
             .ledger
             .committed(request.request_id, request.tokens)
             .map_err(|_| BundleStatusV1::InvalidState)?;
+        self.dspark_catch_up(request.request_id)?;
+        if let Some(device) = &self.dspark {
+            let snapshot = device
+                .runtime
+                .as_ref()
+                .ok_or(BundleStatusV1::InvalidState)?
+                .state()
+                .snapshot(request.request_id)
+                .map_err(|_| BundleStatusV1::InvalidState)?;
+            if snapshot.end != request.tokens {
+                return Err(BundleStatusV1::InvalidState);
+            }
+        }
         let header = Header {
             tokens: request.tokens,
             frontier: None,
@@ -150,14 +163,24 @@ impl PrefixInstance for Instance {
         self.ledger
             .check_restore(request.request_id, request.tokens, Some(slot))
             .map_err(|_| BundleStatusV1::InvalidState)?;
-        let read = self.copy_snapshot(slot, &request.pages, None)?;
+        self.dspark_validate_restore(request.request_id, slot, request.tokens)?;
+        let read = self
+            .copy_snapshot(slot, &request.pages, None)
+            .inspect_err(|_| {
+                self.dspark_poison();
+            })?;
         let header = Header::decode(&read, &HEADER, self.stamp(), request.tokens)
             .map_err(|_| BundleStatusV1::InvalidArgument)?;
         if !may_restore(&self.state, &header, request.request_id) {
             return Err(BundleStatusV1::InvalidArgument);
         }
         // The Engram history: the prefix's last tokens.
-        if let Some(engram) = &mut self.engram {
+        if self.dspark.is_some() {
+            self.dspark_restored(request.request_id, slot, &request.token_ids)
+                .inspect_err(|_| {
+                    self.dspark_poison();
+                })?;
+        } else if let Some(engram) = &mut self.engram {
             engram
                 .restore(request.request_id, &request.token_ids)
                 .map_err(|error| {
@@ -170,10 +193,11 @@ impl PrefixInstance for Instance {
             .restore(request.request_id, request.tokens, Some(slot))
             .map(|_| ())
             .map_err(|_| BundleStatusV1::InternalError);
-        if restored.is_err()
-            && let Some(engram) = &mut self.engram
-        {
-            engram.forget(request.request_id);
+        if restored.is_err() {
+            self.dspark_forget(request.request_id);
+            if let Some(engram) = &mut self.engram {
+                engram.forget(request.request_id);
+            }
         }
         restored
     }

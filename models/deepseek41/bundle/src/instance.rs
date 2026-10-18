@@ -16,6 +16,7 @@
 //! request is the host's (`engram`): a commit adds the kept tokens, and a
 //! freed slot or a retire forgets it.
 
+mod dspark;
 mod engram;
 mod execute;
 mod media;
@@ -74,7 +75,7 @@ fn partial() -> bool {
 }
 
 pub struct Instance {
-    services: HostServicesV1,
+    services: std::rc::Rc<HostServicesV1>,
     held: Vec<Held>,
     collectives: Collectives,
     config: Configuration,
@@ -106,6 +107,7 @@ pub struct Instance {
     taps: crate::taps::StepTaps,
     /// The Engram rows of a geometry with Engram layers.
     engram: Option<engram::Engram>,
+    dspark: Option<crate::dspark::device::Device>,
     /// The compiled image, whose mapped views the host gathers rows of.
     image: Option<BundleCompiledImageHandleV1>,
     /// The kernels the encoder is created on, held from create to acquire
@@ -255,10 +257,13 @@ impl Instance {
                     block_tables,
                 });
             }
-            let bound = bundle_runtime::scratch::bind(
-                Scratch::of_storage(&shape, self.config.kv.storage),
-                |bytes| allocate_span(services, pool, stream, bytes, held),
-            )?;
+            let mut declared = Scratch::of_storage(&shape, self.config.kv.storage);
+            if let Some(drafter) = &self.dspark {
+                drafter.reserve_engram(&mut declared);
+            }
+            let bound = bundle_runtime::scratch::bind(declared, |bytes| {
+                allocate_span(services, pool, stream, bytes, held)
+            })?;
             services.copy_host_to_device(stream, bound.first_pre, &first_pre)?;
             scratch.push(bound);
             // The mixer scratch the mix-collapse lists; its tickets start
@@ -290,9 +295,23 @@ impl Instance {
                 .moe
                 .as_ref()
                 .map_or(0, |ops| ops.sorted_rows_bytes());
+            let sorted = sorted.max(
+                self.dspark
+                    .as_ref()
+                    .and_then(|d| d.ops.moe.as_ref())
+                    .map_or(0, |ops| ops.sorted_rows_bytes()),
+            );
             let sorted = allocate_span(services, pool, stream, sorted.max(4), held)?;
-            let workspace = self.ops.workspace().max(1).next_multiple_of(256);
+            let workspace = self
+                .ops
+                .workspace()
+                .max(self.dspark.as_ref().map_or(0, |d| d.workspace()))
+                .max(1)
+                .next_multiple_of(256);
             let workspace = allocate_span(services, pool, stream, workspace, held)?;
+            if let Some(drafter) = &mut self.dspark {
+                drafter.allocate(services, pool, stream, held)?;
+            }
             if let Some(bound) = scratch.last() {
                 services.zero_device_buffer(stream, bound.bias_select)?;
                 services.zero_device_buffer(stream, bound.index_status)?;
@@ -349,15 +368,22 @@ impl Instance {
             held,
         )?;
         let extent = self.extent;
-        let shared = self.ops.shared_bytes();
+        let mut shared = self.ops.shared_bytes();
+        if let Some(drafter) = &self.dspark {
+            for (entry, bytes) in drafter.shared_bytes() {
+                let most = shared.entry(entry).or_default();
+                *most = (*most).max(bytes);
+            }
+        }
         for (rank, &(context, _, stream)) in ranks.iter().enumerate() {
             let mut resolved = BTreeMap::new();
             // The cubins of this geometry and the shared ones.
             let geometry = shape.geometry.id;
-            for cubin in crate::CUBINS
-                .iter()
-                .filter(|cubin| crate::serves(cubin.name, geometry))
-            {
+            for cubin in crate::CUBINS.iter().filter(|cubin| {
+                crate::serves(cubin.name, geometry)
+                    && (self.dspark.is_some()
+                        || !crate::Kernels::drafter_only(cubin.name, shape.geometry))
+            }) {
                 acquire::load_module(
                     log,
                     context,
@@ -443,6 +469,12 @@ impl Instance {
                 rope_compressed,
             });
         }
+        if let Some(drafter) = &mut self.dspark {
+            drafter.bind_stages(&self.buffers).map_err(|error| {
+                let _ = services.log(error.as_bytes());
+                BundleAbiError::InvalidRange("DSpark stage bindings")
+            })?;
+        }
         acquire::synchronize(log, &ranks)?;
         self.ranks = ranks;
         Ok(())
@@ -459,7 +491,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         BundleStatusV1::InvalidArgument
     })?;
     let items = config.create.items;
-    let (verify_rows, verify) = verify_rows(&services, items)?;
+    let (verify_rows, mut verify) = verify_rows(&services, items)?;
     // The head scores at most this many rows per phase.
     bundle_runtime::config::check_scored_rows(
         &services,
@@ -467,16 +499,20 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         model_deepseek41_contract::serving::SCORED_ROWS,
     )?;
     let shape = config.shape;
-    // The DSpark drafter's state joins with the drafter.
-    let state =
-        model_deepseek41_contract::state::request_state(shape.geometry, config.kv.storage, false);
+    let has_drafter = shape.geometry.dspark_stages() > 0
+        && config.create.state.bytes
+            == u64::from(items.capacity())
+                * crate::config::slot_state_bytes(&shape, config.kv.storage, true);
+    let state = model_deepseek41_contract::state::request_state(
+        shape.geometry,
+        config.kv.storage,
+        has_drafter,
+    );
     if config.create.state.bytes
         != u64::from(items.capacity())
-            * crate::config::slot_state_bytes(&shape, config.kv.storage, false)
+            * crate::config::slot_state_bytes(&shape, config.kv.storage, has_drafter)
     {
-        log(
-            "the per-item state the host allocates is the drafter's, which the bundle cannot run yet",
-        );
+        log("the per-item state bytes differ from the model's state declaration");
         return Err(BundleStatusV1::Unsupported.into());
     }
     // The window write reads each slot's last position from one scratch
@@ -491,6 +527,30 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         BundleStatusV1::Unsupported
     })?;
     let ops = Ops::prepare(&kernels, &shape, config.kv.storage);
+    let dspark = if has_drafter {
+        if config.kv.storage != model_deepseek41_contract::state::KvStorage::Native {
+            log("DSpark requires the native KV layout");
+            return Err(BundleStatusV1::Unsupported.into());
+        }
+        Some(
+            crate::dspark::device::Device::new(
+                &kernels,
+                shape,
+                items,
+                config
+                    .create
+                    .context_tokens
+                    .unwrap_or(shape.geometry.context_tokens()),
+            )
+            .map_err(|error| {
+                log(&error);
+                BundleStatusV1::Unsupported
+            })?,
+        )
+    } else {
+        None
+    };
+    verify.bundle_drafter = has_drafter;
     let media = config.media;
     let engram = engram::Engram::new(shape.geometry, media).map_err(|error| {
         log(&error);
@@ -512,7 +572,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
             .unwrap_or(limits.context_tokens()),
     );
     let mut instance = Instance {
-        services,
+        services: std::rc::Rc::new(services),
         held: Vec::new(),
         collectives: Collectives::default(),
         graphs: GraphCache::with_items(config.create.ranks, items),
@@ -540,6 +600,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         partial,
         taps,
         engram,
+        dspark,
         image: None,
         encoder_kernels: media.then_some(kernels),
         media: None,
@@ -621,9 +682,41 @@ impl Steps for Instance {
         &mut self.ledger
     }
 
+    fn prepare(
+        &mut self,
+        _kept: &[(u64, u32)],
+        plan: &bundle_runtime::ledger::CommitPlan,
+    ) -> Result<(), BundleStatusV1> {
+        self.dspark_commit(plan)
+    }
+
+    fn restore(&mut self, _step: &bundle_runtime::ledger::Step) -> Result<(), BundleStatusV1> {
+        self.dspark_cancel()
+    }
+
+    fn before_retire(&mut self, _request: u64) -> Result<(), BundleStatusV1> {
+        if self.dspark.as_ref().is_some_and(|device| {
+            device
+                .runtime
+                .as_ref()
+                .is_none_or(|runtime| runtime.state().is_pending() || runtime.state().is_poisoned())
+        }) {
+            return Err(BundleStatusV1::InvalidState);
+        }
+        Ok(())
+    }
+
     /// The Engram history takes the rows a commit kept, and forgets a
     /// request whose slot a cancel freed.
     fn ended(&mut self, ended: Ended<'_>) -> Result<(), BundleStatusV1> {
+        if self.dspark.is_some() {
+            if let Ended::Cancelled(step) = ended {
+                for item in &step.items {
+                    self.dspark_forget(item.request);
+                }
+            }
+            return Ok(());
+        }
         let Some(engram) = &mut self.engram else {
             return Ok(());
         };
@@ -642,6 +735,7 @@ impl Steps for Instance {
     }
 
     fn retired(&mut self, request: u64) {
+        self.dspark_forget(request);
         if let Some(engram) = &mut self.engram {
             engram.forget(request);
         }
@@ -676,4 +770,23 @@ pub(crate) fn ledger_state(
             })
         })
         .expect("a live instance")
+}
+
+#[cfg(test)]
+pub(crate) fn dspark_context(
+    handle: runtime_bundle_abi::BundleHandleV1,
+    request: u64,
+) -> Option<crate::dspark::state::Context> {
+    INSTANCES.with(|table| {
+        let mut table = table.borrow_mut();
+        let instance = table.get_mut(handle)?;
+        instance
+            .dspark
+            .as_ref()?
+            .runtime
+            .as_ref()?
+            .state()
+            .context(request)
+            .cloned()
+    })
 }

@@ -227,6 +227,25 @@ impl Heads {
         })
     }
 
+    pub(crate) fn symbols(&self) -> impl Iterator<Item = &(String, u32)> {
+        [
+            self.collapse.info(),
+            self.norm.info(),
+            self.vocabulary.info(),
+            self.widen.info(),
+            self.logits_row.info(),
+            self.markov.info(),
+            self.confidence.info(),
+            self.select.info(),
+        ]
+        .into_iter()
+        .chain(self.embedding.iter().map(|op| op.info()))
+        .chain(self.reduce.iter().map(|op| op.info()))
+        .chain(self.partial.iter().map(|op| op.info()))
+        .chain(self.gather.iter().map(|op| op.info()))
+        .flat_map(|info| &info.symbols)
+    }
+
     /// Per-rank persistent collective regions, zeroed once and kept
     /// separate for embedding reduction and candidate gathering.
     pub fn state(&self) -> (&[u64], &[u64]) {

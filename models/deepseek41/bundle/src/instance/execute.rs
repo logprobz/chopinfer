@@ -207,7 +207,7 @@ impl Instance {
             self.items(),
             1,
         )?;
-        if step.bundle_drafts(&batch).iter().any(|&drafts| drafts > 0) {
+        if self.dspark.is_none() && step.bundle_drafts(&batch).iter().any(|&drafts| drafts > 0) {
             return Err(BundleStatusV1::Unsupported);
         }
         Ok(step)
@@ -303,9 +303,25 @@ impl Instance {
             let mut waits = Vec::new();
             let mut of = Vec::new();
             for &stage in &stages {
+                if self.dspark.is_some() && stage == Stage::HeadCollapse {
+                    for lowered in self.dspark_pack_features(rank, phase).map_err(|error| {
+                        self.log(&error);
+                        BundleStatusV1::InternalError
+                    })? {
+                        waits.push(lowered.collective);
+                        launches.push(lowered.launch);
+                        of.push(stage);
+                    }
+                }
                 // A prefill of image rows closes their Engram gates.
-                let lowered = match (images, stage) {
-                    (true, Stage::EngramGate(layer)) => self
+                let lowered = match (self.dspark.is_some(), images, stage) {
+                    (true, _, Stage::DsparkFeature(layer)) => {
+                        self.dspark_feature(&lowering, phase, layer).map(Some)
+                    }
+                    (true, _, Stage::EngramRows(layer)) => {
+                        self.dspark_engram(&lowering, phase, layer)
+                    }
+                    (_, true, Stage::EngramGate(layer)) => self
                         .text_flags(rank)
                         .and_then(|text| lowering.engram_gate_masked(phase, layer, text)),
                     _ => lowering.stage(phase, stage),
@@ -360,6 +376,9 @@ impl Instance {
         media: Option<PrefillMedia>,
     ) -> Result<Run, BundleStatusV1> {
         let (phase, arena, layout, graph) = self.phase_of(&inputs)?;
+        // Feature and Engram staging offsets depend on the preceding
+        // prefill's live rows. Keep this first adapter eager.
+        let graph = if self.dspark.is_some() { None } else { graph };
         let (head_rows, capacity) = if arena == PREFILL {
             (inputs.logit_rows().len() as u32, SCORED_ROWS)
         } else {
@@ -397,7 +416,7 @@ impl Instance {
             self.log(&error);
             BundleStatusV1::InvalidArgument
         })?;
-        let engram = match &self.engram {
+        let engram = match self.engram.as_ref().filter(|_| self.dspark.is_none()) {
             Some(engram) => Some(engram.hash(&inputs).map_err(|error| {
                 self.log(&format!("Engram rows: {error}"));
                 BundleStatusV1::InvalidArgument
@@ -425,7 +444,7 @@ impl Instance {
     }
 
     /// The serving pages and request state the stages address.
-    fn kv_extent(&self) -> KvExtent {
+    pub(super) fn kv_extent(&self) -> KvExtent {
         let limits = super::model_limits(&self.config);
         KvExtent {
             storage: self.config.kv.storage,
@@ -688,7 +707,7 @@ impl Instance {
     /// Issues an eager run's segments on every rank, up to each collective
     /// in turn. Ranks whose programs differ in collectives are refused
     /// before anything is queued.
-    fn launch_eager(
+    pub(super) fn launch_eager(
         &self,
         streams: &[BundleStreamHandleV1],
         programs: &[Vec<PreparedLaunch>],
@@ -799,6 +818,23 @@ impl Instance {
             Ok(step) => step,
             Err(error) => return error,
         };
+        if self.dspark.is_some() {
+            let mut rows = items(&step.prefill);
+            rows.extend(items(&step.decode));
+            if self.ledger.preview(&rows).is_err() {
+                return BundleStatusV1::InvalidArgument;
+            }
+            return self.execute_dspark(request, sink, step);
+        }
+        self.execute_packed(request, sink, step)
+    }
+
+    pub(super) fn execute_packed(
+        &mut self,
+        request: &[u8],
+        sink: &mut ExecuteResultSinkV1,
+        step: PackedStep,
+    ) -> BundleStatusV1 {
         let mut items = items(&step.prefill);
         items.extend(self::items(&step.decode));
         // The encoder runs before the step opens: a failure leaves no step
@@ -820,7 +856,7 @@ impl Instance {
         if self.ledger.preview(&items).is_err() || self.ledger.begin(&items, Vec::new()).is_err() {
             return BundleStatusV1::InvalidArgument;
         }
-        if let Some(engram) = &mut self.engram {
+        if let Some(engram) = self.engram.as_mut().filter(|_| self.dspark.is_none()) {
             engram.begin(runs.iter().map(|run| &run.inputs));
         }
         let issued = self.issue_step(&mut runs, sink);
@@ -835,7 +871,7 @@ impl Instance {
                 return status(error);
             }
             let _ = self.ledger.cancel();
-            if let Some(engram) = &mut self.engram {
+            if let Some(engram) = self.engram.as_mut().filter(|_| self.dspark.is_none()) {
                 engram.cancelled(&self.ledger);
             }
             return status(error);
@@ -852,6 +888,7 @@ impl Instance {
     ) -> Result<(), BundleAbiError> {
         for run in runs.iter_mut() {
             self.upload(run)?;
+            self.dspark_pack_counts(run.phase, run.inputs.live_tokens())?;
             self.launch(run)?;
             if run.media.is_some() {
                 self.clear_flags()?;

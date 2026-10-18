@@ -1,0 +1,318 @@
+//! Device storage for one drafter instance, allocated before the KV pool.
+//! The target's scratch and collective buffers are reused only between
+//! completed target invocations. Provisional features and draft KV have
+//! their own storage and never alias committed request state.
+
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use bundle_runtime::geometry::Items;
+use bundle_runtime::resources::{Held, allocate_span};
+use bundle_runtime::upload::{DeviceInputs, InputLayout, PhaseArena};
+use kernel_core::allocation::Allocation;
+use model_deepseek41_contract::moe::Experts;
+use model_deepseek41_contract::own_ops::rope::MAX_POSITIONS;
+use model_deepseek41_contract::serving::{DECODE_BATCH, DeepSeek, MAX_VERIFY_ROWS, PREFILL_TOKENS};
+use model_deepseek41_contract::state::KvStorage;
+use runtime_bundle_abi::{
+    BundleAbiError, BundleMemoryPoolHandleV1, BundleStreamHandleV1, DeviceBufferSpanV1 as Span,
+    HostServicesV1,
+};
+
+use super::calibration::Context;
+use super::execution::Runtime;
+use super::features::Layout;
+use super::staging::Staging;
+use super::state::{BLOCK_ROWS, Config, State};
+use crate::buffers::{RankBuffers, Scratch};
+use crate::engram_rows::Destination;
+use crate::lower::dspark::heads::Heads;
+use crate::lower::dspark::{DraftMode, Prepared, Window};
+use crate::ops::Ops;
+use crate::shape::Shape;
+
+/// Enough disjoint staging for a maximum prefill and the decode phase.
+pub(crate) const TARGET_ROWS: u32 = PREFILL_TOKENS + DECODE_BATCH * MAX_VERIFY_ROWS;
+const DRAFT_ROWS: u32 = DECODE_BATCH * BLOCK_ROWS;
+static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
+
+pub(crate) struct Device {
+    pub shape: Shape,
+    pub config: Config,
+    pub features: Layout,
+    pub ops: Ops,
+    pub prepared: Prepared,
+    pub heads: Heads,
+    pub runtime: Option<Runtime>,
+    pub staging: Option<Staging>,
+    pub ranks: Vec<Rank>,
+    pub stages: Vec<Vec<RankBuffers>>,
+    pub diagnostic: Context,
+    pub verified: Vec<u64>,
+    pub prefill_rows: u32,
+}
+
+pub(crate) struct Rank {
+    pub inputs: DeviceInputs,
+    pub window: Window,
+    pub item_slots: Span,
+    pub first: Span,
+    pub last: Span,
+    pub keys: Span,
+    pub taps: Span,
+    pub packed: Span,
+    pub feature_indices: Span,
+    pub feature_counts: Vec<Span>,
+    pub feature_codes: Span,
+    pub feature_scales: Span,
+    pub predecessor_ids: Span,
+    pub draft_ids: Span,
+    pub confidence: Span,
+    pub position_rows: Vec<Span>,
+    pub block_logits: Span,
+    pub position_logits: Span,
+    pub embedding_partial: Span,
+    pub embedding_wide: Span,
+    pub embedding: Span,
+    pub pairs: Span,
+    pub gathered: Span,
+    pub live_items: Span,
+    pub live_width: Span,
+    pub reduce_state: Vec<Span>,
+    pub gather_state: Vec<Span>,
+}
+
+pub(crate) fn slice(span: Span, offset: u64, bytes: u64) -> Result<Span, String> {
+    if offset
+        .checked_add(bytes)
+        .is_none_or(|end| end > span.length)
+    {
+        return Err("DSpark device span is too short".into());
+    }
+    let offset = span
+        .offset
+        .checked_add(offset)
+        .ok_or("DSpark device address overflows")?;
+    Ok(Span::new(span.buffer, offset, bytes))
+}
+
+impl Device {
+    pub fn new(
+        kernels: &crate::Kernels,
+        shape: Shape,
+        items: Items,
+        context_tokens: u64,
+    ) -> Result<Self, String> {
+        let g = shape.geometry;
+        let config = Config {
+            slots: items.capacity(),
+            stages: g.dspark_stages(),
+            window: g.shape.attention.window,
+            max_prefill_rows: PREFILL_TOKENS,
+            context_tokens,
+            // RoPE rows are computed on demand. The existing contract
+            // includes a validated tail beyond the served context.
+            position_capacity: u64::from(MAX_POSITIONS),
+        };
+        let features = Layout::new(g, config)?;
+        let ops = Ops::prepare_set(
+            kernels,
+            &shape,
+            KvStorage::Native,
+            Experts {
+                count: g.shape.dspark.experts,
+                top_k: g.shape.dspark.top_k,
+            },
+        );
+        if let Some(missing) = ops.missing.first() {
+            return Err(missing.clone());
+        }
+        let prepared = Prepared::prepare(kernels.backend.as_ref(), shape, DraftMode::Greedy)
+            .map_err(|e| format!("DSpark operations: {e:?}"))?;
+        let heads = Heads::prepare(
+            kernels.backend.as_ref(),
+            kernels.own.as_ref(),
+            shape,
+            DraftMode::Greedy,
+        )
+        .map_err(|e| format!("DSpark heads: {e:?}"))?;
+        let runtime = Runtime::new(State::new(config)?, g.shape.vocab, config.window)?;
+        let instance_id = NEXT_INSTANCE
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .map_err(|_| "DSpark instance counter overflows")?;
+        Ok(Self {
+            shape,
+            config,
+            features,
+            ops,
+            prepared,
+            heads,
+            runtime: Some(runtime),
+            staging: Some(Staging::new(g)?),
+            ranks: Vec::new(),
+            stages: Vec::new(),
+            diagnostic: Context {
+                instance_id,
+                step_id: 0,
+            },
+            verified: Vec::new(),
+            prefill_rows: 0,
+        })
+    }
+
+    pub fn workspace(&self) -> u64 {
+        self.ops.workspace().max(self.prepared.workspace())
+    }
+
+    pub fn shared_bytes(&self) -> std::collections::BTreeMap<String, u32> {
+        let mut bytes = self.ops.shared_bytes();
+        for (symbol, shared) in self.prepared.symbols().chain(self.heads.symbols()) {
+            let most = bytes.entry(symbol.clone()).or_default();
+            *most = (*most).max(*shared);
+        }
+        bytes
+    }
+
+    pub fn bind_stages(&mut self, buffers: &[RankBuffers]) -> Result<(), String> {
+        self.stages = (0..self.config.stages)
+            .map(|stage| {
+                buffers
+                    .iter()
+                    .map(|rank| crate::lower::dspark::stage_views(rank, self.shape.geometry, stage))
+                    .collect()
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(())
+    }
+
+    pub fn reserve_engram(&self, scratch: &mut Scratch<Allocation>) {
+        let g = self.shape.geometry;
+        let bytes = u64::from(g.engram_layers())
+            * u64::from(TARGET_ROWS)
+            * u64::from(crate::ops::dense::engram_k(g));
+        scratch.engram_codes = Allocation::bytes(bytes);
+        scratch.engram_scales = Allocation::bytes(bytes / 32);
+    }
+
+    pub fn engram_destinations(&self, scratch: &Scratch<Span>) -> Result<Vec<Destination>, String> {
+        let g = self.shape.geometry;
+        let stride = u64::from(TARGET_ROWS) * u64::from(crate::ops::dense::engram_k(g));
+        (0..g.engram_layers())
+            .map(|layer| {
+                Ok(Destination {
+                    codes: slice(scratch.engram_codes, u64::from(layer) * stride, stride)?,
+                    scales: slice(
+                        scratch.engram_scales,
+                        u64::from(layer) * stride / 32,
+                        stride / 32,
+                    )?,
+                })
+            })
+            .collect()
+    }
+
+    pub fn allocate(
+        &mut self,
+        services: &HostServicesV1,
+        pool: BundleMemoryPoolHandleV1,
+        stream: BundleStreamHandleV1,
+        held: &mut Vec<Held>,
+    ) -> Result<(), BundleAbiError> {
+        let g = self.shape.geometry;
+        let items = u64::from(DECODE_BATCH);
+        let rows = u64::from(DRAFT_ROWS);
+        let hidden = u64::from(g.shape.hidden);
+        let width = u64::from(self.shape.vocab_rows());
+        let markov = u64::from(g.shape.dspark.markov_rank);
+        let targets = g.shape.dspark.targets.len() as u64;
+        let mut alloc = |bytes| allocate_span(services, pool, stream, bytes, held);
+        let layout = InputLayout::new::<DeepSeek>(DRAFT_ROWS.max(self.config.window), DRAFT_ROWS);
+        let arena = PhaseArena {
+            arena: alloc(layout.end)?,
+            block_tables: alloc(4)?,
+        };
+        let inputs = DeviceInputs::within(arena, &layout);
+        let cells = self.config.window + BLOCK_ROWS;
+        let stride = u64::from(cells) * u64::from(g.shape.attention.head_dim);
+        let window = Window {
+            codes: alloc(items * stride)?,
+            scales: alloc(items * stride / 32)?,
+            sequences: DECODE_BATCH,
+            cells,
+            code_stride: stride,
+            scale_stride: stride / 32,
+        };
+        let indices = self
+            .prepared
+            .feature_indices(PREFILL_TOKENS)
+            .map_err(|_| BundleAbiError::InvalidRange("DSpark feature indices"))?;
+        let feature_indices = alloc(indices.len() as u64 * 4)?;
+        services.copy_host_to_device(
+            stream,
+            feature_indices,
+            &indices
+                .into_iter()
+                .flat_map(u32::to_le_bytes)
+                .collect::<Vec<_>>(),
+        )?;
+        let feature_counts = (0..targets)
+            .map(|_| alloc(4))
+            .collect::<Result<Vec<_>, _>>()?;
+        let position_rows = (0..BLOCK_ROWS)
+            .map(|position| {
+                let span = alloc(items * 4)?;
+                let ids = (0..DECODE_BATCH)
+                    .flat_map(|item| (item * BLOCK_ROWS + position).to_le_bytes())
+                    .collect::<Vec<_>>();
+                services.copy_host_to_device(stream, span, &ids)?;
+                Ok(span)
+            })
+            .collect::<Result<Vec<_>, BundleAbiError>>()?;
+        let (reduce, gather) = self.heads.state();
+        let mut state = |sizes: &[u64]| {
+            sizes
+                .iter()
+                .map(|&bytes| {
+                    let span = alloc(bytes)?;
+                    services.zero_device_buffer(stream, span)?;
+                    Ok(span)
+                })
+                .collect::<Result<Vec<_>, BundleAbiError>>()
+        };
+        let reduce_state = state(reduce)?;
+        let gather_state = state(gather)?;
+        let pairs = alloc(items * 2 * 4)?;
+        services.zero_device_buffer(stream, pairs)?;
+        let live_width = alloc(4)?;
+        services.copy_host_to_device(stream, live_width, &self.shape.vocab_rows().to_le_bytes())?;
+        self.ranks.push(Rank {
+            inputs,
+            window,
+            item_slots: alloc(items * 4)?,
+            first: alloc(items * 4)?,
+            last: alloc(items * 4)?,
+            keys: alloc(rows * u64::from(cells) * 4)?,
+            taps: alloc(u64::from(PREFILL_TOKENS) * targets * hidden * 2)?,
+            packed: alloc(u64::from(TARGET_ROWS) * targets * hidden * 2)?,
+            feature_indices,
+            feature_counts,
+            feature_codes: alloc(u64::from(self.config.window) * targets * hidden)?,
+            feature_scales: alloc(u64::from(self.config.window) * targets * hidden / 32)?,
+            predecessor_ids: alloc(items * 4)?,
+            draft_ids: alloc(rows * 4)?,
+            confidence: alloc(rows * 4)?,
+            position_rows,
+            block_logits: alloc(rows * width * 4)?,
+            position_logits: alloc(items * width * 4)?,
+            embedding_partial: alloc(items * markov * 2)?,
+            embedding_wide: alloc(items * markov * 4)?,
+            embedding: alloc(items * markov * 2)?,
+            pairs,
+            gathered: alloc(items * 2 * 4 * u64::from(self.shape.ranks()))?,
+            live_items: alloc(4)?,
+            live_width,
+            reduce_state,
+            gather_state,
+        });
+        Ok(())
+    }
+}

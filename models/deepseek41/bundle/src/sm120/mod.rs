@@ -123,6 +123,15 @@ pub fn register_f32_projections(
 }
 
 impl crate::Kernels {
+    /// Entries used only by the drafter's smaller expert bank. An AR-only
+    /// instance has no consumer for these modules.
+    pub fn drafter_only(cubin: &str, g: &model_deepseek41_contract::geometry::Geometry) -> bool {
+        cubin == dspark_router::cubin_name(g)
+            || dspark_router::sum_cubins(g)
+                .iter()
+                .any(|name| name == cubin)
+    }
+
     /// Whether an instance loads `cubin` with the program's cubins: every
     /// cubin but the dependency probes, which only the kernel lab launches,
     /// and the vision encoder's, which only an instance serving the encoder

@@ -1237,6 +1237,8 @@ fn a_second_collective_contract_crosses_v1_as_bytes_rather_than_as_a_change() {
 /// destination; a record of another length, or rows whose pointer and count
 /// disagree, never reach the host.
 #[test]
+// SAFETY-REVIEWED: the raw gather callback uses a live table and rows;
+// malformed records are rejected before the callback reads their rows.
 #[allow(unsafe_code)]
 fn mapped_row_gathers_cross_as_copied_rows() {
     let backend = Rc::new(FixtureHostBackend::default());

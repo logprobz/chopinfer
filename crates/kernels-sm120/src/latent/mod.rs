@@ -1109,3 +1109,5 @@ mod tests {
         assert_eq!(spec.entries.len(), 24);
     }
 }
+
+pub mod window_stage;

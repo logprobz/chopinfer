@@ -103,6 +103,8 @@ pub struct Spec<'a> {
     kind: Kind<'a>,
     /// Whether the role is route metadata ([`Spec::route_metadata`]).
     route_metadata: bool,
+    /// Whether an output admits exact, oracle-validated non-finite sentinels.
+    nonfinite_sentinels: bool,
 }
 
 impl<'a> Spec<'a> {
@@ -115,6 +117,7 @@ impl<'a> Spec<'a> {
             row_elements,
             kind: Kind::Input(image),
             route_metadata: false,
+            nonfinite_sentinels: false,
         }
     }
 
@@ -137,6 +140,7 @@ impl<'a> Spec<'a> {
             row_elements,
             kind: Kind::Ids { ids, pools, holes },
             route_metadata: false,
+            nonfinite_sentinels: false,
         }
     }
 
@@ -148,6 +152,7 @@ impl<'a> Spec<'a> {
             row_elements: image.len(),
             kind: Kind::Weight(image),
             route_metadata: false,
+            nonfinite_sentinels: false,
         }
     }
 
@@ -168,6 +173,7 @@ impl<'a> Spec<'a> {
             row_elements,
             kind: Kind::Output(write),
             route_metadata: false,
+            nonfinite_sentinels: false,
         }
     }
 
@@ -184,6 +190,17 @@ impl<'a> Spec<'a> {
             },
             _ => self,
         }
+    }
+
+    /// This output may hold exact non-finite sentinels. Unit launches still
+    /// check poison and write maps; if a non-finite value is present, the
+    /// bitwise or custom oracle must validate the whole buffer, including
+    /// every element that must remain finite. Other roles are unchanged.
+    pub fn nonfinite_sentinels(mut self) -> Self {
+        if matches!(self.kind, Kind::Output(_) | Kind::Filled(..)) {
+            self.nonfinite_sentinels = true;
+        }
+        self
     }
 
     /// This output marked route metadata: data of a routed operation that
@@ -217,6 +234,7 @@ impl<'a> Spec<'a> {
             row_elements,
             kind: Kind::State(image, write, None),
             route_metadata: false,
+            nonfinite_sentinels: false,
         }
     }
 
@@ -238,6 +256,7 @@ impl<'a> Spec<'a> {
             row_elements,
             kind: Kind::State(image, write, Some(Box::new(updated))),
             route_metadata: false,
+            nonfinite_sentinels: false,
         }
     }
 
@@ -272,6 +291,7 @@ impl<'a> Spec<'a> {
             row_elements: bytes,
             kind,
             route_metadata: false,
+            nonfinite_sentinels: false,
         }
     }
 }
@@ -309,7 +329,7 @@ impl<'a> Spec<'a> {
                 Rows::Live => capacity as usize,
                 Rows::Fixed(rows) => rows,
             };
-        Ok(match self.kind {
+        let builder = match self.kind {
             Kind::Input(image) | Kind::Weight(image) => {
                 builder.input(path, self.dtype, dims, image)
             }
@@ -353,7 +373,12 @@ impl<'a> Spec<'a> {
                 })
             }),
             Kind::Live => builder.live(path),
-        })
+        };
+        if self.nonfinite_sentinels {
+            builder.output_nonfinite_sentinels(path)
+        } else {
+            Ok(builder)
+        }
     }
 }
 

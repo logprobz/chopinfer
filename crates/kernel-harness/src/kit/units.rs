@@ -12,11 +12,11 @@
 //!
 //! Every launch runs on poisoned outputs and poisoned state write maps and
 //! is checked afterwards ([`Case::check_unit_writes`]): every element its
-//! maps name written and, for BF16 and F32 elements, finite unless the
-//! oracle's exact or custom check accepts the buffer. Every other
-//! byte of an output is untouched, and of a state kept but for its
-//! read-modify-write ranges. Equal units of two launches that both left a
-//! region unwritten would prove nothing.
+//! maps name written and, for BF16 and F32 elements, finite unless an output
+//! opts into non-finite sentinels and its exact or custom oracle accepts the
+//! buffer. Every other byte of an output is untouched, and of a state kept
+//! but for its read-modify-write ranges. Equal units of two launches that
+//! both left a region unwritten would prove nothing.
 
 use super::{OpCase, Tag};
 use crate::conformance::{Expected, Images, Rows};

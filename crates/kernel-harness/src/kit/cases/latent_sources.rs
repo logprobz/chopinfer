@@ -420,7 +420,7 @@ fn with_queries<'a>(
         }),
         output: (!partial).then(|| Spec::output(DType::Bf16, (Rows::Live, heads * width))),
         partial: partial.then(|| LatentPartial {
-            max: Spec::output(DType::F32, (Rows::Live, heads)),
+            max: Spec::output(DType::F32, (Rows::Live, heads)).nonfinite_sentinels(),
             den: Spec::output(DType::F32, (Rows::Live, heads)),
             num: Spec::output(DType::F32, (Rows::Live, heads * width)),
         }),

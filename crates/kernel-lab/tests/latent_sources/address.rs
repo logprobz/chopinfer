@@ -16,15 +16,57 @@ use std::collections::BTreeMap;
 
 #[test]
 fn native_sources_preserve_wide_strides_and_page_offsets() {
+    wide_addresses(family::catalog(), &["codes", "scales", "compressed"], false);
+}
+
+#[test]
+fn native_compressed_pages_keep_wide_offsets_at_a_million_tokens() {
+    use kernel_core::contract::AttentionPhase;
+    use kernel_core::latent_attention::{LatentAttentionOutput, LatentAttentionQuery};
+    let entries = kernel_lab::families::latent_sources_pages::catalog()
+        .into_iter()
+        .filter(|e| {
+            matches!(
+                e.query,
+                LatentAttentionQuery::Attention {
+                    phase: AttentionPhase::Decode,
+                    output: LatentAttentionOutput::Normalized,
+                    ..
+                }
+            )
+        })
+        .collect();
+    wide_addresses(entries, &["compressed"], true);
+}
+
+fn wide_addresses(
+    entries: Vec<kernels_sm120::latent::sources::Entry>,
+    modes: &[&str],
+    million: bool,
+) {
+    let expected_cases = entries.len() * modes.len();
     kernel_lab::gpu_test(5_u64 << 30, |session| {
         let functions = LabModules.load(session)?;
         let (width, heads) = (512_usize, 4_usize);
         let code_bytes = 128 * width;
         let scale_bytes = 128 * width / 32;
-        let page_bytes = LatentKvFormat::Fp4E2M1E4M3Block16.page_bytes(512, 16) as usize;
         let mut receipts = Vec::new();
-        for entry in family::catalog() {
-            for wide in ["codes", "scales", "compressed"] {
+        for entry in entries {
+            let kernel_core::latent_attention::LatentAttentionQuery::Attention {
+                page_size, ..
+            } = entry.query
+            else {
+                unreachable!()
+            };
+            let page = page_size as usize;
+            let page_bytes = LatentKvFormat::Fp4E2M1E4M3Block16.page_bytes(512, page_size) as usize;
+            let position = if million {
+                (1_usize << 20) / (64 / page) - 1
+            } else {
+                0
+            };
+            let max_pages = position / page + 1;
+            for &wide in modes {
                 let wide_window = wide != "compressed";
                 let sequences = if wide_window { 2 } else { 1 };
                 let code_stride = if wide == "codes" {
@@ -78,11 +120,19 @@ fn native_sources_preserve_wide_strides_and_page_offsets() {
                         "tables",
                         upload(
                             &(0..sequences)
-                                .flat_map(|_| (page_id as u32).to_le_bytes())
+                                .flat_map(|_| {
+                                    (0..max_pages).flat_map(|column| {
+                                        if column == position / page {
+                                            (page_id as i32).to_le_bytes()
+                                        } else {
+                                            (-1_i32).to_le_bytes()
+                                        }
+                                    })
+                                })
                                 .collect::<Vec<_>>(),
                         )?,
                     ),
-                    ("compressed_keys", upload(&0_u32.to_le_bytes())?),
+                    ("compressed_keys", upload(&(position as u32).to_le_bytes())?),
                     ("sinks", upload(&f32s(&vec![-1000.0; heads]))?),
                     ("cos_sin", upload(&f32s(&[1.0, 0.0].repeat(32)))?),
                     ("out", session.allocate(heads * width * 2)?),
@@ -124,10 +174,14 @@ fn native_sources_preserve_wide_strides_and_page_offsets() {
                     assert!(page_id > u16::MAX as usize && page_offset > u32::MAX as usize);
                     for (offset, code) in [(page_offset, 0x44), (page_offset as u32 as usize, 0x22)]
                     {
-                        write("compressed", offset, &vec![code; width / 2])?;
                         write(
                             "compressed",
-                            offset + 16 * width / 2,
+                            offset + (position % page) * width / 2,
+                            &vec![code; width / 2],
+                        )?;
+                        write(
+                            "compressed",
+                            offset + page * width / 2 + (position % page) * width / 16,
                             &vec![0x38; width / 16],
                         )?;
                     }
@@ -167,7 +221,7 @@ fn native_sources_preserve_wide_strides_and_page_offsets() {
                         block_tables: BlockTables {
                             tables: view("tables"),
                             sequences,
-                            max_pages: 1,
+                            max_pages: max_pages as u32,
                         },
                         key_lists: view("compressed_keys"),
                         key_stride: 1,
@@ -241,12 +295,14 @@ fn native_sources_preserve_wide_strides_and_page_offsets() {
                     "window_scale_stride".into(),
                     serde_json::json!(scale_stride),
                 );
+                receipt.insert("compressed_position".into(), serde_json::json!(position));
+                receipt.insert("page_rows".into(), serde_json::json!(page));
                 receipt.insert("page_id".into(), serde_json::json!(page_id));
                 receipt.insert("page_offset".into(), serde_json::json!(page_offset));
                 receipts.push(receipt);
             }
         }
-        assert_eq!(receipts.len(), 6);
+        assert_eq!(receipts.len(), expected_cases);
         session.receipt(
             "native-latent-wide-addresses",
             BTreeMap::from([("cases".into(), serde_json::json!(receipts))]),

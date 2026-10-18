@@ -1,0 +1,14 @@
+[
+  {
+    "name": "latent_sources_latent_native_pages_mutants_sm120",
+    "source_closure_sha256": "3cced1f7243192ddd6599dca00ef7d6e6abe133e2d164229986cdf5f809fd4fc"
+  },
+  {
+    "name": "latent_sources_latent_native_pages_p32_sm120",
+    "source_closure_sha256": "e70292e22ce7a719a63dde04b17a8e0c9d230deeeae4df1f8830648f3eb4d872"
+  },
+  {
+    "name": "latent_sources_latent_native_pages_p64_sm120",
+    "source_closure_sha256": "91cc8fa9e0ed8be3a3270d7966f85ca1384d25e0bf4dc84a10c6cf88a1a2beda"
+  }
+]

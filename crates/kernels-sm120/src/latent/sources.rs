@@ -369,6 +369,41 @@ pub fn entries(profile: Profile, query: LatentAttentionQuery) -> Result<Vec<Entr
     Ok(entries)
 }
 
+/// Distinct native compressed-page entries. Existing registrations keep
+/// their symbols; these suffix every new entry with its source page size.
+pub fn paged_entries(profile: Profile, query: LatentAttentionQuery) -> Result<Vec<Entry>, Refusal> {
+    let s = shape(query)?;
+    if !s.second || !matches!(s.page, 32 | 64) {
+        return Err(Refusal(
+            "native paged entries require 32 or 64 compressed positions",
+        ));
+    }
+    let mut entries = entries(profile, query)?;
+    for entry in &mut entries {
+        entry.name.push_str(&format!("_p{}", s.page));
+    }
+    Ok(entries)
+}
+
+/// Keep a new compressed-page geometry in a separate cubin and lock record.
+pub fn paged_cubin_spec(
+    profile: Profile,
+    page: u32,
+    entries: &[Entry],
+) -> Result<CubinSpec, Refusal> {
+    if entries.is_empty()
+        || !matches!(page, 32 | 64)
+        || entries
+            .iter()
+            .any(|e| shape(e.query).is_ok_and(|s| !s.second || s.page != page))
+    {
+        return Err(Refusal("native paged cubin geometry mismatch"));
+    }
+    let mut spec = cubin_spec(profile, entries)?;
+    spec.name = format!("latent_sources_{}_p{page}_sm120", profile.tag());
+    Ok(spec)
+}
+
 pub fn cubin_spec(profile: Profile, entries: &[Entry]) -> Result<CubinSpec, Refusal> {
     let mut specs = Vec::new();
     for entry in entries {
@@ -439,6 +474,53 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn native_compressed_page_entries_have_separate_symbols_and_cubins() {
+        use kernel_core::backend::{Backend, Need};
+        let legacy = entries(PROFILE, query(16, 512)).unwrap();
+        let old_symbols = legacy.iter().map(Entry::symbol).collect::<Vec<_>>();
+        let mut backend = legacy.clone().into_iter().fold(
+            crate::backend::Sm120::new(),
+            crate::backend::Sm120::with_latent_sources,
+        );
+        let mut page32 = query(16, 512);
+        if let LatentAttentionQuery::Attention { page_size, .. } = &mut page32 {
+            *page_size = 32;
+        }
+        assert!(
+            backend
+                .latent_attention_sources(&page32, Need::rows(1))
+                .is_err()
+        );
+        let new = paged_entries(PROFILE, page32).unwrap();
+        for entry in &new {
+            assert!(!old_symbols.contains(&entry.symbol()));
+        }
+        backend = new
+            .clone()
+            .into_iter()
+            .fold(backend, crate::backend::Sm120::with_latent_sources);
+        for entry in legacy.iter().chain(&new) {
+            backend
+                .latent_attention_sources(&entry.query, Need::rows(1))
+                .unwrap();
+        }
+        assert_ne!(
+            paged_cubin_spec(PROFILE, 32, &new).unwrap().name,
+            cubin_spec(PROFILE, &legacy).unwrap().name
+        );
+        assert!(paged_cubin_spec(PROFILE, 64, &new).is_err());
+        assert!(paged_cubin_spec(PROFILE, 32, &[]).is_err());
+        assert_eq!(
+            entries(PROFILE, query(16, 512))
+                .unwrap()
+                .iter()
+                .map(Entry::symbol)
+                .collect::<Vec<_>>(),
+            old_symbols
+        );
     }
 
     #[test]

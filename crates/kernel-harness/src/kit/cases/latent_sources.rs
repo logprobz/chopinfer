@@ -134,7 +134,7 @@ pub fn case<'a>(
     capacity: u32,
     prepared: Prepared<LatentSourcesBuffers<View>>,
 ) -> LabResult<OpCase<'a>> {
-    with_queries(query, capacity, prepared, false)
+    with_queries(query, capacity, prepared, false, false)
 }
 
 /// Signed nonzero BF16 queries span several exponents. Every finite QK
@@ -144,7 +144,7 @@ pub fn numerical_case<'a>(
     capacity: u32,
     prepared: Prepared<LatentSourcesBuffers<View>>,
 ) -> LabResult<OpCase<'a>> {
-    with_queries(query, capacity, prepared, true)
+    with_queries(query, capacity, prepared, true, false)
 }
 
 fn with_queries<'a>(
@@ -152,6 +152,7 @@ fn with_queries<'a>(
     capacity: u32,
     prepared: Prepared<LatentSourcesBuffers<View>>,
     nonzero: bool,
+    page_edges: bool,
 ) -> LabResult<OpCase<'a>> {
     let LatentAttentionQuery::Attention {
         heads,
@@ -201,7 +202,11 @@ fn with_queries<'a>(
             slots: slots as u32,
         }
     };
-    let pages_per_sequence = compressed_budget.max(1).div_ceil(page);
+    let pages_per_sequence = if page_edges {
+        4
+    } else {
+        compressed_budget.max(1).div_ceil(page)
+    };
     let visible_pages = pages_per_sequence * ITEMS;
     let pages = visible_pages + 1;
     let (window, packed_stride) =
@@ -220,7 +225,12 @@ fn with_queries<'a>(
             );
     }
     let (compressed, page_stride) = pool(LatentKvFormat::Fp4E2M1E4M3Block16, width, page, pages);
-    let tables = (0..visible_pages as i32).rev().collect::<Vec<_>>();
+    let mut tables = (0..visible_pages as i32).rev().collect::<Vec<_>>();
+    if page_edges {
+        for item in 0..ITEMS {
+            tables[item * pages_per_sequence + 2] = -1;
+        }
+    }
     let mut window_keys = vec![-1; rows * window_budget];
     let mut compressed_keys = vec![-1; rows * compressed_budget];
     for row in 0..rows {
@@ -234,6 +244,19 @@ fn with_queries<'a>(
                 compressed_keys[row * compressed_budget + key] =
                     ((key + row * 5) % compressed_budget) as i32;
             }
+        }
+    }
+    if page_edges {
+        compressed_keys.fill(-1);
+        for row in 0..rows {
+            compressed_keys[row * compressed_budget..row * compressed_budget + 4].copy_from_slice(
+                &[
+                    (page - 1) as i32,
+                    page as i32,
+                    (2 * page) as i32,
+                    (3 * page) as i32,
+                ],
+            );
         }
     }
     let partial = output == LatentAttentionOutput::Partial;
@@ -299,7 +322,7 @@ fn with_queries<'a>(
                 page_stride: page_stride as u64,
             },
             block_tables: BlockTables {
-                tables: if nonzero {
+                tables: if nonzero || page_edges {
                     Spec::input(
                         DType::I32,
                         (Rows::Fixed(ITEMS), pages_per_sequence),
@@ -477,14 +500,31 @@ fn with_queries<'a>(
 }
 
 pub fn family<'a>(entries: &[Entry]) -> Vec<Required<'a>> {
-    family_with_queries(entries, false)
+    family_with_queries(entries, false, false)
 }
 
 pub fn numerical_family<'a>(entries: &[Entry]) -> Vec<Required<'a>> {
-    family_with_queries(entries, true)
+    family_with_queries(entries, true, false)
 }
 
-fn family_with_queries<'a>(entries: &[Entry], nonzero: bool) -> Vec<Required<'a>> {
+/// Last row, next page, a missing page and a later valid page, for each item.
+pub fn paged_family<'a>(entries: &[Entry], nonzero: bool) -> Vec<Required<'a>> {
+    family_with_queries(entries, nonzero, true)
+}
+
+pub fn paged_case<'a>(
+    query: LatentAttentionQuery,
+    capacity: u32,
+    prepared: Prepared<LatentSourcesBuffers<View>>,
+) -> LabResult<OpCase<'a>> {
+    with_queries(query, capacity, prepared, true, true)
+}
+
+fn family_with_queries<'a>(
+    entries: &[Entry],
+    nonzero: bool,
+    page_edges: bool,
+) -> Vec<Required<'a>> {
     entries
         .iter()
         .map(|entry| {
@@ -501,7 +541,7 @@ fn family_with_queries<'a>(entries: &[Entry], nonzero: bool) -> Vec<Required<'a>
                 ),
                 Need::rows(CAPACITY),
                 move |backend, need| backend.latent_attention_sources(&query, need),
-                move |prepared| with_queries(query, CAPACITY, prepared, nonzero),
+                move |prepared| with_queries(query, CAPACITY, prepared, nonzero, page_edges),
             )
             .required()
         })

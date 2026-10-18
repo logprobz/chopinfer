@@ -130,6 +130,21 @@ class PairedTests(unittest.TestCase):
         self.assertEqual(result["metrics"]["affected_positions"], [])
         self.assertEqual(result["metrics"]["pooled"]["mean_gap_ci95"], [0, 0])
 
+    def test_a_named_drafter_needs_its_own_declared_policy(self):
+        check = copy.deepcopy(self.check)
+        check["constants"]["paired_teacher"] = {"PROFILE_POLICIES": {
+            "value": {"tp4-ar": self.policy, "tp4-block": self.policy}, "source": "test"}}
+        profile = {"tensor_parallel_size": 4, "speculation": {"tokens": 5, "drafter": "block"}}
+        server = {"health": {"serving": {"profile": profile,
+                                        "checkpoint_identity": "a" * 64, "startup_nonce": "b" * 32}}}
+        self.assertEqual(paired.policy(check, server), self.policy)
+        del check["constants"]["paired_teacher"]["PROFILE_POLICIES"]["value"]["tp4-block"]
+        with self.assertRaisesRegex(kinds.Insufficient, "no declared paired margins"):
+            paired.policy(check, server)
+        for drafter in (None, "", "none", "ar", "Bad", "../block", 7):
+            with self.subTest(drafter=drafter), self.assertRaises(kinds.Insufficient):
+                paired.profile_key({**profile, "speculation": {"tokens": 5, "drafter": drafter}})
+
     def test_regression_below_absolute_ceiling_fails(self):
         self.candidate = self.capture(self.identity, 0.025)
         self.assertTrue(self.candidate["passed"])

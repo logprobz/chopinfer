@@ -54,7 +54,9 @@ def profile_key(profile):
     require(type(ranks) is int and ranks > 0 and type(tokens) is int and tokens >= 0,
             "incomplete effective serving profile")
     mode = "ar" if tokens == 0 else speculation.get("drafter")
-    require(mode in ("ar", "mtp", "dflash"), "unknown effective speculation mode")
+    require(isinstance(mode, str) and re.fullmatch(r"[a-z][a-z0-9_-]*", mode)
+            and mode != "none" and (mode == "ar") == (tokens == 0),
+            "unknown effective speculation mode")
     return f"tp{ranks}-{mode}"
 
 

@@ -3368,7 +3368,9 @@
     "kv-bf16": {
       "serve": [
         "--kv-cache-dtype",
-        "bf16"
+        "bf16",
+        "--speculative-tokens",
+        "0"
       ],
       "checks": [
         "prefix_exact",

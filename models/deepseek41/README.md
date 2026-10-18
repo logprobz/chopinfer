@@ -213,3 +213,6 @@ These configurations fix the draft budget so adaptive scheduling cannot
 avoid a required capacity. The default full cohort also runs the C1 pair.
 A missing capacity or dropped trace observation fails the check. No
 speculative GPU evidence is claimed by this declaration.
+
+The `kv-bf16` comparison explicitly disables speculation. DSpark runs on
+native KV; both arms of the BF16 versus native comparison use K=0.

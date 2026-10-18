@@ -20,7 +20,7 @@ use serde_json::Map;
 use crate::automaton::Automaton;
 use crate::budget::Budget;
 use crate::expr::{CharClass, Expr, Grammar, GrammarBuilder, GrammarError, RuleId};
-use crate::range::{Bound, integer_range, number_range};
+use crate::range::{Bound, integer_range, number_range, unsigned_range};
 use crate::regex::{digits, regex_expr};
 use crate::stack::Config;
 
@@ -113,9 +113,8 @@ impl<'a> SchemaCompiler<'a> {
 
     /// Admits a number with a fraction or exponent only when it is a finite
     /// binary64, at any depth, for a reader that keeps any other such
-    /// number as text: at most 200 integer digits and a one- or two-digit
-    /// exponent, so its magnitude stays below 1e300. An integer keeps every
-    /// digit.
+    /// number as text. An integer keeps every digit. Magnitudes from 1e308,
+    /// just below the largest finite one, are refused.
     #[must_use]
     pub fn finite_numbers(mut self) -> Self {
         self.finite_numbers = true;
@@ -1147,36 +1146,87 @@ fn number_expr() -> Expr {
     ])
 }
 
-/// The most integer digits a finite number admits with a fraction or an
-/// exponent ([`SchemaCompiler::finite_numbers`]).
-const FINITE_INTEGER_DIGITS: u32 = 200;
+/// The most integer digits a finite number admits with a fraction or a
+/// negative exponent ([`SchemaCompiler::finite_numbers`]), so its magnitude
+/// stays below 1e308.
+const FINITE_INTEGER_DIGITS: u32 = 308;
 
-/// [`number_expr`] less the numbers a binary64 cannot hold: an integer at
-/// any size, and with a fraction or exponent at most
-/// [`FINITE_INTEGER_DIGITS`] integer digits and a two-digit exponent.
+/// The most integer digits a finite number admits with a positive exponent:
+/// the significant digits a binary64 holds.
+const FINITE_SCALED_DIGITS: u32 = 17;
+
+/// [`number_expr`] less the numbers a binary64 cannot hold. An integer keeps
+/// every digit. A number with a fraction or exponent is admitted when it is
+/// zero or its magnitude is below 1e308, under any negative exponent since
+/// underflow is finite. The boundary is conservative by less than one decade:
+/// magnitudes from 1e308 to the largest finite 1.7976931348623157e308 are
+/// refused with those that overflow.
+///
+/// Three rarer finite spellings are refused too. A finite automaton cannot
+/// weigh an unbounded digit count against an unbounded exponent, which rules
+/// out an integer part of more than 308 digits with a negative exponent and a
+/// fraction below 1 with a positive exponent above 308, such as `0.001e309`.
+/// And an integer part under a positive exponent has at most
+/// [`FINITE_SCALED_DIGITS`] digits: weighing each of 308 lengths against the
+/// exponent would multiply the automaton of every number.
 fn finite_number_expr() -> Expr {
-    let digits = || Expr::Class(digits());
-    let integer = Expr::seq([
-        Expr::literal("-").optional(),
-        Expr::alt([
-            Expr::literal("0"),
-            Expr::seq([
-                Expr::Class(CharClass::from_ranges([('1' as u32, '9' as u32)])),
-                digits().repeat(0, Some(FINITE_INTEGER_DIGITS - 1)),
-            ]),
+    let digit = || Expr::Class(digits());
+    let nonzero = || Expr::Class(CharClass::from_ranges([('1' as u32, '9' as u32)]));
+    let fraction = || Expr::seq([Expr::literal("."), digit().plus()]);
+    let mark = || Expr::Class(CharClass::of("eE"));
+    let negative = || Expr::seq([mark(), Expr::literal("-"), digit().plus()]);
+    // A positive exponent of at most `high`, with any leading zeros.
+    let positive = |high: u32| {
+        Expr::seq([
+            mark(),
+            Expr::literal("+").optional(),
+            Expr::literal("0").star(),
+            unsigned_range(0, Some(u128::from(high))),
+        ])
+    };
+    // After `length` integer digits, a positive exponent reaches at most
+    // 308 - `length`, which keeps the magnitude below 1e308.
+    let mut scaled = Expr::Nothing;
+    for length in (1..=FINITE_SCALED_DIGITS).rev() {
+        let first = if length == 1 { nonzero() } else { digit() };
+        let exponent = positive(FINITE_INTEGER_DIGITS - length);
+        scaled = Expr::seq([
+            first,
+            Expr::alt([Expr::seq([fraction().optional(), exponent]), scaled]),
+        ]);
+    }
+    let integer_part = Expr::alt([
+        Expr::literal("0"),
+        Expr::seq([
+            nonzero(),
+            digit().repeat(0, Some(FINITE_INTEGER_DIGITS - 1)),
         ]),
-    ]);
-    let fraction = Expr::seq([Expr::literal("."), digits().plus()]);
-    let exponent = Expr::seq([
-        Expr::Class(CharClass::of("eE")),
-        Expr::Class(CharClass::of("+-")).optional(),
-        digits().repeat(1, Some(2)),
     ]);
     Expr::alt([
         integer_expr(),
         Expr::seq([
-            integer,
-            Expr::alt([Expr::seq([fraction, exponent.clone().optional()]), exponent]),
+            Expr::literal("-").optional(),
+            Expr::alt([
+                Expr::seq([
+                    integer_part,
+                    Expr::alt([Expr::seq([fraction(), negative().optional()]), negative()]),
+                ]),
+                scaled,
+                // A fraction below 1 under a positive exponent of at most 308.
+                Expr::seq([
+                    Expr::literal("0"),
+                    fraction().optional(),
+                    positive(FINITE_INTEGER_DIGITS),
+                ]),
+                // Zero under any exponent.
+                Expr::seq([
+                    Expr::literal("0"),
+                    Expr::seq([Expr::literal("."), Expr::literal("0").plus()]).optional(),
+                    mark(),
+                    Expr::Class(CharClass::of("+-")).optional(),
+                    digit().plus(),
+                ]),
+            ]),
         ]),
     ])
 }

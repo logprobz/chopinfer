@@ -270,7 +270,6 @@ fn a_constrained_number_keeps_its_type() {
         "type": "object",
         "properties": {
             "x": {"type": "number"},
-            "y": {"type": "number", "minimum": 0},
             "z": {"type": "array", "items": {"type": "number"}},
             "w": {"type": "object"}
         },
@@ -285,30 +284,49 @@ fn a_constrained_number_keeps_its_type() {
         )
     };
     let long = |digits: usize| format!("1{}", "0".repeat(digits - 1));
+    // Every finite spelling below 1e308 is admitted, including underflow and
+    // zero under any exponent.
     for value in [
         "1.5e99".to_owned(),
         "-0.25E-7".to_owned(),
         long(400),
-        format!("{}.5", long(200)),
+        format!("{}.5", long(308)),
+        "1e-100".to_owned(),
+        "1e300".to_owned(),
+        "1e307".to_owned(),
+        "-9.99e307".to_owned(),
+        "1.7976931348623157e307".to_owned(),
+        "1E+0000307".to_owned(),
+        "0.5e308".to_owned(),
+        "1e-400".to_owned(),
+        "0e400".to_owned(),
+        "-0.00E+999".to_owned(),
+        format!("{}e291", long(17)),
+        "1234567890.5e298".to_owned(),
+        format!("{}e-400", long(308)),
     ] {
         assert!(admitted(&[("x", true, &value)]), "{value}");
     }
+    // Magnitudes from 1e308 are refused: the overflowing ones and, by the
+    // conservative boundary, the finite ones within a decade below.
     for value in [
+        "1e308".to_owned(),
+        "1.7976931348623157e308".to_owned(),
+        "1.7976931348623159e308".to_owned(),
+        "1e309".to_owned(),
         "1e400".to_owned(),
-        "1e300".to_owned(),
-        format!("{}.5", long(201)),
-        format!("{}e5", long(201)),
+        "-1e400".to_owned(),
+        "10e307".to_owned(),
+        format!("{}.5", long(309)),
+        format!("{}e292", long(17)),
+        "1234567890.5e299".to_owned(),
+        // A digit count weighed against an exponent is refused past them.
+        format!("{}e-1", long(309)),
+        "0.001e309".to_owned(),
+        format!("{}e1", long(18)),
     ] {
         assert!(!admitted(&[("x", true, &value)]), "{value}");
     }
-    assert!(admitted(&[
-        ("x", true, "1"),
-        ("y", true, &format!("{}.5", long(200)))
-    ]));
-    assert!(!admitted(&[
-        ("x", true, "1"),
-        ("y", true, &format!("{}.5", long(201)))
-    ]));
     assert!(admitted(&[("x", true, "1"), ("z", true, "[1.5e10]")]));
     assert!(!admitted(&[("x", true, "1"), ("z", true, "[1e400]")]));
     assert!(admitted(&[
@@ -327,6 +345,15 @@ fn a_constrained_number_keeps_its_type() {
         parsed.tool_calls[0].arguments,
         r#"{"x": 1.5e+99, "z": [2.5]}"#
     );
+    for value in ["1e-400", "-9.99e307", "1E+0000307", "0e400"] {
+        let text = block(&[call("f", &[("x", true, value)])]);
+        let parsed =
+            parse_completion_v1(&descriptor(), &format!("{text}[EOS]"), PromptModeV1::Chat)
+                .unwrap();
+        let arguments: serde_json::Value =
+            serde_json::from_str(&parsed.tool_calls[0].arguments).unwrap();
+        assert!(arguments["x"].is_number(), "{value}");
+    }
     // An unconstrained completion keeps a number beyond binary64 as text.
     let text = block(&[call("f", &[("x", true, "1e400")])]);
     let parsed =

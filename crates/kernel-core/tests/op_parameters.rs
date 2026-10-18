@@ -3236,3 +3236,44 @@ fn window_block_visibility_rejects_causal_and_truncated_block_controls() {
         );
     }
 }
+
+#[test]
+fn retained_window_stage_contract_requires_complete_independent_planes() {
+    use kernel_core::latent_window_stage::LatentWindowStage;
+    let query = LatentWindowStage {
+        latent: 512,
+        window: 128,
+        ring_slots: 136,
+        staged_slots: 512,
+    };
+    query.validate().unwrap();
+    let id = query.numerical_contract_id().unwrap();
+    for invalid in [
+        LatentWindowStage { latent: 0, ..query },
+        LatentWindowStage {
+            latent: 33,
+            ..query
+        },
+        LatentWindowStage { window: 1, ..query },
+        LatentWindowStage {
+            ring_slots: 127,
+            ..query
+        },
+        LatentWindowStage {
+            staged_slots: 126,
+            ..query
+        },
+    ] {
+        assert!(invalid.validate().is_err());
+        assert!(invalid.numerical_contract_id().is_err());
+    }
+    assert_ne!(
+        id,
+        LatentWindowStage {
+            staged_slots: 256,
+            ..query
+        }
+        .numerical_contract_id()
+        .unwrap()
+    );
+}

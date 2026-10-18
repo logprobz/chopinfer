@@ -926,9 +926,18 @@ pub trait Backend: Send + Sync {
         Err(Refused::Unsupported)
     }
 
-    /// F32 tail rotation, the shared trained quantizer's BF16 input
-    /// boundary, then separate native window code and scale plane writes.
-    /// Launches read `Counts::rows`; device live rows select the input rows.
+    /// Copy each item's retained ring prefix into its prefill stage.
+    fn latent_window_stage(
+        &self,
+        op: &crate::latent_window_stage::LatentWindowStage,
+        need: Need,
+    ) -> Result<Prepared<crate::latent_window_stage::LatentWindowStageBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
+    /// F32 normalization and tail rotation, then shared trained quantization
+    /// and separate native window code and scale plane writes.
     fn latent_window_write(
         &self,
         op: &crate::latent_glue::LatentWindowWrite,
@@ -2233,6 +2242,9 @@ mod tests {
         );
         latent_query_rope: Empty.latent_query_rope(
             &crate::latent_glue::LatentQueryRope { heads: 2, latent: 512, rotary: 64 }, Need::rows(32)
+        );
+        latent_window_stage: Empty.latent_window_stage(
+            &crate::latent_window_stage::LatentWindowStage { latent: 512, window: 128, ring_slots: 136, staged_slots: 512 }, Need::rows(4)
         );
         latent_window_write: Empty.latent_window_write(
             &crate::latent_glue::LatentWindowWrite { latent: 512, rotary: 64, epsilon_bits: 1e-20_f32.to_bits(), addressing: crate::latent_glue::WindowAddressing::Circular { slots: 136 } }, Need::rows(32)

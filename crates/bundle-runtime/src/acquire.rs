@@ -503,6 +503,23 @@ pub fn grant_peers(
 /// for more.
 pub const DEFAULT_SHARED_BYTES: u32 = 48 * 1024;
 
+/// Configures a resolved symbol only when it needs more dynamic shared
+/// memory than the device's default.
+pub fn configure_symbol(
+    log: Log,
+    symbol: &str,
+    function: BundleCudaSymbolHandleV1,
+    shared: u32,
+) -> Result<(), BundleAbiError> {
+    if shared > DEFAULT_SHARED_BYTES {
+        log.named(
+            &format!("configure_cuda_symbol {symbol}"),
+            log.services.configure_cuda_symbol(function, shared),
+        )?;
+    }
+    Ok(())
+}
+
 /// Loads the cubin `(name, bytes)` into `context` and resolves each of
 /// `symbols` into `resolved`, configuring each that takes more than the
 /// default dynamic shared memory with `shared_bytes(symbol)`.
@@ -530,13 +547,7 @@ pub fn load_module<'a>(
         if resolved.insert(symbol.to_owned(), function).is_some() {
             return Err(BundleAbiError::InvalidRange("duplicate CUDA symbol"));
         }
-        let shared = shared_bytes(symbol)?;
-        if shared > DEFAULT_SHARED_BYTES {
-            log.named(
-                &format!("configure_cuda_symbol {symbol}"),
-                services.configure_cuda_symbol(function, shared),
-            )?;
-        }
+        configure_symbol(log, symbol, function, shared_bytes(symbol)?)?;
     }
     Ok(())
 }

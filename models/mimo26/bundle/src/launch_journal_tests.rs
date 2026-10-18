@@ -66,10 +66,10 @@ const EXPECTED: [(&str, JournalPin); 7] = [
     ("target", (23713, 0xad58_6944_0148_7fd6)),
     ("mtp", (12434, 0xe683_2d67_de17_366a)),
     ("dflash", (11739, 0x97ff_bbf4_3cd9_da33)),
-    ("vision", (614, 0x94fb_6d47_38b0_5b9f)),
-    ("vision_parallel", (614, 0x94fb_6d47_38b0_5b9f)),
-    ("audio", (718, 0xe68e_7a02_3186_0f58)),
-    ("audio_parallel", (718, 0xe68e_7a02_3186_0f58)),
+    ("vision", (638, 0xfa7e_5136_bd33_8418)),
+    ("vision_parallel", (638, 0xfa7e_5136_bd33_8418)),
+    ("audio", (742, 0xd214_79ff_1b93_2dcd)),
+    ("audio_parallel", (742, 0xd214_79ff_1b93_2dcd)),
 ];
 
 fn note_views(host: &FakeHost, step: &str, views: &[OwnedLogitsViewV1]) {

@@ -4231,8 +4231,22 @@ pub(crate) fn shared_encoder(
             names
                 .iter()
                 .map(|name| {
-                    let symbol = services.resolve_cuda_symbol(module, name.as_bytes());
-                    (name.clone(), symbol.unwrap())
+                    let symbol = services
+                        .resolve_cuda_symbol(module, name.as_bytes())
+                        .unwrap();
+                    let shared = crate::sm120::modules::dynamic_shared_bytes(name, ITEMS_32)
+                        .expect("encoder symbol shared memory");
+                    bundle_runtime::acquire::configure_symbol(
+                        bundle_runtime::acquire::Log {
+                            services,
+                            bundle: "MiMo",
+                        },
+                        name,
+                        symbol,
+                        shared,
+                    )
+                    .unwrap();
+                    (name.clone(), symbol)
                 })
                 .collect::<BTreeMap<_, _>>(),
         );

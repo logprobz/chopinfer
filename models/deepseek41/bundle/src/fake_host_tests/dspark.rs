@@ -144,10 +144,7 @@ fn instance_configures_draft_attention_before_execution() {
         );
         for line in journal.iter() {
             let fields = line.split_whitespace().collect::<Vec<_>>();
-            if fields.len() == 3
-                && fields[0] == "resolve"
-                && fields[2] == symbol
-            {
+            if fields.len() == 3 && fields[0] == "resolve" && fields[2] == symbol {
                 let prefix = format!("configure {} ", fields[1]);
                 let bytes = journal
                     .iter()

@@ -1245,7 +1245,7 @@
               "top_p": 1,
               "logprobs": 5
             },
-            "source": "docs/numerics.md#serving-qualification-gates"
+            "source": "models/deepseek41/README.md#dspark-qualification"
           },
           {
             "path": [
@@ -1255,7 +1255,7 @@
             ],
             "op": "count_ge",
             "value": 16,
-            "source": "docs/numerics.md#serving-qualification-gates"
+            "source": "models/deepseek41/README.md#dspark-qualification"
           },
           {
             "path": [
@@ -1265,7 +1265,7 @@
             ],
             "op": "count_ge",
             "value": 16,
-            "source": "docs/numerics.md#serving-qualification-gates"
+            "source": "models/deepseek41/README.md#dspark-qualification"
           },
           {
             "path": [
@@ -1334,7 +1334,7 @@
               "top_p": 1,
               "logprobs": 5
             },
-            "source": "docs/numerics.md#serving-qualification-gates"
+            "source": "models/deepseek41/README.md#dspark-qualification"
           },
           {
             "path": [
@@ -1344,7 +1344,7 @@
             ],
             "op": "count_ge",
             "value": 16,
-            "source": "docs/numerics.md#serving-qualification-gates"
+            "source": "models/deepseek41/README.md#dspark-qualification"
           },
           {
             "path": [
@@ -1354,7 +1354,7 @@
             ],
             "op": "count_ge",
             "value": 16,
-            "source": "docs/numerics.md#serving-qualification-gates"
+            "source": "models/deepseek41/README.md#dspark-qualification"
           },
           {
             "path": [
@@ -1592,7 +1592,7 @@
             ],
             "op": "count_ge",
             "value": 35,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "models/deepseek41/README.md#qualification"
           },
           {
             "path": [
@@ -1678,7 +1678,7 @@
             ],
             "op": "count_ge",
             "value": 35,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "models/deepseek41/README.md#qualification"
           },
           {
             "path": [
@@ -1943,7 +1943,7 @@
             ],
             "op": "count_ge",
             "value": 35,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "models/deepseek41/README.md#qualification"
           },
           {
             "path": [
@@ -2029,7 +2029,7 @@
             ],
             "op": "count_ge",
             "value": 35,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "models/deepseek41/README.md#qualification"
           },
           {
             "path": [
@@ -2294,7 +2294,7 @@
             ],
             "op": "count_ge",
             "value": 35,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "models/deepseek41/README.md#qualification"
           },
           {
             "path": [
@@ -2380,7 +2380,7 @@
             ],
             "op": "count_ge",
             "value": 35,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "models/deepseek41/README.md#qualification"
           },
           {
             "path": [
@@ -2645,7 +2645,7 @@
             ],
             "op": "count_ge",
             "value": 35,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "models/deepseek41/README.md#qualification"
           },
           {
             "path": [
@@ -2731,7 +2731,7 @@
             ],
             "op": "count_ge",
             "value": 35,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "models/deepseek41/README.md#qualification"
           },
           {
             "path": [
@@ -2996,7 +2996,7 @@
             ],
             "op": "count_ge",
             "value": 35,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "models/deepseek41/README.md#qualification"
           },
           {
             "path": [
@@ -3082,7 +3082,7 @@
             ],
             "op": "count_ge",
             "value": 35,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "models/deepseek41/README.md#qualification"
           },
           {
             "path": [

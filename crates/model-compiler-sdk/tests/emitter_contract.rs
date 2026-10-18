@@ -1541,7 +1541,7 @@ fn drafts_for_several_topologies_join_into_one_package() {
 
 /// The BF16 layout of `topology_draft` with `ranks`, and a mixed-plane one
 /// of the same pages: 32 FP8 values and their scale, then 32 FP4 values and
-/// their two scales, in 64 bytes per token.
+/// their two scales, in 51 of 64 bytes per token.
 fn mixed_plane_formats(ranks: u32) -> Vec<BundleKvFormatV1> {
     use runtime_bundle::{BundleKvCodeV1, BundleKvPlaneV1, BundleKvScaleFormatV1, BundleKvScaleV1};
     let layout = |name: &str, bytes: u64| {
@@ -1558,25 +1558,21 @@ fn mixed_plane_formats(ranks: u32) -> Vec<BundleKvFormatV1> {
         )
         .expect("the fixture KV layout is valid")
     };
-    let plane = |name: &str, code, offset, scale| {
-        BundleKvPlaneV1::new(id(name), code, 32, offset, Some(scale))
-            .expect("the fixture plane is valid")
+    let plane = |name: &str, code, scale| {
+        BundleKvPlaneV1::new(id(name), code, 32, Some(scale)).expect("the fixture plane is valid")
     };
-    let scale = |format, block, offset| {
-        BundleKvScaleV1::new(format, block, offset).expect("the fixture scale is valid")
-    };
+    let scale =
+        |format, block| BundleKvScaleV1::new(format, block).expect("the fixture scale is valid");
     let planes = vec![
         plane(
             "window",
             BundleKvCodeV1::Fp8E4m3,
-            0,
-            scale(BundleKvScaleFormatV1::Ue8m0, 32, 32),
+            scale(BundleKvScaleFormatV1::Ue8m0, 32),
         ),
         plane(
             "compressed",
             BundleKvCodeV1::Fp4E2m1,
-            40,
-            scale(BundleKvScaleFormatV1::E4m3, 16, 56),
+            scale(BundleKvScaleFormatV1::E4m3, 16),
         ),
     ];
     vec![

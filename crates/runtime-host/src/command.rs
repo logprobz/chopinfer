@@ -8527,24 +8527,21 @@ mod tests {
             BundleStateLifetimeV1::Transaction,
         )
         .expect("the native test layout is valid");
-        let scale =
-            |format, block, offset| Some(BundleKvScaleV1::new(format, block, offset).unwrap());
+        let scale = |format, block| Some(BundleKvScaleV1::new(format, block).unwrap());
         // 32 FP8 values and their scale, then 32 FP4 values and their two.
         let planes = vec![
             BundleKvPlaneV1::new(
                 id("window"),
                 BundleKvCodeV1::Fp8E4m3,
                 32,
-                0,
-                scale(BundleKvScaleFormatV1::Ue8m0, 32, 32),
+                scale(BundleKvScaleFormatV1::Ue8m0, 32),
             )
             .unwrap(),
             BundleKvPlaneV1::new(
                 id("compressed"),
                 BundleKvCodeV1::Fp4E2m1,
                 32,
-                40,
-                scale(BundleKvScaleFormatV1::E4m3, 16, 56),
+                scale(BundleKvScaleFormatV1::E4m3, 16),
             )
             .unwrap(),
         ];

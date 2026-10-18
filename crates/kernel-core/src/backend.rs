@@ -1064,6 +1064,22 @@ pub trait Backend: Send + Sync {
         Err(Refused::Unsupported)
     }
 
+    /// The same index-key preparation with explicit physical storage.
+    /// Fp4 writes the native code and scale planes. Bf16 writes each exact
+    /// native E2M1 times UE8M0 product in channel order to `keys.codes`,
+    /// with two bytes per value, `keys.scales = View::EMPTY` and scale
+    /// stride zero. Both modes preserve the native finite-product status
+    /// flags and hole rules; BF16 storage never bypasses quantization.
+    fn position_indexer_key_write_with_storage(
+        &self,
+        op: &PositionIndexerQuery,
+        storage: crate::pooled_indexer::IndexerKeyFormat,
+        need: Need,
+    ) -> Result<Prepared<PositionKeyWriteBuffers<View>>, Refused> {
+        let _ = (op, storage, need);
+        Err(Refused::Unsupported)
+    }
+
     /// Rotate normalized F32 latent tails, round the quantizer input to
     /// BF16 once, and write trained E2M1 values
     /// with E4M3-per-16 scales, or their exact BF16 decoded representation.
@@ -2318,6 +2334,13 @@ mod tests {
             &PositionIndexerQuery { heads: 32, head_dim: 128, compression_ratio: 2,
                 tail_rope_dims: 64, key_norm_eps_bits: 1e-20f32.to_bits(), max_top_k: 512,
                 page_size: 64, candidates: crate::pooled_indexer::IndexerCandidates::All, capacity: 4 },
+            Need::rows(4),
+        );
+        position_indexer_key_write_with_storage: Empty.position_indexer_key_write_with_storage(
+            &PositionIndexerQuery { heads: 32, head_dim: 128, compression_ratio: 2,
+                tail_rope_dims: 64, key_norm_eps_bits: 1e-20f32.to_bits(), max_top_k: 512,
+                page_size: 64, candidates: crate::pooled_indexer::IndexerCandidates::All, capacity: 4 },
+            crate::pooled_indexer::IndexerKeyFormat::Bf16,
             Need::rows(4),
         );
         compressed_kv_write: Empty.compressed_kv_write(

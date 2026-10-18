@@ -458,3 +458,31 @@ fn query_positions_report_bounds_without_changing_valid_rows() {
         0
     );
 }
+
+#[test]
+fn comparison_key_pages_preserve_native_products_and_check_extents() {
+    use kernel_core::pooled_indexer::IndexerKeyFormat;
+    let q = PositionIndexerQuery {
+        head_dim: 128,
+        page_size: 32,
+        ..query()
+    };
+    assert_eq!(
+        q.storage_page_bytes(IndexerKeyFormat::Fp4).unwrap(),
+        (2048, 128)
+    );
+    assert_eq!(
+        q.storage_page_bytes(IndexerKeyFormat::Bf16).unwrap(),
+        (8192, 0)
+    );
+    let too_large = PositionIndexerQuery {
+        head_dim: u32::MAX,
+        page_size: u32::MAX,
+        ..q
+    };
+    assert!(
+        too_large
+            .storage_page_bytes(IndexerKeyFormat::Bf16)
+            .is_err()
+    );
+}

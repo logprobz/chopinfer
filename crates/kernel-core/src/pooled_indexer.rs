@@ -102,10 +102,13 @@ pub enum IndexerGranularity {
     Position,
 }
 
-/// Storage of the pooled keys.
+/// Physical storage of pooled or position keys.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum IndexerKeyFormat {
-    /// `[page_size / group][head_dim]` BF16 per page.
+    /// Pooled keys: `[page_size / group][head_dim]` BF16 per page.
+    /// Position keys: `[page_size][head_dim]` exact native E2M1 times
+    /// UE8M0 products in channel order, two bytes per value, no scales.
+    /// Native finite-product refusals still apply in this comparison mode.
     Bf16,
     /// MXFP4 position keys: E2M1 codes, low nibble first, and one UE8M0
     /// scale per 32 channels. The position query defines the trained
@@ -250,6 +253,21 @@ impl PositionIndexerQuery {
         position
             .checked_add(1)?
             .checked_div(u64::from(self.compression_ratio))
+    }
+
+    /// Physical bytes per position-key page for a writer's storage mode.
+    /// BF16 holds the exact native products and has no scale plane.
+    pub fn storage_page_bytes(&self, storage: IndexerKeyFormat) -> Result<(u64, u64), Refusal> {
+        match storage {
+            IndexerKeyFormat::Fp4 => Ok(self.page_bytes()),
+            IndexerKeyFormat::Bf16 => Ok((
+                u64::from(self.page_size)
+                    .checked_mul(u64::from(self.head_dim))
+                    .and_then(|v| v.checked_mul(2))
+                    .ok_or(Refusal("BF16 index-key page size overflows"))?,
+                0,
+            )),
+        }
     }
 
     /// Packed E2M1 bytes and UE8M0 bytes per page, in separate planes.
@@ -663,6 +681,10 @@ crate::scratch_record! {
     /// bytes. Each page holds `[page_size][head_dim / 2]` code bytes and
     /// `[page_size][head_dim / 32]` scale bytes. Page tables address compressed
     /// positions. Page strides and their address products are 64-bit.
+    /// The explicit BF16 key writer instead uses `codes` for exact native
+    /// products, `[page_size][head_dim]` BF16. Its scales view is empty and
+    /// scale stride zero. The value stride is still a byte stride between
+    /// pages, so the stream can be embedded at an offset in a larger page.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct PositionKeyPages {
         pub codes: value,

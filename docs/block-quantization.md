@@ -103,3 +103,15 @@ addresses receive the row's status and its defined quantized output.
 Status cannot alias any operand or cache plane. Projection quantizer status
 likewise cannot alias any other bound role of its composed operation,
 including final output, weights, residual, routing or compute scratch.
+
+
+The position-key writer also exposes explicit `IndexerKeyFormat` storage.
+`Fp4` keeps the native E2M1 and UE8M0 planes. `Bf16` stores each exact native
+product, in channel order, in the value plane with no scale allocation.
+It applies the same norm, RoPE, trained quantization and finite-product
+checks. Changing storage does not admit a previously refused row. Its
+256-byte entries and the compressed latent writer's existing 1,024-byte
+BF16 entries use byte page strides, allowing both streams to be embedded
+in a shared physical page. The BF16 backend requires an empty scales view
+and scale stride zero for index keys. A separate entry family adds these
+instantiations without changing existing cubins.

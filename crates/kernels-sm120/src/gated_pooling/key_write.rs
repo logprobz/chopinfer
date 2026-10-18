@@ -4,7 +4,7 @@
 use kernel_build::{CubinSpec, EntryParam, EntrySpec};
 use kernel_core::compressed_kv::{CompressedKvStorage, CompressedKvWriteQuery};
 use kernel_core::contract::{LaunchPlan, Refusal, Validate};
-use kernel_core::pooled_indexer::PositionIndexerQuery;
+use kernel_core::pooled_indexer::{IndexerKeyFormat, PositionIndexerQuery};
 
 use super::{THREADS, pointer, scalar};
 
@@ -12,7 +12,7 @@ pub const HEADER: &str = "gated_pooling/key_write.cuh";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Format {
-    Index,
+    Index(IndexerKeyFormat),
     Compressed(CompressedKvStorage),
 }
 
@@ -27,15 +27,16 @@ struct Geometry {
 }
 
 impl Geometry {
-    fn index(query: &PositionIndexerQuery) -> Result<Self, Refusal> {
+    fn index(query: &PositionIndexerQuery, storage: IndexerKeyFormat) -> Result<Self, Refusal> {
         query.validate()?;
+        query.storage_page_bytes(storage)?;
         Ok(Self {
             width: query.head_dim,
             rotary: query.tail_rope_dims,
             ratio: query.compression_ratio,
             page_size: query.page_size,
             eps_bits: query.key_norm_eps_bits,
-            format: Format::Index,
+            format: Format::Index(storage),
         })
     }
 
@@ -74,7 +75,15 @@ pub struct Entry {
 
 impl Entry {
     pub fn index(query: &PositionIndexerQuery, symbol: &str) -> Result<Self, Refusal> {
-        Self::new(Geometry::index(query)?, query.capacity, symbol)
+        Self::index_with_storage(query, IndexerKeyFormat::Fp4, symbol)
+    }
+
+    pub fn index_with_storage(
+        query: &PositionIndexerQuery,
+        storage: IndexerKeyFormat,
+        symbol: &str,
+    ) -> Result<Self, Refusal> {
+        Self::new(Geometry::index(query, storage)?, query.capacity, symbol)
     }
 
     pub fn compressed(query: &CompressedKvWriteQuery, symbol: &str) -> Result<Self, Refusal> {
@@ -104,7 +113,22 @@ impl Entry {
     }
 
     pub fn matches_index(&self, query: &PositionIndexerQuery) -> bool {
-        Geometry::index(query) == Ok(self.geometry)
+        self.matches_index_storage(query, IndexerKeyFormat::Fp4)
+    }
+
+    pub fn matches_index_storage(
+        &self,
+        query: &PositionIndexerQuery,
+        storage: IndexerKeyFormat,
+    ) -> bool {
+        Geometry::index(query, storage) == Ok(self.geometry)
+    }
+
+    pub fn packed(&self) -> bool {
+        !matches!(
+            self.geometry.format,
+            Format::Index(IndexerKeyFormat::Bf16) | Format::Compressed(CompressedKvStorage::Bf16)
+        )
     }
 
     pub fn matches_compressed(&self, query: &CompressedKvWriteQuery) -> bool {
@@ -151,9 +175,9 @@ impl Entry {
 
     pub fn entry_spec(&self) -> EntrySpec {
         let g = self.geometry;
-        let normalize = g.format == Format::Index;
+        let normalize = matches!(g.format, Format::Index(_));
         let e4m3 = !normalize;
-        let packed = g.format != Format::Compressed(CompressedKvStorage::Bf16);
+        let packed = self.packed();
         let mut params = vec![
             pointer("key", "const float"),
             pointer("norm_weight", "const uint16_t"),

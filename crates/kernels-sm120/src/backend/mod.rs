@@ -1414,6 +1414,15 @@ impl Backend for Sm120 {
         fp4_key_write::index(&self.fp4_writes, op, need)
     }
 
+    fn position_indexer_key_write_with_storage(
+        &self,
+        op: &PositionIndexerQuery,
+        storage: kernel_core::pooled_indexer::IndexerKeyFormat,
+        need: Need,
+    ) -> Result<Prepared<PositionKeyWriteBuffers<View>>, Refused> {
+        fp4_key_write::index_with_storage(&self.fp4_writes, op, storage, need)
+    }
+
     fn compressed_kv_write(
         &self,
         op: &CompressedKvWriteQuery,

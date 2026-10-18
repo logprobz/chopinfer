@@ -6,7 +6,9 @@ use kernel_core::compressed_kv::{
     CompressedKvStorage, CompressedKvWriteBuffers, CompressedKvWriteQuery,
 };
 use kernel_core::contract::{Argument, ArgumentList, Refusal, Validate};
-use kernel_core::pooled_indexer::{PositionIndexerQuery, PositionKeyWriteBuffers};
+use kernel_core::pooled_indexer::{
+    IndexerKeyFormat, PositionIndexerQuery, PositionKeyWriteBuffers,
+};
 use kernel_core::properties::Invariance;
 
 use super::select::{Candidate, choose};
@@ -38,9 +40,18 @@ pub(super) fn index(
     query: &PositionIndexerQuery,
     need: Need,
 ) -> Result<Prepared<PositionKeyWriteBuffers<View>>, Refused> {
+    index_with_storage(entries, query, IndexerKeyFormat::Fp4, need)
+}
+
+pub(super) fn index_with_storage(
+    entries: &[Entry],
+    query: &PositionIndexerQuery,
+    storage: IndexerKeyFormat,
+    need: Need,
+) -> Result<Prepared<PositionKeyWriteBuffers<View>>, Refused> {
     query.validate()?;
     check_need(query.capacity, need)?;
-    let entry = select(entries, need, |e| e.matches_index(query))?;
+    let entry = select(entries, need, |e| e.matches_index_storage(query, storage))?;
     Ok(Box::new(IndexWrite(Write::new(entry, need)?)))
 }
 
@@ -197,8 +208,18 @@ impl PreparedOp<PositionKeyWriteBuffers<View>> for IndexWrite {
         let k = b.keys;
         k.page_tables.check()?;
         let elements = u64::from(write.entry.page_size()) * u64::from(write.entry.width());
-        plane(k.codes, k.pages, k.code_page_stride, elements / 2)?;
-        plane(k.scales, k.pages, k.scale_page_stride, elements / 32)?;
+        if write.entry.packed() {
+            plane(k.codes, k.pages, k.code_page_stride, elements / 2)?;
+            plane(k.scales, k.pages, k.scale_page_stride, elements / 32)?;
+        } else {
+            if k.code_page_stride % 2 != 0 {
+                return Err(Refusal("BF16 index-key page stride must be even"));
+            }
+            if k.scales != View::EMPTY || k.scale_page_stride != 0 {
+                return Err(Refusal("BF16 index keys have no scale plane"));
+            }
+            plane(k.codes, k.pages, k.code_page_stride, elements * 2)?;
+        }
         status_buffer(
             b.status,
             b.status_row_offset,
@@ -224,8 +245,10 @@ impl PreparedOp<PositionKeyWriteBuffers<View>> for IndexWrite {
             pointer(b.live_rows),
             pointer(k.page_tables.tables),
             pointer(k.codes),
-            pointer(k.scales),
         ];
+        if write.entry.packed() {
+            args.push(pointer(k.scales));
+        }
         args.extend(page_arguments(
             k.page_tables,
             k.pages,
@@ -462,6 +485,66 @@ mod tests {
             }
         }
         assert_eq!(prepared, 6);
+    }
+
+    #[test]
+    fn bf16_index_storage_has_exact_extent_no_scales_and_native_refusals() {
+        let q = index_query(2);
+        let native = Entry::index(&q, "native_v1").unwrap();
+        let bf16 = Entry::index_with_storage(&q, IndexerKeyFormat::Bf16, "bf16_v1").unwrap();
+        let backend = Sm120::new().with_fp4_key_writes([native.clone(), bf16.clone()]);
+        let op = backend
+            .position_indexer_key_write_with_storage(&q, IndexerKeyFormat::Bf16, Need::rows(8))
+            .unwrap();
+        assert_eq!(op.info().symbols[0].0, "bf16_v1");
+        assert_eq!(
+            backend
+                .position_indexer_key_write(&q, Need::rows(8))
+                .unwrap()
+                .info()
+                .symbols[0]
+                .0,
+            "native_v1"
+        );
+        assert!(
+            Sm120::new()
+                .with_fp4_key_writes([native])
+                .position_indexer_key_write_with_storage(&q, IndexerKeyFormat::Bf16, Need::rows(8))
+                .is_err()
+        );
+        let spec = bf16.entry_spec();
+        assert!(!spec.params.iter().any(
+            |p| matches!(p, kernel_build::EntryParam::DevicePointer{name,..} if name=="scales")
+        ));
+        assert!(spec.body.contains("128,64,2,64,true,false,false>"));
+        let counts = Counts::rows(8).with_positions(1024);
+        let mut b = index_buffers();
+        b.keys.scales = View::EMPTY;
+        b.keys.scale_page_stride = 0;
+        let extent = 2 * b.keys.code_page_stride + 64 * 128 * 2;
+        b.keys.codes.bytes = extent;
+        op.launches(&b, View::EMPTY, counts).unwrap();
+        let mut bad = b;
+        bad.keys.codes.bytes -= 1;
+        assert!(op.launches(&bad, View::EMPTY, counts).is_err());
+        bad = b;
+        bad.keys.code_page_stride += 1;
+        assert!(op.launches(&bad, View::EMPTY, counts).is_err());
+        bad = b;
+        bad.keys.scales = view(8);
+        assert!(op.launches(&bad, View::EMPTY, counts).is_err());
+        bad = b;
+        bad.keys.scale_page_stride = 32;
+        assert!(op.launches(&bad, View::EMPTY, counts).is_err());
+        bad = b;
+        bad.status.handle = bad.keys.codes.handle;
+        assert!(op.launches(&bad, View::EMPTY, counts).is_err());
+        bad = b;
+        bad.status.bytes = (3 + 8) * 4 - 1;
+        assert!(op.launches(&bad, View::EMPTY, counts).is_err());
+        bad = b;
+        bad.keys.code_page_stride = u64::MAX - 1;
+        assert!(op.launches(&bad, View::EMPTY, counts).is_err());
     }
 
     #[test]

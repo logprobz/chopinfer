@@ -181,10 +181,11 @@ pub enum LatentAttentionQuery {
     ///
     /// With two sources, concatenate the window list then the compressed
     /// list before one softmax, with at most `max_keys` entries in total.
-    /// Window lists name slots of a per-layer 128-slot ring (absolute token
-    /// position modulo 128), or rows of a staged prefill chunk. Compressed
-    /// lists name positions through their own page table. Each source skips
-    /// -1 without reading storage; positions must not repeat within a source.
+    /// Window lists name physical slots of the declared window storage.
+    /// Producers guarantee an in-range slot or -1; a reader treats every
+    /// index outside `[0, slots)` as a hole without reading codes or scales.
+    /// Compressed lists name positions through their own page table and skip
+    /// -1. Valid positions must not repeat within a source.
     /// The lists alone specify visibility, including block-visible verify.
     Attention {
         heads: u32,
@@ -443,6 +444,8 @@ crate::scratch_record! {
     /// `s * scale_stride` bytes in `scales`. Each holds contiguous slot rows
     /// of `latent` codes and `latent / 32` scales. Lists name physical ring
     /// slots or staged rows, with `key_stride` entries and `budget` live.
+    /// Producers supply in-range slots or -1. Readers mask every index
+    /// outside `[0, slots)` as a hole, without reading either plane.
     /// Code bases are two-byte aligned; pair-loading backends also require
     /// an even code stride. Scale bases and strides need only byte alignment.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -144,7 +144,9 @@ fn plane<'a>(
 }
 
 /// A source's row-major index lists. Only `budget` entries per row are read.
-/// -1 is a hole; any other negative entry or repeated position is refused.
+/// -1 is a hole. Window lists also mask every index outside their slot
+/// range; compressed lists refuse other negative indices. Repeated valid
+/// positions are refused in either source.
 #[derive(Clone, Copy, Debug)]
 pub struct LatentKeyLists<'a> {
     pub indices: &'a [i32],
@@ -160,10 +162,10 @@ impl LatentKeyLists<'_> {
         Ok(())
     }
 
-    fn row(self, row: usize) -> Result<Vec<usize>, Refusal> {
+    fn row(self, row: usize, window_slots: Option<usize>) -> Result<Vec<usize>, Refusal> {
         let mut positions = Vec::new();
         for &p in &self.indices[row * self.stride..row * self.stride + self.budget] {
-            if p == -1 {
+            if p == -1 || window_slots.is_some_and(|slots| p < 0 || p as usize >= slots) {
                 continue;
             }
             let p = usize::try_from(p).map_err(|_| Refusal("latent key list entry below -1"))?;
@@ -180,6 +182,8 @@ impl LatentKeyLists<'_> {
 /// The views may be slices of a single allocation or separate allocations.
 /// Attention only reads this source; ring updates and verify rollback are
 /// explicit caller-owned operations. The lists alone specify visibility.
+/// Producers supply a valid slot or -1; every index outside `[0, slots)`
+/// is a hole and reads neither plane.
 #[derive(Clone, Copy, Debug)]
 pub struct LatentWindowInput<'a> {
     pub codes: &'a [u8],
@@ -333,12 +337,9 @@ pub fn latent_attention_with_sources(
     };
     for row in 0..rows {
         let mut keys = Vec::new();
-        for position in input.window.lists.row(row)? {
+        for position in input.window.lists.row(row, Some(slots))? {
             let sequence = usize::try_from(input.row_batch[row])
                 .map_err(|_| Refusal("latent sequence is negative"))?;
-            if position >= slots {
-                return Err(Refusal("latent window slot outside storage"));
-            }
             let codes = plane(
                 input.window.codes,
                 sequence,
@@ -361,7 +362,7 @@ pub fn latent_attention_with_sources(
             )?);
         }
         if let Some(source) = input.compressed {
-            for position in source.lists.row(row)? {
+            for position in source.lists.row(row, None)? {
                 let (base, slot) = layout.locate(
                     source.paging,
                     source.pool.len(),

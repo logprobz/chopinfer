@@ -41,6 +41,10 @@ struct Fixture {
 
 impl Fixture {
     fn new(entry: &Entry) -> LabResult<Self> {
+        Self::with_storage_case(entry, true)
+    }
+
+    fn with_storage_case(entry: &Entry, staged: bool) -> LabResult<Self> {
         let LatentAttentionQuery::Attention {
             heads,
             latent,
@@ -54,7 +58,11 @@ impl Fixture {
             .with_latent_sources(entry.clone())
             .latent_attention_sources(&entry.query, Need::rows(ROWS as u32))
             .map_err(|e| e.to_string())?;
-        let case = cases::latent_sources::numerical_case(entry.query, ROWS as u32, prepared)?;
+        let case = if staged {
+            cases::latent_sources::numerical_case(entry.query, ROWS as u32, prepared)?
+        } else {
+            cases::latent_sources::case(entry.query, ROWS as u32, prepared)?
+        };
         let mut images = case.images();
         let (width, heads, page) = (latent as usize, heads as usize, page_size as usize);
         let window_code_stride = images.bytes("window.codes")?.len() / 2;
@@ -204,6 +212,60 @@ fn native_numerical_controls_prepare() {
     assert_eq!(specs[0].entries.len(), 5);
     assert!(entries[0].sink_per_split_entry_spec().is_err());
     assert!(entries[1].sink_per_split_entry_spec().is_ok());
+}
+
+#[test]
+fn native_window_out_of_range_indices_are_holes() {
+    kernel_lab::gpu_test(1 << 30, |session| {
+        let entry = family::catalog()
+            .into_iter()
+            .find(|e| e.splits > 1)
+            .unwrap();
+        let functions = LabModules.load(session)?;
+        let mut checked = 0;
+        for (staged, slots, outside) in [
+            (false, 128, vec![128, -2, i32::MIN]),
+            (true, 136, vec![136, 137, i32::MAX, -2, i32::MIN]),
+        ] {
+            let mut fixture = Fixture::with_storage_case(&entry, staged)?;
+            assert_eq!(fixture.slots, slots);
+            fixture.window(0, &vec![1.0; fixture.width])?;
+            fixture.window(slots - 1, &vec![4.0; fixture.width])?;
+            fixture.select(0, &[(1, 0), (2, slots as i32 - 1)], &[])?;
+            let expected = fixture.run(session, functions.as_ref(), 1)?;
+            fixture.judge(&expected, 1)?;
+            assert!(
+                bf16(&expected["output"])[..fixture.heads * fixture.width]
+                    .iter()
+                    .all(|&v| v == f32_to_bf16(5.0 / 3.0))
+            );
+            for invalid in outside {
+                fixture.select(0, &[(0, invalid), (1, 0), (2, slots as i32 - 1)], &[])?;
+                let actual = fixture.run(session, functions.as_ref(), 1)?;
+                fixture.judge(&actual, 1)?;
+                assert_eq!(
+                    actual["output"], expected["output"],
+                    "slots={slots}, index={invalid}"
+                );
+                fixture.select(0, &[(0, invalid)], &[])?;
+                let empty = fixture.run(session, functions.as_ref(), 1)?;
+                fixture.judge(&empty, 1)?;
+                assert!(
+                    bf16(&empty["output"])[..fixture.heads * fixture.width]
+                        .iter()
+                        .all(|&v| v == 0)
+                );
+                checked += 1;
+            }
+        }
+        assert_eq!(checked, 8);
+        session.receipt(
+            "native-latent-window-holes",
+            BTreeMap::from([("indices_checked".into(), serde_json::json!(checked))]),
+        )?;
+        Ok(())
+    })
+    .expect("out-of-range window indices are holes");
 }
 
 #[test]

@@ -1938,6 +1938,61 @@ mod latent_parameters {
     }
 
     #[test]
+    fn latent_out_of_range_window_slots_are_holes() {
+        let source = Sources::new();
+        for (storage, slots, outside) in [
+            (LatentWindowStorage::Ring128, 128, vec![128, -2, i32::MIN]),
+            (
+                LatentWindowStorage::Staged { slots: 136 },
+                136,
+                vec![136, 137, i32::MAX, -2, i32::MIN],
+            ),
+        ] {
+            let codes = vec![0x38; slots * D];
+            let scales = vec![127; slots * (D / 32)];
+            let mut query = query(Output::Normalized);
+            if let Query::Attention {
+                second_fp4_keys, ..
+            } = &mut query
+            {
+                *second_fp4_keys = false;
+            }
+            let baseline = [-1, 0, slots as i32 - 1];
+            let mut input = source.input(&baseline, &[]);
+            input.compressed = None;
+            input.window.codes = &codes;
+            input.window.scales = &scales;
+            input.window.code_stride = codes.len();
+            input.window.scale_stride = scales.len();
+            input.window.storage = storage;
+            let expected = normalized(latent_attention_with_sources(query, input).unwrap());
+            for invalid in outside {
+                let indices = [invalid, 0, slots as i32 - 1];
+                let mut actual = input;
+                actual.window.lists.indices = &indices;
+                assert_eq!(
+                    normalized(latent_attention_with_sources(query, actual).unwrap()),
+                    expected
+                );
+                // An out-of-range-only list must not touch either plane.
+                let mut empty = input;
+                let single = [invalid];
+                empty.window.lists = LatentKeyLists {
+                    indices: &single,
+                    stride: 1,
+                    budget: 1,
+                };
+                empty.window.codes = &[];
+                empty.window.scales = &[];
+                assert_eq!(
+                    normalized(latent_attention_with_sources(query, empty).unwrap()),
+                    vec![0.0; 2 * D]
+                );
+            }
+        }
+    }
+
+    #[test]
     fn latent_holes_do_not_read_storage_and_large_sinks_are_stable() {
         let mut source = Sources::new();
         source.sinks = [1000.0, -1000.0];
@@ -2005,7 +2060,9 @@ mod latent_parameters {
             normalized(latent_attention_with_sources(query(Output::Normalized), input).unwrap());
         assert_eq!(out[0], 1.0); // (1 + 2) / (2 + exp(0))
         input.window.storage = LatentWindowStorage::Ring128;
-        assert!(latent_attention_with_sources(query(Output::Normalized), input).is_err());
+        let out =
+            normalized(latent_attention_with_sources(query(Output::Normalized), input).unwrap());
+        assert_eq!(out[0], 0.5); // Slot 128 is a hole; only slot 0 contributes.
     }
 
     #[test]
@@ -2252,7 +2309,7 @@ mod latent_parameters {
     fn latent_sources_refuse_malformed_storage_and_operands() {
         let source = Sources::new();
         for (w, c) in [
-            (&[-2][..], &[][..]),
+            (&[][..], &[-2][..]),
             (&[0, 0][..], &[][..]),
             (&[][..], &[4][..]),
             (&[][..], &[0, 0][..]),

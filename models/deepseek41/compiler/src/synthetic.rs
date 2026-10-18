@@ -38,6 +38,9 @@ pub enum Fill {
     E2m1Codes,
     /// UE8M0 scales `2^exponent`.
     Ue8m0 { exponent: i32 },
+    /// UE8M0 scales `2^(exponent + d)`, `d` uniform in `[-spread, spread]`
+    /// per scale, so neighbouring blocks differ.
+    Ue8m0Varied { exponent: i32, spread: u32 },
 }
 
 /// One checkpoint tensor.
@@ -333,41 +336,46 @@ fn bf16(value: f32) -> [u8; 2] {
     kernel_core::codec::f32_to_bf16(value).to_le_bytes()
 }
 
-/// Writes `tensor`'s values.
+/// The bytes a write of one tensor's values buffers before it flushes.
+pub const CHUNK_BYTES: usize = 1 << 16;
+
+/// Writes `tensor`'s values, in writes of at most [`CHUNK_BYTES`] plus one
+/// value whatever the fill.
 fn fill(tensor: &Tensor, seed: u64, out: &mut impl Write) -> std::io::Result<()> {
     let mut values = Values::of(&tensor.name, seed);
     let count = tensor.shape.iter().product::<u64>();
-    let mut chunk = Vec::with_capacity(1 << 16);
+    let mut chunk = Vec::with_capacity(CHUNK_BYTES + 4);
     for _ in 0..count {
-        let value = match tensor.fill {
-            Fill::Uniform { scale } => values.signed() * scale,
-            Fill::AroundOne { scale } => 1.0 + values.signed() * scale,
+        match tensor.fill {
+            Fill::Uniform { scale } => push(tensor, values.signed() * scale, &mut chunk),
+            Fill::AroundOne { scale } => push(tensor, 1.0 + values.signed() * scale, &mut chunk),
             Fill::E4m3Codes => {
                 let bits = values.next();
                 // Exponent field 1..=9 (2^-6..2^2), any mantissa, any sign.
                 let exponent = 1 + (bits % 9) as u8;
                 chunk.push(((bits >> 8) as u8 & 0x80) | exponent << 3 | ((bits >> 16) as u8 & 7));
-                continue;
             }
-            Fill::E2m1Codes => {
-                chunk.push(values.next() as u8);
-                continue;
+            Fill::E2m1Codes => chunk.push(values.next() as u8),
+            Fill::Ue8m0 { exponent } => chunk.push((127 + exponent) as u8),
+            Fill::Ue8m0Varied { exponent, spread } => {
+                let offset = (values.next() % (2 * u64::from(spread) + 1)) as i32 - spread as i32;
+                chunk.push((127 + exponent + offset) as u8);
             }
-            Fill::Ue8m0 { exponent } => {
-                chunk.push((127 + exponent) as u8);
-                continue;
-            }
-        };
-        match tensor.dtype {
-            "F32" => chunk.extend(value.to_le_bytes()),
-            _ => chunk.extend(bf16(value)),
         }
-        if chunk.len() >= 1 << 16 {
+        if chunk.len() >= CHUNK_BYTES {
             out.write_all(&chunk)?;
             chunk.clear();
         }
     }
     out.write_all(&chunk)
+}
+
+/// Appends `value` in `tensor`'s dtype: F32, else BF16.
+fn push(tensor: &Tensor, value: f32, chunk: &mut Vec<u8>) {
+    match tensor.dtype {
+        "F32" => chunk.extend(value.to_le_bytes()),
+        _ => chunk.extend(bf16(value)),
+    }
 }
 
 /// The single-file checkpoint's safetensors header (padded to 8 bytes, as
@@ -419,6 +427,97 @@ pub fn write(dir: &Path, tensors: &[Tensor], seed: u64) -> Result<u64, String> {
 mod tests {
     use super::*;
     use model_deepseek41_contract::geometry::FLASH;
+
+    /// Records the largest write and refuses writes past `limit` bytes.
+    struct Peak {
+        largest: usize,
+        written: usize,
+        limit: usize,
+    }
+
+    impl Write for Peak {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if self.written >= self.limit {
+                return Err(std::io::Error::other("enough"));
+            }
+            self.largest = self.largest.max(buf.len());
+            self.written += buf.len();
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Every fill streams in chunks: a whole tensor of each mode writes all
+    /// its bytes in writes of at most one chunk and a value, and Flash's
+    /// largest quantized tensor (an Engram table of about 98 GB) starts
+    /// writing without buffering itself.
+    #[test]
+    fn every_fill_streams_in_chunks() {
+        let elements = 5 * CHUNK_BYTES as u64 + 3;
+        for (dtype, mode) in [
+            ("F32", Fill::Uniform { scale: 1.0 }),
+            ("BF16", Fill::AroundOne { scale: 0.1 }),
+            ("F8_E4M3", Fill::E4m3Codes),
+            ("I8", Fill::E2m1Codes),
+            ("F8_E8M0", Fill::Ue8m0 { exponent: -3 }),
+            (
+                "F8_E8M0",
+                Fill::Ue8m0Varied {
+                    exponent: -3,
+                    spread: 2,
+                },
+            ),
+        ] {
+            let tensor = Tensor {
+                name: "t".into(),
+                dtype,
+                shape: vec![elements],
+                fill: mode,
+            };
+            let mut out = Peak {
+                largest: 0,
+                written: 0,
+                limit: usize::MAX,
+            };
+            fill(&tensor, 7, &mut out).unwrap();
+            assert_eq!(out.written as u64, tensor.bytes(), "{mode:?}");
+            assert!(out.largest <= CHUNK_BYTES + 4, "{mode:?}: {}", out.largest);
+        }
+        let tensors = tensors(&FLASH).unwrap();
+        let table = tensors
+            .iter()
+            .find(|t| t.name == "layers.14.engram.embed.weight")
+            .unwrap();
+        assert!(table.bytes() > 90 << 30, "{}", table.bytes());
+        let mut out = Peak {
+            largest: 0,
+            written: 0,
+            limit: 8 * CHUNK_BYTES,
+        };
+        assert!(fill(table, 7, &mut out).is_err());
+        assert!(out.largest <= CHUNK_BYTES + 4, "{}", out.largest);
+    }
+
+    /// Varied UE8M0 scales stay within their spread and differ between
+    /// neighbouring blocks.
+    #[test]
+    fn varied_scales_vary_within_their_spread() {
+        let tensor = Tensor {
+            name: "s".into(),
+            dtype: "F8_E8M0",
+            shape: vec![4096],
+            fill: Fill::Ue8m0Varied {
+                exponent: -4,
+                spread: 3,
+            },
+        };
+        let mut bytes = Vec::new();
+        fill(&tensor, 1, &mut bytes).unwrap();
+        assert!(bytes.iter().all(|&b| (120..=126).contains(&b)));
+        assert!(bytes.windows(2).filter(|w| w[0] != w[1]).count() > 3000);
+    }
 
     #[test]
     fn the_flash_catalog_is_the_official_checkpoints() {

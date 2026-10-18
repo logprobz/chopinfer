@@ -20,17 +20,27 @@ runtime-weights.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
+[features]
+gpu-tests = ["runtime-host/linux-cuda-host"]
+
 [dev-dependencies]
 bundle-runtime = { workspace = true, features = ["test-support"] }
 frontend-format.workspace = true
 runtime-frontend = { workspace = true, features = ["test-support"] }
 runtime-host = { workspace = true, features = ["test-support"] }
 runtime-server.workspace = true
+runtime-bundle-sdk.workspace = true
+runtime-kv.workspace = true
 sha2.workspace = true
 
 [[bin]]
 name = "chopinfer-model-deepseek41"
 path = "src/bin/chopinfer-model-deepseek41.rs"
+
+[[test]]
+name = "dspark_lifecycle"
+path = "tests/dspark_lifecycle.rs"
+required-features = ["gpu-tests"]
 
 [lints]
 workspace = true

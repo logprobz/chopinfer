@@ -17,6 +17,7 @@ license.workspace = true
 kernel-build.workspace = true
 kernel-core.workspace = true
 kernel-harness.workspace = true
+kernels-sm120.workspace = true
 model-deepseek41-contract.workspace = true
 runtime-cuda.workspace = true
 serde_json.workspace = true

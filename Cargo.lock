@@ -763,6 +763,7 @@ dependencies = [
  "kernel-build",
  "kernel-core",
  "kernel-harness",
+ "kernels-sm120",
  "model-deepseek41-contract",
  "runtime-cuda",
  "serde_json",

@@ -11,3 +11,9 @@ mod own_cubin;
 mod own_entries;
 #[path = "../../../bundle/src/sm120/own_ops.rs"]
 mod own_ops;
+
+// The vision encoder: the bundle's catalog and its conformance cases.
+mod encoder;
+#[path = "../../../bundle/src/sm120/encoder.rs"]
+#[allow(dead_code, reason = "the cases read the catalog and cubin specs")]
+mod encoder_catalog;

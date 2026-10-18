@@ -146,6 +146,48 @@
         "env": "CHOPINFER_DATA",
         "path": "refrun/deepseek41/m1/teacher-reference.workload.json"
       }
+    },
+    "media_capture": {
+      "directory": false,
+      "members": {
+        ".": "24d4ec51121f74c9189ce603c4b1ff73db702c4d0a1bbeb2a91677b395b8383c"
+      },
+      "path": {
+        "env": "CHOPINFER_DATA",
+        "path": "refrun/deepseek41/workloads-20261018-probes-served/capture/probes.json"
+      }
+    },
+    "media_fixtures": {
+      "directory": true,
+      "members": {
+        "identity.json": "ad8356c69ce073412a352547bbbc8927f90a83202d037f3cb5dc053818bfdc9a",
+        "manifest.json": "b24212819c84de222cbce240a20edd36fa93ef4e257c6bf7f89b76de4a5c14b5",
+        "probes.json": "24d4ec51121f74c9189ce603c4b1ff73db702c4d0a1bbeb2a91677b395b8383c"
+      },
+      "path": {
+        "env": "CHOPINFER_DATA",
+        "path": "refrun/deepseek41/workloads-20261018-probes-served/capture"
+      }
+    },
+    "reference:image_probes": {
+      "directory": false,
+      "members": {
+        ".": "483e5b44b727dfd5d497ef6fb4a1d24bfb4632d082b706a70128000394496578"
+      },
+      "path": {
+        "env": "CHOPINFER_DATA",
+        "path": "refrun/deepseek41/media/image-probe-references.json"
+      }
+    },
+    "workload:image_probes": {
+      "directory": false,
+      "members": {
+        ".": "803bf6fad134b6615d429c49321602879330835e97b9e7b0340d87b7e95b88bd"
+      },
+      "path": {
+        "env": "CHOPINFER_DATA",
+        "path": "refrun/deepseek41/media/image-probe-references.workload.json"
+      }
     }
   },
   "model": "deepseek41",
@@ -258,6 +300,32 @@
     },
     "ebbe6204917beaed2c093360330dc85d521ac2a5c9330a9c11b8443fec5e2e68": {
       "schema": "legacy-json-array"
+    },
+    "24d4ec51121f74c9189ce603c4b1ff73db702c4d0a1bbeb2a91677b395b8383c": {
+      "schema": "legacy-json-array"
+    },
+    "483e5b44b727dfd5d497ef6fb4a1d24bfb4632d082b706a70128000394496578": {
+      "production": {
+        "assembled_fixture_sha256": "32470a84a200c55d536ebe64eb501a1f374d569f2063945687236541318eb9e5",
+        "producer": "runner-binding",
+        "refset_sha256": "f611b04d8d5c5540295efa87be2d0c5e9c3a552f9b1e25a2a1b7f32990d799dc",
+        "workload_sha256": "74997b8243654c678ee69bc114f32d7d5b9d07ddad08526ad7055d98d82dbc62"
+      },
+      "schema": "chopinfer.deepseek41.image-probe-references.v1"
+    },
+    "803bf6fad134b6615d429c49321602879330835e97b9e7b0340d87b7e95b88bd": {
+      "production": {
+        "producer": "runner-workload",
+        "refset_sha256": "f611b04d8d5c5540295efa87be2d0c5e9c3a552f9b1e25a2a1b7f32990d799dc",
+        "workload_sha256": "74997b8243654c678ee69bc114f32d7d5b9d07ddad08526ad7055d98d82dbc62"
+      },
+      "schema": "chopinfer.refrun.workload.v1"
+    },
+    "ad8356c69ce073412a352547bbbc8927f90a83202d037f3cb5dc053818bfdc9a": {
+      "schema": "legacy-json-object"
+    },
+    "b24212819c84de222cbce240a20edd36fa93ef4e257c6bf7f89b76de4a5c14b5": {
+      "schema": "legacy-json-object"
     }
   },
   "schema": "chopinfer-qual-references/v1"

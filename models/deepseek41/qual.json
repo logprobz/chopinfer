@@ -29,7 +29,8 @@
         "preemption_exact",
         "determinism",
         "kv_offload_plain",
-        "kv_offload_pressure"
+        "kv_offload_pressure",
+        "multimodal"
       ]
     }
   },
@@ -50,7 +51,8 @@
       "api",
       "structured",
       "frontend_goldens",
-      "gsm8k_regression"
+      "gsm8k_regression",
+      "multimodal"
     ],
     "service": [
       "soak",
@@ -1146,6 +1148,48 @@
           "source": "docs/serving-kv-pool.md"
         }
       ]
+    },
+    "multimodal": {
+      "module": "multimodal",
+      "args": [
+        "--url",
+        "{url}",
+        "--model",
+        "{model}",
+        "--server-log",
+        "{server_log}"
+      ],
+      "timeout_seconds": 3600,
+      "receipt": "*-deepseek41-multimodal.json",
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/check-kinds.md"
+        },
+        {
+          "path": [
+            "server",
+            "checkpoint",
+            "checkpoint_identity"
+          ],
+          "op": "eq",
+          "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
+          "source": "docs/check-kinds.md"
+        },
+        {
+          "path": [
+            "reference",
+            "sha256"
+          ],
+          "op": "eq",
+          "value": "483e5b44b727dfd5d497ef6fb4a1d24bfb4632d082b706a70128000394496578",
+          "source": "docs/check-kinds.md"
+        }
+      ]
     }
   },
   "inputs": {
@@ -1176,6 +1220,15 @@
       "env": "CHOPINFER_MIMO_FIXTURES",
       "default": "fixtures/mimo26",
       "path": "gsm8k"
+    },
+    "media_capture": {
+      "env": "CHOPINFER_DATA",
+      "path": "refrun/deepseek41/workloads-20261018-probes-served/capture/probes.json"
+    },
+    "media_images": "models/deepseek41/probe_images.py",
+    "media_fixtures": {
+      "env": "CHOPINFER_DATA",
+      "path": "refrun/deepseek41/workloads-20261018-probes-served/capture"
     }
   },
   "references": {
@@ -1218,6 +1271,18 @@
         "served_model_name",
         "source_lock_sha256"
       ]
+    },
+    "image_probes": {
+      "path": {
+        "env": "CHOPINFER_DATA",
+        "path": "refrun/deepseek41/media/image-probe-references.json"
+      },
+      "sha256": "483e5b44b727dfd5d497ef6fb4a1d24bfb4632d082b706a70128000394496578",
+      "schema": "chopinfer.deepseek41.image-probe-references.v1",
+      "workload": {
+        "env": "CHOPINFER_DATA",
+        "path": "refrun/deepseek41/media/image-probe-references.workload.json"
+      }
     }
   },
   "qualification": {
@@ -1265,6 +1330,23 @@
         "anchor_past_window"
       ],
       "reference_schema": "chopinfer.deepseek41.teacher-reference.v1"
+    },
+    "media": {
+      "format": "image-probes",
+      "reference": "image_probes",
+      "receipt": "deepseek41-multimodal",
+      "stop_token": "<｜end▁of▁sentence｜>",
+      "expected": {},
+      "fixture_images": {},
+      "items": {
+        "small-100x60": "free-text",
+        "odd-333x517": "free-text",
+        "wide-1000x40": "free-text",
+        "exact-588x588": "free-text",
+        "translucent-300x200": "free-text",
+        "large-1300x1000": "free-text"
+      },
+      "thinking": false
     }
   },
   "receipts": {
@@ -1273,7 +1355,8 @@
   },
   "limitations": [
     "Unreleased, not yet a qualification: deepseek41 serves nothing released until the release preview's full suite passes. Every numerical limit declared here was pinned from the spread of the refrun references of the pinned vendor code before any candidate run and is never moved after a result (models/deepseek41/README.md#qualification).",
-    "Pending checks, each added with its references and limits pinned before any candidate run (models/deepseek41/README.md#qualification): long_context (131,072 tokens), whose rule is the teacher rule over the last 1,024 positions with BF16 the only spread variant and whose values follow its F32-TQ reference; verify_exact and spec_verify with DSpark; frontend_goldens' chat renders with their captures; multimodal, media_preprocessing and encoder_parity with the vision encoder. determinism compares the AR record with the DSpark record, so it runs once the DSpark profile is declared. paired_teacher and gsm8k_regression compare against a stored passing run and report no baseline until one exists.",
+    "Pending checks, each added with its references and limits pinned before any candidate run (models/deepseek41/README.md#qualification): long_context (131,072 tokens), whose rule is the teacher rule over the last 1,024 positions with BF16 the only spread variant and whose values follow its F32-TQ reference; verify_exact and spec_verify with DSpark; frontend_goldens' chat renders with their captures; media_preprocessing and encoder_parity with the vision encoder. determinism compares the AR record with the DSpark record, so it runs once the DSpark profile is declared. paired_teacher and gsm8k_regression compare against a stored passing run and report no baseline until one exists.",
+    "multimodal teacher-forces the six image probes of models/deepseek41/probe_images.py (one image and the probe question in a chat turn, thinking disabled) on their F32-TQ greedy answers as a served chat continues them, against the image_probes reference (F32-TQ gate, BF16 and F64-TQ spread variants, the image-probe rule: mean floor 0.15, top-1 floor 0.08, mean step 0.05, near tie 0.3 nats). Its limits, derived from the reference's own spread before any served result, are the floors for every probe (mean |dlogprob| 0.15, decisive and near-tie top-1 0.08, all top-1 flips 0.10) except wide-1000x40's all-flips limit, 7/69 (BF16). The BF16 and F64-TQ spreads over the 487 positions are mean |dlogprob| 0.074 and 0.065 with 28 and 25 top-1 flips (models/deepseek41/README.md#qualification).",
     "The needle check runs frozen token-ID prompts at total contexts of 8,192, 131,072, 262,144 and 1,048,576 tokens and needs no reference (models/deepseek41/README.md#qualification).",
     "Pending sections, deferred from the skeleton by a revision of its acceptance scope (integration owner, 2026-10-17): preview (profile tp4-ar, quick_arms [\"ar\"]) lands with the chopinfer-model-deepseek41 helper of the geometry recipe.",
     "kv-bf16 is a comparison configuration, never a served default: --kv-cache-dtype bf16 serves the BF16 KV layout, which stores the same values as the native trained formats, and its served bits must equal the native layout's bit for bit. Its pages are about 3.6 times larger (3,200 bytes against 890 per token), and capacity, offload and pressure behavior follow page size, so it is not qualified for capacity, preemption under pressure or offload. Its checks are prefix_exact and kv_layout_equality (native mixed versus BF16 served bits, bit for bit, on the determinism request set) now; teacher, teacher_arms and chat join with their references."

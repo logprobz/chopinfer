@@ -48,6 +48,14 @@ impl PackedOperand {
         {
             return None;
         }
+        // Mirror MatrixView::repack's inclusive padded-coordinate checks.
+        // A valid source extent can still overflow when padding is added.
+        (matrix.k_origin as usize)
+            .checked_add(matrix.k_kept.start as usize)?
+            .checked_add(self.plan.k as usize - 1)?;
+        (matrix.row_origin as usize)
+            .checked_add(matrix.rows_kept[0].start as usize)?
+            .checked_add(self.plan.rows as usize - 1)?;
         let local = matrix.local? as usize;
         if local == matrix.codes as usize {
             return None;
@@ -73,15 +81,14 @@ impl PackedOperand {
             return Ok(None);
         };
         let expected = self.output_bytes(record)?;
-        if bytes.len() as u64 != record.sources[source].byte_length {
-            return refuse("scale byte count disagrees with its grid");
-        }
         ScaleBytes {
             dtype: DType::Ue8M0,
             bytes,
         }
-        .validate(bytes.len(), false)
-        .map_err(|e| WeightTransformError(e.into()))?;
+        .validate(record.sources[source].byte_length as usize, false)
+        .map_err(|e| {
+            WeightTransformError(format!("packed operand packed operand local scale: {e}"))
+        })?;
         if self.decode_order.has_bf16_weight_operand() && bytes.iter().any(|b| *b > 252) {
             return Ok(None);
         }

@@ -68,6 +68,77 @@ fn record(order: DecodeOrder) -> (PackedOperand, WeightRecord, Vec<u8>, Vec<u8>)
     )
 }
 
+// Logical row-major oracle, independent of both materializers. Its seeded
+// corpus is also checked against the pre-change implementation below.
+fn reference(operand: &PackedOperand, codes: &[u8], scales: &[u8]) -> [Vec<u8>; 3] {
+    let m = &operand.matrices[0];
+    let rows = operand.plan.rows as usize;
+    let k = operand.plan.k as usize;
+    let mut output_codes = vec![0; rows * k / 2];
+    let mut output_scales = vec![127; rows * k.div_ceil(32)];
+    for (out_row, source_row) in m
+        .rows_kept
+        .iter()
+        .flat_map(|range| range.clone())
+        .enumerate()
+    {
+        for column in 0..m.k_kept.end - m.k_kept.start {
+            let source = (source_row * m.k + m.k_kept.start + column) as usize;
+            let shift = match m.nibble_order {
+                NibbleOrder::EvenLow => (source % 2) * 4,
+                NibbleOrder::EvenHigh => (1 - source % 2) * 4,
+            };
+            let code = (codes[source / 2] >> shift) & 15;
+            let target = out_row * k + column as usize;
+            output_codes[target / 2] |= code << ((target % 2) * 4);
+        }
+        for column in 0..(m.k_kept.end - m.k_kept.start).div_ceil(32) {
+            let source = (source_row * (m.k / 32) + m.k_kept.start / 32 + column) as usize;
+            output_scales[out_row * k.div_ceil(32) + column as usize] = scales[source];
+        }
+    }
+    [output_codes, output_scales, vec![]]
+}
+
+fn seeded_cases() -> Vec<(PackedOperand, WeightRecord, Vec<u8>, Vec<u8>)> {
+    let mut seed = 0x6d78_6670_345f_7470_u64;
+    let mut next = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    (0..128)
+        .map(|_| {
+            let (mut operand, record, mut codes, mut scales) =
+                record(DecodeOrder::ExactScaledOperand);
+            for byte in &mut codes {
+                *byte = next() as u8;
+            }
+            for byte in &mut scales {
+                *byte = (next() % 252) as u8;
+            }
+            let matrix = &mut operand.matrices[0];
+            let start = next() % 8;
+            let rows = 1 + next() % (16 - start);
+            matrix.rows_kept = vec![start..start + rows];
+            matrix.row_origin = next() % 17;
+            matrix.k_origin = (next() % 4) * 32;
+            let start = (next() % 5) * 32;
+            let k = 1 + next() % 96;
+            matrix.k_kept = start..start + k;
+            matrix.nibble_order = if next() % 2 == 0 {
+                NibbleOrder::EvenLow
+            } else {
+                NibbleOrder::EvenHigh
+            };
+            operand.plan.rows = (rows + next() % 5) as u32;
+            operand.plan.k = (k.div_ceil(32) * 32) as u32;
+            (operand, record, codes, scales)
+        })
+        .collect()
+}
+
 #[test]
 fn independent_scales_match_whole_packing_with_origins_slices_and_padding() {
     for order in [
@@ -79,9 +150,13 @@ fn independent_scales_match_whole_packing_with_origins_slices_and_padding() {
             operand.matrices[0].k_origin = origin;
             for start in [0, 32, 128, 192] {
                 operand.matrices[0].k_kept = start..start + 64;
-                let expected = operand
-                    .execute_sections(&record, &[&codes, &scales])
-                    .unwrap();
+                let expected = reference(&operand, &codes, &scales);
+                assert_eq!(
+                    operand
+                        .execute_sections(&record, &[&codes, &scales])
+                        .unwrap(),
+                    expected
+                );
                 let actual = operand
                     .independent_scales(&record, &scales, vec![255; 1000])
                     .unwrap()
@@ -98,6 +173,42 @@ fn independent_scales_match_whole_packing_with_origins_slices_and_padding() {
             }
         }
     }
+}
+
+#[test]
+fn seeded_sections_match_independent_bytes_and_the_pre_change_digest() {
+    let mut digest = 0xcbf2_9ce4_8422_2325_u64;
+    for (operand, record, codes, scales) in seeded_cases() {
+        let expected = reference(&operand, &codes, &scales);
+        assert_eq!(
+            operand
+                .execute_sections(&record, &[&codes, &scales])
+                .unwrap(),
+            expected
+        );
+        assert_eq!(
+            operand
+                .execute_sections_reusing(
+                    &record,
+                    &[&codes, &scales],
+                    std::array::from_fn(|_| vec![255; 8192])
+                )
+                .unwrap(),
+            expected
+        );
+        assert_eq!(
+            operand
+                .independent_scales(&record, &scales, vec![255; 8192])
+                .unwrap()
+                .unwrap(),
+            expected[1]
+        );
+        for byte in expected.iter().flatten() {
+            digest = (digest ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3);
+        }
+    }
+    // Filled from the pre-change packer at b450a4ea1, never from a candidate.
+    assert_eq!(digest, 0xa4e0_f18a_1038_ae61);
 }
 
 #[test]
@@ -149,4 +260,60 @@ fn scale_section_keeps_full_source_validation_and_code_dependent_fallback() {
         }
         assert_eq!(changed.independent_scale_source(&record), None);
     }
+}
+
+#[test]
+fn independent_scales_fall_back_for_padded_coordinate_overflow() {
+    for axis in ["row", "column"] {
+        let (mut operand, mut record, _, _) = record(DecodeOrder::ExactScaledOperand);
+        operand.plan.rows = 96;
+        operand.plan.k = 96;
+        let matrix = &mut operand.matrices[0];
+        matrix.rows = 32;
+        matrix.k = 32;
+        matrix.rows_kept = vec![0..32];
+        matrix.k_kept = 0..32;
+        matrix.row_origin = if axis == "row" { u64::MAX - 63 } else { 0 };
+        matrix.k_origin = if axis == "column" { u64::MAX - 63 } else { 0 };
+        record.sources[0].byte_length = 512;
+        record.sources[1].byte_length = 32;
+        let error = operand
+            .execute_sections(&record, &[&[0; 512], &[126; 32]])
+            .unwrap_err();
+        assert!(
+            error.0.contains(if axis == "row" {
+                "scale row overflow"
+            } else {
+                "scale grid overflow"
+            }),
+            "{error}"
+        );
+        assert_eq!(operand.independent_scale_source(&record), None);
+        assert!(
+            operand
+                .independent_scales(&record, &[126; 32], vec![])
+                .unwrap()
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn independent_scale_refusals_keep_the_whole_packers_context() {
+    let (operand, record, codes, mut scales) = record(DecodeOrder::ExactScaledOperand);
+    scales[0] = 255;
+    let expected = operand
+        .execute_sections(&record, &[&codes, &scales])
+        .unwrap_err();
+    assert_eq!(
+        expected.0,
+        "packed operand packed operand local scale: UE8M0 scale 0xff is not finite"
+    );
+    assert_eq!(
+        operand
+            .independent_scales(&record, &scales, vec![])
+            .unwrap_err()
+            .0,
+        expected.0
+    );
 }

@@ -105,10 +105,14 @@ sets `ending_only`: a format that refuses only the conversation's final
 turn (a turn it would render closed, say) still reads that turn back after
 the prefix it serves.
 
-The model adapters are `models/mimo26/reference.py` and
-`models/qwen38/reference.py`, with tiny CPU tests in
+The model adapters are `models/mimo26/reference.py`,
+`models/qwen38/reference.py`, `models/glm5next/reference.py` and
+`models/deepseek41/reference.py`, with tiny CPU tests in
 `models/<model>/test_reference.py`; model-specific encoder variants live in
-`models/<model>/encoder_reference.py` (MiMo).
+`models/<model>/encoder_reference.py` (MiMo). DeepSeek's adapter executes
+the vendor's own inference code with its tilelang kernels replaced by
+`models/deepseek41/reference_kernel.py`, whose ledger records each
+replacement.
 
 ## Tests
 

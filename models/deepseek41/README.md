@@ -49,6 +49,22 @@ safetensors headers to it before any payload is read. The official
 revision binds all 96,085 tensors, each claimed once
 (`compiler/tests/checkpoint_binding.rs`).
 
+## Reference
+
+`reference.py` is the refrun adapter (`tools/refrun`). It executes the
+checkpoint's own `inference/` code (sha256-pinned) with the tilelang kernels
+replaced by `reference_kernel.py`, whose ledger records each replacement and
+its result against the executed vendor kernel
+(`reference_vendor_control.py`). `REPLACEMENTS` lists everything else it
+changes: the row-blocked prefill of `reference_memory.py`, ties to the lower
+index in the indexer and router top-k, the RoPE tables the vendor computes
+on CUDA, Engram rows gathered on the host, and the vision tower on its own
+device. The F32 mode rounds quantizer inputs to BF16 (F32-TQ, the gate
+variant); F64 widens the vendor code except its RoPE angle lines.
+`reference_pure_f32.py` is the same adapter without that rounding.
+`test_reference.py` checks it bitwise against the vendor's
+`convert.py`, `load_model` and `Transformer.forward` on a tiny checkpoint.
+
 ## Qualification
 
 The model is not qualified. `qual.json` is a skeleton: its checks carry

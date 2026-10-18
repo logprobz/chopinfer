@@ -155,6 +155,7 @@
    "PRODUCER": "list",
    "REASONING_TOKENS": "int",
    "ROWS_API": "str",
+   "SAMPLING": "dict",
    "SEED": "int",
    "SIGNIFICANCE": "number",
    "SOURCES": "dict",

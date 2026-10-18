@@ -3,7 +3,9 @@
 Suites: the full GSM8K test split, a stratified MMLU-Pro subset and a
 synthetic RULER-style long-context set (multi-key needle, multi-value needle
 and variable tracking at 32K and 128K). Every arm gets byte-identical request
-bodies with greedy decoding and the same token limits.
+bodies with greedy decoding and the same token limits, unless a declaration
+sets `SAMPLING`: its temperature, top_p and max_tokens then replace those of
+every request body (and so its digest), for every arm alike.
 
   evals.py fetch                   download and pin the datasets
   evals.py run --arm NAME ...      run one arm (resumable)
@@ -79,6 +81,9 @@ SEED = 20260924
 MMLU_PRO_SUBSET = 1200
 GSM8K_INSTRUCTION = "Solve the math problem. Put your final numeric answer on its own line as #### NUMBER."
 REASONING_TOKENS = 8192
+# A declaration's sampling for every request body; empty keeps greedy decoding
+# and each suite's token limit.
+SAMPLING = {}
 LONG_LENGTHS = (32768, 131072)
 LONG_TASKS = ("multikey", "multivalue", "vartrack")
 LONG_ITEMS = 50
@@ -145,7 +150,9 @@ def load(name, manifest):
 
 
 def chat(messages, max_tokens, thinking):
-    return {"messages": messages, "temperature": 0, "max_tokens": max_tokens,
+    if unknown := sorted(set(SAMPLING) - {"temperature", "top_p", "max_tokens"}):
+        raise ValueError(f"evals SAMPLING sets {unknown}: only temperature, top_p and max_tokens")
+    return {"messages": messages, "temperature": 0, "max_tokens": max_tokens, **SAMPLING,
             "chat_template_kwargs": thinking_kwargs(thinking)}
 
 
@@ -757,7 +764,7 @@ def markdown(result):
     first, second = result["arms"]
     runs = sorted({str(run) for run in result["arm_runs"].values()})
     lines = [f"# Evals: {first} vs {second} (run{'s' if len(runs) > 1 else ''} {', '.join(runs)})", "",
-             "Greedy decoding, identical request bodies. McNemar p is the exact two-sided "
+             "Identical request bodies (greedy unless the declaration sets sampling). McNemar p is the exact two-sided "
              "binomial test on the discordant pairs.", "",
              f"| suite | n | {first} | {second} | only {first} | only {second} | McNemar p "
              "| same correctness | identical outputs |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]

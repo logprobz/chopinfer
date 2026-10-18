@@ -79,6 +79,28 @@ class EvalsTests(unittest.TestCase):
         self.assertIsNone(other["margins"][1])
         self.assertIsNone(divergence(full, dict(full)))
 
+    def test_declared_sampling_replaces_the_greedy_settings_of_every_body(self):
+        rows = [{"question": "What is 1 + 1?", "answer": "1 + 1 = 2\n#### 2"}]
+        with patch.object(evals, "thinking_kwargs", lambda thinking: {"enable_thinking": thinking}):
+            greedy = evals.gsm8k_items(rows)[0]
+            # Without a declaration the body is the greedy one, key for key.
+            self.assertEqual(greedy["body"], {
+                "messages": [{"role": "system", "content": evals.GSM8K_INSTRUCTION},
+                             {"role": "user", "content": "What is 1 + 1?"}],
+                "temperature": 0, "max_tokens": evals.REASONING_TOKENS,
+                "chat_template_kwargs": {"enable_thinking": True}})
+            recipe = {"temperature": 1.0, "top_p": 1.0, "max_tokens": 262144}
+            with patch.object(evals, "SAMPLING", recipe):
+                sampled = evals.gsm8k_items(rows)[0]
+                # Every suite's body takes it, the long-context suite's included.
+                self.assertEqual(evals.chat([], evals.LONG_TOKENS, False)["max_tokens"], 262144)
+            self.assertEqual(sampled["body"], {**greedy["body"], **recipe})
+            self.assertNotEqual(evals.body_digest(sampled), evals.body_digest(greedy))
+            self.assertNotEqual(evals.workload_digest([sampled]), evals.workload_digest([greedy]))
+            with patch.object(evals, "SAMPLING", {"temperature": 1.0, "seed": 7}):
+                with self.assertRaisesRegex(ValueError, r"SAMPLING sets \['seed'\]"):
+                    evals.gsm8k_items(rows)
+
 class ArmFiles:
     def arm(self, root, run, arm, correct, receipts, commit="c"):
         """An arm's results file in `run` and its receipt in `receipts`."""

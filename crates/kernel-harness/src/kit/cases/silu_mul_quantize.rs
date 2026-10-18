@@ -13,8 +13,10 @@
 //! the kernel's code must be one of the two adjacent outcomes. A group's
 //! scale is exact unless its amax enclosure crosses a scale-selection
 //! boundary, when it must be one of the two scales. [`Outcomes::check`]
-//! judges codes and scales together and counts both kinds. A product whose
-//! enclosure reaches a BF16 infinity is refused, as the contract refuses it.
+//! judges codes and scales together and counts both kinds. Failed rows
+//! have exact zero codes, fixed finite scale 1, and sticky status words.
+
+pub mod sequence;
 
 use super::super::{OpCase, Required, Spec};
 use crate::LabResult;
@@ -77,6 +79,8 @@ fn product_with(g: f32, u: f32, t: f32) -> f32 {
 pub struct Outcomes {
     pub width: usize,
     pub rows: usize,
+    /// Sticky row flags, including all caller-supplied bits.
+    pub status: Vec<u32>,
     /// Per element, the lowest and highest BF16 product (as F32) any
     /// kernel within the exponential's error can form.
     pub values: Vec<(f32, f32)>,
@@ -106,10 +110,25 @@ pub fn outcomes(
     up: &[f32],
     rows: usize,
 ) -> LabResult<Outcomes> {
+    outcomes_with_status(query, gate, up, &vec![0; rows])
+}
+
+/// Preserve the existing boundary-aware gate on passing rows; failed rows
+/// have one exact outcome, positive zero codes and UE8M0 scale 127.
+pub fn outcomes_with_status(
+    query: SiluMulQuantizeQuery,
+    gate: &[f32],
+    up: &[f32],
+    prior: &[u32],
+) -> LabResult<Outcomes> {
+    let rows = prior.len();
     let width = query.width as usize;
     if gate.len() != rows * width || up.len() != gate.len() || !width.is_multiple_of(GROUP) {
         return Err("quantized SwiGLU operand shape mismatch".into());
     }
+    let status = query
+        .row_status(gate, up, prior)
+        .map_err(|e| e.to_string())?;
     let SwigluClamp { .. } = query.clamp;
     let (gate_max, limit) = (query.clamp.gate_max(), query.clamp.up_limit());
     let floor = f32::from_bits(query.amax_floor_bits);
@@ -117,7 +136,9 @@ pub fn outcomes(
     let values = gate
         .iter()
         .zip(up)
-        .map(|(&gate, &up)| {
+        .enumerate()
+        .map(|(at, (&gate, &up))| {
+            if status[at / width] != 0 { return Ok((0.0, 0.0)); }
             if !gate.is_finite() || !up.is_finite() {
                 return Err("quantized SwiGLU inputs must be finite".to_string());
             }
@@ -134,7 +155,11 @@ pub fn outcomes(
         .collect::<Result<Vec<_>, _>>()?;
     let scales = values
         .chunks_exact(GROUP)
-        .map(|group| {
+        .enumerate()
+        .map(|(at, group)| {
+            if status[at * GROUP / width] != 0 {
+                return (127, 127);
+            }
             let low = group
                 .iter()
                 .map(|&(lo, hi)| {
@@ -155,6 +180,7 @@ pub fn outcomes(
     Ok(Outcomes {
         width,
         rows,
+        status,
         values,
         scales,
     })
@@ -294,28 +320,65 @@ pub fn case<'a>(
     capacity: u32,
     prepared: Prepared<SiluMulQuantizeBuffers<View>>,
 ) -> LabResult<OpCase<'a>> {
+    case_with_status(op, capacity, prepared, false)
+}
+
+pub fn case_with_status<'a>(
+    op: SiluMulQuantizeQuery,
+    capacity: u32,
+    prepared: Prepared<SiluMulQuantizeBuffers<View>>,
+    invalid: bool,
+) -> LabResult<OpCase<'a>> {
     let (width, rows) = (op.width as usize, capacity as usize);
+    let mut gate = spread(51, rows * width, 12.0);
+    let mut up = spread(52, rows * width, 12.0);
+    let mut prior = vec![0; rows];
+    if invalid {
+        for row in 0..rows {
+            let at = row * width + if row % 2 == 0 { 0 } else { width - 1 };
+            match row % 8 {
+                0 => gate[at] = f32::NAN,
+                1 => gate[at] = f32::INFINITY,
+                2 => gate[at] = f32::NEG_INFINITY,
+                3 => up[at] = f32::NAN,
+                4 => up[at] = f32::INFINITY,
+                5 => up[at] = f32::NEG_INFINITY,
+                6 => prior[row] = 0x8000_0002,
+                _ => {}
+            }
+        }
+    }
     let roles = SiluMulQuantizeBuffers {
-        gate: Spec::input(
-            DType::F32,
-            (Rows::Live, width),
-            f32_bytes(&spread(51, rows * width, 12.0)),
-        ),
-        up: Spec::input(
-            DType::F32,
-            (Rows::Live, width),
-            f32_bytes(&spread(52, rows * width, 12.0)),
-        ),
+        gate: Spec::input(DType::F32, (Rows::Live, width), f32_bytes(&gate)),
+        up: Spec::input(DType::F32, (Rows::Live, width), f32_bytes(&up)),
         codes: Spec::output(DType::Fp8E4M3, (Rows::Live, width)),
         scales: Spec::output(DType::Ue8M0, (Rows::Live, width / GROUP)),
         live_rows: Spec::live(),
+        status: super::block_quantize::status_role(&prior),
+        status_row_offset: 0,
     };
     let oracle = move |images: &Images, live: u32| -> LabResult<Vec<(String, Expected)>> {
         let live = live as usize;
         let gate = images.f32s("gate")?;
         let up = images.f32s("up")?;
-        let admissible = outcomes(op, &gate[..live * width], &up[..live * width], live)?;
-        Ok(judges(admissible, live))
+        let mut status = images
+            .bytes("status")?
+            .chunks_exact(4)
+            .map(|v| u32::from_le_bytes(v.try_into().unwrap()))
+            .collect::<Vec<_>>();
+        let admissible = outcomes_with_status(
+            op,
+            &gate[..live * width],
+            &up[..live * width],
+            &status[..live],
+        )?;
+        status[..live].copy_from_slice(&admissible.status);
+        let mut expected = judges(admissible, live);
+        expected.push((
+            "status".into(),
+            Expected::Bits(status.iter().flat_map(|v| v.to_le_bytes()).collect()),
+        ));
+        Ok(expected)
     };
     Ok(OpCase::new(prepared, capacity, roles)?.oracle(oracle))
 }
@@ -331,23 +394,56 @@ pub fn sm120() -> Sm120 {
 pub fn required<'a>() -> Vec<Required<'a>> {
     row::lab_entries()
         .into_iter()
-        .map(|entry| {
-            let op = entry.query;
-            let need = Need::rows(CAPACITY);
-            Required::new(
-                format!("silu mul quantize width {}", op.width),
-                need,
-                move |backend, need| backend.silu_mul_quantize(&op, need),
-                move |prepared| case(op, need.capacity, prepared),
-            )
-            .required()
+        .flat_map(|entry| {
+            [false, true].map(move |invalid| {
+                let op = entry.query;
+                let need = Need::rows(CAPACITY);
+                Required::new(
+                    format!("silu mul quantize width {} invalid {invalid}", op.width),
+                    need,
+                    move |backend, need| backend.silu_mul_quantize(&op, need),
+                    move |prepared| case_with_status(op, need.capacity, prepared, invalid),
+                )
+                .required()
+            })
         })
+        .chain([sequence::required()])
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nonfinite_and_prior_status_rows_have_only_positive_zero_outcomes() {
+        let q = query(64);
+        let mut gate = vec![2.0; 8 * 64];
+        let mut up = vec![3.0; 8 * 64];
+        for (row, bad) in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY]
+            .into_iter()
+            .enumerate()
+        {
+            gate[row * 64 + 63] = bad;
+            up[(row + 3) * 64] = bad;
+        }
+        let expected = outcomes_with_status(q, &gate, &up, &[0, 2, 0, 0, 0, 0, 0x80, 0]).unwrap();
+        assert_eq!(expected.status, [1, 3, 1, 1, 1, 1, 0x80, 0]);
+        let (packed, flags) = q
+            .apply_with_status(&gate, &up, &[0, 2, 0, 0, 0, 0, 0x80, 0])
+            .unwrap();
+        assert_eq!(flags, expected.status);
+        let kernel_core::quantize::Scales::Ue8M0(scales) = packed.scales else {
+            panic!("UE8M0 scales")
+        };
+        expected.check(&packed.codes, &scales).unwrap();
+        let mut partial = packed.codes.clone();
+        partial[32] = 1;
+        assert!(expected.check(&partial, &scales).is_err());
+        let mut negative_zero = packed.codes;
+        negative_zero[0] = 0x80;
+        assert!(expected.check(&negative_zero, &scales).is_err());
+    }
 
     fn query(width: u32) -> SiluMulQuantizeQuery {
         SiluMulQuantizeQuery {
@@ -460,18 +556,21 @@ mod tests {
     }
 
     #[test]
-    fn a_product_that_rounds_to_a_bf16_infinity_is_refused() {
+    fn a_product_that_rounds_to_a_bf16_infinity_sets_status() {
         // The F32 product of 2e19 and 1.7e19 is finite; its BF16 rounding
-        // is not, which the contract refuses.
+        // is not, which the oracle reports as an unrepresentable output.
         let q = SiluMulQuantizeQuery {
             clamp: SwigluClamp::symmetric(2e19),
             ..query(32)
         };
         let (gate, up) = ([2e19_f32; 32], [1.7e19_f32; 32]);
         assert!((gate[0] * up[0]).is_finite());
-        assert!(q.apply(&gate, &up, 1).is_err());
-        let refusal = outcomes(q, &gate, &up, 1).unwrap_err();
-        assert!(refusal.contains("BF16 infinity"), "{refusal}");
+        let (output, status) = q.apply_with_status(&gate, &up, &[0]).unwrap();
+        assert_eq!(status, [4]);
+        assert_eq!(output.codes, vec![0; 32]);
+        let admissible = outcomes(q, &gate, &up, 1).unwrap();
+        assert_eq!(admissible.status, [4]);
+        admissible.check(&[0; 32], &[127]).unwrap();
         outcomes(q, &[2e19; 32], &[1e19; 32], 1).unwrap();
     }
 
@@ -514,6 +613,9 @@ mod tests {
                 .iter()
                 .all(|&(lo, hi)| lo == 0.0 && hi == 0.0)
         );
-        assert!(outcomes(q, &[f32::NAN; 32], &[1.0; 32], 1).is_err());
+        assert_eq!(
+            outcomes(q, &[f32::NAN; 32], &[1.0; 32], 1).unwrap().status,
+            [1]
+        );
     }
 }

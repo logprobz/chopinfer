@@ -50,6 +50,7 @@ const UP: u64 = 1;
 const CODES: u64 = 2;
 const SCALES: u64 = 3;
 const LIVE: u64 = 4;
+const STATUS: u64 = 7;
 // The PDL producer's outputs.
 const P_CODES: u64 = 5;
 const P_SCALES: u64 = 6;
@@ -167,6 +168,8 @@ impl<'a> Fixture<'a> {
             buffers.insert(handle, session.allocate(ROWS * width / GROUP)?);
         }
         buffers.insert(LIVE, session.allocate(4)?);
+        buffers.insert(STATUS, session.allocate(ROWS * 4)?);
+        poison::write(session, &buffers[&STATUS], 0, &vec![0; ROWS * 4])?;
         let fixture = Self {
             entry,
             function,
@@ -190,7 +193,7 @@ impl<'a> Fixture<'a> {
         plan.pdl = pdl;
         let args = self
             .entry
-            .arguments(GATE, UP, outputs[0], outputs[1], LIVE)
+            .arguments(GATE, UP, outputs[0], outputs[1], LIVE, STATUS, 0)
             .map_err(err)?;
         let bindings = Bindings {
             buffers: self.buffers.iter().map(|(&k, v)| (k, v)).collect(),
@@ -301,7 +304,7 @@ fn misaligned_entry(session: &Session, module: &Module, entry: &Entry) -> LabRes
     let bytes = ROWS * width * 4;
     let address = |buffer: &DeviceBuffer| buffer.device_address_at(4, bytes).map_err(err);
     let mut args = entry
-        .arguments(GATE, UP, P_CODES, P_SCALES, LIVE)
+        .arguments(GATE, UP, P_CODES, P_SCALES, LIVE, STATUS, 0)
         .map_err(err)?;
     args.0[0] = Argument::U64(address(&gate)?);
     args.0[1] = Argument::U64(address(&up)?);
@@ -434,6 +437,66 @@ fn silu_mul_quantize_replays_on_poisoned_buffers() {
         Ok(())
     })
     .expect("quantized SwiGLU poisoned replays");
+}
+
+#[test]
+fn silu_mul_quantize_passing_rows_match_the_previous_cubin_bitwise() {
+    kernel_lab::gpu_test(1 << 30, |session| {
+        let path = std::env::var("CHOPINFER_SILU_BASE_CUBIN")
+            .map_err(|_| "the passing-row comparison requires CHOPINFER_SILU_BASE_CUBIN")?;
+        let baseline = session.load_cubin(&std::fs::read(path).map_err(err)?)?;
+        let module = session.module(LAB_CUBIN)?;
+        for entry in lab_entries() {
+            for inputs in input_sets(entry.query.width as usize) {
+                let fixture = Fixture::new(session, &module, &entry, &inputs)?;
+                fixture.launch(session, [CODES, SCALES], false)?;
+                let symbol = entry.symbol.replace("_v2", "_v1");
+                let function = baseline.function(&symbol).map_err(err)?;
+                let mut plan = entry.plan(ROWS as u32).map_err(err)?;
+                plan.grid[1] = entry.query.width / 32;
+                let mut args = entry
+                    .arguments(GATE, UP, P_CODES, P_SCALES, LIVE, STATUS, 0)
+                    .map_err(err)?;
+                args.0.truncate(5);
+                let bindings = Bindings {
+                    buffers: fixture.buffers.iter().map(|(&k, v)| (k, v)).collect(),
+                };
+                launch::launch(
+                    &session.context,
+                    &function,
+                    &session.stream,
+                    plan,
+                    &args,
+                    &bindings,
+                )?;
+                session.stream.synchronize().map_err(err)?;
+                for (new, old, len) in [
+                    (CODES, P_CODES, entry.code_bytes(ROWS as u32)),
+                    (SCALES, P_SCALES, entry.scale_bytes(ROWS as u32)),
+                ] {
+                    assert_eq!(
+                        fixture.bytes(session, new, len as usize)?,
+                        fixture.bytes(session, old, len as usize)?,
+                        "{} {}",
+                        entry.symbol,
+                        inputs.name
+                    );
+                }
+                assert_eq!(fixture.bytes(session, STATUS, ROWS * 4)?, vec![0; ROWS * 4]);
+            }
+        }
+        session.receipt(
+            "silu-mul-quantize-passing-bits",
+            BTreeMap::from([
+                ("entries".into(), json!(3)),
+                ("input_sets".into(), json!(5)),
+                ("rows".into(), json!(ROWS)),
+                ("bits_equal".into(), json!(true)),
+            ]),
+        )?;
+        Ok(())
+    })
+    .expect("passing SwiGLU rows preserve the previous cubin's bits");
 }
 
 /// Words per class of the expf probe's results: the distance histogram,

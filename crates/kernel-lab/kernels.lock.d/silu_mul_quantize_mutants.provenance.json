@@ -1,0 +1,6 @@
+[
+  {
+    "name": "silu_mul_quantize_mutants_sm120",
+    "source_closure_sha256": "140306bbaa72d5273ba1201e072a00ebbd32b4273c88ffdb5033e0b3e2ffaaf0"
+  }
+]

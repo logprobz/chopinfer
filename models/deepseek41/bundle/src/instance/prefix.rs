@@ -5,8 +5,8 @@
 //! copy, and the shared header (`HeaderLayout::V1`) on rank 0. The KV
 //! sources' compressed latents and index keys live in the shared pages
 //! already. A ring holds its last window of positions; a tail the open
-//! group's row. The Engram history needs nothing: a restore names every
-//! prefix token.
+//! group's row. The Engram history needs no pages: a restore names every
+//! prefix token, and the history takes the last of them.
 
 use bundle_runtime::prefix::{
     Header, HeaderLayout, PrefixInstance, Stamp, layout_digest, may_restore,
@@ -61,7 +61,12 @@ impl Instance {
             .enumerate()
             .map(|(rank, buffers)| {
                 let held = HeldBuffers {
-                    buffers: buffers.state.buffers.iter().copied().map(Some).collect(),
+                    buffers: buffers
+                        .state
+                        .buffers
+                        .iter()
+                        .map(|&(_, span)| Some(span))
+                        .collect(),
                     spares: vec![None; buffers.state.buffers.len()],
                 };
                 let paged = Pages {
@@ -151,9 +156,25 @@ impl PrefixInstance for Instance {
         if !may_restore(&self.state, &header, request.request_id) {
             return Err(BundleStatusV1::InvalidArgument);
         }
-        self.ledger
+        // The Engram history: the prefix's last tokens.
+        if let Some(engram) = &mut self.engram {
+            engram
+                .restore(request.request_id, &request.token_ids)
+                .map_err(|error| {
+                    self.log(&format!("Engram restore: {error}"));
+                    BundleStatusV1::InvalidArgument
+                })?;
+        }
+        let restored = self
+            .ledger
             .restore(request.request_id, request.tokens, Some(slot))
             .map(|_| ())
-            .map_err(|_| BundleStatusV1::InternalError)
+            .map_err(|_| BundleStatusV1::InternalError);
+        if restored.is_err()
+            && let Some(engram) = &mut self.engram
+        {
+            engram.forget(request.request_id);
+        }
+        restored
     }
 }

@@ -12,9 +12,13 @@
 //! then its decode or verify phase as captured graphs per bucket. Every
 //! state buffer rolls back by position (`model_deepseek41_contract::state`),
 //! so commit only moves the ledger, and cancel leaves the slots the step
-//! touched invalid, which the ledger retires.
+//! touched invalid, which the ledger retires. The Engram history of each
+//! request is the host's (`engram`): a commit adds the kept tokens, and a
+//! freed slot or a retire forgets it.
 
+mod engram;
 mod execute;
+mod media;
 mod prefix;
 
 use std::cell::RefCell;
@@ -22,6 +26,7 @@ use std::collections::BTreeMap;
 use std::thread::LocalKey;
 
 use bundle_runtime::acquire::{self, Log, RankHandles};
+use bundle_runtime::dispatch::DispatchError;
 use bundle_runtime::entry::{Bundle, Failed};
 use bundle_runtime::geometry::{Items, ModelLimits};
 use bundle_runtime::graphs::GraphCache;
@@ -31,18 +36,18 @@ use bundle_runtime::pipeline::Collectives;
 use bundle_runtime::resources::{Held, allocate_span, status};
 use bundle_runtime::state::{Extent, RequestState};
 use bundle_runtime::table::{InstanceTable, Live};
-use bundle_runtime::transaction::{self, Failure, Retire, Stage, Steps};
+use bundle_runtime::transaction::{self, Ended, Failure, Retire, Stage, Steps};
 use bundle_runtime::upload::{BlockTableMirror, InputLayout, PhaseArena};
 use model_deepseek41_contract::serving::{
     DeepSeek, INDEX_SCHEMA, MAX_VERIFY_ROWS, PAGE_TOKENS, RANK_IMAGE_ROLE, REQUEST_STATE_ID,
     index_role,
 };
 use runtime_bundle_abi::{
-    BundleAbiError, BundleCudaSymbolHandleV1, BundleKeptRowsV1, BundleStatusV1,
-    ExecuteResultSinkV1, HostServicesV1,
+    BundleAbiError, BundleCompiledImageHandleV1, BundleCudaSymbolHandleV1, BundleKeptRowsV1,
+    BundleStatusV1, ExecuteResultSinkV1, HostServicesV1,
 };
 
-use crate::buffers::{RankBuffers, Scratch, StateSpans};
+use crate::buffers::{LogitsComm, RankBuffers, Scratch, StateSpans};
 use crate::config::{Configuration, decode};
 use crate::ops::Ops;
 
@@ -90,10 +95,24 @@ pub struct Instance {
     state: RequestState,
     /// What the state buffers are sized for.
     extent: Extent,
+    /// Steps planned so far: each row's index tag holds its step's.
+    steps: std::cell::Cell<u64>,
     /// Run the lowered stages alone (`PARTIAL`).
     partial: bool,
     /// Each rank's decode and verify graphs by bucket.
     graphs: GraphCache<DeepSeek>,
+    /// Per-layer taps of prefills (`crate::taps`), when the environment
+    /// asks for them.
+    taps: crate::taps::StepTaps,
+    /// The Engram rows of a geometry with Engram layers.
+    engram: Option<engram::Engram>,
+    /// The compiled image, whose mapped views the host gathers rows of.
+    image: Option<BundleCompiledImageHandleV1>,
+    /// The kernels the encoder is created on, held from create to acquire
+    /// by an instance serving images.
+    encoder_kernels: Option<crate::Kernels>,
+    /// The vision encoder of an instance serving images.
+    pub(super) media: Option<crate::encoders::Media>,
 }
 
 impl Live for Instance {
@@ -158,11 +177,21 @@ impl Instance {
         // Every rank's index, parsed under the model's schema and bound to
         // the image the host serves for that rank, before any rank context
         // opens or the image is opened or uploaded.
+        // Each weight view an exact F32 projection or the head reads is
+        // stored in the layout its op reads.
+        let ops = &self.ops;
         let admit = |rank: u32, bytes: &[u8]| {
-            bundle_runtime::index::parse(bytes, rank, INDEX_SCHEMA).map_err(|error| {
-                let _ = services.log(format!("{NAME} rank index: {error}").as_bytes());
-                BundleAbiError::InvalidRange("deepseek41 rank index")
-            })
+            let index =
+                bundle_runtime::index::parse(bytes, rank, INDEX_SCHEMA).map_err(|error| {
+                    let _ = services.log(format!("{NAME} rank index: {error}").as_bytes());
+                    BundleAbiError::InvalidRange("deepseek41 rank index")
+                })?;
+            ops.check_weight_layouts(shape.geometry, &index)
+                .map_err(|error| {
+                    let _ = services.log(format!("{NAME} rank {rank} index: {error}").as_bytes());
+                    BundleAbiError::InvalidRange("deepseek41 weight view layout")
+                })?;
+            Ok(index)
         };
         let images = acquire::RankImages {
             role: RANK_IMAGE_ROLE.as_bytes(),
@@ -173,18 +202,27 @@ impl Instance {
             acquire::rank_images(log, images, shape.ranks(), admit, acquire::identity, held)?;
         let ranks = acquire::open_ranks(log, &create.ordinals, held)?;
         let rank_arenas = acquire::upload_arenas(log, image, &ranks, held)?;
+        self.image = Some(image);
         let mut views = Vec::new();
         for (arena, index) in rank_arenas.into_iter().zip(&indexes) {
-            let placed =
-                acquire::place_views(services, image, arena, index, &[]).map_err(|error| {
-                    match error {
-                        acquire::PlaceError::Host(error) => error,
-                        acquire::PlaceError::Layout(message) => {
-                            let _ = services.log(message.as_bytes());
-                            BundleAbiError::InvalidRange("deepseek41 rank arena length")
-                        }
-                    }
-                })?;
+            // The Engram tables the plan maps, which the host gathers rows
+            // of and which are not placed.
+            let mapped = match &mut self.engram {
+                Some(engram) => engram.mapped(shape.geometry, index).map_err(|error| {
+                    let _ = services.log(format!("{NAME}: {error}").as_bytes());
+                    BundleAbiError::InvalidRange("deepseek41 Engram tables")
+                })?,
+                None => Vec::new(),
+            };
+            let mapped: Vec<&str> = mapped.iter().map(String::as_str).collect();
+            let placed = acquire::place_views_mapped(services, image, arena, index, &[], &mapped)
+                .map_err(|error| match error {
+                acquire::PlaceError::Host(error) => error,
+                acquire::PlaceError::Layout(message) => {
+                    let _ = services.log(message.as_bytes());
+                    BundleAbiError::InvalidRange("deepseek41 rank arena length")
+                }
+            })?;
             views.push(acquire::spans(placed));
         }
         acquire::grant_peers(services, &ranks, held)?;
@@ -196,6 +234,18 @@ impl Instance {
         ];
         let tables = BlockTableMirror::<DeepSeek>::device_bytes(limits, items);
         let mut scratch = Vec::new();
+        let mut comm = Vec::new();
+        let mut logits_comm = Vec::new();
+        let mut mix_scratch = Vec::new();
+        let mut op_spans = Vec::new();
+        // The one-hot `pre` the first sublayer collapses with, on every
+        // row; held until the uploads complete.
+        let first_pre: Vec<u8> = model_deepseek41_contract::hc::first_pre(shape.geometry)
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .cycle()
+            .take(crate::buffers::scratch_rows() as usize * shape.dims().hc.streams as usize * 4)
+            .collect();
         for &(_, pool, stream) in &ranks {
             for (phase, bytes) in layouts.into_iter().enumerate() {
                 let arena = allocate_span(services, pool, stream, bytes, held)?;
@@ -205,10 +255,87 @@ impl Instance {
                     block_tables,
                 });
             }
-            scratch.push(bundle_runtime::scratch::bind(
-                Scratch::of(&shape),
-                |bytes| allocate_span(services, pool, stream, bytes, held),
-            )?);
+            let bound = bundle_runtime::scratch::bind(Scratch::of(&shape), |bytes| {
+                allocate_span(services, pool, stream, bytes, held)
+            })?;
+            services.copy_host_to_device(stream, bound.first_pre, &first_pre)?;
+            scratch.push(bound);
+            // The mixer scratch the mix-collapse lists; its tickets start
+            // zeroed.
+            let bytes = self
+                .ops
+                .hc
+                .as_ref()
+                .map(|ops| ops.scratch())
+                .unwrap_or_default();
+            let partials = bytes
+                .partials
+                .map(|bytes| allocate_span(services, pool, stream, bytes, held))
+                .transpose()?;
+            let tickets = match bytes.tickets {
+                Some(bytes) => {
+                    let span = allocate_span(services, pool, stream, bytes, held)?;
+                    services.zero_device_buffer(stream, span)?;
+                    Some(span)
+                }
+                None => None,
+            };
+            mix_scratch.push((partials, tickets));
+            // The spans the ops size: the sorted routed rows and the
+            // backend workspace (at least one byte, so every rank binds a
+            // span), and the routes' bias choice, zeroed: text rows.
+            let sorted = self
+                .ops
+                .moe
+                .as_ref()
+                .map_or(0, |ops| ops.sorted_rows_bytes());
+            let sorted = allocate_span(services, pool, stream, sorted.max(4), held)?;
+            let workspace = self.ops.workspace().max(1).next_multiple_of(256);
+            let workspace = allocate_span(services, pool, stream, workspace, held)?;
+            if let Some(bound) = scratch.last() {
+                services.zero_device_buffer(stream, bound.bias_select)?;
+                services.zero_device_buffer(stream, bound.index_status)?;
+            }
+            // The compressed RoPE table, which the modules fill below.
+            let table = self
+                .ops
+                .compressor
+                .as_ref()
+                .map_or(4, |ops| ops.table_bytes());
+            let table = allocate_span(services, pool, stream, table, held)?;
+            op_spans.push((sorted, workspace, table));
+            // The all-reduce's comm state, which the peers write: zeroed
+            // before any step, after peer access.
+            let regions = self.ops.reduce.as_ref().map_or(&[][..], |ops| ops.state());
+            let mut spans = Vec::with_capacity(regions.len());
+            for &bytes in regions {
+                let span = allocate_span(services, pool, stream, bytes, held)?;
+                services.zero_device_buffer(stream, span)?;
+                spans.push(span);
+            }
+            comm.push(spans);
+            // The logits moves' comm state, likewise.
+            let logits = match self.ops.logits.as_ref().map(|ops| ops.state()) {
+                Some([exchange_flags, exchange_epoch, gather_flags, gather_epoch]) => {
+                    let mut zeroed = |bytes| -> Result<_, BundleAbiError> {
+                        let span = allocate_span(services, pool, stream, bytes, held)?;
+                        services.zero_device_buffer(stream, span)?;
+                        Ok(span)
+                    };
+                    let exchange_flags = zeroed(exchange_flags)?;
+                    let exchange_epoch = zeroed(exchange_epoch)?;
+                    let gather_flags = zeroed(gather_flags)?;
+                    let gather_epoch = zeroed(gather_epoch)?;
+                    Some(LogitsComm {
+                        exchange_flags,
+                        exchange_epoch,
+                        gather_flags,
+                        gather_epoch,
+                    })
+                }
+                None => None,
+            };
+            logits_comm.push(logits);
         }
         // The window rings and compressor tails of every bucket item, which
         // the host allocates per state slot; zeroed, as a new request's
@@ -221,20 +348,67 @@ impl Instance {
             held,
         )?;
         let extent = self.extent;
-        for &(context, _, _) in &ranks {
+        let shared = self.ops.shared_bytes();
+        for (rank, &(context, _, stream)) in ranks.iter().enumerate() {
             let mut resolved = BTreeMap::new();
-            for cubin in crate::CUBINS {
+            // The cubins of this geometry and the shared ones.
+            let geometry = shape.geometry.id;
+            for cubin in crate::CUBINS
+                .iter()
+                .filter(|cubin| crate::serves(cubin.name, geometry))
+            {
                 acquire::load_module(
                     log,
                     context,
                     (cubin.name, cubin.bytes),
                     cubin.symbols.iter().copied(),
-                    |_| Ok(acquire::DEFAULT_SHARED_BYTES),
+                    |symbol| Ok(shared.get(symbol).copied().unwrap_or(0)),
                     &mut resolved,
                     held,
                 )?;
             }
+            // Every served position's compressed RoPE rows, computed once.
+            if let Some(ops) = &self.ops.compressor {
+                let fill = ops.fill_table(op_spans[rank].2).map_err(|refusal| {
+                    let _ = services
+                        .log(format!("{NAME}: compressed RoPE table: {refusal}").as_bytes());
+                    BundleAbiError::InvalidRange("deepseek41 compressed RoPE table")
+                })?;
+                for lowered in fill {
+                    let launch = lowered.launch;
+                    bundle_runtime::dispatch::launch(
+                        services,
+                        stream,
+                        &resolved,
+                        &launch.symbol,
+                        launch.plan,
+                        &launch.arguments,
+                        &launch.bindings,
+                    )
+                    .map_err(|error| match error {
+                        DispatchError::Host(error) => error,
+                        error => {
+                            let _ = services.log(
+                                format!("{NAME}: compressed RoPE table: {error:?}").as_bytes(),
+                            );
+                            BundleAbiError::InvalidRange("deepseek41 compressed RoPE table")
+                        }
+                    })?;
+                }
+            }
             self.symbols.push(resolved);
+        }
+        // The vision encoder's cubins, image and working memory, before the
+        // KV pool takes what is left.
+        if let Some(kernels) = self.encoder_kernels.take() {
+            self.media = Some(crate::encoders::acquire_media(
+                services,
+                &kernels,
+                &ranks,
+                &mut self.symbols,
+                u64::from(crate::buffers::scratch_rows()),
+                held,
+            )?);
         }
         let (pages, pools) = acquire::serving_kv(
             log,
@@ -243,16 +417,29 @@ impl Instance {
             shape.ranks(),
         )?;
         self.kv_pages = pages;
-        for ((scratch, views), (kv_pool, state)) in scratch
+        for (
+            ((((scratch, views), (kv_pool, state)), (comm, logits)), (mix_partials, mix_tickets)),
+            (sorted_rows, workspace, rope_compressed),
+        ) in scratch
             .into_iter()
             .zip(views)
             .zip(pools.into_iter().zip(state_views))
+            .zip(comm.into_iter().zip(logits_comm))
+            .zip(mix_scratch)
+            .zip(op_spans)
         {
             self.buffers.push(RankBuffers {
                 scratch,
                 state: StateSpans::new(&self.state, extent, state)?,
                 views,
                 kv_pool,
+                comm,
+                logits,
+                sorted_rows,
+                workspace,
+                mix_partials,
+                mix_tickets,
+                rope_compressed,
             });
         }
         acquire::synchronize(log, &ranks)?;
@@ -266,6 +453,10 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         let _ = services.log(format!("{NAME} create failed: {reason}").as_bytes());
     };
     let config = decode(bytes, log)?;
+    let taps = crate::taps::StepTaps::from_env(&config).map_err(|error| {
+        log(&error);
+        BundleStatusV1::InvalidArgument
+    })?;
     let items = config.create.items;
     let (verify_rows, verify) = verify_rows(&services, items)?;
     // The head scores at most this many rows per phase.
@@ -287,12 +478,23 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         );
         return Err(BundleStatusV1::Unsupported.into());
     }
+    // The window write reads each slot's last position from one scratch
+    // row a slot.
+    if items.capacity() > crate::buffers::scratch_rows() {
+        log("the instance holds more state slots than the window write addresses");
+        return Err(BundleStatusV1::Unsupported.into());
+    }
     // Every op, prepared once on the target's kernels.
     let kernels = crate::Kernels::new(&shape).map_err(|error| {
         log(&error);
         BundleStatusV1::Unsupported
     })?;
-    let ops = Ops::prepare(&kernels, &shape);
+    let ops = Ops::prepare(&kernels, &shape, config.kv.storage);
+    let media = config.media;
+    let engram = engram::Engram::new(shape.geometry, media).map_err(|error| {
+        log(&error);
+        BundleStatusV1::InternalError
+    })?;
     let partial = partial();
     if !partial && let Some(missing) = ops.missing.first() {
         log(missing);
@@ -333,7 +535,13 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
             bucket: items.capacity(),
             verify_rows,
         },
+        steps: std::cell::Cell::new(0),
         partial,
+        taps,
+        engram,
+        image: None,
+        encoder_kernels: media.then_some(kernels),
+        media: None,
     };
     if let Err(error) = instance.acquire() {
         instance.log(&format!("create failed: {error}"));
@@ -397,8 +605,45 @@ impl Bundle for Instance {
 impl Steps for Instance {
     const RETIRE: Retire = Retire::UnlessHeld;
 
+    /// Publishes or removes the step's taps (`crate::taps`).
+    fn finish_taps(&mut self, commit: bool) -> BundleStatusV1 {
+        match self.taps.finish(commit) {
+            Ok(()) => BundleStatusV1::Success,
+            Err(error) => {
+                self.log(&format!("taps: {error}"));
+                BundleStatusV1::InternalError
+            }
+        }
+    }
+
     fn ledger(&mut self) -> &mut Ledger {
         &mut self.ledger
+    }
+
+    /// The Engram history takes the rows a commit kept, and forgets a
+    /// request whose slot a cancel freed.
+    fn ended(&mut self, ended: Ended<'_>) -> Result<(), BundleStatusV1> {
+        let Some(engram) = &mut self.engram else {
+            return Ok(());
+        };
+        match ended {
+            Ended::Committed(committed) => engram.commit(committed).map_err(|error| {
+                let _ = self
+                    .services
+                    .log(format!("{NAME}: Engram commit: {error}").as_bytes());
+                BundleStatusV1::InternalError
+            }),
+            Ended::Cancelled(_) => {
+                engram.cancelled(&self.ledger);
+                Ok(())
+            }
+        }
+    }
+
+    fn retired(&mut self, request: u64) {
+        if let Some(engram) = &mut self.engram {
+            engram.forget(request);
+        }
     }
 
     fn status(&self, failure: Failure) -> BundleStatusV1 {
@@ -412,4 +657,22 @@ impl Steps for Instance {
             }
         }
     }
+}
+
+/// The (request, tokens) slot `slot` holds, and whether a step is open.
+#[cfg(test)]
+pub(crate) fn ledger_state(
+    handle: runtime_bundle_abi::BundleHandleV1,
+    slot: u32,
+) -> (Option<(u64, u64)>, bool) {
+    INSTANCES
+        .with(|table| {
+            table.borrow_mut().get_mut(handle).map(|instance| {
+                (
+                    instance.ledger.holder(slot),
+                    instance.ledger.step().is_some(),
+                )
+            })
+        })
+        .expect("a live instance")
 }

@@ -11,8 +11,13 @@ build = "src/sm120/build.rs"
 [lib]
 crate-type = ["rlib", "cdylib"]
 
+[features]
+# Per-layer taps of prefills (`src/taps.rs`); never in a serving build.
+diagnostic-taps = []
+
 [dependencies]
 bundle-runtime.workspace = true
+frontend-format.workspace = true
 kernel-build.workspace = true
 kernel-core.workspace = true
 kernels-sm120.workspace = true

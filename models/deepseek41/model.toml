@@ -25,12 +25,14 @@ package = "model-deepseek41-contract"
 [release]
 enabled = false
 
-# tests/model-geometry-recipe.sh: one `--contract` leg per fixture under
-# fixtures/deepseek41/geometries/, until the bundle serves an added geometry.
+# tests/model-geometry-recipe.sh: one `--ci` leg per fixture under
+# fixtures/deepseek41/geometries/. The bundle builds and serves the added
+# geometry, and the contract's kernel suites prepare its entries.
 [geometry_recipe]
-stage = "contract"
+stage = "bundle"
 fixtures = ["synthetic-small"]
 architecture = "DeepseekV41GeometryRecipeForCausalLM"
+contract_tests = ["kernel_compressor", "kernel_latent", "kernel_moe", "kernel_mxfp8_fold"]
 
 [checks]
 reference_tests = ["test_reference.py", "test_reference_kernel.py", "test_reference_workloads.py"]

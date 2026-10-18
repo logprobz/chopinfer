@@ -1,8 +1,9 @@
-//! The row ops: the RMSNorms of the sublayer inputs, the query-down output,
-//! the window key and the final row (F32 arithmetic, the weight applied
-//! before the one BF16 rounding, eps 1e-20, `model.py:281-293`), each
-//! rank's embedding gather from its vocabulary shard, and the embedding
-//! copied into every residual stream.
+//! The row ops: the RMSNorms of the sublayer inputs and the ratio-1
+//! compressed latent (F32 arithmetic, the weight applied before the one
+//! BF16 rounding, eps 1e-20, `model.py:281-293`), the final norm over the
+//! F32 collapse into F32 rows (no rounding), each rank's embedding gather
+//! from its vocabulary shard, and the embedding copied into every residual
+//! stream.
 
 use kernel_core::backend::{Backend, Counts, Prepared, Refused, View};
 use kernel_core::contract::Refusal;
@@ -29,6 +30,8 @@ pub(crate) fn verify_rows() -> u32 {
 pub(crate) struct RowOps {
     /// The RMSNorm of each width the program normalizes.
     norms: Vec<(u32, Prepared<RmsNormBuffers<View>>)>,
+    /// The final norm, F32 in and out (`rows::final_norm`).
+    final_norm: Prepared<RmsNormBuffers<View>>,
     /// Each rank's gather from its vocabulary shard, in rank order.
     embeddings: Vec<Prepared<EmbeddingBuffers<View>>>,
     /// The vocabulary rows of one rank's shard.
@@ -43,6 +46,9 @@ pub(crate) struct NormViews {
     pub weight: DeviceBufferSpanV1,
     pub y: DeviceBufferSpanV1,
     pub live_rows: DeviceBufferSpanV1,
+    /// The phase's row status, which an F32-output norm flags; a BF16 norm
+    /// binds none.
+    pub status: Option<DeviceBufferSpanV1>,
 }
 
 /// The views of an embedding gather: `output` row `r` is row
@@ -85,6 +91,9 @@ impl RowOps {
             })?;
             norms.push((width, op));
         }
+        let final_norm = asks.ask("rows.final_norm", need, |need| {
+            backend.rmsnorm(&rows::final_norm(g), need)
+        })?;
         let shard = shape.vocab_rows();
         let query = rows::embedding(g, shape.ranks());
         let embeddings = (0..shape.ranks())
@@ -96,6 +105,7 @@ impl RowOps {
             .collect::<Result<_, _>>()?;
         Ok(RowOps {
             norms,
+            final_norm,
             embeddings,
             shard,
             expand_streams: asks.ask("rows.expand_streams", need, |need| {
@@ -113,26 +123,18 @@ impl RowOps {
         bucket: u32,
         views: &NormViews,
     ) -> Result<Vec<Lowered>, Refusal> {
-        let (_, op) = self
-            .norms
-            .iter()
-            .find(|&&(w, _)| w == width)
-            .ok_or(Refusal("DeepSeek V4.1 normalizes no rows of this width"))?;
-        let mut bind = Bind::default();
-        let buffers = RmsNormBuffers {
-            status: None,
-            status_row_offset: 0,
-            x: bind.view(views.x),
-            weight: bind.view(views.weight),
-            residual: None,
-            y: bind.view(views.y),
-            live_rows: bind.view(views.live_rows),
-        };
-        let counts = Counts {
-            padded_rows: bucket,
-            ..Counts::rows(rows)
-        };
-        bind.launch(op, &buffers, counts)
+        launch_norm(&self.norms, width, rows, bucket, views)
+    }
+
+    /// The final norm of `rows` rows, gridded over the row bucket `bucket`
+    /// that holds them. Its F32 output flags the phase's row status.
+    pub(crate) fn final_norm(
+        &self,
+        rows: u32,
+        bucket: u32,
+        views: &NormViews,
+    ) -> Result<Vec<Lowered>, Refusal> {
+        bind_norm(&self.final_norm, rows, bucket, views)
     }
 
     /// Rank `rank`'s embedding of `rows` token ids from its vocabulary
@@ -173,4 +175,44 @@ impl RowOps {
         };
         bind.launch(&self.expand_streams, &buffers, Counts::rows(bucket))
     }
+}
+
+/// The norm of `width` among `norms` over `rows` rows of `views`, gridded
+/// over the row bucket `bucket`.
+pub(super) fn launch_norm(
+    norms: &[(u32, Prepared<RmsNormBuffers<View>>)],
+    width: u32,
+    rows: u32,
+    bucket: u32,
+    views: &NormViews,
+) -> Result<Vec<Lowered>, Refusal> {
+    let (_, op) = norms
+        .iter()
+        .find(|&&(w, _)| w == width)
+        .ok_or(Refusal("DeepSeek V4.1 normalizes no rows of this width"))?;
+    bind_norm(op, rows, bucket, views)
+}
+
+/// `op` over `rows` rows of `views`, gridded over the row bucket `bucket`.
+fn bind_norm(
+    op: &Prepared<RmsNormBuffers<View>>,
+    rows: u32,
+    bucket: u32,
+    views: &NormViews,
+) -> Result<Vec<Lowered>, Refusal> {
+    let mut bind = Bind::default();
+    let buffers = RmsNormBuffers {
+        status: views.status.map(|status| bind.view(status)),
+        status_row_offset: 0,
+        x: bind.view(views.x),
+        weight: bind.view(views.weight),
+        residual: None,
+        y: bind.view(views.y),
+        live_rows: bind.view(views.live_rows),
+    };
+    let counts = Counts {
+        padded_rows: bucket,
+        ..Counts::rows(rows)
+    };
+    bind.launch(op, &buffers, counts)
 }

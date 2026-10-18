@@ -98,6 +98,57 @@ pub fn spans(index: &EncoderIndex, image: Span) -> Result<BTreeMap<String, Span>
         .collect()
 }
 
+/// The encoder of an instance serving images, and each rank's text flags
+/// of the prefill rows (U8, one a row), which a prefill that injects
+/// encoder rows uploads for the masked Engram gate.
+pub(crate) struct Media {
+    pub(crate) encoder: Encoder,
+    pub(crate) text: Vec<Span>,
+}
+
+/// Loads the encoder's cubins on every rank into `symbols`, each entry with
+/// its planned dynamic shared memory; acquires the encoder over its image
+/// and each rank's text flags of `rows` rows.
+pub(crate) fn acquire_media(
+    services: &HostServicesV1,
+    kernels: &crate::Kernels,
+    ranks: &[RankHandles],
+    symbols: &mut [BTreeMap<String, runtime_bundle_abi::BundleCudaSymbolHandleV1>],
+    rows: u64,
+    held: &mut Vec<Held>,
+) -> Result<Media, BundleAbiError> {
+    let log = Log {
+        services,
+        bundle: "DeepSeek V4.1 Flash encoder",
+    };
+    for (&(context, _, _), resolved) in ranks.iter().zip(symbols.iter_mut()) {
+        for cubin in crate::CUBINS
+            .iter()
+            .filter(|cubin| crate::Kernels::encoder_cubin(cubin.name))
+        {
+            acquire::load_module(
+                log,
+                context,
+                (cubin.name, cubin.bytes),
+                cubin.symbols.iter().copied(),
+                |symbol| {
+                    crate::Kernels::encoder_shared_bytes(symbol).ok_or(
+                        BundleAbiError::InvalidRange("unplanned deepseek41 encoder symbol"),
+                    )
+                },
+                resolved,
+                held,
+            )?;
+        }
+    }
+    let encoder = acquire(services, kernels, ranks, held)?;
+    let text = ranks
+        .iter()
+        .map(|&(_, pool, stream)| allocate_span(services, pool, stream, rows, held))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Media { encoder, text })
+}
+
 /// Checks each rank's index against the layout and the image identity the
 /// host serves, opens the encoder image on every rank, and creates the
 /// runtime over its views with each rank's regions.

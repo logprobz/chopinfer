@@ -62,6 +62,12 @@ impl crate::Kernels {
         )
     }
 
+    /// Whether `cubin` is one of the vision encoder's, which only an
+    /// instance serving the encoder loads.
+    pub(crate) fn encoder_cubin(cubin: &str) -> bool {
+        super::encoder::is_cubin(cubin)
+    }
+
     /// The dynamic shared memory an encoder entry `symbol` loads with, at
     /// least the default; `None` for a symbol that is not the encoder's.
     pub(crate) fn encoder_shared_bytes(symbol: &str) -> Option<u32> {

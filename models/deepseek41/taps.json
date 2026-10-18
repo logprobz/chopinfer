@@ -2,236 +2,30 @@
  "schema": "chopinfer.tap-declaration.v2",
  "model": "deepseek41",
  "about": [
-  "The taps the engine will write and the reference adapter (models/deepseek41/reference.py `taps`) writes, in program order, for the flash geometry's 40 backbone layers. The first entry whose name matches, in its layers when given, applies; {nn} is a two-digit layer. A skeleton: the bundle's tap writer and the reference adapter align their names with this file as each lands; the DSpark stages and the vision encoder add their entries with their lanes.",
-  "Names follow docs/reference-runner.md (\"Taps and tapdiff\") (tools/refrun/taps.py's grammar). cols is the full width; a col_shards rank holds cols / ranks of it. detail: written only in the layers CHOPINFER_TAPS_LAYERS names."
+  "The engine's taps (models/deepseek41/bundle/src/taps/text.rs, built with the diagnostic-taps feature), in program order. The first entry whose name matches applies; {nn} is a two-digit layer.",
+  "Names follow docs/reference-runner.md (\"Taps and tapdiff\"); models/deepseek41/reference.py `taps` maps the same names onto the vendor modules: embed.out the embedding; L<nn>.in.streams the block's four mHC streams; x.hc.attn.{pre,post,comb} and x.hc.ffn.{pre,post,comb} a block's mHC coefficients; x.hc.attn and x.hc.mlp the attn_norm and ffn_norm inputs; attn.in and mlp.in their outputs; x.latent the normalized window latent before RoPE and quantization; attn.out and mlp.out the all-reduced sublayer outputs; router.weights and router.ids the gate's outputs; L<nn>.out the block's output streams; final.x.hc.head the norm's input; final.norm its output.",
+  "Every tap is replicated and written from rank 0 after its stage, for prefill phases only. Widths follow the geometry, so the entries leave cols out."
  ],
  "taps": [
-  {
-   "name": "embed.out",
-   "dtype": "bf16",
-   "cols": 20480,
-   "layout": "streams x hidden (4 x 5120); the token embedding expanded to the mHC streams, layer 0's input",
-   "compare": "dense",
-   "sharding": "replicated"
-  },
-  {
-   "name": "L{nn}.in.streams",
-   "dtype": "f32",
-   "cols": 20480,
-   "layout": "streams x hidden (4 x 5120); the layer's input streams, F32",
-   "compare": "dense",
-   "sharding": "replicated"
-  },
-  {
-   "name": "L{nn}.x.engram",
-   "dtype": "bf16",
-   "cols": 5120,
-   "layout": "hidden; the Engram contribution added before the layer",
-   "compare": "dense",
-   "sharding": "replicated",
-   "detail": true,
-   "layers": [
-    1,
-    14
-   ]
-  },
-  {
-   "name": "L{nn}.x.hc.attn",
-   "dtype": "bf16",
-   "cols": 5120,
-   "layout": "hidden; the streams collapsed into the attention sublayer's input by the lagged pre weights",
-   "compare": "dense",
-   "sharding": "replicated"
-  },
-  {
-   "name": "L{nn}.attn.in",
-   "dtype": "bf16",
-   "cols": 5120,
-   "layout": "hidden; attn_norm",
-   "compare": "dense",
-   "sharding": "replicated"
-  },
-  {
-   "name": "L{nn}.x.q_latent",
-   "dtype": "bf16",
-   "cols": 1280,
-   "layout": "the normalized query latent (q_norm) the queries and the indexer read",
-   "compare": "dense",
-   "sharding": "replicated",
-   "detail": true
-  },
-  {
-   "name": "L{nn}.x.latent",
-   "dtype": "bf16",
-   "cols": 512,
-   "layout": "the normalized key-value latent (kv_norm), its last 64 channels rotated, as the window ring holds it before quantization",
-   "compare": "dense",
-   "sharding": "replicated"
-  },
-  {
-   "name": "L{nn}.x.indexer.ids",
-   "dtype": "u32",
-   "cols": 512,
-   "layout": "selected compressed positions, 2^32 - 1 where none",
-   "compare": "set",
-   "sharding": "replicated",
-   "layers": [
-    2,
-    3,
-    4,
-    5,
-    6,
-    7,
-    8,
-    9,
-    10,
-    11,
-    12,
-    13,
-    14,
-    15,
-    16,
-    17,
-    18,
-    19,
-    20,
-    21,
-    22,
-    23,
-    24,
-    25,
-    26,
-    27,
-    28,
-    29,
-    30,
-    31,
-    32,
-    33,
-    34,
-    35,
-    36,
-    37,
-    38,
-    39
-   ]
-  },
-  {
-   "name": "L{nn}.attn.core",
-   "dtype": "bf16",
-   "cols": 32768,
-   "layout": "query heads x 512 after the inverse tail rotation, the input of wo_a",
-   "compare": "dense",
-   "sharding": {
-    "col_shards": {
-     "axis": "heads",
-     "blocks": [
-      [
-       64,
-       512
-      ]
-     ]
-    }
-   },
-   "detail": true
-  },
-  {
-   "name": "L{nn}.attn.out",
-   "dtype": "bf16",
-   "cols": 5120,
-   "layout": "hidden; the all-reduced wo_b output",
-   "compare": "dense",
-   "sharding": "replicated"
-  },
-  {
-   "name": "L{nn}.x.hc.mlp",
-   "dtype": "bf16",
-   "cols": 5120,
-   "layout": "hidden; the streams collapsed into the MoE sublayer's input",
-   "compare": "dense",
-   "sharding": "replicated"
-  },
-  {
-   "name": "L{nn}.mlp.in",
-   "dtype": "bf16",
-   "cols": 5120,
-   "layout": "hidden; ffn_norm",
-   "compare": "dense",
-   "sharding": "replicated"
-  },
-  {
-   "name": "L{nn}.router.logits",
-   "dtype": "f32",
-   "cols": 384,
-   "layout": "experts; sqrt(softplus) scores before the bias",
-   "compare": "dense",
-   "sharding": "replicated"
-  },
-  {
-   "name": "L{nn}.router.weights",
-   "dtype": "f32",
-   "cols": 6,
-   "layout": "top-6 weights after normalization and the 1.5 scale, in the order of router.ids",
-   "compare": "paired",
-   "sharding": "replicated"
-  },
-  {
-   "name": "L{nn}.router.ids",
-   "dtype": "u32",
-   "cols": 6,
-   "layout": "top-6 expert ids",
-   "compare": "set",
-   "sharding": "replicated"
-  },
-  {
-   "name": "L{nn}.moe.routed",
-   "dtype": "f32",
-   "cols": 5120,
-   "layout": "hidden; the routed experts' weighted sum, F32 partials",
-   "compare": "dense",
-   "sharding": "rank_partial",
-   "detail": true
-  },
-  {
-   "name": "L{nn}.moe.shared",
-   "dtype": "f32",
-   "cols": 5120,
-   "layout": "hidden; the shared expert's F32 partials",
-   "compare": "dense",
-   "sharding": "rank_partial",
-   "detail": true
-  },
-  {
-   "name": "L{nn}.mlp.out",
-   "dtype": "bf16",
-   "cols": 5120,
-   "layout": "hidden; the all-reduced routed and shared sum",
-   "compare": "dense",
-   "sharding": "replicated"
-  },
-  {
-   "name": "L{nn}.out",
-   "dtype": "f32",
-   "cols": 20480,
-   "layout": "streams x hidden (4 x 5120); the layer's output streams",
-   "compare": "dense",
-   "sharding": "replicated"
-  },
-  {
-   "name": "final.x.hc.head",
-   "dtype": "bf16",
-   "cols": 5120,
-   "layout": "hidden; the streams collapsed by the sigmoid-weighted head before the final norm",
-   "compare": "dense",
-   "sharding": "replicated"
-  },
-  {
-   "name": "final.norm",
-   "dtype": "bf16",
-   "cols": 5120,
-   "layout": "hidden",
-   "compare": "dense",
-   "sharding": "replicated"
-  }
+  {"name": "embed.out", "dtype": "bf16", "layout": "hidden", "compare": "dense", "sharding": "replicated"},
+  {"name": "L{nn}.in.streams", "dtype": "bf16", "layout": "streams x hidden", "compare": "dense", "sharding": "replicated"},
+  {"name": "L{nn}.x.hc.attn.pre", "dtype": "f32", "layout": "streams", "compare": "dense", "sharding": "replicated"},
+  {"name": "L{nn}.x.hc.attn.post", "dtype": "f32", "layout": "streams", "compare": "dense", "sharding": "replicated"},
+  {"name": "L{nn}.x.hc.attn.comb", "dtype": "f32", "layout": "streams x streams", "compare": "dense", "sharding": "replicated"},
+  {"name": "L{nn}.x.hc.attn", "dtype": "bf16", "layout": "hidden", "compare": "dense", "sharding": "replicated"},
+  {"name": "L{nn}.attn.in", "dtype": "bf16", "layout": "hidden", "compare": "dense", "sharding": "replicated"},
+  {"name": "L{nn}.x.latent", "dtype": "f32", "layout": "latent (head_dim)", "compare": "dense", "sharding": "replicated"},
+  {"name": "L{nn}.attn.out", "dtype": "bf16", "layout": "hidden", "compare": "dense", "sharding": "replicated"},
+  {"name": "L{nn}.x.hc.ffn.pre", "dtype": "f32", "layout": "streams", "compare": "dense", "sharding": "replicated"},
+  {"name": "L{nn}.x.hc.ffn.post", "dtype": "f32", "layout": "streams", "compare": "dense", "sharding": "replicated"},
+  {"name": "L{nn}.x.hc.ffn.comb", "dtype": "f32", "layout": "streams x streams", "compare": "dense", "sharding": "replicated"},
+  {"name": "L{nn}.x.hc.mlp", "dtype": "bf16", "layout": "hidden", "compare": "dense", "sharding": "replicated"},
+  {"name": "L{nn}.mlp.in", "dtype": "bf16", "layout": "hidden", "compare": "dense", "sharding": "replicated"},
+  {"name": "L{nn}.router.weights", "dtype": "f32", "layout": "top-k weights, in the order of router.ids", "compare": "paired", "sharding": "replicated"},
+  {"name": "L{nn}.router.ids", "dtype": "u32", "layout": "top-k expert ids", "compare": "set", "sharding": "replicated"},
+  {"name": "L{nn}.mlp.out", "dtype": "bf16", "layout": "hidden", "compare": "dense", "sharding": "replicated"},
+  {"name": "L{nn}.out", "dtype": "bf16", "layout": "streams x hidden", "compare": "dense", "sharding": "replicated"},
+  {"name": "final.x.hc.head", "dtype": "f32", "layout": "hidden", "compare": "dense", "sharding": "replicated"},
+  {"name": "final.norm", "dtype": "f32", "layout": "hidden", "compare": "dense", "sharding": "replicated"}
  ]
 }

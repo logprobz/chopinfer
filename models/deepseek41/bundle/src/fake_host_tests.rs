@@ -5,6 +5,7 @@
 //! retire and release mechanics, not numerics.
 
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use bundle_runtime::fake_host::dump::{Memory, Origin};
@@ -15,7 +16,14 @@ use model_deepseek41_contract::serving::{INDEX_SCHEMA, RANK_IMAGE_ROLE, index_ro
 use runtime_bundle_abi::*;
 
 use crate::config::{KV_LAYOUTS, KvLayout};
+
+mod conformance;
+mod media;
 use crate::shape::Shape;
+use model_deepseek41_contract::state::KvStorage;
+
+#[path = "lower/dspark/journal.rs"]
+mod dspark_journal;
 
 const KV_PAGES: u64 = 256;
 const IMAGE_SLOT: u32 = 1_000_000;
@@ -38,9 +46,16 @@ pub(crate) struct FakeHost {
     /// Every upload's bytes by its destination, which a download of the
     /// same span reads back (a snapshot's header).
     uploads: RefCell<std::collections::BTreeMap<(u64, u64), Vec<u8>>>,
+    /// Bytes the next read back of their length returns instead (a device
+    /// status a kernel would have written).
+    injected: RefCell<Option<Vec<u8>>>,
+    /// Read backs of the injected length that pass before it applies.
+    injected_after: Cell<usize>,
     /// Device memory as the origins of its bytes: every device copy moves
     /// them, so a test can tell where a span's bytes came from.
     memory: RefCell<Memory>,
+    /// Layout IDs that replace a view's own in every rank index.
+    layouts: RefCell<BTreeMap<String, String>>,
 }
 
 pub(crate) type Host = Backend<FakeHost>;
@@ -53,35 +68,141 @@ impl std::ops::Deref for FakeHost {
     }
 }
 
-/// The views the program binds today, with their bytes, in the order a
-/// rank image lays them out. The weight plan names every view once it
-/// lands; the fake host serves exactly what the lowering reads.
-fn views(shape: &Shape) -> Vec<(String, u64)> {
+/// The views the program binds today, with their bytes and element type,
+/// in the order a rank image lays them out. The weight plan names every
+/// view once it lands; the fake host serves exactly what the lowering
+/// reads.
+fn views(shape: &Shape) -> Vec<(String, u64, &'static str)> {
+    let g = shape.geometry;
     let d = shape.dims();
     let hidden = u64::from(d.hidden);
+    let mixes = u64::from(g.hc_mix());
     let mut views = vec![(
         "embed.weight".to_owned(),
         u64::from(shape.vocab_rows()) * hidden * 2,
+        "BF16",
     )];
     for layer in 0..d.layers {
         for norm in ["attn_norm", "ffn_norm"] {
-            views.push((format!("layers.{layer}.{norm}.weight"), hidden * 2));
+            views.push((format!("layers.{layer}.{norm}.weight"), hidden * 2, "BF16"));
+        }
+        for (norm, width) in [
+            ("q_norm", d.attention.q_rank),
+            ("kv_norm", d.attention.head_dim),
+        ] {
+            let bytes = u64::from(width) * 2;
+            views.push((format!("layers.{layer}.attn.{norm}.weight"), bytes, "BF16"));
+        }
+        // The rank's heads' sinks.
+        views.push((
+            format!("layers.{layer}.attn.attn_sink"),
+            u64::from(shape.local_heads()) * 4,
+            "F32",
+        ));
+        let experts = u64::from(d.moe.experts);
+        let inter = u64::from(shape.local_inter());
+        views.push((format!("layers.{layer}.ffn.gate.bias"), experts * 4, "F32"));
+        views.push((
+            format!("layers.{layer}.ffn.gate.bias_vl"),
+            experts * 4,
+            "F32",
+        ));
+        for (bank, elements) in [
+            ("gate_up", experts * 2 * inter * hidden),
+            ("down", experts * hidden * inter),
+        ] {
+            let name = |part: &str| format!("layers.{layer}.ffn.experts.{bank}.{part}");
+            views.push((name("weight"), elements / 2, "U8"));
+            views.push((name("scale"), elements / 32, "U8"));
+        }
+        // The dense fold projections' MXFP8 rows and scales; the indexer's
+        // query projection is its index sources' alone, `wkv` its Engram
+        // layers'.
+        for dense in crate::ops::dense::projections(shape) {
+            if dense.id == "indexer.q" && !g.shape.csa.index_sources.contains(&layer)
+                || dense.id == "engram.kv" && !g.is_engram_layer(layer)
+            {
+                continue;
+            }
+            let q = dense.query;
+            let codes = u64::from(q.groups) * u64::from(q.n) * u64::from(q.k);
+            let name = |part: &str| format!("layers.{layer}.{}.{part}", dense.tensor);
+            views.push((name("weight"), codes, "U8"));
+            views.push((name("scale"), codes / 32, "U8"));
+        }
+        if g.is_engram_layer(layer) {
+            for weight in ["q_weight", "k_weight"] {
+                let bytes = u64::from(d.hc.streams) * hidden * 2;
+                views.push((format!("layers.{layer}.engram.{weight}"), bytes, "BF16"));
+            }
+        }
+        for mixer in ["hc_attn", "hc_ffn"] {
+            let f32 = |name: &str, elements: u64| {
+                (
+                    format!("layers.{layer}.{mixer}_{name}"),
+                    elements * 4,
+                    "F32",
+                )
+            };
+            views.push(f32("fn", mixes * u64::from(g.hc_width())));
+            views.push(f32("base", mixes));
+            views.push(f32("scale", 3));
         }
     }
-    views.push(("norm.weight".into(), hidden * 2));
+    // The exact F32 projections' BF16 weights: every router, each KV
+    // source's compressor and indexer key, each index source's weights.
+    for layer in 0..d.layers {
+        views.push((
+            format!("layers.{layer}.ffn.gate.weight"),
+            u64::from(d.moe.experts) * hidden * 2,
+            "BF16",
+        ));
+    }
+    for &layer in g.shape.csa.kv_sources {
+        let attention = |name: &str| format!("layers.{layer}.attn.{name}.weight");
+        let head_dim = u64::from(d.attention.head_dim);
+        views.push((attention("compressor.norm"), head_dim * 2, "BF16"));
+        let index_dim = u64::from(d.indexer.dim);
+        views.push((attention("indexer.k_norm"), index_dim * 2, "BF16"));
+        views.push((attention("compressor.wkv"), head_dim * hidden * 2, "BF16"));
+        if g.compress_ratio(layer) > 1 {
+            views.push((attention("compressor.wgate"), head_dim * hidden * 2, "BF16"));
+        }
+        views.push((attention("indexer.wk"), index_dim * head_dim * 2, "BF16"));
+    }
+    for &layer in g.shape.csa.index_sources {
+        views.push((
+            format!("layers.{layer}.attn.indexer.weights_proj.weight"),
+            u64::from(d.indexer.heads) * hidden * 2,
+            "BF16",
+        ));
+    }
+    views.push(("norm.weight".into(), hidden * 2, "BF16"));
+    views.push((
+        "head.weight".into(),
+        u64::from(shape.vocab_rows()) * hidden * 2,
+        "BF16",
+    ));
     views
 }
 
-/// Rank `rank`'s index and image bytes.
-fn index(shape: &Shape, rank: u32) -> (Vec<u8>, u64) {
+/// Rank `rank`'s index and image bytes: each view row-major, as the weight
+/// plan stores a BF16 or F32 view, unless `layouts` names its layout.
+fn index(shape: &Shape, rank: u32, layouts: &BTreeMap<String, String>) -> (Vec<u8>, u64) {
     let mut index = FakeIndex::new(INDEX_SCHEMA, rank);
-    for (name, bytes) in views(shape) {
+    for (name, bytes, dtype) in views(shape) {
+        let (element, layout) = match dtype {
+            "F32" => (4, "f32_row_major_v1"),
+            "U8" => (1, "row-major"),
+            _ => (2, "bf16_row_major_v1"),
+        };
+        let layout = layouts.get(&name).map_or(layout, String::as_str);
         index.push(
             name,
             bytes,
-            "BF16",
-            vec![bytes / 2],
-            "row-major",
+            dtype,
+            vec![bytes / element],
+            layout,
             VIEW_ALIGNMENT,
         );
     }
@@ -99,7 +220,10 @@ impl FakeHost {
             speculation: Cell::new(None),
             state_bytes: Cell::new(0),
             uploads: RefCell::new(std::collections::BTreeMap::new()),
+            injected: RefCell::new(None),
+            injected_after: Cell::new(0),
             memory: RefCell::new(Memory::default()),
+            layouts: RefCell::new(BTreeMap::new()),
         }))
     }
 
@@ -129,6 +253,20 @@ impl FakePackage for FakeHost {
         destination: &mut [u8],
         source: DeviceBufferSpanV1,
     ) -> HostServiceResultV1<()> {
+        let mut injected = self.injected.borrow_mut();
+        if injected
+            .as_ref()
+            .is_some_and(|bytes| bytes.len() == destination.len())
+        {
+            match self.injected_after.get() {
+                0 => {
+                    destination.copy_from_slice(&injected.take().unwrap_or_default());
+                    return Ok(());
+                }
+                after => self.injected_after.set(after - 1),
+            }
+        }
+        drop(injected);
         match self
             .uploads
             .borrow()
@@ -182,7 +320,7 @@ impl FakePackage for FakeHost {
         rank: u32,
         _view_id: &[u8],
     ) -> HostServiceResultV1<CompiledImageSpanV1> {
-        let (_, bytes) = index(&self.shape, rank);
+        let (_, bytes) = index(&self.shape, rank, &self.layouts.borrow());
         let slot = IMAGE_SLOT + rank;
         self.device.extents.borrow_mut().insert(slot, bytes);
         Ok(CompiledImageSpanV1::new(
@@ -216,7 +354,7 @@ impl FakePackage for FakeHost {
     fn component(&self, slot: u32) -> (String, Vec<u8>) {
         if slot >= IDENTITY_COMPONENT {
             let rank = slot - IDENTITY_COMPONENT;
-            let (_, bytes) = index(&self.shape, rank);
+            let (_, bytes) = index(&self.shape, rank, &self.layouts.borrow());
             let identity = serde_json::json!({"byte_length": bytes, "sha256": "a".repeat(64)});
             return (
                 format!("chop.compiled-image-identity.v1/{RANK_IMAGE_ROLE}/{rank}"),
@@ -224,7 +362,10 @@ impl FakePackage for FakeHost {
             );
         }
         let rank = slot - INDEX_COMPONENT;
-        (index_role(rank), index(&self.shape, rank).0)
+        (
+            index_role(rank),
+            index(&self.shape, rank, &self.layouts.borrow()).0,
+        )
     }
     fn acquire_serving_kv(&self, layout_id: &[u8]) -> HostServiceResultV1<u64> {
         assert_eq!(layout_id, self.kv.layout_id);
@@ -361,98 +502,305 @@ pub(crate) fn decode(items: &[(u64, u64, u64, u32)]) -> Vec<u8> {
         .unwrap()
 }
 
-/// Every topology and KV layout creates, prefills a prompt in two chunks,
-/// decodes two requests, commits each step, retires and releases
-/// everything; each logits row reaches the sink.
+/// Executes `batch` and commits it.
+#[track_caller]
+fn step(instance: &mut BundleInstanceV1, batch: &[u8], views: &mut Views) {
+    if let Err(error) = instance.execute(batch, views) {
+        panic!("{error:?}: {:?}", instance.last_execute_refusal());
+    }
+    instance.commit().unwrap();
+}
+
+/// The journal's lifecycle on `host`: create; a prompt prefilled in two
+/// chunks, the first a whole page, and a second prompt; a decode step of
+/// both that is cancelled, which invalidates the requests it touched
+/// (`Cancel::Invalidate`), so both retire and start again as new requests
+/// in their slots, the first in one chunk; a decode of both; retire and
+/// destroy. Each scored row reaches the sink.
+fn journal_steps(host: &Rc<Host>) {
+    let mut instance = create(host, 4);
+    let mut views = Views::default();
+    step(&mut instance, &prompt(7, 0, 0, 64, false), &mut views);
+    assert_eq!(views.rows(), 0);
+    step(&mut instance, &prompt(7, 0, 64, 6, true), &mut views);
+    assert_eq!(views.rows(), 1);
+    step(&mut instance, &prompt(9, 1, 0, 3, true), &mut views);
+    instance
+        .execute(
+            &decode(&[(7, 0, 70, 1), (9, 1, 3, 2)]),
+            &mut Views::default(),
+        )
+        .unwrap();
+    instance.cancel().unwrap();
+    instance.retire_request(7).unwrap();
+    instance.retire_request(9).unwrap();
+    step(&mut instance, &prompt(11, 0, 0, 70, true), &mut views);
+    step(&mut instance, &prompt(13, 1, 0, 3, true), &mut views);
+    step(
+        &mut instance,
+        &decode(&[(11, 0, 70, 1), (13, 1, 3, 2)]),
+        &mut views,
+    );
+    assert_eq!(views.rows(), 6);
+    instance.retire_request(11).unwrap();
+    instance.retire_request(13).unwrap();
+    instance.destroy().unwrap();
+}
+
+/// The pinned journal digest of each Flash topology and KV layout: the
+/// launches of the families lowered so far while the other stages are
+/// not, so each family that lowers re-pins them.
+const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
+    (
+        "deepseek41-flash-tp1",
+        KvStorage::Native,
+        (12663, 0x9777bf80403f9f3c),
+    ),
+    (
+        "deepseek41-flash-tp1",
+        KvStorage::Bf16,
+        (10601, 0x24ecba2c438cdedf),
+    ),
+    (
+        "deepseek41-flash-tp2",
+        KvStorage::Native,
+        (25203, 0x8929220a0835fd4d),
+    ),
+    (
+        "deepseek41-flash-tp2",
+        KvStorage::Bf16,
+        (21079, 0xe2f4810a0e142ca4),
+    ),
+    (
+        "deepseek41-flash-tp4",
+        KvStorage::Native,
+        (50291, 0x0adf0119b7e01fce),
+    ),
+    (
+        "deepseek41-flash-tp4",
+        KvStorage::Bf16,
+        (42043, 0x32eea25f4c65ad64),
+    ),
+];
+
+/// Every compiled geometry at every topology and KV layout runs the
+/// journal's lifecycle, loading only the cubins that serve its geometry,
+/// and releases everything it acquired; the Flash journals are pinned, and
+/// hold whatever other geometries the build compiles. With `CHOPINFER_DEEPSEEK41_GEOMETRY_JOURNAL_DIR`
+/// set, each journal is written there as `<topology>.<layout>.journal`.
 #[test]
-fn every_topology_and_layout_runs_the_lifecycle() {
+fn every_geometry_topology_runs_the_fake_host_journal_and_lifecycle() {
+    let export =
+        std::env::var_os("CHOPINFER_DEEPSEEK41_GEOMETRY_JOURNAL_DIR").map(std::path::PathBuf::from);
+    let mut mismatches = Vec::new();
     for shape in crate::shape::topologies() {
         for kv in KV_LAYOUTS {
             let host = FakeHost::new(shape, kv);
-            let mut instance = create(&host, 4);
-            let mut views = Views::default();
-            instance
-                .execute(&prompt(7, 0, 0, 64, false), &mut views)
-                .unwrap();
-            instance.commit().unwrap();
-            assert_eq!(views.rows(), 0);
-            instance
-                .execute(&prompt(7, 0, 64, 6, true), &mut views)
-                .unwrap();
-            instance.commit().unwrap();
-            assert_eq!(views.rows(), 1);
-            instance
-                .execute(&prompt(9, 1, 0, 3, true), &mut views)
-                .unwrap();
-            instance.commit().unwrap();
-            instance
-                .execute(&decode(&[(7, 0, 70, 1), (9, 1, 3, 2)]), &mut views)
-                .unwrap();
-            instance.commit().unwrap();
-            assert_eq!(views.rows(), 4);
-            instance.retire_request(7).unwrap();
-            instance.retire_request(9).unwrap();
-            instance.destroy().unwrap();
+            journal_steps(&host);
+            let topology = shape.topology();
             assert_eq!(
                 host.acquired.get(),
                 host.released.get(),
-                "{} {:?}",
-                shape.topology(),
+                "{topology} {:?}",
                 kv.storage
             );
+            // Each loaded cubin serves the topology's geometry.
+            for cubin in host.device.module_cubins.borrow().values() {
+                assert!(
+                    crate::serves(cubin, shape.geometry.id),
+                    "{topology}: {cubin}"
+                );
+            }
+            let lines = host.device.journal.borrow().clone();
+            assert_launches_fit_configured_shared(&lines, &topology);
+            let layout = format!("{:?}", kv.storage).to_lowercase();
+            if let Some(dir) = &export {
+                std::fs::create_dir_all(dir).unwrap();
+                std::fs::write(
+                    dir.join(format!("{topology}.{layout}.journal")),
+                    lines.join("\n"),
+                )
+                .unwrap();
+            }
+            if let Some(&(_, _, expected)) = FLASH_JOURNALS
+                .iter()
+                .find(|(id, storage, _)| *id == topology && *storage == kv.storage)
+                && let Err(observed) = bundle_runtime::fake_host::check_journal(
+                    &lines,
+                    expected,
+                    &format!("{topology}.{layout}.journal"),
+                )
+            {
+                mismatches.push(format!("{topology} {layout}: {observed}"));
+            }
         }
+    }
+    assert!(mismatches.is_empty(), "{mismatches:#?}");
+}
+
+/// Every launch of `lines` fits its entry's dynamic shared memory: the
+/// default without a configure, else the bytes its resolved symbol was
+/// configured for. CUDA refuses a launch past either.
+fn assert_launches_fit_configured_shared(lines: &[String], topology: &str) {
+    let mut names = BTreeMap::<&str, &str>::new();
+    let mut configured = BTreeMap::<&str, u32>::new();
+    let mut launched = 0;
+    for line in lines {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        match words.as_slice() {
+            ["resolve", slot, symbol, ..] => {
+                names.insert(slot, symbol);
+            }
+            ["configure", slot, bytes] => {
+                let symbol = names[slot];
+                let bytes: u32 = bytes.parse().unwrap();
+                let most = configured.entry(symbol).or_insert(0);
+                *most = (*most).max(bytes);
+            }
+            ["launch", _, symbol, ..] => {
+                let shared: u32 = line
+                    .split("shared_memory_bytes: ")
+                    .nth(1)
+                    .and_then(|rest| rest.split(',').next())
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+                let limit = configured
+                    .get(symbol)
+                    .copied()
+                    .unwrap_or(bundle_runtime::acquire::DEFAULT_SHARED_BYTES);
+                assert!(
+                    shared <= limit,
+                    "{topology}: {symbol} launches with {shared} bytes of dynamic shared memory, configured for {limit}"
+                );
+                launched += 1;
+            }
+            _ => {}
+        }
+    }
+    assert!(launched > 0, "{topology}");
+}
+
+/// Create refuses a rank index that stores a weight view an exact F32
+/// projection or the head reads in another layout than its op reads: a
+/// router or head packed in MMA fragments binds and runs, on scrambled
+/// weights.
+#[test]
+fn create_refuses_a_weight_view_its_op_reads_in_another_layout() {
+    let shape = Shape::new(&FLASH, Ranks::TP2).unwrap();
+    for view in ["layers.0.ffn.gate.weight", "head.weight"] {
+        let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+        host.layouts
+            .borrow_mut()
+            .insert(view.into(), "bf16_mma_fragments_16x16_v1".into());
+        let record = crate::config::tests::record(&shape, KV_LAYOUTS[0], 4, false);
+        let created = api().create(HostServicesTableV1::new(Rc::clone(&host)), &record);
+        assert!(created.is_err(), "{view}");
+        let expected = format!(
+            "{view} is stored as bf16_mma_fragments_16x16_v1, but its op reads bf16_row_major_v1"
+        );
+        assert!(
+            host.logs
+                .borrow()
+                .iter()
+                .any(|line| line.contains(&expected)),
+            "{view}: {:?}",
+            host.logs.borrow()
+        );
+        assert_eq!(host.acquired.get(), host.released.get(), "{view}");
     }
 }
 
-/// A step refuses, before its ledger step opens, while a stage of its
-/// program is not lowered, unless the instance runs the lowered stages
-/// alone; the prepared row ops launch through the row cubin's entries.
+/// Create refuses a KV layout whose families are missing: the BF16 layout
+/// has no BF16 window-ring writer or staging, index-key writer or indexer
+/// read yet. An
+/// instance that runs the lowered stages alone launches the prepared ops
+/// through their cubins' entries in program order.
 #[test]
-fn a_step_refuses_while_a_stage_is_unlowered() {
+fn create_refuses_while_a_family_is_missing() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
-    let host = FakeHost::new(shape, KV_LAYOUTS[0]);
-    let record = crate::config::tests::record(&shape, KV_LAYOUTS[0], 4, false);
-    let mut instance = api()
+    let host = FakeHost::new(shape, KV_LAYOUTS[1]);
+    let record = crate::config::tests::record(&shape, KV_LAYOUTS[1], 4, false);
+    let refused = api()
         .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
-        .unwrap_or_else(|error| panic!("{error:?} {:?}", host.logs.borrow()));
-    let refused = instance
-        .execute(&prompt(7, 0, 0, 3, true), &mut Views::default())
+        .map(|_| ())
         .unwrap_err();
     assert_eq!(refused, BundleAbiError::Status(BundleStatusV1::Unsupported));
     assert!(
         host.logs
             .borrow()
             .iter()
-            .any(|line| line.contains("stage EmbeddingReduce is not lowered yet")),
+            .any(|line| line.contains("bf16 KV layout has no BF16 window-ring writer")),
         "{:?}",
         host.logs.borrow()
     );
-    // No step opened: commit has nothing to commit.
-    assert!(instance.commit().is_err());
-    instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
-    // The partial instance launches the row ops' entries.
+    // The partial instance launches the row ops', the all-reduce's and the
+    // mixers' entries: the embedding widened, reduced through the F32 pair
+    // and rounded, before the streams take it; the first sublayer's mixer
+    // before its input norm; the F32 head collapse, then the F32 final
+    // norm, last.
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
     let mut instance = create(&host, 4);
-    instance
-        .execute(&prompt(7, 0, 0, 3, true), &mut Views::default())
-        .unwrap();
-    let journal = host.device.journal.borrow().clone();
-    for symbol in [
-        "chop_row_embedding_deepseek41_tp4_v1",
-        kernels_sm120_broadcast(),
-        "chop_row_rmsnorm_deepseek41_w5120_v1",
-    ] {
-        assert!(
-            journal
-                .iter()
-                .any(|line| line.starts_with("launch") && line.contains(symbol)),
-            "{symbol}"
-        );
+    if let Err(error) = instance.execute(&prompt(7, 0, 0, 3, true), &mut Views::default()) {
+        panic!("{error:?}: {:?}", host.logs.borrow());
     }
+    let journal = host.device.journal.borrow().clone();
+    let first = |symbol: &str| {
+        journal
+            .iter()
+            .position(|line| line.starts_with("launch") && line.contains(symbol))
+            .unwrap_or_else(|| panic!("{symbol}"))
+    };
+    let order = [
+        "chop_row_embedding_deepseek41_tp4_v1",
+        "chop_row_rounding_widen_deepseek41_w5120_v1",
+        "chop_comm_reduce_scatter_f32_v1",
+        "chop_comm_allgather_scattered_f32_v1",
+        "chop_row_rounding_round_deepseek41_w5120_v1",
+        kernels_sm120_broadcast(),
+        "chop_sinkhorn_hc_deepseek41_lagged_mix_collapse_v1",
+        "chop_row_rmsnorm_deepseek41_w5120_v1",
+        "chop_sinkhorn_hc_deepseek41_expand_f32_v1",
+        "chop_sinkhorn_hc_deepseek41_weighted_head_f32_v1",
+        "chop_row_rmsnorm_deepseek41_f32_w5120_v1",
+    ]
+    .map(first);
+    assert!(order.is_sorted(), "{order:?}");
     instance.commit().unwrap();
     instance.retire_request(7).unwrap();
     instance.destroy().unwrap();
+}
+
+/// The native layout lowers every stage: a full instance, not the lowered
+/// stages alone, creates, prefills and decodes, decoding each Engram
+/// layer's rows in each step.
+#[test]
+fn the_native_layout_lowers_every_stage() {
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+    let record = crate::config::tests::record(&shape, KV_LAYOUTS[0], 4, false);
+    let mut instance = api()
+        .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
+        .unwrap_or_else(|error| panic!("create: {error:?} {:?}", host.logs.borrow()));
+    for batch in [prompt(7, 0, 0, 3, true), decode(&[(7, 0, 3, 3)])] {
+        if let Err(error) = instance.execute(&batch, &mut Views::default()) {
+            panic!("{error:?}: {:?}", host.logs.borrow());
+        }
+        instance.commit().unwrap();
+    }
+    let journal = host.device.journal.borrow().clone();
+    let launches = |symbol: &str| {
+        journal
+            .iter()
+            .filter(|line| line.starts_with("launch") && line.contains(symbol))
+            .count()
+    };
+    // Two Engram layers in each of the two steps, on each of four ranks.
+    assert_eq!(launches("chop_row_mxfp8_decode_v1"), 2 * 2 * 4);
+    instance.retire_request(7).unwrap();
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
 }
 
 /// The shared stream broadcast's symbol.
@@ -534,16 +882,22 @@ fn assert_state_moved(host: &FakeHost, items: u32, verify_rows: u32, from: u32, 
     }
 }
 
+/// The rank counts the prefix-cache tests serve flash at.
+const PREFIX_RANKS: [Ranks; 2] = [Ranks::TP2, Ranks::TP4];
+
 /// A request's rings and tails reach snapshot pages after a prompt and
-/// come back into another slot under a new request, which then decodes; a
-/// restore that names other tokens is refused and leaves the slot free.
-/// The capture ends at an odd position past the 136-cell ring's wrap, and
-/// the restored slot holds exactly the captured slot's bytes, in both KV
-/// layouts.
+/// come back into the host's state slot of a new request, which then
+/// decodes; a restore that names other tokens is refused and leaves the
+/// slot free. The capture ends at an odd position past the 136-cell ring's
+/// wrap, and the restored slot holds exactly the captured slot's bytes on
+/// every rank, at TP2 and TP4 in both KV layouts.
 #[test]
 fn prefix_snapshots_round_trip_through_the_pages() {
-    let shape = Shape::new(&FLASH, Ranks::TP2).unwrap();
-    for kv in KV_LAYOUTS {
+    for (ranks, kv) in PREFIX_RANKS
+        .into_iter()
+        .flat_map(|ranks| KV_LAYOUTS.map(|kv| (ranks, kv)))
+    {
+        let shape = Shape::new(&FLASH, ranks).unwrap();
         let host = FakeHost::new(shape, kv);
         let mut instance = create(&host, 4);
         let mut views = Views::default();
@@ -573,6 +927,84 @@ fn prefix_snapshots_round_trip_through_the_pages() {
         instance.commit().unwrap();
         assert_eq!(views.rows(), 2);
         instance.retire_request(9).unwrap();
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
+}
+
+/// A host state slot takes another request only once its holder retires,
+/// by restore or by prompt: a restore or a prompt into a held slot, or a
+/// restore into a slot past the served items, is refused and changes
+/// nothing; after the retire the same slot takes a restored request, which
+/// holds exactly the captured state and decodes, and a new prompt. At TP2
+/// and TP4 in both KV layouts.
+#[test]
+fn a_state_slot_takes_a_new_request_once_its_holder_retires() {
+    for (ranks, kv) in PREFIX_RANKS
+        .into_iter()
+        .flat_map(|ranks| KV_LAYOUTS.map(|kv| (ranks, kv)))
+    {
+        let shape = Shape::new(&FLASH, ranks).unwrap();
+        let host = FakeHost::new(shape, kv);
+        let mut instance = create(&host, 4);
+        let tokens = 141;
+        instance
+            .execute(&prompt(7, 0, 0, tokens, true), &mut Views::default())
+            .unwrap();
+        instance.commit().unwrap();
+        let count = instance.describe_prefix_state().unwrap();
+        let pages = (0..count).map(|page| 40 + page).collect::<Vec<_>>();
+        instance.capture_prefix_state(7, tokens, &pages).unwrap();
+        let ids = (0..tokens as u32).collect::<Vec<u32>>();
+        instance
+            .restore_prefix_state_in_slot(9, &ids, &pages, 1)
+            .unwrap();
+        assert_state_moved(&host, 4, 0, 0, 1);
+        // Slots 0 and 1 are held, and the instance serves slots 0 to 3.
+        for slot in [0, 1, 4] {
+            assert!(
+                instance
+                    .restore_prefix_state_in_slot(11, &ids, &pages, slot)
+                    .is_err(),
+                "slot {slot}"
+            );
+        }
+        for slot in [0, 1] {
+            assert!(
+                instance
+                    .execute(&prompt(11, slot, 0, 3, true), &mut Views::default())
+                    .is_err(),
+                "slot {slot}"
+            );
+        }
+        // The holders still decode in their slots.
+        instance
+            .execute(
+                &decode(&[(7, 0, tokens, 1), (9, 1, tokens, 2)]),
+                &mut Views::default(),
+            )
+            .unwrap();
+        instance.commit().unwrap();
+        // Once request 9 retires, its slot takes request 11's restore.
+        instance.retire_request(9).unwrap();
+        instance
+            .restore_prefix_state_in_slot(11, &ids, &pages, 1)
+            .unwrap();
+        assert_state_moved(&host, 4, 0, 0, 1);
+        let mut views = Views::default();
+        instance
+            .execute(&decode(&[(11, 1, tokens, 3)]), &mut views)
+            .unwrap();
+        instance.commit().unwrap();
+        assert_eq!(views.rows(), 1);
+        // Once request 7 retires, its slot takes a new prompt.
+        instance.retire_request(7).unwrap();
+        instance
+            .execute(&prompt(13, 0, 0, 3, true), &mut Views::default())
+            .unwrap();
+        instance.commit().unwrap();
+        instance.retire_request(11).unwrap();
+        instance.retire_request(13).unwrap();
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
     }
@@ -718,6 +1150,264 @@ fn the_lifecycle_verifies_cancels_preempts_and_recycles_slots() {
     assert_eq!(views.rows(), 2);
     instance.retire_request(13).unwrap();
     instance.retire_request(15).unwrap();
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
+/// Marks a test's child process (`in_child`).
+const TAPS_CHILD: &str = "DEEPSEEK41_TAPS_CHILD";
+
+/// Runs the test `name` in a child process with `CHOPINFER_TAPS_DIR` set to
+/// `directory` and the taps variables `env`, and fails unless it passed.
+fn in_child(name: &str, directory: &std::path::Path, env: &[(&str, &str)]) {
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args([name, "--exact", "--test-threads=1"])
+        .env(TAPS_CHILD, "1")
+        .env(runtime_bundle_sdk::taps::TAPS_ENV.dir, directory);
+    for variable in ["SITES", "LAYERS", "FROM", "BYTES", "SCOPE_JSON"] {
+        command.env_remove(format!("CHOPINFER_TAPS_{variable}"));
+    }
+    let output = command.envs(env.iter().copied()).output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "{stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// A serving bundle refuses to create while a taps variable is set.
+#[cfg(not(feature = "diagnostic-taps"))]
+#[test]
+fn serving_create_refuses_taps() {
+    let shape = Shape::new(&FLASH, Ranks::TP2).unwrap();
+    if std::env::var_os(TAPS_CHILD).is_some() {
+        let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+        let record = crate::config::tests::record(&shape, KV_LAYOUTS[0], 4, false);
+        let refused = api()
+            .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
+            .err();
+        assert!(refused.is_some(), "the create was not refused");
+        let logs = host.logs.borrow();
+        assert!(
+            logs.iter()
+                .any(|line| line.contains("CHOPINFER_TAPS_DIR") && line.contains("diagnostic-taps")),
+            "{logs:?}"
+        );
+        assert_eq!(host.released.get(), host.acquired.get());
+        return;
+    }
+    let directory =
+        std::env::temp_dir().join(format!("deepseek41-taps-serving-{}", std::process::id()));
+    in_child(
+        "fake_host_tests::serving_create_refuses_taps",
+        &directory,
+        &[],
+    );
+    assert!(!directory.exists(), "a refused create wrote taps");
+}
+
+/// The launch lines of the journal from line `from`, by stream in issue
+/// order.
+#[cfg(feature = "diagnostic-taps")]
+fn launch_lines(host: &FakeHost, from: usize) -> std::collections::BTreeMap<String, Vec<String>> {
+    let mut streams = std::collections::BTreeMap::<String, Vec<String>>::new();
+    for line in &host.device.journal.borrow()[from..] {
+        if let Some(rest) = line.strip_prefix("launch ") {
+            let stream = rest.split(' ').next().unwrap_or_default().to_owned();
+            streams.entry(stream).or_default().push(line.clone());
+        }
+    }
+    streams
+}
+
+/// A diagnostic bundle's prefill runs stage by stage and issues exactly
+/// the launches of an untapped prefill; its committed step holds every
+/// selected tap of the prompt's rows in program order from rank 0, and a
+/// cancelled step's capture is removed.
+#[cfg(feature = "diagnostic-taps")]
+#[test]
+fn diagnostic_prefills_write_the_taps() {
+    let shape = Shape::new(&FLASH, Ranks::TP2).unwrap();
+    let sites = [
+        (
+            "CHOPINFER_TAPS_SITES",
+            "embed.out,in.streams,x.hc.attn.pre,attn.in,router.*,out,final.norm",
+        ),
+        ("CHOPINFER_TAPS_LAYERS", "all"),
+    ];
+    if std::env::var_os(TAPS_CHILD).is_some() {
+        let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+        let mut instance = create(&host, 4);
+        let directory = std::env::var_os(runtime_bundle_sdk::taps::TAPS_ENV.dir).unwrap();
+        for request in [7, 9] {
+            let start = host.device.journal.borrow().len();
+            instance
+                .execute(&prompt(request, 0, 0, 5, true), &mut Views::default())
+                .unwrap_or_else(|error| panic!("{error:?} {:?}", host.logs.borrow()));
+            if request == 7 {
+                std::fs::write(
+                    std::path::Path::new(&directory).join("launches.json"),
+                    serde_json::to_vec(&launch_lines(&host, start)).unwrap(),
+                )
+                .unwrap();
+                instance.commit().unwrap();
+            } else {
+                instance.cancel().unwrap();
+            }
+            instance.retire_request(request).unwrap();
+        }
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+        return;
+    }
+    // The launches of the same prefill without taps.
+    let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+    let mut instance = create(&host, 4);
+    let start = host.device.journal.borrow().len();
+    instance
+        .execute(&prompt(7, 0, 0, 5, true), &mut Views::default())
+        .unwrap_or_else(|error| panic!("{error:?} {:?}", host.logs.borrow()));
+    let untapped = launch_lines(&host, start);
+    instance.commit().unwrap();
+    instance.destroy().unwrap();
+    let directory = std::env::temp_dir().join(format!("deepseek41-taps-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    in_child(
+        "fake_host_tests::diagnostic_prefills_write_the_taps",
+        &directory,
+        &sites,
+    );
+    let tapped: std::collections::BTreeMap<String, Vec<String>> =
+        serde_json::from_slice(&std::fs::read(directory.join("launches.json")).unwrap()).unwrap();
+    assert_eq!(untapped.len(), 2);
+    assert!(
+        untapped.values().all(|lines| lines.len() > 100),
+        "{untapped:?}"
+    );
+    assert_eq!(tapped, untapped);
+    let step = directory.join("step0000");
+    let read = |name: &str| -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(step.join(name)).unwrap()).unwrap()
+    };
+    assert_eq!(read("capture.json")["model"], "deepseek41");
+    assert_eq!(read("capture.json")["program"], "Prefill");
+    assert_eq!(read("completion.json")["completion"], "full");
+    assert_eq!(read("items.json")["items"][0]["request"], 7);
+    let index = std::fs::read_to_string(step.join("index.jsonl")).unwrap();
+    let written: Vec<serde_json::Value> = index
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let selected = [
+        "embed.out",
+        "in.streams",
+        "x.hc.attn.pre",
+        "attn.in",
+        "router.weights",
+        "router.ids",
+        "out",
+        "norm",
+    ];
+    let expected: Vec<String> = crate::taps::text_specs(&shape)
+        .into_iter()
+        .filter(|spec| selected.contains(&runtime_bundle_sdk::taps::site(&spec.name)))
+        .map(|spec| spec.name)
+        .collect();
+    let names: Vec<&str> = written
+        .iter()
+        .map(|entry| entry["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, expected);
+    for entry in &written {
+        assert_eq!(entry["rank"], 0, "{entry}");
+        assert_eq!(entry["rows"], 5, "{entry}");
+    }
+    // The cancelled step's capture is removed.
+    assert!(!directory.join("step0001").exists());
+    std::fs::remove_dir_all(&directory).unwrap();
+}
+
+/// An invalid quantized input in one live row of one rank refuses that
+/// step with a named error and emits no logits, after every index status
+/// read clean; the request retires and the instance serves on.
+#[test]
+fn an_invalid_quantized_input_refuses_its_step_alone() {
+    let shape = Shape::new(&FLASH, Ranks::TP2).unwrap();
+    let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+    let mut instance = create(&host, 4);
+    let mut views = Views::default();
+    step(&mut instance, &prompt(9, 1, 0, 3, true), &mut views);
+    // Rank 1 flags row 3 in the next step's prefill: its read back follows
+    // the index sources' and rank 0's.
+    let mut status = vec![0_u8; 5 * 4];
+    status[3 * 4] = 1;
+    host.injected.replace(Some(status));
+    host.injected_after
+        .set(FLASH.shape.csa.index_sources.len() + 1);
+    let mut refused = Views::default();
+    let error = instance
+        .execute(&prompt(7, 0, 0, 5, true), &mut refused)
+        .unwrap_err();
+    assert_eq!(error, BundleAbiError::Status(BundleStatusV1::BundleError));
+    assert_eq!(refused.rows(), 0);
+    assert!(
+        host.logs.borrow().iter().any(|line| line
+            .contains("a quantized input on rank 1 was invalid in row 3 (request Some(7))")),
+        "{:?}",
+        host.logs.borrow()
+    );
+    assert!(host.injected.borrow().is_none());
+    assert!(instance.commit().is_err());
+    instance.retire_request(7).unwrap();
+    let mut views = Views::default();
+    step(&mut instance, &decode(&[(9, 1, 3, 5)]), &mut views);
+    assert_eq!(views.rows(), 1);
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
+/// A non-finite index score in one live row refuses that step with a
+/// named error and emits no logits; its request is invalidated and retires,
+/// while the other request in the instance decodes on, and the slot serves
+/// a new request.
+#[test]
+fn a_non_finite_index_score_refuses_its_step_alone() {
+    let shape = Shape::new(&FLASH, Ranks::TP2).unwrap();
+    let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+    let mut instance = create(&host, 4);
+    let mut views = Views::default();
+    step(&mut instance, &prompt(9, 1, 0, 3, true), &mut views);
+    assert_eq!(views.rows(), 1);
+    // Row 2 of the first index source fails in the next step's prefill.
+    let mut status = vec![0_u8; 5 * 4];
+    status[2 * 4] = 1;
+    host.injected.replace(Some(status));
+    let mut refused = Views::default();
+    let error = instance
+        .execute(&prompt(7, 0, 0, 5, true), &mut refused)
+        .unwrap_err();
+    assert_eq!(error, BundleAbiError::Status(BundleStatusV1::BundleError));
+    assert_eq!(refused.rows(), 0);
+    let layer = FLASH.shape.csa.index_sources[0];
+    assert!(
+        host.logs.borrow().iter().any(|line| line.contains(&format!(
+            "the index selection of layer {layer} met a non-finite score in row 2 (request Some(7))"
+        ))),
+        "{:?}",
+        host.logs.borrow()
+    );
+    assert!(host.injected.borrow().is_none());
+    // No step is open; the failed request retires, the other decodes on.
+    assert!(instance.commit().is_err());
+    instance.retire_request(7).unwrap();
+    let mut views = Views::default();
+    step(&mut instance, &decode(&[(9, 1, 3, 5)]), &mut views);
+    assert_eq!(views.rows(), 1);
+    let mut views = Views::default();
+    step(&mut instance, &prompt(11, 0, 0, 4, true), &mut views);
+    assert_eq!(views.rows(), 1);
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
 }

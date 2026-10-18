@@ -69,9 +69,12 @@ class DeepseekInventory(ModelRequirements):
                     release_gate.judge_input(key, record(kv), rules, {})
 
     def test_geometry_recipe_legs(self):
-        # Contract stage until the bundle serves an added geometry.
-        self.assertEqual(self.geometry_legs('--contract'), [('deepseek41', 'synthetic-small')])
-        self.assertEqual(self.geometry_legs('--ci'), [])
+        # The bundle serves an added geometry: a bundle-stage leg running
+        # the contract's kernel suites.
+        self.assertEqual(self.geometry_legs('--ci'), [('deepseek41', 'synthetic-small')])
+        self.assertEqual(self.geometry_legs('--contract'), [])
+        self.assertEqual(self.model.geometry_recipe.contract_tests,
+                         ('kernel_compressor', 'kernel_latent', 'kernel_moe', 'kernel_mxfp8_fold'))
         self.assertEqual(self.model.geometry_recipe.architecture, 'DeepseekV41GeometryRecipeForCausalLM')
 
 

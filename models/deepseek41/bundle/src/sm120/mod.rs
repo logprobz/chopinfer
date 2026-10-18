@@ -35,10 +35,6 @@ mod compressor;
 mod dense;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 pub(crate) mod encoder;
-#[allow(
-    dead_code,
-    reason = "the program acquires the encoder once media steps land"
-)]
 pub(crate) mod encoders;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod f32_dense;
@@ -119,6 +115,14 @@ pub fn register_f32_projections(
 }
 
 impl crate::Kernels {
+    /// Whether an instance loads `cubin` with the program's cubins: every
+    /// cubin but the dependency probes, which only the kernel lab launches,
+    /// and the vision encoder's, which only an instance serving the encoder
+    /// loads.
+    pub fn loads(cubin: &str) -> bool {
+        cubin != kernels_sm120::probes::CUBIN && !encoder::is_cubin(cubin)
+    }
+
     /// The SM120 backend over the entries the build compiles for `shape`,
     /// and the model's own kernels.
     pub(crate) fn new(shape: &crate::shape::Shape) -> Result<Self, String> {
@@ -145,6 +149,188 @@ impl crate::Kernels {
         Ok(Self {
             backend: Box::new(sm120),
             own: Box::new(own_ops::Sm120Own::new(shape.geometry)),
+            gather_state: [
+                kernels_sm120::comm::GATHER_ROWS_FLAG_BYTES,
+                kernels_sm120::comm::GATHER_ROWS_EPOCH_BYTES,
+            ],
         })
+    }
+}
+
+// The build script includes the registration files, and so does the
+// projection assembly test; a test that reads the bundle's own modules
+// lives here.
+#[cfg(test)]
+mod tests {
+    use bundle_runtime::geometry::Ranks;
+    use model_deepseek41_contract::geometry::GEOMETRIES;
+
+    /// The dense registration quantizes exactly the inputs the dense ops
+    /// ask for.
+    #[test]
+    fn registered_dense_inputs_are_the_dense_ops_inputs() {
+        for g in GEOMETRIES {
+            for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
+                let Ok(shape) = crate::shape::Shape::new(g, ranks) else {
+                    continue;
+                };
+                assert_eq!(
+                    super::dense::inputs(g, ranks.get()),
+                    crate::ops::dense::quantized_inputs(&shape)
+                );
+            }
+        }
+    }
+
+    /// Each rank count's head entry projects its shard of the vocabulary
+    /// from the hidden width, the projection the head ops ask for.
+    #[test]
+    fn the_head_entry_is_the_ranks_vocabulary_shard() {
+        use model_deepseek41_contract::geometry::FLASH;
+        for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
+            let entry = super::f32_head::entry(&FLASH, ranks.get()).unwrap();
+            let q = entry.query();
+            assert_eq!(
+                (q.n * ranks.get(), q.k),
+                (FLASH.shape.vocab, FLASH.shape.hidden)
+            );
+            let shape = crate::shape::Shape::new(&FLASH, ranks).unwrap();
+            assert_eq!(q, crate::ops::head::query(&shape));
+            assert_eq!(entry.usage(), crate::ops::head::USE);
+        }
+    }
+
+    /// Every dense F32 projection the ops ask for has an entry of its query
+    /// at the use they ask it at, and every entry serves one.
+    #[test]
+    fn each_f32_projection_has_its_entry() {
+        use crate::ops::exact_f32;
+        for g in GEOMETRIES {
+            let entries = super::f32_dense::entries(g).unwrap();
+            let projections = exact_f32::projections(g);
+            for dense in &projections {
+                let q = exact_f32::query(dense.n, dense.k);
+                let entry = entries.iter().find(|e| e.query() == q);
+                let entry = entry.unwrap_or_else(|| panic!("{} has no entry", dense.id));
+                assert_eq!(entry.usage(), exact_f32::USE);
+            }
+            for entry in &entries {
+                let q = entry.query();
+                assert!(projections.iter().any(|d| (d.n, d.k) == (q.n, q.k)));
+            }
+        }
+    }
+
+    /// Every block quantizer the instance registers serves a query no other
+    /// entry serves, at every geometry and rank count: SM120 refuses a
+    /// query two entries serve.
+    #[test]
+    fn each_quantizer_query_is_registered_once() {
+        use model_deepseek41_contract::admission::{SUPPORTED_RANKS, check_ranks};
+        for g in GEOMETRIES {
+            for &ranks in SUPPORTED_RANKS {
+                if check_ranks(g, ranks).is_err() {
+                    continue;
+                }
+                let entries: Vec<_> = super::moe::quantizers(g, ranks)
+                    .unwrap()
+                    .into_iter()
+                    .chain(super::dense::quantizers(g, ranks).unwrap())
+                    .chain(super::latent_glue::quantizers())
+                    .chain([super::indexer_query::quantizer(g)])
+                    .collect();
+                for (at, entry) in entries.iter().enumerate() {
+                    let twin = entries[at + 1..].iter().find(|e| e.query == entry.query);
+                    assert!(
+                        twin.is_none(),
+                        "{} tp{ranks}: {} and {} serve one query",
+                        g.id,
+                        entry.symbol,
+                        twin.unwrap().symbol
+                    );
+                }
+            }
+        }
+    }
+
+    /// Every RMSNorm requirement the instance registers has one entry: the
+    /// drafter's F32 head norm is the main head's final norm, registered
+    /// once by the rows (`rows::norms`), and the DSpark rows register none.
+    #[test]
+    fn each_rmsnorm_requirement_is_registered_once() {
+        use kernels_sm120::backend::Sm120;
+        use model_deepseek41_contract::admission::{SUPPORTED_RANKS, check_ranks};
+        for g in GEOMETRIES {
+            let mut norms = super::rows::norms(g);
+            if SUPPORTED_RANKS
+                .iter()
+                .any(|&ranks| super::latent_glue::register(Sm120::new(), g, ranks).is_ok())
+            {
+                norms.push(super::latent_glue::query_norm(g));
+            }
+            for (at, (requirement, symbol)) in norms.iter().enumerate() {
+                let twin = norms[at + 1..].iter().find(|(r, _)| r == requirement);
+                assert!(
+                    twin.is_none(),
+                    "{}: {symbol} and {} serve one requirement",
+                    g.id,
+                    twin.unwrap().1
+                );
+            }
+            for &ranks in SUPPORTED_RANKS {
+                if check_ranks(g, ranks).is_err() {
+                    continue;
+                }
+                let drafter = super::dspark_aux::register(Sm120::new(), g, ranks).unwrap();
+                let refused = kernel_core::backend::Backend::rmsnorm(
+                    &drafter,
+                    &model_deepseek41_contract::rows::final_norm(g),
+                    kernel_core::backend::Need::rows(1),
+                );
+                assert!(
+                    refused.is_err(),
+                    "{} tp{ranks}: DSpark registers a norm",
+                    g.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn each_hc_query_is_registered_once_including_dspark() {
+        use kernel_core::sinkhorn_hyper_connection::{
+            SinkhornHyperConnectionQuery as Query, StreamHeadMode,
+        };
+        for g in GEOMETRIES {
+            let entries: Vec<_> = super::hc::registered_entries(g)
+                .into_iter()
+                .map(|entry| (entry.query, entry.symbol))
+                .chain(
+                    super::dspark_aux::feature_entries(g)
+                        .into_iter()
+                        .map(|entry| (entry.query, entry.symbol)),
+                )
+                .collect();
+            for (at, (query, symbol)) in entries.iter().enumerate() {
+                assert!(
+                    !entries[at + 1..].iter().any(|(q, _)| q == query),
+                    "{} repeats {symbol}'s query",
+                    g.id
+                );
+            }
+            assert_eq!(
+                entries
+                    .iter()
+                    .filter(|(q, _)| matches!(
+                        q,
+                        Query::Head {
+                            mode: StreamHeadMode::SigmoidWeightedF32,
+                            ..
+                        }
+                    ))
+                    .count(),
+                1
+            );
+        }
     }
 }

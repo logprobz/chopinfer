@@ -1,6 +1,6 @@
-//! The bundle API over the deepseek41 instance, which the crate's tests
-//! drive (`lib.rs` declares this module `#[cfg(test)]`). The shipped
-//! library exports it once the instance can serve every stage.
+//! The bundle API over the deepseek41 instance, which every stage of the
+//! native KV layout lowers for; the BF16 layout's create refuses until its
+//! writers land.
 
 use crate::instance::Instance;
 use bundle_runtime::entry;

@@ -62,11 +62,18 @@ pub enum Stage {
     EmbeddingReduce,
     /// The embedding copied into every stream.
     ExpandStreams,
+    /// Each RoPE table's cos and sin rows at the step's positions, which
+    /// the tail rotations read.
+    RopeRows,
+    /// Each row's window key list: its visible ring cells, oldest first.
+    /// Every layer's ring is addressed alike.
+    WindowKeys,
     /// The Engram rows the host hashed and gathered for the step's tokens,
     /// staged to the device and decoded to BF16 (`model.py:312-326`).
     EngramRows(u32),
-    /// The Engram gate per stream and its F32 add of the value into the
-    /// streams; image rows keep their streams (`model.py:350-366`).
+    /// The v2 Engram gate reads the projection's F32 keys and value, adds
+    /// into the BF16 streams in F32 and rounds once to BF16. Image rows
+    /// use the closed-gate expression (`model.py:350-366`).
     EngramGate(u32),
     /// The mean of the streams at the layer's attention input, retained for
     /// the DSpark drafter (`model.py:1265-1266`).
@@ -76,15 +83,23 @@ pub enum Stage {
     HcMix(u32, Sublayer),
     /// The sublayer's input RMSNorm of the collapsed row.
     InputNorm(u32, Sublayer),
+    /// The normed row quantized to E4M3 per 32 with a ceil UE8M0 scale,
+    /// the activation every FP8 and FP4 projection of the sublayer reads
+    /// (D10).
+    QuantizeInput(u32, Sublayer),
     /// One projection by projection ID.
     Project(u32, &'static str),
-    /// `q_norm` of the query-down output: the attention and the indexer
-    /// read it.
+    /// `q_norm` of the query-down output into F32: the attention and the
+    /// indexer read it.
     QueryNorm(u32),
-    /// `kv_norm` of the window key.
-    KvNorm(u32),
-    /// The step rows' window keys: the RoPE tail at each row's position,
-    /// then the E4M3 per-32 quant-dequant of the whole key.
+    /// The queries' RoPE tail in F32, rounded once into the BF16 attention
+    /// query.
+    QueryRope(u32),
+    /// The step rows' window keys: `kv_norm`, the RoPE tail at each row's
+    /// position, then the E4M3 per-32 quantization. A decode or verify
+    /// step writes them into the layer's ring, which has room for its
+    /// rows, before its queries read it; a prefill stages them after the
+    /// window before its chunk.
     WindowKv(u32),
     /// The KV source's compressor: each completed group's pooled latent
     /// (F32 softmax over the group at ratio 2) and its RMSNorm; an open
@@ -99,23 +114,20 @@ pub enum Stage {
     /// The index query: the RoPE tail at each row's position, MXFP4
     /// quant-dequant.
     IndexQuery(u32),
-    /// The candidate source's level-one selection: each query's best
-    /// candidate blocks of compressed positions, its newest block pinned
-    /// (`model.py:584-611`).
-    CandidateBlocks(u32),
     /// The index source's top-k compressed positions, in its candidate
-    /// blocks when it reindexes.
+    /// blocks when it reindexes. The candidate source also publishes each
+    /// query's best candidate blocks of compressed positions, its newest
+    /// block pinned (`model.py:584-611`), from the same scores.
     IndexSelect(u32),
     /// Latent attention over the window and the selected compressed
     /// positions, with the sink; the output's RoPE tail rotated back.
     LatentAttention(u32),
-    /// The step rows' window keys into the layer's ring, after every query
-    /// of the step read the cells before them.
+    /// A prefill's window keys written into the layer's ring after its
+    /// attention: each sequence's last ring cells' positions.
     WindowRingWrite(u32),
-    /// Router scores, the bias select per row (text or image), the top-k
-    /// and the normalized, scaled weights.
+    /// The router's scores, the per-row bias choice, the top-k weights and
+    /// the rank's local routes, padded to the experts' route tile.
     Route(u32),
-    LocalRoutes(u32),
     ExpertsGateUp(u32),
     ExpertsDown(u32),
     /// The shared expert's gate and up projections (column split).
@@ -150,20 +162,19 @@ impl Stage {
             | Self::DsparkFeature(layer)
             | Self::HcMix(layer, _)
             | Self::InputNorm(layer, _)
+            | Self::QuantizeInput(layer, _)
             | Self::Project(layer, _)
             | Self::QueryNorm(layer)
-            | Self::KvNorm(layer)
+            | Self::QueryRope(layer)
             | Self::WindowKv(layer)
             | Self::Compress(layer)
             | Self::IndexKeyWrite(layer)
             | Self::CompressedKvWrite(layer)
             | Self::IndexQuery(layer)
-            | Self::CandidateBlocks(layer)
             | Self::IndexSelect(layer)
             | Self::LatentAttention(layer)
             | Self::WindowRingWrite(layer)
             | Self::Route(layer)
-            | Self::LocalRoutes(layer)
             | Self::ExpertsGateUp(layer)
             | Self::ExpertsDown(layer)
             | Self::SharedGateUp(layer)
@@ -182,6 +193,7 @@ fn sublayer(stages: &mut Vec<Stage>, layer: u32, sublayer: Sublayer, body: Vec<S
     stages.extend([
         Stage::HcMix(layer, sublayer),
         Stage::InputNorm(layer, sublayer),
+        Stage::QuantizeInput(layer, sublayer),
     ]);
     stages.extend(body);
     stages.extend([
@@ -193,40 +205,28 @@ fn sublayer(stages: &mut Vec<Stage>, layer: u32, sublayer: Sublayer, body: Vec<S
 /// The KV source whose compressed KV and index keys `layer` reads: the
 /// latest at or before it (`SharedAttentionRuntime`, `model.py:1169-1183`).
 pub fn kv_source(g: &Geometry, layer: u32) -> Option<u32> {
-    g.shape
-        .csa
-        .kv_sources
-        .iter()
-        .rev()
-        .copied()
-        .find(|&source| source <= layer)
+    model_deepseek41_contract::indexer::sources(g, layer).map(|sources| sources.keys)
 }
 
 /// The index source whose selection `layer` attends over: the latest at or
 /// before it.
 pub fn index_source(g: &Geometry, layer: u32) -> Option<u32> {
-    g.shape
-        .csa
-        .index_sources
-        .iter()
-        .rev()
-        .copied()
-        .find(|&source| source <= layer)
+    model_deepseek41_contract::indexer::sources(g, layer).map(|sources| sources.selection)
 }
 
-/// The attention of `layer`. The indexer reads the latent before RoPE, so
-/// index keys are written before the compressed latents
+/// The attention of `layer` in `phase`. The indexer reads the latent
+/// before RoPE, so index keys are written before the compressed latents
 /// (`model.py:740-764`); both precede the selection that scores them and
 /// the attention that reads them.
-pub fn attention(g: &Geometry, layer: u32) -> Vec<Stage> {
+pub fn attention(g: &Geometry, layer: u32, phase: Phase) -> Vec<Stage> {
     use Stage::*;
     let l = layer;
     let mut stages = vec![
         Project(l, "attention.q-a"),
         QueryNorm(l),
         Project(l, "attention.q-b"),
+        QueryRope(l),
         Project(l, "attention.kv"),
-        KvNorm(l),
         WindowKv(l),
     ];
     let indexer = [
@@ -247,9 +247,6 @@ pub fn attention(g: &Geometry, layer: u32) -> Vec<Stage> {
                 CompressedKvWrite(l),
             ]);
             stages.extend(indexer);
-            if g.shape.candidates.source == l {
-                stages.push(CandidateBlocks(l));
-            }
             stages.push(IndexSelect(l));
         }
         LayerRole::Reindex => {
@@ -258,12 +255,11 @@ pub fn attention(g: &Geometry, layer: u32) -> Vec<Stage> {
         }
         LayerRole::Reuse | LayerRole::Window => {}
     }
-    stages.extend([
-        LatentAttention(l),
-        WindowRingWrite(l),
-        Project(l, "attention.o-a"),
-        Project(l, "attention.o-b"),
-    ]);
+    stages.push(LatentAttention(l));
+    if phase.prefill() {
+        stages.push(WindowRingWrite(l));
+    }
+    stages.extend([Project(l, "attention.o-a"), Project(l, "attention.o-b")]);
     stages
 }
 
@@ -274,7 +270,6 @@ pub fn moe(layer: u32) -> Vec<Stage> {
     vec![
         Project(layer, "moe.router"),
         Route(layer),
-        LocalRoutes(layer),
         ExpertsGateUp(layer),
         ExpertsDown(layer),
         SharedGateUp(layer),
@@ -290,6 +285,8 @@ pub fn stages(g: &Geometry, phase: Phase) -> Vec<Stage> {
         Stage::Embedding,
         Stage::EmbeddingReduce,
         Stage::ExpandStreams,
+        Stage::RopeRows,
+        Stage::WindowKeys,
     ];
     for l in 0..g.layers() {
         if g.is_engram_layer(l) {
@@ -302,7 +299,7 @@ pub fn stages(g: &Geometry, phase: Phase) -> Vec<Stage> {
         if g.shape.dspark.targets.contains(&l) {
             stages.push(Stage::DsparkFeature(l));
         }
-        sublayer(&mut stages, l, Sublayer::Attention, attention(g, l));
+        sublayer(&mut stages, l, Sublayer::Attention, attention(g, l, phase));
         sublayer(&mut stages, l, Sublayer::Mlp, moe(l));
     }
     stages.extend([Stage::HeadCollapse, Stage::FinalNorm]);
@@ -327,6 +324,30 @@ mod tests {
     }
 
     #[test]
+    fn engram_projection_feeds_the_gate_without_an_intermediate_round() {
+        for phase in [
+            Phase::Prefill { rows: 8 },
+            Phase::Decode(8),
+            Phase::Verify { rows: 8, items: 2 },
+        ] {
+            let stages = stages(&FLASH, phase);
+            for layer in FLASH.shape.engram.layers {
+                let at = stages
+                    .iter()
+                    .position(|s| *s == Stage::EngramGate(*layer))
+                    .unwrap();
+                assert_eq!(
+                    &stages[at - 2..at],
+                    &[
+                        Stage::EngramRows(*layer),
+                        Stage::Project(*layer, "engram.kv")
+                    ]
+                );
+            }
+        }
+    }
+
+    #[test]
     fn the_flash_program_follows_the_csa2_schedule() {
         let stages = stages(&FLASH, Phase::Decode(8));
         assert_eq!(
@@ -340,10 +361,6 @@ mod tests {
         assert_eq!(
             layers_of(&stages, |s| matches!(s, Stage::IndexSelect(_))),
             [2, 8, 14, 20, 24, 28, 32, 36]
-        );
-        assert_eq!(
-            layers_of(&stages, |s| matches!(s, Stage::CandidateBlocks(_))),
-            [20]
         );
         assert_eq!(
             layers_of(&stages, |s| matches!(
@@ -382,15 +399,18 @@ mod tests {
         // The index keys are written before the compressed latents, both
         // before the selection and the attention that read them.
         assert!(at(Stage::IndexKeyWrite(20)) < at(Stage::CompressedKvWrite(20)));
-        assert!(at(Stage::CompressedKvWrite(20)) < at(Stage::CandidateBlocks(20)));
-        assert!(at(Stage::CandidateBlocks(20)) < at(Stage::IndexSelect(20)));
+        assert!(at(Stage::CompressedKvWrite(20)) < at(Stage::IndexSelect(20)));
         assert!(at(Stage::IndexSelect(20)) < at(Stage::LatentAttention(20)));
-        assert!(at(Stage::LatentAttention(20)) < at(Stage::WindowRingWrite(20)));
+        // A decode step writes its window keys into the ring before its
+        // queries read them; a prefill writes the ring after its attention.
+        assert!(at(Stage::WindowKv(20)) < at(Stage::LatentAttention(20)));
+        assert!(!stages.contains(&Stage::WindowRingWrite(20)));
         assert_eq!(stages.last(), Some(&Stage::GatherLogits));
         assert!(!stages.contains(&Stage::GatherHeadRows));
-        assert!(
-            super::stages(&FLASH, Phase::Prefill { rows: 64 }).contains(&Stage::GatherHeadRows)
-        );
+        let prefill = super::stages(&FLASH, Phase::Prefill { rows: 64 });
+        assert!(prefill.contains(&Stage::GatherHeadRows));
+        let at = |stage: Stage| prefill.iter().position(|s| *s == stage).unwrap();
+        assert!(at(Stage::LatentAttention(20)) < at(Stage::WindowRingWrite(20)));
     }
 
     #[test]
@@ -409,12 +429,12 @@ mod tests {
                 .any(|s| matches!(s, Stage::Compress(_) | Stage::Project(_, "compressor.kv")))
         };
         for layer in [0, 1, 5, 23, 39] {
-            let stages = attention(&FLASH, layer);
+            let stages = attention(&FLASH, layer, Phase::Decode(1));
             assert!(!indexer(&stages), "{layer}");
             assert!(!compressor(&stages), "{layer}");
         }
-        assert!(indexer(&attention(&FLASH, 24)));
-        assert!(!compressor(&attention(&FLASH, 24)));
+        assert!(indexer(&attention(&FLASH, 24, Phase::Decode(1))));
+        assert!(!compressor(&attention(&FLASH, 24, Phase::Decode(1))));
         assert_eq!(
             [1, 2, 7, 19, 20, 39].map(|l| kv_source(&FLASH, l)),
             [None, Some(2), Some(2), Some(14), Some(20), Some(20)]

@@ -7,18 +7,37 @@
 //! the op's roles and calls `PreparedOp::launches`: no catalog search or
 //! entry choice happens per step. One file per family holds its ops.
 
+pub(crate) mod compressor;
+pub(crate) mod dense;
+pub(crate) mod engram;
 pub(crate) mod exact;
+pub(crate) mod exact_f32;
+mod hc;
+pub(crate) mod head;
+pub(crate) mod indexer;
+pub(crate) mod latent;
+pub(crate) mod logits;
+pub(crate) mod moe;
+mod reduce;
 mod rows;
+pub(crate) mod shared;
 
+pub(crate) use compressor::{PlaneViews, PoolingViews, WriteViews};
+pub(crate) use dense::GemmViews;
+pub(crate) use hc::{ExpandViews, HeadViews, MixViews};
+pub(crate) use reduce::{PeerViews, ReduceViews, WidenViews};
 pub(crate) use rows::{EmbeddingViews, NormViews, StreamViews, verify_rows};
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 
 use bundle_runtime::dispatch::BufferBindings;
 use bundle_runtime::pipeline::PreparedLaunch;
-use kernel_core::backend::{Counts, Launch, Need, Prepared, PreparedOp, Refused, View};
+use kernel_core::backend::{Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View};
 use kernel_core::contract::Refusal;
 use kernel_core::properties::Invariance;
+use model_deepseek41_contract::geometry::Geometry;
+use model_deepseek41_contract::state::KvStorage;
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
 use crate::Kernels;
@@ -32,10 +51,24 @@ pub(crate) const NAME: &str = "DeepSeek V4.1";
 /// the fake-host tests that run the lowered stages alone.
 pub struct Ops {
     pub(crate) rows: Option<rows::RowOps>,
+    pub(crate) reduce: Option<reduce::ReduceOps>,
+    pub(crate) hc: Option<hc::HcOps>,
+    pub(crate) moe: Option<moe::MoeOps>,
+    pub(crate) compressor: Option<compressor::CompressorOps>,
+    pub(crate) dense: Option<dense::DenseOps>,
+    pub(crate) shared: Option<shared::SharedOps>,
+    pub(crate) indexer: Option<indexer::IndexerOps>,
+    pub(crate) select: Option<indexer::SelectOps>,
+    pub(crate) glue: Option<latent::GlueOps>,
+    pub(crate) logits: Option<logits::LogitsOps>,
+    pub(crate) engram: Option<engram::EngramOps>,
+    pub(crate) head: Option<head::HeadOps>,
+    pub(crate) exact_f32: Option<exact_f32::ExactF32Ops>,
+    /// The attention of each compress ratio the kernels serve.
+    pub(crate) attention: Vec<latent::AttentionOps>,
     /// Each family the kernels refused, with the refusal.
     pub(crate) missing: Vec<String>,
     /// What each op asked at create and was granted, in prepare order.
-    #[cfg_attr(not(test), allow(dead_code, reason = "the asks journal reads them"))]
     pub(crate) asked: Vec<Asked>,
     /// The kernels' names: the shared contracts' backend and the model's
     /// own ops'.
@@ -43,28 +76,238 @@ pub struct Ops {
 }
 
 impl Ops {
-    /// Prepares every op of an instance of `shape` on `kernels`, recording
-    /// each family they refuse.
-    pub(crate) fn prepare(kernels: &Kernels, shape: &Shape) -> Ops {
+    /// Prepares every op of an instance of `shape` on `kernels` over KV
+    /// pages in `storage`, recording each family they refuse.
+    pub(crate) fn prepare(kernels: &Kernels, shape: &Shape, storage: KvStorage) -> Ops {
         let asks = Asks::default();
         let mut missing = Vec::new();
-        let backend = kernels.backend.name();
-        let mut family = |name: &str, prepared: Result<_, Refused>| match prepared {
-            Ok(ops) => Some(ops),
-            Err(refusal) => {
-                missing.push(format!("{backend} refuses {NAME}'s {name} ops: {refusal}"));
-                None
-            }
-        };
+        let names = [kernels.backend.name(), kernels.own.name()].join(" and ");
         let rows = family(
+            &mut missing,
+            &names,
             "row",
             rows::RowOps::prepare(kernels.backend.as_ref(), shape, &asks),
         );
+        let reduce = family(
+            &mut missing,
+            &names,
+            "all-reduce",
+            reduce::ReduceOps::prepare(
+                kernels.backend.as_ref(),
+                kernels.own.as_ref(),
+                shape,
+                &asks,
+            ),
+        );
+        let hc = family(
+            &mut missing,
+            &names,
+            "hyper-connection",
+            hc::HcOps::prepare(kernels.backend.as_ref(), shape, &asks),
+        );
+        let moe = family(
+            &mut missing,
+            &names,
+            "routed MoE",
+            moe::MoeOps::prepare(kernels.backend.as_ref(), shape, &asks),
+        );
+        let compressor = family(
+            &mut missing,
+            &names,
+            "compressor",
+            compressor::CompressorOps::prepare(
+                kernels.backend.as_ref(),
+                kernels.own.as_ref(),
+                shape,
+                storage,
+                &asks,
+            ),
+        );
+        let dense = family(
+            &mut missing,
+            &names,
+            "dense projection",
+            dense::DenseOps::prepare(kernels.backend.as_ref(), shape, &asks),
+        );
+        let shared = family(
+            &mut missing,
+            &names,
+            "shared expert",
+            shared::SharedOps::prepare(kernels.backend.as_ref(), shape, &asks),
+        );
+        let indexer = family(
+            &mut missing,
+            &names,
+            "indexer",
+            indexer::IndexerOps::prepare(kernels.backend.as_ref(), shape, &asks),
+        );
+        let select = family(
+            &mut missing,
+            &names,
+            "index selection",
+            indexer::SelectOps::prepare(kernels.backend.as_ref(), shape, &asks),
+        );
+        let glue = family(
+            &mut missing,
+            &names,
+            "latent glue",
+            latent::GlueOps::prepare(kernels.backend.as_ref(), kernels.own.as_ref(), shape, &asks),
+        );
+        let logits = family(
+            &mut missing,
+            &names,
+            "logits",
+            logits::LogitsOps::prepare(
+                kernels.backend.as_ref(),
+                kernels.gather_state,
+                shape,
+                &asks,
+            ),
+        );
+        let engram = family(
+            &mut missing,
+            &names,
+            "Engram",
+            engram::EngramOps::prepare(
+                kernels.backend.as_ref(),
+                kernels.own.as_ref(),
+                shape,
+                &asks,
+            ),
+        );
+        let head = family(
+            &mut missing,
+            &names,
+            "LM head",
+            head::HeadOps::prepare(kernels.backend.as_ref(), shape, &asks),
+        );
+        let exact_f32 = family(
+            &mut missing,
+            &names,
+            "exact F32 projection",
+            exact_f32::ExactF32Ops::prepare(
+                kernels.backend.as_ref(),
+                kernels.own.as_ref(),
+                shape,
+                &asks,
+            ),
+        );
+        let mut ratios: Vec<u32> = shape.geometry.shape.compress_ratios.to_vec();
+        ratios.sort_unstable();
+        ratios.dedup();
+        let attention = ratios
+            .into_iter()
+            .filter_map(|ratio| {
+                family(
+                    &mut missing,
+                    &names,
+                    &format!("ratio-{ratio} latent attention"),
+                    latent::AttentionOps::prepare(
+                        kernels.backend.as_ref(),
+                        shape,
+                        ratio,
+                        storage,
+                        &asks,
+                    ),
+                )
+            })
+            .collect();
+        // Named refusals of what no contract serves yet.
+        if storage == KvStorage::Bf16 {
+            missing.push(format!(
+                "{NAME}'s bf16 KV layout has no BF16 window-ring writer or staging, BF16 \
+                 index-key writer or BF16 indexer read before M1"
+            ));
+        }
         Ops {
             rows,
+            reduce,
+            hc,
+            moe,
+            compressor,
+            dense,
+            shared,
+            indexer,
+            select,
+            glue,
+            logits,
+            engram,
+            head,
+            exact_f32,
+            attention,
             missing,
             asked: asks.asked(),
-            backends: [backend.to_owned(), kernels.own.name().to_owned()],
+            backends: [
+                kernels.backend.name().to_owned(),
+                kernels.own.name().to_owned(),
+            ],
+        }
+    }
+}
+
+impl Ops {
+    /// The backend workspace every rank holds: the most any op takes.
+    pub(crate) fn workspace(&self) -> u64 {
+        self.asked
+            .iter()
+            .map(|asked| asked.workspace)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Refuses a rank index that stores a weight view an exact F32
+    /// projection or the head reads in another layout than its op reads:
+    /// such a view binds and runs, but on scrambled weights.
+    pub(crate) fn check_weight_layouts(
+        &self,
+        g: &Geometry,
+        index: &bundle_runtime::index::RankIndex,
+    ) -> Result<(), String> {
+        let mut expected = match &self.exact_f32 {
+            Some(ops) => ops.weight_layouts(g)?,
+            None => Vec::new(),
+        };
+        if let Some(head) = &self.head {
+            expected.push(("head.weight".to_owned(), head.weight_layout()?));
+        }
+        for (name, layout) in expected {
+            if let Some(view) = index.views.get(&name)
+                && view.layout_id != layout
+            {
+                return Err(format!(
+                    "{name} is stored as {}, but its op reads {layout}",
+                    view.layout_id
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// The dynamic shared memory each entry an op launches takes: the most
+    /// any op states for it. Load configures every entry above the default
+    /// (`acquire::load_module`); an entry no op launches takes none.
+    pub(crate) fn shared_bytes(&self) -> BTreeMap<String, u32> {
+        let mut bytes = BTreeMap::new();
+        for (symbol, shared) in self.asked.iter().flat_map(|asked| &asked.symbols) {
+            let most = bytes.entry(symbol.clone()).or_insert(0);
+            *most = (*most).max(*shared);
+        }
+        bytes
+    }
+}
+
+/// A family's ops, or `None` with the refusal recorded in `missing`.
+fn family<T>(
+    missing: &mut Vec<String>,
+    kernels: &str,
+    name: &str,
+    prepared: Result<T, Refused>,
+) -> Option<T> {
+    match prepared {
+        Ok(ops) => Some(ops),
+        Err(refusal) => {
+            missing.push(format!("{kernels} refuse {NAME}'s {name} ops: {refusal}"));
+            None
         }
     }
 }
@@ -99,15 +342,21 @@ mod tests {
         let kernels = Kernels {
             backend: Box::new(Nothing),
             own: Box::new(Nothing),
+            gather_state: [0; 2],
         };
-        let ops = Ops::prepare(&kernels, &shape);
-        assert!(ops.rows.is_none());
+        let ops = Ops::prepare(&kernels, &shape, KvStorage::Native);
+        assert!(ops.rows.is_none() && ops.reduce.is_none() && ops.hc.is_none());
+        assert!(ops.moe.is_none() && ops.compressor.is_none() && ops.dense.is_none());
         assert!(ops.asked.is_empty());
         assert_eq!(ops.backends, ["nothing", "nothing own"]);
         assert!(
-            ops.missing[0].starts_with("nothing refuses DeepSeek V4.1's row ops"),
+            ops.missing[0].starts_with("nothing and nothing own refuse DeepSeek V4.1's row ops"),
             "{:?}",
             ops.missing
+        );
+        assert!(
+            ops.missing[1]
+                .starts_with("nothing and nothing own refuse DeepSeek V4.1's all-reduce ops")
         );
     }
 }
@@ -123,8 +372,11 @@ pub(crate) struct Asked {
     pub granted: Invariance,
     /// The backend's versioned implementation (`OpInfo::implementation`).
     pub implementation: String,
-    /// The entries its launches name.
-    pub symbols: Vec<String>,
+    /// The entries its launches name, each with the dynamic shared memory
+    /// the host configures it for at load (`OpInfo::symbols`).
+    pub symbols: Vec<(String, u32)>,
+    /// The backend workspace its launches take (`OpInfo::workspace`).
+    pub workspace: u64,
 }
 
 /// The asks of one create, recorded as each op prepares.
@@ -145,15 +397,21 @@ impl Asks {
         prepare: impl FnOnce(Need) -> Result<Prepared<B>, Refused>,
     ) -> Result<Prepared<B>, Refused> {
         let prepared = prepare(need)?;
-        let info = prepared.info();
+        self.record(what, need, prepared.info());
+        Ok(prepared)
+    }
+
+    /// Records the ask `what` of an op prepared for `need`, which `info`
+    /// describes.
+    pub(crate) fn record(&self, what: impl Into<String>, need: Need, info: &OpInfo) {
         self.0.borrow_mut().push(Asked {
             what: what.into(),
             need,
             granted: info.guarantees,
             implementation: info.implementation.clone(),
-            symbols: info.symbols.iter().map(|(s, _)| s.clone()).collect(),
+            symbols: info.symbols.clone(),
+            workspace: info.workspace,
         });
-        Ok(prepared)
     }
 }
 
@@ -177,27 +435,57 @@ impl Bind {
     }
 
     /// `op`'s launches over `buffers` as the pipeline's launches, every one
-    /// with these bindings and the facts the op states of it. DeepSeek binds
-    /// no backend workspace.
+    /// with these bindings and the facts the op states of it, for an op
+    /// that takes no backend workspace.
     pub(crate) fn launch<B>(
         self,
         op: &Prepared<B>,
         buffers: &B,
         counts: Counts,
     ) -> Result<Vec<Lowered>, Refusal> {
-        self.lowered_op(op.as_ref(), buffers, counts)
+        self.lowered_op(op.as_ref(), buffers, None, counts)
+    }
+
+    /// `op`'s launches over `buffers`, its backend workspace, if it takes
+    /// one, bound to `workspace`: the rank's region every op's workspace
+    /// fits (`Ops::workspace`).
+    pub(crate) fn launch_within<B>(
+        self,
+        op: &Prepared<B>,
+        buffers: &B,
+        workspace: DeviceBufferSpanV1,
+        counts: Counts,
+    ) -> Result<Vec<Lowered>, Refusal> {
+        self.lowered_op(op.as_ref(), buffers, Some(workspace), counts)
+    }
+
+    /// An expert projection's launches, its backend workspace bound to
+    /// `workspace`, the rank's region every op's workspace fits
+    /// (`Ops::workspace`).
+    pub(crate) fn launch_experts(
+        self,
+        op: &dyn kernel_core::moe_experts::PreparedExperts,
+        buffers: &kernel_core::moe_experts::GatedMlpBuffers<View>,
+        workspace: DeviceBufferSpanV1,
+        counts: Counts,
+    ) -> Result<Vec<Lowered>, Refusal> {
+        self.lowered_op(op, buffers, Some(workspace), counts)
     }
 
     fn lowered_op<B>(
-        self,
+        mut self,
         op: &dyn PreparedOp<B>,
         buffers: &B,
+        workspace: Option<DeviceBufferSpanV1>,
         counts: Counts,
     ) -> Result<Vec<Lowered>, Refusal> {
-        if op.info().workspace != 0 {
-            return Err(Refusal("DeepSeek V4.1 binds no backend workspace"));
-        }
-        let launches = op.launches(buffers, View::EMPTY, counts)?;
+        let bytes = op.info().workspace;
+        let workspace = match (bytes, workspace) {
+            (0, _) => View::EMPTY,
+            (_, Some(span)) if span.length >= bytes => self.view(span),
+            _ => return Err(Refusal("DeepSeek V4.1 binds no workspace this large")),
+        };
+        let launches = op.launches(buffers, workspace, counts)?;
         Ok(launches
             .into_iter()
             .map(|launch| self.lowered(launch))

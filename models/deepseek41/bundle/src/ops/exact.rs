@@ -36,6 +36,17 @@ impl From<Phase> for Kind {
     }
 }
 
+impl From<kernel_core::precision::ExecutionPhase> for Kind {
+    fn from(phase: kernel_core::precision::ExecutionPhase) -> Kind {
+        use kernel_core::precision::ExecutionPhase;
+        match phase {
+            ExecutionPhase::Prefill => Kind::Prefill,
+            ExecutionPhase::Decode => Kind::Decode,
+            ExecutionPhase::Verify => Kind::Verify,
+        }
+    }
+}
+
 /// What a prefill op needs: its rows kept over chunk splits on the
 /// granule.
 pub(crate) const PREFILL: Invariance = Invariance {
@@ -61,7 +72,6 @@ pub(crate) const fn every_phase(rows: u32) -> Invariance {
 }
 
 /// What an op of `phase`'s kind needs, prepared for `capacity` rows.
-#[allow(dead_code, reason = "the per-phase families ask it")]
 pub(crate) fn of_phase(phase: impl Into<Kind>, capacity: u32) -> Invariance {
     match phase.into() {
         Kind::Prefill => PREFILL,

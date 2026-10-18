@@ -2478,9 +2478,37 @@ fn modality_emits_v1(
     }
 }
 
-/// Refuses prepared media items that no modality of their encoder emits:
-/// a geometry preparing a part cannot produce never reaches the engine,
-/// however the item was prepared.
+/// Row count preparing a part with this geometry produces, including any
+/// delimiters. Geometry validity is checked separately by `modality_emits_v1`.
+fn modality_output_rows_v1(
+    modality: &runtime_frontend::FrontendMediaModalityV1,
+    geometry: [u32; 4],
+) -> Option<u64> {
+    use runtime_frontend::FrontendMediaKindV1;
+    let parameters = &modality.recipe.parameters;
+    let [t, h, w, _] = geometry;
+    match modality.kind {
+        FrontendMediaKindV1::Image => {
+            let recipe = declared_image_recipe_v1(&modality.recipe).ok()?;
+            image_span_rows_v1(modality, recipe_merge_v1(recipe), [t, h, w])
+        }
+        FrontendMediaKindV1::Video => {
+            let recipe = image_recipe_v1(parameters.get("image")?).ok()?;
+            let rows =
+                u64::from(h.checked_div(recipe.merge)?) * u64::from(w.checked_div(recipe.merge)?);
+            u64::from(t).checked_mul(rows)
+        }
+        FrontendMediaKindV1::Audio => {
+            let recipe = audio_recipe_v1(parameters).ok()?;
+            runtime_media::audio::strided_group_tokens(t as usize, recipe)
+                .ok()
+                .map(|rows| rows as u64)
+        }
+    }
+}
+
+/// Refuses prepared media whose geometry or row count its encoder's
+/// modalities cannot produce, before it reaches the engine.
 fn admit_prepared_media_v1(
     declared: Option<&FrontendMultimodalV1>,
     media: &[MediaInputV1],
@@ -2496,12 +2524,17 @@ fn admit_prepared_media_v1(
             .modalities
             .iter()
             .filter(|modality| modality.encoder == input.encoder)
-            .any(|modality| modality_emits_v1(modality, input.geometry));
+            .any(|modality| {
+                modality_emits_v1(modality, input.geometry)
+                    && input.output_rows <= modality.maximum_tokens
+                    && modality_output_rows_v1(modality, input.geometry)
+                        == Some(u64::from(input.output_rows))
+            });
         if !admitted {
             return Err(AdmissionError::Rejected(format!(
-                "media item {index}: geometry {:?} for encoder {} is not one its media \
+                "media item {index}: geometry {:?} with {} output rows for encoder {} is not one its media \
                  recipes produce",
-                input.geometry, input.encoder
+                input.geometry, input.output_rows, input.encoder
             )));
         }
     }
@@ -2629,31 +2662,7 @@ fn validate_centered_pad_outputs_v1(
     recipe: runtime_media::recipe::CenteredPadRecipe,
 ) -> Result<(), String> {
     runtime_media::recipe::check_centered_pad_recipe(recipe).map_err(|error| error.to_string())?;
-    if modality.layout != Some(runtime_frontend::FrontendMediaLayoutV1::LearnedDelimitersV1) {
-        return Err(
-            "the token budget counts learned delimiter rows: the modality must declare the \
-             learned-delimiters.v1 layout"
-                .to_owned(),
-        );
-    }
-    if recipe.maximum_tokens > u64::from(modality.maximum_tokens) {
-        return Err(format!(
-            "maximum_tokens {} exceeds the modality's {} tokens",
-            recipe.maximum_tokens, modality.maximum_tokens
-        ));
-    }
-    // `check_centered_pad_recipe` bounds a cell's side by `u32::MAX` over
-    // the budget, so the product stays within u128.
-    let cell = u128::from(recipe.patch) * u128::from(recipe.downsample);
-    let canvas = u128::from(recipe.maximum_tokens - 3) * cell * cell;
-    let limits = part_limits_v1(modality);
-    if canvas > u128::from(limits.maximum_pixels) {
-        return Err(format!(
-            "a canvas of up to {canvas} pixels exceeds the host's {} decoded pixels",
-            limits.maximum_pixels
-        ));
-    }
-    Ok(())
+    modality.validate_centered_pad_v1()
 }
 
 /// Refuses token-budget parameters it does not read, a missing or unknown
@@ -2722,13 +2731,7 @@ fn validate_media_recipe_v1(
             return validate_image_fixed_parameters_v1(parameters);
         }
         TOKEN_BUDGET_TAG_V1 => return validate_token_budget_parameters_v1(parameters),
-        CENTERED_PAD_TAG_V1 => {
-            return validate_padded_parameters_v1(
-                CENTERED_PAD_TAG_V1,
-                &CENTERED_PAD_PARAMETERS_V1,
-                parameters,
-            );
-        }
+        CENTERED_PAD_TAG_V1 => return recipe.validate_centered_pad_v1(),
         _ => return Ok(()),
     };
     for (key, expected) in supported.as_object().expect("object literal") {
@@ -2882,7 +2885,7 @@ fn video_admission_error_v1(error: crate::video::VideoErrorV1) -> AdmissionError
 /// `MAX_IMAGE_PIXELS` (warning above it); this is `MAX_IMAGE_PIXELS`, which
 /// bounds a decode at 256 MiB of RGB. The JPEG decoder keeps its own lower
 /// hard limit.
-const MAXIMUM_DECODED_IMAGE_PIXELS_V1: u64 = 89_478_485;
+const MAXIMUM_DECODED_IMAGE_PIXELS_V1: u64 = runtime_frontend::MAXIMUM_DECODED_IMAGE_PIXELS_V1;
 
 /// Largest decoded video frame, the JPEG decoder's hard limit.
 const MAXIMUM_DECODED_FRAME_PIXELS_V1: u64 = 1 << 24;
@@ -3070,21 +3073,6 @@ const TOKEN_BUDGET_PARAMETERS_V1: [&str; 10] = [
 /// canvas within a delimited token budget and centered on a constant color
 /// (`runtime_media::recipe::centered_pad_grid`).
 pub const CENTERED_PAD_TAG_V1: &str = "image.centered-pad.v1";
-
-/// Every parameter [`CENTERED_PAD_TAG_V1`] reads, `maximum_aspect_ratio`
-/// through the part limits.
-const CENTERED_PAD_PARAMETERS_V1: [&str; 10] = [
-    "alpha_background",
-    "patch",
-    "downsample",
-    "minimum_pixels",
-    "maximum_tokens",
-    "pad",
-    "value_divisor",
-    "mean",
-    "std",
-    "maximum_aspect_ratio",
-];
 
 /// An image modality's recipe, by its tag. The patch grid composites
 /// transparency onto white; the padded recipes handle it as declared.
@@ -4856,11 +4844,19 @@ mod tests {
             ]
         }))
         .unwrap();
-        let input = |encoder, geometry| MediaInputV1 {
+        let input = |encoder, geometry: [u32; 4]| MediaInputV1 {
             key: [0; 32],
             encoder,
             geometry,
-            output_rows: 1,
+            output_rows: if encoder == 1 {
+                runtime_media::audio::strided_group_tokens(
+                    geometry[0] as usize,
+                    audio_recipe_v1(&declared.modalities[2].recipe.parameters).unwrap(),
+                )
+                .unwrap() as u32
+            } else {
+                geometry[0] * (geometry[1] / 2) * (geometry[2] / 2)
+            },
             payload: vec![0_u8; 4].into(),
         };
         let admits = |encoder, geometry| {
@@ -4971,7 +4967,7 @@ mod tests {
         let media = [input(0, [1, 32, 32, 0]), input(0, [2, 2, 2, 0])];
         assert_eq!(
             refusal(Some(&declared), &media),
-            "media item 1: geometry [2, 2, 2, 0] for encoder 0 is not one its media recipes \
+            "media item 1: geometry [2, 2, 2, 0] with 2 output rows for encoder 0 is not one its media recipes \
              produce"
         );
         assert_eq!(
@@ -5176,6 +5172,143 @@ mod tests {
             let error = validate_multimodal_recipes_v1(&media).unwrap_err();
             assert!(error.contains(message), "{error}");
         }
+    }
+
+    #[test]
+    fn centered_pad_prepared_rows_must_match_the_delimited_span() {
+        let mut declared: FrontendMultimodalV1 = serde_json::from_value(serde_json::json!({
+            "arena": {"rows": 1024, "page_rows": 64, "hidden": 8, "element": "bf16"},
+            "encoders": [],
+            "modalities": [{
+                "kind": "image", "part_types": ["image_url"], "maximum_items": 1,
+                "maximum_bytes": 1 << 20, "maximum_tokens": 1024, "encoder": 0,
+                "recipe": {"tag": CENTERED_PAD_TAG_V1, "parameters": {
+                    "patch": 14, "downsample": 3, "minimum_pixels": 295936, "maximum_tokens": 1024,
+                    "pad": [127, 127, 127], "value_divisor": 255.0,
+                    "mean": [0.5, 0.5, 0.5], "std": [0.5, 0.5, 0.5], "alpha_background": "none"
+                }},
+                "layout": "learned-delimiters.v1", "render": {"pad": "<image>"}
+            }]
+        }))
+        .unwrap();
+        validate_multimodal_recipes_v1(&declared).unwrap();
+        let mut input = MediaInputV1 {
+            key: [0; 32],
+            encoder: 0,
+            geometry: [1, 39, 39, 0],
+            output_rows: 184,
+            payload: vec![0_u8; 39 * 39 * 588 * 2].into(),
+        };
+        assert_eq!(
+            image_span_rows_v1(&declared.modalities[0], 3, [1, 39, 39]),
+            Some(184)
+        );
+        admit_prepared_media_v1(Some(&declared), &[input.clone()]).unwrap();
+        for rows in [1025, 185, 183, 0] {
+            input.output_rows = rows;
+            assert!(
+                admit_prepared_media_v1(Some(&declared), &[input.clone()]).is_err(),
+                "{rows}"
+            );
+        }
+        input.output_rows = 184;
+        declared.modalities[0].maximum_tokens = 183;
+        assert!(admit_prepared_media_v1(Some(&declared), &[input]).is_err());
+    }
+
+    #[test]
+    fn centered_pad_reserves_cmyk_decode_storage_before_decoding() {
+        let source = runtime_media::MediaSource {
+            mime: "image/jpeg".into(),
+            bytes: include_bytes!(
+                "../../runtime-media/tests/fixtures/centered-pad-jpeg-cmyk-256x256.jpg"
+            )
+            .to_vec(),
+        };
+        let recipe = runtime_media::recipe::CenteredPadRecipe {
+            patch: 1,
+            downsample: 1,
+            minimum_pixels: 0,
+            maximum_tokens: 4,
+            pad: [127; 3],
+            value_divisor: 255.0,
+            mean: [0.5; 3],
+            std: [0.5; 3],
+        };
+        let limits = runtime_media::MediaLimits {
+            maximum_bytes: 1 << 20,
+            maximum_pixels: 1 << 24,
+            maximum_audio_frames: 0,
+            maximum_frames: 1,
+            maximum_tokens: 4,
+            maximum_aspect_ratio: 200.0,
+        };
+        let wrapped = ImageRecipeV1::CenteredPad(recipe, runtime_media::Alpha::Discard);
+        // The previous 1,273,686-byte preparation bound plus this source
+        // fits, but the actual decoder buffers alone need 1,507,328 bytes.
+        let pool = Arc::new(MediaMemoryV1::new(1_500_000));
+        let mut memory = RequestMediaMemoryV1::new(Arc::clone(&pool), u64::MAX);
+        assert!(matches!(
+            prepare_image_v1(&source, wrapped, limits, &mut memory),
+            Err(AdmissionError::Unavailable(_))
+        ));
+        let pool = Arc::new(MediaMemoryV1::new(2_000_000));
+        let mut memory = RequestMediaMemoryV1::new(pool, u64::MAX);
+        let (grid, reserved) = prepare_image_v1(&source, wrapped, limits, &mut memory).unwrap();
+        assert_eq!(grid.grid, [1, 1, 1]);
+        assert!(reserved >= 1_507_328 + source.bytes.len() as u64);
+    }
+
+    #[test]
+    fn centered_pad_refuses_16_bit_png_before_preparation() {
+        // A complete 1 x 1, 16-bit RGB PNG. This recipe has no matching
+        // 16-bit decode path and must not silently truncate the samples.
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        let mut header = png_header(1, 1);
+        header[8] = 16;
+        png_chunk(b"IHDR", &header, &mut bytes);
+        png_chunk(
+            b"IDAT",
+            &[
+                0x78, 0x01, 1, 7, 0, 0xf8, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 7, 0, 1,
+            ],
+            &mut bytes,
+        );
+        png_chunk(b"IEND", &[], &mut bytes);
+        let source = runtime_media::MediaSource {
+            mime: "image/png".into(),
+            bytes,
+        };
+        let recipe = runtime_media::recipe::CenteredPadRecipe {
+            patch: 14,
+            downsample: 3,
+            minimum_pixels: 295936,
+            maximum_tokens: 1024,
+            pad: [127; 3],
+            value_divisor: 255.0,
+            mean: [0.5; 3],
+            std: [0.5; 3],
+        };
+        let limits = runtime_media::MediaLimits {
+            maximum_bytes: 1 << 20,
+            maximum_pixels: 1 << 24,
+            maximum_audio_frames: 0,
+            maximum_frames: 1,
+            maximum_tokens: 1024,
+            maximum_aspect_ratio: 200.0,
+        };
+        let mut memory = RequestMediaMemoryV1::new(Arc::new(MediaMemoryV1::new(0)), u64::MAX);
+        let error = prepare_image_v1(
+            &source,
+            ImageRecipeV1::CenteredPad(recipe, runtime_media::Alpha::Discard),
+            limits,
+            &mut memory,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, AdmissionError::Rejected(ref message) if message == "unsupported PNG IHDR"),
+            "{error:?}"
+        );
     }
 
     /// The centered-pad recipe prepares a part as runtime-media centers it,

@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdint.h>
 #include "../common/convert.cuh"
+#include "../common/mxfp4.cuh"
 #include "../common/ptx.cuh"
 #include "swiglu_clamp.cuh"
 
@@ -47,6 +48,7 @@ enum class Weights : int {
   nvfp4 = 1,         // E2M1 pairs [rows, K / 2] (even K low), UE4M3 [rows, K / 16], F32 globals
   mxfp8 = 2,         // E4M3 [rows, K], UE8M0 [rows, K / 32]
   bf16 = 3,          // BF16 [rows, K]
+  mxfp4 = 4,         // E2M1 pairs [rows, K / 2], UE8M0 [rows, K / 32]
 };
 
 enum class Projection : int { gate_up = 0, down = 1 };
@@ -67,6 +69,8 @@ struct Config {
   static constexpr int top_k = TopK;
   static constexpr int n = N;
   static constexpr int k = K;
+  static constexpr int loop_k = K;
+  static constexpr bool quantized_before_down = false;
   static constexpr int row_tile = RowTile;
   static constexpr bool grouped = Grouped;
   using clamp = Clamp;
@@ -161,6 +165,13 @@ __device__ __forceinline__ void load_weights(
     const uint8_t* local_scales, const float* globals, int expert, int n0, int step) {
   constexpr int K = C::k;
   const int k0 = step * kStepK;
+  if constexpr (C::loop_k != K) {
+    if (k0 >= K) {
+      for (int i = threadIdx.x; i < C::tile_rows * kStepK; i += kThreads)
+        tile[i / kStepK][i % kStepK] = 0;
+      return;
+    }
+  }
   if constexpr (C::weights == Weights::bf16) {
     // 128 bytes per row: eight 16-byte chunks.
 #pragma unroll
@@ -171,6 +182,24 @@ __device__ __forceinline__ void load_weights(
       const uint4 v = *reinterpret_cast<const uint4*>(
           weight + (global * K + k0 + part * 8) * 2);
       *reinterpret_cast<uint4*>(&tile[row][part * 8]) = v;
+    }
+  } else if constexpr (C::weights == Weights::mxfp4) {
+#pragma unroll
+    for (int i = 0; i < C::tile_rows * 4 / kThreads; ++i) {
+      const int chunk = threadIdx.x + i * kThreads;
+      const int row = chunk >> 2, part = chunk & 3;
+      const uint64_t global = uint64_t(expert) * C::weight_rows + weight_row<C>(n0, row);
+      const uint2 codes = *reinterpret_cast<const uint2*>(
+          weight + global * (K / 2) + (k0 + part * 16) / 2);
+      const uint8_t scale = local_scales[global * (K / 32) + (k0 + part * 16) / 32];
+      uint32_t out[8];
+#pragma unroll
+      for (int b = 0; b < 8; ++b) {
+        const uint32_t word = b < 4 ? codes.x : codes.y;
+        out[b] = convert::scaled_mxfp4_bf16x2(uint8_t(word >> (8 * (b & 3))), scale);
+      }
+      *reinterpret_cast<uint4*>(&tile[row][part * 16]) = make_uint4(out[0], out[1], out[2], out[3]);
+      *reinterpret_cast<uint4*>(&tile[row][part * 16 + 8]) = make_uint4(out[4], out[5], out[6], out[7]);
     }
   } else if constexpr (C::weights == Weights::nvfp4) {
     // 32 bytes per row: four 8-byte chunks of 16 values, one UE4M3 each.
@@ -240,17 +269,49 @@ __device__ __forceinline__ const uint16_t* input_row(const uint16_t* input, int 
 
 template<class C>
 __device__ __forceinline__ void load_rows(
-    uint16_t (*tile)[kStride], const uint16_t* input, const int32_t* rows, int step) {
+    uint16_t (*tile)[kStride], const uint16_t* input, const int32_t* rows, int step,
+    const uint8_t* activation_scales = nullptr) {
 #pragma unroll
   for (int i = 0; i < C::row_tile * 8 / kThreads; ++i) {
     const int chunk = threadIdx.x + i * kThreads;
     const int slot = chunk >> 3, part = chunk & 7;
     const int route = rows[slot];
     uint4 v = make_uint4(0, 0, 0, 0);
-    if (route >= 0)
-      v = *reinterpret_cast<const uint4*>(input_row<C>(input, route) + step * kStepK + part * 8);
+    if constexpr (C::quantized_before_down) {
+      const int k = step * kStepK + part * 8;
+      if (route >= 0 && k < C::k) {
+        const int source = C::gate_up ? route / C::top_k : route;
+        const uint8_t* codes = reinterpret_cast<const uint8_t*>(input) + uint64_t(source) * C::k + k;
+        const uint8_t scale = activation_scales[uint64_t(source) * (C::k / 32) + k / 32];
+        uint32_t out[4];
+#pragma unroll
+        for (int p = 0; p < 4; ++p) {
+          const uint16_t pair = *reinterpret_cast<const uint16_t*>(codes + p * 2);
+          if ((pair & 0x7f) == 0x7f || ((pair >> 8) & 0x7f) == 0x7f) __trap();
+          out[p] = scaled_e4m3x2(pair, scale);
+        }
+        v = make_uint4(out[0], out[1], out[2], out[3]);
+      }
+    } else {
+      if (route >= 0)
+        v = *reinterpret_cast<const uint4*>(input_row<C>(input, route) + step * kStepK + part * 8);
+    }
     *reinterpret_cast<uint4*>(&tile[slot][part * 8]) = v;
   }
+}
+
+// The quantized gate/up uses the executed F32 SiLU and two separate F32
+// products, then BF16 before amax. The legacy epilogue retains its tail.
+template<class Clamp>
+__device__ __forceinline__ float before_down(float gate, float up, float weight) {
+  if constexpr (Clamp::enabled) {
+    const float limit_g = __uint_as_float(Clamp::gate_max_bits);
+    const float limit_u = __uint_as_float(Clamp::up_limit_bits);
+    gate = gate > limit_g ? limit_g : gate;
+    up = up > limit_u ? limit_u : (up < -limit_u ? -limit_u : up);
+  }
+  const float silu = gate / __fadd_rn(1.f, expf(-gate));
+  return __fmul_rn(weight, __fmul_rn(silu, up));
 }
 
 // One projection. Unused pointers of a format or mode may be null:
@@ -263,7 +324,7 @@ __device__ void run(
     const uint16_t* input, const uint8_t* weight, const float* block_scales,
     const uint8_t* local_scales, const float* globals, const int32_t* offsets,
     const int32_t* sorted_rows, const int32_t* num_padded_rows, const int32_t* live_tokens,
-    const float* route_weights, void* output) {
+    const float* route_weights, void* output, const uint8_t* activation_scales = nullptr) {
   constexpr int RT = C::row_tile;
   constexpr int Halves = C::halves;
   constexpr int Fragments = RT / 8;
@@ -292,6 +353,12 @@ __device__ void run(
     for (int i = threadIdx.x; i < RT; i += kThreads) rows[i] = row0 + i < live ? row0 + i : -1;
   }
   __syncthreads();
+  if constexpr (C::quantized_before_down) {
+    const int live = *live_tokens;
+    if (live < 0 || live > C::tokens_capacity) __trap();
+    for (int i = threadIdx.x; i < RT; i += kThreads)
+      if (rows[i] >= live * C::top_k) __trap();
+  }
   const int expert = tile_expert;
   const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5;
   const int g = lane >> 2, t = lane & 3;
@@ -305,10 +372,10 @@ __device__ void run(
       for (int i = 0; i < 4; ++i) chain[h][f].v[i] = sum[h][f].v[i] = 0.f;
 
 #pragma unroll 1
-  for (int step = 0; step < C::k / kStepK; ++step) {
+  for (int step = 0; step < C::loop_k / kStepK; ++step) {
     __syncthreads();
     load_weights<C>(weights_tile, weight, block_scales, local_scales, globals, expert, n0, step);
-    load_rows<C>(rows_tile, input, rows, step);
+    load_rows<C>(rows_tile, input, rows, step, activation_scales);
     __syncthreads();
 #pragma unroll
     for (int kk = 0; kk < kStepK / 16; ++kk) {
@@ -373,11 +440,17 @@ __device__ void run(
       if (route < 0) continue;
       const uint64_t at = uint64_t(route) * C::n + n0 + warp * 16 + g + (i >= 2 ? 8 : 0);
       if constexpr (C::gate_up) {
-        const float value =
-            clamp::clamped_swiglu<typename C::clamp>(sum[0][f].v[i], sum[Halves - 1][f].v[i]);
+        float value;
+        if constexpr (C::quantized_before_down) {
+          value = before_down<typename C::clamp>(
+              sum[0][f].v[i], sum[Halves - 1][f].v[i], route_weights[route]);
+        } else {
+          value = clamp::clamped_swiglu<typename C::clamp>(sum[0][f].v[i], sum[Halves - 1][f].v[i]);
+        }
         static_cast<uint16_t*>(output)[at] = convert::bf16_from_f32(value);
       } else if constexpr (C::grouped) {
-        static_cast<float*>(output)[at] = __fmul_rn(sum[0][f].v[i], route_weights[route]);
+        if constexpr (C::quantized_before_down) static_cast<float*>(output)[at] = sum[0][f].v[i];
+        else static_cast<float*>(output)[at] = __fmul_rn(sum[0][f].v[i], route_weights[route]);
       } else {
         static_cast<uint16_t*>(output)[at] = convert::bf16_from_f32(sum[0][f].v[i]);
       }

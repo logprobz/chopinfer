@@ -50,6 +50,7 @@ use crate::moe::{
     CombineBuffers, ExpertCombineOp, ProjectedRouteBuffers, RouteBuffers, RoutedSumBuffers,
     RouterBuffers, SharedCombineBuffers,
 };
+use crate::moe_chained::ChainedMlpProjectionQuery;
 use crate::moe_experts::PreparedExperts;
 use crate::multimodal::{
     EmbeddingOverrideBuffers, EncoderAttentionBuffers, EncoderGemmBuffers, EncoderHeadBuffers,
@@ -68,6 +69,7 @@ use crate::properties::Invariance;
 use crate::recurrent::{ConvBuffers, DeltaRuleBuffers, GatedNormBuffers};
 use crate::rmsnorm::{RmsNormBuffers, RmsNormRequirement};
 use crate::rope_kv::{RingWriteBuffers, RingWriteOp, RopeBuffers, RopeKvBuffers, RopeKvOp, RopeOp};
+use crate::router::{RowBiasRouteBuffers, RowBiasRouterBuffers, RowBiasRouterQuery};
 use crate::row_copy::{ColumnSlice, RowCopyBuffers, StreamBroadcast};
 use crate::rows::{
     ArgmaxFinalBuffers, ArgmaxPartialBuffers, BottleneckBuffers, EmbeddingBuffers,
@@ -1318,6 +1320,35 @@ pub trait Backend: Send + Sync {
         Err(Refused::Unsupported)
     }
 
+    /// Sqrt-softplus selection with one of two biases per token, including
+    /// the F32 scores used to select. Launches read `Counts::rows` alone;
+    /// every live U8 bias selector is 0 or 1. Logits and biases are finite.
+    fn moe_row_bias_router(
+        &self,
+        op: &RowBiasRouterQuery,
+        need: Need,
+    ) -> Result<Prepared<RowBiasRouterBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
+    /// Row-bias selection and rank-local route metadata, with the same
+    /// ordering, padding, live-count and routed-operation claims as
+    /// `moe_route`. Launches read `Counts::rows` alone; live selectors
+    /// are 0 or 1 and logits and biases are finite.
+    fn moe_row_bias_route(
+        &self,
+        router: &RowBiasRouterQuery,
+        routes: &MoeQuery,
+        rank: u32,
+        route_tile: u32,
+        usage: OperationUse,
+        need: Need,
+    ) -> Result<Prepared<RowBiasRouteBuffers<View>>, Refused> {
+        let _ = (router, routes, rank, route_tile, usage, need);
+        Err(Refused::Unsupported)
+    }
+
     /// Rank `rank`'s shared-expert gate combine
     /// (`MoeQuery::SharedExpertGateCombine`) over the routes of `routes`
     /// (`MoeQuery::LocalRoutes`).
@@ -1380,6 +1411,26 @@ pub trait Backend: Send + Sync {
     fn gated_mlp_projection(
         &self,
         op: &GatedMlpProjectionQuery,
+        usage: OperationUse,
+        need: Need,
+    ) -> Result<Box<dyn PreparedExperts>, Refused> {
+        let _ = (op, usage, need);
+        Err(Refused::Unsupported)
+    }
+
+    /// Quantized routed experts with separate stored and loop K and route
+    /// weights before down. Gate/up produces route-indexed BF16
+    /// rows, then the shared ceil quantizer produces the output codes and
+    /// scales. Gate/up input codes are token-indexed; down inputs are
+    /// route-indexed. Payloads satisfy the contract's exact-BF16 admission.
+    /// Launches read `Counts::rows`, the token count, alone. Sorted route
+    /// entries are -1 or less than the live token count times top-k.
+    /// Gate/up requires metadata covering every live top-k slot: its
+    /// quantizer consumes all such rows. Expert-parallel metadata that
+    /// omits non-local routes is unsupported by the row-bias route API.
+    fn chained_mlp_projection(
+        &self,
+        op: &ChainedMlpProjectionQuery,
         usage: OperationUse,
         need: Need,
     ) -> Result<Box<dyn PreparedExperts>, Refused> {
@@ -2183,6 +2234,13 @@ mod tests {
             Need::rows(8),
         );
         moe_router: Empty.moe_router(&router(), Need::rows(8));
+        moe_row_bias_router: Empty.moe_row_bias_router(
+            &RowBiasRouterQuery { experts: 128, top_k: 3, scaling_factor: 1.5 }, Need::rows(8)
+        );
+        moe_row_bias_route: Empty.moe_row_bias_route(
+            &RowBiasRouterQuery { experts: 128, top_k: 3, scaling_factor: 1.5 },
+            &routes(), 0, 16, decode(8), Need::rows(8)
+        );
         moe_shared_expert_combine: Empty.moe_shared_expert_combine(
             &MoeQuery::SharedExpertGateCombine {
                 width: 256,
@@ -2214,6 +2272,12 @@ mod tests {
             Need::rows(8),
         );
         gated_mlp_projection: Empty.gated_mlp_projection(&gated_mlp(), decode(8), Need::rows(8));
+        chained_mlp_projection: Empty.chained_mlp_projection(
+            &ChainedMlpProjectionQuery {
+                projection: gated_mlp(),
+                k: crate::moe_chained::ChainedK::new(gated_mlp().gemm.k).unwrap(),
+            }, decode(8), Need::rows(8)
+        );
         all_reduce: Empty.all_reduce(&reduce(), 0, Need::rows(4));
         fused_all_reduce: Empty.fused_all_reduce(
             &reduce(),

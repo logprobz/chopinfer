@@ -93,6 +93,7 @@ mod gather;
 mod hc_all_reduce;
 mod latent;
 mod latent_sources;
+mod moe_chained;
 mod moe_experts;
 mod moe_route;
 mod multimodal;
@@ -164,6 +165,7 @@ pub struct Sm120 {
     latent_sources: Vec<crate::latent::sources::Entry>,
     recurrent: recurrent::Entries,
     experts: moe_experts::Selection,
+    chained_quantized: moe_chained::Selection,
     indexer: pooled_indexer::Selection,
     position_indexers: Vec<crate::pooled_indexer::position::Entry>,
     position_queries: Vec<crate::pooled_indexer::position_query::Entry>,
@@ -200,6 +202,27 @@ impl Sm120 {
         self.f32_norms.push((norm, symbol.into()));
         self
     }
+
+    /// A quantized chained compute stage. Gate/up requires the shared
+    /// ceil quantizer in the prepared operation before its down input.
+    pub fn with_quantized_chained_projection(
+        mut self,
+        projection: crate::moe::chained::quantized::Projection,
+    ) -> Self {
+        self.chained_quantized.projections.push(projection);
+        self
+    }
+
+    pub fn with_row_bias_router(mut self, router: crate::moe::chained::row_bias::Router) -> Self {
+        self.chained_quantized.routers.push(router);
+        self
+    }
+
+    pub fn with_row_bias_route(mut self, route: crate::moe::chained::row_bias::Route) -> Self {
+        self.chained_quantized.routes.push(route);
+        self
+    }
+
     pub fn new() -> Sm120 {
         Sm120::default()
     }
@@ -1411,6 +1434,34 @@ impl Backend for Sm120 {
         moe_route::router(&self.moe_routes, op, need)
     }
 
+    fn moe_row_bias_router(
+        &self,
+        op: &kernel_core::router::RowBiasRouterQuery,
+        need: Need,
+    ) -> Result<Prepared<kernel_core::router::RowBiasRouterBuffers<View>>, Refused> {
+        moe_chained::router(&self.chained_quantized.routers, op, need)
+    }
+
+    fn moe_row_bias_route(
+        &self,
+        router: &kernel_core::router::RowBiasRouterQuery,
+        routes: &MoeQuery,
+        rank: u32,
+        route_tile: u32,
+        usage: OperationUse,
+        need: Need,
+    ) -> Result<Prepared<kernel_core::router::RowBiasRouteBuffers<View>>, Refused> {
+        moe_chained::route(
+            &self.chained_quantized.routes,
+            router,
+            routes,
+            rank,
+            route_tile,
+            usage,
+            need,
+        )
+    }
+
     fn moe_shared_expert_combine(
         &self,
         op: &MoeQuery,
@@ -1445,6 +1496,15 @@ impl Backend for Sm120 {
         need: Need,
     ) -> Result<Box<dyn PreparedExperts>, Refused> {
         moe_experts::prepare(&self.experts, &self.moe_routes.local, op, usage, need)
+    }
+
+    fn chained_mlp_projection(
+        &self,
+        op: &kernel_core::moe_chained::ChainedMlpProjectionQuery,
+        usage: OperationUse,
+        need: Need,
+    ) -> Result<Box<dyn PreparedExperts>, Refused> {
+        moe_chained::projection(self, &self.chained_quantized.projections, op, usage, need)
     }
 
     // Collectives.

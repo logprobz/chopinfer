@@ -55,6 +55,8 @@ use kernel_core::properties::{Invariance, Ties};
 use std::path::PathBuf;
 
 pub mod formats;
+pub mod quantized;
+pub mod row_bias;
 pub mod split;
 
 /// Threads of a projection CTA: four warps of 16 output columns.

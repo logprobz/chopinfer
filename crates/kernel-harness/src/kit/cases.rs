@@ -18,6 +18,7 @@ pub mod gated_sparse;
 pub mod latent;
 pub mod latent_glue;
 pub mod latent_sources;
+pub mod latent_window_stage;
 pub mod moe;
 pub mod moe_chained_quantized;
 pub mod moe_routed;

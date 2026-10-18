@@ -37,7 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // numerical controls. The full catalog still assigns each cubin once.
     let dependencies = match family {
         "latent_glue" => &["dependency_probes", "latent_glue_mutants"][..],
-        "rmsnorm_f32" => &["dependency_probes"][..],
+        "rmsnorm_f32" | "latent_window_stage" => &["dependency_probes"][..],
         _ => &[][..],
     };
     for (name, required) in kernel_lab_families::all() {

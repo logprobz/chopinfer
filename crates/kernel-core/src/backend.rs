@@ -56,6 +56,7 @@ use crate::multimodal::{
     EmbeddingOverrideBuffers, EncoderAttentionBuffers, EncoderGemmBuffers, EncoderHeadBuffers,
     EncoderRowBuffers,
 };
+use crate::mxfp8_rows::{Mxfp8Rows, Mxfp8RowsBuffers};
 use crate::per_channel_decay_delta_rule::PerChannelDecayOp;
 use crate::pooled_indexer::{
     CandidateBlocksBuffers, CandidateBlocksQuery, IndexerKeyWriteBuffers, IndexerMergeBuffers,
@@ -1842,6 +1843,21 @@ pub trait Backend: Send + Sync {
         Err(Refused::Unsupported)
     }
 
+    /// Decode dense MXFP8 rows to BF16 with one RNE rounding.
+    ///
+    /// Launches read `Counts::rows` and grid `Counts::padded_rows` when
+    /// nonzero, otherwise `Counts::rows`. The host keeps the device
+    /// `live_rows` at most `Counts::rows`, which is at most `Need::capacity`,
+    /// and binds nonoverlapping planes at their natural alignments.
+    fn decode_mxfp8_rows(
+        &self,
+        op: &Mxfp8Rows,
+        need: Need,
+    ) -> Result<Prepared<Mxfp8RowsBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
     // Row copies: the stream broadcast, the column slice and the gather by
     // index (`crate::row_copy`), which move element bytes and compute
     // nothing.
@@ -2514,6 +2530,10 @@ mod tests {
         encoder_attention: Empty.encoder_attention(&encoder(), 0.125, Need::rows(4));
         encoder_gemm: Empty.encoder_gemm(&encoder(), Need::rows(4));
         embedding_override: Empty.embedding_override(&encoder(), Need::rows(4));
+        decode_mxfp8_rows: Empty.decode_mxfp8_rows(
+            &Mxfp8Rows { width: 128 },
+            Need::rows(4),
+        );
         broadcast_streams: Empty.broadcast_streams(
             &StreamBroadcast {
                 dtype: DType::Bf16,

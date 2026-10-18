@@ -48,6 +48,26 @@ class DeepseekInventory(ModelRequirements):
         self.assertNotIn(lab, metadata['workspace_default_members'])
         self.assertFalse(self.model.kernel_lab.catalog)
 
+    def test_kv_bf16_judges_only_bf16_receipts(self):
+        # The comparison configuration's prefix evidence must come from a
+        # server running the BF16 KV layout: both prefix records and the
+        # report's common serving identity.
+        sys.path.insert(0, str(ROOT / 'tools' / 'qual'))
+        import release_gate
+        config = self.qual()['configurations']['kv-bf16']
+        self.assertEqual(config['serve'], ['--kv-cache-dtype', 'bf16'])
+        appended = config['append']['prefix_exact']
+        self.assertEqual(sorted(appended), ['prefix_record_1', 'prefix_record_2', 'rules'])
+
+        def record(kv):
+            return {'server': {'health': {'serving': {'profile': {'kv_cache_dtype': kv}}}},
+                    'serving_identity': {'profile': {'kv_cache_dtype': kv}}}
+        for key, rules in appended.items():
+            release_gate.judge_input(key, record('bf16'), rules, {})
+            for kv in ('mixed', 'fp8'):
+                with self.subTest(key=key, kv=kv), self.assertRaises(ValueError):
+                    release_gate.judge_input(key, record(kv), rules, {})
+
     def test_geometry_recipe_legs(self):
         # Contract stage until the bundle serves an added geometry.
         self.assertEqual(self.geometry_legs('--contract'), [('deepseek41', 'synthetic-small')])

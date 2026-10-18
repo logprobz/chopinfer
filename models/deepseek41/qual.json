@@ -262,6 +262,50 @@
         "kv_offload": false,
         "media": [],
         "speculation": "none"
+      },
+      "append": {
+        "prefix_exact": {
+          "rules": [
+            {
+              "path": [
+                "serving_identity",
+                "profile",
+                "kv_cache_dtype"
+              ],
+              "op": "eq",
+              "value": "bf16",
+              "source": "models/deepseek41/README.md#qualification"
+            }
+          ],
+          "prefix_record_1": [
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "kv_cache_dtype"
+              ],
+              "op": "eq",
+              "value": "bf16",
+              "source": "models/deepseek41/README.md#qualification"
+            }
+          ],
+          "prefix_record_2": [
+            {
+              "path": [
+                "server",
+                "health",
+                "serving",
+                "profile",
+                "kv_cache_dtype"
+              ],
+              "op": "eq",
+              "value": "bf16",
+              "source": "models/deepseek41/README.md#qualification"
+            }
+          ]
+        }
       }
     }
   }

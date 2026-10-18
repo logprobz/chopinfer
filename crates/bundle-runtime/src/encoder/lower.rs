@@ -818,9 +818,12 @@ impl Builder<'_> {
 fn full_rows(declaration: &Declaration) -> Result<Vec<[u64; 2]>, String> {
     let mut rows = u64::from(declaration.input.capacity_rows);
     let mut out = Vec::new();
-    for stage in &declaration.stages {
+    for (index, stage) in declaration.stages.iter().enumerate() {
         let after = match &stage.op {
             StageOp::Merge(Merge::Consecutive(params)) => rows / u64::from(params.rows),
+            StageOp::Merge(Merge::SpaceToDepth(params)) => {
+                declaration.space_to_depth_rows(index, params.factor, rows)
+            }
             StageOp::Linear(_)
             | StageOp::Position(_)
             | StageOp::Norm(_)
@@ -1036,6 +1039,21 @@ fn lower_pairs(
                 place = Operand::Region(out);
             }
             StageOp::Merge(Merge::Consecutive(_)) => {}
+            StageOp::Merge(Merge::SpaceToDepth(_)) => {
+                // One CTA per cell: the live count is the cells written.
+                let out = writes(&id)?;
+                let write = builder.stage_counts[index][1];
+                let named = vec![
+                    ("input", place),
+                    ("indices", Operand::Side("gather-indices", index)),
+                    ("output", target(out)),
+                    ("live_rows", builder.count_slot(write)),
+                ];
+                builder
+                    .launch_counting(index, ("gather", None), named, write)
+                    .map_err(fail)?;
+                place = Operand::Region(out);
+            }
             StageOp::Group(_) => {
                 let out = writes(&id)?;
                 let Operand::Region(from) = place else {
@@ -1203,12 +1221,17 @@ impl Lowered {
         let inject = inject(declaration, resolver).map_err(|error| format!("{name}: {error}"))?;
         let input = &declaration.input;
         // Every recipe's item traces through the declaration, with a grid
-        // of its rows (`multiple` is one merge block) for a layout that
-        // follows one.
+        // of its rows (`multiple` is one merge block) for a layout or a
+        // space-to-depth merge that follows one.
+        let follows_grid = delimiters.is_some()
+            || declaration
+                .stages
+                .iter()
+                .any(|stage| matches!(stage.op, StageOp::Merge(Merge::SpaceToDepth(_))));
         for recipe in &input.recipes {
             let rows = recipe.rows().map_err(|error| format!("{name}: {error}"))?;
             let side = rows.multiple.isqrt();
-            let grid = (delimiters.is_some() && side * side == rows.multiple)
+            let grid = (follows_grid && side * side == rows.multiple)
                 .then(|| [rows.item / rows.grid, side, rows.grid / side]);
             let item = encoder_spec::components::Item {
                 rows: rows.item,
@@ -1553,6 +1576,7 @@ mod tests {
             "norm" => vec!["input", "weight", "bias", "output", "live_rows"],
             "qk_norm" => vec!["rows", "q_weight", "k_weight", "live_rows"],
             "swiglu" | "gelu" | "pad" => vec!["input", "output", "live_rows"],
+            "gather" => vec!["input", "indices", "output", "live_rows"],
             "rotary" => vec!["rows", "cos", "sin", "live_rows"],
             "attention" => vec!["qkv", "cu_seqlens", "sinks", "output", "live_tokens"],
             _ => return Err(format!("no part {part}")),
@@ -2343,6 +2367,74 @@ mod tests {
                 bytes(&weights, f32::to_le_bytes),
             );
         }
+    }
+
+    /// A tower of row-major patches merged 2 x 2 by space-to-depth: the
+    /// gather reads the norm's rows and the run's own gather indices, one
+    /// launch row per cell, and writes the region the first aligner GEMM
+    /// reads. A 5 x 7 grid gathers 3 x 4 cells, the last row and column of
+    /// cells half past the grid; the plan holds the cells the recipe's
+    /// budget admits.
+    #[test]
+    fn space_to_depth_gathers_each_runs_cells() {
+        let mut value: serde_json::Value = serde_json::from_str(TOWER).unwrap();
+        value["input"] = serde_json::json!({
+            "recipes": [{"tag": "image.centered-pad.v1", "patch": 16, "downsample": 2,
+                         "maximum_tokens": 259}],
+            "patchify": "row-major.v1", "payload": "f32", "columns": 768,
+            "capacity_rows": 1024});
+        value["output"]["positions"] = "sequential".into();
+        let stages = value["stages"].as_array_mut().unwrap();
+        stages.remove(1);
+        stages[3] =
+            serde_json::json!({"op": "merge.space-to-depth.v1", "factor": 2, "pad": "zero"});
+        let declaration = parse(&value.to_string(), &Environment::new("alpha")).unwrap();
+        let serving = Serving {
+            arena_rows: 1024,
+            prefill_rows: 64,
+            staging_bytes: 0,
+        };
+        let plan = buffers::plan(&[&declaration], 1024, serving).unwrap();
+        assert_eq!(
+            plan.owned("gather-indices", Some(3)).unwrap().bytes,
+            256 * 4 * 4
+        );
+        let lowered = lower(&declaration, &plan, kernel_params, &Shared).unwrap();
+        let [gather] = launches_of(&lowered, "gather")[..] else {
+            panic!("one gather launch");
+        };
+        let write = lowered.stage_counts[3][1];
+        let operands = arguments(&lowered, gather, kernel_params);
+        assert_eq!(
+            operands,
+            [
+                Operand::Region("a"),
+                Operand::Side("gather-indices", 3),
+                Operand::Region("b"),
+                Operand::Count(write),
+            ]
+        );
+        let linear = launches_of(&lowered, "linear4");
+        assert_eq!(
+            arguments(&lowered, linear[0], kernel_params)[0],
+            Operand::Region("b")
+        );
+
+        let geometry = declaration
+            .geometry(
+                "image.centered-pad.v1",
+                encoder_spec::geometry::Media::Grid([1, 5, 7]),
+            )
+            .unwrap();
+        let side =
+            super::super::side::inputs(&lowered, &Shared, &geometry, 1, &geometry.runs[0]).unwrap();
+        assert_eq!(side.counts[write], 12);
+        let indices = encoder_spec::geometry::space_to_depth_indices([1, 5, 7], 2).unwrap();
+        assert_eq!(indices.len(), 12 * 4);
+        assert_eq!(
+            read(&lowered, &side, gather, "indices"),
+            bytes(&indices, i32::to_le_bytes)
+        );
     }
 
     /// A staged tower under `f32-pairs.v1`: F32 payload and rows, RMS F32

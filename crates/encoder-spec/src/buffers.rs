@@ -1,7 +1,8 @@
 //! Buffer plan: the device regions one rank allocates for its encoders, for
 //! runs of up to `rows` rows, derived from their declarations. Every region
 //! a run touches holds `rows` rows divided by the merges before the stage
-//! that uses it; the payload holds a whole item when an item takes several
+//! that uses it (a space-to-depth merge's cells bounded by its recipes,
+//! `Declaration::space_to_depth_rows`); the payload holds a whole item when an item takes several
 //! runs, and rows that a stage joins across runs hold the largest item's.
 //!
 //! The precision policy fixes the lowering, and with it the aliasing:
@@ -12,9 +13,10 @@
 //!   `b` and its product `a`, and a reorder gathers the stream into `a`. A
 //!   declaration whose items are one run each uploads every side input
 //!   before the run's first launch, so each stage's side inputs (a
-//!   transformer's rotary rows and sequence bounds, a position stage's taps)
-//!   have regions of their own (`Region::owner`) and each distinct live row
-//!   count has its own slot. One whose items take several runs
+//!   transformer's rotary rows and sequence bounds, a position stage's
+//!   taps, a space-to-depth merge's gather indices) have regions of their
+//!   own (`Region::owner`) and each distinct live row count has its own
+//!   slot. One whose items take several runs
 //!   (`Declaration::staged`) stages them in command order: shared
 //!   `sequences`, `cos`, `sin` and `reorder` regions and one live row `count`.
 //!
@@ -140,15 +142,19 @@ pub fn scratch_use(id: &str) -> String {
 /// the first still needs them.
 const ONE_CARRY: &str = "one `carry` region holds one carry's rows; no lowering of several";
 
-/// The rows a full run holds after `op`, from `rows` before it.
-fn rows_after(op: &StageOp, rows: u64) -> Result<u64, String> {
-    match op {
+/// The rows a full run holds after stage `index` of `declaration`, from
+/// `rows` before it.
+fn rows_after(declaration: &Declaration, index: usize, rows: u64) -> Result<u64, String> {
+    match &declaration.stages[index].op {
         StageOp::Merge(Merge::Consecutive(params)) => {
             let group = u64::from(params.rows);
             if rows % group != 0 {
                 return Err(format!("{rows} rows are not whole groups of {group}"));
             }
             Ok(rows / group)
+        }
+        StageOp::Merge(Merge::SpaceToDepth(params)) => {
+            Ok(declaration.space_to_depth_rows(index, params.factor, rows))
         }
         _ => Ok(rows),
     }
@@ -202,8 +208,8 @@ impl<'a> Lowering<'a> {
         let steps = declaration.steps()?;
         let mut stages = Vec::new();
         let mut full = rows;
-        for (index, stage) in declaration.stages.iter().enumerate() {
-            let after = rows_after(&stage.op, full)
+        for index in 0..declaration.stages.len() {
+            let after = rows_after(declaration, index, full)
                 .map_err(|error| Error(format!("{}: {error}", steps[index].at)))?;
             stages.push((
                 steps[index].component,
@@ -361,7 +367,28 @@ impl<'a> Lowering<'a> {
                 | StageOp::Pad(_) => {
                     write(plan, &mut place)?;
                 }
-                StageOp::Merge(Merge::SpaceToDepth(_)) => write(plan, &mut place)?,
+                StageOp::Merge(Merge::SpaceToDepth(params)) => {
+                    // The host computes each cell's input rows per item.
+                    // Parsing already refuses a staged merge (temporal grids
+                    // come in merge blocks, segments have no grid).
+                    if staged {
+                        return Err(fail(
+                            "a space-to-depth merge gathers one item's grid; no f32-pairs.v1 \
+                             lowering of several runs per item"
+                                .into(),
+                        ));
+                    }
+                    let group =
+                        mul(u64::from(params.factor), u64::from(params.factor)).map_err(fail)?;
+                    plan.add_owned(
+                        "gather-indices",
+                        Some(index),
+                        at,
+                        "gather indices",
+                        after * group * 4,
+                    );
+                    write(plan, &mut place)?;
+                }
                 StageOp::Merge(Merge::Consecutive(_)) => {}
                 StageOp::Position(_) => {
                     for region in ["tap-indices", "tap-weights"] {

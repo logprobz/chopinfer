@@ -1,7 +1,7 @@
 //! One run's side inputs, computed on the host from its geometry: the live
 //! row counts, the attention sequence bounds, the rotary rows of the
-//! transformer and the bilinear taps of a learned position grid, each in
-//! the reference's F32 arithmetic. A model's registered rotary variants
+//! transformer, the bilinear taps of a learned position grid, each in the
+//! reference's F32 arithmetic, and the rows a space-to-depth merge gathers. A model's registered rotary variants
 //! compute their rows through the bundle's `Registered`.
 //!
 //! A declaration of one run per item uploads every side input before the
@@ -14,8 +14,8 @@
 use std::collections::BTreeMap;
 
 use encoder_spec::components::rotary::{Rotary, Table};
-use encoder_spec::components::{Position, RotarySlot, StageOp};
-use encoder_spec::geometry::{Geometry, Positions, Run, grid_positions};
+use encoder_spec::components::{Merge, Position, RotarySlot, StageOp};
+use encoder_spec::geometry::{Geometry, Positions, Run, grid_positions, space_to_depth_indices};
 use kernel_core::rotary::{AngleRule, Axes, ComputedTable};
 
 use super::lower::Lowered;
@@ -289,6 +289,27 @@ pub(super) fn inputs(
                     .take(step.rows[0] as usize)
                     .collect();
                 taps.push((step.stage, position_taps(&positions, [h, w], params.table)));
+            }
+            StageOp::Merge(Merge::SpaceToDepth(params)) => {
+                // One run holds the whole item: the buffer plan refuses a
+                // staged merge.
+                let grid = match step.stage {
+                    0 => geometry.input.grid,
+                    stage => geometry.rows[stage - 1].grid,
+                }
+                .ok_or("a space-to-depth merge without a grid")?;
+                let indices = space_to_depth_indices(grid, u64::from(params.factor))?;
+                let group = (params.factor * params.factor) as usize;
+                if indices.len() != step.rows[1] as usize * group {
+                    return Err(format!(
+                        "a space-to-depth merge of {grid:?} into {} cells",
+                        step.rows[1]
+                    ));
+                }
+                side.uploads.push((
+                    ("gather-indices", Some(step.stage)),
+                    le_bytes(&indices, i32::to_le_bytes),
+                ));
             }
             _ => {}
         }

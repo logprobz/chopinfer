@@ -275,6 +275,48 @@ pub fn space_to_depth_indices([t, h, w]: [u64; 3], factor: u64) -> Result<Vec<i3
     Ok(out)
 }
 
+impl Recipe {
+    /// The cells a `factor x factor` space-to-depth merge of one item's
+    /// patch grid holds at most, when the recipe bounds them: a centered
+    /// pad's token budget, for cells of its downsample, admits
+    /// `h * (w + 1) + 2` tokens and so `budget - 3` cells.
+    pub fn space_to_depth_cells(&self, factor: u32) -> Option<u64> {
+        match self {
+            Recipe::ImageCenteredPad(r) if r.downsample == factor && r.maximum_tokens >= 4 => {
+                Some(u64::from(r.maximum_tokens) - 3)
+            }
+            _ => None,
+        }
+    }
+}
+
+impl Declaration {
+    /// The rows a run of `rows` rows holds after the space-to-depth merge
+    /// at `stage` by `factor`. A cell holds at least one patch, so there
+    /// are no more cells than rows; a run of one item whose merge reads the
+    /// payload's patch grid holds no more than its recipes bound, when
+    /// every recipe bounds them.
+    pub fn space_to_depth_rows(&self, stage: usize, factor: u32, rows: u64) -> u64 {
+        let reads_payload_grid = self.stages[..stage].iter().all(|earlier| {
+            !matches!(
+                earlier.op,
+                StageOp::Merge(_) | StageOp::Group(_) | StageOp::Conv1d(_) | StageOp::Registered(_)
+            )
+        });
+        if !matches!(self.sequences, Sequences::Item {}) || !reads_payload_grid {
+            return rows;
+        }
+        let mut cells = 0;
+        for recipe in &self.input.recipes {
+            match recipe.space_to_depth_cells(factor) {
+                Some(bound) => cells = cells.max(bound),
+                None => return rows,
+            }
+        }
+        rows.min(cells)
+    }
+}
+
 /// Bounds of consecutive sequences of `size` rows over `rows` rows.
 fn bounds(rows: u64, size: u64) -> Vec<u64> {
     (0..=rows / size).map(|index| index * size).collect()

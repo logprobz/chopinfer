@@ -55,9 +55,9 @@ use kernel_core::mxfp8_rows::{Mxfp8Rows, Mxfp8RowsBuffers};
 use kernel_core::occupancy::EntryResources;
 use kernel_core::per_channel_decay_delta_rule::PerChannelDecayOp;
 use kernel_core::pooled_indexer::{
-    CandidateBlocksBuffers, CandidateBlocksQuery, IndexerKeyWriteBuffers, IndexerMergeBuffers,
-    IndexerSelectBuffers, PooledIndexerQuery, PositionIndexerQuery, PositionKeyWriteBuffers,
-    PositionQueryBuffers, PositionSelectBuffers, SelectionCompactBuffers,
+    CandidateBlocksBuffers, CandidateBlocksQuery, IndexerKeyFormat, IndexerKeyWriteBuffers,
+    IndexerMergeBuffers, IndexerSelectBuffers, PooledIndexerQuery, PositionIndexerQuery,
+    PositionKeyWriteBuffers, PositionQueryBuffers, PositionSelectBuffers, SelectionCompactBuffers,
 };
 use kernel_core::position_blocks::{
     CandidateBlockIdsBuffers, PositionBlockIndexerQuery, PositionBlockSelectBuffers,
@@ -190,6 +190,8 @@ pub struct Sm120 {
     position_block_indexers: Vec<crate::pooled_indexer::position_blocks::Entry>,
     candidate_block_ids: Vec<crate::pooled_indexer::position_blocks::CandidateEntry>,
     position_indexers: Vec<crate::pooled_indexer::position::Entry>,
+    bf16_position_indexers: Vec<crate::pooled_indexer::position::Entry>,
+    bf16_position_block_indexers: Vec<crate::pooled_indexer::position_blocks::Entry>,
     position_queries: Vec<crate::pooled_indexer::position_query::Entry>,
     indexer_candidates: Vec<crate::pooled_indexer::position::CandidateEntry>,
     gated_sparse: Option<Box<GatedSparseEntries>>,
@@ -554,6 +556,30 @@ impl Sm120 {
         entries: impl IntoIterator<Item = crate::pooled_indexer::position_blocks::Entry>,
     ) -> Self {
         self.position_block_indexers.extend(entries);
+        self
+    }
+
+    /// BF16 comparison readers compiled separately from native entries.
+    pub fn with_position_indexer_bf16(
+        mut self,
+        entries: impl IntoIterator<Item = crate::pooled_indexer::position::Entry>,
+    ) -> Self {
+        self.bf16_position_indexers.extend(
+            entries
+                .into_iter()
+                .map(|e| crate::pooled_indexer::position_bf16::dense_entry(&e)),
+        );
+        self
+    }
+    pub fn with_position_block_indexer_bf16(
+        mut self,
+        entries: impl IntoIterator<Item = crate::pooled_indexer::position_blocks::Entry>,
+    ) -> Self {
+        self.bf16_position_block_indexers.extend(
+            entries
+                .into_iter()
+                .map(|e| crate::pooled_indexer::position_bf16::compact_entry(&e)),
+        );
         self
     }
 
@@ -1505,6 +1531,49 @@ impl Backend for Sm120 {
         need: Need,
     ) -> Result<Prepared<PositionSelectBuffers<View>>, Refused> {
         position_indexer::select(&self.position_indexers, op, top_k, position_capacity, need)
+    }
+
+    fn position_indexer_with_storage(
+        &self,
+        op: &PositionIndexerQuery,
+        storage: IndexerKeyFormat,
+        top_k: u32,
+        position_capacity: u32,
+        need: Need,
+    ) -> Result<Prepared<PositionSelectBuffers<View>>, Refused> {
+        match storage {
+            IndexerKeyFormat::Fp4 => self.position_indexer(op, top_k, position_capacity, need),
+            IndexerKeyFormat::Bf16 => position_indexer::select_with_storage(
+                &self.bf16_position_indexers,
+                op,
+                top_k,
+                position_capacity,
+                need,
+                storage,
+            ),
+        }
+    }
+    fn position_block_indexer_with_storage(
+        &self,
+        op: &PositionBlockIndexerQuery,
+        storage: IndexerKeyFormat,
+        top_k: u32,
+        position_capacity: u32,
+        need: Need,
+    ) -> Result<Prepared<PositionBlockSelectBuffers<View>>, Refused> {
+        match storage {
+            IndexerKeyFormat::Fp4 => {
+                self.position_block_indexer(op, top_k, position_capacity, need)
+            }
+            IndexerKeyFormat::Bf16 => position_blocks::select_with_storage(
+                &self.bf16_position_block_indexers,
+                op,
+                top_k,
+                position_capacity,
+                need,
+                storage,
+            ),
+        }
     }
 
     fn indexer_candidate_blocks(

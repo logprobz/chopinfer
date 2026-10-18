@@ -7,6 +7,7 @@ use crate::pooled_indexer::position_blocks::{CandidateEntry, Entry};
 use kernel_core::backend::{Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View};
 use kernel_core::contract::{Argument, Refusal, Validate};
 use kernel_core::pooled_indexer::CandidateBlocksQuery;
+use kernel_core::pooled_indexer::IndexerKeyFormat;
 use kernel_core::position_blocks::{
     CandidateBlockIds, CandidateBlockIdsBuffers, PositionBlockIndexerQuery,
     PositionBlockSelectBuffers,
@@ -49,6 +50,17 @@ pub(super) fn select(
     top_k: u32,
     width: u32,
     need: Need,
+) -> Result<Prepared<PositionBlockSelectBuffers<View>>, Refused> {
+    select_with_storage(entries, query, top_k, width, need, IndexerKeyFormat::Fp4)
+}
+
+pub(super) fn select_with_storage(
+    entries: &[Entry],
+    query: &PositionBlockIndexerQuery,
+    top_k: u32,
+    width: u32,
+    need: Need,
+    storage: IndexerKeyFormat,
 ) -> Result<Prepared<PositionBlockSelectBuffers<View>>, Refused> {
     query.validate()?;
     capacity(need.capacity, query.indexer.capacity)?;
@@ -106,6 +118,7 @@ pub(super) fn select(
     ];
     need.check(&info)?;
     Ok(Box::new(Select {
+        storage,
         entry,
         info,
         top_k,
@@ -178,6 +191,7 @@ pub(super) fn candidates(
 }
 
 struct Select {
+    storage: IndexerKeyFormat,
     entry: Entry,
     info: OpInfo,
     top_k: u32,
@@ -215,7 +229,7 @@ impl PreparedOp<PositionBlockSelectBuffers<View>> for Select {
             .covers(rows * u64::from(self.entry.query.score_slots()?) * 4)?;
         b.status.covers(rows * 4)?;
         b.output.covers(rows * u64::from(q.max_top_k) * 4)?;
-        super::position_indexer::pages(&b.keys, q, self.width)?;
+        super::position_indexer::pages_with_storage(&b.keys, q, self.width, self.storage)?;
         distinct(
             &[b.scores, b.status, b.output],
             &[
@@ -249,7 +263,11 @@ impl PreparedOp<PositionBlockSelectBuffers<View>> for Select {
             buffer(b.q),
             buffer(b.head_weights),
             buffer(b.keys.codes),
-            buffer(b.keys.scales),
+            if self.storage == IndexerKeyFormat::Fp4 {
+                buffer(b.keys.scales)
+            } else {
+                Argument::NullDevicePointer
+            },
         ];
         scores.extend(common.clone());
         scores.extend([

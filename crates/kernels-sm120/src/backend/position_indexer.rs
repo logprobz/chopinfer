@@ -6,6 +6,7 @@ use super::select::{Candidate, choose};
 use crate::pooled_indexer::position::{CandidateEntry, Entry};
 use kernel_core::backend::{Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View};
 use kernel_core::contract::{Argument, Refusal, Validate};
+use kernel_core::pooled_indexer::IndexerKeyFormat;
 use kernel_core::pooled_indexer::{
     CandidateBlocksBuffers, CandidateBlocksQuery, IndexerCandidates, PositionIndexerQuery,
     PositionKeyPages, PositionSelectBuffers,
@@ -17,6 +18,17 @@ pub(super) fn select(
     top_k: u32,
     width: u32,
     need: Need,
+) -> Result<Prepared<PositionSelectBuffers<View>>, Refused> {
+    select_with_storage(entries, query, top_k, width, need, IndexerKeyFormat::Fp4)
+}
+
+pub(super) fn select_with_storage(
+    entries: &[Entry],
+    query: &PositionIndexerQuery,
+    top_k: u32,
+    width: u32,
+    need: Need,
+    storage: IndexerKeyFormat,
 ) -> Result<Prepared<PositionSelectBuffers<View>>, Refused> {
     query.validate()?;
     capacity(need.capacity, query.capacity)?;
@@ -73,6 +85,7 @@ pub(super) fn select(
     }
     need.check(&info)?;
     Ok(Box::new(Select {
+        storage,
         entry,
         info,
         top_k,
@@ -194,7 +207,40 @@ pub(super) fn pages(
     Ok(())
 }
 
+pub(super) fn pages_with_storage(
+    keys: &PositionKeyPages<View>,
+    query: PositionIndexerQuery,
+    width: u32,
+    storage: IndexerKeyFormat,
+) -> Result<(), Refusal> {
+    if storage == IndexerKeyFormat::Fp4 {
+        return pages(keys, query, width);
+    }
+    keys.page_tables.check()?;
+    if keys.pages == 0 || keys.page_tables.max_pages < width.div_ceil(query.page_size) {
+        return Err(Refusal(
+            "position indexer key pages do not cover the position capacity",
+        ));
+    }
+    if keys.scales.bytes != 0 || keys.scale_page_stride != 0 {
+        return Err(Refusal("BF16 position keys have no scale plane"));
+    }
+    let (bytes, _) = query.storage_page_bytes(storage)?;
+    let stride = keys.code_page_stride;
+    if stride < bytes || stride % 2 != 0 {
+        return Err(Refusal(
+            "BF16 position key page stride is short or unaligned",
+        ));
+    }
+    let end = u64::from(keys.pages - 1)
+        .checked_mul(stride)
+        .and_then(|start| start.checked_add(bytes))
+        .ok_or(Refusal("position indexer page address overflow"))?;
+    keys.codes.covers(end)
+}
+
 struct Select {
+    storage: IndexerKeyFormat,
     entry: Entry,
     info: OpInfo,
     top_k: u32,
@@ -247,7 +293,7 @@ impl PreparedOp<PositionSelectBuffers<View>> for Select {
             ));
         }
         b.output.covers(rows * u64::from(q.max_top_k) * 4)?;
-        pages(&b.keys, q, self.width)?;
+        pages_with_storage(&b.keys, q, self.width, self.storage)?;
         let mask = match (q.candidates, b.candidate_mask) {
             (IndexerCandidates::All, None) => Argument::NullDevicePointer,
             (IndexerCandidates::Mask, Some(mask)) => {
@@ -265,7 +311,11 @@ impl PreparedOp<PositionSelectBuffers<View>> for Select {
                     buffer(b.q),
                     buffer(b.head_weights),
                     buffer(b.keys.codes),
-                    buffer(b.keys.scales),
+                    if self.storage == IndexerKeyFormat::Fp4 {
+                        buffer(b.keys.scales)
+                    } else {
+                        Argument::NullDevicePointer
+                    },
                     buffer(b.keys.page_tables.tables),
                     buffer(b.row_batch),
                     buffer(b.positions),
@@ -632,5 +682,61 @@ mod tests {
                 )
                 .is_err()
         );
+    }
+    #[test]
+    fn bf16_position_reader_requires_registration_and_validates_the_value_plane() {
+        let e = entry("comparison", 4);
+        let q = e.query;
+        let need = Need::rows(4);
+        let width = 1 << 20;
+        let native = Sm120::new().with_position_indexer([e.clone()]);
+        assert!(
+            native
+                .position_indexer_with_storage(&q, IndexerKeyFormat::Bf16, 7, width, need)
+                .is_err()
+        );
+        let backend = native.with_position_indexer_bf16([e]);
+        let op = backend
+            .position_indexer_with_storage(&q, IndexerKeyFormat::Bf16, 7, width, need)
+            .unwrap();
+        let mut b = buffers(q, width);
+        b.keys.scales = View {
+            handle: 0,
+            bytes: 0,
+        };
+        b.keys.scale_page_stride = 0;
+        let page_bytes = q.storage_page_bytes(IndexerKeyFormat::Bf16).unwrap().0;
+        b.keys.codes.bytes = 3 * (1 << 32) + page_bytes;
+        b.keys.page_tables.max_pages = width.div_ceil(q.page_size);
+        b.keys.page_tables.tables.bytes = u64::from(b.keys.page_tables.max_pages) * 2 * 4;
+        let calls = op.launches(&b, View::default(), Counts::rows(4)).unwrap();
+        assert!(calls[0].symbol.contains("_bf16_scores_v3"));
+        assert_eq!(calls[0].arguments.0[3], Argument::NullDevicePointer);
+        assert_eq!(calls[0].arguments.0[12], Argument::U64(1 << 32));
+        let mut bad = b;
+        bad.keys.codes.bytes -= 1;
+        assert!(op.launches(&bad, View::default(), Counts::rows(4)).is_err());
+        let mut bad = b;
+        bad.keys.scales.bytes = 1;
+        assert!(op.launches(&bad, View::default(), Counts::rows(4)).is_err());
+        let mut bad = b;
+        bad.keys.scale_page_stride = 1;
+        assert!(op.launches(&bad, View::default(), Counts::rows(4)).is_err());
+        let mut bad = b;
+        bad.keys.code_page_stride = page_bytes - 2;
+        assert!(op.launches(&bad, View::default(), Counts::rows(4)).is_err());
+        let mut bad = b;
+        bad.keys.code_page_stride = page_bytes + 1;
+        assert!(op.launches(&bad, View::default(), Counts::rows(4)).is_err());
+        let mut bad = b;
+        bad.keys.code_page_stride = u64::MAX - 1;
+        assert!(op.launches(&bad, View::default(), Counts::rows(4)).is_err());
+        let mut bad = b;
+        bad.status = bad.keys.codes;
+        assert!(op.launches(&bad, View::default(), Counts::rows(4)).is_err());
+        let mut bad = b;
+        bad.candidate_mask = None;
+        assert!(op.launches(&bad, View::default(), Counts::rows(4)).is_err());
+        assert!(op.launches(&b, View::default(), Counts::rows(5)).is_err());
     }
 }

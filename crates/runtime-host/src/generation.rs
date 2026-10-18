@@ -2409,6 +2409,11 @@ fn modality_emits_v1(
                         _ => false,
                     },
                 ),
+                // A superset below the recipe's minimum pixels: the
+                // upscale's truncation and the solve's rounding emit small
+                // canvases that are not their own plan and have no closed
+                // form (`centered_pad_emits_size`); every admitted canvas is
+                // still aligned, within the token budget and the pixels.
                 ImageRecipeV1::CenteredPad(recipe, _) => (
                     1,
                     recipe.downsample,
@@ -2972,7 +2977,10 @@ fn prepare_image_v1(
 ) -> Result<(runtime_media::recipe::PatchGrid, u64), AdmissionError> {
     let recipe = recipe.into();
     let rejected = |error: runtime_media::MediaError| AdmissionError::Rejected(error.to_string());
-    let (width, height) = match runtime_media::probe(&source.bytes, limits).map_err(rejected)? {
+    let orientation = image_orientation_v1(recipe);
+    let (width, height) = match runtime_media::probe_oriented(&source.bytes, limits, orientation)
+        .map_err(rejected)?
+    {
         runtime_media::Probe::Png { width, height }
         | runtime_media::Probe::Jpeg { width, height } => (width, height),
         runtime_media::Probe::Wav { .. } => return Err(AdmissionError::InvalidPrompt),
@@ -2996,7 +3004,7 @@ fn prepare_image_v1(
         ImageRecipeV1::PatchGrid(_) => runtime_media::Alpha::CompositeWhite,
         ImageRecipeV1::TokenBudget(_, alpha) | ImageRecipeV1::CenteredPad(_, alpha) => alpha,
     };
-    let decoded = decode_image_v1(source, limits, alpha)?;
+    let decoded = decode_image_v1(source, limits, alpha, orientation)?;
     let grid = match recipe {
         ImageRecipeV1::PatchGrid(recipe) => {
             runtime_media::recipe::image_grid(&decoded, recipe, limits)
@@ -3011,16 +3019,29 @@ fn prepare_image_v1(
     Ok((grid.map_err(rejected)?, reserved))
 }
 
+/// The EXIF orientation policy of a recipe's JPEG sources: the centered
+/// pad keeps the stored pixels, as its reference's `Image.open` and
+/// `convert("RGB")` do; the others transpose into the tagged orientation.
+fn image_orientation_v1(recipe: ImageRecipeV1) -> runtime_media::Orientation {
+    match recipe {
+        ImageRecipeV1::CenteredPad(..) => runtime_media::Orientation::Stored,
+        ImageRecipeV1::PatchGrid(_) | ImageRecipeV1::TokenBudget(..) => {
+            runtime_media::Orientation::Exif
+        }
+    }
+}
+
 /// Decodes by MIME type; `alpha` applies to PNG transparency (JPEG has
-/// none).
+/// none), `orientation` to a JPEG's EXIF orientation.
 fn decode_image_v1(
     source: &runtime_media::MediaSource,
     limits: runtime_media::MediaLimits,
     alpha: runtime_media::Alpha,
+    orientation: runtime_media::Orientation,
 ) -> Result<runtime_media::RgbImage, AdmissionError> {
     match source.mime.as_str() {
         "image/png" => runtime_media::png::decode_with_alpha(&source.bytes, limits, alpha),
-        "image/jpeg" => runtime_media::jpeg::decode(&source.bytes, limits),
+        "image/jpeg" => runtime_media::jpeg::decode_oriented(&source.bytes, limits, orientation),
         _ => return Err(AdmissionError::InvalidPrompt),
     }
     .map_err(|error| AdmissionError::Rejected(error.to_string()))
@@ -3150,7 +3171,10 @@ fn check_image_span_v1(
     limits: runtime_media::MediaLimits,
 ) -> Result<(), AdmissionError> {
     let rejected = |error: runtime_media::MediaError| AdmissionError::Rejected(error.to_string());
-    let (width, height) = match runtime_media::probe(&source.bytes, limits).map_err(rejected)? {
+    let orientation = image_orientation_v1(recipe);
+    let (width, height) = match runtime_media::probe_oriented(&source.bytes, limits, orientation)
+        .map_err(rejected)?
+    {
         runtime_media::Probe::Png { width, height }
         | runtime_media::Probe::Jpeg { width, height } => (width, height),
         runtime_media::Probe::Wav { .. } => return Err(AdmissionError::InvalidPrompt),
@@ -4713,6 +4737,7 @@ mod tests {
             &source("image/png", png.clone()),
             limits,
             runtime_media::Alpha::CompositeWhite,
+            runtime_media::Orientation::Exif,
         )
         .unwrap();
         assert_eq!((image.width, image.height), (2048, 1536));
@@ -4730,6 +4755,7 @@ mod tests {
             &source("image/png", solid_png(6400, 40, [9; 3])),
             limits,
             runtime_media::Alpha::CompositeWhite,
+            runtime_media::Orientation::Exif,
         );
         let grid = runtime_media::recipe::image_grid(&strip.unwrap(), recipe, limits).unwrap();
         assert_eq!(grid.grid, [1, 2, 400]);
@@ -4751,14 +4777,15 @@ mod tests {
         // The MIME selects the decoder, so PNG bytes labeled JPEG reach the
         // JPEG decoder and fail there; non-image MIME types never decode.
         assert!(matches!(
-            decode_image_v1(&source("image/jpeg", png.clone()), limits, runtime_media::Alpha::CompositeWhite),
+            decode_image_v1(&source("image/jpeg", png.clone()), limits, runtime_media::Alpha::CompositeWhite, runtime_media::Orientation::Exif),
             Err(AdmissionError::Rejected(message)) if message.contains("JPEG")
         ));
         assert!(matches!(
             decode_image_v1(
                 &source("audio/wav", png),
                 limits,
-                runtime_media::Alpha::CompositeWhite
+                runtime_media::Alpha::CompositeWhite,
+                runtime_media::Orientation::Exif
             ),
             Err(AdmissionError::InvalidPrompt)
         ));
@@ -5017,7 +5044,8 @@ mod tests {
                 .0
         };
         let padded = |alpha| {
-            let decoded = decode_image_v1(&source, limits, alpha).unwrap();
+            let decoded =
+                decode_image_v1(&source, limits, alpha, runtime_media::Orientation::Exif).unwrap();
             let ImageRecipeV1::TokenBudget(recipe, _) =
                 declared_image_recipe_v1(&modality.recipe).unwrap()
             else {
@@ -5226,7 +5254,9 @@ mod tests {
                 .0
         };
         let centered = |alpha| {
-            let decoded = decode_image_v1(&source, limits, alpha).unwrap();
+            let decoded =
+                decode_image_v1(&source, limits, alpha, runtime_media::Orientation::Stored)
+                    .unwrap();
             runtime_media::recipe::centered_pad_grid(&decoded, recipe, limits).unwrap()
         };
         let grid = prepared(modality);
@@ -5247,6 +5277,39 @@ mod tests {
         // The span is the recipe's budget count: 11 * (16 + 1) + 2.
         assert_eq!(image_span_rows_v1(modality, 3, grid.grid), Some(189));
         check_image_span_v1(&source, modality, wrapped, limits).unwrap();
+        // A JPEG tagged with EXIF orientation 6 keeps its stored 8 x 16, as
+        // the reference reads it: planned and prepared at 770 x 392 pixels
+        // (55 x 28 patches), not as the rotated 16 x 8. Other recipes keep
+        // transposing into the tagged orientation.
+        let jpeg = runtime_media::MediaSource {
+            mime: "image/jpeg".to_owned(),
+            bytes: include_bytes!(
+                "../../runtime-media/tests/fixtures/centered-pad-jpeg-exif6-8x16.jpg"
+            )
+            .to_vec(),
+        };
+        assert_eq!(
+            image_orientation_v1(wrapped),
+            runtime_media::Orientation::Stored
+        );
+        let token_budget = token_budget_recipe_v1(&serde_json::json!({
+            "patch": 14, "temporal_patch": 2, "merge": 2, "minimum_tokens": 16,
+            "maximum_tokens": 8000, "value_scale": 1.0, "mean": [0.0, 0.0, 0.0],
+            "std": [1.0, 1.0, 1.0]
+        }))
+        .unwrap();
+        assert_eq!(
+            image_orientation_v1(ImageRecipeV1::TokenBudget(token_budget, alpha)),
+            runtime_media::Orientation::Exif
+        );
+        let mut jpeg_memory = RequestMediaMemoryV1::new(Arc::clone(&pool), u64::MAX);
+        let (stored, _) = prepare_image_v1(&jpeg, wrapped, limits, &mut jpeg_memory).unwrap();
+        assert_eq!(stored.grid, [1, 55, 28]);
+        assert_eq!(
+            planned_image_grid_v1(8, 16, wrapped, limits).unwrap(),
+            stored.grid
+        );
+        check_image_span_v1(&jpeg, modality, wrapped, limits).unwrap();
         let emits = |geometry| modality_emits_v1(modality, geometry);
         assert!(emits([1, 32, 48, 0]));
         // A 79 x 15000 source solves to 569 x 2 patches (7966 x 28 pixels):

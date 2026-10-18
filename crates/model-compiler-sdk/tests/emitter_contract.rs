@@ -19,14 +19,15 @@ use model_compiler_sdk::{
 };
 use runtime_bundle::{
     BUNDLE_NATIVE_MODULE_FORMAT_V1, BundleArtifactOriginV1, BundleBuildIdentityV1,
-    BundleGraphBucketV1, BundleHostCompatibilityV1, BundleImplementationTierV1, BundleKvLayoutV1,
-    BundleLaunchContractV1, BundleNativeSymbolSequenceV1, BundleOpaqueId, BundleOperationKeyV1,
-    BundleOperationProvisioningV1, BundleOperationRequirementV1, BundlePackageV1,
-    BundleRankPlacementV1, BundleRelativePathV1, BundleResourceRequirementsV1,
-    BundleScalarArgumentV1, BundleSemanticContractV1, BundleSourceIdentityV1,
-    BundleSpecializationV1, BundleStateLayoutV1, BundleStateLifetimeV1, BundleTargetV1,
-    BundleTensorAccessV1, BundleTensorAliasV1, BundleTensorRequirementV1, BundleTopologyV1,
-    BundleWorkspaceContractV1, publish_staging_no_replace,
+    BundleGraphBucketV1, BundleHostCompatibilityV1, BundleImplementationTierV1, BundleKvDtypeV1,
+    BundleKvFormatV1, BundleKvLayoutV1, BundleLaunchContractV1, BundleNativeSymbolSequenceV1,
+    BundleOpaqueId, BundleOperationKeyV1, BundleOperationProvisioningV1,
+    BundleOperationRequirementV1, BundlePackageV1, BundleRankPlacementV1, BundleRelativePathV1,
+    BundleResourceRequirementsV1, BundleScalarArgumentV1, BundleSemanticContractV1,
+    BundleSourceIdentityV1, BundleSpecializationV1, BundleStateLayoutV1, BundleStateLifetimeV1,
+    BundleTargetV1, BundleTensorAccessV1, BundleTensorAliasV1, BundleTensorRequirementV1,
+    BundleTopologyV1, BundleWorkspaceContractV1, MIXED_PLANE_KV_CAPABILITY_V1,
+    publish_staging_no_replace,
 };
 use runtime_weights::sha256_bytes;
 
@@ -1536,6 +1537,125 @@ fn drafts_for_several_topologies_join_into_one_package() {
     assert!(
         BundleDraftV1::for_topologies(vec![joined, topology_draft("tp1", 1, &weights)]).is_err()
     );
+}
+
+/// The BF16 layout of `topology_draft` with `ranks`, and a mixed-plane one
+/// of the same pages: 32 FP8 values and their scale, then 32 FP4 values and
+/// their two scales, in 64 bytes per token.
+fn mixed_plane_formats(ranks: u32) -> Vec<BundleKvFormatV1> {
+    use runtime_bundle::{BundleKvCodeV1, BundleKvPlaneV1, BundleKvScaleFormatV1, BundleKvScaleV1};
+    let layout = |name: &str, bytes: u64| {
+        BundleKvLayoutV1::new(
+            id(name),
+            bytes,
+            64,
+            1,
+            bytes,
+            1,
+            1_024,
+            BundleRankPlacementV1::RankLocal,
+            BundleStateLifetimeV1::Request,
+        )
+        .expect("the fixture KV layout is valid")
+    };
+    let plane = |name: &str, code, offset, scale| {
+        BundleKvPlaneV1::new(id(name), code, 32, offset, Some(scale))
+            .expect("the fixture plane is valid")
+    };
+    let scale = |format, block, offset| {
+        BundleKvScaleV1::new(format, block, offset).expect("the fixture scale is valid")
+    };
+    let planes = vec![
+        plane(
+            "window",
+            BundleKvCodeV1::Fp8E4m3,
+            0,
+            scale(BundleKvScaleFormatV1::Ue8m0, 32, 32),
+        ),
+        plane(
+            "compressed",
+            BundleKvCodeV1::Fp4E2m1,
+            40,
+            scale(BundleKvScaleFormatV1::E4m3, 16, 56),
+        ),
+    ];
+    vec![
+        BundleKvFormatV1::new(
+            BundleKvDtypeV1::Bf16,
+            layout("fixture.kv.v1", 64 * u64::from(ranks)),
+        ),
+        BundleKvFormatV1::mixed_planes(planes, layout("fixture.kv-native.v1", 64))
+            .expect("the fixture planes fit their layout"),
+    ]
+}
+
+/// A draft that declares a mixed-plane KV element emits a package requiring
+/// its capability: the emitter declares the two together, whether or not the
+/// draft states the capability, for one topology and for each topology of a
+/// joined draft, and the package verifies on a host that has it. A draft
+/// that requires the capability with no such element is refused.
+#[test]
+fn a_mixed_plane_kv_element_is_emitted_with_its_capability() {
+    let capability = id(MIXED_PLANE_KV_CAPABILITY_V1);
+    let weights = weight_bytes();
+    let mixed = |topology: &str, ranks: u32| {
+        topology_draft(topology, ranks, &weights).with_kv_formats(mixed_plane_formats(ranks))
+    };
+    let stating = mixed("tp1", 1).with_resource_requirements(
+        BundleResourceRequirementsV1::new(1, vec![capability.clone()])
+            .expect("the fixture resources are valid"),
+    );
+    let root = TemporaryDirectory::new("model-compiler-sdk-mixed-planes");
+    for (name, draft) in [("implied", mixed("tp1", 1)), ("stated", stating)] {
+        let output = root.path().join(name);
+        let emitted = emit_bundle_directory_v1(&draft, &output).expect("the draft emits");
+        let manifest = emitted.manifest();
+        assert_eq!(
+            manifest.resource_requirements().required_capabilities(),
+            std::slice::from_ref(&capability),
+            "{name}"
+        );
+        assert_eq!(
+            manifest.kv_formats()[1].dtype(),
+            BundleKvDtypeV1::MixedPlanes
+        );
+        let error = BundlePackageV1::verify_directory(&output, &host())
+            .expect_err("a host without the capability refuses the package")
+            .to_string();
+        assert!(error.contains(MIXED_PLANE_KV_CAPABILITY_V1), "{error}");
+        let package = BundlePackageV1::verify_directory(
+            &output,
+            &host().with_capabilities([capability.clone()]),
+        )
+        .expect("a host with the capability verifies the package");
+        assert_eq!(package.manifest(), manifest);
+    }
+
+    let joined = BundleDraftV1::for_topologies(vec![mixed("tp2", 2), mixed("tp4", 4)])
+        .expect("the drafts join");
+    let output = root.path().join("joined");
+    let emitted = emit_bundle_directory_v1(&joined, &output).expect("the joined draft emits");
+    for topology in ["tp2", "tp4"] {
+        let selected = emitted
+            .manifest()
+            .for_topology(topology)
+            .expect("each topology selects");
+        assert_eq!(
+            selected.resource_requirements().required_capabilities(),
+            std::slice::from_ref(&capability),
+            "{topology}"
+        );
+        assert_eq!(selected.kv_formats().len(), 2, "{topology}");
+    }
+
+    let stray = topology_draft("tp1", 1, &weights).with_resource_requirements(
+        BundleResourceRequirementsV1::new(1, vec![capability])
+            .expect("the fixture resources are valid"),
+    );
+    let error = emit_bundle_directory_v1(&stray, &root.path().join("stray"))
+        .expect_err("the capability without its element is refused")
+        .to_string();
+    assert!(error.contains(MIXED_PLANE_KV_CAPABILITY_V1), "{error}");
 }
 
 fn model_options_draft(default: i64, qualified: bool) -> BundleDraftV1 {

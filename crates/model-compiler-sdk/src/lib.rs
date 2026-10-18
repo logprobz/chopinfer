@@ -30,13 +30,13 @@ use runtime_bundle::{
     BUNDLE_MANIFEST_FILE, BUNDLE_NATIVE_ENTRY_SYMBOL_V1, BundleArtifactIdentityV1,
     BundleBatchLimitsV1, BundleBuildIdentityV1, BundleComponentV1, BundleError,
     BundleGraphBucketV1, BundleHostCompatibilityV1, BundleImplementationDetailV1,
-    BundleImplementationTierV1, BundleImplementationV1, BundleKvFormatV1, BundleKvLayoutV1,
-    BundleLaunchContractV1, BundleManifestV1, BundleNativeModuleV1, BundleNativeSymbolSequenceV1,
-    BundleOpaqueId, BundleOperationKeyV1, BundleOperationRequirementV1, BundlePackageV1,
-    BundlePlannedComponentV1, BundleRelativePathV1, BundleResourceRequirementsV1,
-    BundleSourceIdentityV1, BundleSpecializationV1, BundleSpeculationV1, BundleStateLayoutV1,
-    BundleTargetV1, BundleTopologyResourcesV1, BundleWorkspaceContractV1,
-    MODEL_BUNDLE_V1_ABI_VERSION, publish_verified_staging_no_replace,
+    BundleImplementationTierV1, BundleImplementationV1, BundleKvDtypeV1, BundleKvFormatV1,
+    BundleKvLayoutV1, BundleLaunchContractV1, BundleManifestV1, BundleNativeModuleV1,
+    BundleNativeSymbolSequenceV1, BundleOpaqueId, BundleOperationKeyV1,
+    BundleOperationRequirementV1, BundlePackageV1, BundlePlannedComponentV1, BundleRelativePathV1,
+    BundleResourceRequirementsV1, BundleSourceIdentityV1, BundleSpecializationV1,
+    BundleSpeculationV1, BundleStateLayoutV1, BundleTargetV1, BundleTopologyResourcesV1,
+    BundleWorkspaceContractV1, MODEL_BUNDLE_V1_ABI_VERSION, publish_verified_staging_no_replace,
 };
 use runtime_weights::{Sha256State, sha256_reader};
 
@@ -473,7 +473,9 @@ impl BundleDraftV1 {
             components.extend(restricted(&mut draft));
             let resources = BundleTopologyResourcesV1::new(
                 topologies[topologies.len() - 1].id().clone(),
-                draft.resource_requirements.clone(),
+                draft
+                    .resource_requirements
+                    .for_kv_formats(&draft.kv_formats)?,
                 draft.kv_layout.clone(),
                 draft.kv_formats.clone(),
                 draft.state_layout.clone(),
@@ -532,7 +534,9 @@ impl BundleDraftV1 {
     }
 
     /// Every serving KV layout the bundle can run, the preferred `kv_layout`
-    /// among them; the host picks one at startup.
+    /// among them; the host picks one at startup. A mixed-plane element is
+    /// emitted with the capability it requires
+    /// (`runtime_bundle::MIXED_PLANE_KV_CAPABILITY_V1`).
     #[must_use]
     pub fn with_kv_formats(mut self, formats: Vec<BundleKvFormatV1>) -> Self {
         self.kv_formats = formats;
@@ -988,6 +992,21 @@ fn manifest_v1(
         .filter(|component| component.serves(first.as_str()))
         .map(|component| component.for_topology(first))
         .collect();
+    // A mixed-plane element and its capability are declared together, by
+    // `with_kv_formats`, so the manifest is built before either. A draft
+    // that requires the capability with no such element is refused.
+    let requirements = if draft
+        .kv_formats
+        .iter()
+        .any(|format| format.dtype() == BundleKvDtypeV1::MixedPlanes)
+    {
+        let capability = BundleOpaqueId::new(runtime_bundle::MIXED_PLANE_KV_CAPABILITY_V1)?;
+        draft
+            .resource_requirements
+            .without_capability(&capability)?
+    } else {
+        draft.resource_requirements.clone()
+    };
     let mut manifest = BundleManifestV1::new_with_planned_v1(
         draft.id.clone(),
         BundleTargetV1::new(
@@ -996,7 +1015,7 @@ fn manifest_v1(
         )?,
         first_components,
         planned,
-        draft.resource_requirements.clone(),
+        requirements,
         draft.kv_layout.clone(),
         draft.state_layout.clone(),
         draft.graph_buckets.clone(),

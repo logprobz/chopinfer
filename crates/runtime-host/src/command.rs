@@ -8513,7 +8513,6 @@ mod tests {
     fn mixed_planes(manifest: BundleManifestV1) -> BundleManifestV1 {
         use runtime_bundle::{
             BundleKvCodeV1, BundleKvPlaneV1, BundleKvScaleFormatV1, BundleKvScaleV1,
-            MIXED_PLANE_KV_CAPABILITY_V1,
         };
         let bf16 = manifest.kv_layout().clone();
         let native = BundleKvLayoutV1::new(
@@ -8549,12 +8548,8 @@ mod tests {
             )
             .unwrap(),
         ];
+        // Declaring the formats declares the capability with them.
         let mut value = serde_json::to_value(&manifest).unwrap();
-        let capabilities = value["resource_requirements"]["required_capabilities"]
-            .as_array_mut()
-            .unwrap();
-        capabilities.push(MIXED_PLANE_KV_CAPABILITY_V1.into());
-        capabilities.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
         value["kv_layout"] = serde_json::to_value(&native).unwrap();
         serde_json::from_value::<BundleManifestV1>(value)
             .unwrap()

@@ -517,6 +517,39 @@ impl BundleResourceRequirementsV1 {
         &self.required_capabilities
     }
 
+    /// These requirements with `capability` among them.
+    pub fn with_capability(&self, capability: &BundleOpaqueId) -> Result<Self, BundleError> {
+        let mut capabilities = self.required_capabilities.clone();
+        if !capabilities.contains(capability) {
+            capabilities.push(capability.clone());
+        }
+        Self::new(self.minimum_device_memory_bytes, capabilities)
+    }
+
+    /// These requirements without `capability`.
+    pub fn without_capability(&self, capability: &BundleOpaqueId) -> Result<Self, BundleError> {
+        let capabilities = self
+            .required_capabilities
+            .iter()
+            .filter(|required| *required != capability)
+            .cloned()
+            .collect();
+        Self::new(self.minimum_device_memory_bytes, capabilities)
+    }
+
+    /// These requirements with the capability `formats` need: a mixed-plane
+    /// element requires [`MIXED_PLANE_KV_CAPABILITY_V1`].
+    pub fn for_kv_formats(&self, formats: &[BundleKvFormatV1]) -> Result<Self, BundleError> {
+        if formats
+            .iter()
+            .any(|format| format.dtype == BundleKvDtypeV1::MixedPlanes)
+        {
+            self.with_capability(&BundleOpaqueId::new(MIXED_PLANE_KV_CAPABILITY_V1)?)
+        } else {
+            Ok(self.clone())
+        }
+    }
+
     fn validate(&self) -> Result<(), BundleError> {
         if self.minimum_device_memory_bytes == 0 {
             return Err(BundleError::validation(
@@ -3219,12 +3252,15 @@ impl BundleManifestV1 {
     }
 
     /// Declares every serving KV layout the bundle can run, `kv_layout`
-    /// among them, one per element.
+    /// among them, one per element. A mixed-plane element brings
+    /// [`MIXED_PLANE_KV_CAPABILITY_V1`] into the resource requirements in the
+    /// same step, so neither is declared without the other.
     pub fn with_kv_formats(
         mut self,
         mut formats: Vec<BundleKvFormatV1>,
     ) -> Result<Self, BundleError> {
         formats.sort_by_key(BundleKvFormatV1::dtype);
+        self.resource_requirements = self.resource_requirements.for_kv_formats(&formats)?;
         self.kv_formats = formats;
         self.validate()?;
         Ok(self)
@@ -6032,20 +6068,34 @@ mod tests {
             BundleKvFormatV1::new(BundleKvDtypeV1::Bf16, primary.clone()),
         ];
 
-        // Without the capability the declaration is refused, naming it.
-        let error = manifest
+        // Declaring the formats declares the capability with them; formats
+        // without a mixed-plane element add none.
+        assert!(!manifest.requires(MIXED_PLANE_KV_CAPABILITY_V1));
+        let both = manifest.clone().with_kv_formats(formats).unwrap();
+        assert!(both.requires(MIXED_PLANE_KV_CAPABILITY_V1));
+        let bf16 = manifest
             .clone()
-            .with_kv_formats(formats.clone())
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains(MIXED_PLANE_KV_CAPABILITY_V1), "{error}");
-        // So is the capability without a mixed-plane format, whose layout a
-        // host would otherwise read as BF16.
+            .with_kv_formats(vec![BundleKvFormatV1::new(
+                BundleKvDtypeV1::Bf16,
+                primary.clone(),
+            )])
+            .unwrap();
+        assert_eq!(bf16.resource_requirements, manifest.resource_requirements);
+        // A manifest that states one without the other is refused, naming the
+        // capability: the formats without it, and the capability without
+        // them, whose layout a host would otherwise read as BF16.
+        let mut without = both.clone();
+        without.resource_requirements = manifest.resource_requirements.clone();
         let declares = with_capability(manifest.clone(), MIXED_PLANE_KV_CAPABILITY_V1);
-        let error = declares.to_canonical_json().unwrap_err().to_string();
-        assert!(error.contains(MIXED_PLANE_KV_CAPABILITY_V1), "{error}");
+        for refused in [without, declares] {
+            let error = refused.validate().unwrap_err().to_string();
+            assert!(error.contains(MIXED_PLANE_KV_CAPABILITY_V1), "{error}");
+            let mut value = serde_json::to_value(&refused).unwrap();
+            super::sort_json(&mut value);
+            let bytes = serde_json::to_vec(&value).unwrap();
+            assert!(BundleManifestV1::from_canonical_json(&bytes).is_err());
+        }
 
-        let both = declares.with_kv_formats(formats).unwrap();
         let elements: Vec<_> = both
             .kv_formats()
             .iter()

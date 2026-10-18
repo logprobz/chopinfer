@@ -5,8 +5,9 @@
 //! 32 columns; each row and group reads only its own columns, so an entry
 //! claims one-row bits up to its capacity, any chunk split and row
 //! independence. Each column is a scalar load, so the gate and up views
-//! need only F32 alignment. A product that rounds to a BF16 infinity traps,
-//! as the contract refuses it.
+//! need only F32 alignment. An entry refuses a clamp whose product can
+//! round to a BF16 infinity ([`clamp_fits_bf16`]), so no finite input
+//! reaches the kernel's overflow trap.
 
 use super::{pack_arguments, ptr};
 use kernel_build::{CubinSpec, EntrySpec};
@@ -22,6 +23,20 @@ pub const LAB_CUBIN: &str = "silu_mul_quantize_sm120";
 pub const LAB_CAPACITY: u32 = 16;
 /// Columns of one CTA: one quantization group.
 pub const GROUP: u32 = 32;
+/// The largest finite BF16 value, `0x7f7f`.
+const BF16_MAX: f64 = 3.389_531_389_251_535_5e38;
+
+/// Whether every finite gate and up within `clamp` gives a finite BF16
+/// product: `max(gate_max, 1) * up_limit` at most the largest BF16. The
+/// SiLU of a gate at most `gate_max` is at most `max(gate_max, 1)` in
+/// magnitude after F32 rounding (`g / fl(1 + t)` with `t >= 0` is at most
+/// `g` for `g >= 0`, and under 0.28 in magnitude for `g < 0`), the up value
+/// is at most `up_limit` in magnitude, and the F32 product and its BF16
+/// rounding are monotone, so the bound holds through every rounding. For a
+/// symmetric clamp of at least 1 this is its square.
+pub fn clamp_fits_bf16(clamp: SwigluClamp) -> bool {
+    f64::from(clamp.gate_max().max(1.0)) * f64::from(clamp.up_limit()) <= BF16_MAX
+}
 
 #[derive(Clone, Debug)]
 pub struct Entry {
@@ -48,6 +63,11 @@ impl Entry {
     pub fn validate(&self) -> Result<(), Refusal> {
         self.query.validate()?;
         self.query.numerical_contract_id()?;
+        if !clamp_fits_bf16(self.query.clamp) {
+            return Err(Refusal(
+                "quantized SwiGLU clamp lets the product overflow BF16",
+            ));
+        }
         if self.capacity == 0 || self.capacity > crate::backend::MAX_CAPACITY {
             return Err(Refusal("quantized SwiGLU capacity exceeds SM120 bounds"));
         }
@@ -226,5 +246,46 @@ mod tests {
         bad.width = 48;
         assert!(Entry::new(bad, 1, "chop_x_v1").is_err());
         assert_eq!(lab_cubin_specs()[0].entries.len(), 3);
+    }
+
+    #[test]
+    fn entries_refuse_clamps_whose_product_can_overflow_bf16() {
+        let entry = |clamp| {
+            Entry::new(
+                SiluMulQuantizeQuery {
+                    clamp,
+                    ..lab_entries()[0].query
+                },
+                1,
+                "chop_x_v1",
+            )
+        };
+        let bf16_max = f32::from_bits(0x7f7f_0000);
+        // The square of the largest symmetric clamp is the largest BF16.
+        let root = (f64::from(bf16_max)).sqrt() as f32;
+        let mut fits = root;
+        while !clamp_fits_bf16(SwigluClamp::symmetric(fits)) {
+            fits = fits.next_down();
+        }
+        while clamp_fits_bf16(SwigluClamp::symmetric(fits.next_up())) {
+            fits = fits.next_up();
+        }
+        assert!(clamp_fits_bf16(SwigluClamp::symmetric(fits)));
+        assert!(!clamp_fits_bf16(SwigluClamp::symmetric(fits.next_up())));
+        entry(SwigluClamp::symmetric(fits)).unwrap();
+        assert!(entry(SwigluClamp::symmetric(fits.next_up())).is_err());
+        // The review's overflow: clamp 2e19, whose square passes 3.4e38.
+        assert!(entry(SwigluClamp::symmetric(2e19)).is_err());
+        // A gate clamp under 1 still bounds the SiLU by 1, not by itself.
+        let small_gate = SwigluClamp {
+            gate_max_bits: 0.5_f32.to_bits(),
+            up_limit_bits: bf16_max.to_bits(),
+        };
+        entry(small_gate).unwrap();
+        let wide_up = SwigluClamp {
+            gate_max_bits: 0.5_f32.to_bits(),
+            up_limit_bits: f32::MAX.to_bits(),
+        };
+        assert!(entry(wide_up).is_err());
     }
 }

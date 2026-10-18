@@ -81,6 +81,8 @@ ALLOWED |= {
         ('cfg-test', "the binaries' unit tests' native fixture, which includes native.rs",
          ('models/mimo26/compiler/src/bin/chopinfer-model-mimo26.rs',
           'models/mimo26/compiler/src/bin/mimo26-package.rs')),
+    'models/deepseek41/compiler/tests/package_helper.rs':
+        ('tests', "the package helper's integration test, which includes native.rs", ()),
     'models/qwen38/compiler/src/test_native.rs':
         ('cfg-test', "the compiler's unit tests' native fixture, which includes native.rs",
          ('models/qwen38/compiler/src/lib.rs',)),

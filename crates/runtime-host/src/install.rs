@@ -340,19 +340,7 @@ impl InstalledBundleHostV1 {
         kv_dtype: Option<runtime_bundle::BundleKvDtypeV1>,
     ) -> Result<HostInstanceConfigV1, HostLoadErrorV1> {
         let manifest = self.manifest();
-        // The declared layout the host serves: the preferred one unless the
-        // serving policy names another element.
-        let kv_layout = match kv_dtype {
-            None => manifest.kv_layout(),
-            Some(dtype) => {
-                crate::kv_cache_dtype::kv_layout_of_v1(manifest, dtype).ok_or_else(|| {
-                    HostLoadErrorV1::Bundle(BundleError::validation(format!(
-                        "bundle declares no {} KV layout",
-                        dtype.as_str()
-                    )))
-                })?
-            }
-        };
+        let kv_layout = served_kv_layout_v1(manifest, kv_dtype)?;
         let topology = HostTopologyV1::new(device_ordinals)
             .map_err(|error| BundleError::validation(error.to_string()))?;
         let declared = manifest
@@ -403,7 +391,7 @@ impl InstalledBundleHostV1 {
                 kv_layout.id().as_str().as_bytes().to_vec(),
                 page_layout,
             ))
-            .with_state_contract(state_contract_v1(manifest, served)?);
+            .with_state_contract(state_contract_for_v1(manifest, kv_layout, served)?);
         // A selected checkpoint: the bundle's weight plans produce the rank
         // images and the components they declare, which replace any package
         // component of the same role.
@@ -609,9 +597,14 @@ impl InstalledBundleHostV1 {
                 maximum_sequences,
             )?
         {
+            let kv_layout = served_kv_layout_v1(self.manifest(), kv_dtype)?;
             config = config
                 .with_maximum_sequences(sequences)
-                .with_state_contract(state_contract_v1(self.manifest(), Some(sequences))?);
+                .with_state_contract(state_contract_for_v1(
+                    self.manifest(),
+                    kv_layout,
+                    Some(sequences),
+                )?);
         }
         if let Some(policy) = serving_kv {
             config = config.with_serving_kv(policy);
@@ -771,14 +764,42 @@ pub fn state_contract_v1(
     manifest: &BundleManifestV1,
     served: Option<u32>,
 ) -> Result<DeclaredStateContractV1, HostLoadErrorV1> {
-    let layout = manifest.state_layout();
+    state_contract_for_v1(manifest, manifest.kv_layout(), served)
+}
+
+/// [`state_contract_v1`] of an instance serving `kv_layout`, one of the
+/// manifest's KV layouts: a format may size the state for its element
+/// ([`BundleManifestV1::state_layout_for_v1`]).
+pub fn state_contract_for_v1(
+    manifest: &BundleManifestV1,
+    kv_layout: &runtime_bundle::BundleKvLayoutV1,
+    served: Option<u32>,
+) -> Result<DeclaredStateContractV1, HostLoadErrorV1> {
+    let layout = manifest.state_layout_for_v1(kv_layout);
     Ok(DeclaredStateContractV1::new(
         layout.id().as_str().as_bytes().to_vec(),
         manifest
-            .state_bytes_v1(served)
+            .state_bytes_for_v1(kv_layout, served)
             .map_err(HostLoadErrorV1::Bundle)?,
         layout.alignment_bytes(),
     ))
+}
+
+/// The declared KV layout the host serves: the preferred one unless the
+/// serving policy names another element.
+fn served_kv_layout_v1(
+    manifest: &BundleManifestV1,
+    kv_dtype: Option<runtime_bundle::BundleKvDtypeV1>,
+) -> Result<&runtime_bundle::BundleKvLayoutV1, HostLoadErrorV1> {
+    match kv_dtype {
+        None => Ok(manifest.kv_layout()),
+        Some(dtype) => crate::kv_cache_dtype::kv_layout_of_v1(manifest, dtype).ok_or_else(|| {
+            HostLoadErrorV1::Bundle(BundleError::validation(format!(
+                "bundle declares no {} KV layout",
+                dtype.as_str()
+            )))
+        }),
+    }
 }
 
 /// Reads one verified component of a package, by the role it serves.
@@ -1405,6 +1426,81 @@ mod tests {
             assert_eq!(
                 runtime_bundle::state_slots_v1(served),
                 runtime_bundle_abi::raw_state_slots_v1(served)
+            );
+        }
+    }
+    /// An instance serving a KV format that sizes the state for its element
+    /// is created with that state, per served slot like the manifest's.
+    #[test]
+    fn the_served_kv_format_sizes_the_state_contract() {
+        use crate::services::DeclaredStateContractV1;
+        use runtime_bundle::{BundleBatchLimitsV1, BundleKvDtypeV1, BundleKvFormatV1};
+        let base = two_topology_manifest();
+        let requirements = BundleResourceRequirementsV1::new(
+            1,
+            vec![
+                id(runtime_bundle::SERVED_ITEMS_CAPABILITY_V1),
+                id(runtime_bundle::STATE_PER_ITEM_CAPABILITY_V1),
+            ],
+        )
+        .expect("the test requirements are valid");
+        let wide = BundleKvLayoutV1::new(
+            id("fixture.kv-wide.v1"),
+            128,
+            64,
+            1,
+            128,
+            1,
+            1024,
+            BundleRankPlacementV1::Replicated,
+            BundleStateLifetimeV1::Transaction,
+        )
+        .expect("the wide KV layout is valid");
+        let larger = BundleStateLayoutV1::new(
+            id("fixture.state.v1"),
+            128,
+            64,
+            BundleStateLifetimeV1::Request,
+        )
+        .expect("the larger state layout is valid");
+        let manifest = BundleManifestV1::new(
+            base.id().clone(),
+            base.target().clone(),
+            base.components().to_vec(),
+            requirements,
+            base.kv_layout().clone(),
+            base.state_layout().clone(),
+            base.graph_buckets().to_vec(),
+            Vec::new(),
+            Vec::new(),
+            None,
+        )
+        .and_then(|m| m.with_batch_limits(BundleBatchLimitsV1::new(64, 8192)?))
+        .and_then(|m| {
+            m.with_kv_formats(vec![
+                BundleKvFormatV1::new(BundleKvDtypeV1::Bf16, base.kv_layout().clone()),
+                BundleKvFormatV1::new(BundleKvDtypeV1::Fp8E4m3, wide.clone())
+                    .with_state_layout(larger)?,
+            ])
+        })
+        .expect("the test manifest is valid");
+        let served = |dtype| super::served_kv_layout_v1(&manifest, dtype).map(|l| l.id().clone());
+        assert_eq!(served(None).unwrap(), id("fixture.kv.v1"));
+        assert_eq!(
+            served(Some(BundleKvDtypeV1::Fp8E4m3)).unwrap(),
+            id("fixture.kv-wide.v1")
+        );
+        assert!(served(Some(BundleKvDtypeV1::MixedPlanes)).is_err());
+        let contract =
+            |bytes: u64| DeclaredStateContractV1::new(b"fixture.state.v1".to_vec(), bytes, 64);
+        for (served, slots) in [(1, 1), (33, 64)] {
+            assert_eq!(
+                super::state_contract_for_v1(&manifest, &wide, Some(served)).unwrap(),
+                contract(128 * slots)
+            );
+            assert_eq!(
+                super::state_contract_v1(&manifest, Some(served)).unwrap(),
+                contract(64 * slots)
             );
         }
     }

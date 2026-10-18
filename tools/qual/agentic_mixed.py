@@ -39,7 +39,10 @@ PROMPT_TAIL_IDS = 64
 # set by `main` from the frontend declaration; the raw re-parse of a turn
 # reads it.
 MARKUP = None
-TOOL_GRAMMARS = ('xml-function-parameters-v1', 'xml-key-value-arguments-v1')
+TOOL_GRAMMARS = ('xml-function-parameters-v1', 'xml-key-value-arguments-v1', 'xml-typed-parameters-v1')
+# The library grammars whose calls are function elements.
+FUNCTION_GRAMMARS = ('xml-function-parameters-v1', 'xml-typed-parameters-v1')
+TYPED = 'xml-typed-parameters-v1'
 
 
 class Markup:
@@ -53,7 +56,10 @@ class Markup:
     assistant header (the assistant prefix) opens the thinking block or
     leaves the model to open it, so generated text before the reasoning
     close is reasoning, and everything after it is the answer or tool calls,
-    in the declared tool grammar.
+    in the declared tool grammar. In the typed grammar the calls are
+    function elements inside one calls block, opened with the declared
+    whitespace before it, and each parameter's open tag says whether its
+    value is raw text or JSON.
 
     A format that declares no library tool grammar supplies its own
     re-parser: a class `Markup` in the model root's `agentic_markup.py`
@@ -90,7 +96,7 @@ class Markup:
         self.value_lead = markup['parameter_name_close'][len(markup['parameter_name_close'].rstrip()):]
         self.value_trail = markup['parameter_close'][:len(markup['parameter_close']) - len(
             markup['parameter_close'].lstrip())]
-        if self.grammar == 'xml-function-parameters-v1':
+        if self.grammar in FUNCTION_GRAMMARS:
             self.function_open = markup['function_open'].strip()
             name_close = markup['function_name_close'].strip()
             self.function_close = markup['function_close'].strip()
@@ -101,7 +107,15 @@ class Markup:
             self.function_head = re.compile(head)
             self.function_region = re.compile(head + r'(.*)' + re.escape(self.function_close) + r'\s*', re.S)
             self.parameter_head = re.compile(re.escape(self.parameter_open) + name_pattern(self.parameter_name_close))
-        else:
+        if self.grammar == TYPED:
+            # The calls block opens with its declared whitespace, and a
+            # parameter's open tag ends in the close that types its value.
+            self.block_open = markup['tool_call_open']
+            self.json_close = markup['parameter_json_name_close'].strip()
+            closes = re.escape(self.parameter_name_close) + '|' + re.escape(self.json_close)
+            self.parameter_head = re.compile(
+                re.escape(self.parameter_open) + r'((?:(?!' + closes + r')[^\n])+)(' + closes + ')')
+        if self.grammar not in FUNCTION_GRAMMARS:
             if value_open is None:
                 raise ValueError('xml-key-value-arguments-v1 needs parameter_value_open')
             self.value_open = value_open.strip()
@@ -122,13 +136,16 @@ class Markup:
 
     def calls(self, after, tools=()):
         """The content and calls of the text after a reasoning close:
-        (content, [(name, [(parameter, raw value)])]), or None (`raw_calls`)."""
+        (content, [(name, [(parameter, raw value)])]), or None (`raw_calls`,
+        or `typed_calls` for the typed grammar)."""
+        if self.grammar == TYPED:
+            return typed_calls(self, after)
         return raw_calls(self, after, tools)
 
     def names_function(self, region):
         """Whether a tool region's text (inside its wrapper) opens with a
         function header."""
-        if self.grammar == 'xml-function-parameters-v1':
+        if self.grammar in FUNCTION_GRAMMARS:
             return self.function_open in region
         return bool(region.partition(self.parameter_open)[0].strip())
 
@@ -165,7 +182,11 @@ class Markup:
         """Whether a raw parameter value is the parsed argument: a string
         (less the whitespace the declared markers write around it in the
         function-parameter grammar, `value_lead` and `value_trail`), else its
-        JSON value."""
+        JSON value. A typed grammar's raw value is `(whether it is JSON, its
+        text)`, typed by its open tag (`typed_json`)."""
+        if self.grammar == TYPED:
+            json_value, raw = raw
+            return (typed_json(raw) if json_value else raw) == value
         if isinstance(value, str):
             if self.grammar == 'xml-function-parameters-v1':
                 raw = raw.removeprefix(self.value_lead).removesuffix(self.value_trail)
@@ -277,6 +298,82 @@ def walk_step(markup, raw, end, walk, json_key):
             return 'seek', at + len(markup.parameter_close), 0, False, False
         return 'seek', at, 0, False, False
     return mode, at + 1, name, in_string, escaped
+
+
+def typed_calls(markup, after):
+    """The content and calls of the text after a reasoning close in the
+    typed grammar (xml-typed-parameters-v1), as `raw_calls` returns them
+    with each value as `(whether it is JSON, its text)`, or None unless it
+    is content followed by one calls block, opened with its declared
+    whitespace, of function elements separated only by whitespace, and
+    nothing after the block close but whitespace. The served parser reads a
+    call only inside such a block, and the content may not spell the call
+    markup.
+
+    The walk reads AFTER by offsets and copies only the names and values it
+    returns, so many parameters cost the block once."""
+    content, opened, rest = after.partition(markup.block_open)
+    if any(m in content for m in markup.call_markup):
+        return None
+    if not opened:
+        return content, []
+    calls, at = [], skip_space(rest, 0)
+    while not rest.startswith(markup.tool_close, at):
+        head = markup.function_head.match(rest, at)
+        if not head:
+            return None
+        parameters, at = typed_parameters(markup, rest, head.end())
+        if parameters is None:
+            return None
+        calls.append((head.group(1), parameters))
+        at = skip_space(rest, at)
+    if rest[at + len(markup.tool_close):].strip():
+        return None
+    return content, calls
+
+
+def typed_parameters(markup, text, at):
+    """The parameters of one typed function element in TEXT from AT, after
+    its name, up to its function close: ([(parameter, (whether it is JSON,
+    raw value))], the index after the close), or (None, AT) unless
+    parameters separated only by whitespace run to the close. A raw value
+    ends at its first parameter close, whatever else it spells; a JSON value
+    at the first outside its string literals, as the served parser reads
+    them."""
+    parameters = []
+    while True:
+        at = skip_space(text, at)
+        if text.startswith(markup.function_close, at):
+            return parameters, at + len(markup.function_close)
+        head = markup.parameter_head.match(text, at)
+        if not head:
+            return None, at
+        json_value = head.group(2) == markup.json_close
+        end = (outside_strings if json_value else str.find)(text, markup.parameter_close, head.end())
+        if end < 0:
+            return None, at
+        parameters.append((head.group(1), (json_value, text[head.end():end])))
+        at = end + len(markup.parameter_close)
+
+
+def typed_json(raw):
+    """A typed JSON value as the served parser reads it: the JSON text's
+    value, or the text itself when it is not JSON or holds a fractional or
+    exponent number that is not a finite binary64 (NaN and infinities
+    included)."""
+    def finite(text):
+        number = float(text)
+        if not math.isfinite(number):
+            raise ValueError(text)
+        return number
+
+    def constant(name):
+        raise ValueError(name)
+
+    try:
+        return json.loads(raw, parse_float=finite, parse_constant=constant)
+    except (ValueError, RecursionError):
+        return raw
 
 
 def key_value_region(markup, text, tools):
@@ -1148,7 +1245,11 @@ def inventoried(model):
     frontend file."""
     root, found = Path(common.ROOT), set()
     for inventory in sorted(root.glob('models/*/model.toml')):
-        declared = json.loads(declaration.path(inventory.parent.name, root).read_text())['inputs'].get('frontend')
+        # A model without a qualification declaration declares no frontend.
+        qualification = declaration.path(inventory.parent.name, root)
+        if not qualification.is_file():
+            continue
+        declared = json.loads(qualification.read_text())['inputs'].get('frontend')
         path = root / declared if isinstance(declared, str) else None
         if path and path.is_file() and model in [m.get('id') for m in json.loads(path.read_text()).get('models', [])]:
             found.add((path, inventory.parent))

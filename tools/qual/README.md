@@ -1446,8 +1446,11 @@ else the `frontend` input of `CHOPINFER_QUAL_CONFIG`, else the inventoried
 model whose frontend declares the served model ID. It is independent of the
 served parser: it decodes token IDs through `/detokenize` and never reads
 frontend-format or the server's parse. A format that declares a library tool
-grammar in `format.parser.tool_grammar` (`xml-function-parameters-v1` or
-`xml-key-value-arguments-v1`) uses the shared re-parser, `Markup`. Any
+grammar in `format.parser.tool_grammar` (`xml-function-parameters-v1`,
+`xml-key-value-arguments-v1` or `xml-typed-parameters-v1`) uses the shared
+re-parser, `Markup`. In the typed grammar it reads calls only inside one
+calls block opened with its declared whitespace, a raw value to its first
+parameter close and a JSON value to the first outside its strings. Any
 other format supplies its own as `agentic_markup.py` in its model root:
 `--model-root`, else `CHOPINFER_QUAL_MODEL_ROOT` (set by `release_gate.py
 --model-root`), else `models/<m>` of that inventoried model. The file must be

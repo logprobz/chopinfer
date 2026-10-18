@@ -31,10 +31,27 @@ TOOLS = [{'type': 'function', 'function': {'name': 'read', 'parameters': {
                                      'filter': {'type': 'object'}}}}}]
 # Completions the served parser's test reads too, with the calls it returns.
 SHARED_CASES = ROOT / 'crates/frontend-format/tests/function_parameter_cases.json'
+# A typed-grammar declaration (frontend-format's TYPED_PARAMETERS fixture
+# markup), each turn opener and the stop its own boundary token.
+TYPED_PARSER = {
+    'tool_grammar': 'xml-typed-parameters-v1', 'json_encoding': 'python-json-v1',
+    'reasoning_open': '<think>', 'reasoning_close': '</think>',
+    'tool_call_open': '\n\n<calls>\n', 'tool_call_close': '</calls>',
+    'function_open': '<invoke name="', 'function_name_close': '">\n', 'function_close': '</invoke>\n',
+    'parameter_open': '<parameter name="', 'parameter_name_close': '" string="true">',
+    'parameter_json_name_close': '" string="false">', 'parameter_close': '</parameter>\n',
+    'turn_open': ['A[', 'U['], 'assistant_header': 'A[',
+}
+TYPED_FRONTEND = {'format': {'parser': TYPED_PARSER}, 'vocabulary': {
+    'boundary_tokens': [{'id': 0, 'text': 'A['}, {'id': 1, 'text': 'U['}, {'id': 2, 'text': '[EOS]'}],
+    'stop_token_ids': [2]}}
 
 
 def declared_frontend(model):
-    declared = json.loads(declaration.path(model).read_text())['inputs'].get('frontend')
+    path = declaration.path(model)
+    if not path.is_file():
+        return None
+    declared = json.loads(path.read_text())['inputs'].get('frontend')
     return ROOT / declared if isinstance(declared, str) else None
 
 
@@ -483,7 +500,10 @@ class ReParserSelection(unittest.TestCase):
                     self.assertEqual(markup.grammar, parser_section(frontend)['tool_grammar'])
                     self.assertEqual(record['tool_grammar'], markup.grammar)
                     self.assertIsNone(record['reparser_sha256'])
-        self.assertEqual({agentic_mixed.library_grammar(frontend) for _, frontend in frontends()}, set(TOOL_GRAMMARS))
+        # Every library grammar is a declared frontend's, or the typed one
+        # this file declares (`TypedGrammar`).
+        self.assertEqual({agentic_mixed.library_grammar(frontend) for _, frontend in frontends()}
+                         | {agentic_mixed.library_grammar(TYPED_FRONTEND)}, set(TOOL_GRAMMARS))
 
     def test_a_format_with_neither_is_refused(self):
         """Naming both remedies: a library grammar or agentic_markup.py."""
@@ -647,6 +667,67 @@ class SharedCases(unittest.TestCase):
                 self.assertEqual(calls_class(markup, *turn, answer, tools), case['qual'])
                 classes.add(case['qual'])
         self.assertEqual(classes, {RAW_CALLS_AGREE, 'calls differ', 'malformed call region'})
+
+
+class TypedGrammar(unittest.TestCase):
+    """xml-typed-parameters-v1: one calls block, opened after a blank line,
+    of `<invoke name="N">` elements whose parameters' open tags say whether
+    the value is raw text (`string="true"`) or JSON (`string="false"`)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.markup = Markup(TYPED_FRONTEND)
+
+    def turn(self, after):
+        return raw_turn(self.markup, 'U[q]A[<think>', f'Plan</think>{after}[EOS]')
+
+    def invoke(self, name, *parameters):
+        text = f'<invoke name="{name}">\n'
+        for key, json_value, value in parameters:
+            text += f'<parameter name="{key}" string="{"false" if json_value else "true"}">{value}</parameter>\n'
+        return text + '</invoke>\n'
+
+    def test_calls_in_one_block_agree_with_their_parsed_answer(self):
+        # A raw value runs to its own close past a parameter open and a
+        # function close; a JSON string may spell the parameter close.
+        raw = 'a <parameter name="x" string="true"> b </invoke>'
+        after = ('Reading.\n\n<calls>\n'
+                 + self.invoke('read', ('path', False, raw), ('filter', True, '{"k": "</parameter>"}'))
+                 + self.invoke('read', ('offset', True, '5')) + '</calls>')
+        answer = {'reasoning': 'Plan', 'content': 'Reading.', 'tool_calls': [
+            {'function': {'name': 'read', 'arguments': json.dumps({'path': raw, 'filter': {'k': '</parameter>'}})}},
+            {'function': {'name': 'read', 'arguments': json.dumps({'offset': 5})}}]}
+        self.assertEqual(calls_class(self.markup, *self.turn(after), answer, TOOLS), RAW_CALLS_AGREE)
+        # The open tag types the value, whatever the schema says.
+        typed = {**answer, 'tool_calls': [answer['tool_calls'][0],
+                                          {'function': {'name': 'read', 'arguments': '{"offset": "5"}'}}]}
+        self.assertEqual(calls_class(self.markup, *self.turn(after), typed, TOOLS), 'calls differ')
+
+    def test_a_number_beyond_binary64_stays_text(self):
+        after = '\n\n<calls>\n' + self.invoke('read', ('offset', True, '1e400')) + '</calls>'
+        text = {'reasoning': 'Plan', 'content': '', 'tool_calls': [
+            {'function': {'name': 'read', 'arguments': '{"offset": "1e400"}'}}]}
+        self.assertEqual(calls_class(self.markup, *self.turn(after), text, TOOLS), RAW_CALLS_AGREE)
+
+    def test_calls_outside_one_opened_block_are_malformed(self):
+        call = self.invoke('read', ('path', False, 'a.py'))
+        for after in (f'Done.<calls>\n{call}</calls>',
+                      f'Done.{call}',
+                      f'\n\n<calls>\n{call}</calls>\n\n<calls>\n{call}</calls>',
+                      f'\n\n<calls>\n{call}</calls>trailing',
+                      '\n\n<calls>\n<invoke name="read">\n<parameter name="path" string="true">a.py</invoke>\n</calls>',
+                      '\n\n<calls>\n<invoke name="read">\n<parameter name="path" string="maybe">a</parameter>\n'
+                      '</invoke>\n</calls>'):
+            with self.subTest(after=after):
+                self.assertIsNone(self.markup.calls(after, TOOLS))
+        self.assertEqual(self.markup.calls('Done.', TOOLS), ('Done.', []))
+
+    def test_last_turn_classes(self):
+        self.assertEqual(last_turn_class(self.markup, *self.turn('\n\n<calls>\n</calls>')), RAW_MALFORMED_CALL)
+        call = '\n\n<calls>\n' + self.invoke('read', ('path', False, 'a.py')) + '</calls>'
+        self.assertEqual(last_turn_class(self.markup, *self.turn(call)), 'output after reasoning')
+        self.assertEqual(raw_turn(self.markup, 'U[q]A[<think>', 'Plan <invoke name="read"></think>Done.[EOS]'),
+                         'call markup')
 
 
 class KeyValueGrammar(unittest.TestCase):

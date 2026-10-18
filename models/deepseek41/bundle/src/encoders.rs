@@ -21,6 +21,7 @@ use bundle_runtime::media::MediaArena;
 use bundle_runtime::resources::{Held, allocate_span};
 use model_deepseek41_contract::serving::PREFILL_TOKENS;
 use runtime_bundle_abi::{BundleAbiError, DeviceBufferSpanV1 as Span, HostServicesV1};
+use runtime_bundle_sdk::taps::{TapCompare, TapDType, TapSharding, TapSpec};
 
 pub use model_deepseek41_contract::encoder::*;
 
@@ -43,6 +44,40 @@ pub const CONFIG: Config = Config {
     registered: &SharedRegistered,
     staging_bytes: 0,
 };
+
+/// The encoder's taps (`models/deepseek41/taps.json`): the aligner's image
+/// cells in BF16 from rank 0's media arena (`enc.vision.out`, without the
+/// learned delimiter rows, as the reference taps the aligner), and every
+/// transformer block's input and output rows as the residual stream the
+/// runtime reads back (`Encoder::block_taps`), blocks numbered across the
+/// transformers.
+pub fn taps() -> Result<Vec<TapSpec>, String> {
+    let shape = tap_shape().map_err(|error| error.0)?;
+    let tap = |name: String, cols, dtype| TapSpec {
+        name,
+        layer: None,
+        detail: false,
+        cols,
+        dtype,
+        sharding: TapSharding::Replicated,
+        compare: TapCompare::Dense,
+    };
+    let dtype = if shape.f32 {
+        TapDType::F32
+    } else {
+        TapDType::Bf16
+    };
+    let mut specs = vec![tap("enc.vision.out".into(), ARENA_HIDDEN, TapDType::Bf16)];
+    let mut block = 0;
+    for (width, blocks) in shape.transformers {
+        specs.push(tap(format!("enc.vision.B{block:02}.in"), width, dtype));
+        for _ in 0..blocks {
+            specs.push(tap(format!("enc.vision.B{block:02}.out"), width, dtype));
+            block += 1;
+        }
+    }
+    Ok(specs)
+}
 
 /// Whether the create configuration names the encoder: its image role and
 /// every rank's index role, or none of them (`None` for a partial set).

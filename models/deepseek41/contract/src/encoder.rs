@@ -68,6 +68,50 @@ pub fn tensors() -> Result<std::collections::BTreeSet<String>, Error> {
     Ok(declarations()?[0].tensors())
 }
 
+/// What the tower's diagnostic taps need of the declaration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TapShape {
+    /// Each transformer's width and block count, in stage order.
+    pub transformers: Vec<(u32, u32)>,
+    /// Whether the residual stream is F32 (`f32-pairs.v1`), else BF16.
+    pub f32: bool,
+    /// The side of the patch cell one output row merges: the centered
+    /// pad's `downsample`, so an image of `[h, w]` patches has
+    /// `ceil(h / side)` rows of `ceil(w / side)` cells.
+    pub cell_side: u32,
+}
+
+/// The declaration's [`TapShape`].
+pub fn tap_shape() -> Result<TapShape, Error> {
+    use encoder_spec::components::StageOp;
+    let declaration = &declarations()?[0];
+    let transformers = declaration
+        .stages
+        .iter()
+        .filter_map(|stage| match &stage.op {
+            StageOp::Transformer(transformer) => {
+                let params = transformer.params();
+                Some((params.width, params.blocks))
+            }
+            _ => None,
+        })
+        .collect();
+    let cell_side = declaration
+        .input
+        .recipes
+        .iter()
+        .find_map(|recipe| match recipe {
+            encoder_spec::Recipe::ImageCenteredPad(pad) => Some(pad.downsample),
+            _ => None,
+        })
+        .ok_or_else(|| Error("the vision declaration has no centered-pad recipe".into()))?;
+    Ok(TapShape {
+        transformers,
+        f32: declaration.precision == encoder_spec::policy::Precision::F32Pairs,
+        cell_side,
+    })
+}
+
 /// Every encoder allocation of one rank at the declared capacity, the media
 /// arena and the prefill's arena source rows included.
 pub fn buffer_bytes() -> Result<u64, Error> {

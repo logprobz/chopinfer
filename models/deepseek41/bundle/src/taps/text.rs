@@ -295,12 +295,20 @@ mod tests {
     }
 
     /// Every tap's entry declares its dtype, sharding and comparison, and
-    /// every entry declares a tap. The entries leave the columns to the
-    /// geometry, which is the only difference `check` may report.
+    /// every entry declares a tap. The text entries leave the columns to
+    /// the geometry, which is the only difference `check` may report; the
+    /// encoder entries (`crate::encoders::taps`) declare theirs.
     #[test]
     fn taps_json_declares_every_tap() {
         let declaration = declaration();
         let mut used = vec![false; declaration.entries().len()];
+        let encoder = crate::encoders::taps().unwrap();
+        // The aligner's cells and 32 blocks of the 1024-wide F32 residual
+        // stream, with the transformer's input.
+        assert_eq!(encoder.len(), 1 + 1 + 32);
+        for spec in &encoder {
+            used[declaration.check(spec, 4).unwrap()] = true;
+        }
         for g in GEOMETRIES {
             let shape = Shape::new(g, Ranks::TP1).unwrap();
             for spec in specs(&shape) {

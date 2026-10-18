@@ -841,8 +841,28 @@ impl Instance {
         // to cancel, and the prefill's injects read what it wrote.
         let media = match self.encode(request, &step.prefill) {
             Ok(media) => media,
-            Err(error) => return error,
+            Err(error) => {
+                if let Some(media) = &self.media
+                    && let Err(taps) = self.taps.discard(&media.encoder)
+                {
+                    self.log(&format!("encoder taps: {taps}"));
+                }
+                return error;
+            }
         };
+        // A diagnostic build writes the step's encoder rows (`crate::taps`).
+        if let Some(encoder) = self.media.as_ref().map(|media| &media.encoder)
+            && let Err(error) = self.taps.step(
+                &self.services,
+                self.ranks[0].2,
+                encoder,
+                request,
+                &step.prefill,
+            )
+        {
+            self.log(&format!("encoder taps: {error}"));
+            return BundleStatusV1::InternalError;
+        }
         let mut runs = Vec::new();
         for (inputs, media) in [(step.prefill, media), (step.decode, None)] {
             if inputs.request_ids.is_empty() {

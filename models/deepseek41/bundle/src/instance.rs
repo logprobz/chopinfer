@@ -436,14 +436,16 @@ impl Instance {
         // The vision encoder's cubins, image and working memory, before the
         // KV pool takes what is left.
         if let Some(kernels) = self.encoder_kernels.take() {
-            self.media = Some(crate::encoders::acquire_media(
+            let mut media = crate::encoders::acquire_media(
                 services,
                 &kernels,
                 &ranks,
                 &mut self.symbols,
                 u64::from(crate::buffers::scratch_rows()),
                 held,
-            )?);
+            )?;
+            media.encoder.block_taps = self.taps.selects_blocks();
+            self.media = Some(media);
         }
         let (pages, pools) = acquire::serving_kv(
             log,
@@ -740,6 +742,12 @@ impl Steps for Instance {
                 Ok(())
             }
         }
+    }
+
+    /// Taps retire the request even when the ledger refuses it.
+    fn before_retire(&mut self, request: u64) -> Result<(), BundleStatusV1> {
+        self.taps.retire(request);
+        Ok(())
     }
 
     fn retired(&mut self, request: u64) {

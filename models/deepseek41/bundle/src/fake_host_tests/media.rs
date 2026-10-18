@@ -405,3 +405,89 @@ fn an_image_prefill_journals_at_two_and_four_ranks() {
     }
     assert!(mismatches.is_empty(), "{mismatches:#?}");
 }
+
+/// A diagnostic bundle selecting the encoder taps writes an image prefill's
+/// own step: the image's 3 x 2 cells from rank 0's arena without the
+/// delimiter rows, numbered in raster order, and the 32 vision blocks'
+/// rows of its 35 patches with the transformer's input, all under the
+/// request's first image; a text prompt writes none.
+#[cfg(feature = "diagnostic-taps")]
+#[test]
+fn diagnostic_image_prefills_write_the_encoder_taps() {
+    let shape = Shape::new(&FLASH, Ranks::TP2).unwrap();
+    let sites = [("CHOPINFER_TAPS_SITES", "enc.vision.*")];
+    if std::env::var_os(super::TAPS_CHILD).is_some() {
+        let host = MediaHost::new(shape, KV_LAYOUTS[0]);
+        let mut instance = create(&host, 4);
+        let mut views = Views::default();
+        let (batch, _, _) = image_prompt(7, 0);
+        step(&mut instance, &batch, &mut views);
+        step(&mut instance, &prompt(9, 1, 0, 5, true), &mut views);
+        instance.retire_request(7).unwrap();
+        instance.retire_request(9).unwrap();
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+        return;
+    }
+    let directory =
+        std::env::temp_dir().join(format!("deepseek41-encoder-taps-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    super::in_child(
+        "fake_host_tests::media::diagnostic_image_prefills_write_the_encoder_taps",
+        &directory,
+        &sites,
+    );
+    let steps: Vec<_> = std::fs::read_dir(&directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .filter(|name| name.starts_with("step"))
+        .collect();
+    assert_eq!(steps, ["step0000"]);
+    let step = directory.join("step0000");
+    let read = |name: &str| -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(step.join(name)).unwrap()).unwrap()
+    };
+    assert_eq!(read("completion.json")["completion"], "full");
+    let index: Vec<serde_json::Value> = std::fs::read_to_string(step.join("index.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let rows = |name: &str| {
+        let entry = index.iter().find(|entry| entry["name"] == name).unwrap();
+        assert_eq!(entry["axis"], "encoder", "{entry}");
+        (
+            entry["rows"].as_u64().unwrap(),
+            entry["cols"].as_u64().unwrap(),
+            entry["dtype"].as_str().unwrap().to_owned(),
+        )
+    };
+    assert_eq!(rows("enc.vision.out"), (6, 5120, "bf16".into()));
+    assert_eq!(rows("enc.vision.B00.in"), (35, 1024, "f32".into()));
+    for block in 0..32 {
+        assert_eq!(
+            rows(&format!("enc.vision.B{block:02}.out")),
+            (35, 1024, "f32".into())
+        );
+    }
+    assert_eq!(index.len(), 1 + 1 + 32);
+    let items = read("items.json");
+    let cells = &items["encoder"]["enc.vision.out"];
+    let segments: Vec<(u64, u64, u64)> = cells
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|segment| {
+            assert_eq!(segment["request"], 7);
+            assert_eq!(segment["kind"], "image");
+            assert_eq!(segment["item"], 0);
+            (
+                segment["start"].as_u64().unwrap(),
+                segment["index"].as_u64().unwrap(),
+                segment["rows"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(segments, [(0, 0, 2), (2, 2, 2), (4, 4, 2)]);
+    let _ = std::fs::remove_dir_all(&directory);
+}

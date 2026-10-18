@@ -283,7 +283,7 @@ fn the_manifest_declares_each_topology_s_resources() {
         let state = topology.state_layout();
         assert_eq!(state.id().as_str(), REQUEST_STATE_ID);
         assert_eq!(state.bytes(), slot_state_bytes(geometry, KvStorage::Native));
-        assert_eq!(state.bytes(), 2_970_624);
+        assert_eq!(state.bytes(), 7_289_856);
         let formats = topology.kv_formats();
         assert_eq!(
             formats.iter().map(|f| f.dtype()).collect::<Vec<_>>(),
@@ -312,12 +312,12 @@ fn the_manifest_declares_each_topology_s_resources() {
 }
 
 /// Each topology declares its per-item state as its one recurrent state
-/// layout, sized for the BF16 rings, the larger state: the host then gives
+/// layout, sized for the largest native or BF16 state: the host then gives
 /// every request a state slot, names it in each batch and restores prefix
 /// snapshots into it. Create allocates every slot's state before the
 /// serving KV pool, so the host's slot pool reserves nothing beside it, and
 /// the state the host creates the bundle with in either KV format fits the
-/// declared slots, the BF16 state exactly.
+/// declared slots, the native state including the drafter exactly.
 #[test]
 fn each_topology_keeps_its_request_state_in_host_slots() {
     use runtime_bundle_abi::{
@@ -336,8 +336,8 @@ fn each_topology_keeps_its_request_state_in_host_slots() {
             layout.lifetime(),
             runtime_bundle::BundleStateLifetimeV1::Request
         );
-        assert_eq!(layout.bytes(), slot_state_bytes(&FLASH, KvStorage::Bf16));
-        assert_eq!(layout.bytes(), 5_668_864);
+        assert_eq!(layout.bytes(), slot_state_bytes(&FLASH, KvStorage::Native));
+        assert_eq!(layout.bytes(), 7_289_856);
         assert_eq!(
             topology.recurrent_state_bytes_per_slot().unwrap(),
             layout.bytes()
@@ -387,7 +387,7 @@ fn each_topology_keeps_its_request_state_in_host_slots() {
             }
             assert_eq!(
                 topology.state_bytes_for_v1(bf16, Some(served)).unwrap(),
-                layout.bytes() * slots
+                slot_state_bytes(&FLASH, KvStorage::Bf16) * slots
             );
         }
     }
@@ -653,4 +653,37 @@ fn an_image_package_plans_the_encoder_and_requires_media_inputs() {
     );
     eprintln!("encoder: {encoder_bytes} bytes a rank");
     std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// The existing rank image contains every drafter tensor. Its authenticated
+/// component binds the advertised drafter to the package, at every topology.
+#[test]
+fn native_packages_advertise_full_block_drafting_and_bounded_verify_rows() {
+    let manifest = flash_manifest();
+    for (ranks, _) in FLASH_TOPOLOGIES {
+        let topology = manifest.for_topology(&topology_id(&FLASH, ranks)).unwrap();
+        let speculation = topology.speculation().unwrap();
+        assert!(speculation.bundle_drafter());
+        assert_eq!(speculation.drafter_kind(), Some("dspark"));
+        assert_eq!(
+            speculation.drafter_component().unwrap().as_str(),
+            RANK_IMAGE_COMPONENT
+        );
+        assert_eq!(speculation.maximum_draft_tokens(), 5);
+        assert_eq!(speculation.maximum_verify_tokens(), 32);
+        assert_eq!(speculation.row_buckets(), &[2, 3, 4, 5, 6]);
+        let slot = bundle_runtime::state::Extent {
+            served: 1,
+            bucket: 1,
+            verify_rows: 0,
+        };
+        let raw = request_state(&FLASH, KvStorage::Native, true);
+        let declared = raw
+            .buffers
+            .iter()
+            .map(|buffer| buffer.bytes(slot))
+            .sum::<u64>()
+            .next_multiple_of(256);
+        assert_eq!(topology.state_layout().bytes(), declared);
+    }
 }

@@ -29,8 +29,8 @@ use model_deepseek41_contract::state::{KvStorage, request_state};
 use model_deepseek41_contract::{BUNDLE_ID, admission};
 use runtime_bundle::{
     BundleBatchLimitsV1, BundleError, BundleKvLayoutV1, BundleOpaqueId, BundleRankPlacementV1,
-    BundleResourceRequirementsV1, BundleStateLayoutV1, BundleStateLifetimeV1, BundleTargetV1,
-    BundleTopologyV1,
+    BundleResourceRequirementsV1, BundleSpeculationV1, BundleStateLayoutV1, BundleStateLifetimeV1,
+    BundleTargetV1, BundleTopologyV1,
 };
 
 /// The device architecture the native module's kernels are built for.
@@ -125,8 +125,9 @@ pub fn profiles(geometry: &Geometry, ranks: &[u32]) -> Result<String, BundleErro
 /// snapshots restored into the state slot, the planned text image and the
 /// rows it gathers from the views it maps (the Engram tables), and the chat
 /// frontend.
-pub const CAPABILITIES: [&str; 14] = [
+pub const CAPABILITIES: [&str; 15] = [
     runtime_bundle_abi::SERVING_KV_CAPABILITY_V1,
+    runtime_bundle_abi::SPECULATIVE_CAPABILITY_V1,
     runtime_bundle_abi::RECURRENT_STATE_CAPABILITY_V1,
     runtime_bundle_abi::RECURRENT_STATE_PREALLOCATED_CAPABILITY_V1,
     runtime_bundle_abi::RECURRENT_STATE_IN_PLACE_CAPABILITY_V1,
@@ -153,15 +154,15 @@ pub fn topology_id(geometry: &Geometry, ranks: u32) -> String {
 }
 
 /// The per-item state bytes of one state slot of `geometry` in `storage`
-/// without the drafter, in whole 256-byte blocks: what create checks
-/// against the served item count.
+/// including the native drafter rings and retained features, in whole
+/// 256-byte blocks: what create checks against the served item count.
 pub fn slot_state_bytes(geometry: &Geometry, storage: KvStorage) -> u64 {
     let slot = bundle_runtime::state::Extent {
         served: 1,
         bucket: 1,
         verify_rows: 0,
     };
-    request_state(geometry, storage, false)
+    request_state(geometry, storage, storage == KvStorage::Native)
         .buffers
         .iter()
         .map(|buffer| buffer.bytes(slot))
@@ -263,7 +264,7 @@ fn state_layout(
 }
 
 /// The topology's recurrent state layout: the per-item state, sized for
-/// the most a slot holds in either KV format (the BF16 rings). The host
+/// the most a slot holds in either KV format. The host
 /// names a slot of it for every request in each batch, which the bundle
 /// places the request's state in (`Placement::Host`), and restores prefix
 /// snapshots into it. Create allocates every slot's state before the
@@ -354,6 +355,16 @@ fn topology_draft(
         state_layout(geometry, KvStorage::Native)?,
     )
     .with_kv_formats(formats)
+    .with_speculation(
+        BundleSpeculationV1::new(
+            model_deepseek41_contract::serving::MAX_DRAFT_TOKENS,
+            true,
+            <model_deepseek41_contract::serving::DeepSeek as bundle_runtime::BundleGeometry>::VERIFY_TOKENS,
+            (2..=model_deepseek41_contract::serving::MAX_VERIFY_ROWS).collect(),
+            Some(id(RANK_IMAGE_COMPONENT)?),
+        )?
+        .with_drafter_kind(Some(id("dspark")?))?,
+    )
     .with_recurrent_state_layouts(vec![recurrent_state_layout(geometry)?])
     .with_batch_limits(
         BundleBatchLimitsV1::new(DECODE_BATCH, PREFILL_TOKENS)?

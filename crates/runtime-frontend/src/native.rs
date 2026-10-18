@@ -186,7 +186,8 @@ impl NativeFormatV1 {
 
     /// Rebuilds a rendered prompt from the format's answer, checking that
     /// each media segment names a request media part, at most once and in
-    /// increasing order, and that it selects a declared effort.
+    /// increasing order unless tool images are declared, and that it
+    /// selects a declared effort. Only images may be reordered.
     ///
     /// A format may leave a request media part out of the prompt, as one
     /// that renders a user message carrying message-level tools as plain
@@ -210,6 +211,7 @@ impl NativeFormatV1 {
         let mut media = Vec::new();
         // The request index the next media segment must reach.
         let mut next = 0;
+        let mut placed = vec![false; request_media.len()];
         for segment in rendered.segments {
             match segment {
                 document::SegmentV1::Text(text) => {
@@ -218,7 +220,10 @@ impl NativeFormatV1 {
                 }
                 document::SegmentV1::Media(index) => {
                     let index = usize::try_from(index).unwrap_or(usize::MAX);
-                    let part = request_media.get(index).filter(|_| index >= next).ok_or_else(|| {
+                    let part = request_media.get(index).filter(|part| {
+                        !placed[index] && (index >= next ||
+                            (self.descriptor.tools.image_results && part.kind == FrontendMediaPartKindV1::Image))
+                    }).ok_or_else(|| {
                         malformed(
                             "media segments must name request media parts, at most once and in increasing order",
                         )
@@ -229,7 +234,8 @@ impl NativeFormatV1 {
                         })?);
                     segments.push(PromptSegmentV1::Media(media.len()));
                     media.push(part.clone());
-                    next = index + 1;
+                    placed[index] = true;
+                    next = next.max(index + 1);
                 }
             }
         }

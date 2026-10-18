@@ -332,6 +332,41 @@ fn media_inputs(prompt: &PreparedPrompt) -> &[MediaInputV1] {
     }
 }
 
+#[test]
+fn media_preparation_preserves_the_frontends_prompt_order() {
+    let modality = &MODALITIES[1];
+    let root = std::env::temp_dir().join(format!("media-prompt-order-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let root = std::fs::canonicalize(root).unwrap();
+    let pool = Arc::new(MediaMemoryV1::new(u64::MAX));
+    let backend = backend(modality, &root, pool, 1 << 30);
+    let (original, _) = backend.prepare_prompt(request(&root, 3, 0)).unwrap();
+    let PreparedPrompt::MediaChat { segments, media } = request(&root, 3, 0) else {
+        panic!("image request");
+    };
+    // The frontend has sorted results by call order and numbered segments
+    // against the returned media list, including intervening user images.
+    let order = [2, 0, 1];
+    let (sorted, _) = backend
+        .prepare_prompt(PreparedPrompt::MediaChat {
+            segments,
+            media: order.iter().map(|index| media[*index].clone()).collect(),
+        })
+        .unwrap();
+    assert_eq!(
+        media_inputs(&sorted),
+        order.map(|index| media_inputs(&original)[index].clone())
+    );
+    let PreparedPrompt::MediaTokens { spans, .. } = &sorted else {
+        panic!("prepared images have spans");
+    };
+    assert_eq!(
+        spans.iter().map(|span| span.media).collect::<Vec<_>>(),
+        [0, 1, 2]
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 /// An image sent again is the item its source prepared before: equal to a
 /// fresh preparation and backed by the same payload, so nothing is decoded
 /// or leased again.

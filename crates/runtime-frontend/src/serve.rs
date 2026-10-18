@@ -320,6 +320,10 @@ impl ServerFrontendV1 for BundleFrontendV1 {
         self.descriptor.multimodal.is_some()
     }
 
+    fn tool_result_images(&self) -> bool {
+        self.descriptor.tools.image_results
+    }
+
     fn served_media(&self) -> Vec<FrontendMediaPartKindV1> {
         self.served_media.clone()
     }

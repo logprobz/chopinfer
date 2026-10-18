@@ -113,8 +113,14 @@ impl Request {
         mut history: Vec<Value>,
         reasoning_field: &str,
         separator: Option<&str>,
+        tool_result_images: bool,
     ) -> Result<Value, ApiError> {
-        history.extend(input_messages(&self.input, reasoning_field, separator)?);
+        history.extend(input_messages(
+            &self.input,
+            reasoning_field,
+            separator,
+            tool_result_images,
+        )?);
         if let Some(instructions) = &self.instructions {
             history.insert(0, json!({"role":"system", "content":instructions}));
         }
@@ -332,6 +338,7 @@ pub(super) fn input_messages(
     input: &Value,
     reasoning_field: &str,
     separator: Option<&str>,
+    tool_result_images: bool,
 ) -> Result<Vec<Value>, ApiError> {
     if let Some(text) = input.as_str() {
         return Ok(vec![json!({"role":"user", "content":text})]);
@@ -392,7 +399,7 @@ pub(super) fn input_messages(
                 if message.get("tool_calls").is_none() { message["tool_calls"] = json!([]); }
                 message["tool_calls"].as_array_mut().expect("calls").push(call);
             },
-            "function_call_output" => messages.push(json!({"role":"tool", "tool_call_id":string(item,"call_id")?, "content":text_parts(&item["output"], &["input_text"])?})),
+            "function_call_output" => messages.push(json!({"role":"tool", "tool_call_id":string(item,"call_id")?, "content":tool_output(&item["output"], tool_result_images)?})),
             "reasoning" => {
                 if !item["encrypted_content"].is_null() { return Err(invalid("encrypted reasoning is not supported", "input")); }
                 let summary = if item["summary"].is_null() { None }
@@ -439,6 +446,38 @@ fn text_parts(value: &Value, types: &[&str]) -> Result<String, ApiError> {
     }
     Ok(text)
 }
+
+fn tool_output(value: &Value, images: bool) -> Result<Value, ApiError> {
+    // Preserve text-only mapping unless this frontend declares image results.
+    if !images || !value.is_array() {
+        return text_parts(value, &["input_text"]).map(Value::String);
+    }
+    value
+        .as_array()
+        .expect("array checked")
+        .iter()
+        .map(|part| match part["type"].as_str() {
+            Some("input_text") => {
+                supported_fields(part, &["type", "text"], "input")?;
+                Ok(json!({"type": "text", "text": string(part, "text")?}))
+            }
+            Some("input_image") => {
+                supported_fields(part, &["type", "image_url", "detail"], "input")?;
+                let mut image = json!({"url": string(part, "image_url")?});
+                if let Some(detail) = part.get("detail") {
+                    image["detail"] = detail.clone();
+                }
+                Ok(json!({"type": "image_url", "image_url": image}))
+            }
+            _ => Err(invalid(
+                "tool output supports input_text and input_image parts",
+                "input",
+            )),
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Value::Array)
+}
+
 fn supported_fields(value: &Value, allowed: &[&str], param: &str) -> Result<(), ApiError> {
     let fields = value
         .as_object()
@@ -459,4 +498,45 @@ fn string<'a>(value: &'a Value, field: &str) -> Result<&'a str, ApiError> {
 }
 pub(super) fn invalid(message: impl Into<String>, param: &str) -> ApiError {
     ApiError::invalid(message, Some(param))
+}
+
+#[cfg(test)]
+mod tool_output_tests {
+    use super::*;
+
+    #[test]
+    fn image_results_map_to_chat_parts_only_when_declared() {
+        let output = json!([
+            {"type": "input_text", "text": "first"},
+            {"type": "input_image", "image_url": "data:image/png;base64,AA==", "detail": "high"},
+            {"type": "input_text", "text": "last"}
+        ]);
+        let input = json!([{"type": "function_call_output", "call_id": "c", "output": output}]);
+        let mapped = input_messages(&input, "reasoning_content", None, true).unwrap();
+        assert_eq!(
+            mapped,
+            [json!({"role": "tool", "tool_call_id": "c", "content": [
+                {"type": "text", "text": "first"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA==", "detail": "high"}},
+                {"type": "text", "text": "last"}
+            ]})]
+        );
+        let error = input_messages(&input, "reasoning_content", None, false).unwrap_err();
+        assert_eq!(error.message, "only text content parts are supported");
+        assert_eq!(
+            tool_output(
+                &json!([{"type": "input_text", "text": "a"}, {"type": "input_text", "text": "b"}]),
+                false
+            )
+            .unwrap(),
+            json!("ab")
+        );
+        for output in [
+            json!([{"type": "input_image", "file_id": "f"}]),
+            json!([{"type": "input_file", "file_id": "f"}]),
+            json!([{"type": "input_image", "image_url": 1}]),
+        ] {
+            assert!(tool_output(&output, true).is_err());
+        }
+    }
 }

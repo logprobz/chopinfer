@@ -63,7 +63,12 @@ impl Context {
             .unwrap_or_default();
         let reasoning_field = state.frontend.reasoning_field().to_owned();
         let separator = state.frontend.tool_namespace_separator().map(str::to_owned);
-        let chat = request.chat(history, &reasoning_field, separator.as_deref())?;
+        let chat = request.chat(
+            history,
+            &reasoning_field,
+            separator.as_deref(),
+            state.frontend.tool_result_images(),
+        )?;
         let mut history = chat["messages"].as_array().expect("chat messages").clone();
         // Instructions belong to this response only, including when it is
         // continued by previous_response_id.
@@ -200,6 +205,7 @@ pub(crate) async fn adapt(
             &events.response["output"],
             &context.reasoning_field,
             context.separator.as_deref(),
+            false,
         )
         .unwrap_or_default();
         guard.finish(events.response, history);

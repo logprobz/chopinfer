@@ -212,7 +212,14 @@ fn descriptor() -> Arc<FrontendDescriptorV1> {
 
 fn format(scenario: &str) -> NativeFormatV1 {
     let export = FrontendExportV1::in_process::<FakeFrontendV1>();
-    NativeFormatV1::open(&export, scenario.as_bytes(), descriptor()).unwrap()
+    let mut descriptor = descriptor();
+    let scenario = if let Some(scenario) = scenario.strip_prefix("tool-images:") {
+        Arc::make_mut(&mut descriptor).tools.image_results = true;
+        scenario
+    } else {
+        scenario
+    };
+    NativeFormatV1::open(&export, scenario.as_bytes(), descriptor).unwrap()
 }
 
 fn image(source: &str) -> FrontendContentPartV1 {
@@ -444,6 +451,26 @@ fn a_render_may_leave_request_media_unplaced() {
     );
     let sources: Vec<_> = rendered.media.iter().map(|media| &media.source).collect();
     assert_eq!(sources, ["data:second"]);
+}
+
+#[test]
+fn declared_tool_images_allow_reordering_but_not_duplicate_or_invalid_references() {
+    let rendered = render("tool-images:media-out-of-order").unwrap();
+    assert_eq!(
+        rendered
+            .media
+            .iter()
+            .map(|part| part.source.as_str())
+            .collect::<Vec<_>>(),
+        ["data:second", "data:first"]
+    );
+    assert_eq!(
+        rendered.segments,
+        [PromptSegmentV1::Media(0), PromptSegmentV1::Media(1)]
+    );
+    for scenario in ["tool-images:media-twice", "tool-images:media-extra"] {
+        assert!(render(scenario).is_err(), "{scenario}");
+    }
 }
 
 #[test]

@@ -24,6 +24,29 @@ const STREAMING: &[u8] =
     include_bytes!("../fixtures/checkpoints/glm-5.3-flash/streaming-vectors.json");
 
 #[test]
+fn undeclared_tool_images_are_refused() {
+    let descriptor = FrontendDescriptorV1::from_component_bytes(COMPONENT).unwrap();
+    assert!(!descriptor.tools.image_results);
+    let frontend = runtime_frontend::test_support::documents::PairedFrontendV1::chat_format::<
+        Glm53Format,
+    >(descriptor)
+    .unwrap();
+    let body = serde_json::json!({"messages": [{"role": "tool", "tool_call_id": "c", "content": [
+        {"type": "text", "text": "look"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}}
+    ]}]});
+    let error = runtime_server::prepare_chat_request_v1(
+        &frontend,
+        1 << 20,
+        body.as_object().unwrap().clone(),
+        1024,
+    )
+    .unwrap_err();
+    assert_eq!(error.message, "only user messages may contain media");
+    assert_eq!(error.parameter.as_deref(), Some("messages"));
+}
+
+#[test]
 fn every_vector_file_reads() {
     assert_eq!(read_render_vectors_v1(RENDER).unwrap().len(), 16);
     assert_eq!(read_tokenizer_vectors_v1(TOKENIZER).unwrap().len(), 27);

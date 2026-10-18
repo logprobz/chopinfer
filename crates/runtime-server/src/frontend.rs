@@ -570,6 +570,12 @@ frontend_with_alias_delegation! {
         false
     }
 
+    /// Whether tool results may carry images, subject to served modalities
+    /// and the same request limits as user images.
+    fn tool_result_images(&self) -> bool {
+        false
+    }
+
     /// The media kinds this server accepts, of [`FrontendMediaPartKindV1::ALL`];
     /// text is always served. The default accepts every kind when the bundle
     /// declares media inputs.

@@ -116,6 +116,10 @@ impl ServerFrontendV1 for PairedFrontendV1 {
         self.document.supports_media()
     }
 
+    fn tool_result_images(&self) -> bool {
+        self.document.tool_result_images()
+    }
+
     fn served_media(&self) -> Vec<FrontendMediaPartKindV1> {
         self.document.served_media()
     }

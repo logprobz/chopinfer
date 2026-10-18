@@ -273,6 +273,10 @@ pub enum FrontendToolArgumentsV1 {
 pub struct FrontendToolPolicyV1 {
     pub name_bytes: FrontendNameBytesV1,
     pub arguments: FrontendToolArgumentsV1,
+    /// Tool results may carry images. The format may reorder image parts
+    /// when it orders tool results; the host retains unique request references.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub image_results: bool,
     /// How a tool choice changes the render, for a model whose request
     /// mapping says so. Absent, every choice renders every offered tool and
     /// a forced choice's constraint alone does the forcing.

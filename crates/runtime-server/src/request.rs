@@ -1558,7 +1558,9 @@ fn convert_content_parts(
             let part = match kind.as_str() {
                 "text" => FrontendContentPartV1::Text(take_string(&mut fields, "text")?),
                 "image_url" | "audio_url" | "video_url" | "input_audio" => {
-                    if role != "user" {
+                    if role != "user"
+                        && !(role == "tool" && kind == "image_url" && frontend.tool_result_images())
+                    {
                         return Err(ApiError::invalid(
                             "only user messages may contain media",
                             Some("messages"),

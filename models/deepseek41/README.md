@@ -69,6 +69,16 @@ candidate run, never moved after a result:
   preemption under pressure or offload, since its pages are about 3.6
   times larger (3,200 bytes against 890 per token).
 
+The needle check runs frozen token-ID prompts at total contexts of 8,192,
+131,072, 262,144 and 1,048,576 tokens (7,168, 130,048, 261,120 and
+1,047,552 prompt tokens, each with 1,024 tokens to answer) and requires the
+three needle values in order. `fixtures/deepseek41/capture/needles.py`
+builds them on CPU from MiMo's functional haystack, rendered by the
+checkpoint's `encoding/encoding.py` in chat mode, with the needles near
+10%, 50% and 90% of the haystack, into
+`$CHOPINFER_DATA/deepseek41/needle/prompts.json`; the digests are in
+`fixtures/deepseek41/needles.json` (`--check` rebuilds and compares).
+
 `profiles.json` holds the experimental `tp4-ar` bring-up profile. The
 release preview's full suite at the release revision is the
 qualification evidence.

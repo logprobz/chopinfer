@@ -17,8 +17,11 @@ scheduling against the vendor's, not the replacements' fidelity to the
 tilelang kernels, which test_reference_kernel.py and the executed vendor
 control (reference_vendor_control.py) cover.
 
-Needs torch, tokenizers, safetensors and the vendor files
-($CHOPINFER_DEEPSEEK_CHECKPOINT/inference); skipped otherwise.
+Needs torch, tokenizers, safetensors and the vendor's small inference/*.py
+files. The official checkpoint ships these beside its tokenizer, so tiny
+tests use CHOPINFER_DEEPSEEK_TOKENIZER_DIR (kept by CPU CI), falling back to
+CHOPINFER_DEEPSEEK_CHECKPOINT. They authenticate the sources against the
+checkpoint lock and never read the official weights.
 """
 
 import contextlib
@@ -45,7 +48,11 @@ except ModuleNotFoundError:
     torch = None
 
 ROOT = Path(__file__).resolve().parents[2]
-VENDOR_DIR = os.environ.get("CHOPINFER_DEEPSEEK_CHECKPOINT")
+CHECKPOINT_DIR = os.environ.get("CHOPINFER_DEEPSEEK_CHECKPOINT")
+# The official checkpoint ships inference/ beside tokenizer.json. CPU CI
+# preserves this root while leaving tests of the official checkpoint opt-in.
+VENDOR_SOURCE_DIR = os.environ.get("CHOPINFER_DEEPSEEK_TOKENIZER_DIR") or CHECKPOINT_DIR
+HAS_VENDOR_SOURCE = bool(VENDOR_SOURCE_DIR and Path(VENDOR_SOURCE_DIR, "inference/model.py").is_file())
 IMAGE = 95
 CONFIG = {
     "vocab_size": 96, "dim": 128, "moe_inter_dim": 64, "n_layers": 5, "n_mtp_layers": 1,
@@ -91,11 +98,21 @@ def e8m0(generator, shape, low=120, high=127):
     return torch.randint(low, high, shape, generator=generator, dtype=torch.uint8).view(torch.float8_e8m0fnu)
 
 
+def copy_vendor_sources(root, reference):
+    """Copy only authenticated Python sources, without opening checkpoint weights."""
+    source = place.Checkpoint.__new__(place.Checkpoint)
+    source.root = Path(VENDOR_SOURCE_DIR)
+    lock = json.loads((ROOT / "models/deepseek41/checkpoint-files.json").read_text())
+    (root / "inference").mkdir(parents=True)
+    for file, digest in reference.VENDOR.items():
+        if digest != lock[file]["sha256"]:
+            raise ValueError(f"{file}: adapter pin differs from checkpoint lock")
+        (root / file).write_bytes(source.pinned(file, digest))
+
+
 def write_checkpoint(root, generator, reference):
     """The tiny checkpoint: inference code, config, tokenizer and weights."""
-    (root / "inference").mkdir(parents=True)
-    for file in ("model.py", "kernel.py", "engram.py", "vision.py", "image_processor.py", "convert.py"):
-        shutil.copy(Path(VENDOR_DIR) / "inference" / file, root / "inference" / file)
+    copy_vendor_sources(root, reference)
     tokenizer_json(root / "tokenizer.json")
     (root / "config.json").write_text(json.dumps({"model_type": "deepseek_v41", "tiny": True}))
     config = dict(CONFIG)
@@ -214,8 +231,9 @@ def image_patches(generator):
     return (torch.rand((count, 3, 14, 14), generator=generator) * 2 - 1).to(torch.bfloat16)
 
 
-@unittest.skipIf(torch is None or not VENDOR_DIR or not Path(VENDOR_DIR, "inference/model.py").exists(),
-                 "needs torch and the vendor inference code ($CHOPINFER_DEEPSEEK_CHECKPOINT)")
+@unittest.skipIf(torch is None, "needs torch (set CHOPINFER_REFRUN_PYTHON)")
+@unittest.skipUnless(HAS_VENDOR_SOURCE,
+                     "needs vendor inference/*.py beside the tokenizer (CHOPINFER_DEEPSEEK_TOKENIZER_DIR)")
 class TinyCheckpoint(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -234,6 +252,27 @@ class TinyCheckpoint(unittest.TestCase):
     def tearDownClass(cls):
         stamps.RACY_NS = cls.saved_racy
         cls.directory.cleanup()
+
+    def test_vendor_source_copy_reads_no_checkpoint_weights_and_refuses_changed_code(self):
+        read = Path.read_bytes
+        source = Path(VENDOR_SOURCE_DIR)
+        seen = set()
+
+        def source_bytes(path):
+            if path.is_relative_to(source):
+                relative = path.relative_to(source).as_posix()
+                self.assertIn(relative, self.reference.VENDOR)
+                seen.add(relative)
+            return read(path)
+
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(Path, "read_bytes", source_bytes):
+            copy_vendor_sources(Path(directory), self.reference)
+        self.assertEqual(seen, set(self.reference.VENDOR))
+        changed = source / "inference/model.py"
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(Path, "read_bytes", lambda path: read(path) + b"\n" if path == changed else read(path)), \
+                self.assertRaisesRegex(ValueError, "inference/model.py is not the pinned"):
+            copy_vendor_sources(Path(directory), self.reference)
 
     def image_ids(self):
         ids = self.ids.clone()
@@ -485,8 +524,9 @@ if __name__ == "__main__":
     unittest.main()
 
 
-@unittest.skipIf(torch is None or not VENDOR_DIR or not Path(VENDOR_DIR, "model.safetensors.index.json").exists(),
-                 "needs torch and the official checkpoint ($CHOPINFER_DEEPSEEK_CHECKPOINT)")
+@unittest.skipIf(torch is None, "needs torch (set CHOPINFER_REFRUN_PYTHON)")
+@unittest.skipUnless(CHECKPOINT_DIR and Path(CHECKPOINT_DIR, "model.safetensors.index.json").is_file(),
+                     "needs the official checkpoint (CHOPINFER_DEEPSEEK_CHECKPOINT)")
 class OfficialLayout(unittest.TestCase):
     """The official checkpoint's headers against the vendor model the adapter
     builds, without reading a weight: every stored tensor but the MTP's has a
@@ -495,7 +535,7 @@ class OfficialLayout(unittest.TestCase):
 
     def test_headers_bind_to_the_vendor_parameters(self):
         reference, _ = load_adapter(ROOT / "models/deepseek41/reference.py")
-        checkpoint = place.Checkpoint(VENDOR_DIR)
+        checkpoint = place.Checkpoint(CHECKPOINT_DIR)
         self.assertEqual(hashlib.sha256((checkpoint.root / reference.CONFIG).read_bytes()).hexdigest(),
                          reference.OFFICIAL_CONFIG)
         modeling = reference.vendor(checkpoint)
@@ -529,7 +569,7 @@ class OfficialLayout(unittest.TestCase):
         """On the four-GPU placement some layers reuse a compressed KV source
         on another device (layer 10 reads layer 8's), which share_to covers."""
         reference, _ = load_adapter(ROOT / "models/deepseek41/reference.py")
-        checkpoint = place.Checkpoint(VENDOR_DIR)
+        checkpoint = place.Checkpoint(CHECKPOINT_DIR)
         args = reference.model_args(checkpoint, reference.vendor(checkpoint))
         units = [u for u in reference.units(checkpoint) if not u.host]
         placement = place.plan([(u.module, checkpoint.stored_bytes(u.tensors)) for u in units],
@@ -548,21 +588,21 @@ class OfficialLayout(unittest.TestCase):
         reference, _ = load_adapter(ROOT / "models/deepseek41/reference.py")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            shutil.copytree(Path(VENDOR_DIR) / "inference", root / "inference",
+            shutil.copytree(Path(CHECKPOINT_DIR) / "inference", root / "inference",
                             ignore=shutil.ignore_patterns("examples"))
             tokenizer_json(root / "tokenizer.json")
             checkpoint = place.Checkpoint.__new__(place.Checkpoint)
             checkpoint.root = root
             with self.assertRaisesRegex(ValueError, "not the official"):
                 reference.reference_code(checkpoint)
-            shutil.copy(Path(VENDOR_DIR) / "tokenizer.json", root / "tokenizer.json")
+            shutil.copy(Path(CHECKPOINT_DIR) / "tokenizer.json", root / "tokenizer.json")
             self.assertIn("deepseek41/tokenizer.json", reference.reference_code(checkpoint))
 
     def test_engram_token_map_has_the_configured_size(self):
         """NgramHashState's compressed vocabulary from the checkpoint's
         tokenizer through the adapter's Tokenizer equals the config's 99,092."""
         reference, _ = load_adapter(ROOT / "models/deepseek41/reference.py")
-        checkpoint = place.Checkpoint(VENDOR_DIR)
+        checkpoint = place.Checkpoint(CHECKPOINT_DIR)
         modeling = reference.vendor(checkpoint)
         engram = sys.modules[f"{modeling.__name__.rpartition('.')[0]}.engram"]
         tokenizer = reference.Tokenizer(checkpoint.root / reference.TOKENIZER)
@@ -572,8 +612,9 @@ class OfficialLayout(unittest.TestCase):
         self.assertEqual(size, 99092)
 
 
-@unittest.skipIf(torch is None or not VENDOR_DIR or not Path(VENDOR_DIR, "inference/model.py").exists(),
-                 "needs torch and the vendor inference code ($CHOPINFER_DEEPSEEK_CHECKPOINT)")
+@unittest.skipIf(torch is None, "needs torch (set CHOPINFER_REFRUN_PYTHON)")
+@unittest.skipUnless(HAS_VENDOR_SOURCE,
+                     "needs vendor inference/*.py beside the tokenizer (CHOPINFER_DEEPSEEK_TOKENIZER_DIR)")
 class PureF32(unittest.TestCase):
     def test_pins_reference_and_quantizes_unrounded_inputs(self):
         modes.prepare_environment(cuda=False)

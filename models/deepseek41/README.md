@@ -66,6 +66,15 @@ variant); F64 widens the vendor code except its RoPE angle lines.
 `reference_pure_f32.py` is the same adapter without that rounding.
 `test_reference.py` checks it bitwise against the vendor's
 `convert.py`, `load_model` and `Transformer.forward` on a tiny checkpoint.
+Its synthetic tests read only the six small `inference/*.py` files from
+`CHOPINFER_DEEPSEEK_TOKENIZER_DIR`, falling back to
+`CHOPINFER_DEEPSEEK_CHECKPOINT`. The official checkpoint ships the tokenizer
+and inference code together; CPU CI preserves the tokenizer directory while
+leaving the official-checkpoint tests opt-in. Each source must match both
+`checkpoint-files.json` and the adapter's pin before import. Synthetic tests
+generate their own tokenizer, configuration and weights, and never read the
+official weights. Missing vendor sources and missing checkpoint inputs have
+separate skip reasons; missing Python dependencies remain CI failures.
 
 ## Qualification
 

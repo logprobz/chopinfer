@@ -559,6 +559,10 @@ pub enum BundleStateLifetimeV1 {
 pub enum BundleKvDtypeV1 {
     Bf16,
     Fp8E4m3,
+    /// Named planes, each with its own code and scale format, which the
+    /// format lists (`BundleKvFormatV1::planes`). A manifest that declares it
+    /// requires `MIXED_PLANE_KV_CAPABILITY_V1`.
+    MixedPlanes,
 }
 
 impl BundleKvDtypeV1 {
@@ -567,6 +571,157 @@ impl BundleKvDtypeV1 {
         match self {
             Self::Bf16 => "bf16",
             Self::Fp8E4m3 => "fp8_e4m3",
+            Self::MixedPlanes => "mixed_planes",
+        }
+    }
+}
+
+/// Capability of bundles that declare a mixed-plane serving KV element. A
+/// host without it refuses the package by this name.
+pub const MIXED_PLANE_KV_CAPABILITY_V1: &str = "chop.kv-cache.mixed-planes.v1";
+
+/// The most planes one mixed-plane KV element declares.
+const MAX_KV_PLANES: usize = 16;
+
+/// The code a mixed-plane KV plane stores each value in.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BundleKvCodeV1 {
+    Bf16,
+    Fp8E4m3,
+    Fp4E2m1,
+}
+
+impl BundleKvCodeV1 {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Bf16 => "bf16",
+            Self::Fp8E4m3 => "fp8_e4m3",
+            Self::Fp4E2m1 => "fp4_e2m1",
+        }
+    }
+}
+
+/// The element of a KV plane's block scales.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BundleKvScaleFormatV1 {
+    /// A power-of-two exponent byte.
+    Ue8m0,
+    E4m3,
+}
+
+impl BundleKvScaleFormatV1 {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ue8m0 => "ue8m0",
+            Self::E4m3 => "e4m3",
+        }
+    }
+}
+
+/// One scale for each `block` consecutive values of a plane.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BundleKvScaleV1 {
+    block: u32,
+    format: BundleKvScaleFormatV1,
+}
+
+impl BundleKvScaleV1 {
+    pub fn new(format: BundleKvScaleFormatV1, block: u32) -> Result<Self, BundleError> {
+        let scale = Self { block, format };
+        scale.validate()?;
+        Ok(scale)
+    }
+
+    #[must_use]
+    pub const fn format(&self) -> BundleKvScaleFormatV1 {
+        self.format
+    }
+
+    #[must_use]
+    pub const fn block(&self) -> u32 {
+        self.block
+    }
+
+    fn validate(&self) -> Result<(), BundleError> {
+        if self.block == 0 {
+            return Err(BundleError::validation(
+                "bundle KV plane scale block must be greater than zero",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// One named plane of a mixed-plane KV element: the code its values are
+/// stored in and, for a scaled code, the format of its block scales.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BundleKvPlaneV1 {
+    code: BundleKvCodeV1,
+    name: BundleOpaqueId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scale: Option<BundleKvScaleV1>,
+}
+
+impl BundleKvPlaneV1 {
+    pub fn new(
+        name: BundleOpaqueId,
+        code: BundleKvCodeV1,
+        scale: Option<BundleKvScaleV1>,
+    ) -> Result<Self, BundleError> {
+        let plane = Self { code, name, scale };
+        plane.validate()?;
+        Ok(plane)
+    }
+
+    #[must_use]
+    pub const fn name(&self) -> &BundleOpaqueId {
+        &self.name
+    }
+
+    #[must_use]
+    pub const fn code(&self) -> BundleKvCodeV1 {
+        self.code
+    }
+
+    #[must_use]
+    pub const fn scale(&self) -> Option<BundleKvScaleV1> {
+        self.scale
+    }
+
+    /// The plane as `code` or `code/scale x block`, for messages.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        match self.scale {
+            None => format!("{} {}", self.name, self.code.as_str()),
+            Some(scale) => format!(
+                "{} {}/{}x{}",
+                self.name,
+                self.code.as_str(),
+                scale.format.as_str(),
+                scale.block
+            ),
+        }
+    }
+
+    fn validate(&self) -> Result<(), BundleError> {
+        validate_opaque_id(self.name.as_str())?;
+        match (self.code, self.scale) {
+            (BundleKvCodeV1::Bf16, Some(_)) => Err(BundleError::validation(format!(
+                "bundle KV plane {} stores BF16 and takes no scale",
+                self.name
+            ))),
+            (BundleKvCodeV1::Fp4E2m1, None) => Err(BundleError::validation(format!(
+                "bundle KV plane {} stores FP4 E2M1 and needs its block scale",
+                self.name
+            ))),
+            (_, Some(scale)) => scale.validate(),
+            (_, None) => Ok(()),
         }
     }
 }
@@ -578,12 +733,37 @@ impl BundleKvDtypeV1 {
 pub struct BundleKvFormatV1 {
     dtype: BundleKvDtypeV1,
     layout: BundleKvLayoutV1,
+    /// The planes of a mixed-plane element, in the bundle's order; empty for
+    /// every other element, so this stays out of the canonical JSON of every
+    /// format that predates it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    planes: Vec<BundleKvPlaneV1>,
 }
 
 impl BundleKvFormatV1 {
+    /// A BF16 or FP8 E4M3 format; a mixed-plane one comes from
+    /// [`Self::mixed_planes`].
     #[must_use]
     pub const fn new(dtype: BundleKvDtypeV1, layout: BundleKvLayoutV1) -> Self {
-        Self { dtype, layout }
+        Self {
+            dtype,
+            layout,
+            planes: Vec::new(),
+        }
+    }
+
+    /// A mixed-plane format of `planes`, distinctly named.
+    pub fn mixed_planes(
+        planes: Vec<BundleKvPlaneV1>,
+        layout: BundleKvLayoutV1,
+    ) -> Result<Self, BundleError> {
+        let format = Self {
+            dtype: BundleKvDtypeV1::MixedPlanes,
+            layout,
+            planes,
+        };
+        format.validate()?;
+        Ok(format)
     }
 
     #[must_use]
@@ -594,6 +774,37 @@ impl BundleKvFormatV1 {
     #[must_use]
     pub const fn layout(&self) -> &BundleKvLayoutV1 {
         &self.layout
+    }
+
+    /// The planes of a mixed-plane element; empty for every other element.
+    #[must_use]
+    pub fn planes(&self) -> &[BundleKvPlaneV1] {
+        &self.planes
+    }
+
+    fn validate(&self) -> Result<(), BundleError> {
+        self.layout.validate()?;
+        let mixed = self.dtype == BundleKvDtypeV1::MixedPlanes;
+        if mixed == self.planes.is_empty() {
+            return Err(BundleError::validation(format!(
+                "bundle KV format {} must declare planes exactly when its element is mixed_planes",
+                self.layout.id
+            )));
+        }
+        validate_count("KV planes", self.planes.len(), MAX_KV_PLANES)?;
+        for (index, plane) in self.planes.iter().enumerate() {
+            plane.validate()?;
+            if self.planes[..index]
+                .iter()
+                .any(|other| other.name == plane.name)
+            {
+                return Err(BundleError::validation(format!(
+                    "bundle KV format {} declares plane {} twice",
+                    self.layout.id, plane.name
+                )));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -3809,15 +4020,31 @@ impl BundleManifestV1 {
     /// Declared KV layouts agree on everything but their pages: the same page
     /// tokens, sequence limit, placement and lifetime, so a host sizes
     /// sequences alike whichever it serves. One per element, the preferred
-    /// `kv_layout` among them.
+    /// `kv_layout` among them. A mixed-plane element and the capability that
+    /// names it come together, so a host without it refuses the package by
+    /// name and never infers another element for its layout.
     fn validate_kv_formats(&self) -> Result<(), BundleError> {
+        let mixed = self
+            .kv_formats
+            .iter()
+            .any(|format| format.dtype == BundleKvDtypeV1::MixedPlanes);
+        let required = self
+            .resource_requirements
+            .required_capabilities
+            .iter()
+            .any(|id| id.as_str() == MIXED_PLANE_KV_CAPABILITY_V1);
+        if mixed != required {
+            return Err(BundleError::validation(format!(
+                "a mixed-plane KV format and {MIXED_PLANE_KV_CAPABILITY_V1} must be declared together"
+            )));
+        }
         if self.kv_formats.is_empty() {
             return Ok(());
         }
         validate_count("KV formats", self.kv_formats.len(), 8)?;
         let primary = &self.kv_layout;
         for (index, format) in self.kv_formats.iter().enumerate() {
-            format.layout.validate()?;
+            format.validate()?;
             let layout = &format.layout;
             if layout.page_tokens != primary.page_tokens
                 || layout.maximum_sequence_tokens != primary.maximum_sequence_tokens
@@ -5283,13 +5510,14 @@ mod tests {
     use runtime_weights::sha256_bytes;
 
     use super::{
-        BundleComponentV1, BundleGraphBucketV1, BundleHostCompatibilityV1, BundleKvDtypeV1,
-        BundleKvFormatV1, BundleKvLayoutV1, BundleManifestV1, BundleOpaqueId, BundlePackageV1,
+        BundleComponentV1, BundleGraphBucketV1, BundleHostCompatibilityV1, BundleKvCodeV1,
+        BundleKvDtypeV1, BundleKvFormatV1, BundleKvLayoutV1, BundleKvPlaneV1,
+        BundleKvScaleFormatV1, BundleKvScaleV1, BundleManifestV1, BundleOpaqueId, BundlePackageV1,
         BundleRankPlacementV1, BundleRelativePathV1, BundleResourceRequirementsV1,
         BundleStateLayoutV1, BundleStateLifetimeV1, BundleTargetV1, BundleTopologyV1,
-        MODEL_BUNDLE_V1_ABI_VERSION, VerifiedComponentFileV1, containing_directory,
-        declared_parent_directories, publish_staging_no_replace,
-        publish_verified_staging_no_replace,
+        MAX_KV_PLANES, MIXED_PLANE_KV_CAPABILITY_V1, MODEL_BUNDLE_V1_ABI_VERSION,
+        VerifiedComponentFileV1, containing_directory, declared_parent_directories,
+        publish_staging_no_replace, publish_verified_staging_no_replace,
     };
 
     /// A relative output of one component publishes into the working
@@ -5651,6 +5879,165 @@ mod tests {
                 kv_layout("fixture.kv-fp8.v1", 32, 2_048)
             ),
         ]));
+    }
+
+    fn plane(
+        name: &str,
+        code: BundleKvCodeV1,
+        scale: Option<(BundleKvScaleFormatV1, u32)>,
+    ) -> BundleKvPlaneV1 {
+        let scale = scale.map(|(format, block)| BundleKvScaleV1::new(format, block).unwrap());
+        BundleKvPlaneV1::new(id(name), code, scale).unwrap()
+    }
+
+    fn native_planes() -> Vec<BundleKvPlaneV1> {
+        use BundleKvScaleFormatV1::{E4m3, Ue8m0};
+        vec![
+            plane("window", BundleKvCodeV1::Fp8E4m3, Some((Ue8m0, 32))),
+            plane("compressed", BundleKvCodeV1::Fp4E2m1, Some((E4m3, 16))),
+            plane("index", BundleKvCodeV1::Fp4E2m1, Some((Ue8m0, 32))),
+        ]
+    }
+
+    fn with_capability(mut manifest: BundleManifestV1, capability: &str) -> BundleManifestV1 {
+        let mut capabilities = manifest.resource_requirements.required_capabilities.clone();
+        capabilities.push(id(capability));
+        manifest.resource_requirements = BundleResourceRequirementsV1::new(
+            manifest.resource_requirements.minimum_device_memory_bytes,
+            capabilities,
+        )
+        .unwrap();
+        manifest
+    }
+
+    #[test]
+    fn a_mixed_plane_kv_format_names_its_planes_and_its_capability() {
+        let manifest = test_manifest();
+        let primary = manifest.kv_layout().clone();
+        let native = kv_layout("fixture.kv-native.v1", 32, 1_024);
+        let mixed = BundleKvFormatV1::mixed_planes(native_planes(), native.clone()).unwrap();
+        let formats = vec![
+            mixed.clone(),
+            BundleKvFormatV1::new(BundleKvDtypeV1::Bf16, primary.clone()),
+        ];
+
+        // Without the capability the declaration is refused, naming it.
+        let error = manifest
+            .clone()
+            .with_kv_formats(formats.clone())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(MIXED_PLANE_KV_CAPABILITY_V1), "{error}");
+        // So is the capability without a mixed-plane format, whose layout a
+        // host would otherwise read as BF16.
+        let declares = with_capability(manifest.clone(), MIXED_PLANE_KV_CAPABILITY_V1);
+        let error = declares.to_canonical_json().unwrap_err().to_string();
+        assert!(error.contains(MIXED_PLANE_KV_CAPABILITY_V1), "{error}");
+
+        let both = declares.with_kv_formats(formats).unwrap();
+        let elements: Vec<_> = both
+            .kv_formats()
+            .iter()
+            .map(BundleKvFormatV1::dtype)
+            .collect();
+        assert_eq!(
+            elements,
+            [BundleKvDtypeV1::Bf16, BundleKvDtypeV1::MixedPlanes]
+        );
+        assert_eq!(both.kv_formats()[1], mixed);
+        // The planes are part of the declaration's bytes and come back exactly,
+        // in the bundle's order; the BF16 format serializes as before.
+        let canonical = both.to_canonical_json().unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&canonical).unwrap();
+        assert_eq!(
+            value["kv_formats"][0],
+            serde_json::json!({"dtype": "bf16", "layout": serde_json::to_value(&primary).unwrap()})
+        );
+        assert_eq!(
+            value["kv_formats"][1]["planes"],
+            serde_json::json!([
+                {"code": "fp8_e4m3", "name": "window", "scale": {"block": 32, "format": "ue8m0"}},
+                {"code": "fp4_e2m1", "name": "compressed", "scale": {"block": 16, "format": "e4m3"}},
+                {"code": "fp4_e2m1", "name": "index", "scale": {"block": 32, "format": "ue8m0"}},
+            ])
+        );
+        assert_eq!(value["kv_formats"][1]["dtype"], "mixed_planes");
+        let parsed = BundleManifestV1::from_canonical_json(&canonical).unwrap();
+        assert_eq!(parsed, both);
+        assert_eq!(
+            both.declared_page_layout_for(&native, &id("tp1"))
+                .unwrap()
+                .bytes_per_token(),
+            32
+        );
+
+        // A host without the capability refuses the package by its name; a
+        // host with it accepts.
+        let error = both.verify_host(&host()).unwrap_err().to_string();
+        assert!(
+            error.contains(&format!(
+                "unsupported host capability {MIXED_PLANE_KV_CAPABILITY_V1}"
+            )),
+            "{error}"
+        );
+        both.verify_host(&host().with_capabilities([id(MIXED_PLANE_KV_CAPABILITY_V1)]))
+            .unwrap();
+    }
+
+    #[test]
+    fn mixed_planes_are_declared_whole_and_never_on_another_element() {
+        use BundleKvScaleFormatV1::{E4m3, Ue8m0};
+        let layout = kv_layout("fixture.kv-native.v1", 32, 1_024);
+        let refused = |planes: Vec<BundleKvPlaneV1>| {
+            BundleKvFormatV1::mixed_planes(planes, layout.clone()).is_err()
+        };
+        assert!(refused(Vec::new()));
+        let mut twice = native_planes();
+        twice.push(plane("window", BundleKvCodeV1::Bf16, None));
+        assert!(refused(twice));
+        assert!(refused(
+            (0..=MAX_KV_PLANES)
+                .map(|index| plane(&format!("plane{index}"), BundleKvCodeV1::Bf16, None))
+                .collect()
+        ));
+        // FP4 codes carry their scale, BF16 takes none, and a block holds a value.
+        let fp4 = BundleKvPlaneV1::new(id("compressed"), BundleKvCodeV1::Fp4E2m1, None);
+        assert!(fp4.is_err());
+        let bf16 = BundleKvPlaneV1::new(
+            id("window"),
+            BundleKvCodeV1::Bf16,
+            Some(BundleKvScaleV1::new(E4m3, 16).unwrap()),
+        );
+        assert!(bf16.is_err());
+        assert!(BundleKvScaleV1::new(Ue8m0, 0).is_err());
+        assert_eq!(
+            plane("window", BundleKvCodeV1::Fp8E4m3, None).describe(),
+            "window fp8_e4m3"
+        );
+        assert_eq!(native_planes()[1].describe(), "compressed fp4_e2m1/e4m3x16");
+
+        // A decoded format is checked by the same rules: planes on a BF16
+        // element, a mixed-plane element without planes, an unscaled FP4 plane.
+        let bf16 =
+            serde_json::to_value(BundleKvFormatV1::new(BundleKvDtypeV1::Bf16, layout.clone()))
+                .unwrap();
+        let mixed = serde_json::to_value(
+            BundleKvFormatV1::mixed_planes(native_planes(), layout.clone()).unwrap(),
+        )
+        .unwrap();
+        let mut with_planes = bf16;
+        with_planes["planes"] = mixed["planes"].clone();
+        let mut without_planes = mixed.clone();
+        without_planes.as_object_mut().unwrap().remove("planes");
+        let mut unscaled = mixed;
+        unscaled["planes"][1]
+            .as_object_mut()
+            .unwrap()
+            .remove("scale");
+        for value in [with_planes, without_planes, unscaled] {
+            let format: BundleKvFormatV1 = serde_json::from_value(value.clone()).unwrap();
+            assert!(format.validate().is_err(), "{value}");
+        }
     }
 
     #[test]

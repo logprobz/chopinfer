@@ -141,7 +141,7 @@ serve --bundle DIR [--checkpoint DIR [--load-threads N]] [--profile NAME|FILE#NA
   [--listen ADDR] [--topology ID] [--devices 0,1,...]
   [--max-context-tokens N] [--max-sequences N] [--max-batch-tokens N]
   [--prefill-chunk-tokens N] [--queue-depth N] [--queue-wait-ms N] [--drain-timeout-ms N]
-  [--kv-memory-fraction F] [--kv-pages N] [--kv-cache-dtype auto|bf16|fp8]
+  [--kv-memory-fraction F] [--kv-pages N] [--kv-cache-dtype auto|bf16|fp8|mixed]
   [--context-parallel-size N]
   [--model-option NAME=VALUE]... [--list-model-options]
   [--speculative-tokens N] [--speculative-rows N] [--speculation fixed|adaptive]
@@ -3044,11 +3044,12 @@ impl ServedEngineV1 {
 }
 
 /// The engine's KV metrics for the served layout's element: an FP8 layout
-/// publishes the FP8 token and capacity gauges, a BF16 one does not.
+/// publishes the FP8 token and capacity gauges; a BF16 or mixed-plane one,
+/// whose planes are not all FP8, does not.
 fn kv_metrics_v1(dtype: BundleKvDtypeV1) -> KvMetrics {
     match dtype {
         BundleKvDtypeV1::Fp8E4m3 => KvMetrics::new(KvCachePrecision::Fp8),
-        BundleKvDtypeV1::Bf16 => KvMetrics::default(),
+        BundleKvDtypeV1::Bf16 | BundleKvDtypeV1::MixedPlanes => KvMetrics::default(),
     }
 }
 
@@ -4864,8 +4865,9 @@ impl ArgumentsV1 {
                     set_once_v1(&mut parsed.speculation_mode, mode, flag)?;
                 }
                 "--kv-cache-dtype" => {
-                    let dtype = KvCacheDtypeV1::parse(value)
-                        .ok_or_else(|| usage_error("--kv-cache-dtype must be auto, bf16 or fp8"))?;
+                    let dtype = KvCacheDtypeV1::parse(value).ok_or_else(|| {
+                        usage_error("--kv-cache-dtype must be auto, bf16, fp8 or mixed")
+                    })?;
                     set_once_v1(&mut parsed.kv_cache_dtype, dtype, flag)?;
                 }
                 "--prefix-cache" => {
@@ -5250,6 +5252,9 @@ impl ArgumentsV1 {
                 runtime_bundle_abi::RECURRENT_STATE_PREALLOCATED_CAPABILITY_V1,
             ))
             .chain(std::iter::once(runtime_bundle_abi::FP8_KV_CAPABILITY_V1))
+            .chain(std::iter::once(
+                runtime_bundle::MIXED_PLANE_KV_CAPABILITY_V1,
+            ))
             .chain(std::iter::once(
                 runtime_bundle_abi::HOST_RESIDENT_VIEWS_CAPABILITY_V1,
             ))
@@ -6771,13 +6776,15 @@ mod tests {
             ("bfloat16", KvCacheDtypeV1::Bf16),
             ("fp8", KvCacheDtypeV1::Fp8),
             ("fp8_e4m3", KvCacheDtypeV1::Fp8),
+            ("mixed", KvCacheDtypeV1::Mixed),
+            ("mixed_planes", KvCacheDtypeV1::Mixed),
         ] {
             let words = ["serve", "--bundle", "a", "--kv-cache-dtype", value];
             assert_eq!(dtype(&words), expected);
         }
         assert!(
             refusal(&["serve", "--bundle", "a", "--kv-cache-dtype", "fp16"])
-                .contains("--kv-cache-dtype must be auto, bf16 or fp8")
+                .contains("--kv-cache-dtype must be auto, bf16, fp8 or mixed")
         );
         assert!(
             refusal(&[
@@ -7897,6 +7904,7 @@ mod tests {
                 runtime_bundle_abi::HOST_MAPPED_GATHER_CAPABILITY_V1,
                 runtime_bundle_abi::HOST_RESIDENT_VIEWS_CAPABILITY_V1,
                 runtime_bundle_abi::FP8_KV_CAPABILITY_V1,
+                runtime_bundle::MIXED_PLANE_KV_CAPABILITY_V1,
                 crate::offload::KV_OFFLOAD_CAPABILITY_V1,
                 crate::executor::MEDIA_INPUTS_CAPABILITY_V1,
                 runtime_bundle_abi::MODEL_OPTIONS_CAPABILITY_V1,
@@ -7934,6 +7942,7 @@ mod tests {
                 &BundleOpaqueId::new(runtime_bundle_abi::HOST_RESIDENT_VIEWS_CAPABILITY_V1)
                     .unwrap(),
                 &BundleOpaqueId::new(runtime_bundle_abi::FP8_KV_CAPABILITY_V1).unwrap(),
+                &BundleOpaqueId::new(runtime_bundle::MIXED_PLANE_KV_CAPABILITY_V1).unwrap(),
                 &BundleOpaqueId::new(crate::offload::KV_OFFLOAD_CAPABILITY_V1).unwrap(),
                 &BundleOpaqueId::new(crate::executor::MEDIA_INPUTS_CAPABILITY_V1).unwrap(),
                 &BundleOpaqueId::new(runtime_bundle_abi::MODEL_OPTIONS_CAPABILITY_V1).unwrap(),
@@ -8442,9 +8451,11 @@ mod tests {
         let published = |dtype| super::kv_metrics_v1(dtype).snapshot().prometheus();
         let fp8 = published(BundleKvDtypeV1::Fp8E4m3);
         let bf16 = published(BundleKvDtypeV1::Bf16);
+        let mixed = published(BundleKvDtypeV1::MixedPlanes);
         for gauge in ["chop_fp8_kv_tokens", "chop_fp8_kv_capacity_tokens"] {
             assert!(fp8.contains(gauge), "{fp8}");
             assert!(!bf16.contains(gauge), "{bf16}");
+            assert!(!mixed.contains(gauge), "{mixed}");
         }
         assert!(bf16.contains("chop_kv_capacity_tokens"));
     }
@@ -8494,6 +8505,107 @@ mod tests {
         assert_eq!(
             described,
             "serving KV cache dtype: bf16 (auto, the package's preference; the package supports bf16, fp8)"
+        );
+    }
+
+    /// `manifest` preferring a mixed-plane layout of two planes, with its BF16
+    /// layout as the other format.
+    fn mixed_planes(manifest: BundleManifestV1) -> BundleManifestV1 {
+        use runtime_bundle::{
+            BundleKvCodeV1, BundleKvPlaneV1, BundleKvScaleFormatV1, BundleKvScaleV1,
+            MIXED_PLANE_KV_CAPABILITY_V1,
+        };
+        let bf16 = manifest.kv_layout().clone();
+        let native = BundleKvLayoutV1::new(
+            id("fixture.kv-native.v1"),
+            u64::from(bf16.page_tokens()) * 24,
+            8,
+            bf16.page_tokens(),
+            24,
+            1,
+            bf16.maximum_sequence_tokens(),
+            BundleRankPlacementV1::Replicated,
+            BundleStateLifetimeV1::Transaction,
+        )
+        .expect("the native test layout is valid");
+        let scale = |format, block| Some(BundleKvScaleV1::new(format, block).unwrap());
+        let planes = vec![
+            BundleKvPlaneV1::new(
+                id("window"),
+                BundleKvCodeV1::Fp8E4m3,
+                scale(BundleKvScaleFormatV1::Ue8m0, 32),
+            )
+            .unwrap(),
+            BundleKvPlaneV1::new(
+                id("compressed"),
+                BundleKvCodeV1::Fp4E2m1,
+                scale(BundleKvScaleFormatV1::E4m3, 16),
+            )
+            .unwrap(),
+        ];
+        let mut value = serde_json::to_value(&manifest).unwrap();
+        let capabilities = value["resource_requirements"]["required_capabilities"]
+            .as_array_mut()
+            .unwrap();
+        capabilities.push(MIXED_PLANE_KV_CAPABILITY_V1.into());
+        capabilities.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
+        value["kv_layout"] = serde_json::to_value(&native).unwrap();
+        serde_json::from_value::<BundleManifestV1>(value)
+            .unwrap()
+            .with_kv_formats(vec![
+                BundleKvFormatV1::new(BundleKvDtypeV1::Bf16, bf16),
+                BundleKvFormatV1::mixed_planes(planes, native).unwrap(),
+            ])
+            .expect("both KV formats are valid")
+    }
+
+    #[test]
+    fn mixed_selects_a_declared_mixed_plane_layout_and_records_its_planes() {
+        use crate::kv_cache_dtype::kv_layout_of_v1;
+        let resolve = |manifest: &BundleManifestV1, requested| {
+            resolve_kv_cache_dtype_v1(manifest, requested).map(|choice| choice.dtype)
+        };
+        let (bf16, mixed) = (BundleKvDtypeV1::Bf16, BundleKvDtypeV1::MixedPlanes);
+        let native = mixed_planes(manifest_with_rows(16, DECLARED_ROWS_V1));
+        assert_eq!(resolve(&native, KvCacheDtypeV1::Auto), Ok(mixed));
+        assert_eq!(resolve(&native, KvCacheDtypeV1::Mixed), Ok(mixed));
+        assert_eq!(resolve(&native, KvCacheDtypeV1::Bf16), Ok(bf16));
+        assert!(resolve(&native, KvCacheDtypeV1::Fp8).is_err());
+        assert_eq!(
+            kv_layout_of_v1(&native, mixed).map(|layout| layout.id().as_str()),
+            Some("fixture.kv-native.v1")
+        );
+        let described = resolve_kv_cache_dtype_v1(&native, KvCacheDtypeV1::Auto)
+            .unwrap()
+            .describe(&native);
+        assert_eq!(
+            described,
+            "serving KV cache dtype: mixed [window fp8_e4m3/ue8m0x32, compressed fp4_e2m1/e4m3x16] \
+             (auto, the package's preference; the package supports bf16, mixed)"
+        );
+        // A BF16 choice of the same package records no planes.
+        let described = resolve_kv_cache_dtype_v1(&native, KvCacheDtypeV1::Bf16)
+            .unwrap()
+            .describe(&native);
+        assert_eq!(
+            described,
+            "serving KV cache dtype: bf16 (requested; the package supports bf16, mixed)"
+        );
+        // Packages without the element refuse it by name.
+        for manifest in [
+            manifest_with_rows(16, DECLARED_ROWS_V1),
+            kv_formats(manifest_with_rows(16, DECLARED_ROWS_V1), bf16),
+        ] {
+            let refusal = resolve(&manifest, KvCacheDtypeV1::Mixed).unwrap_err();
+            assert!(refusal.contains("declares no mixed KV layout"), "{refusal}");
+        }
+        // This host serves the element; the capability it requires is the
+        // host's own.
+        let host = ArgumentsV1::default().host_compatibility().unwrap();
+        assert!(
+            native
+                .capabilities_of_every_topology()
+                .all(|capability| { host.capabilities().any(|offered| offered == capability) })
         );
     }
 

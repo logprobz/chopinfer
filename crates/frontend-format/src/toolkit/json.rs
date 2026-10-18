@@ -210,7 +210,11 @@ pub fn write_json_v1(
             FrontendJsonEncodingV1::SpacedJsonV1 => {
                 output.push_str(&integral_v1(number, context)?);
             }
-            FrontendJsonEncodingV1::PythonJsonV1 => output.push_str(&python_number_v1(number)),
+            FrontendJsonEncodingV1::PythonJsonV1 => {
+                output.push_str(&python_number_v1(number).map_err(|_| {
+                    format!("{context} holds a number beyond the finite binary64 range")
+                })?);
+            }
         },
         FrontendJsonV1::String(value) => write_string_v1(value, output),
         FrontendJsonV1::Array(values) => {
@@ -241,16 +245,28 @@ pub fn write_json_v1(
 
 /// Python uses the same shortest round-trip digits, with different notation:
 /// scientific below 1e-4 or at 1e16, signed exponents with at least two digits,
-/// and a decimal point for integral floats.
-pub(crate) fn python_number_v1(number: &serde_json::Number) -> String {
+/// and a decimal point for integral floats. `Err` carries Python's spelling
+/// of a float beyond binary64's finite range (`Infinity` or `-Infinity`),
+/// which is not JSON.
+pub(crate) fn python_number_v1(number: &serde_json::Number) -> Result<String, String> {
     let text = number.to_string();
     if !text.contains(['.', 'e', 'E']) {
-        return text;
+        return Ok(text);
     }
     // Arbitrary precision preserves the input spelling. Floats still use
     // Python's binary64 value and its shortest round-trip digits.
-    let text = serde_json::to_string(&number.as_f64().expect("finite JSON float"))
-        .expect("finite floats serialize");
+    let value = number.as_f64().unwrap_or(f64::NAN);
+    if !value.is_finite() {
+        let spelled = if value.is_nan() {
+            "NaN"
+        } else if value < 0.0 {
+            "-Infinity"
+        } else {
+            "Infinity"
+        };
+        return Err(spelled.to_owned());
+    }
+    let text = serde_json::to_string(&value).expect("finite floats serialize");
     let (sign, magnitude) = text
         .strip_prefix('-')
         .map_or(("", text.as_str()), |s| ("-", s));
@@ -262,7 +278,7 @@ pub(crate) fn python_number_v1(number: &serde_json::Number) -> String {
     let leading = digits.bytes().take_while(|b| *b == b'0').count();
     let digits = digits[leading..].trim_end_matches('0');
     if digits.is_empty() {
-        return format!("{sign}0.0");
+        return Ok(format!("{sign}0.0"));
     }
     let exponent = exponent + point - leading as i32 - 1;
     if !(-4..16).contains(&exponent) {
@@ -271,10 +287,10 @@ pub(crate) fn python_number_v1(number: &serde_json::Number) -> String {
         } else {
             String::new()
         };
-        return format!("{sign}{}{fraction}e{exponent:+03}", &digits[..1]);
+        return Ok(format!("{sign}{}{fraction}e{exponent:+03}", &digits[..1]));
     }
     let point = exponent + 1;
-    if point <= 0 {
+    Ok(if point <= 0 {
         format!("{sign}0.{}{digits}", "0".repeat((-point) as usize))
     } else if point as usize >= digits.len() {
         format!(
@@ -287,7 +303,7 @@ pub(crate) fn python_number_v1(number: &serde_json::Number) -> String {
             &digits[..point as usize],
             &digits[point as usize..]
         )
-    }
+    })
 }
 
 /// Renders one JSON value into a fresh string.

@@ -24,7 +24,7 @@ use crate::chat::PromptModeV1;
 use crate::chatml_decode::{
     ChatMlTerminalsV1, RegionCallV1, RegionScanV1, ToolRegionV1, call_arguments_v1,
 };
-use crate::descriptor::{FormatDescriptorV1, FrontendParserDeclarationV1};
+use crate::descriptor::{FormatDescriptorV1, FrontendParserDeclarationV1, FrontendToolGrammarV1};
 use crate::format::{
     AssistantCompletionV1, CompletionFinishV1, FormatEventV1, FormatInputV1, FormatParserOptionsV1,
     FormatToolCallDeltaV1, ParsedToolCallV1,
@@ -110,6 +110,9 @@ pub struct DeclaredParserV1 {
     /// Whether the host holds bytes after `bytes`.
     held: bool,
     stop_floor: Option<usize>,
+    /// Where an end marker the text spells can still begin: the search for
+    /// one resumes here, so a long tool region costs its bytes once.
+    terminator_from: std::cell::Cell<usize>,
     cursor: usize,
     tool_start: Option<usize>,
     /// Where the answer text began, so a held blank answer can be found.
@@ -171,6 +174,12 @@ impl DeclaredParserV1 {
         if keep > self.bytes.len() {
             return Err(sequence_v1("a push keeps bytes the parser never received"));
         }
+        if keep < self.bytes.len() {
+            let longest = self.terminators().iter().map(|text| text.len()).max();
+            let from = keep.saturating_sub(longest.unwrap_or(1).saturating_sub(1));
+            self.terminator_from
+                .set(self.terminator_from.get().min(from));
+        }
         self.bytes.truncate(keep);
         self.bytes.extend_from_slice(suffix);
         self.held = held;
@@ -209,6 +218,7 @@ impl DeclaredParserV1 {
             bytes: Vec::new(),
             held: false,
             stop_floor: None,
+            terminator_from: std::cell::Cell::new(0),
             cursor: 0,
             tool_start: None,
             content_start: 0,
@@ -599,13 +609,23 @@ impl DeclaredParserV1 {
     }
 
     fn next_terminator(&self, valid_end: usize) -> Option<(usize, usize)> {
-        self.terminators()
-            .into_iter()
+        let terminators = self.terminators();
+        let found = terminators
+            .iter()
             .filter_map(|text| {
                 self.find_textual_stop(text.as_bytes(), valid_end)
                     .map(|position| (position, text.len()))
             })
-            .min_by_key(|(position, _)| *position)
+            .min_by_key(|(position, _)| *position);
+        // With none found, none begins before the last bytes a longer text
+        // could complete one in.
+        if found.is_none() && self.stop_floor.is_some() && !self.engine_tokens {
+            let longest = terminators.iter().map(|text| text.len()).max().unwrap_or(1);
+            let from = valid_end.saturating_sub(longest - 1);
+            self.terminator_from
+                .set(self.terminator_from.get().max(from));
+        }
+        found
     }
 
     /// The earliest thing in the pending bytes that is not ordinary text.
@@ -656,7 +676,7 @@ impl DeclaredParserV1 {
                     consider(terminals.reasoning_close.as_bytes(), MarkerV1::ThinkEnd);
                 }
                 consider(terminals.tool_open.as_bytes(), MarkerV1::ToolStart);
-                consider(terminals.function_open.as_bytes(), MarkerV1::ToolStart);
+                consider(self.bare_function_open().as_bytes(), MarkerV1::ToolStart);
                 for terminator in self.terminators() {
                     consider(terminator.as_bytes(), MarkerV1::Terminator);
                 }
@@ -690,6 +710,17 @@ impl DeclaredParserV1 {
         best
     }
 
+    /// The function open that begins a call without its tool wrapper in
+    /// text, as the reference parsers read one; empty for the typed grammar,
+    /// whose calls open only inside the call block.
+    fn bare_function_open(&self) -> &str {
+        if self.parser.tool_grammar == FrontendToolGrammarV1::XmlTypedParametersV1 {
+            ""
+        } else {
+            self.parser.function_open.trim()
+        }
+    }
+
     /// The markers that are structure rather than a violation in this state.
     fn expected_markers(&self) -> Vec<&str> {
         let terminals = ChatMlTerminalsV1::new(&self.parser);
@@ -705,11 +736,11 @@ impl DeclaredParserV1 {
                 vec![
                     terminals.reasoning_close,
                     terminals.tool_open,
-                    terminals.function_open,
+                    self.bare_function_open(),
                 ]
             }
             TextStateV1::Content => {
-                vec![terminals.tool_open, terminals.function_open]
+                vec![terminals.tool_open, self.bare_function_open()]
             }
             TextStateV1::Tool | TextStateV1::Complete => Vec::new(),
         };
@@ -740,7 +771,7 @@ impl DeclaredParserV1 {
             }
             consider(terminals.tool_open.as_bytes());
             if self.state == TextStateV1::Content {
-                consider(terminals.function_open.as_bytes());
+                consider(self.bare_function_open().as_bytes());
             }
             for terminator in self.terminators() {
                 consider(terminator.as_bytes());
@@ -764,7 +795,8 @@ impl DeclaredParserV1 {
         }
         let start = self
             .cursor
-            .max(minimum_end.saturating_sub(needle.len() - 1));
+            .max(minimum_end.saturating_sub(needle.len() - 1))
+            .max(self.terminator_from.get());
         find_bytes_v1(self.bytes.get(start..valid_end)?, needle).map(|relative| start + relative)
     }
 

@@ -73,7 +73,10 @@ fn write_tojson_v1(
     match value {
         FrontendJsonV1::Null => output.push_str("null"),
         FrontendJsonV1::Bool(value) => output.push_str(if *value { "true" } else { "false" }),
-        FrontendJsonV1::Number(number) => output.push_str(&python_number_v1(number)),
+        // Python writes a float beyond the finite range as it spells it.
+        FrontendJsonV1::Number(number) => {
+            output.push_str(&python_number_v1(number).unwrap_or_else(|spelled| spelled));
+        }
         FrontendJsonV1::String(text) => write_json_string_v1(text, options.ensure_ascii, output),
         FrontendJsonV1::Array(values) if values.is_empty() => output.push_str("[]"),
         FrontendJsonV1::Array(values) => {

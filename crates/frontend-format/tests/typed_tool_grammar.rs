@@ -200,6 +200,7 @@ fn a_tool_choice_prefill_opens_the_declared_calls_and_never_thinks() {
             named_renders_its_tool_only: true,
             forced_prefill: prefill.into(),
             forced_refused_in_thinking: refused,
+            forced_without_tools_is_auto: false,
         });
         descriptor.validate().map_err(|error| error.to_string())
     };
@@ -215,4 +216,112 @@ fn a_tool_choice_prefill_opens_the_declared_calls_and_never_thinks() {
             .unwrap_err()
             .contains("needs forced_refused_in_thinking")
     );
+}
+
+fn tool(parameters: serde_json::Value) -> FrontendToolV1 {
+    FrontendToolV1 {
+        name: "f".into(),
+        description: None,
+        parameters: serde_json::from_value::<FrontendJsonV1>(parameters).unwrap(),
+        parameters_present: true,
+        strict: None,
+    }
+}
+
+fn block(calls: &[String]) -> String {
+    format!("\n\n<calls>\n{}</calls>", calls.concat())
+}
+
+#[test]
+fn a_forced_call_writes_only_names_the_parser_reads() {
+    let required = tool(serde_json::json!({
+        "type": "object", "properties": {"a.b": {"type": "integer"}},
+        "required": ["a.b"], "additionalProperties": false
+    }));
+    let error = tool_constraint_v1(&descriptor(), &[required], &FrontendToolChoiceV1::Required)
+        .unwrap_err();
+    assert_eq!(error.parameter.as_deref(), Some("tools"));
+    assert!(error.message.contains("\"a.b\""), "{}", error.message);
+    // An optional name the parser cannot read is never written.
+    let optional = [tool(serde_json::json!({
+        "type": "object", "properties": {"a.b": {"type": "integer"}, "c": {"type": "integer"}},
+        "required": ["c"], "additionalProperties": false
+    }))];
+    let required = FrontendToolChoiceV1::Required;
+    assert!(admits(
+        &optional,
+        &required,
+        &block(&[call("f", &[("c", true, "1")])])
+    ));
+    assert!(!admits(
+        &optional,
+        &required,
+        &block(&[call("f", &[("a.b", true, "1"), ("c", true, "1")])])
+    ));
+}
+
+#[test]
+fn a_number_beyond_binary64_reads_back_as_text() {
+    let tools = [tool(serde_json::json!({
+        "type": "object", "properties": {"x": {"type": "number"}}, "required": ["x"]
+    }))];
+    let text = block(&[call("f", &[("x", true, "1e400")])]);
+    assert!(admits(&tools, &FrontendToolChoiceV1::Required, &text));
+    let parsed =
+        parse_completion_v1(&descriptor(), &format!("{text}[EOS]"), PromptModeV1::Chat).unwrap();
+    assert_eq!(parsed.tool_calls[0].arguments, r#"{"x": "1e400"}"#);
+}
+
+#[test]
+fn a_function_element_outside_a_call_block_is_text() {
+    let completion = format!("Hi{}[EOS]", call("f", &[("x", false, "1")]));
+    let parsed = parse_completion_v1(&descriptor(), &completion, PromptModeV1::Chat).unwrap();
+    assert!(parsed.tool_calls.is_empty());
+    assert!(parsed.content.starts_with("Hi<invoke name=\"f\">"));
+}
+
+#[test]
+fn a_raw_value_runs_to_its_own_close() {
+    let value = "a <parameter name=\"y\" string=\"true\">b</invoke>\nc";
+    let completion = format!("{}[EOS]", block(&[call("f", &[("x", false, value)])]));
+    let parsed = parse_completion_v1(&descriptor(), &completion, PromptModeV1::Chat).unwrap();
+    assert_eq!(parsed.tool_calls.len(), 1);
+    assert_eq!(
+        parsed.tool_calls[0].arguments,
+        serde_json::json!({ "x": value })
+            .to_string()
+            .replace("\":", "\": ")
+    );
+}
+
+#[test]
+fn forced_calls_share_one_call_block() {
+    let tools = [tool(serde_json::json!({
+        "type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]
+    }))];
+    let one = call("f", &[("x", false, "a")]);
+    let two = call("f", &[("x", false, "b")]);
+    for choice in [
+        FrontendToolChoiceV1::Required,
+        FrontendToolChoiceV1::Named("f".into()),
+    ] {
+        assert!(admits(&tools, &choice, &block(std::slice::from_ref(&one))));
+        assert!(admits(&tools, &choice, &block(&[one.clone(), two.clone()])));
+        assert!(!admits(
+            &tools,
+            &choice,
+            &format!(
+                "{}{}",
+                block(std::slice::from_ref(&one)),
+                block(std::slice::from_ref(&two))
+            )
+        ));
+    }
+    let parsed = parse_completion_v1(
+        &descriptor(),
+        &format!("{}[EOS]", block(&[one, two])),
+        PromptModeV1::Chat,
+    )
+    .unwrap();
+    assert_eq!(parsed.tool_calls.len(), 2);
 }

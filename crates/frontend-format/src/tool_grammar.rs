@@ -28,6 +28,7 @@ use crate::chatml_decode::{
 };
 use crate::descriptor::{FormatDescriptorV1, FrontendParserDeclarationV1, FrontendToolGrammarV1};
 use crate::request::{FrontendErrorV1, FrontendToolChoiceV1, FrontendToolV1};
+use crate::toolkit::validate_name_v1;
 
 fn refusal(message: impl Into<String>) -> FrontendErrorV1 {
     FrontendErrorV1::new(message, Some("tool_choice"))
@@ -68,7 +69,8 @@ pub fn tool_constraint_v1(
     // copy. A rule nests its body a level deeper, and where that takes the
     // grammar past the depth the wire admits, the body is written out in
     // both places, as one call writes it.
-    let shared = !matches!(forced, FrontendToolChoiceV1::Named(_));
+    let shared = !matches!(forced, FrontendToolChoiceV1::Named(_))
+        || descriptor.parser.tool_grammar == FrontendToolGrammarV1::XmlTypedParametersV1;
     let mut grammar = calls_v1(descriptor, &offered, forced, shared)?;
     if shared && grammar.compile_depth() > GRAMMAR_WIRE_NESTING_MAX_V1 {
         grammar = calls_v1(descriptor, &offered, forced, false)?;
@@ -117,19 +119,48 @@ fn calls_v1(
         rest
     };
     let open = || Expr::literal(&format.tool_call_open);
-    let call = Expr::seq([open(), rest.clone()]);
-    let more_calls = Expr::seq([Expr::literal(&format.tool_call_separator), call.clone()]).star();
+    let typed = format.tool_grammar == FrontendToolGrammarV1::XmlTypedParametersV1;
+    // The typed grammar writes every call of a turn as one function element
+    // after another inside one call block, as its reference parser reads
+    // them; a named choice is the same block of calls to its one tool.
+    // Every other grammar writes a call block per call.
+    let call = if typed {
+        Expr::seq([
+            open(),
+            rest.clone(),
+            Expr::seq([Expr::literal(&format.tool_call_separator), rest.clone()]).star(),
+            Expr::literal(&format.tool_call_close),
+        ])
+    } else {
+        Expr::seq([open(), rest.clone()])
+    };
+    let more_calls = if typed {
+        Expr::Empty
+    } else {
+        Expr::seq([Expr::literal(&format.tool_call_separator), call.clone()]).star()
+    };
     // A template that writes a prefix before the answer may start with it.
     let answer_prefix = Expr::literal(&format.answer_prefix).optional();
     let body = match forced {
-        FrontendToolChoiceV1::Named(_) => Expr::seq([answer_prefix, call]),
-        FrontendToolChoiceV1::Required => Expr::seq([answer_prefix, call, more_calls]),
+        FrontendToolChoiceV1::Named(_) if !typed => Expr::seq([answer_prefix, call]),
+        FrontendToolChoiceV1::Named(_) | FrontendToolChoiceV1::Required => {
+            Expr::seq([answer_prefix, call, more_calls])
+        }
         // Free text, then optionally calls. The decoder reads everything from
         // the first call or function marker on as calls, so the text contains
         // neither and, when calls follow, ends at the first call marker.
         _ => {
             let (tool_open, after_open) = call_open_v1(format);
             let function_open = format.function_open.trim();
+            let calls = if typed {
+                Expr::seq([
+                    rest.clone(),
+                    Expr::seq([Expr::literal(&format.tool_call_separator), rest]).star(),
+                    Expr::literal(&format.tool_call_close),
+                ])
+            } else {
+                Expr::seq([rest, more_calls])
+            };
             Expr::alt([
                 Expr::TextExcluding(bare_markers_v1([tool_open, function_open])),
                 Expr::seq([
@@ -138,8 +169,7 @@ fn calls_v1(
                         avoid: bare_markers_v1([function_open]),
                     },
                     Expr::literal(after_open),
-                    rest,
-                    more_calls,
+                    calls,
                 ]),
             ])
         }
@@ -183,9 +213,10 @@ fn call_after_open(
     let (bare_close, after_close) = bare_v1(&format.parameter_close);
     // A function's arguments end at its close; a key-value call's arguments
     // end at the call close, and a value may hold the next key's open marker.
+    // A typed grammar's raw value runs to its own close whatever it holds.
     let avoid = match format.tool_grammar {
-        FrontendToolGrammarV1::XmlFunctionParametersV1
-        | FrontendToolGrammarV1::XmlTypedParametersV1 => {
+        FrontendToolGrammarV1::XmlTypedParametersV1 => Vec::new(),
+        FrontendToolGrammarV1::XmlFunctionParametersV1 => {
             bare_markers_v1([format.parameter_open.trim(), format.function_close.trim()])
         }
         FrontendToolGrammarV1::XmlKeyValueArgumentsV1 => {
@@ -234,8 +265,25 @@ fn call_after_open(
         // The names written once each: the declared properties, then the
         // required names that are not properties.
         let mut written: Vec<&str> = Vec::new();
+        // The parser reads only a parameter name in the declared byte set
+        // and length: a required name outside it cannot be written so that
+        // it reads back, and an optional one is never written.
+        let readable = |name: &str| validate_name_v1(descriptor, name, "parameter").is_ok();
+        if let Some(name) = required.iter().find(|name| !readable(name)) {
+            return Err(FrontendErrorV1::new(
+                format!(
+                    "tools: the required parameter {name:?} of {} is not a name the tool-call \
+                     parser reads",
+                    tool.name
+                ),
+                Some("tools"),
+            ));
+        }
         for (name, property) in properties.into_iter().flatten() {
             written.push(name);
+            if !readable(name) {
+                continue;
+            }
             let value = parameter_value(
                 &mut compiler,
                 property,
@@ -308,13 +356,19 @@ fn call_after_open(
         }
     };
     // The call open marker is the caller's, so free text can end with it.
+    // The typed grammar's caller closes the block after its last call.
+    let block_close = if format.tool_grammar == FrontendToolGrammarV1::XmlTypedParametersV1 {
+        Expr::Empty
+    } else {
+        Expr::literal(&format.tool_call_close)
+    };
     Ok(Expr::seq([
         Expr::literal(&format.function_open),
         Expr::literal(&tool.name),
         Expr::literal(&format.function_name_close),
         parameters,
         Expr::literal(&format.function_close),
-        Expr::literal(&format.tool_call_close),
+        block_close,
     ]))
 }
 

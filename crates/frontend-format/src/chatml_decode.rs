@@ -680,7 +680,9 @@ enum ParameterStateV1 {
 /// same way, except that a marker inside one of its string literals is
 /// content. The reference parser also ends a JSON value there; this decoder
 /// diverges so that a value the tool-choice grammar writes, whose strings may
-/// spell any marker, parses back whole.
+/// spell any marker, parses back whole. The typed grammar's raw value ends
+/// only at its close, as that grammar's reference parser reads it, so it
+/// holds parameter opens and function closes as text.
 ///
 /// A walk of a longer text that begins with the one walked before resumes
 /// where every earlier decision is final, so the walk to each function close
@@ -705,7 +707,8 @@ impl ParameterWalkV1 {
     /// Walks `raw`, a function's arguments up to a function close, from
     /// where this walk stands; reports each parameter whose name is complete,
     /// with its value once that ended; and returns whether `raw` ends inside a
-    /// string literal of a JSON value.
+    /// string literal of a JSON value, or inside a typed grammar's raw value:
+    /// where a function close is text.
     ///
     /// The walk then stands before the last bytes a marker could still begin
     /// in, so it can go on over any longer text that begins with `raw`.
@@ -770,8 +773,12 @@ impl ParameterWalkV1 {
                     value,
                     json: None,
                 } => {
-                    // An open ends the value before a close at the same byte.
-                    let end = if here.starts_with(terminals.parameter_open) {
+                    // An open ends the value before a close at the same byte,
+                    // except in the typed grammar, whose raw value runs to its
+                    // close whatever it holds, as the reference parser reads
+                    // it.
+                    let typed = terminals.grammar == FrontendToolGrammarV1::XmlTypedParametersV1;
+                    let end = if !typed && here.starts_with(terminals.parameter_open) {
                         Some(0)
                     } else if here.starts_with(terminals.parameter_close) {
                         Some(terminals.parameter_close.len())
@@ -814,7 +821,11 @@ impl ParameterWalkV1 {
             ParameterStateV1::Seek | ParameterStateV1::Name(_) => false,
             ParameterStateV1::Value { name, json, .. } => {
                 found(raw[name.0..name.1].trim(), None, json.is_some());
-                json.is_some_and(|strings| strings.in_string)
+                // A typed grammar's raw value holds a function close as text.
+                match json {
+                    Some(strings) => strings.in_string,
+                    None => terminals.grammar == FrontendToolGrammarV1::XmlTypedParametersV1,
+                }
             }
         }
     }
@@ -871,13 +882,31 @@ pub(crate) fn call_arguments_v1(
 
 /// A typed grammar's value as its close typed it: raw text is the string it
 /// spells, and JSON the value it spells, a repeated key taking its last
-/// value. JSON that does not read is kept as its text.
+/// value. JSON that does not read, or holds a number outside the range a
+/// request's JSON reader accepts (a fraction or exponent beyond a finite
+/// binary64; integers keep every digit), is kept as its text, as the other
+/// grammars' coercion keeps it.
 fn typed_value_v1(value: &str, json: bool) -> FrontendJsonV1 {
     if !json {
         return FrontendJsonV1::String(value.to_owned());
     }
-    serde_json::from_str::<Value>(value)
-        .map_or_else(|_| FrontendJsonV1::String(value.to_owned()), json_value_v1)
+    match serde_json::from_str::<Value>(value) {
+        Ok(parsed) if numbers_in_range_v1(&parsed) => json_value_v1(parsed),
+        _ => FrontendJsonV1::String(value.to_owned()),
+    }
+}
+
+/// Whether every number in `value` is one a request's JSON reader accepts.
+fn numbers_in_range_v1(value: &Value) -> bool {
+    match value {
+        Value::Number(number) => {
+            !number.to_string().contains(['.', 'e', 'E'])
+                || number.as_f64().is_some_and(f64::is_finite)
+        }
+        Value::Array(values) => values.iter().all(numbers_in_range_v1),
+        Value::Object(entries) => entries.values().all(numbers_in_range_v1),
+        _ => true,
+    }
 }
 
 /// A `serde_json` value as a request's JSON value, keys in map order.

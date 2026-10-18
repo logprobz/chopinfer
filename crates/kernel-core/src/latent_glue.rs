@@ -177,7 +177,9 @@ impl NumericalContract for LatentWindowWrite {
 /// A negative query position or an absent staged position is a -1 hole.
 /// An invalid staged sequence id writes no row. The live count excludes padding.
 /// This is ordinary causal visibility; bidirectional draft blocks use the
-/// separate `latent_visibility::WindowBlockVisibility` contract.
+/// separate `latent_visibility::WindowBlockVisibility` contract. Staged
+/// storage here must be fully populated. Gathered prefixes with holes use
+/// `latent_staged_window_keys::LatentStagedWindowKeys` instead.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct LatentWindowKeys {
     pub window: u32,

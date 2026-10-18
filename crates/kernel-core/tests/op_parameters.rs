@@ -3277,3 +3277,45 @@ fn retained_window_stage_contract_requires_complete_independent_planes() {
         .unwrap()
     );
 }
+
+#[test]
+fn staged_window_lists_bind_the_retained_prefix_before_slot_mapping() {
+    use kernel_core::latent_staged_window_keys::{LatentStagedWindowKeys, keys};
+    let q = LatentStagedWindowKeys {
+        window: 128,
+        ring_slots: 136,
+        staged_slots: 256,
+    };
+    let actual = keys(q, &[8], &[0], &[8], &[8], &[0], &[200]).unwrap();
+    assert_eq!(
+        actual
+            .iter()
+            .filter(|&&p| p >= 0)
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![8]
+    );
+    let old = kernel_core::latent_glue_oracle::window_keys(
+        kernel_core::latent_glue::LatentWindowKeys {
+            window: 128,
+            addressing: kernel_core::latent_glue::WindowAddressing::Staged { slots: 256 },
+        },
+        8,
+        0,
+    )
+    .unwrap();
+    assert_ne!(
+        actual, old,
+        "storage bounds alone expose missing prefix cells"
+    );
+    q.validate().unwrap();
+    assert_ne!(
+        q.numerical_contract_id().unwrap(),
+        LatentStagedWindowKeys {
+            ring_slots: 160,
+            ..q
+        }
+        .numerical_contract_id()
+        .unwrap()
+    );
+}

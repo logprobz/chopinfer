@@ -14,9 +14,10 @@ use crate::latent_attention::LatentWindowBuffers;
 /// rounding or quantization occurs. Invalid item mappings, negative first
 /// or last positions, and source positions outside the retained interval
 /// `[max(0, last + 1 - ring_slots), last]` are holes: neither destination
-/// plane is written for them and neither source plane is read. The caller
-/// must mask holes in its attention lists. The staged chunk and all padding
-/// remain untouched. No two items write the same staged block.
+/// plane is written for them and neither source plane is read. Construct
+/// attention lists with `latent_staged_window_keys::LatentStagedWindowKeys`
+/// over the same retained bounds, so these holes cannot reach attention.
+/// The staged chunk and all padding remain untouched. No two items write the same staged block.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct LatentWindowStage {
     pub latent: u32,

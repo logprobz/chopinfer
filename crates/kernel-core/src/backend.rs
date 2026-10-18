@@ -926,6 +926,19 @@ pub trait Backend: Send + Sync {
         Err(Refused::Unsupported)
     }
 
+    /// Lists for staged prefixes with holes in the retained ring snapshot.
+    fn latent_staged_window_keys(
+        &self,
+        op: &crate::latent_staged_window_keys::LatentStagedWindowKeys,
+        need: Need,
+    ) -> Result<
+        Prepared<crate::latent_staged_window_keys::LatentStagedWindowKeyBuffers<View>>,
+        Refused,
+    > {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
     /// Copy each item's retained ring prefix into its prefill stage.
     fn latent_window_stage(
         &self,
@@ -2242,6 +2255,9 @@ mod tests {
         );
         latent_query_rope: Empty.latent_query_rope(
             &crate::latent_glue::LatentQueryRope { heads: 2, latent: 512, rotary: 64 }, Need::rows(32)
+        );
+        latent_staged_window_keys: Empty.latent_staged_window_keys(
+            &crate::latent_staged_window_keys::LatentStagedWindowKeys { window: 128, ring_slots: 136, staged_slots: 256 }, Need::rows(32)
         );
         latent_window_stage: Empty.latent_window_stage(
             &crate::latent_window_stage::LatentWindowStage { latent: 512, window: 128, ring_slots: 136, staged_slots: 512 }, Need::rows(4)

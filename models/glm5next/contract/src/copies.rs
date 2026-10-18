@@ -1,11 +1,12 @@
 //! GLM's row copies as the shared ops (`kernel_core::row_copy`): the
-//! embedding copied into every residual stream, and the router's scores of
+//! embedding copied into every residual stream, the router's scores of
 //! every expert, the leading columns of the rows its GEMM writes over the
-//! weight's zero-padded rows. Both move bytes only; every view starts at
-//! 16-byte alignment.
+//! weight's zero-padded rows, and the head's rows gathered by index (a
+//! prefill's rows that need logits, the drafter's draft rows). Each moves
+//! bytes only; every view starts at 16-byte alignment.
 
 use kernel_core::contract::DType;
-use kernel_core::row_copy::{ColumnSlice, StreamBroadcast};
+use kernel_core::row_copy::{ColumnSlice, GatherByIndex, StreamBroadcast};
 
 use crate::contract::Shape;
 
@@ -36,6 +37,16 @@ pub fn router_scores(shape: Shape) -> ColumnSlice {
     }
 }
 
+/// The BF16 hidden rows of `shape` the head scores, gathered by index from
+/// the final norm's output.
+pub fn head_rows(shape: Shape) -> GatherByIndex {
+    GatherByIndex {
+        dtype: DType::Bf16,
+        width: shape.profile.hidden,
+        alignment_bytes: ALIGNMENT_BYTES,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -50,5 +61,8 @@ mod tests {
         let scores = router_scores(shape);
         assert_eq!((scores.width, scores.stride, scores.offset), (288, 320, 0));
         scores.validate().unwrap();
+        let head = head_rows(shape);
+        assert_eq!((head.dtype, head.width), (DType::Bf16, 4096));
+        head.validate().unwrap();
     }
 }

@@ -1,13 +1,12 @@
 //! GLM 5.3 Flash's own kernels as contracts: its row kernels (the single
 //! rounding of an all-reduced F32 row, the widening of a BF16 row, the
-//! drafter's residual add, and the gathers of rows by index and of the
-//! drafter's row inputs),
+//! drafter's residual add and the gather of the drafter's row inputs),
 //! the placement of the drafter's input halves, the stacked KDA input
 //! projections, commit's layered state copy and create's payload
 //! admission. No other model runs them, so they live here rather than in
 //! kernel-core (an op moves there when a second model needs it, as the
-//! stream expansion and the score compaction moved to the shared row
-//! copies, `crate::copies`).
+//! stream expansion, the score compaction and the head rows' gather by
+//! index moved to the shared row copies, `crate::copies`).
 //!
 //! Each op is a contract type whose fields are the math the model needs
 //! (widths, strides, placements, tables), a role record of its buffers and
@@ -30,7 +29,7 @@ pub mod state;
 
 use draft::{DraftGather, DraftGatherBuffers};
 use rows::{
-    EhInput, EhInputBuffers, GatherRows, GatherRowsBuffers, ResidualAdd, ResidualAddBuffers,
+    EhInput, EhInputBuffers, ResidualAdd, ResidualAddBuffers,
     RoundRows, RoundRowsBuffers, WidenRows, WidenRowsBuffers,
 };
 use stacked::{StackedProjection, StackedProjectionBuffers};
@@ -85,25 +84,6 @@ pub trait OwnOps: Send + Sync {
         op: &ResidualAdd,
         need: Need,
     ) -> Result<Prepared<ResidualAddBuffers<View>>, Refused> {
-        let _ = (op, need);
-        Err(Refused::Unsupported)
-    }
-
-    /// Gathers rows by device row indices: the prefill rows that need
-    /// logits, or the drafter's draft rows.
-    ///
-    /// Launches read `Counts::rows`, the most rows gathered (the device
-    /// `count` is at most that), which `row_indices` and `output` hold, and
-    /// `Counts::padded_rows` when nonzero: the rows the launch grids
-    /// instead, at least `Counts::rows`, which may then be zero. A prefill's
-    /// gather of its scored rows grids the prefill's rows and gathers the
-    /// scored ones (a chunk that scores none, none); a drafter's gathers
-    /// its draft rows over them alone. Each index names a row of `input`.
-    fn gather_rows(
-        &self,
-        op: &GatherRows,
-        need: Need,
-    ) -> Result<Prepared<GatherRowsBuffers<View>>, Refused> {
         let _ = (op, need);
         Err(Refused::Unsupported)
     }
@@ -265,7 +245,6 @@ mod tests {
         unsupported(backend.round_rows(&RoundRows::of(shape), need));
         unsupported(backend.widen_rows(&WidenRows::of(shape), need));
         unsupported(backend.residual_add(&ResidualAdd::of(shape), need));
-        unsupported(backend.gather_rows(&GatherRows::of(shape), need));
         unsupported(backend.eh_input(&EhInput::of(shape), usage, need));
         unsupported(backend.draft_gather(&DraftGather::of(shape), need));
         unsupported(backend.stacked_projection(

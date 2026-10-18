@@ -6,7 +6,7 @@
 //! moves (`crate::ops`): decode and verify rows to the rank that owns each
 //! block, prefill rows to rank 0.
 
-use model_glm5next_contract::own_ops::rows::GatherRowsBuffers;
+use kernel_core::row_copy::GatherByIndexBuffers;
 use runtime_bundle_abi::DeviceBufferSpanV1 as Span;
 
 use super::Lowering;
@@ -55,16 +55,16 @@ impl Lowering<'_> {
     /// The final norm's rows that need logits, in the prefill's row order:
     /// the head's rows gathered over the prefill's row bucket.
     pub(super) fn gather_head_rows(&self, phase: Phase) -> Result<Lowered, String> {
-        let spans = GatherRowsBuffers {
-            input: self.scratch(Buffer::Normed),
+        let spans = GatherByIndexBuffers {
+            source: self.scratch(Buffer::Normed),
             row_indices: self.inputs.row_indices,
             count: self.inputs.logit_rows,
-            output: self.scratch(Buffer::HeadRows),
+            destination: self.scratch(Buffer::HeadRows),
         };
         self.own_launch("the head rows' gather", || {
             self.ops
-                .own
-                .gather_rows(self.head_rows, phase.rows(), spans)
+                .logits
+                .head_rows(self.head_rows, phase.rows(), spans)
         })
     }
 

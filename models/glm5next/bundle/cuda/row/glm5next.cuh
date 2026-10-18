@@ -1,9 +1,8 @@
 #pragma once
 // GLM 5.3 Flash's own row kernels beside the shared row engine: the single
 // rounding of an all-reduced F32 row to BF16, the widening of a BF16 row
-// into an F32 rank partial, the gather of the rows that need logits, the
-// drafter's residual add and the gather of its row inputs. One CTA per row;
-// rows at or past the device live count return.
+// into an F32 rank partial, the drafter's residual add and the gather of its
+// row inputs. One CTA per row; rows at or past the device live count return.
 #include "row/row.cuh"
 
 namespace chop::row::glm5next {
@@ -55,20 +54,6 @@ __device__ void residual_add(uint16_t* x, const uint16_t* y, const uint32_t* liv
     const float hi = bf(uint16_t(a >> 16)) + bf(uint16_t(b >> 16));
     reinterpret_cast<uint32_t*>(x + at)[0] = uint32_t(to_bf(lo)) | (uint32_t(to_bf(hi)) << 16);
   }
-}
-
-// output[i] = input[row_indices[i]] for the first `*count` rows.
-template<int Width>
-__device__ void gather_rows(const uint16_t* input, const uint32_t* row_indices,
-                            const uint32_t* count, uint16_t* output) {
-  begin();
-  static_assert(Width % 8 == 0);
-  const uint32_t row = blockIdx.x;
-  if (row >= *count) return;
-  const uint64_t source = row_indices[row];
-  for (int c = threadIdx.x * 8; c < Width; c += blockDim.x * 8)
-    reinterpret_cast<uint4*>(output + uint64_t(row) * Width + c)[0] =
-        reinterpret_cast<const uint4*>(input + source * Width + c)[0];
 }
 
 // The MTP drafter's row inputs: hidden row `row` from a slot's retained

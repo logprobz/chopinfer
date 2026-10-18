@@ -1,17 +1,17 @@
 //! GLM's own row kernels around the all-reduce and the head
 //! (`bundle/cuda/row/glm5next.cuh`): the single rounding of an all-reduced
-//! F32 row, the widening of a BF16 row into an F32 partial, the drafter's
-//! residual add and the gather of rows by device indices; and the placement
-//! of the drafter's two normalized rows as its input projection's input
-//! (two exact layout copies on SM120). Each writes the rows below its device
-//! live count and nothing else. The router's score compaction and the
-//! embedding's copy into every residual stream are the shared row copies
-//! (`crate::copies`).
+//! F32 row, the widening of a BF16 row into an F32 partial and the
+//! drafter's residual add; and the placement of the drafter's two
+//! normalized rows as its input projection's input (two exact layout copies
+//! on SM120). Each writes the rows below its device live count and nothing
+//! else. The router's score compaction, the embedding's copy into every
+//! residual stream and the head rows' gather by index are the shared row
+//! copies (`crate::copies`).
 
 use kernel_core::codec::bf16_to_f32;
 use kernel_core::contract::{Refusal, Validate};
 
-use super::{entry, live, round_bf16, take, take_mut};
+use super::{live, round_bf16, take, take_mut};
 use crate::contract::Shape;
 
 /// `output[r] = bf16(input[r])` over rows of `width` F32 values: one
@@ -189,69 +189,6 @@ pub fn residual_add(
     Ok(())
 }
 
-/// `output[i] = input[row_indices[i]]` over rows of `width` BF16 values for
-/// the first `count` rows, exact: the prefill rows that need logits, or
-/// the drafter's draft rows of its head norm's output. All math.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct GatherRows {
-    pub width: u32,
-}
-
-impl GatherRows {
-    pub fn of(shape: Shape) -> GatherRows {
-        GatherRows {
-            width: shape.profile.hidden,
-        }
-    }
-}
-
-impl Validate for GatherRows {
-    fn validate(&self) -> Result<(), Refusal> {
-        if self.width == 0 {
-            return Err(Refusal("a row gather needs values"));
-        }
-        Ok(())
-    }
-}
-
-kernel_core::scratch_record! {
-    /// A row gather's buffers: the source rows, the `u32` row indices, the
-    /// device `u32` count of gathered rows and the output rows. Rows are
-    /// moved in 16-byte vectors and start at 16-byte alignment, the indices
-    /// and count at 4.
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    pub struct GatherRowsBuffers {
-        pub input: value,
-        pub row_indices: value,
-        pub count: value,
-        pub output: value,
-    }
-}
-
-/// What the gather kernel writes over its first `rows` grid rows. An index
-/// past `input`'s rows is refused: the kernel would read past its source.
-pub fn gather_rows(
-    op: &GatherRows,
-    input: &[u16],
-    row_indices: &[u32],
-    count: u32,
-    output: &mut [u16],
-    rows: u32,
-) -> Result<(), Refusal> {
-    op.validate()?;
-    let width = op.width as usize;
-    let live = live(rows, count);
-    let output = take_mut(output, live * width, "a gather's output is too small")?;
-    for (row, out) in output.chunks_exact_mut(width).enumerate() {
-        let source = entry(row_indices, row, "a gather's row indices are too few")? as usize;
-        let from = input
-            .get(source * width..(source + 1) * width)
-            .ok_or(Refusal("a gather index is past its source rows"))?;
-        out.copy_from_slice(from);
-    }
-    Ok(())
-}
-
 /// The MTP drafter's input projection's input: each row of `[rows, 2 *
 /// hidden]` BF16 values holds the normalized embedding row in its first
 /// `hidden` columns and the normalized hidden row in the next, exact
@@ -364,17 +301,6 @@ mod tests {
         let mut x = [0x3f80, 0x4000];
         residual_add(&op, &mut x, &[0x3f80, 0x3f80], 1, 1).unwrap();
         assert_eq!(x, [0x4000, 0x4040]);
-    }
-
-    #[test]
-    fn gathers_follow_their_indices_within_the_source() {
-        let op = GatherRows { width: 2 };
-        let input = [1, 2, 3, 4, 5, 6];
-        let mut output = [POISON; 6];
-        gather_rows(&op, &input, &[2, 0, 2], 2, &mut output, 3).unwrap();
-        assert_eq!(output, [5, 6, 1, 2, POISON, POISON]);
-        assert!(gather_rows(&op, &input, &[3], 1, &mut output, 3).is_err());
-        assert!(gather_rows(&op, &input, &[0], 2, &mut output, 3).is_err());
     }
 
     #[test]

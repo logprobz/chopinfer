@@ -62,7 +62,7 @@ use kernel_core::collective::{GatherBuffers, RankViews};
 use kernel_core::contract::{Argument, DType, WeightFormat};
 use kernel_core::precision::{ExecutionPhase, OperationUse};
 use kernel_core::properties::Property;
-use kernel_core::row_copy::RowCopyBuffers;
+use kernel_core::row_copy::{GatherByIndexBuffers, RowCopyBuffers};
 use kernel_lab::conformance::{Expected, Holes, Images, Probes, Rows, Write};
 use kernel_lab::kit::collective::{CollectiveCase, RequiredCollective, Slot};
 use kernel_lab::kit::modules::{Functions, Modules};
@@ -83,8 +83,7 @@ use model_glm5next_contract::{
         OwnOps,
         draft::{self as draft_ops, DraftGather, DraftGatherBuffers},
         rows::{
-            self as row_ops, EhInput, EhInputBuffers, GatherRows, GatherRowsBuffers, ResidualAdd,
-            ResidualAddBuffers, RoundRows, RoundRowsBuffers, WidenRows, WidenRowsBuffers,
+            self as row_ops, EhInput, EhInputBuffers, ResidualAdd, ResidualAddBuffers, RoundRows, RoundRowsBuffers, WidenRows, WidenRowsBuffers,
         },
         same_bf16, same_f32,
         stacked::{self as stacked_ops, StackedPart, StackedProjection, StackedProjectionBuffers},
@@ -488,47 +487,6 @@ fn own_row_cases(rng: &mut Rng) -> LabResult<Vec<OwnCase>> {
     );
     cases.push(("residual_add", need, case));
 
-    // Gather: rows by device indices that run backwards, stride past the
-    // bucket and repeat; the kit reruns them moved to the top of the source.
-    let op = GatherRows::of(shape);
-    let mut indices = (0..rows as i32)
-        .map(|i| (i * 37 + 11) % GATHER_SOURCE_ROWS as i32)
-        .collect::<Vec<_>>();
-    indices[0] = GATHER_SOURCE_ROWS as i32 - 1;
-    indices[1] = 0;
-    indices[5] = indices[3];
-    let roles = GatherRowsBuffers {
-        input: Spec::input(
-            DType::Bf16,
-            (Rows::Fixed(GATHER_SOURCE_ROWS), width),
-            halves(&rng.bf16(GATHER_SOURCE_ROWS * width)),
-        ),
-        row_indices: Spec::ids(
-            (Rows::Live, 1),
-            indices,
-            &[("input", width * 2)],
-            Holes::Never,
-        ),
-        count: Spec::live(),
-        output: Spec::output(DType::Bf16, (Rows::Live, width)),
-    };
-    let case = OpCase::new(own_op(own.gather_rows(&op, need))?, CAPACITY, roles)?.oracle(
-        move |images, live| {
-            let mut output = vec![0; rows * width];
-            let indices = image_words(images, "row_indices")?;
-            row_ops::gather_rows(
-                &op,
-                &images.u16s("input")?,
-                &indices,
-                live,
-                &mut output,
-                CAPACITY,
-            )
-            .map_err(refused)?;
-            Ok(vec![("output".into(), Expected::Bits(halves(&output)))])
-        },
-    );
-    cases.push(("gather_rows", need, case));
 
     // The drafter's input halves at a 32-row decode use: the normalized
     // embedding rows at column 0, the hidden rows at the hidden width.
@@ -792,8 +750,8 @@ fn served_ask(capacity: u32, verify: bool) -> Need {
     Need::rows(capacity).with_exact(exact)
 }
 
-/// The bundle's declared own rows (`Sm120Own`'s `declared_kernels`: rounding,
-/// widening and the logits row gather)
+/// The bundle's declared own rows (`Sm120Own`'s `declared_kernels`: rounding
+/// and widening)
 /// at the [`WIDE`] bucket, each prepared for what the bundle asks of it and
 /// checked against its contract oracle: the kit then checks the rows,
 /// chunk and batch claims at 256 rows, whose launches grid buckets from
@@ -846,49 +804,6 @@ fn wide_row_cases(rng: &mut Rng) -> LabResult<Vec<OwnCase>> {
     );
     cases.push(("widen wide", need, case));
 
-    // The gather reads a source of more rows than the bucket, by indices
-    // that run backwards, stride and repeat.
-    let need = served_ask(WIDE, false);
-    let source = 2 * rows + 13;
-    let mut indices = (0..rows as i32)
-        .map(|i| (i * 37 + 11) % source as i32)
-        .collect::<Vec<_>>();
-    indices[0] = source as i32 - 1;
-    indices[1] = 0;
-    indices[5] = indices[3];
-    let op = GatherRows::of(shape);
-    let roles = GatherRowsBuffers {
-        input: Spec::input(
-            DType::Bf16,
-            (Rows::Fixed(source), width),
-            halves(&rng.bf16(source * width)),
-        ),
-        row_indices: Spec::ids(
-            (Rows::Live, 1),
-            indices,
-            &[("input", width * 2)],
-            Holes::Never,
-        ),
-        count: Spec::live(),
-        output: Spec::output(DType::Bf16, (Rows::Live, width)),
-    };
-    let case = OpCase::new(own_op(own.gather_rows(&op, need))?, WIDE, roles)?.oracle(
-        move |images, live| {
-            let mut output = vec![0; rows * width];
-            let indices = image_words(images, "row_indices")?;
-            row_ops::gather_rows(
-                &op,
-                &images.u16s("input")?,
-                &indices,
-                live,
-                &mut output,
-                WIDE,
-            )
-            .map_err(refused)?;
-            Ok(vec![("output".into(), Expected::Bits(halves(&output)))])
-        },
-    );
-    cases.push(("gather_rows wide", need, case));
     Ok(cases)
 }
 
@@ -908,7 +823,7 @@ fn own_cases() -> LabResult<Vec<OwnCase>> {
 #[test]
 fn bundle_own_op_cases_are_declared_whole() {
     let wide = wide_row_cases(&mut Rng(0x0c1a_55e5)).expect("wide own-row cases");
-    assert_eq!(wide.len(), 3);
+    assert_eq!(wide.len(), 2);
     for (name, need, case) in &wide {
         for check in case.checks(*need, None, None, None) {
             match (check.name.as_str(), &check.outcome) {
@@ -1033,22 +948,77 @@ fn bundle_own_rows_keep_their_claims_at_a_wide_bucket() {
     .expect("bundle own rows at a wide bucket");
 }
 
-/// The shared row copies' entries (`kernels_sm120::row::copy`) on SM120, as
-/// the bundle registers them.
+/// The shared row copies' entries (`kernels_sm120::row::copy`) and the
+/// shared gather by index (`kernels_sm120::row::gather`) on SM120, as the
+/// bundle registers them.
 fn shared_copies() -> kernels_sm120::backend::Sm120 {
     kernels_sm120::row::copy::entries()
         .into_iter()
         .fold(kernels_sm120::backend::Sm120::new(), |backend, entry| {
             backend.with_row_copy(entry)
         })
+        .with_row_gather(kernels_sm120::row::gather::SYMBOL)
 }
 
-/// The bundle's stream expansion and router score compaction at its TP4
-/// shape (the contract's `copies`), as SM120 prepares the shared copies the
-/// bundle launches, at a 32-row bucket against the shared copy's oracle
+/// The head rows' gather by index (`copies::head_rows`) at `capacity` rows
+/// for `need`, from a source of `source` rows by device indices that run
+/// backwards, stride past the bucket and repeat; the kit reruns them moved
+/// to the top of the source.
+fn gather_case(
+    rng: &mut Rng,
+    shared: &kernels_sm120::backend::Sm120,
+    capacity: u32,
+    need: Need,
+    source: usize,
+) -> LabResult<OpCase<'static>> {
+    let op = copies::head_rows(Shape::TP4);
+    let (width, rows) = (op.width as usize, capacity as usize);
+    let mut indices = (0..rows as i32)
+        .map(|i| (i * 37 + 11) % source as i32)
+        .collect::<Vec<_>>();
+    indices[0] = source as i32 - 1;
+    indices[1] = 0;
+    indices[5] = indices[3];
+    let roles = GatherByIndexBuffers {
+        source: Spec::input(
+            DType::Bf16,
+            (Rows::Fixed(source), width),
+            halves(&rng.bf16(source * width)),
+        ),
+        row_indices: Spec::ids(
+            (Rows::Live, 1),
+            indices,
+            &[("source", width * 2)],
+            Holes::Never,
+        ),
+        count: Spec::live(),
+        destination: Spec::output(DType::Bf16, (Rows::Live, width)),
+    };
+    let prepared = shared
+        .gather_by_index(&op, need)
+        .map_err(|refused| format!("SM120 refuses the bundle's head rows: {refused}"))?;
+    Ok(OpCase::new(prepared, capacity, roles)?.oracle(move |images, live| {
+        let mut output = vec![0; rows * width * 2];
+        let indices = image_words(images, "row_indices")?;
+        kernel_core::row_copy::gather_by_index(
+            &op,
+            images.bytes("source")?,
+            &indices,
+            live,
+            &mut output,
+        )
+        .map_err(refused)?;
+        Ok(vec![("destination".into(), Expected::Bits(output))])
+    }))
+}
+
+/// The bundle's stream expansion, router score compaction and head rows'
+/// gather at its TP4 shape (the contract's `copies`), as SM120 prepares the
+/// shared copies the bundle launches, at a 32-row bucket (and the gather at
+/// the wide bucket too) against the shared copy's oracle
 /// (`kernel_core::row_copy`): every live count, poisoned through eager,
 /// relaunch, graph and PDL-producer runs, from the bundle's embedded
-/// `row_copy_sm120`.
+/// `row_copy_sm120` and `row_gather_sm120`.
 fn copy_cases(rng: &mut Rng) -> LabResult<Vec<OwnCase>> {
     let shape = Shape::TP4;
     let shared = shared_copies();
@@ -1104,12 +1074,21 @@ fn copy_cases(rng: &mut Rng) -> LabResult<Vec<OwnCase>> {
         Ok(vec![("destination".into(), Expected::Bits(output))])
     });
     cases.push(("compact_scores", need, case));
+
+    let case = gather_case(rng, &shared, CAPACITY, need, GATHER_SOURCE_ROWS)?;
+    cases.push(("head_rows", need, case));
+    // At the wide bucket, asked what the bundle asks of it: the kit checks
+    // the rows, chunk and batch claims at 256 rows.
+    let wide = served_ask(WIDE, false);
+    let case = gather_case(rng, &shared, WIDE, wide, 2 * WIDE as usize + 13)?;
+    cases.push(("head_rows wide", wide, case));
     Ok(cases)
 }
 
-/// The bundle embeds the shared copies in its `row_copy_sm120`, the lab's
-/// cubin of them byte for byte, and no other embedded cubin holds them;
-/// each copy case declares on the CPU.
+/// The bundle embeds the shared copies in its `row_copy_sm120` and the
+/// shared gather in its `row_gather_sm120`, the lab's cubins of them byte
+/// for byte, and no other embedded cubin holds them; each copy case
+/// declares on the CPU.
 #[test]
 fn the_bundle_embeds_the_shared_copies_and_their_cases_declare() {
     let cubin = engines::ROW_COPY_CUBIN;
@@ -1120,8 +1099,14 @@ fn the_bundle_embeds_the_shared_copies_and_their_cases_declare() {
         embedded_cubin(cubin),
         Some(kernel_lab::cubin(kernels_sm120::row::copy::LAB_CUBIN).unwrap())
     );
+    let gather = kernels_sm120::row::gather::CUBIN;
+    assert_eq!(cubin_of(kernels_sm120::row::gather::SYMBOL), Some(gather));
+    assert_eq!(
+        embedded_cubin(gather),
+        Some(kernel_lab::cubin(gather).unwrap())
+    );
     let cases = copy_cases(&mut Rng(0x0c09_1e55)).expect("copy cases");
-    assert_eq!(cases.len(), 2);
+    assert_eq!(cases.len(), 4);
     for (name, need, case) in &cases {
         for check in case.checks(*need, None, None, None) {
             match (check.name.as_str(), &check.outcome) {

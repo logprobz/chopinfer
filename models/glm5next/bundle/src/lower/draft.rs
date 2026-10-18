@@ -1,11 +1,12 @@
 //! Lowering of the MTP drafter's own rows through the instance's own row
-//! ops (`crate::ops::own`): its hidden inputs, its head rows and its
-//! residual add; and of its argmax on the shared sharded argmax
-//! (`crate::ops::draft`).
+//! ops (`crate::ops::own`): its hidden inputs and its residual add; of its
+//! head rows on the shared gather by index (`crate::ops::logits`); and of
+//! its argmax on the shared sharded argmax (`crate::ops::draft`).
 
 use model_glm5next_contract::contract::DRAFT_ITEMS;
 use model_glm5next_contract::own_ops::draft::DraftGatherBuffers;
-use model_glm5next_contract::own_ops::rows::{GatherRowsBuffers, ResidualAddBuffers};
+use kernel_core::row_copy::GatherByIndexBuffers;
+use model_glm5next_contract::own_ops::rows::ResidualAddBuffers;
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
 use super::Lowering;
@@ -37,14 +38,14 @@ impl Lowering<'_> {
     /// The draft rows of the head norm's output, which alone the head
     /// scores (`draft_rows`).
     pub(super) fn draft_head_rows(&self, phase: Phase) -> Result<Lowered, String> {
-        let spans = GatherRowsBuffers {
-            input: self.scratch(Buffer::Normed),
+        let spans = GatherByIndexBuffers {
+            source: self.scratch(Buffer::Normed),
             row_indices: self.scratch(Buffer::DraftRows),
             count: self.scratch(Buffer::DraftCount),
-            output: self.scratch(Buffer::HeadRows),
+            destination: self.scratch(Buffer::HeadRows),
         };
         self.own_launch("the draft head rows", || {
-            self.ops.own.gather_rows(draft_rows(phase), 0, spans)
+            self.ops.logits.head_rows(draft_rows(phase), 0, spans)
         })
     }
 

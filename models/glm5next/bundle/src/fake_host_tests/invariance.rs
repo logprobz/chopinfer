@@ -279,7 +279,7 @@ fn the_asks_and_grants_are_pinned() {
     // lines follow the earlier 3429, (3429, 0xd4cff0ebdbfa4477), unchanged.
     check_journal(
         &lines,
-        (4578, 0x97f7cc82cc063865),
+        (4578, 0x9e57593e2a6f9975),
         "glm5next-invariance-asks.txt",
     )
     .unwrap();
@@ -592,7 +592,7 @@ fn the_launches_keep_the_declared_invariance() {
     // at create (their launches take the asks, no longer undeclared).
     check_journal(
         &lines,
-        (362, 0x4459ee58aaec84e5),
+        (362, 0x91f31a9178b5b90b),
         "glm5next-invariance-launches.txt",
     )
     .unwrap();

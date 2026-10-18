@@ -41,8 +41,10 @@ fn main() {
             .into_iter()
             .map(|spec| (stacked::FAMILY, spec)),
     );
-    // The shared row copies, loaded after every other text cubin.
+    // The shared row copies, loaded after every other text cubin, then the
+    // shared gather by index.
     specs.push((engines::ROW_COPY_FAMILY, engines::row_copy_cubin_spec()));
+    specs.push((engines::ROW_GATHER_FAMILY, engines::row_gather_cubin_spec()));
     // One family per engine, holding every cubin it builds.
     let mut families: Vec<(&str, Vec<&str>)> = Vec::new();
     for (family, spec) in &specs {

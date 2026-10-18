@@ -945,7 +945,7 @@ fn create_acquires_retires_and_releases() {
     // handle as before. Re-pinned when the dense FP8 chained cubin lost its
     // two unlaunched expert-parallel entries (two fewer resolves per rank;
     // later ids renumber).
-    check_journal(&journal, (2786, 0xb6ac5bde92271e2a), "glm5next-create.txt").unwrap();
+    check_journal(&journal, (2786, 0xacd61864e3f2e382), "glm5next-create.txt").unwrap();
     instance.retire_request(7).unwrap();
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
@@ -1475,7 +1475,7 @@ fn projection_stages_launch_through_the_stores() {
     // change, accuracy unaffected).
     check_journal(
         &lines,
-        (4268, 0x42977d246352e9e6),
+        (4268, 0x74e2b6c1134c2d4c),
         "glm5next-decode-projections.txt",
     )
     .unwrap();
@@ -1919,7 +1919,7 @@ fn decode_and_verify_steps_run_through_the_ledger() {
     // handles; identity change, accuracy unaffected).
     check_journal(
         &lines,
-        (2836, 0xab1dbdfc32721bea),
+        (2836, 0xbb09f551c85c91c6),
         "glm5next-decode-step.txt",
     )
     .unwrap();

@@ -257,9 +257,10 @@ impl ImplementationProvider for Offers {
 }
 
 /// The row entries the row ops run: the RMSNorm of each width the program
-/// normalizes, the embedding gather of a rank's vocabulary shard, and the
-/// shared row copies (`engines::ROW_COPY_CUBIN`) and the shared argmax
-/// entries the drafter's argmax runs.
+/// normalizes, the embedding gather of a rank's vocabulary shard, the
+/// shared row copies (`engines::ROW_COPY_CUBIN`), the shared gather by
+/// index (`engines::ROW_GATHER_CUBIN`) and the shared argmax entries the
+/// drafter's argmax runs.
 fn with_rows(mut backend: Sm120, engines: &Engines) -> Sm120 {
     for (index, (requirement, symbol)) in engines.norms.iter().enumerate() {
         // Widths that coincide normalize through one entry.
@@ -270,6 +271,7 @@ fn with_rows(mut backend: Sm120, engines: &Engines) -> Sm120 {
     for entry in kernels_sm120::row::copy::entries() {
         backend = backend.with_row_copy(entry);
     }
+    backend = backend.with_row_gather(model_glm5next_contract::sm120::engines::ROW_GATHER_SYMBOL);
     model_glm5next_contract::sm120::engines::argmax_entries()
         .into_iter()
         .fold(backend, Sm120::with_row_argmax)

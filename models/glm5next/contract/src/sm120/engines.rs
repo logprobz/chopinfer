@@ -93,6 +93,13 @@ pub const ROW_COPY_CUBIN: &str = "row_copy_sm120";
 pub const BROADCAST_SYMBOL: &str = kernels_sm120::row::copy::BROADCAST_SYMBOL;
 /// The shared column slice, which the router's score compaction launches.
 pub const SLICE_SYMBOL: &str = kernels_sm120::row::copy::SLICE_SYMBOL;
+/// The shared gather by index (`kernels_sm120::row::gather`): the head's
+/// rows of a prefill and of the drafter.
+pub const ROW_GATHER_FAMILY: &str = "row_gather";
+/// Its cubin, which every instance loads after the row copies'.
+pub const ROW_GATHER_CUBIN: &str = kernels_sm120::row::gather::CUBIN;
+/// The shared gather entry, which the head rows' gathers launch.
+pub const ROW_GATHER_SYMBOL: &str = kernels_sm120::row::gather::SYMBOL;
 pub const COMM_FAMILY: &str = "comm";
 /// The Sinkhorn mHC comm epilogue split over CTAs, with the input norm's
 /// tree sum (`kernels_sm120::comm::sinkhorn_split_tree`).
@@ -801,8 +808,6 @@ pub enum ModelRow {
     Round,
     /// A BF16 row widened into an F32 rank partial.
     Widen,
-    /// The rows that need logits, gathered by the prefill's row indices.
-    GatherRows,
     /// The MTP drafter's residual add into its single stream.
     ResidualAdd,
     /// The drafter rows' hidden inputs and tokens, by source codes.
@@ -810,10 +815,9 @@ pub enum ModelRow {
 }
 
 impl ModelRow {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 4] = [
         Self::Round,
         Self::Widen,
-        Self::GatherRows,
         Self::ResidualAdd,
         Self::DraftGather,
     ];
@@ -822,7 +826,6 @@ impl ModelRow {
         let name = match self {
             Self::Round => "round",
             Self::Widen => "widen",
-            Self::GatherRows => "gather_rows",
             Self::ResidualAdd => "residual_add",
             Self::DraftGather => "draft_gather",
         };
@@ -855,15 +858,6 @@ impl ModelRow {
                     ptr("live_rows", "const uint32_t"),
                 ],
                 format!("{ns}::widen_rows<{width}>(input,output,live_rows);"),
-            ),
-            Self::GatherRows => (
-                vec![
-                    ptr("input", "const uint16_t"),
-                    ptr("row_indices", "const uint32_t"),
-                    ptr("count", "const uint32_t"),
-                    ptr("output", "uint16_t"),
-                ],
-                format!("{ns}::gather_rows<{width}>(input,row_indices,count,output);"),
             ),
             Self::ResidualAdd => (
                 vec![
@@ -948,6 +942,12 @@ fn row_cubin_spec(shape: Shape) -> Result<CubinSpec, String> {
 /// bundle holds them.
 pub fn row_copy_cubin_spec() -> CubinSpec {
     kernels_sm120::row::copy::cubin_spec(ROW_COPY_CUBIN, &kernels_sm120::row::copy::entries())
+}
+
+/// The shared gather's cubin: the shared entry under its kernel-base
+/// symbol, compiled once for every width (a launch argument).
+pub fn row_gather_cubin_spec() -> CubinSpec {
+    kernels_sm120::row::gather::cubin_spec()
 }
 
 pub fn cubin_specs(shape: Shape) -> Result<Vec<(&'static str, CubinSpec)>, String> {

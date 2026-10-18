@@ -32,7 +32,7 @@ use model_glm5next_contract::contract::Shape;
 use model_glm5next_contract::own_ops::OwnOps;
 use model_glm5next_contract::own_ops::draft::{DraftGather, DraftGatherBuffers};
 use model_glm5next_contract::own_ops::rows::{
-    EhInput, EhInputBuffers, GatherRows, GatherRowsBuffers, ResidualAdd, ResidualAddBuffers,
+    EhInput, EhInputBuffers, ResidualAdd, ResidualAddBuffers,
     RoundRows, RoundRowsBuffers, WidenRows, WidenRowsBuffers,
 };
 use model_glm5next_contract::own_ops::stacked::{StackedProjection, StackedProjectionBuffers};
@@ -79,7 +79,7 @@ fn embedded(symbol: &str) -> bool {
 /// The declarations of GLM's own kernels that the target's prefill and
 /// verify launch, which kernel-lab's own-op cases check through the
 /// conformance kit (`tests/glm5next_bundle_kernels.rs`):
-/// - the rounding, widening and row gather rows run one CTA per row of the
+/// - the rounding and widening rows run one CTA per row of the
 ///   smallest row bucket holding the step's rows; none reduces across rows, uses atomics in its
 ///   arithmetic or splits by row count, so each row's bits are its own at
 ///   every bucket up to the largest, 8192 rows: one-row bits, any chunk
@@ -94,7 +94,7 @@ fn embedded(symbol: &str) -> bool {
 /// outside the step; neither is declared.
 pub fn declared_kernels() -> Vec<kernels_sm120::invariance::Declared> {
     use model_glm5next_contract::contract::PREFILL_TOKENS;
-    let rows = [ModelRow::Round, ModelRow::Widen, ModelRow::GatherRows]
+    let rows = [ModelRow::Round, ModelRow::Widen]
         .into_iter()
         .map(|row| (row.symbol(), Invariance::any_rows(PREFILL_TOKENS)));
     let stacked = stacked::entries(Shape::TP4)
@@ -283,38 +283,6 @@ impl OwnOps for Sm120Own {
                 b.y.covers(bytes(rows, row))?;
                 b.live_rows.covers(4)?;
                 Ok(vec![buffer(b.x), buffer(b.y), buffer(b.live_rows)])
-            },
-        )
-    }
-
-    fn gather_rows(
-        &self,
-        op: &GatherRows,
-        need: Need,
-    ) -> Result<Prepared<GatherRowsBuffers<View>>, Refused> {
-        op.validate()?;
-        if *op != GatherRows::of(self.shape) {
-            return Err(rule("the row gather is compiled for the hidden rows"));
-        }
-        let row = self.hidden_bytes();
-        // The indices and output hold the gathered rows alone: a prefill
-        // supplies one index per scored row (`InputLayout::prefill_within`).
-        self.row_over(
-            "gather_rows",
-            ModelRow::GatherRows,
-            need,
-            true,
-            move |b: &GatherRowsBuffers<View>, rows, _| {
-                b.input.covers(row)?;
-                b.row_indices.covers(bytes(rows, 4))?;
-                b.count.covers(4)?;
-                b.output.covers(bytes(rows, row))?;
-                Ok(vec![
-                    buffer(b.input),
-                    buffer(b.row_indices),
-                    buffer(b.count),
-                    buffer(b.output),
-                ])
             },
         )
     }
@@ -596,6 +564,9 @@ mod tests {
         Buffer, CommState, DrafterBuffers, RankBuffers, StatePools, allocate_scratch,
     };
     use crate::journal_tests::head_rows;
+    use kernel_core::row_copy::GatherByIndexBuffers;
+    use model_glm5next_contract::copies;
+    use model_glm5next_contract::sm120::engines::ROW_GATHER_SYMBOL;
     use crate::lower::Lowering;
     use crate::program::{DraftPass, Phase, Stage, Sublayer, draft_rows};
     use crate::sm120::engines::Engines;
@@ -1013,16 +984,13 @@ mod tests {
         assert_eq!(inputs.row_indices.length, u64::from(scored.max(1)) * 4);
         let mut lowering = fixture.lowering(&inputs, rank, phase, None, None);
         lowering.head_rows = scored;
-        let own = Sm120Own::new(SHAPE);
-        let gather = own
-            .gather_rows(&GatherRows::of(SHAPE), Need::rows(phase.capacity()))
-            .unwrap();
+        let gather = head_rows_gather(Need::rows(phase.capacity()));
         let bound = Bound::default();
-        let buffers_of = GatherRowsBuffers {
-            input: bound.view(lowering.scratch(Buffer::Normed)),
+        let buffers_of = GatherByIndexBuffers {
+            source: bound.view(lowering.scratch(Buffer::Normed)),
             row_indices: bound.view(inputs.row_indices),
             count: bound.view(inputs.logit_rows),
-            output: bound.view(lowering.scratch(Buffer::HeadRows)),
+            destination: bound.view(lowering.scratch(Buffer::HeadRows)),
         };
         let counts = Counts {
             padded_rows: rows,
@@ -1037,6 +1005,16 @@ mod tests {
         );
     }
 
+    /// The shared gather by index of the head's rows
+    /// (`copies::head_rows`), as the bundle's backend prepares it.
+    fn head_rows_gather(need: Need) -> Prepared<GatherByIndexBuffers<View>> {
+        use kernel_core::backend::Backend;
+        kernels_sm120::backend::Sm120::new()
+            .with_row_gather(ROW_GATHER_SYMBOL)
+            .gather_by_index(&copies::head_rows(SHAPE), need)
+            .unwrap()
+    }
+
     /// A served prefill's gather takes one index per scored row: prefills
     /// of 2, 65 and 8192 tokens scoring one row supply 4 index bytes, which
     /// the op takes, at the prefill's grid; more rows gathered than the
@@ -1048,15 +1026,12 @@ mod tests {
         for rows in [2, 65, 8192] {
             check_prefill_gather(&fixture, 0, rows, 1);
         }
-        let gather = Sm120Own::new(SHAPE)
-            .gather_rows(&GatherRows::of(SHAPE), Need::rows(PREFILL_TOKENS))
-            .unwrap();
-        let big = view(part(1, 0, 1 << 40));
-        let buffers_of = GatherRowsBuffers {
-            input: big,
+        let gather = head_rows_gather(Need::rows(PREFILL_TOKENS));
+        let buffers_of = GatherByIndexBuffers {
+            source: view(part(1, 0, 1 << 40)),
             row_indices: view(part(2, 0, 4)),
             count: view(part(3, 0, 4)),
-            output: big,
+            destination: view(part(4, 0, 1 << 40)),
         };
         let counts = |rows, padded_rows| Counts {
             padded_rows,
@@ -1207,12 +1182,12 @@ mod tests {
             let launch = lowered(lowering, phase, Stage::DraftResidual(sublayer)).remove(0);
             assert_eq!(bound.one(&add, &buffers_of, counts), launch, "{at}");
         }
-        let head_rows = own.gather_rows(&GatherRows::of(SHAPE), draft_need).unwrap();
-        let buffers_of = GatherRowsBuffers {
-            input: scratch(Buffer::Normed),
+        let head_rows = head_rows_gather(draft_need);
+        let buffers_of = GatherByIndexBuffers {
+            source: scratch(Buffer::Normed),
             row_indices: scratch(Buffer::DraftRows),
             count: scratch(Buffer::DraftCount),
-            output: scratch(Buffer::HeadRows),
+            destination: scratch(Buffer::HeadRows),
         };
         let launch = lowered(lowering, phase, Stage::DraftHeadRows).remove(0);
         assert_eq!(bound.one(&head_rows, &buffers_of, drafts), launch, "{at}");
@@ -1771,8 +1746,6 @@ mod tests {
                 .map(|p| p.info().clone()),
             own.residual_add(&ResidualAdd::of(SHAPE), need)
                 .map(|p| p.info().clone()),
-            own.gather_rows(&GatherRows::of(SHAPE), need)
-                .map(|p| p.info().clone()),
             own.eh_input(&EhInput::of(SHAPE), decode, Need::rows(8))
                 .map(|p| p.info().clone()),
             own.draft_gather(&DraftGather::of(SHAPE), need)
@@ -1796,12 +1769,12 @@ mod tests {
             )
             .map(|p| p.info().clone()),
         ];
-        // The rounding, widening and gather rows (the first two ops and the
-        // fourth) claim one-row bits at every bucket; the others nothing.
+        // The rounding and widening rows (the first two ops) claim one-row
+        // bits at every bucket; the others nothing.
         for (at, info) in infos.into_iter().enumerate() {
             let info = info.unwrap();
             let claimed = match at {
-                0 | 1 | 3 => Invariance::any_rows(8192),
+                0 | 1 => Invariance::any_rows(8192),
                 _ => Invariance::NONE,
             };
             for (symbol, _) in &info.symbols {

@@ -222,34 +222,6 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_row_glm5next_gather_rows_v1",
-        "params": [
-          {
-            "kind": "DevicePointer",
-            "name": "input",
-            "cxx_type": "const uint16_t"
-          },
-          {
-            "kind": "DevicePointer",
-            "name": "row_indices",
-            "cxx_type": "const uint32_t"
-          },
-          {
-            "kind": "DevicePointer",
-            "name": "count",
-            "cxx_type": "const uint32_t"
-          },
-          {
-            "kind": "DevicePointer",
-            "name": "output",
-            "cxx_type": "uint16_t"
-          }
-        ],
-        "max_threads": 256,
-        "min_blocks": 1,
-        "allowed_local_bytes": 0
-      },
-      {
         "symbol": "chop_row_glm5next_residual_add_v1",
         "params": [
           {
@@ -316,7 +288,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "1e91cf6856df423a756d1b74ceaca021c7a39835ce24c71ca5db98df1ed58f6e",
+    "cubin_sha256": "0f23b41515768ccd23c0b19ee2abb9f1a287693d1788d227440ced031245f025",
     "resources": [
       {
         "symbol": "chop_row_rmsnorm_glm5next_w4096_v1",
@@ -366,15 +338,6 @@
       {
         "symbol": "chop_row_glm5next_widen_v1",
         "registers": 32,
-        "shared_static_bytes": 0,
-        "local_bytes": 0,
-        "stack_bytes": 0,
-        "max_threads": 256,
-        "min_blocks": 1
-      },
-      {
-        "symbol": "chop_row_glm5next_gather_rows_v1",
-        "registers": 40,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,

@@ -627,10 +627,10 @@ fn every_backend_and_own_record_lowers() {
 #[test]
 fn journals_are_pinned_per_kv_format_and_phase() {
     let pinned: [((LatentKvFormat, Phase), (usize, u64)); 6] = [
-        ((FORMATS[0], PHASES[0]), (5792, 0xb692f81f4f246a1e)),
+        ((FORMATS[0], PHASES[0]), (5792, 0x44b9d4094d13023a)),
         ((FORMATS[0], PHASES[1]), (5044, 0xe502cc638f4ef151)),
         ((FORMATS[0], PHASES[2]), (5044, 0x7a52b349bda17d64)),
-        ((FORMATS[1], PHASES[0]), (5792, 0x2acd219110d83924)),
+        ((FORMATS[1], PHASES[0]), (5792, 0x76651e8ef1143ddc)),
         ((FORMATS[1], PHASES[1]), (5044, 0xac9d640261911eaf)),
         ((FORMATS[1], PHASES[2]), (5044, 0x56d5cc0b43d1c0d2)),
     ];
@@ -699,9 +699,9 @@ fn drafter_journals_are_pinned_per_pass() {
         (
             DraftPass::Extend,
             Phase::Verify { rows: 32, items: 8 },
-            (576, 0xcc1b47abf5c23003),
+            (576, 0x727bd523d4167f39),
         ),
-        (DraftPass::Step, Phase::Decode(8), (552, 0x3030b1acc845bf88)),
+        (DraftPass::Step, Phase::Decode(8), (552, 0x4d9bfb042adf4cd2)),
     ] {
         let lines = journal_of(kv, phase, Some(pass));
         // The drafter's layer is the twelfth paged layer: its latent KV
@@ -728,11 +728,13 @@ fn drafter_journals_are_pinned_per_pass() {
                 .count()
         };
         let launched = |symbol: &str| launches(symbol) > 0;
-        for row in ["draft_gather", "gather_rows"] {
-            assert!(
-                launched(&format!("chop_row_glm5next_{row}_v1")),
-                "{pass:?} {row}"
-            );
+        // The row inputs on GLM's own entry, the head rows on the shared
+        // gather by index.
+        for symbol in [
+            "chop_row_glm5next_draft_gather_v1",
+            model_glm5next_contract::sm120::engines::ROW_GATHER_SYMBOL,
+        ] {
+            assert!(launched(symbol), "{pass:?} {symbol}");
         }
         let ranks = Shape::TP4.ranks() as usize;
         assert!(!launched("chop_row_glm5next_draft_argmax"), "{pass:?}");

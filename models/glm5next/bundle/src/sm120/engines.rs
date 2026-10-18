@@ -282,10 +282,12 @@ impl Engines {
         for row in selected::ModelRow::ALL {
             bytes.insert(row.symbol(), 0);
         }
-        // The shared row copies (`selected::ROW_COPY_CUBIN`).
+        // The shared row copies (`selected::ROW_COPY_CUBIN`) and gather by
+        // index (`selected::ROW_GATHER_CUBIN`).
         for entry in kernels_sm120::row::copy::entries() {
             bytes.insert(entry.symbol, 0);
         }
+        bytes.insert(selected::ROW_GATHER_SYMBOL.into(), 0);
         for symbol in selected::COMM_SYMBOLS {
             bytes.insert(symbol.into(), 0);
         }

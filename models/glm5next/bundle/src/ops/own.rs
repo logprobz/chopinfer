@@ -1,9 +1,9 @@
 //! GLM's own row ops (`model_glm5next_contract::own_ops`), prepared once at
 //! create on the target's own kernels: the embedding's widening before its
-//! all-reduce, the drafter's row inputs, input halves, residual add and
-//! head rows, an eager prefill's gather of the rows that
-//! need logits, and the KDA layers' stacked input projections of the
-//! decode and verify graphs. Each is asked at create for the exactness GLM
+//! all-reduce, the drafter's row inputs, input halves and residual add,
+//! and the KDA layers' stacked input projections of the decode and verify
+//! graphs. The head rows' gathers (a prefill's rows that need logits, the
+//! drafter's draft rows) are the shared gather by index (`super::logits`). Each is asked at create for the exactness GLM
 //! relies on of it (`OwnRowOps::prepare`).
 
 use std::sync::Arc;
@@ -16,7 +16,7 @@ use model_glm5next_contract::contract::{PREFILL_TOKENS, Shape};
 use model_glm5next_contract::own_ops::OwnOps;
 use model_glm5next_contract::own_ops::draft::{DraftGather, DraftGatherBuffers};
 use model_glm5next_contract::own_ops::rows::{
-    EhInput, EhInputBuffers, GatherRows, GatherRowsBuffers, ResidualAdd, ResidualAddBuffers,
+    EhInput, EhInputBuffers, ResidualAdd, ResidualAddBuffers,
     WidenRows, WidenRowsBuffers,
 };
 use model_glm5next_contract::own_ops::stacked::StackedProjectionBuffers;
@@ -51,7 +51,6 @@ pub(crate) struct OwnRowOps {
     kernels: Arc<dyn OwnOps>,
     widen_rows: Prepared<WidenRowsBuffers<View>>,
     residual_add: Prepared<ResidualAddBuffers<View>>,
-    gather_rows: Prepared<GatherRowsBuffers<View>>,
     draft_gather: Prepared<DraftGatherBuffers<View>>,
     /// The drafter's input halves at each use of its input projection.
     eh_input: Vec<(OperationUse, Prepared<EhInputBuffers<View>>)>,
@@ -77,8 +76,7 @@ impl OwnRowOps {
     /// Prepares `shape`'s own row ops on `own`, each asked through `asks`
     /// (`exact`): the drafter's input halves at each of `eh_uses`, with the
     /// stacked projections `target` prepares. The embedding's widening runs
-    /// in every phase and asks what every phase needs, the gather of the
-    /// rows that need logits a prefill's chunk split, and each verify
+    /// in every phase and asks what every phase needs, and each verify
     /// bucket's stacked projections one-row bits up to the bucket's rows
     /// (decode's ask nothing, the one-row reference they are). The
     /// drafter's own rows (its residual add, row-input gather and input
@@ -110,11 +108,6 @@ impl OwnRowOps {
         let residual_add = asks.ask("own.residual_add", rows, |need| {
             own.residual_add(&ResidualAdd::of(shape), need)
         })?;
-        let gather_rows = asks.ask(
-            "own.gather_rows",
-            exact::need(PREFILL_TOKENS, exact::PREFILL),
-            |need| own.gather_rows(&GatherRows::of(shape), need),
-        )?;
         let draft_gather = asks.ask("own.draft_gather", rows, |need| {
             own.draft_gather(&DraftGather::of(shape), need)
         })?;
@@ -133,7 +126,6 @@ impl OwnRowOps {
             kernels: kernels.clone(),
             widen_rows,
             residual_add,
-            gather_rows,
             draft_gather,
             eh_input,
             stacked,
@@ -161,22 +153,6 @@ impl OwnRowOps {
         spans: ResidualAddBuffers<Span>,
     ) -> Result<Vec<Lowered>, Refusal> {
         launch(&self.residual_add, spans, Counts::rows(rows))
-    }
-
-    /// Gathers at most `rows` rows by index; with `grid` nonzero, over the
-    /// row bucket holding `grid` rows (a prefill's gather of its scored
-    /// rows).
-    pub(crate) fn gather_rows(
-        &self,
-        rows: u32,
-        grid: u32,
-        spans: GatherRowsBuffers<Span>,
-    ) -> Result<Vec<Lowered>, Refusal> {
-        let counts = Counts {
-            padded_rows: grid,
-            ..Counts::rows(rows)
-        };
-        launch(&self.gather_rows, spans, counts)
     }
 
     /// The drafter rows' hidden inputs and tokens of `rows` rows.
@@ -296,14 +272,6 @@ mod tests {
             undeclared(need, |need| self.0.residual_add(op, need))
         }
 
-        fn gather_rows(
-            &self,
-            op: &GatherRows,
-            need: Need,
-        ) -> Result<Prepared<GatherRowsBuffers<View>>, Refused> {
-            undeclared(need, |need| self.0.gather_rows(op, need))
-        }
-
         fn eh_input(
             &self,
             op: &EhInput,
@@ -355,7 +323,6 @@ mod tests {
         };
         let verify = exact::verify_rows();
         assert_eq!(need("own.widen"), exact::every_phase(verify));
-        assert_eq!(need("own.gather_rows"), exact::PREFILL);
         assert_eq!(need("own.residual_add"), Invariance::NONE);
         assert_eq!(need("own.stacked Verify 8"), exact::verify(8));
         assert_eq!(need("own.stacked Decode 8"), Invariance::NONE);

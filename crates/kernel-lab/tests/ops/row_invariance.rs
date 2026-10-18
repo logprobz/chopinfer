@@ -41,6 +41,7 @@ use kernel_core::contract::{
     ArgumentList, GatedAttentionQuery, LaunchPlan, NgramQuery, RecurrentPhase, RecurrentQuery,
     Refusal, SigmoidMeanHyperConnectionQuery as H, StaticQuery,
 };
+use kernel_core::mxfp8_rows::{Mxfp8Rows, Mxfp8RowsBuffers};
 use kernel_core::ngram_oracle;
 use kernel_core::row_copy::{
     ColumnSlice, GatherByIndex, GatherByIndexBuffers, RowCopyBuffers, StreamBroadcast,
@@ -49,7 +50,7 @@ use kernels_sm120::attention::gated;
 use kernels_sm120::backend::Sm120;
 use kernels_sm120::invariance::{Declared, OpKind};
 use kernels_sm120::row::{Grid, smallest_bucket};
-use kernels_sm120::row::{copy, gather};
+use kernels_sm120::row::{copy, gather, mxfp8_decode};
 use model_qwen38_contract::sm120::row as qwen38;
 use std::collections::BTreeSet;
 use std::ops::Range;
@@ -1096,6 +1097,7 @@ enum Family {
     Qwen(kernels_sm120::row::hyper_connection::Entry, Qwen),
     Copy(copy::Entry),
     Gather(String),
+    Mxfp8(String),
 }
 
 fn family(symbol: &str) -> LabResult<Family> {
@@ -1118,6 +1120,9 @@ fn family(symbol: &str) -> LabResult<Family> {
     }
     if let Some(entry) = copy::entries().into_iter().find(|e| e.symbol == symbol) {
         return Ok(Family::Copy(entry));
+    }
+    if symbol == mxfp8_decode::SYMBOL {
+        return Ok(Family::Mxfp8(symbol.into()));
     }
     if symbol == gather::SYMBOL {
         return Ok(Family::Gather(symbol.into()));
@@ -1328,6 +1333,98 @@ fn gather_rows(session: &Session, symbol: &str, seeds: &[u64]) -> LabResult<Unit
         .collect())
 }
 
+/// Decode independently seeded rows, including non-finite values, checking
+/// every output bit and the extra poisoned row against the oracle.
+fn mxfp8_rows(session: &Session, symbol: &str, seeds: &[u64]) -> LabResult<Units> {
+    let rows = seeds.len();
+    let backend = Sm120::new().with_mxfp8_rows(symbol);
+    let prepared = backend
+        .decode_mxfp8_rows(&Mxfp8Rows { width: 128 }, Need::rows(rows as u32))
+        .map_err(|e| format!("{symbol}: {e}"))?;
+    let width = 128;
+    let row = width * 2;
+    let codes = seeds
+        .iter()
+        .flat_map(|&seed| {
+            (0..width).map(move |col| seed.wrapping_mul(29).wrapping_add(col as u64 * 17) as u8)
+        })
+        .collect::<Vec<_>>();
+    let scales = seeds
+        .iter()
+        .flat_map(|&seed| {
+            (0..width / 32).map(move |col| seed.wrapping_mul(7).wrapping_add(col as u64 * 53) as u8)
+        })
+        .collect::<Vec<_>>();
+    let upload = |bytes: &[u8]| -> LabResult<DeviceBuffer> {
+        let buffer = session.allocate(bytes.len())?;
+        poison::write(session, &buffer, 0, bytes)?;
+        Ok(buffer)
+    };
+    let source = upload(&codes)?;
+    let row_scales = upload(&scales)?;
+    let count = upload(&(rows as u32).to_le_bytes())?;
+    let destination = upload(&vec![POISON; (rows + 1) * row])?;
+    let view = |handle, buffer: &DeviceBuffer| View {
+        handle,
+        bytes: buffer.byte_len() as u64,
+    };
+    let buffers = Mxfp8RowsBuffers {
+        codes: view(1, &source),
+        scales: view(2, &row_scales),
+        live_rows: view(3, &count),
+        output: view(4, &destination),
+    };
+    let launches = prepared
+        .launches(&buffers, View::EMPTY, Counts::rows(rows as u32))
+        .map_err(|e| format!("{symbol}: {e}"))?;
+    let module = session.module(mxfp8_decode::CUBIN)?;
+    let bindings = Bindings {
+        buffers: BTreeMap::from([
+            (1, &source),
+            (2, &row_scales),
+            (3, &count),
+            (4, &destination),
+        ]),
+    };
+    for one in &launches {
+        let function = module.function(&one.symbol).map_err(|e| e.to_string())?;
+        launch::launch(
+            &session.context,
+            &function,
+            &session.stream,
+            one.plan,
+            &one.arguments,
+            &bindings,
+        )?;
+        kernel_lab::launched(&one.symbol);
+    }
+    let bytes = bytes_of(session, &destination)?;
+    let mut expected = vec![u16::from_le_bytes([POISON; 2]); (rows + 1) * width];
+    kernel_core::mxfp8_rows::decode_rows(
+        &Mxfp8Rows {
+            width: width as u32,
+        },
+        &codes,
+        &scales,
+        rows as u32,
+        &mut expected,
+    )
+    .map_err(|e| e.to_string())?;
+    let expected = expected
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect::<Vec<_>>();
+    if bytes != expected {
+        return Err(format!(
+            "{symbol}: decoded rows or untouched tail differ from the oracle"
+        ));
+    }
+    Ok(bytes[..rows * row]
+        .chunks(row)
+        .map(<[u8]>::to_vec)
+        .collect())
+}
+
 /// The shared gather entry resolves to the gather family and prepares
 /// with its declared claims (no GPU).
 #[test]
@@ -1342,6 +1439,25 @@ fn the_shared_gather_entry_resolves_to_the_gather() {
     let prepared = Sm120::new()
         .with_row_gather(gather::SYMBOL)
         .gather_by_index(&GATHER, Need::rows(512))
+        .unwrap();
+    assert_eq!(prepared.info().guarantees, declared.invariance);
+}
+
+#[test]
+fn the_mxfp8_entry_resolves_to_the_decoder() {
+    let inventory = crate::invariance::inventory();
+    let declared = inventory
+        .iter()
+        .find(|d| d.symbol == mxfp8_decode::SYMBOL)
+        .unwrap();
+    assert_eq!(declared.op, OpKind::Row);
+    assert!(matches!(
+        family(mxfp8_decode::SYMBOL).unwrap(),
+        Family::Mxfp8(_)
+    ));
+    let prepared = Sm120::new()
+        .with_mxfp8_rows(mxfp8_decode::SYMBOL)
+        .decode_mxfp8_rows(&Mxfp8Rows { width: 128 }, Need::rows(512))
         .unwrap();
     assert_eq!(prepared.info().guarantees, declared.invariance);
 }
@@ -1425,6 +1541,16 @@ impl Adapter for Row {
                 }
                 Ok(units)
             }
+            Family::Mxfp8(symbol) => {
+                let mut units = Vec::new();
+                let mut start = 0;
+                for &end in ends {
+                    let seeds = (start..end).map(u64::from).collect::<Vec<_>>();
+                    units.extend(mxfp8_rows(session, &symbol, &seeds)?);
+                    start = end;
+                }
+                Ok(units)
+            }
         }
     }
 
@@ -1449,6 +1575,7 @@ impl Adapter for Row {
             }
             Family::Copy(entry) => copy_rows(session, &entry, seeds),
             Family::Gather(symbol) => gather_rows(session, &symbol, seeds),
+            Family::Mxfp8(symbol) => mxfp8_rows(session, &symbol, seeds),
         }
     }
 

@@ -1,0 +1,10 @@
+[
+  {
+    "name": "row_mxfp8_decode_sm120",
+    "source_closure_sha256": "c3c7c7d53d25715a5f39c77cd85056b9b6bd7f7b3163adea5e53691c358ff190"
+  },
+  {
+    "name": "row_mxfp8_decode_truncate_sm120",
+    "source_closure_sha256": "7b86e711a973a839454a00ae94087be41877eb2b13044d4dd55f4c2247c83d62"
+  }
+]

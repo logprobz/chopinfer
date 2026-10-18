@@ -25,6 +25,7 @@ pub mod moe_chained_quantized;
 pub mod moe_routed;
 pub mod multimodal;
 pub mod mxfp8_fold;
+pub mod mxfp8_rows;
 mod norm_status_boundary;
 pub mod pooled_indexer;
 pub mod position_blocks;

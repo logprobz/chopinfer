@@ -56,6 +56,15 @@ impl ScaleBytes<'_> {
         if count.checked_mul(size) != Some(self.bytes.len()) {
             return Err("scale byte count disagrees with its grid");
         }
+        if self.dtype == DType::Ue8M0 {
+            // Every finite UE8M0 code is positive, including 0 (2^-127).
+            // Checking the domain needs no floating-point conversion.
+            return if self.bytes.contains(&255) {
+                Err("UE8M0 scale 0xff is not finite")
+            } else {
+                Ok(())
+            };
+        }
         for i in 0..count {
             if self.value(i)? == 0.0 && positive {
                 return Err("global scale must be positive");

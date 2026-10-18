@@ -415,7 +415,7 @@
         "allowed_local_bytes": 0
       },
       {
-        "symbol": "chop_enc_linear_pairs_n5120_k5120_bias_bf16_773ffbd35d3b_v1",
+        "symbol": "chop_enc_linear_pairs_n5120_k5120_bias_f32_cef388303c0d_v1",
         "params": [
           {
             "kind": "DevicePointer",
@@ -435,7 +435,7 @@
           {
             "kind": "DevicePointer",
             "name": "output",
-            "cxx_type": "uint16_t"
+            "cxx_type": "float"
           },
           {
             "kind": "DevicePointer",
@@ -444,6 +444,29 @@
           }
         ],
         "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_enc_cast_bf16_w5120_1b6c9279d5b6_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 256,
         "min_blocks": 1,
         "allowed_local_bytes": 0
       },
@@ -480,7 +503,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "f9b6dedd2d77056fcafa462d5d254f5e51168b4d5f208c8efbab412c468220dc",
+    "cubin_sha256": "42faf4f7f32e740ecbf3f86db175b9ef93ff6dd7e476a1eb319ee18ff1f22ccb",
     "resources": [
       {
         "symbol": "chop_enc_pad_zero_columns_w588_to640_fba13a7cfeba_v1",
@@ -582,12 +605,21 @@
         "min_blocks": 1
       },
       {
-        "symbol": "chop_enc_linear_pairs_n5120_k5120_bias_bf16_773ffbd35d3b_v1",
+        "symbol": "chop_enc_linear_pairs_n5120_k5120_bias_f32_cef388303c0d_v1",
         "registers": 168,
         "shared_static_bytes": 1056,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 384,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_enc_cast_bf16_w5120_1b6c9279d5b6_v1",
+        "registers": 11,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
         "min_blocks": 1
       },
       {

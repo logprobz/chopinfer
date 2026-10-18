@@ -73,9 +73,10 @@
       }
     },
     {
-      "op": "linear.pairs.v1", "out": 5120, "bias": true, "output": "bf16",
+      "op": "linear.pairs.v1", "out": 5120, "bias": true,
       "weights": {"weight": "aligner.w2.weight", "bias": "aligner.w2.bias"}
-    }
+    },
+    {"op": "cast.bf16.v1"}
   ],
   "output": {
     "op": "layout.learned-delimiters.v1", "hidden": 5120, "positions": "sequential", "media_mask": true,

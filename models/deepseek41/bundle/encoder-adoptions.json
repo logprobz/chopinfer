@@ -17,5 +17,24 @@
         "cubin_sha256": "f9b6dedd2d77056fcafa462d5d254f5e51168b4d5f208c8efbab412c468220dc"
       }
     ]
+  },
+  {
+    "previous": "623cd6ce4ed3867537a96584f89b9e4e41085b53a58b69a86da3d18ab1e6a64a",
+    "declarations": [
+      "c742f0f02b5b9772179ee860c566f7123c0cd9b0e9c202268a3198478c82a86b"
+    ],
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "cubins": [
+      {
+        "name": "multimodal_attention_sm120",
+        "source_closure_sha256": "1c602ba389e31812452ae263259c4367a56449ad8006dd3f95dae3ca538aec80",
+        "cubin_sha256": "2fb7ae28d46b89d011b6a3b1a6d0bc4a10152ee3a55b06f126818f0fd22b50b5"
+      },
+      {
+        "name": "multimodal_rows_gemm_sm120",
+        "source_closure_sha256": "84bc0c476b19e2f60506f6f2d7a5aafd8e4958704062db12160722d81416450e",
+        "cubin_sha256": "42faf4f7f32e740ecbf3f86db175b9ef93ff6dd7e476a1eb319ee18ff1f22ccb"
+      }
+    ]
   }
 ]

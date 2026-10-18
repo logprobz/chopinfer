@@ -4,7 +4,8 @@
 //! `kernels.lock.d`, checked against its component oracle with poisoned
 //! outputs. The patch projection (the first GEMM, over the payload padded
 //! from 588 to 640 columns, also at full capacity) and the 3 x 3
-//! space-to-depth merge over odd grids run first, as their own tests.
+//! space-to-depth merge over odd grids run first, as their own tests; the
+//! BF16 cast after the aligner's last GEMM, which writes F32, is one too.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -69,6 +70,7 @@ const RUNNERS: &[(&str, Runner)] = &[
     ("mlp.swiglu.v1", conformance::rows),
     ("merge.space-to-depth.v1", conformance::rows),
     ("layout.learned-delimiters.v1", conformance::layout),
+    ("cast.bf16.v1", conformance::rows),
 ];
 
 fn cases() -> Vec<Case> {
@@ -168,4 +170,11 @@ fn mlp_swiglu() {
 #[test]
 fn layout_learned_delimiters() {
     run("layout.learned-delimiters.v1");
+}
+
+/// The aligner's F32 rows rounded once to BF16, bit for bit, before the
+/// arena placement copies them.
+#[test]
+fn cast_bf16() {
+    run("cast.bf16.v1");
 }

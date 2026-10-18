@@ -24,11 +24,32 @@ fn backend() -> Sm120 {
         .with_f32_projections(F32ProjectionOffers::new(entries, available, "0".repeat(64)).unwrap())
 }
 fn required() -> Vec<kit::Required<'static>> {
-    let mut ops = cases::family(&family::entries());
+    let mut ops = Vec::new();
+    for entry in family::entries() {
+        let q = entry.query();
+        let role = match (q.n, q.k, q.weight) {
+            (512, 5120, WeightFormat::Bf16) => Some("pool value projection"),
+            (128, 512, WeightFormat::Bf16) => Some("shared key projection"),
+            (32, 5120, WeightFormat::Bf16) => Some("head weight projection"),
+            (384, 5120, WeightFormat::Bf16) => Some("expert router projection"),
+            _ => None,
+        };
+        let mut required = cases::required(entry.clone(), Witness::General);
+        if let Some(role) = role {
+            required.name = format!("{role} m{} {}", q.m_capacity, entry.symbol());
+        }
+        ops.push(required);
+        if role == Some("pool value projection") {
+            let mut required = cases::required(entry.clone(), Witness::General);
+            required.name = format!("pool gate projection m{} {}", q.m_capacity, entry.symbol());
+            ops.push(required);
+        }
+    }
     let entry = family::entry(17, 257, 9, WeightFormat::Bf16);
     for witness in [
         Witness::LowComponent,
         Witness::SeparateChains,
+        Witness::MergeOrder,
         Witness::FoldBoundary,
         Witness::Fallback,
     ] {
@@ -51,15 +72,33 @@ fn required() -> Vec<kit::Required<'static>> {
     ops
 }
 fn run(session: Option<&Session>) -> LabResult<()> {
-    let report = kit::conform(&backend(), &LabModules, session, &required())?;
-    assert_eq!(report.prepared().len(), 36);
+    let cases = required();
+    let report = kit::conform(&backend(), &LabModules, session, &cases)?;
+    assert_eq!(report.prepared().len(), 41);
     assert!(report.failures().is_empty(), "{:?}", report.failures());
     if let Some(session) = session {
-        assert!(
-            report.not_exercised().is_empty(),
-            "{:?}",
-            report.not_exercised()
-        );
+        for (op, case) in report.ops.iter().zip(&cases) {
+            let OpResult::Prepared { checks, .. } = &op.result else {
+                panic!("required case refused")
+            };
+            for check in checks {
+                if case.need.capacity == 1
+                    && ["property rows", "property chunk", "property batch"]
+                        .contains(&check.name.as_str())
+                {
+                    assert_eq!(
+                        check.outcome,
+                        Outcome::NotExercised(cases::SINGLE_ROW_PROPERTIES.into())
+                    );
+                } else {
+                    assert!(
+                        matches!(check.outcome, Outcome::Passed(_)),
+                        "{}: {check:?}",
+                        op.name
+                    );
+                }
+            }
+        }
         session.receipt(
             "exact-f32-projection",
             BTreeMap::from([("report".into(), report.json())]),
@@ -67,6 +106,28 @@ fn run(session: Option<&Session>) -> LabResult<()> {
     }
     Ok(())
 }
+#[test]
+fn every_consumer_shape_has_single_and_split_row_cases() {
+    let cases = required();
+    for role in [
+        "pool value projection",
+        "pool gate projection",
+        "shared key projection",
+        "head weight projection",
+        "expert router projection",
+    ] {
+        for capacity in [1, 17] {
+            let prefix = format!("{role} m{capacity} ");
+            let case = cases
+                .iter()
+                .find(|c| c.name.starts_with(&prefix))
+                .expect("required bound shape");
+            assert_eq!(case.need.capacity, capacity);
+            assert_eq!(case.need.exact.claims().is_empty(), capacity == 1);
+        }
+    }
+}
+
 #[test]
 fn prepares_every_required_case() {
     run(None).unwrap();
@@ -130,7 +191,7 @@ impl PreparedOp<ProjectionBuffers<View>> for MutantOp {
 fn faulty_device_arithmetic_is_rejected_by_unchanged_cases() {
     gpu_test(1<<30,|session| {
         let entry = family::entry(17,257,9,WeightFormat::Bf16);
-        for (fault,witness) in [("drop_lo",Witness::LowComponent),("merged_chains",Witness::SeparateChains),("tf32",Witness::LowComponent)] {
+        for (fault,witness) in [("drop_lo",Witness::LowComponent),("merged_chains",Witness::SeparateChains),("wrong_merge",Witness::MergeOrder),("tf32",Witness::LowComponent)] {
             let ops = vec![cases::required(entry.clone(),witness)];
             let positive = kit::conform(&backend(),&LabModules,Some(session),&ops)?;
             assert_eq!(positive.prepared().len(),1);

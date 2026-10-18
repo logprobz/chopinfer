@@ -14,6 +14,11 @@ struct Tf32 {
     Components::split(__uint_as_float(rounded),terms);
   }
 };
+struct WrongMerge : SeparateChains {
+  __device__ __forceinline__ float merged(int v) const {
+    return __fadd_rn(partial[0].v[v], __fadd_rn(partial[1].v[v], partial[2].v[v]));
+  }
+};
 struct MergedChains {
   ptx::D4 partial{};
   __device__ __forceinline__ void step(const ptx::A4& a, const ptx::B2 (&b)[3]) {

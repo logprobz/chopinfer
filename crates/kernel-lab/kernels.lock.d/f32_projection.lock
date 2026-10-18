@@ -334,6 +334,70 @@
         "allowed_local_bytes": 0
       },
       {
+        "symbol": "chop_exact_f32_bf16_m1_n384_k5120_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_f32_bf16_m17_n384_k5120_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
         "symbol": "chop_exact_f32_f32_m1_n384_k5120_v1",
         "params": [
           {
@@ -718,7 +782,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "8b76d7babc163280d8718b29d29b74904a5de0810533239bb68dc85955450214",
+    "cubin_sha256": "043f9abaad4db46cb6e1fcc17d2724bf4da2be06001897a774fdd4d61feb4014",
     "resources": [
       {
         "symbol": "chop_exact_f32_bf16_m1_n512_k5120_v1",
@@ -803,6 +867,24 @@
       },
       {
         "symbol": "chop_exact_f32_bf16_m17_n8_k5120_v1",
+        "registers": 66,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_f32_bf16_m1_n384_k5120_v1",
+        "registers": 66,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_f32_bf16_m17_n384_k5120_v1",
         "registers": 66,
         "shared_static_bytes": 5156,
         "local_bytes": 0,

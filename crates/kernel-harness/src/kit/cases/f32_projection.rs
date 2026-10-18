@@ -12,7 +12,10 @@ use kernel_core::precision::{
     buffers::{ProjectionBuffers, ProjectionScratch, QuantizedWeights},
     f32_gemm,
 };
-use kernel_core::properties::Invariance;
+use kernel_core::properties::{Invariance, Property};
+
+pub const SINGLE_ROW_PROPERTIES: &str =
+    "one-row capacity has no row permutation, neighbour or chunk split";
 use kernels_sm120::f32_projection::Entry;
 use std::cell::RefCell;
 
@@ -22,6 +25,7 @@ pub enum Witness {
     LowComponent,
     WeightBits,
     SeparateChains,
+    MergeOrder,
     FoldBoundary,
     Fallback,
     Underflow,
@@ -78,7 +82,11 @@ pub fn required<'a>(entry: Entry, witness: Witness) -> Required<'a> {
     let capacity = entry.query().m_capacity;
     Required::new(
         format!("{} {witness:?}", entry.symbol()),
-        Need::rows(capacity).with_exact(Invariance::any_rows(capacity)),
+        Need::rows(capacity).with_exact(if capacity > 1 {
+            Invariance::any_rows(capacity)
+        } else {
+            Invariance::NONE
+        }),
         move |backend, need| backend.projection(&spec, usage, need).map(|b| b.handle),
         move |op| case(&entry, witness, op),
     )
@@ -111,6 +119,11 @@ fn operands(entry: &Entry, witness: Witness) -> (Vec<f32>, Vec<f32>) {
                 Witness::SeparateChains => match c {
                     0 | 16 => 1.0 + 2_f32.powi(-8) + 2_f32.powi(-23),
                     32 => -2.,
+                    _ => 0.,
+                },
+                Witness::MergeOrder => match c {
+                    0 => 1.0 + 2_f32.powi(-8) + 2_f32.powi(-23),
+                    16 => 65536.,
                     _ => 0.,
                 },
                 Witness::FoldBoundary => match c {
@@ -276,7 +289,7 @@ pub fn case<'a>(
         shard_rows: 0,
     };
     let cached = RefCell::new(None::<(Vec<u8>, f32_gemm::Oracle, Option<Vec<u8>>)>);
-    Ok(OpCase::new(op, q.m_capacity, roles)?
+    let case = OpCase::new(op, q.m_capacity, roles)?
         .oracle(move |images: &Images, live| {
             if matches!(
                 witness,
@@ -371,7 +384,15 @@ pub fn case<'a>(
                 .into_iter()
                 .filter(|&r| r <= q.m_capacity)
                 .collect(),
-        ))
+        );
+    Ok(if q.m_capacity == 1 {
+        case.without_properties(
+            &[Property::Rows, Property::Chunk, Property::Batch],
+            SINGLE_ROW_PROPERTIES,
+        )
+    } else {
+        case
+    })
 }
 
 fn judge(reference: &f32_gemm::Oracle, bytes: &[u8], count: usize) -> LabResult<()> {
@@ -422,10 +443,31 @@ mod tests {
             (Witness::LowComponent, 1. + 2_f32.powi(-8) + 2_f32.powi(-23)),
             (Witness::SeparateChains, 2_f32.powi(-7) + 2_f32.powi(-22)),
             (Witness::FoldBoundary, 2_f32.powi(-17)),
+            (Witness::MergeOrder, 65537.),
         ] {
             let (a, b) = operands(&entry, witness);
             let correct = f32_gemm::folded_dot(&a[..257], &b[..257], DType::Bf16).unwrap();
             assert_eq!(correct.to_bits(), expected.to_bits(), "{witness:?}");
+            if witness == Witness::MergeOrder {
+                let mut components = [0_f32; 3];
+                for &x in &a[..128] {
+                    for (partial, term) in components
+                        .iter_mut()
+                        .zip(f32_gemm::decompose(x).unwrap().unwrap())
+                    {
+                        *partial += bf16_to_f32(term);
+                    }
+                }
+                let wrong = components[0] + (components[1] + components[2]);
+                assert_eq!(wrong.to_bits(), (65537_f32 + 2_f32.powi(-7)).to_bits());
+                assert_ne!(correct.to_bits(), wrong.to_bits());
+                let oracle = f32_gemm::oracle(entry.query(), 1, &a[..257], &b).unwrap();
+                assert!(
+                    (f64::from(wrong) - oracle.values[0]).abs()
+                        <= f32_gemm::bound(257, oracle.sum_abs_products[0])
+                );
+                continue;
+            }
             if witness == Witness::FoldBoundary {
                 continue;
             }

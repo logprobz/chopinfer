@@ -15,6 +15,7 @@ pub fn entries() -> Vec<Entry> {
         (32, 5120, WeightFormat::Bf16),
         (16, 5120, WeightFormat::Bf16),
         (8, 5120, WeightFormat::Bf16),
+        (384, 5120, WeightFormat::Bf16),
         (384, 5120, WeightFormat::F32),
     ] {
         for m in [1, 17] {

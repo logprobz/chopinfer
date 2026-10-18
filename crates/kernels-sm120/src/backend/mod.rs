@@ -189,6 +189,7 @@ pub struct Sm120 {
     indexer: pooled_indexer::Selection,
     position_block_indexers: Vec<crate::pooled_indexer::position_blocks::Entry>,
     candidate_block_ids: Vec<crate::pooled_indexer::position_blocks::CandidateEntry>,
+    runtime_candidate_block_ids: Vec<crate::pooled_indexer::position_blocks::CandidateEntry>,
     position_indexers: Vec<crate::pooled_indexer::position::Entry>,
     bf16_position_indexers: Vec<crate::pooled_indexer::position::Entry>,
     bf16_position_block_indexers: Vec<crate::pooled_indexer::position_blocks::Entry>,
@@ -589,6 +590,19 @@ impl Sm120 {
         entries: impl IntoIterator<Item = crate::pooled_indexer::position_blocks::CandidateEntry>,
     ) -> Self {
         self.candidate_block_ids.extend(entries);
+        self
+    }
+
+    /// Runtime-count producers compiled under their separate symbols.
+    pub fn with_indexer_candidate_block_ids_runtime(
+        mut self,
+        entries: impl IntoIterator<Item = crate::pooled_indexer::position_blocks::CandidateEntry>,
+    ) -> Self {
+        self.runtime_candidate_block_ids.extend(
+            entries
+                .into_iter()
+                .map(|entry| crate::pooled_indexer::position_candidates_runtime::entry(&entry)),
+        );
         self
     }
 
@@ -1608,6 +1622,22 @@ impl Backend for Sm120 {
         need: Need,
     ) -> Result<Prepared<CandidateBlockIdsBuffers<View>>, Refused> {
         position_blocks::candidates(&self.candidate_block_ids, op, position_capacity, need)
+    }
+
+    fn indexer_candidate_block_ids_runtime(
+        &self,
+        op: &CandidateBlocksQuery,
+        top_k_blocks: u32,
+        position_capacity: u32,
+        need: Need,
+    ) -> Result<Prepared<CandidateBlockIdsBuffers<View>>, Refused> {
+        position_blocks::candidates_with_count(
+            &self.runtime_candidate_block_ids,
+            op,
+            position_capacity,
+            need,
+            Some(top_k_blocks),
+        )
     }
 
     // Recurrent layers.

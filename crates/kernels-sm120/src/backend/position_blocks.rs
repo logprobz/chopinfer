@@ -133,6 +133,19 @@ pub(super) fn candidates(
     width: u32,
     need: Need,
 ) -> Result<Prepared<CandidateBlockIdsBuffers<View>>, Refused> {
+    candidates_with_count(entries, query, width, need, None)
+}
+
+pub(super) fn candidates_with_count(
+    entries: &[CandidateEntry],
+    query: &CandidateBlocksQuery,
+    width: u32,
+    need: Need,
+    top_k_blocks: Option<u32>,
+) -> Result<Prepared<CandidateBlockIdsBuffers<View>>, Refused> {
+    if top_k_blocks.is_some_and(|n| n == 0 || n > query.top_k_blocks) {
+        return Err(Refusal("runtime candidate count exceeds the compiled ID stride").into());
+    }
     query.validate()?;
     capacity(need.capacity, query.capacity)?;
     let chosen = choose(
@@ -159,7 +172,10 @@ pub(super) fn candidates(
     let entry = chosen.entry;
     super::check_plan(&entry.score_plan(need.capacity, width)?)?;
     super::check_plan(&entry.gather_plan(need.capacity, width)?)?;
-    let digest = kernel_build::digest(format!("{:?} {width}", entry.query).as_bytes());
+    let mut digest = kernel_build::digest(format!("{:?} {width}", entry.query).as_bytes());
+    if let Some(kept) = top_k_blocks {
+        digest = kernel_build::digest(format!("{digest} runtime {kept}").as_bytes());
+    }
     let mut info = OpInfo::new(
         format!("sm120.candidate-block-ids.max-radix8.v3#{}", &digest[..16]),
         chosen.guarantees,
@@ -183,6 +199,7 @@ pub(super) fn candidates(
     ];
     need.check(&info)?;
     Ok(Box::new(Filter {
+        top_k_blocks,
         entry,
         info,
         width,
@@ -305,6 +322,7 @@ impl PreparedOp<PositionBlockSelectBuffers<View>> for Select {
 }
 
 struct Filter {
+    top_k_blocks: Option<u32>,
     entry: CandidateEntry,
     info: OpInfo,
     width: u32,
@@ -346,7 +364,7 @@ impl PreparedOp<CandidateBlockIdsBuffers<View>> for Filter {
                 b.live_rows,
             ],
         )?;
-        Ok(vec![
+        let mut launches = vec![
             launch(
                 &self.entry.score_symbol(),
                 counts.rows,
@@ -376,7 +394,11 @@ impl PreparedOp<CandidateBlockIdsBuffers<View>> for Filter {
                     Argument::U32(self.width),
                 ],
             ),
-        ])
+        ];
+        if let Some(top_k_blocks) = self.top_k_blocks {
+            launches[1].arguments.0.push(Argument::U32(top_k_blocks));
+        }
+        Ok(launches)
     }
 }
 

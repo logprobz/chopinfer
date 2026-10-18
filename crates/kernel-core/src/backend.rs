@@ -1249,6 +1249,20 @@ pub trait Backend: Send + Sync {
         Err(Refused::Unsupported)
     }
 
+    /// Keep `top_k_blocks` candidates in the fixed `op.top_k_blocks` ID
+    /// stride, padding unused slots with -1. The count must be in
+    /// 1..=op.top_k_blocks. Other producer semantics are unchanged.
+    fn indexer_candidate_block_ids_runtime(
+        &self,
+        op: &CandidateBlocksQuery,
+        top_k_blocks: u32,
+        position_capacity: u32,
+        need: Need,
+    ) -> Result<Prepared<CandidateBlockIdsBuffers<View>>, Refused> {
+        let _ = (op, top_k_blocks, position_capacity, need);
+        Err(Refused::Unsupported)
+    }
+
     /// Direct compact Position v3 scoring and selection. Position capacity
     /// bounds the original key coordinates, not the compact score slots.
     /// Uses Counts::rows only; page-table and row bounds match position_indexer.
@@ -2415,6 +2429,9 @@ mod tests {
         indexer_candidate_block_ids: Empty.indexer_candidate_block_ids(&CandidateBlocksQuery {
             block_size: 8, top_k_blocks: 2048, capacity: 4,
         }, 1 << 20, Need::rows(4));
+        indexer_candidate_block_ids_runtime: Empty.indexer_candidate_block_ids_runtime(&CandidateBlocksQuery {
+            block_size: 8, top_k_blocks: 2048, capacity: 4,
+        }, 1024, 1 << 20, Need::rows(4));
         position_block_indexer: Empty.position_block_indexer(&PositionBlockIndexerQuery {
             indexer: PositionIndexerQuery {
                 heads: 3, head_dim: 160, compression_ratio: 2, tail_rope_dims: 64,

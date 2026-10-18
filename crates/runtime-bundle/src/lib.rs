@@ -856,6 +856,13 @@ impl BundleKvFormatV1 {
 
     /// A mixed-plane format of `planes`, distinctly named, whose codes and
     /// scales fit apart within each token of `layout`.
+    ///
+    /// Plane ranges may leave gaps: a token's bytes need not be covered, so
+    /// a 32-value FP4 plane with its codes at 0 and its block-32 scale at 16
+    /// fits 32 bytes per token and leaves 15 unused. Alignment is the
+    /// layout's, checked on the page (`page_bytes` a multiple of
+    /// `alignment_bytes`); a plane's offsets carry no alignment rule of
+    /// their own.
     pub fn mixed_planes(
         planes: Vec<BundleKvPlaneV1>,
         layout: BundleKvLayoutV1,

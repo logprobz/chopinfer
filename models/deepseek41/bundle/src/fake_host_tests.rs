@@ -464,7 +464,7 @@ fn kernels_sm120_broadcast() -> &'static str {
 /// holds exactly the bytes of the same piece of `from`'s, moved through the
 /// snapshot pages, and that `from`'s state is still its own: every layer,
 /// plane and slot lands where it belongs, and no byte of `to` is stale.
-fn assert_state_moved(host: &FakeHost, items: u32, from: u32, to: u32) {
+fn assert_state_moved(host: &FakeHost, items: u32, verify_rows: u32, from: u32, to: u32) {
     let state = model_deepseek41_contract::state::request_state(
         host.shape.geometry,
         host.kv.storage,
@@ -475,7 +475,7 @@ fn assert_state_moved(host: &FakeHost, items: u32, from: u32, to: u32) {
         bucket: bundle_runtime::geometry::Items::new(items)
             .unwrap()
             .capacity(),
-        verify_rows: 0,
+        verify_rows,
     };
     let holder = |slot| bundle_runtime::state::Holder::Slot(slot);
     let sources = state.pieces(extent, holder(from)).unwrap();
@@ -566,7 +566,7 @@ fn prefix_snapshots_round_trip_through_the_pages() {
         instance
             .restore_prefix_state_in_slot(9, &ids, &pages, 2)
             .unwrap();
-        assert_state_moved(&host, 4, 0, 2);
+        assert_state_moved(&host, 4, 0, 0, 2);
         instance
             .execute(&decode(&[(9, 2, tokens, 5)]), &mut views)
             .unwrap();
@@ -585,5 +585,139 @@ fn prefix_snapshots_round_trip_through_the_pages() {
 fn the_state_check_catches_a_restore_that_moved_nothing() {
     let shape = Shape::new(&FLASH, Ranks::TP2).unwrap();
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
-    assert_state_moved(&host, 4, 0, 2);
+    assert_state_moved(&host, 4, 0, 0, 2);
+}
+
+/// One verify step of `items`: (request, slot, previous tokens, the
+/// row's tokens: the last sampled one, then the drafts).
+fn verify(items: &[(u64, u64, u64, &[u32])]) -> Vec<u8> {
+    use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
+    let mut batch = Vec::new();
+    let mut appends = Vec::new();
+    let mut slots = Vec::new();
+    for &(request, slot, previous, tokens) in items {
+        let rows = tokens.len() as u64;
+        let end = previous + rows;
+        batch.push(BatchItemV1::verify(
+            request,
+            rows as u32,
+            false,
+            tokens.to_vec(),
+        ));
+        appends.push(BatchAppendV1::new(
+            previous,
+            rows,
+            end,
+            (0..end.div_ceil(64)).map(|page| slot * 8 + page).collect(),
+            None,
+        ));
+        slots.push(slot);
+    }
+    BatchRequestV1::new(BatchWireVersionV1::V3, batch, appends)
+        .with_state_slots(slots)
+        .encode()
+        .unwrap()
+}
+
+fn kept(request_id: u64, kept_rows: u32) -> BundleKeptRowsV1 {
+    BundleKeptRowsV1 {
+        struct_size: std::mem::size_of::<BundleKeptRowsV1>() as u32,
+        reserved: 0,
+        request_id,
+        kept_rows,
+        reserved_tail: 0,
+    }
+}
+
+/// With speculation on: a verify step keeps two of one request's four
+/// rows and one of another's two (three drafts rejected), the next keeps
+/// all four; a cancelled step invalidates the request it
+/// touched, which retires, while another request decodes on; a request preempted by a snapshot resumes as a
+/// new request in a recycled slot, which holds exactly the captured state
+/// (none of its previous request's), and decodes on. Each verify row's
+/// logits reach the sink.
+#[test]
+fn the_lifecycle_verifies_cancels_preempts_and_recycles_slots() {
+    let shape = Shape::new(&FLASH, Ranks::TP2).unwrap();
+    let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+    host.speculation.set(Some((3, 16)));
+    let mut instance = create(&host, 4);
+    let mut views = Views::default();
+    for (request, slot, count) in [(7, 0, 70), (9, 1, 5)] {
+        instance
+            .execute(&prompt(request, slot, 0, count, true), &mut views)
+            .unwrap();
+        instance.commit().unwrap();
+    }
+    assert_eq!(views.rows(), 2);
+    // Request 7 verifies three drafts and keeps two rows; request 9
+    // verifies one and keeps only its first row.
+    let mut views = Views::default();
+    instance
+        .execute(
+            &verify(&[(7, 0, 70, &[1, 2, 3, 4]), (9, 1, 5, &[6, 7])]),
+            &mut views,
+        )
+        .unwrap();
+    assert_eq!(views.rows(), 6);
+    instance.commit_accepted(&[kept(7, 2), kept(9, 1)]).unwrap();
+    // Every draft accepted from the kept position.
+    let mut views = Views::default();
+    instance
+        .execute(&verify(&[(7, 0, 72, &[5, 6, 7, 8])]), &mut views)
+        .unwrap();
+    assert_eq!(views.rows(), 4);
+    instance.commit_accepted(&[kept(7, 4)]).unwrap();
+    // A step from a stale position is refused and changes nothing.
+    assert!(
+        instance
+            .execute(&decode(&[(7, 0, 72, 1)]), &mut Views::default())
+            .is_err()
+    );
+    // A cancelled decode invalidates the request it touched, and only it.
+    instance
+        .execute(&decode(&[(7, 0, 76, 1)]), &mut Views::default())
+        .unwrap();
+    instance.cancel().unwrap();
+    assert!(
+        instance
+            .execute(&decode(&[(7, 0, 76, 1)]), &mut Views::default())
+            .is_err()
+    );
+    instance
+        .execute(&decode(&[(9, 1, 6, 2)]), &mut Views::default())
+        .unwrap();
+    instance.commit().unwrap();
+    instance.retire_request(7).unwrap();
+    instance.retire_request(9).unwrap();
+    // Request 11 runs past the ring's wrap in slot 2 and is preempted: its
+    // state is captured and it retires; request 13 then uses slot 2.
+    instance
+        .execute(&prompt(11, 2, 0, 141, true), &mut Views::default())
+        .unwrap();
+    instance.commit().unwrap();
+    let count = instance.describe_prefix_state().unwrap();
+    let pages = (0..count).map(|page| 40 + page).collect::<Vec<_>>();
+    instance.capture_prefix_state(11, 141, &pages).unwrap();
+    instance.retire_request(11).unwrap();
+    instance
+        .execute(&prompt(13, 2, 0, 9, true), &mut Views::default())
+        .unwrap();
+    instance.commit().unwrap();
+    // Request 11 resumes as request 15 in slot 0, which request 7 held.
+    let ids = (0..141).collect::<Vec<u32>>();
+    instance
+        .restore_prefix_state_in_slot(15, &ids, &pages, 0)
+        .unwrap();
+    assert_state_moved(&host, 4, 4, 2, 0);
+    let mut views = Views::default();
+    instance
+        .execute(&decode(&[(15, 0, 141, 3), (13, 2, 9, 4)]), &mut views)
+        .unwrap();
+    instance.commit().unwrap();
+    assert_eq!(views.rows(), 2);
+    instance.retire_request(13).unwrap();
+    instance.retire_request(15).unwrap();
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
 }

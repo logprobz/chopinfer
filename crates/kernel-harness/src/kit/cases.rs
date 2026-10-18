@@ -20,6 +20,7 @@ pub mod moe;
 pub mod moe_chained_quantized;
 pub mod moe_routed;
 pub mod multimodal;
+pub mod mxfp8_fold;
 pub mod pooled_indexer;
 pub mod position_blocks;
 pub mod position_indexer;

@@ -7,6 +7,9 @@ use kernel_core::contract::{Argument, ArgumentList, LaunchPlan, Refusal};
 use kernel_core::properties::Invariance;
 use model_deepseek41_contract::geometry::Geometry;
 use model_deepseek41_contract::own_ops::OwnOps;
+use model_deepseek41_contract::own_ops::dspark::{
+    ConfidenceHead, ConfidenceHeadBuffers, MarkovStep, MarkovStepBuffers,
+};
 use model_deepseek41_contract::own_ops::engram::{EngramGate, EngramGateBuffers};
 use model_deepseek41_contract::own_ops::rope::{
     MAX_POSITIONS, PAIRS, RopeCosSin, RopeCosSinBuffers, RopeRows, check_geometry,
@@ -28,6 +31,22 @@ impl Sm120Own {
 }
 
 impl OwnOps for Sm120Own {
+    fn dspark_markov_step(
+        &self,
+        op: &MarkovStep,
+        need: Need,
+    ) -> Result<Prepared<MarkovStepBuffers<View>>, Refused> {
+        super::dspark::markov(self.geometry, op, need)
+    }
+
+    fn dspark_confidence(
+        &self,
+        op: &ConfidenceHead,
+        need: Need,
+    ) -> Result<Prepared<ConfidenceHeadBuffers<View>>, Refused> {
+        super::dspark::confidence(self.geometry, op, need)
+    }
+
     fn name(&self) -> &str {
         "sm120"
     }

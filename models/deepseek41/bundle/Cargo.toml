@@ -33,6 +33,12 @@ bundle-runtime = { workspace = true, features = ["test-support"] }
 encoder-spec.workspace = true
 serde_json.workspace = true
 
+# Tests that include the build script's registration files live under
+# tests/sm120.
+[[test]]
+name = "projection_assembly"
+path = "tests/sm120/projection_assembly.rs"
+
 # Tests that name SM120 items live under tests/sm120 and keep their names.
 [[test]]
 name = "encoder_catalog_stability"

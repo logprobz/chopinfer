@@ -4,6 +4,9 @@
 //! here. Generic code names nothing in this module beyond constructing the
 //! backend and the own ops.
 
+pub mod dspark;
+#[allow(dead_code, reason = "the build compiles the drafter auxiliary entries")]
+mod dspark_aux;
 pub mod dspark_entries;
 pub mod latent;
 pub mod mxfp8_fold;
@@ -135,6 +138,7 @@ impl crate::Kernels {
         let sm120 = indexer_query::register(sm120, shape.geometry);
         let sm120 = latent_glue::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = latent_window_stage::register(sm120, shape.geometry, shape.ranks())?;
+        let sm120 = dspark_aux::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = register_f32_projections(sm120, shape.geometry, shape.ranks())?;
         // The vision encoder's shared entries (`crate::encoders`).
         let sm120 = encoder::register(sm120)?;

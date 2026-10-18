@@ -11,12 +11,18 @@ use std::path::PathBuf;
 use kernel_build::{LockDir, ModelLock, Toolchain};
 use model_deepseek41_contract::geometry::GEOMETRIES;
 
+#[allow(dead_code, reason = "the bundle registers the auxiliary entries")]
+mod dspark_aux;
+mod dspark_cubin;
+mod dspark_entries;
 #[path = "encoder.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod encoder;
 #[path = "hc.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod hc;
+#[allow(dead_code, reason = "the bundle registers the entries")]
+mod latent;
 mod own_cubin;
 // The build compiles the entries; the bundle launches them.
 #[allow(dead_code, reason = "the bundle registers the entries")]
@@ -36,8 +42,6 @@ mod indexer;
 #[path = "indexer_query.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod indexer_query;
-#[allow(dead_code, reason = "the bundle registers the entries")]
-mod latent;
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod latent_glue;
 #[allow(dead_code, reason = "the bundle registers the entries")]
@@ -62,40 +66,106 @@ mod rows;
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod shared;
 
+/// The cubins the bundle compiles for `geometries`, each with its lock
+/// family, and the geometry of each cubin that serves one geometry alone;
+/// the other cubins serve every geometry. One cubin per geometry within a
+/// family, so a geometry added later only appends records
+/// (`tests/sm120/projection_assembly.rs`).
+pub struct Selection {
+    pub specs: Vec<(&'static str, kernel_build::CubinSpec)>,
+    pub owners: Vec<(String, &'static str)>,
+}
+
+pub fn selection(
+    manifest: &std::path::Path,
+    geometries: &'static [model_deepseek41_contract::geometry::Geometry],
+) -> Selection {
+    let mut specs = vec![(own_entries::FAMILY, own_cubin::rope_cubin_spec(manifest))];
+    specs.push((dspark_entries::FAMILY, dspark_cubin::cubin_spec(manifest)));
+    specs.extend(dspark_aux::cubins(geometries).expect("DSpark auxiliary cubins"));
+    let mut owners = Vec::new();
+    for geometry in geometries.iter().filter(|g| own_entries::has_gates(g)) {
+        let spec = own_cubin::gate_cubin_spec(manifest, geometry);
+        owners.push((spec.name.clone(), geometry.id));
+        specs.push((own_entries::FAMILY, spec));
+    }
+    for geometry in geometries {
+        owners.extend(dspark_aux::geometry_cubins(geometry).map(|name| (name, geometry.id)));
+        owners.push((rows::cubin_name(geometry), geometry.id));
+        owners.push((rows::final_norm_cubin_name(geometry), geometry.id));
+        owners.push((reduce::rounding_cubin(geometry), geometry.id));
+        owners.push((hc::cubin_name(geometry), geometry.id));
+        owners.push((hc::head_f32_cubin_name(geometry), geometry.id));
+        for cubin in ["sm120", "p32_sm120", "bf16_sm120"] {
+            owners.push((
+                format!("latent_sources_{}_{cubin}", geometry.kernel_tag),
+                geometry.id,
+            ));
+        }
+        owners.push((
+            format!("position_indexer_{}_sm120", geometry.kernel_tag),
+            geometry.id,
+        ));
+        owners.push((indexer::blocks_cubin_name(geometry), geometry.id));
+        for part in ["compute", "routes", "quantize"] {
+            owners.push((
+                format!("moe_{}_{part}_sm120", geometry.kernel_tag),
+                geometry.id,
+            ));
+        }
+        for cubin in routed_sum::cubin_names(geometry) {
+            owners.push((cubin, geometry.id));
+        }
+        owners.push((dense::cubin_name(geometry), geometry.id));
+        owners.push((f32_head::cubin_name(geometry), geometry.id));
+        owners.push((f32_dense::cubin_name(geometry), geometry.id));
+        owners.push((shared::cubin_name(geometry), geometry.id));
+        owners.push((mxfp8_fold::cubin_name(geometry), geometry.id));
+        owners.push((
+            format!("latent_q_norm_{}_sm120", geometry.kernel_tag),
+            geometry.id,
+        ));
+        owners.push((
+            format!("position_query_{}_sm120", geometry.kernel_tag),
+            geometry.id,
+        ));
+        for part in ["pooling", "keys", "ratio_one"] {
+            owners.push((
+                format!("{}_compressor_{part}_v1", geometry.kernel_tag),
+                geometry.id,
+            ));
+        }
+    }
+    specs.extend(rows::cubins(geometries).expect("deepseek41 row cubins"));
+    specs.extend(reduce::cubins(geometries));
+    specs.extend(hc::cubins(geometries));
+    specs.extend(latent::cubins(geometries).expect("deepseek41 latent cubins"));
+    specs.extend(indexer::cubins(geometries).expect("deepseek41 indexer cubins"));
+    specs.extend(compressor::cubins(geometries).expect("deepseek41 compressor cubins"));
+    specs.extend(moe::cubins(geometries).expect("deepseek41 routed MoE cubins"));
+    specs.extend(routed_sum::cubins(geometries).expect("deepseek41 routed sum cubins"));
+    specs.extend(dense::cubins(geometries).expect("deepseek41 dense quantizer cubins"));
+    specs.extend(f32_head::cubins(geometries).expect("deepseek41 F32 head cubins"));
+    specs.extend(f32_dense::cubins(geometries).expect("deepseek41 F32 dense cubins"));
+    specs.extend(shared::cubins(geometries).expect("deepseek41 shared expert cubins"));
+    specs.push(("dependencies", kernels_sm120::probes::cubin_spec()));
+    specs.extend(indexer_query::cubins(geometries).expect("deepseek41 query preparation cubins"));
+    specs.extend(latent_glue::cubins(geometries).expect("deepseek41 latent glue cubins"));
+    specs.extend(latent_window_stage::cubins(geometries).expect("window stage cubins"));
+    specs.extend(latent_window_stage::key_cubins(geometries).expect("staged window key cubins"));
+    specs.extend(mxfp8_fold::cubins(geometries).expect("deepseek41 MXFP8 fold cubins"));
+    specs.extend(encoder::cubins().expect("deepseek41 encoder cubins"));
+    Selection { specs, owners }
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=src/sm120");
     let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest directory"));
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("output directory"));
-    // (family, cubin) pairs; one family per engine or own-op set.
-    let mut specs = vec![(own_entries::FAMILY, own_cubin::rope_cubin_spec(&manifest))];
-    for geometry in GEOMETRIES.iter().filter(|g| own_entries::has_gates(g)) {
-        specs.push((
-            own_entries::FAMILY,
-            own_cubin::gate_cubin_spec(&manifest, geometry),
-        ));
-    }
-    specs.extend(rows::cubins(GEOMETRIES).expect("deepseek41 row cubins"));
-    specs.extend(reduce::cubins(GEOMETRIES));
-    specs.extend(hc::cubins(GEOMETRIES));
-    specs.extend(latent::cubins(GEOMETRIES).expect("deepseek41 latent cubins"));
-    specs.extend(indexer::cubins(GEOMETRIES).expect("deepseek41 indexer cubins"));
-    specs.extend(compressor::cubins(GEOMETRIES).expect("deepseek41 compressor cubins"));
-    specs.extend(moe::cubins(GEOMETRIES).expect("deepseek41 routed MoE cubins"));
-    specs.extend(routed_sum::cubins(GEOMETRIES).expect("deepseek41 routed sum cubins"));
-    specs.extend(dense::cubins(GEOMETRIES).expect("deepseek41 dense quantizer cubins"));
-    specs.extend(f32_head::cubins(GEOMETRIES).expect("deepseek41 F32 head cubins"));
-    specs.extend(f32_dense::cubins(GEOMETRIES).expect("deepseek41 F32 dense cubins"));
-    specs.extend(shared::cubins(GEOMETRIES).expect("deepseek41 shared expert cubins"));
-    specs.push(("dependencies", kernels_sm120::probes::cubin_spec()));
-    specs.extend(indexer_query::cubins(GEOMETRIES).expect("deepseek41 query preparation cubins"));
-    specs.extend(latent_glue::cubins(GEOMETRIES).expect("deepseek41 latent glue cubins"));
-    specs.extend(latent_window_stage::cubins(GEOMETRIES).expect("window stage cubins"));
-    specs.extend(latent_window_stage::key_cubins(GEOMETRIES).expect("staged window key cubins"));
-    specs.extend(mxfp8_fold::cubins(GEOMETRIES).expect("deepseek41 MXFP8 fold cubins"));
-    specs.extend(encoder::cubins().expect("deepseek41 encoder cubins"));
+    let Selection { specs, owners } = selection(&manifest, GEOMETRIES);
     let mut families: Vec<(&str, Vec<&str>)> = Vec::new();
-    for (family, spec) in &specs {
-        match families.iter_mut().find(|(name, _)| name == family) {
+    for (family, spec) in specs.iter().map(|(family, spec)| (*family, spec)) {
+        match families.iter_mut().find(|(name, _)| *name == family) {
             Some((_, cubins)) => cubins.push(&spec.name),
             None => families.push((family, vec![&spec.name])),
         }
@@ -141,4 +211,15 @@ fn main() {
         kernel_build::digest(format!("deepseek41.f32-projections.v1\n{f32}").as_bytes()),
     )
     .expect("write the F32 projection dependency");
+    // The geometry of each cubin that serves one geometry; the others serve
+    // every geometry.
+    let owners: String = owners
+        .iter()
+        .map(|(cubin, geometry)| format!("({cubin:?}, {geometry:?}),"))
+        .collect();
+    std::fs::write(
+        out.join("geometry_cubins.rs"),
+        format!("pub(crate) const GEOMETRY_CUBINS: &[(&str, &str)] = &[{owners}];\n"),
+    )
+    .expect("write geometry cubin list");
 }

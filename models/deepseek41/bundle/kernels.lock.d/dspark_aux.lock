@@ -1,0 +1,686 @@
+[
+  {
+    "name": "dspark_features_deepseek41_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_sinkhorn_hc_deepseek41_head_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "x",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "out",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "f5818d63b0fceb2cd93345cb331b6abe7395e5e68373a34c1bd160de7ff8e553",
+    "resources": [
+      {
+        "symbol": "chop_sinkhorn_hc_deepseek41_head_v1",
+        "registers": 20,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "dspark_gather_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [
+      [
+        "CHOP_COMM_LL_MAX_ROWS",
+        "2"
+      ],
+      [
+        "CHOP_COMM_LL_CLUSTER",
+        "2"
+      ],
+      [
+        "CHOP_COMM_PUSH_CLUSTER",
+        "8"
+      ],
+      [
+        "CHOP_COMM_TWO_SHOT_MIN_RANKS",
+        "4"
+      ],
+      [
+        "CHOP_COMM_ONE_SHOT_BASE",
+        "1048576"
+      ],
+      [
+        "CHOP_COMM_TWO_SHOT_BASE",
+        "5242880"
+      ],
+      [
+        "CHOP_COMM_PHASED_BASE",
+        "8388608"
+      ],
+      [
+        "CHOP_COMM_TWO_SHOT_FLAGS",
+        "82"
+      ],
+      [
+        "CHOP_COMM_MAX_RANKS",
+        "8"
+      ],
+      [
+        "CHOP_COMM_WIDE_MAX_ROWS",
+        "256"
+      ],
+      [
+        "CHOP_COMM_WIDE_BLOCK_ROWS",
+        "16"
+      ],
+      [
+        "CHOP_COMM_WIDE_GATHER_BASE",
+        "5767168"
+      ],
+      [
+        "CHOP_COMM_WIDE_SCATTER_BASE",
+        "8388608"
+      ],
+      [
+        "CHOP_COMM_WIDE_FLAGS",
+        "98"
+      ],
+      [
+        "CHOP_COMM_LL_ROWS_BY_RANKS",
+        "0x0200000002000202ull"
+      ],
+      [
+        "CHOP_COMM_ONESHOT_ROWS_BY_RANKS",
+        "0x1020202010202020ull"
+      ]
+    ],
+    "entries": [
+      {
+        "symbol": "chop_comm_allgather_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "outputs",
+            "slots": 8,
+            "cxx_type": "float"
+          },
+          {
+            "kind": "PointerArray",
+            "name": "flags",
+            "slots": 8,
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "epoch",
+            "cxx_type": "unsigned int"
+          },
+          {
+            "kind": "U64",
+            "name": "elements_per_rank"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "target"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "9946cec1bc6a6640b8a495d6d026bd0e9567e0123e8bfe0468a0ed8bb8687699",
+    "resources": [
+      {
+        "symbol": "chop_comm_allgather_f32_v1",
+        "registers": 72,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "dspark_quantize_deepseek41_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_deepseek41_dspark_quantize_w15360_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_deepseek41_dspark_quantize_w5120_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "status_row_offset"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "d678ba3eaf8e12f7e63b2030ccb9b4017fa135bba62fcbeaa07ad21edac22f37",
+    "resources": [
+      {
+        "symbol": "chop_deepseek41_dspark_quantize_w15360_bf16_v1",
+        "registers": 25,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_dspark_quantize_w5120_f32_v1",
+        "registers": 25,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "dspark_rounding_deepseek41_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_deepseek41_dspark_markov_round_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_deepseek41_dspark_markov_widen_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "243ed3caaa25e2451e525f5cda4d988278836f5943f797d9df6583e190fd457f",
+    "resources": [
+      {
+        "symbol": "chop_deepseek41_dspark_markov_round_v1",
+        "registers": 32,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_dspark_markov_widen_v1",
+        "registers": 32,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "dspark_rows_deepseek41_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_row_dspark_markov_deepseek41_tp1_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "table",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "vocab_offset"
+          },
+          {
+            "kind": "U32",
+            "name": "shard_vocab"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_row_dspark_markov_deepseek41_tp2_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "table",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "vocab_offset"
+          },
+          {
+            "kind": "U32",
+            "name": "shard_vocab"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_row_dspark_markov_deepseek41_tp4_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "table",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "vocab_offset"
+          },
+          {
+            "kind": "U32",
+            "name": "shard_vocab"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "8b034a63c83769313e556217503dbef2dba20a2b0536c7520fcef19154057beb",
+    "resources": [
+      {
+        "symbol": "chop_row_dspark_markov_deepseek41_tp1_v1",
+        "registers": 23,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_row_dspark_markov_deepseek41_tp2_v1",
+        "registers": 23,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_row_dspark_markov_deepseek41_tp4_v1",
+        "registers": 23,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "dspark_select_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_dspark_argmax_f32_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_width",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "vocab"
+          },
+          {
+            "kind": "U32",
+            "name": "vocab_offset"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_dspark_argmax_final_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "rows_a",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "out_a",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "rows_b",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "out_b",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "ranks"
+          },
+          {
+            "kind": "U32",
+            "name": "row_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "rank_stride"
+          },
+          {
+            "kind": "U32",
+            "name": "len_a"
+          },
+          {
+            "kind": "U32",
+            "name": "len_b"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "7e8d5b8721d762556d228d288e6ba006d880237ad46bc018ebf498dad15c332f",
+    "resources": [
+      {
+        "symbol": "chop_dspark_argmax_f32_v1",
+        "registers": 30,
+        "shared_static_bytes": 1280,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_dspark_argmax_final_v1",
+        "registers": 29,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

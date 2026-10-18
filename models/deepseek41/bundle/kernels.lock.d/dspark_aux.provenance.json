@@ -1,0 +1,26 @@
+[
+  {
+    "name": "dspark_features_deepseek41_sm120",
+    "source_closure_sha256": "aa78b77f4cdf2aaedac68a2e4e32f15a3572ef95c3465fe02713b6e1f95deb26"
+  },
+  {
+    "name": "dspark_gather_sm120",
+    "source_closure_sha256": "6690e62bbc95a7e6bd715f5eecf83c923d02268756988352b227a1e3b4d31fbb"
+  },
+  {
+    "name": "dspark_quantize_deepseek41_sm120",
+    "source_closure_sha256": "40e8cb3206fd885f3db8f033d9ba72d541d34251622c53736d6e094a389777ee"
+  },
+  {
+    "name": "dspark_rounding_deepseek41_sm120",
+    "source_closure_sha256": "a5cbbaf2d0bc66dc3c7cffe83c2bffcba4a9faa232c8410ce4943664e0782117"
+  },
+  {
+    "name": "dspark_rows_deepseek41_sm120",
+    "source_closure_sha256": "cea8b58dc2678826509144fcb646e5ba979aa12057ede14f63b39af5b180dfe1"
+  },
+  {
+    "name": "dspark_select_sm120",
+    "source_closure_sha256": "124e5e8192dbbace9f3e59f69eef2b702cd325ed0f444a83a8ee3e1d55e15ddd"
+  }
+]

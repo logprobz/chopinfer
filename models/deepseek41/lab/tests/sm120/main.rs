@@ -10,12 +10,13 @@ mod latent_bf16;
 // The own ops: the bundle's entries, cubin specification and `OwnOps`
 // implementation, and their tests.
 mod compressor;
+#[path = "../../../bundle/src/sm120/dspark.rs"]
+mod dspark;
+#[path = "../../../bundle/src/sm120/dspark_cubin.rs"]
+mod dspark_cubin;
 #[path = "../../../bundle/src/sm120/dspark_entries.rs"]
-#[allow(
-    dead_code,
-    reason = "the row widening reads the drafter's rounding symbol"
-)]
 mod dspark_entries;
+mod dspark_heads;
 mod indexer;
 #[path = "../../../bundle/src/sm120/indexer.rs"]
 mod indexer_entries;

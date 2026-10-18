@@ -163,7 +163,9 @@ pub fn is_routine_bundle_trace(message: &[u8]) -> bool {
         .and_then(serde_json::Value::as_str)
         .is_some_and(|schema| {
             schema.starts_with("chopinfer.")
-                && (schema.ends_with(".step-shape.v1") || schema.ends_with(".drafter-catch-up.v1"))
+                && (schema.ends_with(".step-shape.v1")
+                    || schema.ends_with(".drafter-catch-up.v1")
+                    || schema.ends_with(".drafter-confidence.v1"))
         })
 }
 
@@ -243,7 +245,18 @@ mod tests {
     }
 
     #[test]
-    fn stalled_writer_does_not_block_producer_and_counts_full_queue() {
+    fn stalled_writer_drops_whole_confidence_records_and_counts_them() {
+        const FIRST: &str =
+            r#"bundle: {"schema":"chopinfer.example.drafter-confidence.v1","step_id":"1"}"#;
+        const SECOND: &str =
+            r#"bundle: {"schema":"chopinfer.example.drafter-confidence.v1","step_id":"2"}"#;
+        const DROPPED: &str =
+            r#"bundle: {"schema":"chopinfer.example.drafter-confidence.v1","step_id":"3"}"#;
+        for line in [FIRST, SECOND, DROPPED] {
+            assert!(is_routine_bundle_trace(
+                line.strip_prefix("bundle: ").unwrap().as_bytes()
+            ));
+        }
         let bytes = Arc::new(Mutex::new(Vec::new()));
         let (entered, waiting) = mpsc::sync_channel(0);
         let (release, released) = mpsc::channel();
@@ -257,14 +270,14 @@ mod tests {
             },
             1,
         ));
-        logger.line("first".into());
+        logger.line(FIRST.into());
         waiting.recv_timeout(Duration::from_secs(30)).unwrap();
         let producer = Arc::clone(&logger);
         let (done, completed) = mpsc::channel();
         let worker = std::thread::spawn(move || {
-            producer.line("second".into());
+            producer.line(SECOND.into());
             for _ in 0..100 {
-                producer.line("dropped".into());
+                producer.line(DROPPED.into());
             }
             done.send(()).unwrap();
         });
@@ -277,9 +290,9 @@ mod tests {
         assert!(logger.flush(Duration::from_secs(30)).flushed);
         flushes.recv_timeout(Duration::from_secs(30)).unwrap();
         let output = String::from_utf8(bytes.lock().unwrap().clone()).unwrap();
-        assert!(output.starts_with("first\nsecond\n"));
+        assert!(output.starts_with(&format!("{FIRST}\n{SECOND}\n")));
         assert!(output.contains("dropped 100 lines (total 100)"));
-        assert!(!output.contains("\ndropped\n"));
+        assert!(!output.contains(DROPPED));
         drop(logger);
         flushes
             .recv_timeout(Duration::from_secs(30))
@@ -327,7 +340,7 @@ mod tests {
 
     #[test]
     fn only_recognized_routine_bundle_traces_allow_lossy_delivery() {
-        for kind in ["step-shape", "drafter-catch-up"] {
+        for kind in ["step-shape", "drafter-catch-up", "drafter-confidence"] {
             assert!(is_routine_bundle_trace(
                 format!(r#"{{"schema":"chopinfer.example.{kind}.v1"}}"#).as_bytes()
             ));
@@ -339,6 +352,8 @@ mod tests {
             r#"{"schema":"chopinfer.example.error.v1","error":"digest"}"#,
             r#"{"schema":"chopinfer.example.unknown.v1"}"#,
             r#"{"schema":"other.step-shape.v1"}"#,
+            r#"{"schema":"other.drafter-confidence.v1"}"#,
+            r#"{"schema":"chopinfer.example.drafter-confidence.v2"}"#,
             r#"{"schema":"chopinfer.example.step-shape.v1""#,
         ] {
             assert!(!is_routine_bundle_trace(message.as_bytes()), "{message}");

@@ -201,6 +201,8 @@ pub struct LatentWindowInput<'a> {
 #[derive(Clone, Copy, Debug)]
 pub struct LatentCompressedInput<'a> {
     pub pool: &'a [u8],
+    /// Admitted physical pages, independent of trailing bytes in the view.
+    pub pages: usize,
     pub paging: LatentPaging<'a>,
     pub lists: LatentKeyLists<'a>,
 }
@@ -222,9 +224,13 @@ fn compressed_location(
     layout: Layout,
     paging: LatentPaging<'_>,
     pool_bytes: usize,
+    pages: usize,
     item: i32,
     position: usize,
 ) -> Result<Option<(usize, usize)>, Refusal> {
+    if pages == 0 || paging.page_stride < layout.page_bytes() {
+        return Err(Refusal("latent compressed page geometry is invalid"));
+    }
     let item = usize::try_from(item).map_err(|_| Refusal("latent sequence is negative"))?;
     let column = position / layout.page_size;
     if column >= paging.max_pages {
@@ -238,7 +244,7 @@ fn compressed_location(
         .block_tables
         .get(at)
         .ok_or(Refusal("latent page table entry missing"))?;
-    if page < 0 {
+    if page < 0 || page as usize >= pages {
         return Ok(None);
     }
     layout
@@ -347,6 +353,9 @@ pub fn latent_attention_with_sources(
         page_size: page_size as usize,
         kv: LatentKvFormat::Fp4E2M1E4M3Block16,
     };
+    if input.compressed.is_some_and(|s| s.pages == 0) {
+        return Err(Refusal("latent compressed page count is zero"));
+    }
     if input
         .compressed
         .is_some_and(|s| s.paging.page_stride < layout.page_bytes())
@@ -405,6 +414,7 @@ pub fn latent_attention_with_sources(
                     layout,
                     source.paging,
                     source.pool.len(),
+                    source.pages,
                     input.row_batch[row],
                     position,
                 )?
@@ -683,11 +693,21 @@ mod page_tests {
                 page_stride,
             };
             assert_eq!(
-                compressed_location(layout, paging, base + layout.page_bytes(), 0, positions - 1)
-                    .unwrap(),
+                compressed_location(
+                    layout,
+                    paging,
+                    base + layout.page_bytes(),
+                    physical as usize + 1,
+                    0,
+                    positions - 1
+                )
+                .unwrap(),
                 Some((base, page_size - 1))
             );
-            assert_eq!(compressed_location(layout, paging, 0, 0, 0).unwrap(), None);
+            assert_eq!(
+                compressed_location(layout, paging, 0, physical as usize + 1, 0, 0).unwrap(),
+                None
+            );
         }
     }
 }

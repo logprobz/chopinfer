@@ -387,6 +387,7 @@ fn with_queries<'a>(
         let compressed = if second_fp4_keys {
             Some(LatentCompressedInput {
                 pool: images.bytes("compressed.cache.pool")?,
+                pages,
                 paging: LatentPaging {
                     block_tables: &table,
                     max_pages: pages_per_sequence,

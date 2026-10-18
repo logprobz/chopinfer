@@ -478,7 +478,7 @@ crate::scratch_record! {
     /// stores P code rows of D/2 bytes followed by P scale rows of D/16 bytes.
     /// Position j reads table[item, j/P], code offset (j%P)*D/2 and scale
     /// offset P*D/2 + (j%P)*D/16 within that physical page. A negative page
-    /// entry is a hole. The byte stride is at least P*(D/2+D/16), may include
+    /// entry, or an ID outside `cache.pages`, is a hole. The byte stride is at least P*(D/2+D/16), may include
     /// padding, and physical_page*page_stride uses checked 64-bit offsets.
     /// The FP8 window instead uses its own slot count and separate planes.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]

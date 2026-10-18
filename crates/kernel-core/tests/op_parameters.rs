@@ -1721,6 +1721,7 @@ mod latent_parameters {
                 },
                 compressed: Some(LatentCompressedInput {
                     pool: &self.compressed,
+                    pages: 2,
                     paging: LatentPaging {
                         block_tables: &[1, 0],
                         max_pages: 2,
@@ -2032,6 +2033,7 @@ mod latent_parameters {
             let mut input = source.input(&[], &ids);
             let compressed = input.compressed.as_mut().unwrap();
             compressed.pool = &pool;
+            compressed.pages = 3;
             compressed.paging = LatentPaging {
                 block_tables: &[2, 0, -1, 1],
                 max_pages: 4,
@@ -2057,6 +2059,55 @@ mod latent_parameters {
                 normalized(latent_attention_with_sources(query, hole).unwrap()),
                 vec![0.0; 2 * D]
             );
+        }
+    }
+
+    #[test]
+    fn latent_positive_page_ids_outside_admission_are_holes() {
+        let source = Sources::new();
+        for page in [32, 64] {
+            let payload = COMPRESSED.page_bytes(D as u32, page) as usize;
+            let pool = vec![0x38; 2 * payload];
+            let mut query = query(Output::Normalized);
+            if let Query::Attention { page_size, .. } = &mut query {
+                *page_size = page;
+            }
+            for outside in [1, 2, i32::MAX] {
+                let table = [outside];
+                let mut input = source.input(&[], &[0]);
+                let compressed = input.compressed.as_mut().unwrap();
+                compressed.pages = 1;
+                compressed.pool = &pool[..payload];
+                compressed.paging = LatentPaging {
+                    block_tables: &table,
+                    max_pages: 1,
+                    page_stride: payload,
+                };
+                assert_eq!(
+                    normalized(latent_attention_with_sources(query, input).unwrap()),
+                    vec![0.0; 2 * D]
+                );
+                // Unadmitted trailing pages in a larger view stay holes.
+                input.compressed.as_mut().unwrap().pool = &pool;
+                assert_eq!(
+                    normalized(latent_attention_with_sources(query, input).unwrap()),
+                    vec![0.0; 2 * D]
+                );
+                input.compressed.as_mut().unwrap().paging.page_stride = payload - 1;
+                assert!(latent_attention_with_sources(query, input).is_err());
+            }
+            let mut input = source.input(&[], &[0]);
+            let compressed = input.compressed.as_mut().unwrap();
+            compressed.pages = 1;
+            compressed.pool = &pool[..payload - 1];
+            compressed.paging = LatentPaging {
+                block_tables: &[0],
+                max_pages: 1,
+                page_stride: payload,
+            };
+            assert!(latent_attention_with_sources(query, input).is_err());
+            input.compressed.as_mut().unwrap().pages = 0;
+            assert!(latent_attention_with_sources(query, input).is_err());
         }
     }
 

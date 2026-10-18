@@ -203,6 +203,32 @@ fn retained_ring_store_is_observable_at_every_nonzero_live_count() {
 }
 
 #[test]
+fn positive_glue_cases_exercise_a_chunk_split() {
+    use kernel_core::properties::Chunk;
+    let cases = required();
+    let modules = FamilyModules {
+        directory: PathBuf::new(),
+    };
+    let report = kit::conform(&backend(), &modules, None, &cases).unwrap();
+    for (case, op) in cases.iter().zip(&report.ops) {
+        let OpResult::Prepared { guarantees, .. } = &op.result else {
+            panic!("{} is not prepared", case.name);
+        };
+        let split = match guarantees.chunk {
+            Chunk::Any => 1,
+            Chunk::Granule(n) => n,
+            Chunk::None => continue,
+        };
+        assert!(
+            split > 0 && split < case.need.capacity,
+            "{} has no chunk split at capacity {}",
+            case.name,
+            case.need.capacity
+        );
+    }
+}
+
+#[test]
 fn all_latent_glue_cases_prepare_and_declare() {
     let modules = FamilyModules {
         directory: PathBuf::new(),

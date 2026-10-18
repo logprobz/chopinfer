@@ -164,10 +164,16 @@ pub fn query_pairing_regression<'a>() -> Required<'a> {
     };
     Required::new(
         "query adjacent-pair regression",
-        Need::rows(1),
+        Need::rows(2),
         move |b, n| b.latent_query_rope(&query, n),
         move |op| {
-            query_case_with_values(query, 1, op, [0.0, 1.0].repeat(32), pairing_values(query))
+            query_case_with_values(
+                query,
+                2,
+                op,
+                [0.0, 1.0].repeat(64),
+                pairing_values(query).repeat(2),
+            )
         },
     )
     .required()
@@ -730,15 +736,15 @@ fn write_case_impl<'a>(
 pub fn window_f32_regression<'a>(query: LatentWindowWrite) -> Required<'a> {
     Required::new(
         "F32 projection boundary",
-        Need::rows(1),
+        Need::rows(2),
         move |b, n| b.latent_window_write(&query, n),
         move |op| {
             write_case_impl(
                 query,
-                1,
+                2,
                 0,
                 op,
-                [1.0, 0.0].repeat(32),
+                [1.0, 0.0].repeat(64),
                 WindowFixture::F32Boundary,
             )
         },

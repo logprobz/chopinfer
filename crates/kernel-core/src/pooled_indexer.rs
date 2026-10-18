@@ -700,11 +700,32 @@ crate::scratch_record! {
     }
 }
 
+/// Query preparation failed because its token position is outside the supplied
+/// RoPE table. This bit extends the shared quantizer's sticky U32 flags. The
+/// caller must reject the step before accepting any selection while a flag is
+/// set; score/select status is a separate overwriting plane.
+pub const POSITION_QUERY_INVALID_POSITION: u32 = 8;
+
+/// The position-validation flag for a query row. The table extent is supplied
+/// by the host; every device position is checked before q or table reads.
+pub const fn position_query_status(position: i32, table_positions: u32) -> u32 {
+    if position < 0 || position as u32 >= table_positions {
+        POSITION_QUERY_INVALID_POSITION
+    } else {
+        0
+    }
+}
+
 crate::scratch_record! {
     /// Query preparation: F32 q `[rows][heads][head_dim]`, F32 cos/sin as
     /// in the key write, I32 token positions and device live count. Output
     /// has q's shape and holds the MXFP4 fake-quantized values as lossless
     /// BF16. Rotation keeps F32 until the quantizer's BF16 input rounding.
+    /// A position outside 0..Counts::positions ORs
+    /// POSITION_QUERY_INVALID_POSITION into quantizer_status and writes a
+    /// positive-zero row without reading q or cos_sin. The shared quantizer
+    /// keeps that row zero and preserves the flag. No failed selection may
+    /// be accepted even if its separate score/select status is zero.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct PositionQueryBuffers {
         pub q: value,
@@ -712,7 +733,7 @@ crate::scratch_record! {
         pub positions: value,
         pub live_rows: value,
         pub output: value,
-        /// Caller-owned U32 sticky quantizer flags, one per row. Keep this
+        /// Caller-owned U32 sticky preparation/quantizer flags, one per row. Keep this
         /// separate from the score/select status, which overwrites its rows.
         pub quantizer_status: value,
         pub quantizer_status_row_offset: scalar(u64),

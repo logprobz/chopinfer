@@ -436,3 +436,25 @@ fn legacy_pooled_oracle_refuses_position_selection() {
         );
     }
 }
+
+#[test]
+fn query_positions_report_bounds_without_changing_valid_rows() {
+    use kernel_core::pooled_indexer::{POSITION_QUERY_INVALID_POSITION, position_query_status};
+    for position in [-1, i32::MIN, 4, i32::MAX] {
+        assert_eq!(
+            position_query_status(position, 4),
+            POSITION_QUERY_INVALID_POSITION
+        );
+    }
+    for position in [0, 1, 3] {
+        assert_eq!(position_query_status(position, 4), 0);
+    }
+    assert_eq!(position_query_status(0, 0), POSITION_QUERY_INVALID_POSITION);
+    assert_eq!(
+        POSITION_QUERY_INVALID_POSITION
+            & (kernel_core::precision::quantizer::NONFINITE_INPUT
+                | kernel_core::precision::quantizer::SCALE_OVERFLOW
+                | kernel_core::precision::quantizer::UNREPRESENTABLE_OUTPUT),
+        0
+    );
+}

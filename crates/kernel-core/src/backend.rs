@@ -1096,8 +1096,10 @@ pub trait Backend: Send + Sync {
     /// The only BF16 rounding is at the quantizer input; output BF16 stores
     /// the decoded values without loss. Launches read `Counts::rows` and
     /// `Counts::positions`, the number of table rows. Live query positions
-    /// are nonnegative and below that table extent. Inputs, output and
-    /// backend workspace occupy distinct storage.
+    /// outside that table extent set POSITION_QUERY_INVALID_POSITION on the
+    /// sticky preparation plane and produce zero rows. Inputs, output and
+    /// backend workspace occupy distinct storage. The caller checks this
+    /// plane before accepting selection; score/select status stays separate.
     fn position_indexer_query(
         &self,
         op: &PositionIndexerQuery,

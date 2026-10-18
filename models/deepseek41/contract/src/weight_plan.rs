@@ -37,7 +37,7 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::Arc;
 
-use kernel_core::precision::format::KernelFamily;
+use kernel_core::precision::format::{KernelFamily, registry};
 use kernel_core::weight_transform::{PackedSection, WeightTransform};
 use model_compiler_sdk::quantization::declared::{self, Admitted};
 use model_compiler_sdk::quantization::import::ImportedOperand;
@@ -46,7 +46,9 @@ use model_compiler_sdk::quantization::projection::{RecordPolicy, bind_record_pol
 use model_compiler_sdk::weight_plan::{RequestCache, RequestFiles, RequestKey, plan_identity};
 use projection_spec::ProjectionKind;
 use projection_spec::bind::{BoundDeclaration, CheckpointMetadata};
-use projection_spec::derive::{DerivationInput, Topology, hooks::VariantDeriver};
+use projection_spec::derive::{
+    DerivationInput, DerivedOperation, Topology, ViewRole, hooks::VariantDeriver,
+};
 use projection_spec::registry::Registry;
 use runtime_bundle_abi::weight_plan::{
     NamedBytesV1, PlannedViewV1, ViewPlacementV1, WeightPlanRequestV1, WeightPlanV1, WeightRecordV1,
@@ -104,7 +106,8 @@ pub struct View {
 /// bank's sources would pass the 64 sources one record may name), fused
 /// dense operands (the shared expert's w1 and w3) as one packed piece per
 /// operand, which the bundle binds as its own view, lookup tables as rows,
-/// every other projection one packed operand per resident section.
+/// every other projection one packed operand per resident section. Call
+/// [`bind_policy`] to bind the consumer layout before emitting these records.
 pub fn policy(family: KernelFamily, operands: u32) -> Option<RecordPolicy> {
     match family {
         KernelFamily::GroupedExpert => Some(RecordPolicy::PackedPieces),
@@ -113,6 +116,48 @@ pub fn policy(family: KernelFamily, operands: u32) -> Option<RecordPolicy> {
             model_compiler_sdk::quantization::format::RecordLayout::Rows,
         )),
         _ => None,
+    }
+}
+
+/// Bind the records to this model's consumers. Chained experts decode
+/// row-major codes and scales; the standard grouped format instead tiles
+/// scales for block-scaled MMA. Keep packed pieces so code/scale admission
+/// and the source K slice remain checked together.
+pub fn bind_policy(
+    mut operation: DerivedOperation,
+    operands: u32,
+) -> Result<DerivedOperation, String> {
+    if operation.family == KernelFamily::GroupedExpert {
+        let layout = registry::by_format(operation.packing.format)
+            .map_err(|e| e.to_string())?
+            .layout(KernelFamily::Row, None)
+            .map_err(|e| e.to_string())?;
+        operation.packing.layout = layout.weight;
+        // One row-major matrix per expert and operand, placed by PackedPieces.
+        operation.packing.layout.id = "row-major-groups".into();
+        operation.packing.validate().map_err(|e| e.to_string())?;
+        let sizes = operation
+            .packing
+            .section_bytes()
+            .map_err(|e| e.to_string())?;
+        for view in &mut operation.views {
+            let ViewRole::Weight(section) = view.role else {
+                continue;
+            };
+            let (bytes, id) = match section {
+                PackedSection::Codes => (sizes.codes, Some(layout.codes)),
+                PackedSection::LocalScales => (sizes.local_scales, layout.local_scales),
+                PackedSection::GlobalScales => (sizes.global_scales, layout.global_scales),
+            };
+            let width = kernel_core::precision::dtype_bits(view.dtype) / 8;
+            view.bytes = bytes;
+            view.shape = vec![bytes / width];
+            view.layout = id.ok_or("expert section has no row layout")?.into();
+        }
+    }
+    match policy(operation.family, operands) {
+        Some(policy) => bind_record_policy(operation, policy).map_err(|e| e.to_string()),
+        None => Ok(operation),
     }
 }
 
@@ -283,10 +328,8 @@ impl Checkpoint {
                 .find(|p| p.id == *projection)
                 .ok_or_else(|| format!("{projection}: derived without a declaration"))?;
             let at = |e: model_compiler_sdk::CompilerError| format!("{projection}: {e}");
-            let operation = match policy(operation.family, declared.operand_count()) {
-                Some(policy) => bind_record_policy(operation.clone(), policy).map_err(at)?,
-                None => operation.clone(),
-            };
+            let operation = bind_policy(operation.clone(), declared.operand_count())
+                .map_err(|e| format!("{projection}: {e}"))?;
             let layouts: BTreeMap<_, _> = operation
                 .views
                 .iter()

@@ -294,13 +294,13 @@ fn varied_checkpoint(
 /// each row carrying its own 32x32 block's scales, replicated, split by rows,
 /// by K or by groups; BF16 matrices in MMA fragment order; expert banks
 /// expert-major, each expert's operands split by rows (gate-up) or K (down),
-/// codes in rows and scales in 16x8 tiles. The checkpoint's scales vary per
+/// codes and scales in rows. The checkpoint's scales vary per
 /// block, so a slice that starts in the wrong block fails. Runs when a
 /// synthetic geometry is compiled.
 #[test]
 fn every_planned_view_is_the_checkpoint_s() {
     use kernel_core::transform::fragment::{FragmentWeightFormat, FragmentWeightLayout};
-    use kernel_core::transform::{Layout, Packed, ScaleTileLayout, Transform};
+    use kernel_core::transform::{Layout, Packed, Transform};
     let Some(geometry) = GEOMETRIES.iter().find(|g| g.id != "flash") else {
         eprintln!("no synthetic geometry is compiled: skipped");
         return;
@@ -416,7 +416,7 @@ fn every_planned_view_is_the_checkpoint_s() {
                             columns.start * 2..columns.end * 2,
                         )
                     }
-                    "mxfp4_e2m1_rows_v1" | "mxfp4_ue8m0_scale_tiles_16x8_v1" => {
+                    "mxfp4_e2m1_rows_v1" | "mxfp4_ue8m0_scale_rows_v1" => {
                         let (prefix, bank) = name.split_once(".experts.").unwrap();
                         let (bank, part) = bank.split_once('.').unwrap();
                         let operands: &[&str] = if bank == "gate_up" {
@@ -432,7 +432,6 @@ fn every_planned_view_is_the_checkpoint_s() {
                             })
                             .count();
                         let mut expected = Vec::new();
-                        let mut pieces = Vec::new();
                         for e in 0..experts {
                             for operand in operands {
                                 let stem = format!("{prefix}.experts.{e}.{operand}");
@@ -453,38 +452,9 @@ fn every_planned_view_is_the_checkpoint_s() {
                                     ));
                                 } else {
                                     let blocks = columns.start / 32..columns.end / 32;
-                                    pieces.push((
-                                        (rows.end - rows.start) as usize,
-                                        (blocks.end - blocks.start) as usize,
-                                    ));
                                     expected.extend(block(&scales.bytes, k / 32, rows, blocks));
                                 }
                             }
-                        }
-                        if part == "scale" {
-                            // Each expert's operand is one piece, tiled on its own.
-                            let mut logical = Vec::new();
-                            let mut offset = 0;
-                            for (rows, k_blocks) in pieces {
-                                let layout = ScaleTileLayout {
-                                    rows,
-                                    k_blocks,
-                                    tile_rows: 16,
-                                    k_blocks_per_tile: 8,
-                                };
-                                let bytes = rows.div_ceil(16) * k_blocks.div_ceil(8) * 128;
-                                logical.extend(
-                                    layout
-                                        .unpack(&Packed {
-                                            bytes: got[offset..offset + bytes].to_vec(),
-                                            layout: Layout::ScaleTile(layout),
-                                        })
-                                        .unwrap_or_else(|e| panic!("{at}: {e:?}")),
-                                );
-                                offset += bytes;
-                            }
-                            assert_eq!(offset, got.len(), "{at}: tiled scale bytes");
-                            got = logical;
                         }
                         expected
                     }
@@ -703,3 +673,6 @@ fn a_fake_host_gathers_rows_of_every_planned_mapped_view() {
     eprintln!("{gathered} mapped views gathered bit-exactly");
     std::fs::remove_dir_all(&root).unwrap();
 }
+
+#[path = "host_plan/routed.rs"]
+mod routed;

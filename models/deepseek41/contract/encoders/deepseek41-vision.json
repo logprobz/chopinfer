@@ -1,0 +1,85 @@
+{
+  "schema": "chopinfer.encoder.v1",
+  "model": "deepseek41",
+  "name": "deepseek41-vision",
+  "precision": "f32-pairs.v1",
+  "checkpoint": {
+    "config": [
+      {
+        "file": "config.json",
+        "pointer": "/vision_config",
+        "values": {
+          "num_hidden_layers": 32,
+          "hidden_size": 1024,
+          "num_attention_heads": 16,
+          "intermediate_size": 2816,
+          "patch_size": 14,
+          "rope_theta": 10000,
+          "downsample_ratio": 3,
+          "max_image_tokens": 1024,
+          "min_pixels": 295936
+        }
+      }
+    ]
+  },
+  "input": {
+    "recipes": [{"tag": "image.centered-pad.v1", "patch": 14, "downsample": 3, "maximum_tokens": 1024}],
+    "patchify": "row-major.v1",
+    "payload": "f32",
+    "columns": 588,
+    "capacity_rows": 9216
+  },
+  "sequences": {"kind": "item"},
+  "image_layout": "view-order.v1",
+  "stages": [
+    {"op": "pad.zero-columns.v1", "columns": 640},
+    {
+      "op": "linear.pairs.v1", "out": 1024, "bias": true,
+      "weights": {
+        "weight": {"tensor": "vision.patch_embed.proj.weight", "transforms": [{"pad_cols": 640}]},
+        "bias": "vision.patch_embed.proj.bias"
+      }
+    },
+    {
+      "op": "transformer.pre-norm.v1", "blocks": 32, "width": 1024,
+      "norm": {"op": "norm.rms-f32.v1", "eps": 1e-6},
+      "attention": {
+        "op": "attention.varlen.pairs.v1", "q_heads": 16, "kv_heads": 16, "head_dim": 64,
+        "qkv_bias": true, "proj_bias": true, "mask": "full"
+      },
+      "rotary": {
+        "op": "rotary.axial-2d.v1", "pairs_per_axis": 16, "theta": 10000, "style": "neox",
+        "table": "table.hf-f32-angle.v1"
+      },
+      "mlp": {"op": "mlp.swiglu.v1", "hidden": 2816, "bias": false},
+      "weights": {
+        "norm1.weight": "vision.blocks.{i}.norm1.weight",
+        "qkv.weight": "vision.blocks.{i}.attn.wqkv.weight",
+        "qkv.bias": "vision.blocks.{i}.attn.wqkv.bias",
+        "proj.weight": "vision.blocks.{i}.attn.wo.weight",
+        "proj.bias": "vision.blocks.{i}.attn.wo.bias",
+        "norm2.weight": "vision.blocks.{i}.norm2.weight",
+        "gate_up.weight": "vision.blocks.{i}.mlp.w1.weight",
+        "down.weight": "vision.blocks.{i}.mlp.w2.weight"
+      }
+    },
+    {"op": "norm.rms-f32.v1", "eps": 1e-6, "weights": {"weight": "vision.norm.weight"}},
+    {"op": "merge.space-to-depth.v1", "factor": 3, "pad": "zero"},
+    {
+      "op": "linear.pairs.v1", "out": 5120, "bias": true, "gelu": "erf",
+      "weights": {
+        "weight": {"tensor": "aligner.w1.weight", "transforms": [{"space_to_depth_cols": 3}]},
+        "bias": "aligner.w1.bias"
+      }
+    },
+    {
+      "op": "linear.pairs.v1", "out": 5120, "bias": true, "output": "bf16",
+      "weights": {"weight": "aligner.w2.weight", "bias": "aligner.w2.bias"}
+    }
+  ],
+  "output": {
+    "op": "layout.learned-delimiters.v1", "hidden": 5120, "positions": "sequential", "media_mask": true,
+    "weights": {"start": "image_start", "end": "image_end", "newline": "image_newline"}
+  },
+  "parallel": ["replicated", "record-parallel", "sequence-split"]
+}

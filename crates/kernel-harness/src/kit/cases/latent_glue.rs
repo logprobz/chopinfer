@@ -226,6 +226,7 @@ pub fn query_status_case<'a>(
     let width = query.heads as usize * 512;
     let mut values = latent_values(8, width);
     values[width - 1] = f32::NAN;
+    values[0] = f32::MAX;
     values[width + 17] = f32::INFINITY;
     values[2 * width + 5] = f32::MAX;
     let mut angles = table(8, 64);
@@ -236,7 +237,7 @@ pub fn query_status_case<'a>(
         prepared,
         angles,
         values,
-        vec![0, 0, 0, 0x80, 2, 0, 0, 0],
+        vec![0, 0, 1, 0x80, 2, 0, 0, 0],
     )
 }
 
@@ -662,6 +663,8 @@ enum WindowFixture {
     F32Boundary,
     InvalidData,
     Status,
+    StatusBoundary,
+    StatusOutputOverflow,
 }
 fn write_case_impl<'a>(
     query: LatentWindowWrite,
@@ -745,6 +748,22 @@ fn write_case_impl<'a>(
         input[3 * width] = f32::INFINITY;
         initial[4] = 0x80;
         initial[5] = 2;
+    }
+    if matches!(
+        fixture,
+        WindowFixture::StatusBoundary | WindowFixture::StatusOutputOverflow
+    ) {
+        if capacity != 8 {
+            return Err("norm status boundary requires eight rows".into());
+        }
+        let data = super::norm_status_boundary::operands(
+            width,
+            matches!(fixture, WindowFixture::StatusOutputOverflow),
+        )?;
+        input = data.input;
+        weight = data.weight;
+        initial = data.prior;
+        cos_sin = [1.0, 0.0].repeat(capacity as usize * tail / 2);
     }
     let roles = LatentWindowWriteBuffers {
         status: super::block_quantize::status_role(&initial),
@@ -885,6 +904,32 @@ fn write_case_impl<'a>(
         .omission_guard(&producer, "latent")
         .omission_guard(&quantizer, "quantized_codes");
     Ok(case)
+}
+
+pub fn window_status_boundary<'a>(query: LatentWindowWrite, output_overflow: bool) -> Required<'a> {
+    Required::new(
+        format!(
+            "window status boundary {:?} weighted {output_overflow}",
+            query.addressing
+        ),
+        Need::rows(8),
+        move |b, n| b.latent_window_write(&query, n),
+        move |op| {
+            write_case_impl(
+                query,
+                8,
+                0,
+                op,
+                table(8, 64),
+                if output_overflow {
+                    WindowFixture::StatusOutputOverflow
+                } else {
+                    WindowFixture::StatusBoundary
+                },
+            )
+        },
+    )
+    .required()
 }
 
 pub fn window_status<'a>(query: LatentWindowWrite) -> Required<'a> {

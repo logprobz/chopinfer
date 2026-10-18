@@ -30,6 +30,20 @@ fn required() -> Vec<Required<'static>> {
                     move |op| cases::rmsnorm_status_case(q, 32, op),
                 )
                 .required(),
+                Required::new(
+                    format!("F32 norm reduction boundary {}", q.width),
+                    Need::rows(8),
+                    move |b, n| b.rmsnorm(&q, n),
+                    move |op| cases::rmsnorm_status_boundary_case(q, false, op),
+                )
+                .required(),
+                Required::new(
+                    format!("F32 norm output overflow {}", q.width),
+                    Need::rows(8),
+                    move |b, n| b.rmsnorm(&q, n),
+                    move |op| cases::rmsnorm_status_boundary_case(q, true, op),
+                )
+                .required(),
             ]
         })
         .collect()
@@ -85,7 +99,7 @@ impl Modules for FamilyModules {
     }
 }
 fn check(report: &kit::Report, gpu: bool) {
-    assert_eq!(report.prepared().len(), 6, "{:?}", report.ops);
+    assert_eq!(report.prepared().len(), 12, "{:?}", report.ops);
     assert!(report.failures().is_empty(), "{:?}", report.failures());
     if gpu {
         for op in &report.ops {

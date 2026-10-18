@@ -25,6 +25,7 @@ pub mod moe_chained_quantized;
 pub mod moe_routed;
 pub mod multimodal;
 pub mod mxfp8_fold;
+mod norm_status_boundary;
 pub mod pooled_indexer;
 pub mod position_blocks;
 pub mod position_indexer;
@@ -92,6 +93,36 @@ pub fn rmsnorm_status_case<'a>(
     op: Prepared<RmsNormBuffers<View>>,
 ) -> LabResult<OpCase<'a>> {
     rmsnorm_case_impl(requirement, capacity, op, true)
+}
+
+/// Eight rows combine the finite fused-reduction boundary with independent
+/// current failures and prior flags. Output-overflow rows use BF16 max weights.
+pub fn rmsnorm_status_boundary_case<'a>(
+    requirement: RmsNormRequirement,
+    output_overflow: bool,
+    op: Prepared<RmsNormBuffers<View>>,
+) -> LabResult<OpCase<'a>> {
+    let width = requirement.width as usize;
+    let data = norm_status_boundary::operands(width, output_overflow)?;
+    let roles = RmsNormBuffers {
+        x: Spec::input(
+            DType::F32,
+            (Rows::Live, width),
+            data.input.iter().flat_map(|v| v.to_le_bytes()).collect(),
+        ),
+        weight: Spec::input(
+            DType::Bf16,
+            (Rows::Fixed(1), width),
+            bf16_bytes(&data.weight),
+        ),
+        residual: None,
+        y: Spec::output(DType::F32, (Rows::Live, width)),
+        live_rows: Spec::live(),
+        status: Some(block_quantize::status_role(&data.prior)),
+        status_row_offset: 0,
+    };
+    Ok(OpCase::new(op, 8, roles)?
+        .oracle(move |images, live| rmsnorm_oracle(&requirement, images, live)))
 }
 
 fn rmsnorm_case_impl<'a>(

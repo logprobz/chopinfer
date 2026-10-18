@@ -100,6 +100,20 @@ fn required() -> Vec<Required<'static>> {
         addressing: WindowAddressing::Staged { slots: 160 },
         ..write
     }));
+    for addressing in [
+        WindowAddressing::Circular { slots: 136 },
+        WindowAddressing::Staged { slots: 160 },
+    ] {
+        for output_overflow in [false, true] {
+            cases.push(latent_glue::window_status_boundary(
+                LatentWindowWrite {
+                    addressing,
+                    ..write
+                },
+                output_overflow,
+            ));
+        }
+    }
     cases
 }
 struct FamilyModules {
@@ -244,7 +258,7 @@ fn all_latent_glue_cases_prepare_and_declare() {
     };
     check(
         &kit::conform(&backend(), &modules, None, &required()).unwrap(),
-        20,
+        24,
         false,
     );
     for mutation in Mutation::ALL {
@@ -345,7 +359,7 @@ fn latent_glue_passes_poison_graph_pdl_and_controls_on_gpu() {
             "latent-glue",
             BTreeMap::from([("report".into(), report.json())]),
         )?;
-        check(&report, 20, true);
+        check(&report, 24, true);
         let q=LatentQueryRope{heads:3,latent:512,rotary:64};
         let case=latent_glue::query_status_offset_case(backend().latent_query_rope(&q,Need::rows(8)).map_err(|e|e.to_string())?)?;
         let functions=modules.load(session)?;

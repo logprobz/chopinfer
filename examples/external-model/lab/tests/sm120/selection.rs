@@ -139,6 +139,8 @@ fn exported_gpu_oracles_and_graph_replay() {
                         residual: None,
                         y: view(3, count * 2),
                         live_rows: view(4, 4),
+                        status: None,
+                        status_row_offset: 0,
                     },
                     View::EMPTY,
                     Counts::rows(ops::CAPACITY),

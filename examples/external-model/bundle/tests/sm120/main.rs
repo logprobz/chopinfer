@@ -45,6 +45,8 @@ fn norm_buffers() -> RmsNormBuffers<View> {
         residual: None,
         y: view(3, rows),
         live_rows: view(4, 4),
+        status: None,
+        status_row_offset: 0,
     }
 }
 
@@ -96,6 +98,8 @@ fn prepared_ops_launch_the_selected_entries() {
             residual: None,
             y: 3,
             live_rows: 4,
+            status: None,
+            status_row_offset: 0,
         })
         .unwrap()
     );

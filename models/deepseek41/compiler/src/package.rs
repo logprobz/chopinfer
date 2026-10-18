@@ -31,8 +31,82 @@ pub const ARCHITECTURE: &str = "sm_120f";
 pub const RANK_IMAGE_COMPONENT: &str = "rank-images";
 pub const RANK_IMAGE_FORMAT: &str = "deepseek41.rank-image.v1";
 
-/// The serving profiles, which every package carries.
+/// The model's serving profiles: the flash geometry's, from which a
+/// package's own are generated ([`profiles`]).
 pub const PROFILES: &str = include_str!("../../profiles.json");
+
+/// Where the synthetic geometries are documented, the evidence an
+/// experimental profile of one cites.
+const SYNTHETIC_EVIDENCE: &str = "models/deepseek41/README.md#checkpoint-and-geometry";
+
+/// The serving profiles a package of `geometry` serving `ranks` carries, as
+/// a `chopinfer-serve-profiles-v2` document. Each entry depends on the
+/// geometry and its rank count alone, so the helper selects from the same
+/// entries the package holds:
+/// - flash: the model's profiles whose topology the package serves;
+/// - another geometry: one autoregressive profile per rank count,
+///   `<geometry>-tp<ranks>-ar`, the model's autoregressive profile moved to
+///   that topology, experimental and unqualified.
+pub fn profiles(geometry: &Geometry, ranks: &[u32]) -> Result<String, BundleError> {
+    let invalid = |e: serde_json::Error| BundleError::validation(format!("serving profiles: {e}"));
+    let mut file: serde_json::Value = serde_json::from_str(PROFILES).map_err(invalid)?;
+    let entries = file["profiles"]
+        .as_object()
+        .cloned()
+        .ok_or_else(|| BundleError::validation("serving profiles have no entries"))?;
+    let served: Vec<String> = ranks.iter().map(|&r| topology_id(geometry, r)).collect();
+    let mut chosen = serde_json::Map::new();
+    if geometry.id == model_deepseek41_contract::geometry::FLASH.id {
+        for (name, entry) in entries {
+            if served.iter().any(|t| entry["topology"] == t.as_str()) {
+                chosen.insert(name, entry);
+            }
+        }
+    } else {
+        let base = entries
+            .values()
+            .find(|entry| entry["speculation"]["drafter"] == "none")
+            .ok_or_else(|| {
+                BundleError::validation("deepseek41 declares no autoregressive profile")
+            })?;
+        for (&ranks, topology) in ranks.iter().zip(&served) {
+            let mut entry = base.clone();
+            let fields = entry
+                .as_object_mut()
+                .ok_or_else(|| BundleError::validation("invalid serving profile"))?;
+            for (field, value) in [
+                ("topology", topology.as_str().into()),
+                ("tensor_parallel", ranks.into()),
+                ("devices_required", ranks.into()),
+                ("devices", (0..ranks).collect::<Vec<_>>().into()),
+                (
+                    "qualification",
+                    format!(
+                        "Not qualified: the synthetic test geometry {} at TP{ranks}, \
+                         autoregressive, for bring-up on a synthetic checkpoint \
+                         ({SYNTHETIC_EVIDENCE}).",
+                        geometry.id
+                    )
+                    .into(),
+                ),
+                ("qualified_max_sequences", serde_json::Value::Null),
+                ("status", "experimental".into()),
+                ("evidence", serde_json::json!([SYNTHETIC_EVIDENCE])),
+            ] {
+                fields.insert(field.into(), value);
+            }
+            chosen.insert(format!("{}-tp{ranks}-ar", geometry.id), entry);
+        }
+    }
+    if chosen.is_empty() {
+        return Err(BundleError::validation(format!(
+            "deepseek41 declares no serving profile for {}",
+            served.join(", ")
+        )));
+    }
+    file["profiles"] = chosen.into();
+    serde_json::to_string_pretty(&file).map_err(invalid)
+}
 
 /// What the package requires of the host, from what the module exports:
 /// paged serving KV with per-item state, request retirement, scored prompt
@@ -112,7 +186,10 @@ pub fn draft(
         id(RANK_IMAGE_ROLE)?,
         id(RANK_IMAGE_FORMAT)?,
     )?);
-    components.push(package_draft::serve_profiles(PROFILES.as_bytes())?);
+    let ranks: Vec<u32> = topologies.iter().map(|&(ranks, _)| ranks).collect();
+    components.push(package_draft::serve_profiles(
+        profiles(geometry, &ranks)?.as_bytes(),
+    )?);
     components.sort_by(|a, b| a.id().cmp(b.id()));
     let drafts = topologies
         .iter()

@@ -14,13 +14,13 @@ use model_compiler_sdk::preparation::direct::{DirectEmission, default_profile};
 use model_compiler_sdk::preparation::helper::Provider;
 use model_compiler_sdk::{StagedContentV1, package_draft};
 use model_deepseek41_contract::admission::{self, SUPPORTED_RANKS};
-use model_deepseek41_contract::geometry::{FLASH, Geometry};
+use model_deepseek41_contract::geometry::Geometry;
 use model_deepseek41_contract::weight_plan;
 use runtime_bundle::preparation::{DirectProfile, Modality, PrepareDirectRequest};
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use crate::package::{PROFILES, check_fit, topology_id};
+use crate::package::{PROFILES, check_fit};
 
 /// The installed native module beside the helper.
 const NATIVE_MODULE: &str = "libbundle_deepseek41.so";
@@ -54,40 +54,12 @@ fn check_request(request: &PrepareDirectRequest) -> Result<()> {
     Ok(())
 }
 
-/// The serving profile of `geometry` at `ranks`: the profiles file's
-/// autoregressive one for the flash geometry. Another geometry serves the
-/// autoregressive profile at its own topology, renamed
-/// `<geometry>-tp<ranks>-ar` and experimental, as no profile qualifies it.
+/// The serving profile of `geometry` at `ranks`: the autoregressive entry
+/// for `ranks` of the profiles a package of `geometry` carries
+/// (`package::profiles`), so the selected profile is the package's own.
 pub fn select_profile(geometry: &Geometry, ranks: u32) -> Result<DirectProfile> {
-    if geometry.id == FLASH.id {
-        return default_profile(PROFILES, ranks, &["none"]);
-    }
-    let base = SUPPORTED_RANKS
-        .iter()
-        .find_map(|&ranks| default_profile(PROFILES, ranks, &["none"]).ok())
-        .ok_or("deepseek41 declares no autoregressive serving profile")?;
-    let mut profile = base.profile;
-    let fields = profile.as_object_mut().ok_or("invalid serving profile")?;
-    let devices: Vec<u32> = (0..ranks).collect();
-    for (field, value) in [
-        ("topology", topology_id(geometry, ranks).into()),
-        ("tensor_parallel", ranks.into()),
-        ("devices_required", ranks.into()),
-        ("devices", devices.into()),
-        (
-            "qualification",
-            format!("unqualified geometry {}", geometry.id).into(),
-        ),
-        ("qualified_max_sequences", serde_json::Value::Null),
-        ("status", "experimental".into()),
-        ("evidence", serde_json::json!([])),
-    ] {
-        fields.insert(field.into(), value);
-    }
-    Ok(DirectProfile {
-        name: format!("{}-tp{ranks}-ar", geometry.id),
-        profile,
-    })
+    let document = crate::package::profiles(geometry, &[ranks])?;
+    default_profile(&document, ranks, &["none"])
 }
 
 /// The most weight bytes one rank of `ranks` holds of the checkpoint at

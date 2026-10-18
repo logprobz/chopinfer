@@ -12,7 +12,8 @@ use std::path::Path;
 use model_compiler_sdk::preparation::helper::Provider;
 use model_compiler_sdk::{StagedContentV1, package_draft};
 use model_deepseek41::package::{
-    CAPABILITIES, RANK_IMAGE_COMPONENT, device_bytes, draft, slot_state_bytes, topology_id,
+    CAPABILITIES, RANK_IMAGE_COMPONENT, device_bytes, draft, profiles, slot_state_bytes,
+    topology_id,
 };
 use model_deepseek41::preparation::{DeepSeek41Family, emit, select_profile, served_topologies};
 use model_deepseek41_contract::geometry::{FLASH, GEOMETRIES, Geometry};
@@ -92,25 +93,79 @@ fn the_probe_routes_by_config_alone() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
+/// The host's admission of a serving profile document: `profiles show`
+/// validates every entry (evidence, devices, speculation) and parses it as
+/// serve options. `document` is written to a temporary file.
+fn host_admits(document: &str, name: &str) -> Result<(), String> {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let path = std::env::temp_dir().join(format!(
+        "deepseek41-profiles-{}-{}.json",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::write(&path, document).unwrap();
+    let arguments = ["profiles", "show", path.to_str().unwrap(), name].map(str::to_owned);
+    let result = runtime_host::parse_host_command_v1(&arguments)
+        .map(|_| ())
+        .map_err(|e| e.to_string());
+    std::fs::remove_file(&path).unwrap();
+    result
+}
+
+/// Every geometry's package profiles pass the host's admission, and the
+/// helper selects the package's own entry for the requested rank count.
 #[test]
 fn the_profile_follows_the_geometry_and_rank_count() {
     let flash = select_profile(&FLASH, 4).unwrap();
     assert_eq!(flash.name, "tp4-ar");
     assert_eq!(flash.profile["topology"], topology_id(&FLASH, 4));
     assert!(select_profile(&FLASH, 2).is_err());
+    let document = profiles(&FLASH, &[4]).unwrap();
+    let file: serde_json::Value = serde_json::from_str(&document).unwrap();
+    assert_eq!(file["profiles"]["tp4-ar"], flash.profile);
+    host_admits(&document, "tp4-ar").unwrap();
+    assert!(profiles(&FLASH, &[2]).is_err());
     let Some(geometry) = synthetic() else {
         eprintln!("no synthetic geometry is compiled: flash only");
         return;
     };
-    let small = select_profile(geometry, 2).unwrap();
-    assert_eq!(small.name, format!("{}-tp2-ar", geometry.id));
-    assert_eq!(small.profile["topology"], topology_id(geometry, 2));
-    assert_eq!(small.profile["tensor_parallel"], 2);
-    assert_eq!(small.profile["devices_required"], 2);
-    assert_eq!(small.profile["devices"], serde_json::json!([0, 1]));
-    assert_eq!(small.profile["status"], "experimental");
-    assert_eq!(small.profile["speculation"]["drafter"], "none");
-    assert_eq!(small.profile["evidence"], serde_json::json!([]));
+    let document = profiles(geometry, &[1, 2, 4]).unwrap();
+    let file: serde_json::Value = serde_json::from_str(&document).unwrap();
+    let names: Vec<_> = file["profiles"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
+    assert_eq!(names.len(), 3);
+    for ranks in [1_u32, 2, 4] {
+        let selected = select_profile(geometry, ranks).unwrap();
+        assert_eq!(selected.name, format!("{}-tp{ranks}-ar", geometry.id));
+        assert_eq!(file["profiles"][&selected.name], selected.profile);
+        let p = &selected.profile;
+        assert_eq!(p["topology"], topology_id(geometry, ranks));
+        assert_eq!(p["tensor_parallel"], ranks);
+        assert_eq!(p["devices_required"], ranks);
+        assert_eq!(
+            p["devices"],
+            serde_json::json!((0..ranks).collect::<Vec<_>>())
+        );
+        assert_eq!(p["status"], "experimental");
+        assert_eq!(p["qualified_max_sequences"], serde_json::Value::Null);
+        assert_eq!(p["speculation"]["drafter"], "none");
+        assert_eq!(
+            p["evidence"],
+            serde_json::json!(["models/deepseek41/README.md#checkpoint-and-geometry"])
+        );
+        host_admits(&document, &selected.name).unwrap();
+    }
+    // The admission route refuses what the host refuses: a profile with no
+    // evidence.
+    let mut empty = file.clone();
+    let name = format!("{}-tp2-ar", geometry.id);
+    empty["profiles"][&name]["evidence"] = serde_json::json!([]);
+    let error = host_admits(&empty.to_string(), &name).unwrap_err();
+    assert!(error.contains("qualification evidence"), "{error}");
 }
 
 /// The helper plans from the request the host later sends: the same files,
@@ -288,6 +343,22 @@ fn the_helper_emits_the_synthetic_package() {
     };
     let emitted = emit(source, &request, &module, &out.join("package")).unwrap();
     assert_eq!(emitted.profile.name, format!("{}-tp2-ar", geometry.id));
+    // The package carries the profiles of its own topologies, the selected
+    // one among them, and the host admits it.
+    let carried = std::fs::read_to_string(
+        emitted
+            .package
+            .root()
+            .join(runtime_bundle::deployment::SERVE_PROFILES_PATH_V1),
+    )
+    .unwrap();
+    assert_eq!(carried, profiles(geometry, &[1, 2, 4]).unwrap());
+    let file: serde_json::Value = serde_json::from_str(&carried).unwrap();
+    assert_eq!(
+        file["profiles"][&emitted.profile.name],
+        emitted.profile.profile
+    );
+    host_admits(&carried, &emitted.profile.name).unwrap();
     let manifest = emitted.package.manifest();
     let declared: Vec<_> = manifest
         .target()

@@ -7,6 +7,7 @@ pub mod builders;
 pub mod copy;
 pub mod gather;
 pub mod hyper_connection;
+pub mod mxfp8_decode;
 pub mod ngram_hash;
 pub mod ordered_sum;
 pub mod precision;

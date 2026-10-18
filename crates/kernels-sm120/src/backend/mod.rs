@@ -51,6 +51,7 @@ use kernel_core::multimodal::{
     EmbeddingOverrideBuffers, EncoderAttentionBuffers, EncoderGemmBuffers, EncoderHeadBuffers,
     EncoderRowBuffers,
 };
+use kernel_core::mxfp8_rows::{Mxfp8Rows, Mxfp8RowsBuffers};
 use kernel_core::occupancy::EntryResources;
 use kernel_core::per_channel_decay_delta_rule::PerChannelDecayOp;
 use kernel_core::pooled_indexer::{
@@ -107,6 +108,7 @@ mod moe_experts;
 mod moe_route;
 mod multimodal;
 mod mxfp8_fold;
+mod mxfp8_rows;
 pub mod own;
 mod pooled_indexer;
 mod position_blocks;
@@ -203,6 +205,7 @@ pub struct Sm120 {
     context_parallel: context_parallel::Selection,
     row_copies: Vec<crate::row::copy::Entry>,
     row_gathers: Vec<String>,
+    mxfp8_row_decoders: Vec<String>,
     row_rmsnorms: Vec<crate::row::RowInstantiation>,
     block_quantizers: Vec<crate::row::block_quantize::Entry>,
     silu_mul_quantizers: Vec<crate::row::silu_mul_quantize::Entry>,
@@ -963,6 +966,12 @@ impl Sm120 {
     /// which serves every gather by index SM120 takes.
     pub fn with_row_gather(mut self, symbol: impl Into<String>) -> Self {
         self.row_gathers.push(symbol.into());
+        self
+    }
+
+    /// Register a compiled MXFP8 row decoder (`row::mxfp8_decode`).
+    pub fn with_mxfp8_rows(mut self, symbol: impl Into<String>) -> Self {
+        self.mxfp8_row_decoders.push(symbol.into());
         self
     }
 
@@ -1892,6 +1901,14 @@ impl Backend for Sm120 {
         need: Need,
     ) -> Result<Prepared<EmbeddingOverrideBuffers<View>>, Refused> {
         multimodal::prepare(&self.encoders, op, EncoderStage::Override, None, need)
+    }
+
+    fn decode_mxfp8_rows(
+        &self,
+        op: &Mxfp8Rows,
+        need: Need,
+    ) -> Result<Prepared<Mxfp8RowsBuffers<View>>, Refused> {
+        mxfp8_rows::decode_mxfp8_rows(&self.mxfp8_row_decoders, op, need)
     }
 
     // Row copies.

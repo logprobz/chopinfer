@@ -222,6 +222,7 @@ pub fn contributions(catalogs: &Catalogs) -> Vec<Declared> {
     for entry in row::copy::declared_entries()
         .into_iter()
         .chain(row::gather::declared_entries())
+        .chain(row::mxfp8_decode::declared_entries())
     {
         add(&entry.symbol, entry.profile, entry.op, entry.invariance);
     }

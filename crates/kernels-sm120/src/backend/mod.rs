@@ -58,6 +58,9 @@ use kernel_core::pooled_indexer::{
     IndexerSelectBuffers, PooledIndexerQuery, PositionIndexerQuery, PositionKeyWriteBuffers,
     PositionQueryBuffers, PositionSelectBuffers, SelectionCompactBuffers,
 };
+use kernel_core::position_blocks::{
+    CandidateBlockIdsBuffers, PositionBlockIndexerQuery, PositionBlockSelectBuffers,
+};
 use kernel_core::precision::buffers::ProjectionBuffers;
 use kernel_core::precision::execution::Binding;
 use kernel_core::precision::{OperationSpec, OperationUse};
@@ -99,6 +102,7 @@ mod moe_route;
 mod multimodal;
 pub mod own;
 mod pooled_indexer;
+mod position_blocks;
 mod position_indexer;
 mod position_query;
 mod projection;
@@ -168,6 +172,8 @@ pub struct Sm120 {
     experts: moe_experts::Selection,
     chained_quantized: moe_chained::Selection,
     indexer: pooled_indexer::Selection,
+    position_block_indexers: Vec<crate::pooled_indexer::position_blocks::Entry>,
+    candidate_block_ids: Vec<crate::pooled_indexer::position_blocks::CandidateEntry>,
     position_indexers: Vec<crate::pooled_indexer::position::Entry>,
     position_queries: Vec<crate::pooled_indexer::position_query::Entry>,
     indexer_candidates: Vec<crate::pooled_indexer::position::CandidateEntry>,
@@ -492,6 +498,24 @@ impl Sm120 {
         entries: impl IntoIterator<Item = crate::pooled_indexer::position_query::Entry>,
     ) -> Self {
         self.position_queries.extend(entries);
+        self
+    }
+
+    /// Compact Position v3 entries compiled by the model.
+    pub fn with_position_block_indexer(
+        mut self,
+        entries: impl IntoIterator<Item = crate::pooled_indexer::position_blocks::Entry>,
+    ) -> Self {
+        self.position_block_indexers.extend(entries);
+        self
+    }
+
+    /// Block-ID producers compiled by the model.
+    pub fn with_indexer_candidate_block_ids(
+        mut self,
+        entries: impl IntoIterator<Item = crate::pooled_indexer::position_blocks::CandidateEntry>,
+    ) -> Self {
+        self.candidate_block_ids.extend(entries);
         self
     }
 
@@ -1353,6 +1377,31 @@ impl Backend for Sm120 {
         need: Need,
     ) -> Result<Prepared<CandidateBlocksBuffers<View>>, Refused> {
         position_indexer::candidates(&self.indexer_candidates, op, position_capacity, need)
+    }
+
+    fn position_block_indexer(
+        &self,
+        op: &PositionBlockIndexerQuery,
+        top_k: u32,
+        position_capacity: u32,
+        need: Need,
+    ) -> Result<Prepared<PositionBlockSelectBuffers<View>>, Refused> {
+        position_blocks::select(
+            &self.position_block_indexers,
+            op,
+            top_k,
+            position_capacity,
+            need,
+        )
+    }
+
+    fn indexer_candidate_block_ids(
+        &self,
+        op: &CandidateBlocksQuery,
+        position_capacity: u32,
+        need: Need,
+    ) -> Result<Prepared<CandidateBlockIdsBuffers<View>>, Refused> {
+        position_blocks::candidates(&self.candidate_block_ids, op, position_capacity, need)
     }
 
     // Recurrent layers.

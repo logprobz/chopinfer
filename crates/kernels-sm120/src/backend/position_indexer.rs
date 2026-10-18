@@ -166,7 +166,7 @@ fn capacity(rows: u32, capacity: u32) -> Result<(), Refusal> {
     Ok(())
 }
 
-fn pages(
+pub(super) fn pages(
     keys: &PositionKeyPages<View>,
     query: PositionIndexerQuery,
     width: u32,

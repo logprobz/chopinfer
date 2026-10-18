@@ -347,6 +347,11 @@ fn generate_offer(
             }
         }
         OperationKind::Grouped { .. } => {}
+        OperationKind::GroupedDense { .. } => {
+            return Err(format!(
+                "projection {id} is grouped dense; Qwen publishes none"
+            ));
+        }
         OperationKind::Lookup => {
             capability.implementation = lookup_implementation(shape);
             prefix.push(ngram_hash_symbol(shape, usage.phase));

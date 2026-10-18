@@ -138,6 +138,9 @@ pub fn catalog(
             OperationKind::Dense => "dense",
             OperationKind::Grouped { .. } => "grouped",
             OperationKind::Lookup => "lookup",
+            OperationKind::GroupedDense { .. } => {
+                return Err("a generated catalog never serves grouped dense operations".into());
+            }
         };
         records.push(identity::record(
             format,

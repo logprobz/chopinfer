@@ -104,6 +104,9 @@ impl Checkpoint {
             selection.require_policy(ActivationPolicy::Bf16)?;
             let order = selection.effective.arithmetic.decode_order;
             match selection.source.kind {
+                OperationKind::GroupedDense { .. } => {
+                    return Err("Qwen declares no grouped dense operation".into());
+                }
                 OperationKind::Dense => {
                     for weight in &selection.source.weights {
                         orders.insert(weight.codes.tensor.clone(), order);

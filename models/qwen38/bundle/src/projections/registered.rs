@@ -597,6 +597,7 @@ pub(super) fn registered(selection: &PrecisionSelection, binding: &BoundUse) -> 
             WeightFormat::Fp8Block128x128(_)
         ),
         OperationKind::Lookup => selection.effective.weights[0].format != WeightFormat::Nvfp4,
+        OperationKind::GroupedDense { .. } => false,
     }
 }
 
@@ -647,6 +648,9 @@ pub(super) fn launcher(
             Hash::new(shape, backend, own, symbol.clone(), true, usage)
                 .map_err(|r| r.to_string())?,
         ),
+        OperationKind::GroupedDense { .. } => {
+            return Err("Qwen registers no grouped dense implementation".into());
+        }
     }))
 }
 

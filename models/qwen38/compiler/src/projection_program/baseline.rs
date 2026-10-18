@@ -24,6 +24,7 @@ pub fn legacy_text(document: &PrecisionDocument) -> bool {
             s.effective.weights[0].format,
             WeightFormat::Bf16 | WeightFormat::Fp8PerTensor
         ),
+        OperationKind::GroupedDense { .. } => false,
     })
 }
 

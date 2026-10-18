@@ -132,6 +132,12 @@ pub fn offer(request: Request<'_>, adoptions: &[Adoption]) -> Result<GeneratedOf
         OperationKind::Dense => KernelFamily::Dense,
         OperationKind::Grouped { .. } => KernelFamily::GroupedExpert,
         OperationKind::Lookup => KernelFamily::Lookup,
+        OperationKind::GroupedDense { .. } => {
+            return Err(fail(
+                "grouped dense operations run on the grouped fold GEMM contract, \
+                 not a generated dense or expert kernel",
+            ));
+        }
     };
     let recipe = if operation.arithmetic.decode_order == DecodeOrder::BlockScaleAfterMma {
         A16Recipe::ScaleAfterBlockMma
@@ -347,6 +353,11 @@ pub fn identities(format: FormatId, offer: &KernelOffer) -> Result<Vec<Adoption>
         OperationKind::Dense => "dense",
         OperationKind::Grouped { .. } => "grouped",
         OperationKind::Lookup => "lookup",
+        OperationKind::GroupedDense { .. } => {
+            return Err(fail(
+                "a generated offer never serves grouped dense operations",
+            ));
+        }
     };
     offer
         .handle

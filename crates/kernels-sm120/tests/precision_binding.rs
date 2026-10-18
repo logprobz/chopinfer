@@ -859,11 +859,15 @@ fn generated_offer(
     adoptions: &[generated::Adoption],
 ) -> Result<generated::GeneratedOffer, String> {
     let implementation = match source.kind {
-        OperationKind::Dense => generated::Implementation::Dense {
-            kernel: DenseKernel::Tiled { splits: 1 },
-            capacity: 1,
-            knobs: None,
-        },
+        // A grouped dense operation asks for a dense kernel, which the offer
+        // refuses.
+        OperationKind::Dense | OperationKind::GroupedDense { .. } => {
+            generated::Implementation::Dense {
+                kernel: DenseKernel::Tiled { splits: 1 },
+                capacity: 1,
+                knobs: None,
+            }
+        }
         OperationKind::Grouped { .. } => generated::Implementation::Grouped {
             phase: moe::Phase::Decode,
             capacity: 1,

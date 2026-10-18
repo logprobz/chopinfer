@@ -180,6 +180,12 @@ fn offer(
             scale_dtype: Some(DType::F32),
             shapes: row::ShapeBinding::Compiled,
         },
+        OperationKind::GroupedDense { .. } => {
+            return Err(format!(
+                "projection {}: the example offers no grouped dense kernels",
+                p.id
+            ));
+        }
     };
     Ok(generated::offer(
         Request {

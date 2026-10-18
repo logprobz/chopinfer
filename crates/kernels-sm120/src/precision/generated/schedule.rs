@@ -113,6 +113,9 @@ pub fn default(operation: &OperationSpec, inputs: &Key) -> Result<Schedule, Stri
         usage.capacity.max(8192)
     };
     let implementation = match inputs.kind {
+        OperationKind::GroupedDense { .. } => {
+            return Err("grouped dense operations run on the grouped fold GEMM contract, not a generated dense or expert kernel".into());
+        }
         OperationKind::Dense => Implementation::Dense {
             kernel: match (inputs.format, capacity <= 32) {
                 (FormatId::Bf16, true) => DenseKernel::FragmentDecode { splits: 1 },

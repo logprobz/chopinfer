@@ -778,8 +778,18 @@ pub struct ArithmeticSpec {
 )]
 pub enum OperationKind {
     Dense,
-    Grouped { experts: u32, top_k: u32 },
+    Grouped {
+        experts: u32,
+        top_k: u32,
+    },
     Lookup,
+    /// `groups` independent dense matrices of the operation's geometry, each
+    /// over its own K-wide activation slice, without routing or a sum across
+    /// groups: the grouped fold GEMM contract (`mxfp8_gemm`), which no dense
+    /// or expert-bank capability admits.
+    GroupedDense {
+        groups: u32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -923,6 +933,16 @@ impl OperationSpec {
                     "bank shape or routing geometry disagrees",
                 ));
             }
+        } else if let OperationKind::GroupedDense { groups } = self.kind
+            && (groups < 2
+                || self.geometry.is_none()
+                || self.weights.iter().any(|w| w.logical_shape.len() != 2))
+        {
+            return Err(PrecisionError::new(
+                &self.id,
+                "groups",
+                "grouped dense needs two or more groups of one stacked matrix at a declared rank geometry",
+            ));
         } else if self.weights.iter().any(|w| w.logical_shape.len() != 2) {
             return Err(PrecisionError::new(
                 &self.id,

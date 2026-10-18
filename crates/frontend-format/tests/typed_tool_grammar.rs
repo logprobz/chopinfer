@@ -260,13 +260,75 @@ fn a_forced_call_writes_only_names_the_parser_reads() {
     ));
 }
 
+/// A constrained number keeps its type when read back: a fraction or an
+/// exponent is admitted only as a finite binary64, at any depth, while an
+/// integer keeps every digit. Unconstrained, a number beyond binary64 reads
+/// back as its text.
 #[test]
-fn a_number_beyond_binary64_reads_back_as_text() {
+fn a_constrained_number_keeps_its_type() {
     let tools = [tool(serde_json::json!({
-        "type": "object", "properties": {"x": {"type": "number"}}, "required": ["x"]
+        "type": "object",
+        "properties": {
+            "x": {"type": "number"},
+            "y": {"type": "number", "minimum": 0},
+            "z": {"type": "array", "items": {"type": "number"}},
+            "w": {"type": "object"}
+        },
+        "required": ["x"],
+        "additionalProperties": false
     }))];
+    let admitted = |parameters: &[(&str, bool, &str)]| {
+        admits(
+            &tools,
+            &FrontendToolChoiceV1::Required,
+            &block(&[call("f", parameters)]),
+        )
+    };
+    let long = |digits: usize| format!("1{}", "0".repeat(digits - 1));
+    for value in [
+        "1.5e99".to_owned(),
+        "-0.25E-7".to_owned(),
+        long(400),
+        format!("{}.5", long(200)),
+    ] {
+        assert!(admitted(&[("x", true, &value)]), "{value}");
+    }
+    for value in [
+        "1e400".to_owned(),
+        "1e300".to_owned(),
+        format!("{}.5", long(201)),
+        format!("{}e5", long(201)),
+    ] {
+        assert!(!admitted(&[("x", true, &value)]), "{value}");
+    }
+    assert!(admitted(&[
+        ("x", true, "1"),
+        ("y", true, &format!("{}.5", long(200)))
+    ]));
+    assert!(!admitted(&[
+        ("x", true, "1"),
+        ("y", true, &format!("{}.5", long(201)))
+    ]));
+    assert!(admitted(&[("x", true, "1"), ("z", true, "[1.5e10]")]));
+    assert!(!admitted(&[("x", true, "1"), ("z", true, "[1e400]")]));
+    assert!(admitted(&[
+        ("x", true, "1"),
+        ("w", true, r#"{"k": [2.5e-3]}"#)
+    ]));
+    assert!(!admitted(&[
+        ("x", true, "1"),
+        ("w", true, r#"{"k": [1e400]}"#)
+    ]));
+    // Every admitted number reads back as a number.
+    let text = block(&[call("f", &[("x", true, "1.5e99"), ("z", true, "[2.5]")])]);
+    let parsed =
+        parse_completion_v1(&descriptor(), &format!("{text}[EOS]"), PromptModeV1::Chat).unwrap();
+    assert_eq!(
+        parsed.tool_calls[0].arguments,
+        r#"{"x": 1.5e+99, "z": [2.5]}"#
+    );
+    // An unconstrained completion keeps a number beyond binary64 as text.
     let text = block(&[call("f", &[("x", true, "1e400")])]);
-    assert!(admits(&tools, &FrontendToolChoiceV1::Required, &text));
     let parsed =
         parse_completion_v1(&descriptor(), &format!("{text}[EOS]"), PromptModeV1::Chat).unwrap();
     assert_eq!(parsed.tool_calls[0].arguments, r#"{"x": "1e400"}"#);

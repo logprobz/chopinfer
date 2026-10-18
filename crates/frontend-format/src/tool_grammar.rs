@@ -261,6 +261,11 @@ fn call_after_open(
             .unwrap_or_default();
         let properties = fields.get("properties").and_then(Value::as_object);
         let mut compiler = SchemaCompiler::new(builder, &schema, JsonOptions::default());
+        // The typed grammar reads a fraction or exponent beyond a finite
+        // binary64 back as text, so a constrained number never spells one.
+        if format.tool_grammar == FrontendToolGrammarV1::XmlTypedParametersV1 {
+            compiler = compiler.finite_numbers();
+        }
         let mut items = Vec::new();
         // The names written once each: the declared properties, then the
         // required names that are not properties.

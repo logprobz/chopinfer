@@ -75,6 +75,11 @@ fn at_most(high: &[u8]) -> Expr {
 
 /// Canonical numerals (no leading zeros) for integers in `low..=high`.
 pub(crate) fn unsigned_range(low: u128, high: Option<u128>) -> Expr {
+    unsigned_range_digits(low, high, None)
+}
+
+/// The numerals of [`unsigned_range`] of at most `max_digits` digits.
+fn unsigned_range_digits(low: u128, high: Option<u128>, max_digits: Option<u32>) -> Expr {
     if high.is_some_and(|high| high < low) {
         return Expr::Nothing;
     }
@@ -94,10 +99,12 @@ pub(crate) fn unsigned_range(low: u128, high: Option<u128>) -> Expr {
             end.to_string().as_bytes(),
         ));
     }
-    if high.is_none() {
+    let longer = max_digits.is_none_or(|digits| digits as usize > low_text.len());
+    if high.is_none() && longer {
         branches.push(Expr::seq([
             digit_class(b'1', b'9'),
-            digit_class(b'0', b'9').repeat(low_text.len() as u32, None),
+            digit_class(b'0', b'9')
+                .repeat(low_text.len() as u32, max_digits.map(|digits| digits - 1)),
         ]));
     }
     Expr::alt(branches)
@@ -145,8 +152,8 @@ fn fraction_nonzero() -> Expr {
 }
 
 /// Non-negative decimals without exponent between integer bounds on their
-/// magnitude.
-fn magnitude_range(lower: Bound, upper: Option<Bound>) -> Expr {
+/// magnitude, an unbounded one of at most `max_digits` integer digits.
+fn magnitude_range(lower: Bound, upper: Option<Bound>, max_digits: Option<u32>) -> Expr {
     let low = lower.value as u128;
     let mut branches = Vec::new();
     match upper {
@@ -181,13 +188,21 @@ fn magnitude_range(lower: Bound, upper: Option<Bound>) -> Expr {
                 ]));
             }
         }
-        None => branches.push(Expr::seq([unsigned_range(low + 1, None), fraction_any()])),
+        None => branches.push(Expr::seq([
+            unsigned_range_digits(low + 1, None, max_digits),
+            fraction_any(),
+        ])),
     }
     Expr::alt(branches)
 }
 
-/// JSON numbers without exponent between integer bounds.
-pub(crate) fn number_range(lower: Option<Bound>, upper: Option<Bound>) -> Expr {
+/// JSON numbers without exponent between integer bounds; one that a bound
+/// leaves unbounded has at most `max_digits` integer digits.
+pub(crate) fn number_range(
+    lower: Option<Bound>,
+    upper: Option<Bound>,
+    max_digits: Option<u32>,
+) -> Expr {
     let mut branches = Vec::new();
     let nonnegative =
         upper.is_none_or(|upper| upper.value > 0 || (upper.value == 0 && upper.inclusive));
@@ -199,7 +214,7 @@ pub(crate) fn number_range(lower: Option<Bound>, upper: Option<Bound>) -> Expr {
                 inclusive: true,
             },
         };
-        branches.push(magnitude_range(low, upper));
+        branches.push(magnitude_range(low, upper, max_digits));
     }
     let negative = lower.is_none_or(|lower| lower.value < 0);
     if negative {
@@ -217,7 +232,10 @@ pub(crate) fn number_range(lower: Option<Bound>, upper: Option<Bound>) -> Expr {
             value: -lower.value,
             inclusive: lower.inclusive,
         });
-        branches.push(Expr::seq([Expr::literal("-"), magnitude_range(low, high)]));
+        branches.push(Expr::seq([
+            Expr::literal("-"),
+            magnitude_range(low, high, max_digits),
+        ]));
     }
     Expr::alt(branches)
 }

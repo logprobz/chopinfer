@@ -91,6 +91,9 @@ pub struct SchemaCompiler<'a> {
     references: HashMap<String, RuleId>,
     depth: usize,
     budget: Budget,
+    /// Whether a number with a fraction or exponent stays a finite binary64
+    /// ([`Self::finite_numbers`]).
+    finite_numbers: bool,
 }
 
 impl<'a> SchemaCompiler<'a> {
@@ -104,7 +107,39 @@ impl<'a> SchemaCompiler<'a> {
             references: HashMap::new(),
             depth: 0,
             budget: Budget::default(),
+            finite_numbers: false,
         }
+    }
+
+    /// Admits a number with a fraction or exponent only when it is a finite
+    /// binary64, at any depth, for a reader that keeps any other such
+    /// number as text: at most 200 integer digits and a one- or two-digit
+    /// exponent, so its magnitude stays below 1e300. An integer keeps every
+    /// digit.
+    #[must_use]
+    pub fn finite_numbers(mut self) -> Self {
+        self.finite_numbers = true;
+        self
+    }
+
+    fn number_expr(&self) -> Expr {
+        if self.finite_numbers {
+            finite_number_expr()
+        } else {
+            number_expr()
+        }
+    }
+
+    fn number(&self, fields: &serde_json::Map<String, Value>) -> Result<Expr, GrammarError> {
+        let (lower, upper) = numeric_bounds(fields, false)?;
+        if lower.is_none() && upper.is_none() {
+            return Ok(self.number_expr());
+        }
+        Ok(number_range(
+            lower,
+            upper,
+            self.finite_numbers.then_some(FINITE_INTEGER_DIGITS),
+        ))
     }
 
     /// Cumulative construction costs, including nested literal validation.
@@ -162,7 +197,7 @@ impl<'a> SchemaCompiler<'a> {
                 let array = self.array_of(&[], Some(value), 0, None);
                 let scalar = Expr::alt([
                     string_expr(),
-                    number_expr(),
+                    self.number_expr(),
                     Expr::literal("true"),
                     Expr::literal("false"),
                     Expr::literal("null"),
@@ -332,7 +367,7 @@ impl<'a> SchemaCompiler<'a> {
             branches.push(match kind {
                 "string" => self.string(fields)?,
                 "integer" => self.integer(fields)?,
-                "number" => number(fields)?,
+                "number" => self.number(fields)?,
                 "boolean" => Expr::alt([Expr::literal("true"), Expr::literal("false")]),
                 "null" => Expr::literal("null"),
                 "array" => self.array(fields)?,
@@ -1086,14 +1121,6 @@ fn integer(fields: &serde_json::Map<String, Value>) -> Result<Expr, GrammarError
     Ok(integer_range(lower, upper))
 }
 
-fn number(fields: &serde_json::Map<String, Value>) -> Result<Expr, GrammarError> {
-    let (lower, upper) = numeric_bounds(fields, false)?;
-    if lower.is_none() && upper.is_none() {
-        return Ok(number_expr());
-    }
-    Ok(number_range(lower, upper))
-}
-
 fn integer_expr() -> Expr {
     Expr::seq([
         Expr::literal("-").optional(),
@@ -1117,6 +1144,40 @@ fn number_expr() -> Expr {
             Expr::Class(digits()).plus(),
         ])
         .optional(),
+    ])
+}
+
+/// The most integer digits a finite number admits with a fraction or an
+/// exponent ([`SchemaCompiler::finite_numbers`]).
+const FINITE_INTEGER_DIGITS: u32 = 200;
+
+/// [`number_expr`] less the numbers a binary64 cannot hold: an integer at
+/// any size, and with a fraction or exponent at most
+/// [`FINITE_INTEGER_DIGITS`] integer digits and a two-digit exponent.
+fn finite_number_expr() -> Expr {
+    let digits = || Expr::Class(digits());
+    let integer = Expr::seq([
+        Expr::literal("-").optional(),
+        Expr::alt([
+            Expr::literal("0"),
+            Expr::seq([
+                Expr::Class(CharClass::from_ranges([('1' as u32, '9' as u32)])),
+                digits().repeat(0, Some(FINITE_INTEGER_DIGITS - 1)),
+            ]),
+        ]),
+    ]);
+    let fraction = Expr::seq([Expr::literal("."), digits().plus()]);
+    let exponent = Expr::seq([
+        Expr::Class(CharClass::of("eE")),
+        Expr::Class(CharClass::of("+-")).optional(),
+        digits().repeat(1, Some(2)),
+    ]);
+    Expr::alt([
+        integer_expr(),
+        Expr::seq([
+            integer,
+            Expr::alt([Expr::seq([fraction, exponent.clone().optional()]), exponent]),
+        ]),
     ])
 }
 

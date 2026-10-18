@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 
-use frontend_format::test_support::fixtures::{FUNCTION_PARAMETERS, KEY_VALUE};
+use frontend_format::test_support::fixtures::{FUNCTION_PARAMETERS, KEY_VALUE, TYPED_PARAMETERS};
 use frontend_format::{FormatDescriptorV1, FrontendParserDeclarationV1, FrontendToolGrammarV1};
 use runtime_frontend::{
     CompletionDecoderV1, CompletionFinishV1, CompletionUpdateV1, DecoderLimitsV1,
@@ -190,6 +190,7 @@ fn fixtures() -> Vec<FixtureV1> {
     vec![
         FixtureV1::new("key-value", KEY_VALUE),
         FixtureV1::new("function-parameters", FUNCTION_PARAMETERS),
+        FixtureV1::new("typed-parameters", TYPED_PARAMETERS),
         FixtureV1::new("nested", &nested()),
     ]
 }
@@ -316,6 +317,64 @@ fn every_structural_delimiter_split_matches_the_whole_parse() {
                 fixture.name
             );
         }
+    }
+}
+
+/// The typed grammar's own shapes, streamed in any two pieces and one byte
+/// per token, parse as the whole completion does: two invokes in one calls
+/// block, a raw value that spells a parameter open and a function close,
+/// which only its parameter close ends, and a JSON value whose string
+/// spells the parameter close.
+#[test]
+fn typed_values_stream_as_the_whole_parse_reads_them() {
+    // Room for one byte per token.
+    let mut declaration: serde_json::Value = serde_json::from_str(TYPED_PARAMETERS).unwrap();
+    declaration["context"]["maximum_total_tokens"] = json!(1024);
+    declaration["tokenizer"]["model_max_length"] = json!(1024);
+    declaration["limits"]["maximum_generated_tokens"] = json!(1024);
+    let fixture = FixtureV1::new("typed-parameters", &declaration.to_string());
+    let whole = format!(
+        "answer\n\n<calls>\n<invoke name=\"f\">\n\
+         <parameter name=\"x\" string=\"true\">a <parameter name=\"y\" string=\"true\"> b </invoke></parameter>\n\
+         </invoke>\n<invoke name=\"g\">\n\
+         <parameter name=\"n\" string=\"false\">{{\"k\": \"</parameter>\", \"v\": 2}}</parameter>\n\
+         </invoke>\n</calls>{}",
+        fixture.end()
+    );
+    let expected = parse_completion_v1(&fixture.descriptor, &whole, PromptModeV1::Chat)
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(expected.content, "answer");
+    let calls: Vec<(&str, serde_json::Value)> = expected
+        .tool_calls
+        .iter()
+        .map(|call| {
+            (
+                call.name.as_str(),
+                serde_json::from_str(&call.arguments).unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        calls,
+        [
+            (
+                "f",
+                json!({"x": "a <parameter name=\"y\" string=\"true\"> b </invoke>"})
+            ),
+            ("g", json!({"n": {"k": "</parameter>", "v": 2}})),
+        ]
+    );
+    let bytes = whole.as_bytes();
+    let mut splits: Vec<Vec<&[u8]>> = (0..=bytes.len())
+        .map(|split| vec![&bytes[..split], &bytes[split..]])
+        .collect();
+    splits.push(bytes.chunks(1).collect());
+    for parts in splits {
+        let updates = feed(&mut fixture.decoder(PromptModeV1::Chat), &parts);
+        let done =
+            finished(&updates).unwrap_or_else(|| panic!("no finish at {} parts", parts.len()));
+        assert_eq!(done.completion.as_ref(), Some(&expected), "{parts:?}");
+        assert_eq!(done.reason, CompletionFinishV1::ToolCalls);
     }
 }
 

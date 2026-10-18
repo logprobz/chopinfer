@@ -1,7 +1,7 @@
 //! Build and audit the quantized SwiGLU cubin without opening a GPU:
 //! sm_120f, exact symbols, no spills, stack or shared memory, PDL in every
 //! entry, the exponential and the warp's amax shuffles, and no tensor-core
-//! instructions or atomics.
+//! instructions, atomics or vector operand loads.
 
 use std::fs;
 use std::path::PathBuf;
@@ -53,7 +53,7 @@ fn silu_mul_quantize_entries_compile_and_audit() {
             "{}",
             report.symbol
         );
-        let output = Command::new("/usr/local/cuda/bin/cuobjdump")
+        let output = Command::new(toolchain.home.join("bin/cuobjdump"))
             .args(["-sass", "-fun", &report.symbol])
             .arg(&cubins[0].path)
             .output()
@@ -63,7 +63,17 @@ fn silu_mul_quantize_entries_compile_and_audit() {
         for opcode in ["ACQBULK", "PREEXIT", "MUFU.EX2", "SHFL.BFLY", "F2FP"] {
             assert!(sass.contains(opcode), "{} lacks {opcode}", report.symbol);
         }
-        for opcode in ["HMMA", "QMMA", "OMMA", "ATOM", "RED."] {
+        // Scalar operand loads: no vector load that needs more than F32
+        // alignment.
+        for opcode in [
+            "HMMA",
+            "QMMA",
+            "OMMA",
+            "ATOM",
+            "RED.",
+            "LDG.E.64",
+            "LDG.E.128",
+        ] {
             assert!(!sass.contains(opcode), "{} has {opcode}", report.symbol);
         }
     }

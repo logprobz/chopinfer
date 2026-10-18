@@ -14,9 +14,14 @@
 
 namespace chop::row::silu_mul_quantize {
 
+// The op's exponential of the clamped gate, expf(-g). kernel-lab's expf
+// error probe measures this function over every gate the op can see.
+__device__ __forceinline__ float exponential(float g) { return expf(-g); }
+
 // g = min(gate, gate_max), u = clamp(up, -limit, limit), then
 // (g / (1 + expf(-g))) * u, each step rounded in F32, then BF16. Non-finite
-// gate or up values trap: they are refused, never clamped away.
+// gate or up values, and a product that rounds to a BF16 infinity, trap:
+// the contract refuses them, so they are never clamped away.
 template<uint32_t GateMaxBits, uint32_t UpLimitBits>
 __device__ __forceinline__ float product(float gate, float up) {
   if (!isfinite(gate) || !isfinite(up)) asm volatile("trap;");
@@ -24,13 +29,16 @@ __device__ __forceinline__ float product(float gate, float up) {
   const float limit = __uint_as_float(UpLimitBits);
   const float g = fminf(gate, gate_max);
   const float u = fminf(fmaxf(up, -limit), limit);
-  const float silu = __fdiv_rn(g, __fadd_rn(1.f, expf(-g)));
-  return convert::bf16_to_f32(convert::bf16_from_f32(__fmul_rn(silu, u)));
+  const float silu = __fdiv_rn(g, __fadd_rn(1.f, exponential(g)));
+  const float rounded = convert::bf16_to_f32(convert::bf16_from_f32(__fmul_rn(silu, u)));
+  if (!isfinite(rounded)) asm volatile("trap;");
+  return rounded;
 }
 
 // Grid (rows, Width / 32), 32 threads: lane l < 16 owns columns 2l and
 // 2l + 1 of its group. gate and up are [rows, Width] F32, codes
-// [rows, Width] E4M3 and scales [rows, Width / 32] UE8M0.
+// [rows, Width] E4M3 and scales [rows, Width / 32] UE8M0. Each column is a
+// scalar load, so the operands need only F32 alignment.
 template<int Width, uint32_t GateMaxBits, uint32_t UpLimitBits, uint32_t FloorBits>
 __device__ void run(const float* gate, const float* up, uint8_t* codes, uint8_t* scales,
                     const uint32_t* live_rows) {
@@ -44,10 +52,8 @@ __device__ void run(const float* gate, const float* up, uint8_t* codes, uint8_t*
   const uint64_t at = uint64_t(row) * Width + uint64_t(group) * 32 + 2 * lane;
   float x = 0.f, y = 0.f;
   if (lane < 16) {
-    const float2 g = *reinterpret_cast<const float2*>(gate + at);
-    const float2 u = *reinterpret_cast<const float2*>(up + at);
-    x = product<GateMaxBits, UpLimitBits>(g.x, u.x);
-    y = product<GateMaxBits, UpLimitBits>(g.y, u.y);
+    x = product<GateMaxBits, UpLimitBits>(gate[at], up[at]);
+    y = product<GateMaxBits, UpLimitBits>(gate[at + 1], up[at + 1]);
   }
   float maximum = fmaxf(fabsf(x), fabsf(y));
   for (int step = 16; step; step >>= 1)

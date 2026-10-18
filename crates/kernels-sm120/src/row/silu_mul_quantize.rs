@@ -4,7 +4,9 @@
 //! (`row/block_quantize.cuh`). One CTA of 32 threads per row and group of
 //! 32 columns; each row and group reads only its own columns, so an entry
 //! claims one-row bits up to its capacity, any chunk split and row
-//! independence.
+//! independence. Each column is a scalar load, so the gate and up views
+//! need only F32 alignment. A product that rounds to a BF16 infinity traps,
+//! as the contract refuses it.
 
 use super::{pack_arguments, ptr};
 use kernel_build::{CubinSpec, EntrySpec};

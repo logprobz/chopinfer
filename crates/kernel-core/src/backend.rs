@@ -915,6 +915,28 @@ pub trait Backend: Send + Sync {
 
     // Latent attention.
 
+    /// In-place F32 query-tail RoPE and its separate post-RoPE BF16 Q output.
+    /// Launches read `Counts::rows`; the device live count selects written rows.
+    fn latent_query_rope(
+        &self,
+        op: &crate::latent_glue::LatentQueryRope,
+        need: Need,
+    ) -> Result<Prepared<crate::latent_glue::LatentQueryRopeBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
+    /// Causal physical window slots in increasing absolute-position order.
+    /// Launches read `Counts::rows`; the device live count selects written rows.
+    fn latent_window_keys(
+        &self,
+        op: &crate::latent_glue::LatentWindowKeys,
+        need: Need,
+    ) -> Result<Prepared<crate::latent_glue::LatentWindowKeyBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
     /// A latent KV write (`LatentAttentionQuery::KvWrite`).
     ///
     /// Launches read `Counts::rows` alone. The block tables state their own
@@ -2196,6 +2218,12 @@ mod tests {
             0,
             2,
             Need::rows(4),
+        );
+        latent_query_rope: Empty.latent_query_rope(
+            &crate::latent_glue::LatentQueryRope { heads: 2, latent: 512, rotary: 64 }, Need::rows(32)
+        );
+        latent_window_keys: Empty.latent_window_keys(
+            &crate::latent_glue::LatentWindowKeys { window: 128, addressing: crate::latent_glue::WindowAddressing::Circular { slots: 136 } }, Need::rows(32)
         );
         latent_kv_write: Empty.latent_kv_write(
             &LatentAttentionQuery::KvWrite {

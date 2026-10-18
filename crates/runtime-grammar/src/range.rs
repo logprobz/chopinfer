@@ -134,8 +134,12 @@ pub(crate) fn integer_range(lower: Option<Bound>, upper: Option<Bound>) -> Expr 
     Expr::alt(branches)
 }
 
+fn fraction() -> Expr {
+    Expr::seq([Expr::literal("."), digit_class(b'0', b'9').plus()])
+}
+
 fn fraction_any() -> Expr {
-    Expr::seq([Expr::literal("."), digit_class(b'0', b'9').plus()]).optional()
+    fraction().optional()
 }
 
 fn fraction_zero() -> Expr {
@@ -152,7 +156,8 @@ fn fraction_nonzero() -> Expr {
 }
 
 /// Non-negative decimals without exponent between integer bounds on their
-/// magnitude, an unbounded one of at most `max_digits` integer digits.
+/// magnitude; one with a fraction that the upper bound leaves unbounded has
+/// at most `max_digits` integer digits.
 fn magnitude_range(lower: Bound, upper: Option<Bound>, max_digits: Option<u32>) -> Expr {
     let low = lower.value as u128;
     let mut branches = Vec::new();
@@ -188,16 +193,18 @@ fn magnitude_range(lower: Bound, upper: Option<Bound>, max_digits: Option<u32>) 
                 ]));
             }
         }
-        None => branches.push(Expr::seq([
-            unsigned_range_digits(low + 1, None, max_digits),
-            fraction_any(),
-        ])),
+        // An integer keeps every digit; `max_digits` caps only the integer
+        // part of a number with a fraction.
+        None => branches.extend([
+            unsigned_range(low + 1, None),
+            Expr::seq([unsigned_range_digits(low + 1, None, max_digits), fraction()]),
+        ]),
     }
     Expr::alt(branches)
 }
 
-/// JSON numbers without exponent between integer bounds; one that a bound
-/// leaves unbounded has at most `max_digits` integer digits.
+/// JSON numbers without exponent between integer bounds; one with a fraction
+/// that a bound leaves unbounded has at most `max_digits` integer digits.
 pub(crate) fn number_range(
     lower: Option<Bound>,
     upper: Option<Bound>,

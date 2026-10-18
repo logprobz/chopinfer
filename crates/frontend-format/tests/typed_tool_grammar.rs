@@ -362,6 +362,38 @@ fn a_constrained_number_keeps_its_type() {
 }
 
 #[test]
+fn a_half_open_number_keeps_every_integer_digit() {
+    let tools = [tool(serde_json::json!({
+        "type": "object",
+        "properties": {
+            "x": {"type": "number", "minimum": 0},
+            "y": {"type": "number", "maximum": 0}
+        },
+        "required": ["x", "y"],
+        "additionalProperties": false
+    }))];
+    let admitted = |x: &str, y: &str| {
+        admits(
+            &tools,
+            &FrontendToolChoiceV1::Named("f".into()),
+            &block(&[call("f", &[("x", true, x), ("y", true, y)])]),
+        )
+    };
+    let long = |digits: usize| format!("1{}", "0".repeat(digits - 1));
+    for digits in [201, 309, 400] {
+        assert!(
+            admitted(&long(digits), &format!("-{}", long(digits))),
+            "{digits}"
+        );
+    }
+    // A fraction caps the integer part below 1e308.
+    let fraction = |digits: usize| format!("{}.5", long(digits));
+    assert!(admitted(&fraction(308), &format!("-{}", fraction(308))));
+    assert!(!admitted(&fraction(309), "0"));
+    assert!(!admitted("0", &format!("-{}", fraction(309))));
+}
+
+#[test]
 fn a_function_element_outside_a_call_block_is_text() {
     let completion = format!("Hi{}[EOS]", call("f", &[("x", false, "1")]));
     let parsed = parse_completion_v1(&descriptor(), &completion, PromptModeV1::Chat).unwrap();

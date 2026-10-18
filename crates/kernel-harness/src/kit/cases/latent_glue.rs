@@ -638,6 +638,10 @@ fn write_case_impl<'a>(
                     plane_map(query, images, live, scale_stride, width / 32)
                 })),
             ),
+            // The writer addresses sequences by row; it reads neither the
+            // attention's item slots nor its key lists.
+            item_slots: Spec::untouched(4),
+            items: 0,
             sequences: 2,
             code_stride: code_stride as u64,
             scale_stride: scale_stride as u64,

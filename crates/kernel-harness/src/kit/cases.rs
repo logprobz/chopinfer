@@ -17,6 +17,7 @@ pub mod gated_sparse;
 pub mod latent;
 pub mod latent_sources;
 pub mod moe;
+pub mod moe_chained_quantized;
 pub mod moe_routed;
 pub mod multimodal;
 pub mod pooled_indexer;

@@ -17,3 +17,8 @@ kernels-sm120.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+kernel-harness.workspace = true
+runtime-cuda.workspace = true
+serde_json.workspace = true

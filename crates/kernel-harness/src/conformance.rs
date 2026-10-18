@@ -399,6 +399,9 @@ pub struct Case<'a> {
     /// Stages the chain computes its results without, with the reason
     /// ([`Case::redundant`]).
     redundant: BTreeMap<String, String>,
+    /// A producer's output to check before an omission test runs its
+    /// consumers. Poisoned indexing metadata is not a safe kernel input.
+    omission_guards: BTreeMap<String, String>,
     /// Why the device live count is a step input a launch may read before
     /// its PDL wait ([`Case::live_count_before_wait`]), if it is.
     step_live: Option<String>,
@@ -432,6 +435,7 @@ impl<'a> Case<'a> {
             oracle: None,
             no_write: BTreeMap::new(),
             redundant: BTreeMap::new(),
+            omission_guards: BTreeMap::new(),
             step_live: None,
         }
     }
@@ -759,6 +763,49 @@ impl<'a> Case<'a> {
     pub fn redundant(mut self, symbol: &str, reason: &str) -> Self {
         self.redundant.insert(symbol.into(), reason.into());
         self
+    }
+
+    /// Checks output `name`'s write map when the negative control omits
+    /// its producer `symbol`, before launching later consumers. Missing
+    /// metadata then fails on the host instead of reaching a kernel as
+    /// poisoned indices or counts. If an earlier stage wrote the output,
+    /// the suffix still runs and must fail the normal checks. Every stage
+    /// runs without this host check in eager, graph and PDL phases.
+    pub fn omission_guard(mut self, symbol: &str, name: &str) -> Self {
+        self.omission_guards.insert(symbol.into(), name.into());
+        self
+    }
+
+    fn omit_stage(
+        &self,
+        symbols: &[String],
+        skip: usize,
+        images: &Images,
+        live: u32,
+        read: impl Fn(&str) -> LabResult<Vec<u8>>,
+        launch: impl Fn(usize) -> LabResult<()>,
+    ) -> LabResult<Option<String>> {
+        for (at, symbol) in symbols.iter().enumerate() {
+            if at != skip {
+                launch(at)?;
+                continue;
+            }
+            if let Some(name) = self.omission_guards.get(symbol) {
+                let buffer = self.find(name)?;
+                let Role::Output { write, pattern } = &buffer.role else {
+                    return Err(format!("omission guard {name} is not an output"));
+                };
+                if let Err(error) = poison::check(
+                    &format!("omitted {symbol}: {name}"),
+                    &read(name)?,
+                    &self.map(buffer, write, images, live)?,
+                    poison::Fill::Pattern(pattern),
+                ) {
+                    return Ok(Some(error));
+                }
+            }
+        }
+        Ok(None)
     }
 
     /// Declares the device live count a step input, for `reason`: the host
@@ -1595,6 +1642,12 @@ impl<'a> Case<'a> {
         match &self.source {
             Source::Entries(stages) => {
                 bind_chain(stages, &names, &self.scalars).map_err(context)?;
+                if !self.omission_guards.is_empty() {
+                    let launched = self
+                        .stages(self.capacity, &|name| token(&names, name))
+                        .map_err(context)?;
+                    self.validate_launched(&launched).map_err(context)?;
+                }
             }
             Source::Prepared { .. } => {
                 let launched = self
@@ -1732,6 +1785,22 @@ impl<'a> Case<'a> {
             matches!(buffer.role, Role::Output { .. }) && !taken.contains(buffer.name.as_str())
         }) {
             return Err(format!("no launch takes output {}", buffer.name));
+        }
+        for (producer, name) in &self.omission_guards {
+            let buffer = self.find(name)?;
+            if !matches!(buffer.role, Role::Output { .. }) {
+                return Err(format!("omission guard {name} is not an output"));
+            }
+            let at = stages
+                .iter()
+                .position(|stage| stage.symbol == *producer)
+                .ok_or_else(|| format!("omission guard producer {producer} is not launched"))?;
+            let takes = |stage: &Stage| stage.names.values().any(|path| path == name);
+            if !takes(&stages[at]) || !stages[at + 1..].iter().any(takes) {
+                return Err(format!(
+                    "omission guard {name} needs its producer and a later consumer"
+                ));
+            }
         }
         Ok(())
     }
@@ -2341,6 +2410,7 @@ impl<'a> Case<'a> {
         // oracle at every count where something writes, and so must a
         // chain without any one of its entries.
         let null_counts = self.null_counts(&images)?;
+        let mut guarded_omissions = Vec::new();
         for &live in &null_counts {
             set_live(live)?;
             let mut replay = self.replay(session, &device, &images, live, false)?;
@@ -2354,6 +2424,10 @@ impl<'a> Case<'a> {
                 ));
             }
             let (stages, _) = &planned[&rows_at(live)];
+            let symbols = stages
+                .iter()
+                .map(|stage| stage.0.clone())
+                .collect::<Vec<_>>();
             let dropped = if stages.len() > 1 {
                 0..stages.len()
             } else {
@@ -2364,12 +2438,28 @@ impl<'a> Case<'a> {
                     continue;
                 }
                 let mut replay = self.replay(session, &device, &images, live, false)?;
-                let passes = replay
-                    .eager(|| {
-                        produce(stream)?;
-                        launch_stages(stages, stream, false, Some(skip))
-                    })
-                    .is_ok()
+                replay.prepare(crate::poison::Phase::Eager)?;
+                produce(stream)?;
+                let rejected = self.omit_stage(
+                    &symbols,
+                    skip,
+                    &images,
+                    live,
+                    |name| poison::read(session, &device[name]),
+                    |at| launch_stages(&stages[at..=at], stream, false, None),
+                )?;
+                // A launch or read failure is not an expected negative
+                // control. Fence it before interpreting write-map errors.
+                stream
+                    .synchronize()
+                    .map_err(|e| format!("omitting {} at live {live}: {e}", stages[skip].0))?;
+                if let Some(error) = rejected {
+                    guarded_omissions.push(json!({
+                        "stage": stages[skip].0, "live": live, "rejected": error,
+                    }));
+                    continue;
+                }
+                let passes = replay.finish(crate::poison::Phase::Eager, false).is_ok()
                     && self
                         .compare(&replay, &images, live, &mut BTreeMap::new())
                         .is_ok();
@@ -2451,6 +2541,8 @@ impl<'a> Case<'a> {
             "null_launch_refused_at": null_counts,
             "no_write": no_write,
             "redundant_stages": self.redundant,
+            "omission_guards": self.omission_guards,
+            "guarded_omissions": guarded_omissions,
             "live_count_before_wait": self.step_live,
             "high_ids": high,
             "hole_rows": holes,
@@ -3012,6 +3104,134 @@ mod tests {
     }
 
     const WIDTH: usize = 4;
+
+    #[test]
+    fn omitted_metadata_producer_is_rejected_before_its_consumer() {
+        use std::cell::Cell;
+        let entry = Gather;
+        let make = || {
+            Case::new(&entry, 8).output(
+                "padded_rows",
+                DType::I32,
+                (Rows::Fixed(1), 1),
+                Write::EveryCount(Box::new(|_, _| WriteMap::of(DType::I32).prefix(1))),
+            )
+        };
+        let symbols = vec!["route".into(), "down".into()];
+        let poisoned_count = vec![POISON; 4];
+        assert_eq!(
+            i32::from_le_bytes(poisoned_count.clone().try_into().unwrap()),
+            -1
+        );
+        let consumer_calls = Cell::new(0);
+        let consumer = |at| {
+            assert_eq!(at, 1);
+            consumer_calls.set(consumer_calls.get() + 1);
+            Err("simulated device trap: padded row count is not a whole tile".into())
+        };
+        // Without a guard the dropped route feeds -1 to the down kernel.
+        let unguarded = make();
+        let error = unguarded
+            .omit_stage(
+                &symbols,
+                0,
+                &Images::default(),
+                8,
+                |_| Ok(poisoned_count.clone()),
+                consumer,
+            )
+            .unwrap_err();
+        assert!(error.contains("simulated device trap"));
+        assert_eq!(consumer_calls.get(), 1);
+
+        consumer_calls.set(0);
+        let guarded = make().omission_guard("route", "padded_rows");
+        let error = guarded
+            .omit_stage(
+                &symbols,
+                0,
+                &Images::default(),
+                8,
+                |_| Ok(poisoned_count.clone()),
+                consumer,
+            )
+            .unwrap()
+            .expect("the unwritten metadata must be rejected");
+        assert!(error.contains("the launch did not write it"), "{error}");
+        assert_eq!(consumer_calls.get(), 0);
+
+        // If a prior stage already wrote the output, still run the suffix:
+        // the guard must not hide a genuinely redundant producer.
+        guarded
+            .omit_stage(
+                &symbols,
+                0,
+                &Images::default(),
+                8,
+                |_| Ok(vec![0; 4]),
+                |at| {
+                    assert_eq!(at, 1);
+                    consumer_calls.set(consumer_calls.get() + 1);
+                    Ok(())
+                },
+            )
+            .unwrap();
+        assert_eq!(consumer_calls.get(), 1);
+
+        let error = guarded
+            .omit_stage(
+                &symbols,
+                0,
+                &Images::default(),
+                8,
+                |_| Err("injected metadata read failure".into()),
+                consumer,
+            )
+            .unwrap_err();
+        assert_eq!(error, "injected metadata read failure");
+        assert_eq!(consumer_calls.get(), 1);
+    }
+
+    #[test]
+    fn omission_guards_require_a_bound_output_and_later_consumer() {
+        let entry = Gather;
+        let mut guarded = case(&entry).omission_guard("producer", "output");
+        let stage = |symbol: &str, names: &[&str]| super::Stage {
+            symbol: symbol.into(),
+            plan: entry.plan(8).unwrap(),
+            arguments: ArgumentList(vec![]),
+            names: names
+                .iter()
+                .enumerate()
+                .map(|(i, name)| (i as u64 + 1, (*name).into()))
+                .collect(),
+        };
+        let stages = [
+            stage("producer", &["output"]),
+            stage("consumer", &["output"]),
+        ];
+        guarded.validate_launched(&stages).unwrap();
+        assert!(
+            guarded
+                .validate_launched(&stages[..1])
+                .unwrap_err()
+                .contains("later consumer")
+        );
+        guarded.omission_guards = BTreeMap::from([("missing".into(), "output".into())]);
+        assert!(
+            guarded
+                .validate_launched(&stages)
+                .unwrap_err()
+                .contains("not launched")
+        );
+        guarded.omission_guards = BTreeMap::from([("producer".into(), "pool".into())]);
+        assert!(
+            guarded
+                .validate_launched(&stages)
+                .unwrap_err()
+                .contains("not an output")
+        );
+    }
 
     fn pool() -> Vec<u8> {
         (0..16 * WIDTH as u16).flat_map(u16::to_le_bytes).collect()

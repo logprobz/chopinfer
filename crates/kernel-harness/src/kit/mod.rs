@@ -745,6 +745,13 @@ impl<'a> OpCase<'a> {
         self
     }
 
+    /// Rejects an omitted producer on its output write map before later
+    /// kernels can consume poisoned indices or counts ([`Case::omission_guard`]).
+    pub fn omission_guard(mut self, symbol: &str, output: &str) -> Self {
+        self.case = self.case.omission_guard(symbol, output);
+        self
+    }
+
     /// Live counts in place of the default ([`Case::live_counts`]).
     pub fn live_counts(mut self, counts: Vec<u32>) -> Self {
         self.case = self.case.live_counts(counts);

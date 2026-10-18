@@ -597,7 +597,10 @@ version = "0.1.0-alpha.3"
 dependencies = [
  "kernel-build",
  "kernel-core",
+ "kernel-harness",
  "kernels-sm120",
+ "runtime-cuda",
+ "serde_json",
 ]
 
 [[package]]

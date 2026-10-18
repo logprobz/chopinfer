@@ -83,7 +83,7 @@ pub fn pdl_copy_symbol() -> String {
     format!("chop_latent_{}_pdl_copy_v1", PROFILE.tag())
 }
 
-fn pdl_copy_entry() -> EntrySpec {
+pub fn pdl_copy_entry() -> EntrySpec {
     let pointer = |name: &str, cxx_type: &str| EntryParam::DevicePointer {
         name: name.into(),
         cxx_type: cxx_type.into(),

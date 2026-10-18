@@ -1,0 +1,14 @@
+[
+  {
+    "name": "chop_moe_chain_quantized_lab",
+    "source_closure_sha256": "13e31e45b5406b5eb67daad57a98803b0aa996b339f1497a72b56ffdb7be0b2c"
+  },
+  {
+    "name": "chop_moe_chain_quantized_probes",
+    "source_closure_sha256": "28a159a6addd56c7c35960b14a365f683dfacdd77596eb7696498ff2d0b7ff0c"
+  },
+  {
+    "name": "chop_moe_row_bias_lab",
+    "source_closure_sha256": "8a2459aeb2f745926d46a93779fc33ff270bd5fbd875bdd7695072f64a4338e5"
+  }
+]

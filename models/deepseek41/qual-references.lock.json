@@ -57,16 +57,16 @@
     "frontend": {
       "directory": false,
       "members": {
-        ".": "da60a475adca558ec48684e95701f808f08b708176c2a313fe36558534b39878"
+        ".": "4d79414ef09f655f20667279de6d75e73e3031273bbff11c34fe1c1c8112c621"
       },
       "path": "models/deepseek41/compiler/src/frontend.json"
     },
     "frontend_capture": {
       "directory": true,
       "members": {
-        "corpus-coverage.json": "ea2002c8d11ea4e1c0c055363c96bf50c805a4068fa1c13c7459220f4f94519e",
+        "corpus-coverage.json": "0781a080477c56c5b09555038ef7e7e9f5ef94b3ddaa043b7e134f215b93125e",
         "corpus-rounds.json": "a12c814a2ec083de6cc0f7cd406665cec10f1d3328e957b70c695b369483e222",
-        "corpus.json": "ebbe6204917beaed2c093360330dc85d521ac2a5c9330a9c11b8443fec5e2e68",
+        "corpus.json": "8d71baff45f96252815a3a7ba320193b2dc5d2dcaac27124975cd9cfdbd10560",
         "encoder-tests/LICENSE": "f2c6c602815669d292889e5be8c802f2ed950653b77999b1584e8e6aed25d040",
         "encoder-tests/README.md": "d0ed3e2f6258c01a41cc6a73781889293a124250311839adcf659c494cbd584b",
         "encoder-tests/test_input_1.json": "6a5a86694e47169c8f0c9243a7e24cc5db05447be0d3d3a9891034e913c518de",
@@ -265,9 +265,6 @@
     "d0ed3e2f6258c01a41cc6a73781889293a124250311839adcf659c494cbd584b": {
       "schema": "legacy-md"
     },
-    "da60a475adca558ec48684e95701f808f08b708176c2a313fe36558534b39878": {
-      "schema": "chop-frontend-openai-v2"
-    },
     "e9e19b4b43cc604ff634e457ed367f2d82e170368233af35936e9b505f953ca6": {
       "schema": "legacy-json-object"
     },
@@ -295,12 +292,6 @@
     "a12c814a2ec083de6cc0f7cd406665cec10f1d3328e957b70c695b369483e222": {
       "schema": "legacy-json-array"
     },
-    "ea2002c8d11ea4e1c0c055363c96bf50c805a4068fa1c13c7459220f4f94519e": {
-      "schema": "chop-frontend-corpus-coverage-v1"
-    },
-    "ebbe6204917beaed2c093360330dc85d521ac2a5c9330a9c11b8443fec5e2e68": {
-      "schema": "legacy-json-array"
-    },
     "24d4ec51121f74c9189ce603c4b1ff73db702c4d0a1bbeb2a91677b395b8383c": {
       "schema": "legacy-json-array"
     },
@@ -326,6 +317,15 @@
     },
     "b24212819c84de222cbce240a20edd36fa93ef4e257c6bf7f89b76de4a5c14b5": {
       "schema": "legacy-json-object"
+    },
+    "0781a080477c56c5b09555038ef7e7e9f5ef94b3ddaa043b7e134f215b93125e": {
+      "schema": "chop-frontend-corpus-coverage-v1"
+    },
+    "4d79414ef09f655f20667279de6d75e73e3031273bbff11c34fe1c1c8112c621": {
+      "schema": "chop-frontend-openai-v2"
+    },
+    "8d71baff45f96252815a3a7ba320193b2dc5d2dcaac27124975cd9cfdbd10560": {
+      "schema": "legacy-json-array"
     }
   },
   "schema": "chopinfer-qual-references/v1"

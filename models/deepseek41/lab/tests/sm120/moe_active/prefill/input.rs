@@ -134,6 +134,7 @@ pub fn prepend(
         activation_global: None,
         routing: None,
         scratch: ProjectionScratch {
+            weight_domain: None,
             partial: View::EMPTY,
             semaphores: View::EMPTY,
             unused: View::EMPTY,

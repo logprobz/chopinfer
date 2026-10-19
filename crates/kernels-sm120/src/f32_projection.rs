@@ -21,6 +21,7 @@ pub mod blocked;
 mod decode;
 mod prefill;
 mod split;
+pub mod wide;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Entry {

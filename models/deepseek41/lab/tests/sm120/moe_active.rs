@@ -17,6 +17,18 @@ use model_deepseek41_contract::{geometry::FLASH, moe};
 use runtime_cuda::{DeviceBuffer, Function, Stream};
 use std::collections::BTreeMap;
 
+mod cases;
+mod shared;
+use cases::{Case, Routing};
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Mode {
+    Old,
+    Selected,
+    Compact,
+    BlockWarps,
+}
+
 struct Arena<'a> {
     session: Option<&'a Session>,
     next: u64,
@@ -57,6 +69,9 @@ impl Arena<'_> {
 
 struct Arm {
     launches: Vec<Launch>,
+    side: Vec<Launch>,
+    sum: Vec<Launch>,
+    active_list: View,
     outputs: Vec<View>,
     poison: Vec<View>,
     status: View,
@@ -71,7 +86,14 @@ struct Inputs {
     weights: [QuantizedWeights<View>; 2],
 }
 
-fn arm(a: &mut Arena<'_>, rows: u32, active: bool, inputs: Inputs) -> LabResult<Arm> {
+fn arm(
+    a: &mut Arena<'_>,
+    case: Case,
+    mode: Mode,
+    inputs: Inputs,
+    shared_weights: [QuantizedWeights<View>; 3],
+) -> LabResult<Arm> {
+    let rows = case.rows;
     let Inputs {
         input,
         scales,
@@ -79,46 +101,53 @@ fn arm(a: &mut Arena<'_>, rows: u32, active: bool, inputs: Inputs) -> LabResult<
         logits,
         weights: [gate_weights, down_weights],
     } = inputs;
-    let set = moe::expert_sets(&FLASH)[0];
+    let set = case.set;
     let mut backend = registration::quantizers(&FLASH, 4)?
         .into_iter()
         .fold(Sm120::new(), Sm120::with_block_quantize);
-    let entries = if active {
+    let tile = if mode == Mode::BlockWarps || case.phase == ExecutionPhase::Decode {
+        16
+    } else {
+        64
+    };
+    let entries = if mode == Mode::BlockWarps {
         registration::active_projections(&FLASH, 4)?
+            .into_iter()
+            .filter(|e| e.tokens_capacity == if rows <= 32 { 32 } else { 192 })
+            .collect()
     } else {
         registration::projections(&FLASH, 4)?
     };
-    // Hold exactly the entry under test. The prefill control keeps 64-row
-    // tiles while the candidate uses the decode tile at every comparison.
-    let tile = if active || rows <= 32 { 16 } else { 64 };
-    let capacity = if active && rows > 32 {
-        192
-    } else if tile == 64 {
-        8192
-    } else {
-        32
-    };
-    for e in entries.into_iter().filter(|e| {
-        e.row_tile == tile
-            && e.tokens_capacity == capacity
-            && e.query.projection.gemm.grouped.unwrap().experts == set.count
-    }) {
-        backend = backend.with_quantized_chained_projection(e);
+    for entry in entries.into_iter().filter(|e| e.row_tile == tile) {
+        let entry = if mode == Mode::Compact {
+            entry.with_compact_columns().map_err(|e| e.to_string())?
+        } else {
+            entry
+        };
+        backend = backend.with_quantized_chained_projection(entry);
     }
-    for e in registration::routes(&FLASH)
+    if matches!(mode, Mode::Selected | Mode::Compact)
+        && case.phase == ExecutionPhase::Decode
+        && rows == 1
+    {
+        for entry in registration::serving_active_projections(&FLASH, 4)? {
+            backend = backend.with_quantized_chained_projection(entry);
+        }
+    }
+    for entry in registration::routes(&FLASH)
         .into_iter()
         .chain(registration::active_routes(&FLASH))
     {
-        backend = backend.with_row_bias_route(e);
+        backend = backend.with_row_bias_route(entry);
     }
     let usage = OperationUse {
-        phase: if rows > 32 {
+        phase: if mode == Mode::BlockWarps {
             ExecutionPhase::Verify
         } else {
-            ExecutionPhase::Decode
+            case.phase
         },
-        capacity: rows,
-        graph: true,
+        capacity: case.capacity(),
+        graph: case.phase != ExecutionPhase::Prefill,
     };
     let need = Need::rows(rows);
     let gate = backend
@@ -251,16 +280,33 @@ fn arm(a: &mut Arena<'_>, rows: u32, active: bool, inputs: Inputs) -> LabResult<
         metadata.padded_rows,
         metadata.active_experts.unwrap(),
     ]);
-    Ok(Arm {
+    let mut arm = Arm {
         launches,
+        side: Vec::new(),
+        sum: Vec::new(),
         outputs,
         poison,
         status,
-    })
+        active_list: metadata.active_experts.unwrap(),
+    };
+    shared::append(a, case, inputs, &mut arm, shared_weights)?;
+    Ok(arm)
 }
 
-fn weights(a: &mut Arena<'_>, n: usize, k: usize) -> LabResult<QuantizedWeights<View>> {
-    let count = 384 * n * k / 2;
+fn weights(
+    a: &mut Arena<'_>,
+    experts: usize,
+    n: usize,
+    k: usize,
+) -> LabResult<QuantizedWeights<View>> {
+    let count = experts * n * k / 2;
+    if a.session.is_none() {
+        return Ok(QuantizedWeights {
+            codes: a.filled(count as u64, 0)?,
+            local_scales: Some(a.filled((experts * n * k / 32) as u64, 0)?),
+            global_scales: None,
+        });
+    }
     let codes = (0..count)
         .map(|i| {
             let x = (i as u32).wrapping_mul(747796405).wrapping_add(2891336453);
@@ -268,7 +314,7 @@ fn weights(a: &mut Arena<'_>, n: usize, k: usize) -> LabResult<QuantizedWeights<
         })
         .collect::<Vec<_>>();
     let codes = a.bytes(&codes)?;
-    let scales = (0..384 * n * k / 32)
+    let scales = (0..experts * n * k / 32)
         .map(|i| 120 + (i % 5) as u8)
         .collect::<Vec<_>>();
     Ok(QuantizedWeights {
@@ -278,12 +324,14 @@ fn weights(a: &mut Arena<'_>, n: usize, k: usize) -> LabResult<QuantizedWeights<
     })
 }
 
-fn compare(session: &Session, rows: u32) -> LabResult<()> {
-    let mut a = Arena {
-        session: Some(session),
-        next: 0,
-        buffers: BTreeMap::new(),
-    };
+fn compare(
+    a: &mut Arena<'_>,
+    case: Case,
+    routed_weights: [QuantizedWeights<View>; 2],
+    shared_weights: [QuantizedWeights<View>; 3],
+) -> LabResult<()> {
+    let session = a.session.ok_or("GPU case requires a session")?;
+    let rows = case.rows;
     let live = a.bytes(&rows.to_le_bytes())?;
     let input = a.bytes(
         &(0..rows as usize * 5120)
@@ -295,51 +343,27 @@ fn compare(session: &Session, rows: u32) -> LabResult<()> {
             .map(|i| 122 + (i % 5) as u8)
             .collect::<Vec<_>>(),
     )?;
-    let logits = a.bytes(
-        &(0..rows * 384)
-            .flat_map(|i| {
-                // Repeat six experts in some rows and spread the others. Repeated
-                // experts cross the 16-row tile boundary at the larger buckets.
-                let row = i / 384;
-                let selected = if row % 3 == 0 { 0 } else { row * 37 % 384 };
-                let score = ((i % 384 + 384 - selected) % 384) as f32;
-                (-score / 32.0).to_le_bytes()
-            })
-            .collect::<Vec<_>>(),
-    )?;
-    let gw = weights(&mut a, 1152, 5120)?;
-    let dw = weights(&mut a, 5120, 576)?;
-    let arms = [
-        arm(
-            &mut a,
-            rows,
-            false,
-            Inputs {
-                input,
-                scales,
-                live,
-                logits,
-                weights: [gw, dw],
-            },
-        )?,
-        arm(
-            &mut a,
-            rows,
-            true,
-            Inputs {
-                input,
-                scales,
-                live,
-                logits,
-                weights: [gw, dw],
-            },
-        )?,
-    ];
+    let logits = a.bytes(&case.logits())?;
+    let inputs = Inputs {
+        input,
+        scales,
+        live,
+        logits,
+        weights: routed_weights,
+    };
+    let arms = [Mode::Old, Mode::Selected, Mode::Compact, Mode::BlockWarps]
+        .map(|mode| arm(a, case, mode, inputs, shared_weights))
+        .into_iter()
+        .collect::<LabResult<Vec<_>>>()?;
+    let dummy = a.filled(4, 0)?;
     let bindings = Bindings {
         buffers: a.buffers.iter().map(|(&h, b)| (h, b)).collect(),
     };
     let mut functions = BTreeMap::<String, Function>::new();
-    for op in arms.iter().flat_map(|arm| &arm.launches) {
+    for op in arms
+        .iter()
+        .flat_map(|arm| arm.launches.iter().chain(&arm.side).chain(&arm.sum))
+    {
         if !functions.contains_key(&op.symbol) {
             let (_, bytes) = bundle_deepseek41::sm120::fold_cubin_for_symbol(&op.symbol)
                 .ok_or_else(|| format!("missing {}", op.symbol))?;
@@ -352,8 +376,17 @@ fn compare(session: &Session, rows: u32) -> LabResult<()> {
             );
         }
     }
-    let run = |arm: usize, stream: &Stream| -> LabResult<()> {
-        for op in &arms[arm].launches {
+    let (bytes, _) = bundle_deepseek41::sm120::dependency_probes();
+    let delay = session
+        .load_cubin(bytes)?
+        .function(kernels_sm120::probes::COPY)
+        .map_err(|e| e.to_string())?;
+    let side = session.context.stream().map_err(|e| e.to_string())?;
+    let fork = session.context.event().map_err(|e| e.to_string())?;
+    let join = session.context.event().map_err(|e| e.to_string())?;
+    let consumed = session.context.event().map_err(|e| e.to_string())?;
+    let issue = |ops: &[Launch], stream: &Stream| -> LabResult<()> {
+        for op in ops {
             launch(
                 &session.context,
                 &functions[&op.symbol],
@@ -365,40 +398,108 @@ fn compare(session: &Session, rows: u32) -> LabResult<()> {
         }
         Ok(())
     };
-    // Capture once at the bucket size. Replay with changing live rows and
-    // poisoned metadata to catch stale active lists and out-of-range writes.
-    let graphs = [
-        session.capture(|s| run(0, s))?,
-        session.capture(|s| run(1, s))?,
-    ];
-    for live_rows in [rows, 1, 0, rows] {
-        a.buffers[&live.handle]
-            .copy_from_bytes(&live_rows.to_le_bytes(), &session.stream)
-            .map_err(|e| e.to_string())?;
-        for (index, arm) in arms.iter().enumerate() {
-            for &v in &arm.poison {
-                a.buffers[&v.handle]
-                    .copy_from_bytes(&vec![0xa5; v.bytes as usize], &session.stream)
+    let capture = |index: usize, stress: bool, dropped_join: bool| {
+        session.capture(|compute| {
+            let arm = &arms[index];
+            if index == 0 || case.phase == ExecutionPhase::Prefill {
+                issue(&arm.launches, compute)?;
+                issue(&arm.side, compute)?;
+                return issue(&arm.sum, compute);
+            }
+            fork.record(compute).map_err(|e| e.to_string())?;
+            side.wait_event(&fork).map_err(|e| e.to_string())?;
+            if dropped_join {
+                // Force one legal interleaving after dropping the join: the
+                // consumer finishes before the shared producer runs. The
+                // producer still executes and the graph still rejoins.
+                issue(&arm.launches, compute)?;
+                issue(&arm.sum, compute)?;
+                consumed.record(compute).map_err(|e| e.to_string())?;
+                side.wait_event(&consumed).map_err(|e| e.to_string())?;
+                issue(&arm.side, &side)?;
+                join.record(&side).map_err(|e| e.to_string())?;
+                compute.wait_event(&join).map_err(|e| e.to_string())?;
+                return Ok(());
+            }
+            if stress {
+                // One delayed CTA leaves the remaining SMs free for routed
+                // work. The joined control must still wait for the shared partial.
+                delay
+                    .launch(
+                        &side,
+                        kernel_harness::launch::simple_config(
+                            (1, 1, 1),
+                            (32, 1, 1),
+                            0,
+                            (1, 1, 1),
+                            false,
+                        )?,
+                        &[
+                            runtime_cuda::KernelArgument::Buffer(&a.buffers[&live.handle]),
+                            runtime_cuda::KernelArgument::Buffer(&a.buffers[&dummy.handle]),
+                            runtime_cuda::KernelArgument::U64(1),
+                            runtime_cuda::KernelArgument::U64(250_000_000),
+                        ],
+                    )
                     .map_err(|e| e.to_string())?;
             }
-            graphs[index]
-                .launch(&session.stream)
+            issue(&arm.side, &side)?;
+            issue(&arm.launches, compute)?;
+            join.record(&side).map_err(|e| e.to_string())?;
+            compute.wait_event(&join).map_err(|e| e.to_string())?;
+            issue(&arm.sum, compute)?;
+            Ok(())
+        })
+    };
+    let graphs = (0..4)
+        .map(|i| capture(i, false, false))
+        .collect::<LabResult<Vec<_>>>()?;
+    let poison = |arm: &Arm| -> LabResult<()> {
+        for &v in &arm.poison {
+            a.buffers[&v.handle]
+                .copy_from_bytes(&vec![0xff; v.bytes as usize], &session.stream)
                 .map_err(|e| e.to_string())?;
         }
-        session.stream.synchronize().map_err(|e| e.to_string())?;
-        for (index, (&old, &new)) in arms[0].outputs.iter().zip(&arms[1].outputs).enumerate() {
-            let left = a.read(old)?;
-            let right = a.read(new)?;
-            if left != right {
-                let at = left.iter().zip(&right).position(|(x, y)| x != y).unwrap();
-                return Err(format!(
-                    "rows {rows}, live {live_rows}, output {index}, byte {at}: old {} new {}",
-                    left[at], right[at]
-                ));
-            }
-            let tail = live_rows as usize * left.len() / rows as usize;
-            if left[tail..].iter().any(|&b| b != 0xa5) {
-                return Err("inactive output rows were written".into());
+        a.buffers[&arm.status.handle]
+            .copy_from_bytes(&vec![0; arm.status.bytes as usize], &session.stream)
+            .map_err(|e| e.to_string())
+    };
+    let equal = |live_rows: u32| -> LabResult<()> {
+        for (which, arm) in arms.iter().enumerate().skip(1) {
+            for (index, (&old, &new)) in arms[0].outputs.iter().zip(&arm.outputs).enumerate() {
+                let left = a.read(old)?;
+                let right = a.read(new)?;
+                if left != right {
+                    return Err(format!(
+                        "{} arm {which}, live {live_rows}, output {index}: bitwise mismatch",
+                        case.label()
+                    ));
+                }
+                let tail = live_rows as usize * left.len() / rows as usize;
+                let written = &left[..tail];
+                let valid = match index {
+                    0 => written.chunks_exact(4).all(|v| {
+                        (0..case.set.count as i32)
+                            .contains(&i32::from_le_bytes(v.try_into().unwrap()))
+                    }),
+                    1 | 5 | 6 | 7 | 10 | 11 => written
+                        .chunks_exact(4)
+                        .all(|v| f32::from_le_bytes(v.try_into().unwrap()).is_finite()),
+                    2 => written
+                        .chunks_exact(2)
+                        .all(|v| u16::from_le_bytes(v.try_into().unwrap()) & 0x7f80 != 0x7f80),
+                    3 | 8 => written.iter().all(|v| v & 0x7f != 0x7f),
+                    4 | 9 => !written.contains(&255),
+                    _ => unreachable!("declared output"),
+                };
+                if !valid {
+                    return Err(format!(
+                        "output {index} retains poison or invalid live values"
+                    ));
+                }
+                if left[tail..].iter().any(|&b| b != 0xff) {
+                    return Err("inactive output rows were written".into());
+                }
             }
         }
         for arm in &arms {
@@ -406,62 +507,110 @@ fn compare(session: &Session, rows: u32) -> LabResult<()> {
                 return Err("quantizer status is nonzero".into());
             }
         }
+        Ok(())
+    };
+    for live_rows in [rows, 1, 0, rows] {
+        a.buffers[&live.handle]
+            .copy_from_bytes(&live_rows.to_le_bytes(), &session.stream)
+            .map_err(|e| e.to_string())?;
+        for (index, arm) in arms.iter().enumerate() {
+            poison(arm)?;
+            graphs[index]
+                .launch(&session.stream)
+                .map_err(|e| e.to_string())?;
+        }
+        session.stream.synchronize().map_err(|e| e.to_string())?;
+        equal(live_rows)?;
+        if case.routing == Routing::All && live_rows == rows {
+            for arm in &arms {
+                let active = a
+                    .read(arm.active_list)?
+                    .chunks_exact(4)
+                    .map(|v| i32::from_le_bytes(v.try_into().unwrap()))
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    active[0], case.set.count as i32,
+                    "all experts must be active"
+                );
+                assert_eq!(active[1..], (0..case.set.count as i32).collect::<Vec<_>>());
+            }
+        }
     }
-    let timing = timed_pair(session, |arm, stream| {
-        graphs[arm].launch(stream).map_err(|e| e.to_string())
+    let mut dropped_join_detected = false;
+    if case.phase != ExecutionPhase::Prefill {
+        let good = capture(1, true, false)?;
+        let bad = capture(1, true, true)?;
+        poison(&arms[1])?;
+        good.launch(&session.stream).map_err(|e| e.to_string())?;
+        session.stream.synchronize().map_err(|e| e.to_string())?;
+        equal(rows)?;
+        poison(&arms[1])?;
+        bad.launch(&session.stream).map_err(|e| e.to_string())?;
+        session.stream.synchronize().map_err(|e| e.to_string())?;
+        // Judge the final MoE result, not an event count or an intermediate.
+        dropped_join_detected = a.read(*arms[0].outputs.last().unwrap())?
+            != a.read(*arms[1].outputs.last().unwrap())?;
+        if !dropped_join_detected {
+            return Err("dropped-join negative control escaped the final-output comparison".into());
+        }
+        poison(&arms[1])?;
+        graphs[1]
+            .launch(&session.stream)
+            .map_err(|e| e.to_string())?;
+        session.stream.synchronize().map_err(|e| e.to_string())?;
+        equal(rows)?;
+    }
+    let selected = timed_pair(session, |i, s| {
+        graphs[i].launch(s).map_err(|e| e.to_string())
+    })?;
+    let compact = timed_pair(session, |i, s| {
+        graphs[if i == 0 { 0 } else { 2 }]
+            .launch(s)
+            .map_err(|e| e.to_string())
+    })?;
+    let block_warps = timed_pair(session, |i, s| {
+        graphs[if i == 0 { 0 } else { 3 }]
+            .launch(s)
+            .map_err(|e| e.to_string())
     })?;
     let mut kernel_times = BTreeMap::new();
     for name in ["gateup", "down"] {
-        let selected = arms
+        let kernels = arms
             .iter()
             .map(|arm| {
-                arm.launches
+                let op = arm
+                    .launches
                     .iter()
                     .find(|op| op.symbol.contains(&format!("before_{name}_")))
-                    .unwrap()
+                    .unwrap();
+                session.capture(|s| issue(std::slice::from_ref(op), s))
             })
-            .collect::<Vec<_>>();
-        let kernels = [0, 1]
-            .map(|arm| {
-                session.capture(|stream| {
-                    let op = selected[arm];
-                    launch(
-                        &session.context,
-                        &functions[&op.symbol],
-                        stream,
-                        op.plan,
-                        &op.arguments,
-                        &bindings,
-                    )
-                })
-            })
-            .into_iter()
             .collect::<LabResult<Vec<_>>>()?;
-        let times = timed_pair(session, |arm, stream| {
-            kernels[arm].launch(stream).map_err(|e| e.to_string())
+        let served = timed_pair(session, |i, s| {
+            kernels[i].launch(s).map_err(|e| e.to_string())
         })?;
-        kernel_times.insert(name, times);
+        let candidate = timed_pair(session, |i, s| {
+            kernels[if i == 0 { 0 } else { 2 }]
+                .launch(s)
+                .map_err(|e| e.to_string())
+        })?;
+        kernel_times.insert(name, [served[0], served[1], candidate[1]]);
     }
-    println!(
-        "rows={rows} bitwise=passed warm_old_ms={} warm_active_ms={} kernels={kernel_times:?}",
-        timing[0], timing[1]
-    );
+    let gate = cases::speed_gate(selected[0], selected[1]);
+    let record = serde_json::json!({"case":case.label(),"rows":rows,"experts":case.set.count,"top_k":case.set.top_k,
+        "phase":format!("{:?}",case.phase),"routing":format!("{:?}",case.routing),"cache":"warm",
+        "old_ms":selected[0],"active_ms":selected[1],"compact_ms":compact[1],"block_warps_ms":block_warps[1],"ratio":selected[1]/selected[0],
+        "kernel_ms":kernel_times,"bitwise":true,"dropped_join_detected":dropped_join_detected,
+        "speed_passed":gate.is_ok(),"selection":if case.phase==ExecutionPhase::Decode && rows==1 && case.set.count==384 {"active gate/up, old down"} else {"old routed kernels"}});
+    println!("MOE_RESULT {record}");
     session.receipt(
         "moe-active-bitwise",
-        [
-            ("rows".into(), serde_json::json!(rows)),
-            ("cache".into(), serde_json::json!("warm")),
-            ("pipeline_ms".into(), serde_json::json!(timing)),
-            ("kernel_ms".into(), serde_json::json!(kernel_times)),
-            ("bitwise".into(), serde_json::json!(true)),
-        ]
-        .into(),
+        serde_json::from_value(record).map_err(|e| e.to_string())?,
     )?;
-    Ok(())
+    gate
 }
 
-/// Alternate old/new and new/old after two warmups. CUDA events time
-/// captured work; no receipt implies cold-cache or end-to-end serving time.
+/// Alternating A/B pairs, four warmups and twenty samples per arm.
 fn timed_pair(
     session: &Session,
     work: impl Fn(usize, &Stream) -> LabResult<()>,
@@ -469,7 +618,7 @@ fn timed_pair(
     let start = session.context.timed_event().map_err(|e| e.to_string())?;
     let end = session.context.timed_event().map_err(|e| e.to_string())?;
     let mut samples = [Vec::new(), Vec::new()];
-    for round in 0..10 {
+    for round in 0..24 {
         for step in 0..2 {
             let arm = (round + step) % 2;
             start.record(&session.stream).map_err(|e| e.to_string())?;
@@ -477,71 +626,99 @@ fn timed_pair(
             end.record(&session.stream).map_err(|e| e.to_string())?;
             session.stream.synchronize().map_err(|e| e.to_string())?;
             let elapsed = start.elapsed_ms(&end).map_err(|e| e.to_string())?;
-            if round >= 2 {
+            if round >= 4 {
                 samples[arm].push(elapsed);
             }
         }
     }
     Ok(samples.map(|mut s| {
         s.sort_by(f32::total_cmp);
-        (s[3] + s[4]) * 0.5
+        (s[9] + s[10]) * 0.5
     }))
 }
 
-fn gpu(rows: u32) {
-    kernel_harness::gpu_test(6 << 30, |s| compare(s, rows)).unwrap();
+fn suite(bank: usize) {
+    kernel_harness::gpu_test(8 << 30, |session| {
+        let set = moe::expert_sets(&FLASH)[bank];
+        let mut a = Arena {
+            session: Some(session),
+            next: 0,
+            buffers: BTreeMap::new(),
+        };
+        let routed = [
+            weights(&mut a, set.count as usize, 1152, 5120)?,
+            weights(&mut a, set.count as usize, 5120, 576)?,
+        ];
+        let shared = shared::weights(&mut a)?;
+        let mut errors = Vec::new();
+        for case in cases::cases(set) {
+            if let Err(error) = compare(&mut a, case, routed, shared) {
+                errors.push(format!("{}: {error}", case.label()));
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("\n"))
+        }
+    })
+    .unwrap();
 }
 #[test]
-fn active_moe_rows_1_gpu() {
-    gpu(1);
+fn active_moe_backbone_gpu() {
+    suite(0);
 }
 #[test]
-fn active_moe_rows_8_gpu() {
-    gpu(8);
-}
-#[test]
-fn active_moe_rows_32_gpu() {
-    gpu(32);
-}
-#[test]
-fn active_moe_prefill_128_gpu() {
-    gpu(128);
+fn active_moe_dspark_gpu() {
+    suite(1);
 }
 
 #[test]
 fn active_moe_cpu_dry_run() {
-    for rows in [1, 8, 32, 128] {
+    for set in moe::expert_sets(&FLASH) {
         let mut a = Arena {
             session: None,
             next: 0,
             buffers: BTreeMap::new(),
         };
-        let input = a.filled(u64::from(rows) * 5120, 0).unwrap();
-        let scales = a.filled(u64::from(rows) * 160, 0).unwrap();
-        let live = a.filled(4, 0).unwrap();
-        let logits = a.filled(u64::from(rows) * 384 * 4, 0).unwrap();
-        let mut weight = |n: u64, k: u64| QuantizedWeights {
-            codes: a.filled(384 * n * k / 2, 0).unwrap(),
-            local_scales: Some(a.filled(384 * n * k / 32, 0).unwrap()),
-            global_scales: None,
-        };
-        let inputs = Inputs {
-            input,
-            scales,
-            live,
-            logits,
-            weights: [weight(1152, 5120), weight(5120, 576)],
-        };
-        for active in [false, true] {
-            let arm = arm(&mut a, rows, active, inputs).unwrap();
-            assert!(arm.launches.len() >= 4);
-            for op in arm.launches {
-                assert!(
-                    bundle_deepseek41::sm120::fold_cubin_for_symbol(&op.symbol).is_some(),
-                    "{}",
-                    op.symbol
-                );
-                op.plan.validate_geometry().unwrap();
+        let routed = [
+            weights(&mut a, set.count as usize, 1152, 5120).unwrap(),
+            weights(&mut a, set.count as usize, 5120, 576).unwrap(),
+        ];
+        let shared = shared::weights(&mut a).unwrap();
+        for case in cases::cases(set) {
+            let input = a.filled(u64::from(case.rows) * 5120, 0).unwrap();
+            let scales = a.filled(u64::from(case.rows) * 160, 0).unwrap();
+            let live = a.filled(4, 0).unwrap();
+            let logits = a
+                .filled(u64::from(case.rows) * u64::from(set.count) * 4, 0)
+                .unwrap();
+            for mode in [Mode::Old, Mode::Selected, Mode::Compact, Mode::BlockWarps] {
+                let arm = arm(
+                    &mut a,
+                    case,
+                    mode,
+                    Inputs {
+                        input,
+                        scales,
+                        live,
+                        logits,
+                        weights: routed,
+                    },
+                    shared,
+                )
+                .unwrap();
+                assert_eq!(arm.side.len(), 4);
+                assert_eq!(arm.sum.len(), 1);
+                assert_eq!(arm.outputs.len(), 12);
+                for op in arm.launches.iter().chain(&arm.side).chain(&arm.sum) {
+                    assert!(
+                        bundle_deepseek41::sm120::fold_cubin_for_symbol(&op.symbol).is_some(),
+                        "{}",
+                        op.symbol
+                    );
+                    op.plan.validate_geometry().unwrap();
+                }
             }
         }
     }

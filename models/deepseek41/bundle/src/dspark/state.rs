@@ -112,6 +112,10 @@ impl Context {
     pub fn projected(&self) -> &[u64] {
         &self.projected
     }
+
+    pub fn lease(&self) -> u64 {
+        self.lease
+    }
 }
 
 /// One bounded projection pass from retained raw rows. The lease prevents

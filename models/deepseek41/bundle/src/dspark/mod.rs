@@ -5,6 +5,7 @@
 //! It keeps these separate from the retained committed features. Each
 //! drafter stage projects the same raw features through its own KV path.
 
+pub mod acceptance;
 pub mod calibration;
 pub(crate) mod cycle;
 pub(crate) mod device;

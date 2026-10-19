@@ -43,6 +43,65 @@ fn cubin() -> &'static [u8] {
     })
 }
 
+fn parallel_cubin() -> &'static [u8] {
+    static BYTES: OnceLock<Vec<u8>> = OnceLock::new();
+    BYTES.get_or_init(|| {
+        if let Some(path) = std::env::var_os("CHOPINFER_DEEPSEEK41_CONFIDENCE_CUBIN") {
+            return std::fs::read(path).expect("prebuilt parallel confidence cubin");
+        }
+        let bundle = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../bundle")
+            .canonicalize()
+            .unwrap();
+        let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("confidence-parallel");
+        std::fs::create_dir_all(&out).unwrap();
+        let built = kernel_build::build_in_families(
+            &Toolchain::detect().unwrap(),
+            &[crate::confidence_parallel::cubin_spec(&bundle)],
+            &out,
+            &LockDir::new(bundle.join("kernels.lock.d")).family(
+                crate::confidence_parallel::FAMILY,
+                [crate::confidence_parallel::CUBIN],
+            ),
+            BuildOptions {
+                lock_update: false,
+                emit_cargo_directives: false,
+                profile_line_info: false,
+            },
+            None,
+        )
+        .expect("parallel confidence cubin matches its lock");
+        std::fs::read(&built[0].path).unwrap()
+    })
+}
+
+#[test]
+fn head_cpu_parallel_confidence_matches_lock_and_waits_before_reads() {
+    let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("confidence-parallel-audit.cubin");
+    std::fs::write(&path, parallel_cubin()).unwrap();
+    let output =
+        std::process::Command::new(Toolchain::detect().unwrap().home.join("bin/cuobjdump"))
+            .arg("--dump-sass")
+            .arg(&path)
+            .output()
+            .unwrap();
+    assert!(output.status.success());
+    let sass = String::from_utf8(output.stdout).unwrap();
+    let body = sass
+        .split(&format!(
+            "Function : {}",
+            crate::confidence_parallel::SYMBOL
+        ))
+        .nth(1)
+        .expect("parallel confidence symbol");
+    assert!(body.find("PREEXIT").unwrap() < body.find("ACQBULK").unwrap());
+    assert!(body.find("ACQBULK").unwrap() < body.find("LDG.").unwrap());
+    assert!(body.contains("FFMA") && body.contains("FADD") && body.contains("BAR.SYNC"));
+    for forbidden in ["TF32", "HMMA", "HGMMA", "UTMMA", ".FTZ"] {
+        assert!(!body.contains(forbidden), "unexpected {forbidden}");
+    }
+}
+
 #[test]
 fn head_cpu_cubin_matches_lock_without_tf32() {
     let bytes = cubin();
@@ -201,6 +260,13 @@ fn head_cpu_confidence_checks_strides_aliases_and_capacity() {
         scores: view(4, 31 * 4),
         live_rows: view(5, 4),
     };
+    assert_eq!(
+        prepared.launches(&b, View::EMPTY, Counts::rows(7)).unwrap()[0]
+            .plan
+            .grid,
+        [7, 1, 1],
+        "confidence needs one cooperative block per item"
+    );
     assert!(
         prepared.launches(&b, View::EMPTY, Counts::rows(7)).unwrap()[0]
             .plan

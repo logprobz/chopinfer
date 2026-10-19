@@ -18,6 +18,9 @@ use std::collections::BTreeMap;
 #[path = "probe.rs"]
 mod probe;
 
+#[path = "parallel.rs"]
+mod parallel;
+
 const ROWS: u32 = 7;
 
 fn upload(session: &Session, bytes: &[u8]) -> LabResult<DeviceBuffer> {
@@ -71,7 +74,11 @@ struct Case {
 }
 
 fn run(session: &Session, case: Case) -> LabResult<()> {
-    let module = session.load_cubin(cubin())?;
+    let module = session.load_cubin(if case.hidden_width.is_some() {
+        super::parallel_cubin()
+    } else {
+        cubin()
+    })?;
     let producer_module = session.load_cubin(probe::cubin())?;
     let producer = LiveProducer::with_function(
         session,

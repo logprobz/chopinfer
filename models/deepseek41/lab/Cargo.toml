@@ -95,3 +95,7 @@ path = "examples/sm120/build_norm_quantize_cached.rs"
 [[example]]
 name = "build_hc_round_chain"
 path = "examples/sm120/build_hc_round_chain.rs"
+
+[[example]]
+name = "build_confidence_parallel"
+path = "examples/sm120/build_confidence_parallel.rs"

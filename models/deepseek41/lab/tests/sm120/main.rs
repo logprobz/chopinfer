@@ -35,6 +35,7 @@ mod dspark;
 mod dspark_cubin;
 #[path = "../../../bundle/src/sm120/dspark_entries.rs"]
 mod dspark_entries;
+use bundle_deepseek41::sm120::confidence_parallel;
 mod dspark_heads;
 mod dspark_ring_gather;
 #[path = "../../../bundle/src/sm120/engram_hash.rs"]

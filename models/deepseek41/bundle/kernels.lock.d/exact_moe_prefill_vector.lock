@@ -1,0 +1,6865 @@
+[
+  {
+    "name": "exact_moe_prefill_vector_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_pipe64_pack_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_pipe64_r8_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_pipe64_r8_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_pipe64_r32_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_pipe64_r32_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_pipe64_r64_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_pipe64_r64_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_wide128_pack_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_wide128_r8_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_wide128_r8_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_wide128_r32_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_wide128_r32_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_wide128_r64_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_wide128_r64_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_decoded128_pack_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_decoded128_predecode_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_decoded128_r8_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_decoded128_r8_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_decoded128_r32_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_decoded128_r32_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_decoded128_r64_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_decoded128_r64_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_decoded128_r128_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_decoded128_r128_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_pipe64_pack_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_pipe64_r8_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_pipe64_r8_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_pipe64_r8_omit_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_pipe64_r32_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_pipe64_r32_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_pipe64_r32_omit_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_pipe64_r64_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_pipe64_r64_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_pipe64_r64_omit_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_wide128_pack_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_wide128_r8_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_wide128_r8_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_wide128_r32_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_wide128_r32_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_wide128_r64_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_wide128_r64_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_decoded128_pack_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_decoded128_predecode_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_decoded128_r8_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_decoded128_r8_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_decoded128_r32_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_decoded128_r32_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_decoded128_r64_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_decoded128_r64_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_decoded128_r128_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_decoded128_r128_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_pipe64_pack_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_pipe64_r8_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_pipe64_r8_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_pipe64_r32_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_pipe64_r32_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_pipe64_r64_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_pipe64_r64_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_wide128_pack_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_wide128_r8_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_wide128_r8_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_wide128_r32_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_wide128_r32_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_wide128_r64_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_wide128_r64_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_decoded128_pack_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_decoded128_predecode_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_decoded128_r8_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_decoded128_r8_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_decoded128_r32_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_decoded128_r32_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_decoded128_r64_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_decoded128_r64_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_decoded128_r128_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_decoded128_r128_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_pipe64_pack_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_pipe64_r8_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_pipe64_r8_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_pipe64_r8_omit_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_pipe64_r32_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_pipe64_r32_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_pipe64_r32_omit_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_pipe64_r64_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_pipe64_r64_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_pipe64_r64_omit_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_wide128_pack_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_wide128_r8_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_wide128_r8_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_wide128_r32_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_wide128_r32_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_wide128_r64_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_wide128_r64_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_decoded128_pack_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_decoded128_predecode_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "uint16_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_decoded128_r8_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_decoded128_r8_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_decoded128_r32_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_decoded128_r32_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_decoded128_r64_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_decoded128_r64_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_decoded128_r128_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_decoded128_r128_clock_vector_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "int"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stamps",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "6c849b0453e003333ba16b6a64f1474f8a77a488ee6f1a6f70fcd5dfa7cf4e90",
+    "resources": [
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_pipe64_pack_vector_v1",
+        "registers": 38,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_pipe64_r8_vector_v1",
+        "registers": 57,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_pipe64_r8_clock_vector_v1",
+        "registers": 76,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_pipe64_r32_vector_v1",
+        "registers": 116,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_pipe64_r32_clock_vector_v1",
+        "registers": 132,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_pipe64_r64_vector_v1",
+        "registers": 186,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_pipe64_r64_clock_vector_v1",
+        "registers": 202,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_wide128_pack_vector_v1",
+        "registers": 38,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_wide128_r8_vector_v1",
+        "registers": 61,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_wide128_r8_clock_vector_v1",
+        "registers": 78,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_wide128_r32_vector_v1",
+        "registers": 118,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_wide128_r32_clock_vector_v1",
+        "registers": 132,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_wide128_r64_vector_v1",
+        "registers": 188,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_wide128_r64_clock_vector_v1",
+        "registers": 204,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_decoded128_pack_vector_v1",
+        "registers": 38,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_decoded128_predecode_vector_v1",
+        "registers": 30,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_decoded128_r8_vector_v1",
+        "registers": 56,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_decoded128_r8_clock_vector_v1",
+        "registers": 74,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_decoded128_r32_vector_v1",
+        "registers": 116,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_decoded128_r32_clock_vector_v1",
+        "registers": 132,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_decoded128_r64_vector_v1",
+        "registers": 186,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_decoded128_r64_clock_vector_v1",
+        "registers": 202,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_decoded128_r128_vector_v1",
+        "registers": 186,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_gateup_decoded128_r128_clock_vector_v1",
+        "registers": 204,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_pipe64_pack_vector_v1",
+        "registers": 38,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_pipe64_r8_vector_v1",
+        "registers": 48,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_pipe64_r8_clock_vector_v1",
+        "registers": 65,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_pipe64_r8_omit_vector_v1",
+        "registers": 48,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_pipe64_r32_vector_v1",
+        "registers": 76,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_pipe64_r32_clock_vector_v1",
+        "registers": 92,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_pipe64_r32_omit_vector_v1",
+        "registers": 76,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_pipe64_r64_vector_v1",
+        "registers": 114,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_pipe64_r64_clock_vector_v1",
+        "registers": 128,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_pipe64_r64_omit_vector_v1",
+        "registers": 126,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_wide128_pack_vector_v1",
+        "registers": 38,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_wide128_r8_vector_v1",
+        "registers": 52,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_wide128_r8_clock_vector_v1",
+        "registers": 69,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_wide128_r32_vector_v1",
+        "registers": 80,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_wide128_r32_clock_vector_v1",
+        "registers": 95,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_wide128_r64_vector_v1",
+        "registers": 117,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_wide128_r64_clock_vector_v1",
+        "registers": 131,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_decoded128_pack_vector_v1",
+        "registers": 38,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_decoded128_predecode_vector_v1",
+        "registers": 30,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_decoded128_r8_vector_v1",
+        "registers": 44,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_decoded128_r8_clock_vector_v1",
+        "registers": 64,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_decoded128_r32_vector_v1",
+        "registers": 76,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_decoded128_r32_clock_vector_v1",
+        "registers": 92,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_decoded128_r64_vector_v1",
+        "registers": 114,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_decoded128_r64_clock_vector_v1",
+        "registers": 128,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_decoded128_r128_vector_v1",
+        "registers": 114,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e384_before_down_decoded128_r128_clock_vector_v1",
+        "registers": 130,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_pipe64_pack_vector_v1",
+        "registers": 38,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_pipe64_r8_vector_v1",
+        "registers": 57,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_pipe64_r8_clock_vector_v1",
+        "registers": 76,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_pipe64_r32_vector_v1",
+        "registers": 116,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_pipe64_r32_clock_vector_v1",
+        "registers": 132,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_pipe64_r64_vector_v1",
+        "registers": 186,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_pipe64_r64_clock_vector_v1",
+        "registers": 202,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_wide128_pack_vector_v1",
+        "registers": 38,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_wide128_r8_vector_v1",
+        "registers": 61,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_wide128_r8_clock_vector_v1",
+        "registers": 78,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_wide128_r32_vector_v1",
+        "registers": 118,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_wide128_r32_clock_vector_v1",
+        "registers": 132,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_wide128_r64_vector_v1",
+        "registers": 188,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_wide128_r64_clock_vector_v1",
+        "registers": 204,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_decoded128_pack_vector_v1",
+        "registers": 38,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_decoded128_predecode_vector_v1",
+        "registers": 30,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_decoded128_r8_vector_v1",
+        "registers": 56,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_decoded128_r8_clock_vector_v1",
+        "registers": 74,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_decoded128_r32_vector_v1",
+        "registers": 116,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_decoded128_r32_clock_vector_v1",
+        "registers": 132,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_decoded128_r64_vector_v1",
+        "registers": 186,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_decoded128_r64_clock_vector_v1",
+        "registers": 202,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_decoded128_r128_vector_v1",
+        "registers": 186,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_gateup_decoded128_r128_clock_vector_v1",
+        "registers": 204,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_pipe64_pack_vector_v1",
+        "registers": 38,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_pipe64_r8_vector_v1",
+        "registers": 48,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_pipe64_r8_clock_vector_v1",
+        "registers": 65,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_pipe64_r8_omit_vector_v1",
+        "registers": 48,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_pipe64_r32_vector_v1",
+        "registers": 76,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_pipe64_r32_clock_vector_v1",
+        "registers": 92,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_pipe64_r32_omit_vector_v1",
+        "registers": 76,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_pipe64_r64_vector_v1",
+        "registers": 114,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_pipe64_r64_clock_vector_v1",
+        "registers": 128,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_pipe64_r64_omit_vector_v1",
+        "registers": 126,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_wide128_pack_vector_v1",
+        "registers": 38,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_wide128_r8_vector_v1",
+        "registers": 52,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_wide128_r8_clock_vector_v1",
+        "registers": 69,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_wide128_r32_vector_v1",
+        "registers": 80,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_wide128_r32_clock_vector_v1",
+        "registers": 95,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_wide128_r64_vector_v1",
+        "registers": 117,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_wide128_r64_clock_vector_v1",
+        "registers": 131,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_decoded128_pack_vector_v1",
+        "registers": 38,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_decoded128_predecode_vector_v1",
+        "registers": 30,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_decoded128_r8_vector_v1",
+        "registers": 44,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_decoded128_r8_clock_vector_v1",
+        "registers": 64,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_decoded128_r32_vector_v1",
+        "registers": 76,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_decoded128_r32_clock_vector_v1",
+        "registers": 92,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_decoded128_r64_vector_v1",
+        "registers": 114,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_decoded128_r64_clock_vector_v1",
+        "registers": 128,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_decoded128_r128_vector_v1",
+        "registers": 114,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_exact_prefill_e128_before_down_decoded128_r128_clock_vector_v1",
+        "registers": 130,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

@@ -119,6 +119,7 @@ mod position_blocks;
 mod position_indexer;
 mod position_live;
 mod position_query;
+mod position_simt_tile;
 mod projection;
 mod recurrent;
 mod replicated_embedding;
@@ -200,6 +201,7 @@ pub struct Sm120 {
     candidate_block_ids: Vec<crate::pooled_indexer::position_blocks::CandidateEntry>,
     runtime_candidate_block_ids: Vec<crate::pooled_indexer::position_blocks::CandidateEntry>,
     live_position_indexer: bool,
+    tiled_position_scores: bool,
     valid_position_candidates: bool,
     position_indexers: Vec<crate::pooled_indexer::position::Entry>,
     bf16_position_indexers: Vec<crate::pooled_indexer::position::Entry>,
@@ -706,6 +708,14 @@ impl Sm120 {
                 .into_iter()
                 .map(|entry| crate::pooled_indexer::position_candidates_runtime::entry(&entry)),
         );
+        self
+    }
+
+    /// Opt in to separately compiled register-tiled dense position scores.
+    /// Compact scoring and the live-context selection pipeline stay shared.
+    pub fn with_tiled_position_scores(mut self) -> Self {
+        self.live_position_indexer = true;
+        self.tiled_position_scores = true;
         self
     }
 
@@ -1798,12 +1808,23 @@ impl Backend for Sm120 {
         position_capacity: u32,
         need: Need,
     ) -> Result<Prepared<PositionSelectBuffers<View>>, Refused> {
-        position_live::prepare(
-            position_indexer::select(&self.position_indexers, op, top_k, position_capacity, need),
-            self.live_position_indexer,
-            need.capacity,
-            op.max_top_k,
-            false,
+        position_simt_tile::prepare(
+            position_live::prepare(
+                position_indexer::select(
+                    &self.position_indexers,
+                    op,
+                    top_k,
+                    position_capacity,
+                    need,
+                ),
+                self.live_position_indexer,
+                need.capacity,
+                op.max_top_k,
+                position_live::ScoreKind::Positions,
+                false,
+            ),
+            self.tiled_position_scores,
+            op,
         )
     }
 
@@ -1817,19 +1838,24 @@ impl Backend for Sm120 {
     ) -> Result<Prepared<PositionSelectBuffers<View>>, Refused> {
         match storage {
             IndexerKeyFormat::Fp4 => self.position_indexer(op, top_k, position_capacity, need),
-            IndexerKeyFormat::Bf16 => position_live::prepare(
-                position_indexer::select_with_storage(
-                    &self.bf16_position_indexers,
-                    op,
-                    top_k,
-                    position_capacity,
-                    need,
-                    storage,
+            IndexerKeyFormat::Bf16 => position_simt_tile::prepare(
+                position_live::prepare(
+                    position_indexer::select_with_storage(
+                        &self.bf16_position_indexers,
+                        op,
+                        top_k,
+                        position_capacity,
+                        need,
+                        storage,
+                    ),
+                    self.live_position_indexer,
+                    need.capacity,
+                    op.max_top_k,
+                    position_live::ScoreKind::Positions,
+                    false,
                 ),
-                self.live_position_indexer,
-                need.capacity,
-                op.max_top_k,
-                false,
+                self.tiled_position_scores,
+                op,
             ),
         }
     }
@@ -1857,6 +1883,7 @@ impl Backend for Sm120 {
                 self.live_position_indexer,
                 need.capacity,
                 op.indexer.max_top_k,
+                position_live::ScoreKind::Positions,
                 self.valid_position_candidates,
             ),
         }
@@ -1889,6 +1916,7 @@ impl Backend for Sm120 {
             self.live_position_indexer,
             need.capacity,
             op.indexer.max_top_k,
+            position_live::ScoreKind::Positions,
             self.valid_position_candidates,
         )
     }
@@ -1904,6 +1932,7 @@ impl Backend for Sm120 {
             self.live_position_indexer,
             need.capacity,
             op.top_k_blocks,
+            position_live::ScoreKind::CandidateMaxima,
             self.valid_position_candidates,
         )
     }
@@ -1926,6 +1955,7 @@ impl Backend for Sm120 {
             self.live_position_indexer,
             need.capacity,
             op.top_k_blocks,
+            position_live::ScoreKind::CandidateMaxima,
             self.valid_position_candidates,
         )
     }

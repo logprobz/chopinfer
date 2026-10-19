@@ -3,11 +3,28 @@ use crate::pooled_indexer::position_live as live;
 use kernel_core::backend::{Counts, Launch, OpInfo, Prepared, PreparedOp, Refused, View};
 use kernel_core::contract::{Argument, Refusal};
 
+/// Candidate maxima can use a separately tuned grid. Scratch size identifies
+/// storage only; a selection may acquire its own workspace later.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ScoreKind {
+    Positions,
+    CandidateMaxima,
+}
+impl ScoreKind {
+    fn score_ctas(self, candidate_ctas: u32) -> u32 {
+        match self {
+            Self::Positions => live::SCORE_CTAS,
+            Self::CandidateMaxima => candidate_ctas,
+        }
+    }
+}
+
 pub(super) fn prepare<B: 'static>(
     original: Result<Prepared<B>, Refused>,
     enabled: bool,
     rows: u32,
     kept: u32,
+    kind: ScoreKind,
     valid_candidates: bool,
 ) -> Result<Prepared<B>, Refused> {
     let original = original?;
@@ -16,8 +33,8 @@ pub(super) fn prepare<B: 'static>(
     }
     let mut info = original.info().clone();
     let offset = info.workspace.next_multiple_of(8);
-    let score_ctas = if valid_candidates && offset != 0 {
-        crate::pooled_indexer::position_valid::CANDIDATE_CTAS
+    let score_ctas = if valid_candidates {
+        kind.score_ctas(crate::pooled_indexer::position_valid::CANDIDATE_CTAS)
     } else {
         live::SCORE_CTAS
     };
@@ -95,5 +112,19 @@ impl<B> PreparedOp<B> for Live<B> {
         merge.plan.grid = [1, counts.rows, 1];
         calls.push(merge);
         Ok(calls)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn score_grid_uses_operation_kind_instead_of_scratch_layout() {
+        assert_eq!(ScoreKind::Positions.score_ctas(32), live::SCORE_CTAS);
+        assert_eq!(ScoreKind::CandidateMaxima.score_ctas(32), 32);
+        assert_eq!(
+            ScoreKind::CandidateMaxima.score_ctas(live::SCORE_CTAS),
+            live::SCORE_CTAS
+        );
     }
 }

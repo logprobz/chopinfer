@@ -137,8 +137,8 @@ register-held pairs are published only after that admission. Invalid positions
 avoid input and table reads, failed rows write positive zero, and inactive rows
 write nothing. The opt-in planner uses the runtime row bucket even when the
 prepared capacity also covers prefill. It introduces no cross-stream scratch.
-The model's standalone candidate registration is separate from serving pending
-paired GPU conformance and the measured crossover.
+The owning bundle enables the small-row path after paired GPU conformance;
+its serving binding keeps larger row buckets on the original path.
 
 `position_mma_probe.cuh` is a lab-only experiment. It decodes keys exactly to
 BF16 and uses two m16n8k16 MMAs from zero for each 32-channel block, adds the
@@ -156,5 +156,33 @@ build. No efficient general exact MMA replacement has been established.
 The candidate has no serving route. Its lab reports complete score-bit and
 selection differences, sampled errors against the compensated f64 oracle,
 contract-bound fractions and exclusive, gated, alternating kernel timings.
-The witness must reject the reordered arithmetic even when aggregate error
-on randomized inputs improves.
+The witness must reject the bitwise claim even when aggregate error on
+randomized inputs improves. Approximate promotion requires the owning
+model's real-activation selection and score qualification.
+
+## Register-tiled SIMT score candidate
+
+`position_simt_tile.cuh` assigns two complete scores to each thread in a
+four-row, 64-position tile. Each score reconstructs the original 32 virtual
+lane chains in registers: four strided FMAs per lane, then additions with
+pairing offsets 16, 8, 4, 2 and 1. ReLU, weight scaling and the head FMA chain
+retain their original order. A wrong-tree control instead combines adjacent
+lanes first and must differ on the seeded fixtures.
+
+Keys are staged once per tile in shared memory and reused by rows with the
+same sequence. Mixed batches stage each distinct sequence separately. Four
+heads of queries are staged at a time; shared loads broadcast a query value
+within each warp. Missing pages and per-row causal visibility are checked
+before score publication. Tails remain negative infinity and inactive rows
+remain untouched. A nonfinite chain or contributing tree node remains
+nonfinite at that head's root; the root is checked before ReLU can hide it.
+Invalid scale bytes remain a separate flag. Head-sum nonfinites also persist
+to the final sum.
+
+The opt-in backend changes only dense All scoring for 32 heads of 128.
+Compact scoring, candidate production and selection reuse the live pipeline.
+The operation kind for candidate maxima is explicit in the planner; workspace
+size only describes scratch storage. No cross-stream workspace is added.
+The new family has its own lock and no serving registration until its full
+bitwise matrices pass. CPU tests establish the intended tree and launch ABI;
+they do not establish GPU conformance or speed.

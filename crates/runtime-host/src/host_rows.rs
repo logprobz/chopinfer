@@ -19,6 +19,8 @@
 // SAFETY-REVIEWED: this module contains the mmap, madvise and munmap calls.
 #![allow(unsafe_code)]
 
+pub(crate) mod gather;
+
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io;

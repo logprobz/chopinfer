@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use super::{DeviceObjectV1, DeviceRangeV1, HostDeviceResultV1};
 use crate::host_rows::MappedRowsV1;
+use crate::host_rows::gather::{GatherProbe, MappedProbe, ReadAhead, gather_span_v1};
 use runtime_bundle_abi::BundleStatusV1;
 
 /// One mapped plane. Its input indices are U32 little-endian words.
@@ -100,6 +101,17 @@ pub fn gather_plane_v1(
     input: &[u8],
     output: &mut [u8],
 ) -> Result<(), String> {
+    let probe = MappedProbe::new(&plane.mapping, plane.row_bytes);
+    gather_plane_with_probe(plane, input, output, &probe, crate::host_rows::gather::mapped_read_ahead_v1())
+}
+
+fn gather_plane_with_probe(
+    plane: &MappedGatherPlaneV1,
+    input: &[u8],
+    output: &mut [u8],
+    probe: &dyn GatherProbe,
+    read_ahead: bool,
+) -> Result<(), String> {
     if plane.row_bytes == 0 || !output.len().is_multiple_of(plane.row_bytes) {
         return Err("mapped gather output differs from its row width".into());
     }
@@ -118,16 +130,20 @@ pub fn gather_plane_v1(
         .ok_or("mapped gather input is truncated")?;
     let table = plane.mapping.bytes();
     let limit = table.len() / plane.row_bytes;
-    let ids = || {
-        indices
-            .chunks_exact(4)
-            .map(|word| u32::from_le_bytes(word.try_into().expect("U32 index")) as usize)
-    };
-    if ids().any(|row| row >= limit) {
+    let ids: Vec<u32> = indices
+        .chunks_exact(4)
+        .map(|word| u32::from_le_bytes(word.try_into().expect("U32 index")))
+        .collect();
+    if ids.iter().any(|&row| row as usize >= limit) {
         return Err("mapped gather device index is outside the table".into());
     }
-    for (row, out) in ids().zip(output.chunks_exact_mut(plane.row_bytes)) {
-        out.copy_from_slice(&table[row * plane.row_bytes..][..plane.row_bytes]);
-    }
+    // The CUDA host callback stays serial. Only the mapping's read-ahead
+    // policy is shared with the synchronous service, after every ID is checked.
+    let ahead = if read_ahead { ReadAhead::new(probe) } else { ReadAhead::disabled(probe) };
+    gather_span_v1(table, plane.row_bytes, &ids, 0, output, &ahead);
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "mapped_gather_tests.rs"]
+mod tests;

@@ -241,26 +241,14 @@ impl Instance {
                 items,
             )
             .ok_or(BundleStatusV1::InvalidArgument)?;
-            // A graph's item bucket holds the live items and, at most
-            // `MAX_VERIFY_ROWS` rows each, the token bucket. An instance
-            // too narrow for the padded tokens runs the phase eagerly at
-            // its live rows and items instead.
-            let held = rows.div_ceil(MAX_VERIFY_ROWS).next_power_of_two();
-            let live_bucket = items.bucket(live).ok_or(BundleStatusV1::InvalidArgument)?;
-            let layout = InputLayout::verify_within::<DeepSeek>(items);
-            let items_bucket = live_bucket.max(held);
-            if items_bucket > items.capacity() {
-                let phase = Phase::Verify {
-                    rows: inputs.live_tokens(),
-                    items: live_bucket,
-                };
-                return Ok((phase, VERIFY, layout, None));
+            // Every verify graph holds the exact rows and items. Device
+            // inputs keep their fixed allocation, independent of this key.
+            if live == 0 || live > items.get() || rows < live || rows > live * MAX_VERIFY_ROWS {
+                return Err(BundleStatusV1::InvalidArgument);
             }
-            let phase = Phase::Verify {
-                rows,
-                items: items_bucket,
-            };
-            Ok((phase, VERIFY, layout, Some((rows, items_bucket))))
+            let layout = InputLayout::verify_within::<DeepSeek>(items);
+            let phase = Phase::Verify { rows, items: live };
+            Ok((phase, VERIFY, layout, Some((rows, live))))
         } else {
             let bucket = items.bucket(live).ok_or(BundleStatusV1::InvalidArgument)?;
             Ok((

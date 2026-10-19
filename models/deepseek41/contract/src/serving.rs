@@ -59,5 +59,26 @@ impl bundle_runtime::BundleGeometry for DeepSeek {
     const PREFILL_TOKENS: u32 = PREFILL_TOKENS;
     const DECODE_BATCH: u32 = DECODE_BATCH;
     const MAX_VERIFY_ROWS: u32 = MAX_VERIFY_ROWS;
+    const EXACT_VERIFY_GRAPHS: bool = true;
     const TOKEN_GRANULE: u32 = TOKEN_GRANULE;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DeepSeek;
+    use bundle_runtime::geometry::Items;
+    use bundle_runtime::graphs::{decode_bucket, verify_bucket_within};
+
+    #[test]
+    fn verify_graph_rows_keep_the_exact_width() {
+        for items in [1, 3, 8, 32] {
+            let items = Items::within::<DeepSeek>(items).unwrap();
+            for rows in 1..=32 {
+                assert_eq!(verify_bucket_within::<DeepSeek>(rows, items), Some(rows));
+            }
+            assert_eq!(verify_bucket_within::<DeepSeek>(0, items), None);
+            assert_eq!(verify_bucket_within::<DeepSeek>(33, items), None);
+        }
+        assert_eq!(decode_bucket::<DeepSeek>(3), Some(4));
+    }
 }

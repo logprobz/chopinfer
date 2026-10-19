@@ -12,6 +12,54 @@ mod round_trips;
 pub(super) use host::MappedHost;
 type Sink = RecordingSink<super::conformance::Limits>;
 
+#[test]
+fn target_graphs_capture_each_exact_verify_width() {
+    let (host, mut instance) = create(Shape::new(&FLASH, Ranks::TP4).unwrap());
+    execute(&mut instance, &host, &super::prompt(7, 0, 0, 3, true));
+    instance.commit().unwrap();
+    let mut graphs = std::collections::BTreeMap::new();
+    for rows in [3, 4, 5, 6, 3, 4, 5, 6] {
+        let start = state(&instance, 7).end;
+        let begin = host.journal.borrow().len();
+        let sink = execute(&mut instance, &host, &verify(7, 0, start, rows - 1));
+        assert_eq!(sink.draft_tokens(), [(7, vec![0; (rows - 1) as usize])]);
+        let journal = host.journal.borrow();
+        let step = &journal[begin..];
+        let gathered = step
+            .iter()
+            .rposition(|line| line.starts_with("mapped gather"))
+            .unwrap();
+        let target = &step[gathered + 1..];
+        let handles = |event: &str| {
+            let mut ids: Vec<_> = target
+                .iter()
+                .filter(|line| line.starts_with(event))
+                .map(|line| line.split_whitespace().nth(2).unwrap().to_owned())
+                .collect();
+            ids.sort();
+            ids
+        };
+        let captured = handles("captured ");
+        let replayed = handles("replay ");
+        if let Some(previous) = graphs.get(&rows) {
+            assert!(captured.is_empty());
+            assert_eq!(&replayed, previous);
+        } else {
+            assert!(
+                !captured.is_empty(),
+                "width {rows} reused another width's graph"
+            );
+            assert_eq!(replayed, captured);
+            graphs.insert(rows, captured);
+        }
+        drop(journal);
+        instance.commit_accepted(&[kept(7, 1)]).unwrap();
+    }
+    instance.retire_request(7).unwrap();
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
 #[cfg(feature = "diagnostic-taps")]
 #[test]
 fn diagnostic_state_sidecar_contains_each_committed_snapshot_piece() {

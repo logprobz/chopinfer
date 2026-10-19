@@ -494,7 +494,7 @@ impl Instance {
                 .iter()
                 .filter(|cubin| crate::serves(cubin.name, &shape))
                 .filter(|cubin| {
-                    crate::Kernels::loads_prefill_attention(
+                    crate::Kernels::loads_latent_attention(
                         cubin.name,
                         &shape,
                         self.config.kv.storage,

@@ -19,6 +19,7 @@ use crate::config::{KV_LAYOUTS, KvLayout};
 
 mod batch_limits;
 mod conformance;
+mod decode_attention;
 mod device_results;
 mod dspark;
 mod fold_stream;
@@ -978,6 +979,11 @@ fn every_geometry_topology_runs_the_fake_host_journal_and_lifecycle() {
                     lines.join("\n"),
                 )
                 .unwrap();
+                decode_attention::export_handles(
+                    &host.device,
+                    dir,
+                    &format!("{topology}.{layout}.journal"),
+                );
             }
             if let Some(&(_, _, expected)) = FLASH_JOURNALS
                 .iter()

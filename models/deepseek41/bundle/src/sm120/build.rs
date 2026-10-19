@@ -46,6 +46,8 @@ mod host_acceptance_entries;
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod latent;
 #[allow(dead_code)]
+mod latent_decode;
+#[allow(dead_code)]
 mod latent_scheduled;
 #[allow(dead_code)]
 mod norm_quantize;
@@ -202,6 +204,14 @@ pub fn selection(
         specs.push((prefill_cache::FAMILY, spec));
     }
 
+    for g in geometries
+        .iter()
+        .filter(|g| latent_scheduled::qualified(g, 4))
+    {
+        let spec = latent_decode::cubin(g).expect("measured decode staging cubin");
+        owners.push((spec.name.clone(), g.id));
+        specs.push((latent_decode::FAMILY, spec));
+    }
     for geometry in geometries.iter().filter(|g| own_entries::has_gates(g)) {
         let spec = own_cubin::gate_cubin_spec(manifest, geometry);
         owners.push((spec.name.clone(), geometry.id));

@@ -17,6 +17,7 @@ pub mod hc_mixer_probe;
 pub mod hc_round_chain;
 pub mod hc_round_expand_mix;
 pub mod latent;
+pub mod latent_decode;
 pub mod latent_scheduled;
 pub(crate) mod moe_floor;
 pub mod mxfp8_fold;
@@ -114,7 +115,9 @@ pub fn latent_cubins()
 -> impl Iterator<Item = (&'static str, &'static [u8], &'static [&'static str])> {
     crate::CUBINS
         .iter()
-        .filter(|cubin| cubin.name.starts_with("latent_sources_"))
+        .filter(|cubin| {
+            cubin.name.starts_with("latent_sources_") || cubin.name == latent_decode::CUBIN
+        })
         .map(|cubin| (cubin.name, cubin.bytes, cubin.symbols))
 }
 
@@ -248,15 +251,18 @@ impl crate::Kernels {
         >,
         kernel_core::backend::Refused,
     > {
-        prefill_attention::prepare(self.backend.as_ref(), geometry, ranks, query, need)
+        let reference =
+            prefill_attention::prepare(self.backend.as_ref(), geometry, ranks, query, need)?;
+        latent_decode::prepare(reference, geometry, ranks, query, need)
     }
 
-    pub(crate) fn loads_prefill_attention(
+    pub(crate) fn loads_latent_attention(
         cubin: &str,
         shape: &crate::shape::Shape,
         storage: model_deepseek41_contract::state::KvStorage,
     ) -> bool {
         prefill_attention::loads(cubin, shape.geometry, shape.ranks(), storage)
+            && latent_decode::loads(cubin, shape.geometry, shape.ranks(), storage)
             && (cubin != prefill_cache::CUBIN
                 || prefill_cache::eligible(shape.geometry, shape.ranks(), storage))
     }

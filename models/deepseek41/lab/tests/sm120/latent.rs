@@ -225,9 +225,10 @@ fn latent_required_cases_prepare_and_symbols_are_embedded() {
             .map(|g| 2 + usize::from(g.shape.compress_ratios.contains(&2)))
             .sum::<usize>()
             + scheduled.len()
-            + 1
+            + 2
     );
-    for spec in scheduled.into_iter().chain([prefill]) {
+    let decode = bundle_deepseek41::sm120::latent_decode::cubin(flash).unwrap();
+    for spec in scheduled.into_iter().chain([prefill, decode]) {
         let (_, bytes, symbols) = embedded
             .iter()
             .find(|(name, _, _)| *name == spec.name)

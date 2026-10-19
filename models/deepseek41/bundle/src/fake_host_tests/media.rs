@@ -423,6 +423,11 @@ fn an_image_prefill_journals_at_two_and_four_ranks() {
                 lines.join("\n"),
             )
             .unwrap();
+            super::decode_attention::export_handles(
+                &host.device,
+                &dir,
+                &format!("{topology}.media.journal"),
+            );
         }
         if let Err(observed) = check_journal(&lines, expected, &format!("{topology}.media.journal"))
         {

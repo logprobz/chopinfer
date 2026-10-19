@@ -3,6 +3,7 @@
 #[path = "../../../bundle/src/sm120/latent_scheduled.rs"]
 #[allow(dead_code)]
 mod candidate;
+use candidate as latent_scheduled;
 #[path = "../../../bundle/src/sm120/latent_decode.rs"]
 #[allow(dead_code)]
 mod decode_candidate;

@@ -186,3 +186,21 @@ size only describes scratch storage. No cross-stream workspace is added.
 The new family has its own lock and no serving registration until its full
 bitwise matrices pass. CPU tests establish the intended tree and launch ABI;
 they do not establish GPU conformance or speed.
+
+## Native FP4 qualification candidate
+
+`position_mma_native.cuh` repacks prepared BF16 queries once per row and
+requires the decoded pairs to match their original bits. Its packed code
+and UE8M0 scale planes feed four native m16n8k64 instructions per warp for
+32 heads and 128 channels. Query fragments stay in registers across key
+tiles. Key fragments load once for both head tiles; a padded shared dot
+plane avoids the column bank conflicts of the initial BF16 probe. Weight
+scaling and the ascending head FMA chain retain the served order. Native
+MMA accumulation changes bits and requires separate accuracy evidence.
+
+`position_f64_probe.cuh` evaluates every admitted score with the same
+Neumaier-compensated dot, magnitude and head sums as the CPU score oracle.
+Its explicit double operations prevent contraction. Replay checks sampled
+GPU oracle scores and magnitudes bitwise against the CPU oracle before
+using the complete f64 score matrix for selection agreement. Both kernels
+are isolated in the qualification family and have no serving registration.

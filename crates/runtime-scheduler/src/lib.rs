@@ -381,6 +381,7 @@ pub struct SchedulerConfig {
     tracking_capacity: usize,
     scheduled_token_budget: usize,
     prefill_chunk_limit: usize,
+    guaranteed_prefill_chunks: Option<usize>,
     lone_prefill_expansion: bool,
     maximum_scored_rows: usize,
     decode_cost: usize,
@@ -428,6 +429,7 @@ impl SchedulerConfig {
             tracking_capacity,
             scheduled_token_budget,
             prefill_chunk_limit,
+            guaranteed_prefill_chunks: None,
             lone_prefill_expansion: false,
             maximum_scored_rows: usize::MAX,
             decode_cost,
@@ -452,6 +454,34 @@ impl SchedulerConfig {
     pub const fn with_lone_prefill_expansion(mut self, enabled: bool) -> Self {
         self.lone_prefill_expansion = enabled;
         self
+    }
+
+    /// Opt unscored text prefills into a fixed absolute chunk grid. Every
+    /// grid boundary and prompt end is complete state and may be captured.
+    /// Shared prefixes cannot introduce additional prefill boundaries.
+    /// Scored and media requests keep their ordinary complete-row path.
+    pub const fn with_guaranteed_prefill_chunks(
+        mut self,
+        tokens: usize,
+    ) -> Result<Self, ConfigError> {
+        if tokens == 0 {
+            return Err(ConfigError::ZeroPrefillChunkLimit);
+        }
+        if tokens > self.scheduled_token_budget {
+            return Err(ConfigError::PrefillChunkLimitAboveTokenBudget);
+        }
+        if !tokens.is_multiple_of(self.prefill_granule) {
+            return Err(ConfigError::PrefillChunkLimitOffGranule);
+        }
+        self.guaranteed_prefill_chunks = Some(tokens);
+        self.prefill_chunk_limit = tokens;
+        self.lone_prefill_expansion = false;
+        Ok(self)
+    }
+
+    #[must_use]
+    pub const fn guaranteed_prefill_chunks(self) -> Option<usize> {
+        self.guaranteed_prefill_chunks
     }
 
     /// Positions a chunk may end at before the prompt end: multiples of
@@ -1097,6 +1127,7 @@ pub struct PreparedBatchCommit {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RequestRecord {
     spec: RequestSpec,
+    guaranteed_prefill_chunks: Option<usize>,
     state: RequestState,
     handle: Option<SequenceHandle>,
     reserved_blocks: usize,
@@ -1433,8 +1464,13 @@ impl Scheduler {
             .next_arrival
             .checked_add(1)
             .ok_or(SubmitError::RequestOrdinalExhausted)?;
+        let guaranteed_prefill_chunks = self
+            .config
+            .guaranteed_prefill_chunks
+            .filter(|_| !spec.prompt_scoring && spec.media_pages == 0);
         self.requests.push(RequestRecord {
             spec,
+            guaranteed_prefill_chunks,
             state: RequestState::Queued,
             handle: None,
             reserved_blocks: 0,
@@ -1508,6 +1544,12 @@ impl Scheduler {
                     .map(|blocks| blocks * block)
                     .find(|tokens| {
                         tokens.is_multiple_of(granule)
+                            && self.requests[leader]
+                                .guaranteed_prefill_chunks
+                                .is_none_or(|chunk| {
+                                    tokens.is_multiple_of(chunk)
+                                        || *tokens == self.requests[leader].spec.prompt_tokens
+                                })
                             && !chain.splits_media(*tokens)
                             && !prior.chain.splits_media(*tokens)
                     });
@@ -1947,6 +1989,10 @@ impl Scheduler {
             }
             _ => None,
         };
+        // A declared chunk cannot shrink with a timing estimate. It waits
+        // for a step with enough room, using the existing whole-chunk
+        // admission and starvation protection.
+        let selected = selected.filter(|_| self.config.guaranteed_prefill_chunks.is_none());
         let aware = selected.is_some();
         let mut prefill_budget = selected.unwrap_or(self.config.scheduled_token_budget);
         // Tiny custom budgets retain the alternating progress guarantee.
@@ -1961,7 +2007,9 @@ impl Scheduler {
         // configured chunks and timing caps. Capture points, scored rows
         // and the prefill granule still bound each item below. Scored
         // requests retain their traffic-independent event boundaries.
-        let chunk_limit = if self.config.lone_prefill_expansion
+        let chunk_limit = if let Some(chunk) = self.config.guaranteed_prefill_chunks {
+            chunk
+        } else if self.config.lone_prefill_expansion
             && self.active_sequences == 1
             && prefill.len() == 1
             && !self.requests[prefill[0]].spec.prompt_scoring
@@ -2803,6 +2851,10 @@ impl Scheduler {
                 (self.config.anchor_items > 0 && end < prompt && record.captures.contains(&end))
                     .then_some(end);
         }
+        if self.requests[index].guaranteed_prefill_chunks.is_some() {
+            self.requests[index].captures = self.capture_points(index, 0);
+            self.requests[index].end_anchor = None;
+        }
         self.drop_own_anchor(index)
     }
 
@@ -3041,6 +3093,18 @@ impl Scheduler {
     /// Prompt tokens a request resumed from the prefix cache.
     pub fn cached_tokens(&self, id: RequestId) -> Result<usize, ScheduleError> {
         Ok(self.record(id)?.cached_tokens)
+    }
+
+    /// The chunk grid and complete prefill target promised for this request.
+    /// The host passes this only to an executor that opted into the policy.
+    pub fn prefill_boundary_contract(
+        &self,
+        id: RequestId,
+    ) -> Result<Option<(usize, usize)>, ScheduleError> {
+        let record = self.record(id)?;
+        Ok(record
+            .guaranteed_prefill_chunks
+            .map(|chunk| (chunk, Self::prefill_target(record))))
     }
 
     /// Takes the anchors the last commits made due, in commit order.
@@ -3408,6 +3472,9 @@ impl Scheduler {
         chunk_limit: usize,
         maximum_scored_rows: usize,
     ) -> Option<usize> {
+        if record.guaranteed_prefill_chunks.is_some() {
+            return None;
+        }
         let start = record.prefilled_tokens;
         let anchor = record.end_anchor.filter(|&anchor| anchor > start)?;
         let next = record
@@ -3491,6 +3558,21 @@ impl Scheduler {
         else {
             return Vec::new();
         };
+        if let Some(chunk) = self.requests[index].guaranteed_prefill_chunks {
+            let prompt = self.requests[index].spec.prompt_tokens;
+            let mut points = Vec::new();
+            let mut next = hit / chunk * chunk;
+            while let Some(end) = next.checked_add(chunk).filter(|&end| end < prompt) {
+                if !chain.splits_media(end) {
+                    points.push(end);
+                }
+                next = end;
+            }
+            if prompt > hit && !chain.splits_media(prompt) {
+                points.push(prompt);
+            }
+            return points;
+        }
         let block_tokens = self.kv.geometry().block_tokens();
         let prompt = self.requests[index].spec.prompt_tokens;
         let chunk = Self::request_chunk_limit(
@@ -3606,6 +3688,14 @@ impl Scheduler {
         granule: usize,
         spans: bool,
     ) -> usize {
+        if let Some(chunk) = record.guaranteed_prefill_chunks {
+            let start = record.prefilled_tokens;
+            let end = (start / chunk)
+                .saturating_add(1)
+                .saturating_mul(chunk)
+                .min(Self::prefill_target(record));
+            return end - start;
+        }
         let remaining = Self::chunk_remaining(record, spans);
         let limit = Self::request_chunk_limit(record, chunk_limit, maximum_scored_rows);
         let tokens = remaining.min(limit);

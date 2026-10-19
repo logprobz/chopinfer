@@ -131,6 +131,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if mode == "build" {
         return build(out);
     }
+    if mode == "cache-build" {
+        return probe::cache::build(out);
+    }
+    if mode == "cache-check" {
+        probe::cache::snapshot(out)?;
+        println!("PASS prefill_cache_snapshot hashes=true");
+        return Ok(());
+    }
+    if ["cache-sample-check", "cache-list-check"].contains(&mode.as_str()) {
+        if args.len() != 5 {
+            return Err("usage: cache-list-check OUT LISTS VARIANT OFFSET".into());
+        }
+        probe::cache::check_lists(
+            Path::new(&args[2]),
+            &args[3],
+            args[4].parse()?,
+            mode == "cache-sample-check",
+        )?;
+        return Ok(());
+    }
+    if ["cache-sample", "cache-bitwise", "cache-time"].contains(&mode.as_str()) {
+        if args.len() != 5 {
+            return Err("usage: cache-mode OUT LISTS VARIANT OFFSET".into());
+        }
+        let lists = Path::new(&args[2]);
+        let variant = &args[3];
+        let offset = args[4].parse::<u32>()?;
+        let cubins = probe::cache::snapshot(out)?;
+        if kernel_harness::gpu_test_multi_with(cubins, 4 << 30, |sessions| {
+            probe::cache::run(
+                sessions,
+                lists,
+                variant,
+                offset,
+                mode == "cache-sample",
+                mode == "cache-time",
+            )
+        })?
+        .is_none()
+        {
+            return Err("cache GPU phase did not execute".into());
+        }
+        return Ok(());
+    }
     let cubins = snapshot(out)?;
     if mode == "check" {
         cubins.bytes("probe_sm120")?;

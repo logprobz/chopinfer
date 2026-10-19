@@ -12,6 +12,8 @@ use runtime_cuda::{DeviceBuffer, Function, KernelArgument as Arg, Module, Stream
 
 #[path = "ablation.rs"]
 mod ablations;
+#[path = "cache.rs"]
+pub(super) mod cache;
 #[path = "fixture.rs"]
 mod fixture;
 pub use ablations::run as ablation;

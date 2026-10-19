@@ -218,6 +218,13 @@ fn latent_required_cases_prepare_and_symbols_are_embedded() {
         2,
     )
     .unwrap();
+    let decode = bundle_deepseek41::sm120::latent_decode::cubin(flash).unwrap();
+    let cache = kernels_sm120::latent::sources_prefill_cache::cubin_spec(
+        latent::profile(flash),
+        &prefill_entries,
+    )
+    .unwrap();
+    let added = [prefill, decode, cache];
     assert_eq!(
         embedded.len(),
         GEOMETRIES
@@ -225,10 +232,9 @@ fn latent_required_cases_prepare_and_symbols_are_embedded() {
             .map(|g| 2 + usize::from(g.shape.compress_ratios.contains(&2)))
             .sum::<usize>()
             + scheduled.len()
-            + 2
+            + added.len()
     );
-    let decode = bundle_deepseek41::sm120::latent_decode::cubin(flash).unwrap();
-    for spec in scheduled.into_iter().chain([prefill, decode]) {
+    for spec in scheduled.into_iter().chain(added) {
         let (_, bytes, symbols) = embedded
             .iter()
             .find(|(name, _, _)| *name == spec.name)

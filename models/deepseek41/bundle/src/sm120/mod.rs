@@ -370,6 +370,53 @@ impl crate::Kernels {
     -> Result<Vec<(&'static str, kernel_core::contract::LaunchPlan)>, String> {
         kernels_sm120::backend::rounded_phased_admission_plans().map_err(|error| error.to_string())
     }
+
+    pub(crate) fn prefill_dma_sum_info() -> kernel_core::backend::OpInfo {
+        kernel_core::backend::OpInfo::new(
+            "local-rank-ordered-bf16-owner-sum",
+            kernel_core::properties::Invariance::any_rows(8192),
+            vec![(kernels_sm120::comm::owned_sum_f32::SYMBOL.into(), 0)],
+        )
+    }
+
+    pub(crate) fn prefill_dma_sum(
+        input: runtime_bundle_abi::DeviceBufferSpanV1,
+        inbox: runtime_bundle_abi::DeviceBufferSpanV1,
+        output: runtime_bundle_abi::DeviceBufferSpanV1,
+        slot: u64,
+        rank: u32,
+        rows: u32,
+    ) -> Result<bundle_runtime::pipeline::PreparedLaunch, String> {
+        use bundle_runtime::dispatch::BufferBindings;
+        use kernel_core::contract::{Argument, ArgumentList};
+        use kernels_sm120::comm::owned_sum_f32;
+        let elements = output.length / 2;
+        if input.length != elements * 4
+            || output.length != elements * 2
+            || inbox.length != slot.checked_mul(16).ok_or("DMA inbox overflow")?
+            || [input, inbox, output].iter().any(|s| s.offset % 16 != 0)
+        {
+            return Err("DMA owner sum has inconsistent byte views".into());
+        }
+        let plan = owned_sum_f32::plan(elements, slot, rank, 4).map_err(|e| e.to_string())?;
+        let mut bindings = BufferBindings::default();
+        let arguments = ArgumentList(vec![
+            Argument::DeviceBuffer(bindings.bind(input)),
+            Argument::DeviceBuffer(bindings.bind(inbox)),
+            Argument::DeviceBuffer(bindings.bind(output)),
+            Argument::U64(elements),
+            Argument::U64(slot),
+            Argument::U32(rank),
+            Argument::U32(4),
+        ]);
+        Ok(bundle_runtime::pipeline::PreparedLaunch {
+            symbol: owned_sum_f32::SYMBOL.into(),
+            rows,
+            plan,
+            arguments,
+            bindings,
+        })
+    }
 }
 
 // The build script includes the registration files, and so does the

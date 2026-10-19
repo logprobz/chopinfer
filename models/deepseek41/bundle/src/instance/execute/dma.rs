@@ -1,0 +1,370 @@
+//! Ordered DMA transport with an owner-local rank sum and BF16 gather.
+use super::{Run, Stage};
+use crate::instance::Instance;
+use bundle_runtime::acquire::RankHandles;
+use bundle_runtime::dispatch::{self, DispatchError};
+use bundle_runtime::pipeline::{PoisonOnUnwind, PreparedLaunch};
+use bundle_runtime::resources::{Held, allocate_span};
+use model_deepseek41_contract::serving::PREFILL_TOKENS;
+use runtime_bundle_abi::{
+    BundleAbiError, BundleEventHandleV1, BundleStreamHandleV1, DeviceBufferSpanV1, HostServicesV1,
+};
+
+pub(crate) struct Rank {
+    inbox: DeviceBufferSpanV1,
+    events: [BundleEventHandleV1; 8],
+}
+
+pub(crate) fn acquire(
+    services: &HostServicesV1,
+    ranks: &[RankHandles],
+    width: u32,
+    held: &mut Vec<Held>,
+) -> Result<Vec<Rank>, BundleAbiError> {
+    ranks
+        .iter()
+        .map(|&(context, pool, stream)| {
+            let inbox = allocate_span(
+                services,
+                pool,
+                stream,
+                u64::from(PREFILL_TOKENS) * u64::from(width) * 4,
+                held,
+            )?;
+            let mut events = Vec::new();
+            for _ in 0..8 {
+                let event = services.create_event(context)?;
+                held.push(Held::Event(event));
+                events.push(event);
+            }
+            Ok(Rank {
+                inbox,
+                events: events.try_into().expect("eight DMA events"),
+            })
+        })
+        .collect()
+}
+
+fn subspan(
+    span: DeviceBufferSpanV1,
+    offset: u64,
+    length: u64,
+) -> Result<DeviceBufferSpanV1, String> {
+    if offset
+        .checked_add(length)
+        .is_none_or(|end| end > span.length)
+    {
+        return Err("DMA interval exceeds its buffer view".into());
+    }
+    Ok(DeviceBufferSpanV1::new(
+        span.buffer,
+        span.offset
+            .checked_add(offset)
+            .ok_or("DMA offset overflow")?,
+        length,
+    ))
+}
+
+struct Transfer {
+    source: usize,
+    destination: usize,
+    input: DeviceBufferSpanV1,
+    output: DeviceBufferSpanV1,
+}
+
+pub(super) struct Call {
+    scatter: [Vec<Transfer>; 3],
+    sums: Vec<PreparedLaunch>,
+    gather: [Vec<Transfer>; 3],
+    footprint: Vec<DeviceBufferSpanV1>,
+}
+
+impl Call {
+    pub(super) fn prepare(
+        instance: &Instance,
+        first: u32,
+        rows: u32,
+        embedding: bool,
+    ) -> Result<Option<Self>, String> {
+        if instance.dma.len() != 4 || !(512..=PREFILL_TOKENS).contains(&rows) {
+            return Ok(None);
+        }
+        let width = u64::from(instance.config.shape.dims().hidden);
+        let owner_rows = rows.div_ceil(4);
+        let slot = u64::from(owner_rows) * width;
+        let mut inputs = Vec::new();
+        let mut outputs = Vec::new();
+        let mut inboxes = Vec::new();
+        let mut sums = Vec::new();
+        let mut footprint = Vec::new();
+        for (rank, buffers) in instance.buffers.iter().enumerate() {
+            let input = crate::buffers::row_range(buffers.scratch.partial, first, rows)?;
+            let output = crate::buffers::row_range(
+                if embedding {
+                    buffers.scratch.embedded
+                } else {
+                    buffers.scratch.reduced
+                },
+                first,
+                rows,
+            )?;
+            let inbox = subspan(instance.dma[rank].inbox, 0, slot * 16)?;
+            let begin = (rank as u32 * owner_rows).min(rows);
+            let count = owner_rows.min(rows - begin);
+            sums.push(crate::Kernels::prefill_dma_sum(
+                subspan(
+                    input,
+                    u64::from(begin) * width * 4,
+                    u64::from(count) * width * 4,
+                )?,
+                inbox,
+                subspan(
+                    output,
+                    u64::from(begin) * width * 2,
+                    u64::from(count) * width * 2,
+                )?,
+                slot,
+                rank as u32,
+                count,
+            )?);
+            footprint.extend([input, output, inbox]);
+            inputs.push(input);
+            outputs.push(output);
+            inboxes.push(inbox);
+        }
+        let mut scatter = [Vec::new(), Vec::new(), Vec::new()];
+        let mut gather = [Vec::new(), Vec::new(), Vec::new()];
+        for phase in 0..3 {
+            for destination in 0..4 {
+                let source = (destination + 3 - phase) % 4;
+                let first = (destination as u32 * owner_rows).min(rows);
+                let count = owner_rows.min(rows - first);
+                scatter[phase].push(Transfer {
+                    source,
+                    destination,
+                    input: subspan(
+                        inputs[source],
+                        u64::from(first) * width * 4,
+                        u64::from(count) * width * 4,
+                    )?,
+                    output: subspan(
+                        inboxes[destination],
+                        source as u64 * slot * 4,
+                        u64::from(count) * width * 4,
+                    )?,
+                });
+                let first = (source as u32 * owner_rows).min(rows);
+                let count = owner_rows.min(rows - first);
+                gather[phase].push(Transfer {
+                    source,
+                    destination,
+                    input: subspan(
+                        outputs[source],
+                        u64::from(first) * width * 2,
+                        u64::from(count) * width * 2,
+                    )?,
+                    output: subspan(
+                        outputs[destination],
+                        u64::from(first) * width * 2,
+                        u64::from(count) * width * 2,
+                    )?,
+                });
+            }
+        }
+        Ok(Some(Self {
+            scatter,
+            sums,
+            gather,
+            footprint,
+        }))
+    }
+
+    pub(super) fn audit(&self, compute: &[PreparedLaunch]) -> Result<(), String> {
+        crate::shared_overlap::disjoint_copy_spans(&self.footprint, compute)
+    }
+
+    pub(super) fn execute(
+        &self,
+        instance: &Instance,
+        streams: &[BundleStreamHandleV1],
+    ) -> Result<(), DispatchError> {
+        if streams.len() != 4 || instance.dma.len() != 4 {
+            return Err(DispatchError::InvalidPlan);
+        }
+        let services = &instance.services;
+        let sums = self
+            .sums
+            .iter()
+            .enumerate()
+            .map(|(rank, sum)| {
+                dispatch::resolve(
+                    &instance.symbols[rank],
+                    &sum.symbol,
+                    sum.plan,
+                    &sum.arguments,
+                    &sum.bindings,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let record = |stage: usize| -> Result<(), BundleAbiError> {
+            for (rank, &stream) in streams.iter().enumerate() {
+                services.record_event(instance.dma[rank].events[stage], stream)?;
+            }
+            Ok(())
+        };
+        let wait = |stage: usize| -> Result<(), BundleAbiError> {
+            for &stream in streams {
+                for rank in &instance.dma {
+                    services.wait_event(stream, rank.events[stage])?;
+                }
+            }
+            Ok(())
+        };
+        let copies = |transfers: &[Transfer]| -> Result<(), BundleAbiError> {
+            for transfer in transfers {
+                services.copy_peer_to_peer(
+                    streams[transfer.destination],
+                    instance.ranks[transfer.destination].0,
+                    transfer.output,
+                    instance.ranks[transfer.source].0,
+                    transfer.input,
+                )?;
+            }
+            Ok(())
+        };
+        record(0)?;
+        for phase in 0..3 {
+            wait(phase)?;
+            copies(&self.scatter[phase])?;
+            record(phase + 1)?;
+        }
+        for (rank, sum) in sums.iter().enumerate() {
+            sum.submit(services, streams[rank])?;
+        }
+        record(4)?;
+        for phase in 0..3 {
+            wait(phase + 4)?;
+            copies(&self.gather[phase])?;
+            record(phase + 5)?;
+        }
+        // All peer reads have completed before any rank can reuse partials,
+        // outputs, inboxes, or this call's event records.
+        wait(7)?;
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct Calls {
+    launches: Vec<PreparedLaunch>,
+    flags: Vec<bool>,
+}
+
+fn copied(run: &Run, rank: usize, range: std::ops::Range<usize>) -> Calls {
+    let mut out = Calls::default();
+    for at in range {
+        let launch = &run.programs[rank][at];
+        out.launches.push(PreparedLaunch {
+            symbol: launch.symbol.clone(),
+            rows: launch.rows,
+            plan: launch.plan,
+            arguments: launch.arguments.clone(),
+            bindings: launch.bindings.clone(),
+        });
+        out.flags.push(run.collectives[rank][at]);
+    }
+    out
+}
+
+pub(super) struct Plan {
+    blocks: Vec<(Vec<Calls>, Call)>,
+    tail: Vec<Calls>,
+}
+
+pub(super) fn eligible(instance: &Instance, run: &Run) -> bool {
+    #[cfg(feature = "diagnostic-taps")]
+    if instance.taps.text() {
+        return false;
+    }
+    run.phase.prefill()
+        && instance.dma.len() == 4
+        && instance.dspark.is_none()
+        && run.media.is_none()
+        && run.inputs.request_ids.len() == 1
+}
+
+impl Plan {
+    pub(super) fn prepare(instance: &Instance, run: &Run) -> Result<Option<Self>, String> {
+        if !eligible(instance, run) || !instance.overlap.is_empty() || run.phase.rows() < 512 {
+            return Ok(None);
+        }
+        let stages = crate::program::stages(instance.config.shape.geometry, run.phase);
+        let mut cursors = [0; 4];
+        let mut blocks = Vec::new();
+        for stage in stages
+            .into_iter()
+            .filter(|s| matches!(s, Stage::EmbeddingReduce | Stage::Reduce(..)))
+        {
+            let mut compute = Vec::new();
+            for (rank, cursor) in cursors.iter_mut().enumerate() {
+                let begin = run.stages[rank]
+                    .iter()
+                    .position(|s| *s == stage)
+                    .ok_or("DMA reduction stage missing")?;
+                let end = begin
+                    + run.stages[rank][begin..]
+                        .iter()
+                        .take_while(|s| **s == stage)
+                        .count();
+                let collective = (begin..end)
+                    .find(|&at| run.collectives[rank][at])
+                    .ok_or("DMA stage has no collective")?;
+                if begin < *cursor || (stage != Stage::EmbeddingReduce && collective != begin) {
+                    return Err("DMA reduction stage order changed".into());
+                }
+                compute.push(copied(run, rank, *cursor..collective));
+                *cursor = end;
+            }
+            let call = Call::prepare(
+                instance,
+                0,
+                run.phase.rows(),
+                stage == Stage::EmbeddingReduce,
+            )?
+            .ok_or("DMA call was not prepared")?;
+            blocks.push((compute, call));
+        }
+        let tail = cursors
+            .iter()
+            .enumerate()
+            .map(|(rank, &at)| copied(run, rank, at..run.programs[rank].len()))
+            .collect();
+        Ok(Some(Self { blocks, tail }))
+    }
+
+    pub(super) fn execute(&self, instance: &Instance) -> Result<(), DispatchError> {
+        let streams = instance.ranks.iter().map(|r| r.2).collect::<Vec<_>>();
+        let issue = |calls: &[Calls]| {
+            instance.launch_eager(
+                &streams,
+                &calls
+                    .iter()
+                    .map(|c| c.launches.as_slice())
+                    .collect::<Vec<_>>(),
+                &calls.iter().map(|c| c.flags.as_slice()).collect::<Vec<_>>(),
+            )
+        };
+        let _unwind = PoisonOnUnwind(&instance.collectives);
+        let result = (|| {
+            for (compute, reduction) in &self.blocks {
+                issue(compute)?;
+                reduction.execute(instance, &streams)?;
+            }
+            issue(&self.tail)
+        })();
+        if result.is_err() {
+            instance.collectives.poison();
+        }
+        result
+    }
+}

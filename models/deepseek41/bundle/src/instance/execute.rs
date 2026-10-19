@@ -32,6 +32,7 @@ use crate::engram_rows::Hashed;
 use crate::lower::{KvExtent, Lowering, TailUpload, tail_upload};
 use crate::program::{Phase, Stage};
 
+pub(crate) mod dma;
 mod micro;
 pub(crate) mod overlap;
 
@@ -42,6 +43,7 @@ const VERIFY: usize = 2;
 
 /// One phase of a step, planned before the step opens.
 struct Run {
+    dma: Option<dma::Plan>,
     overlap: Option<overlap::Plan>,
     micro: Option<micro::Plan>,
     inputs: PhaseInputs,
@@ -429,6 +431,7 @@ impl Instance {
         let index = index_upload(self.config.shape.geometry, self.steps.get(), &inputs);
         self.steps.set(self.steps.get() + 1);
         let mut run = Run {
+            dma: None,
             overlap: None,
             micro: None,
             index,
@@ -451,10 +454,16 @@ impl Instance {
             BundleStatusV1::InternalError
         })?;
         if run.micro.is_none() {
-            run.overlap = overlap::Plan::prepare(self, &run).map_err(|error| {
+            run.dma = dma::Plan::prepare(self, &run).map_err(|error| {
                 self.log(&error);
                 BundleStatusV1::InternalError
             })?;
+            if run.dma.is_none() {
+                run.overlap = overlap::Plan::prepare(self, &run).map_err(|error| {
+                    self.log(&error);
+                    BundleStatusV1::InternalError
+                })?;
+            }
         }
         Ok(run)
     }
@@ -611,6 +620,11 @@ impl Instance {
     /// the instance: its peers would wait forever at the collectives that
     /// rank queued.
     fn launch(&mut self, run: &mut Run) -> Result<(), BundleAbiError> {
+        if let Some(plan) = &run.dma {
+            return plan
+                .execute(self)
+                .map_err(|error| self.dispatch_failed(error));
+        }
         if let Some(plan) = &run.micro {
             return plan
                 .execute(self)

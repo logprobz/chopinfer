@@ -30,6 +30,8 @@ pub(crate) use dense::GemmViews;
 pub(crate) use hc::{ExpandViews, HeadViews, MixViews};
 #[cfg(test)]
 pub(crate) use reduce::with_bf16_gather;
+#[cfg(test)]
+pub(crate) use reduce::with_dma;
 pub(crate) use reduce::{PeerViews, ReduceViews, WidenViews};
 pub(crate) use rows::{EmbeddingViews, NormViews, StreamViews, verify_rows};
 
@@ -55,6 +57,7 @@ pub(crate) const NAME: &str = "DeepSeek V4.1";
 /// absent and named in `missing`: create refuses such an instance, except
 /// the fake-host tests that run the lowered stages alone.
 pub struct Ops {
+    pub(crate) prefill_dma: bool,
     pub(crate) expert_set: model_deepseek41_contract::moe::Experts,
     pub(crate) rows: Option<rows::RowOps>,
     pub(crate) norm_quantize: Option<norm_quantize::NormQuantizeOps>,
@@ -123,6 +126,19 @@ impl Ops {
                 }
             }
             ops.asked.extend(asks.asked());
+        }
+        if reduce::dma_requested()
+            && shape.ranks() == 4
+            && shape.geometry == &model_deepseek41_contract::geometry::FLASH
+        {
+            let asks = Asks::default();
+            asks.record(
+                "reduce.prefill_dma_owner",
+                Need::rows(8192),
+                &Kernels::prefill_dma_sum_info(),
+            );
+            ops.asked.extend(asks.asked());
+            ops.prefill_dma = true;
         }
         ops
     }
@@ -276,6 +292,7 @@ impl Ops {
             })
             .collect();
         Ops {
+            prefill_dma: false,
             expert_set,
             rows,
             norm_quantize,

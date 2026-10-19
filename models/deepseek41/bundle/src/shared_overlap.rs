@@ -234,6 +234,28 @@ pub(crate) fn disjoint_branches(
     Ok(())
 }
 
+/// Copies carry spans directly, so audit their full transfer footprints as
+/// well as the arithmetic launch that consumes a local owner interval.
+pub(crate) fn disjoint_copy_spans(
+    copies: &[DeviceBufferSpanV1],
+    main: &[PreparedLaunch],
+) -> Result<(), String> {
+    for &a in copies {
+        end(a)?;
+        for launch in main {
+            for (b, _) in spans(launch)? {
+                if intersects(a, b)? {
+                    return Err(format!(
+                        "unordered DMA scratch alias: {a:?} and {} {b:?}",
+                        launch.symbol
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Check actual pointer arguments before capture. Only the input codes,
 /// input scales and live-row count may be shared across the two branches;
 /// their producers finish before the fork, and both entry arguments must

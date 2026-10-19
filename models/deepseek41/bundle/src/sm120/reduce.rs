@@ -83,7 +83,14 @@ pub fn cubins(geometries: &[Geometry]) -> Vec<(&'static str, CubinSpec)> {
         ]
         .contains(&entry.symbol.as_str())
     });
-    let mut specs = vec![(COMM_FAMILY, comm), ("comm_rounded_phased", phased)];
+    let mut specs = vec![
+        (COMM_FAMILY, comm),
+        ("comm_rounded_phased", phased),
+        (
+            "comm_dma_sum",
+            kernels_sm120::comm::owned_sum_f32::cubin_spec("comm_dma_sum_deepseek41_sm120".into()),
+        ),
+    ];
     for g in geometries {
         specs.push((
             ROUNDING_FAMILY,

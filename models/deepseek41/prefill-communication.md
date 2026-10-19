@@ -129,3 +129,42 @@ layers. The two-part schedule overlaps roughly 425 to 435 ms of compute
 and communication, but increases the envelope about 150 ms. Its 4095/4096
 row parts miss the exact F32 tiled routes, and HC mixing slows during
 concurrent communication. Both overlap modes remain explicit experiments.
+
+## Ordered DMA experiment
+
+`CHOPINFER_DEEPSEEK41_PREFILL_DMA=1` selects a separate transport for single
+text-request Flash TP4 autoregressive prefills. It applies to sequential
+execution and the two-part schedule, with at least 512 rows per reduction.
+Shorter parts retain their previous transport. Attention-only overlap,
+media, packed requests, decode, verify and DSpark keep their existing path.
+DMA is off by default pending served qualification and timing.
+
+Each rank owns a contiguous interval of complete rows. Three ordered rank
+permutations copy F32 partials into local slots indexed by source rank.
+An ordinary local kernel calls the existing phased transport's sum helper:
+positive F32 zero, sources in ascending rank order, then one BF16 rounding.
+Three ordered permutations gather those BF16 owner intervals. Changing the
+owner interval does not change any element's arithmetic. Cross-device
+events order each permutation and join all final peer reads before reuse.
+
+Each rank keeps a private 160 MiB inbox and eight events. A and B reuse the
+inbox only after the previous collective's global join. The overlap audit
+includes complete DMA input/output intervals and every inbox, including
+remote source spans that the local sum kernel does not name. A CPU journal
+audit independently reconstructs happens-before from stream order and
+event records/waits; removing waits must expose a compute/DMA alias.
+
+The host's explicit peer-copy service validates context ownership, directed
+peer access and pool grants before using the driver peer-copy operation.
+Private completion events retain both allocations without synchronizing
+later stream work. Releasing resources or revoking access drains only
+affected copies. The bounded queue refuses overflow before submitting
+another copy; it does not block waiting for an unsubmitted dependency.
+Partial submission failures poison the model instance.
+
+On 2026-10-19 at 250 W, the isolated four-rank transport passed every output
+element and guard at 4095, 4096, 8191 and 8192 rows, including cancellation,
+signed zero, subnormal and rounding-tie inputs. Its 8192-row median was
+3.947 ms per reduction, or an estimated 319.7 ms for 81 reductions. Nsight
+confirmed peer DMA traffic and owner-local sum kernels. This estimate
+excludes serving interactions; the served comparison remains required.

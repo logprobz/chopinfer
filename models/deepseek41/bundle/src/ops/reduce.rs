@@ -60,6 +60,30 @@ fn bf16_gather_defaults_to_the_qualified_geometry_and_keeps_the_control() {
 #[cfg(test)]
 thread_local! { static IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
+pub(crate) fn dma_requested() -> bool {
+    #[cfg(test)]
+    return DMA_IN_TESTS.get();
+    #[cfg(not(test))]
+    {
+        std::env::var("CHOPINFER_DEEPSEEK41_PREFILL_DMA").as_deref() == Ok("1")
+    }
+}
+
+#[cfg(test)]
+thread_local! { static DMA_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+#[cfg(test)]
+pub(crate) fn with_dma<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            DMA_IN_TESTS.set(self.0);
+        }
+    }
+    let _reset = Reset(DMA_IN_TESTS.replace(enabled));
+    run()
+}
+
 #[cfg(test)]
 pub(crate) fn with_bf16_gather<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
     struct Reset(bool);

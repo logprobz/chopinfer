@@ -62,6 +62,7 @@ pub(super) struct Plan {
     whole: Vec<Calls>,
     blocks: Vec<Vec<[Part; 2]>>,
     tail: Vec<Calls>,
+    dma: Vec<[Option<super::dma::Call>; 2]>,
 }
 
 fn split(rows: u32) -> Option<[u32; 2]> {
@@ -255,11 +256,39 @@ impl Plan {
             }
             blocks.push(block);
         }
+        let mut dma = Vec::new();
+        for block in 0..blocks.len() {
+            let mut calls = Vec::new();
+            for part in 0..2 {
+                let first = if part == 0 { 0 } else { rows[0] };
+                calls.push(if super::dma::eligible(instance, run) {
+                    super::dma::Call::prepare(instance, first, rows[part], block == 0)?
+                } else {
+                    None
+                });
+            }
+            let calls: [Option<super::dma::Call>; 2] =
+                calls.try_into().ok().expect("two DMA parts");
+            if let Some(call) = &calls[0] {
+                for rank in &blocks[block] {
+                    call.audit(&rank[1].compute.launches)?;
+                }
+            }
+            if let Some(call) = &calls[1]
+                && let Some(next) = blocks.get(block + 1)
+            {
+                for rank in next {
+                    call.audit(&rank[0].compute.launches)?;
+                }
+            }
+            dma.push(calls);
+        }
         Ok(Some(Self {
             rows,
             whole,
             blocks,
             tail,
+            dma,
         }))
     }
 
@@ -321,6 +350,12 @@ impl Plan {
                     Op::Launch { stage, part, lane } => {
                         let part = part.expect("prefill blocks have parts");
                         let (Work::Compute(block) | Work::Reduce(block)) = stage;
+                        if matches!(stage, Work::Reduce(_))
+                            && let Some(call) = &self.dma[block][part]
+                        {
+                            call.execute(instance, &comm)?;
+                            continue;
+                        }
                         issue(
                             self.blocks[block]
                                 .iter()

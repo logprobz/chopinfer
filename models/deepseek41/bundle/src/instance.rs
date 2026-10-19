@@ -101,6 +101,7 @@ pub struct Instance {
     /// Steps planned so far: each row's index tag holds its step's.
     steps: std::cell::Cell<u64>,
     overlap: Vec<execute::overlap::Rank>,
+    dma: Vec<execute::dma::Rank>,
     layer_overlap: bool,
     prefill_reduce_runs: u64,
     /// Run the lowered stages alone (`PARTIAL`).
@@ -433,6 +434,9 @@ impl Instance {
                             .is_some_and(|ops| ops.prefill_prepared())
                 })
                 .filter(|cubin| {
+                    cubin.name != "comm_dma_sum_deepseek41_sm120" || self.ops.prefill_dma
+                })
+                .filter(|cubin| {
                     self.dspark.is_some()
                         || !crate::Kernels::drafter_only(cubin.name, shape.geometry)
                 })
@@ -618,6 +622,10 @@ impl Instance {
         if execute::overlap::enabled() && self.ops.reduce.is_some() {
             self.overlap = execute::overlap::acquire(services, &ranks, held)?;
         }
+        if self.ops.prefill_dma && self.dspark.is_none() {
+            self.dma =
+                execute::dma::acquire(services, &ranks, self.config.shape.dims().hidden, held)?;
+        }
         acquire::synchronize(log, &ranks)?;
         self.ranks = ranks;
         Ok(())
@@ -747,6 +755,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         },
         steps: std::cell::Cell::new(0),
         overlap: Vec::new(),
+        dma: Vec::new(),
         layer_overlap: execute::overlap::layers_enabled(),
         prefill_reduce_runs: 0,
         partial,

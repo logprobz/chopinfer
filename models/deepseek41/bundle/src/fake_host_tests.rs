@@ -27,6 +27,7 @@ mod media;
 mod norm_quantize;
 mod position_valid;
 mod prefill_attention;
+mod prefill_dma;
 mod prefill_micro;
 mod prefill_overlap;
 mod prefill_reduce;
@@ -575,6 +576,29 @@ impl FakePackage for FakeHost {
         destination: DeviceBufferSpanV1,
         source: DeviceBufferSpanV1,
     ) -> HostServiceResultV1<()> {
+        self.memory.borrow_mut().copy(source, destination);
+        Ok(())
+    }
+    fn copy_peer_to_peer(
+        &self,
+        stream: BundleStreamHandleV1,
+        destination_context: BundleContextHandleV1,
+        destination: DeviceBufferSpanV1,
+        source_context: BundleContextHandleV1,
+        source: DeviceBufferSpanV1,
+    ) -> HostServiceResultV1<()> {
+        if self.device.fail_copy.fails() {
+            return Err(BundleStatusV1::HostError);
+        }
+        assert_eq!(destination.length, source.length);
+        self.check_span(source);
+        self.check_span(destination);
+        self.device.note(format!(
+            "peer-copy {} {} {} {source:?} {destination:?}",
+            stream.slot(),
+            source_context.slot(),
+            destination_context.slot()
+        ));
         self.memory.borrow_mut().copy(source, destination);
         Ok(())
     }

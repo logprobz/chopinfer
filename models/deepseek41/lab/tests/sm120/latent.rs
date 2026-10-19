@@ -197,13 +197,31 @@ fn latent_required_cases_prepare_and_symbols_are_embedded() {
         assert!(bytes.windows(symbol.len()).any(|s| s == symbol.as_bytes()));
     }
     let embedded = bundle_deepseek41::sm120::latent_cubins().collect::<Vec<_>>();
+    let scheduled = bundle_deepseek41::sm120::latent_scheduled::cubins(GEOMETRIES).unwrap();
     assert_eq!(
         embedded.len(),
         GEOMETRIES
             .iter()
             .map(|g| 2 + usize::from(g.shape.compress_ratios.contains(&2)))
             .sum::<usize>()
+            + scheduled.len()
     );
+    for spec in scheduled {
+        let (_, bytes, symbols) = embedded
+            .iter()
+            .find(|(name, _, _)| *name == spec.name)
+            .unwrap();
+        assert!(!bytes.is_empty());
+        assert_eq!(symbols.len(), spec.entries.len());
+        for entry in spec.entries {
+            assert!(symbols.contains(&entry.symbol.as_str()));
+            assert!(
+                bytes
+                    .windows(entry.symbol.len())
+                    .any(|s| s == entry.symbol.as_bytes())
+            );
+        }
+    }
     for g in GEOMETRIES {
         let spec = latent::cubin(g).unwrap();
         let (_, bytes, symbols) = embedded

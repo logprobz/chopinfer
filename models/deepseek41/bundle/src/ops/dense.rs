@@ -229,6 +229,11 @@ pub(crate) struct GemmViews {
     pub status: DeviceBufferSpanV1,
 }
 
+/// Projections decode lowers only through `project_pair`.
+fn pair_only(id: &str) -> bool {
+    matches!(id, "moe.shared-gate" | "moe.shared-up")
+}
+
 impl DenseOps {
     pub(crate) fn prepare(
         backend: &dyn Backend,
@@ -286,8 +291,11 @@ impl DenseOps {
                     |need| backend.mxfp8_fold_gemm(&query, need),
                 )?;
                 decode.push((dense.id, capacity, op));
-                if let Some(op) =
-                    fold_stream::prepare(backend, shape.geometry, query, capacity, false)?
+                // Decode lowers the shared gate and up as one pair, so single
+                // packed folds of either would hold storage no launch reads.
+                if !pair_only(dense.id)
+                    && let Some(op) =
+                        fold_stream::prepare(backend, shape.geometry, query, capacity, false)?
                 {
                     asks.record(
                         format!("dense.{} stream {capacity}", dense.id),
@@ -630,8 +638,8 @@ mod tests {
                 let calls = ops.project(dense.id, phase, &views, workspace).unwrap();
                 if !phase.prefill() && phase.rows() <= 64 {
                     let split = expect_split(shape.ranks(), dense.id, phase.rows());
-                    let packed =
-                        crate::Kernels::stream_fold_qualified(&FLASH, q, phase.rows(), false);
+                    let packed = !pair_only(dense.id)
+                        && crate::Kernels::stream_fold_qualified(&FLASH, q, phase.rows(), false);
                     assert_eq!(
                         calls.len(),
                         if packed {

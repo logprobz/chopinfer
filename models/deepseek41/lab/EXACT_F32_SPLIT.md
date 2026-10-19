@@ -1,6 +1,8 @@
 # Exact F32 split projection
 
-The `f32_split` family routes rows 1 through 256 to two launches. The first
+The prepared `f32_split` offer selects the locked three-launch `f32_decode`
+path for rows 1-32 and the fused two-launch path for rows 33-256. In the
+fused path, the first
 classifies each complete activation row, writes its exact three BF16
 components, and resets every completion counter. The second computes four
 independent 128-K chains per CTA. Its final CTA for each output tile loads
@@ -11,7 +13,7 @@ the reducer but never determines arithmetic order. Whole-row and whole
 The persistent weight-domain table still initializes once per immutable
 weight view. Each graph invocation initializes its own transient scratch,
 including invocations with zero live rows. No replay depends on old
-counters. The head uses this same entry and does not rescan its weights.
+counters. The head uses this same selection and does not rescan its weights.
 The original `f32_decode` and baseline families and their locks remain
 unchanged. Rows above 256 retain the baseline kernel.
 
@@ -26,7 +28,11 @@ The lab enumerates registered entries and tests every row count 1 through
 and 8192. Every routed row count compares eager and captured execution;
 timed buckets and edge witnesses also exercise inactive rows, zero live
 rows, poisoned scratch and repeated replay. Static weights and their
-classification are reused across the production row sweep.
+classification are reused across the production row sweep. The pair job
+partitions all 3950 cases across two GPUs by case-ID popcount parity and
+allows 2400 seconds. Each GPU runs 1975 cases; the checker requires both
+successful shards, disjoint case IDs and the complete union. No routed
+entry or row count is removed.
 
 The staged pair job reports cold-weight paired times, individual launches,
 and time divided by the weight-bandwidth floor. The stated floor assumes
@@ -38,12 +44,23 @@ rows 33 through 256 and <= 1.03 elsewhere. The timing table is written
 even if a performance gate fails. GPU acceptance remains pending that
 job; CPU compilation and oracle checks are not performance evidence.
 
+## Measured selection
+
+At SM120, 250 W on 2026-10-19, the three-launch router takes 24.5 us at
+one row and 30.7 us at 32 rows; the fused path takes 32.7 and 43.0 us.
+For wkv at one row the same comparison is 24.5 versus 32.7 us. At rows
+33 and 256 the fused router takes 51 and 145 us versus the original's
+1194 and 1210 us. Fused wkv takes 57 and 180 us versus 1192 and 1225 us.
+The selector preserves the three-launch path through 32 rows and uses
+the fused path through 256. Both kernels and their locks are unchanged.
+
 ## Prefill follow-up
 
 The job measures the original dense entries at 2048 rows per chunk and
-at maximum capacity. There is no 2048-row result from the earlier pair
-jobs. Forty router calls contribute `40 * router_old_us / 1000` ms per
-chunk. A percentage of prefill also needs a measured full-forward time.
+at maximum capacity. On SM120 at 250 W, measured on 2026-10-19, the original router takes
+2.45 ms and wkv takes 3.48 ms. Forty router calls therefore contribute
+98 ms per chunk. A percentage of prefill also needs a measured
+full-forward time.
 
 The proposed exact prefill path uses a 32-feature by 32- or 64-token CTA
 tile with several warps sharing asynchronously staged weights and the

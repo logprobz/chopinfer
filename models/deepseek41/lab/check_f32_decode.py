@@ -82,15 +82,37 @@ def check(text, expected):
     return parsed
 
 
+def check_shards(texts, expected):
+    count = expected.get("shards", 1)
+    if len(texts) != count:
+        raise ValueError(f"expected {count} shard logs, found {len(texts)}")
+    for ordinal, text in enumerate(texts):
+        if "1 passed; 0 failed; 0 ignored" not in text:
+            raise ValueError(f"shard {ordinal}: GPU test did not pass")
+        if count > 1:
+            for _, value in records(text)["BITWISE"]:
+                if "case" not in value:
+                    raise ValueError("missing case ID")
+                if int(value["case"]).bit_count() % count != ordinal:
+                    raise ValueError(f"case {value['case']} is in the wrong shard")
+    joined = "\n".join(texts)
+    if count > 1:
+        ids = [int(value["case"]) for _, value in records(joined)["BITWISE"]]
+        if len(set(ids)) != len(ids):
+            raise ValueError("duplicate case IDs across shards")
+        if set(ids) != set(range(expected["bitwise_cases"])):
+            raise ValueError("shards omit expected case IDs")
+    return check(joined, expected)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("coverage", type=Path)
     parser.add_argument("logs", nargs="+", type=Path)
     args = parser.parse_args()
     expected = json.loads(args.coverage.read_text())
-    failures = []
-    for log in args.logs:
-        text = log.read_text()
+    texts = [log.read_text() for log in args.logs]
+    for log, text in zip(args.logs, texts):
         parsed = records(text)
         table = ["| Entry | Rows | Old us | New us | New / old | Weight floor us | New / floor |",
                  "|---|---:|---:|---:|---:|---:|---:|"]
@@ -99,12 +121,10 @@ def main():
                 ("rows", "old_us", "new_us", "ratio", "floor_us", "floor_ratio")]) + " |")
         log.with_suffix(".timings.md").write_text("\n".join(table) + "\n")
         log.with_suffix(".timings.json").write_text(json.dumps(parsed["TIMING"], indent=2) + "\n")
-        try:
-            check(text, expected)
-        except ValueError as error:
-            failures.append(f"{log.name}: {error}")
-    if failures:
-        raise SystemExit("\n".join(failures))
+    try:
+        check_shards(texts, expected)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
     print(f"{len(args.logs)} GPU logs passed: <= {MAX_RATIO}, rows 33-256 <= {VERIFY_RATIO}")
 
 

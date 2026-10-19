@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 const CUBIN: &str = "f32_split_edges";
+const LEGACY_CUBIN: &str = "f32_decode_edges";
 const TIMING_ROWS: [u32; 12] = [1, 2, 4, 8, 16, 32, 33, 48, 64, 128, 192, 256];
 const MAX_SLOWDOWN_RATIO: f32 = 1.03;
 const VERIFY_RATIO: f32 = 0.2;
@@ -123,7 +124,15 @@ fn coverage(matrix: &[ProductionCase]) -> serde_json::Value {
         .iter()
         .flat_map(|case| &case.rows)
         .filter(|&&rows| timed(rows))
-        .map(|&rows| if rows <= 256 { 3 } else { 2 })
+        .map(|&rows| {
+            if rows <= 32 {
+                4
+            } else if rows <= 256 {
+                3
+            } else {
+                2
+            }
+        })
         .sum();
     serde_json::json!({
         "production": matrix.iter().map(|case| serde_json::json!({
@@ -142,6 +151,8 @@ fn coverage(matrix: &[ProductionCase]) -> serde_json::Value {
         "production_cases": production_cases,
         "edge_cases": edge_cases,
         "bitwise_cases": production_cases + edge_cases,
+        "shards": 2,
+        "shard_assignment": "case-id-popcount-modulo",
         "timing_cases": timing_cases,
         "launch_timings": launch_timings,
     })
@@ -198,7 +209,7 @@ fn cpu_production_matrix_covers_registered_entries() {
                     fold_cubin_for_symbol(case.old.symbol()).is_some(),
                     "locked baseline is missing"
                 );
-                for symbol in entry.symbols() {
+                for symbol in entry.runtime_symbols() {
                     assert!(
                         fold_cubin_for_symbol(&symbol).is_some(),
                         "registered symbol is missing"
@@ -266,12 +277,21 @@ fn edges() -> Vec<Entry> {
     entries
 }
 
-fn spec() -> CubinSpec {
+fn spec(legacy: bool) -> CubinSpec {
     let entries: Vec<_> = edges()
         .into_iter()
-        .flat_map(|e| [e.clone(), e.with_split_decode()])
+        .flat_map(|e| {
+            [
+                e.clone(),
+                if legacy {
+                    e.with_decode()
+                } else {
+                    e.with_split_decode()
+                },
+            ]
+        })
         .collect();
-    let mut spec = cubin_spec(CUBIN, &entries).unwrap();
+    let mut spec = cubin_spec(if legacy { LEGACY_CUBIN } else { CUBIN }, &entries).unwrap();
     spec.sources_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     spec.include_dirs = vec!["crates/kernels-sm120/cuda".into()];
     spec.headers
@@ -324,25 +344,38 @@ fn artifacts() -> PathBuf {
 
 #[test]
 fn cpu_build_edge_cases() {
-    let spec = spec();
     let toolchain = Toolchain::detect().unwrap();
     assert!(!toolchain.skipped, "CUDA compilation is required");
-    let built = kernel_build::build_in_families(
-        &toolchain,
-        &[spec],
-        &artifacts(),
-        &LockDir::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("kernels.lock.d"))
-            .family(CUBIN, [CUBIN]),
-        BuildOptions {
-            emit_cargo_directives: false,
-            profile_line_info: false,
-            ..BuildOptions::from_env()
-        },
-        None,
-    )
-    .unwrap();
-    assert_eq!(built.len(), 1);
-    assert_eq!(built[0].entries.len(), edges().len() * 4 + 2);
+    // Both locked probes export the original reference symbols. Build
+    // their independent modules separately; do not rename locked entries.
+    for legacy in [false, true] {
+        let spec = spec(legacy);
+        let name = spec.name.clone();
+        let built = kernel_build::build_in_families(
+            &toolchain,
+            &[spec],
+            &artifacts(),
+            &LockDir::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("kernels.lock.d"))
+                .family(&name, [&name]),
+            BuildOptions {
+                emit_cargo_directives: false,
+                profile_line_info: false,
+                ..BuildOptions::from_env()
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(built.len(), 1);
+        assert_eq!(
+            built[0].entries.len(),
+            edges().len() * if legacy { 6 } else { 4 } + 2
+        );
+        std::fs::copy(
+            artifacts().join(kernel_build::report::BUILD_REPORT_FILE),
+            artifacts().join(format!("{name}.report.json")),
+        )
+        .unwrap();
+    }
 }
 
 fn probe_bytes() -> &'static [u8] {
@@ -350,6 +383,14 @@ fn probe_bytes() -> &'static [u8] {
     BYTES.get_or_init(|| {
         std::fs::read(artifacts().join(format!("{CUBIN}.cubin")))
             .expect("CPU-build edge cubin first")
+    })
+}
+
+fn legacy_probe_bytes() -> &'static [u8] {
+    static BYTES: OnceLock<Vec<u8>> = OnceLock::new();
+    BYTES.get_or_init(|| {
+        std::fs::read(artifacts().join(format!("{LEGACY_CUBIN}.cubin")))
+            .expect("CPU-build legacy edge cubin first")
     })
 }
 
@@ -410,12 +451,19 @@ struct ComparisonWeights {
 impl ComparisonWeights {
     fn new(session: &Session, old: &Entry, b: &[f32]) -> LabResult<Self> {
         let new = old.clone().with_split_decode();
-        let modules = [old, &new]
+        let legacy = old.clone().with_decode();
+        let modules = [old, &new, &legacy]
             .into_iter()
             .map(|entry| {
                 let bytes = fold_cubin_for_symbol(entry.symbol())
                     .map(|(_, bytes)| bytes)
-                    .unwrap_or_else(probe_bytes);
+                    .unwrap_or_else(|| {
+                        if entry.uses_cached_weights() && !entry.uses_fused_split() {
+                            legacy_probe_bytes()
+                        } else {
+                            probe_bytes()
+                        }
+                    });
                 session.load_cubin(bytes)
             })
             .collect::<Result<_, _>>()?;
@@ -533,6 +581,8 @@ fn compare(
             .all(|launch| launch.symbol == old.symbol())
         {
             &modules[0]
+        } else if rows <= 32 {
+            &modules[2]
         } else {
             &modules[1]
         },
@@ -666,10 +716,84 @@ fn random_operands(rows: u32, n: u32, k: u32, seed: u32) -> (Vec<f32>, Vec<f32>)
     )
 }
 
+struct Shard {
+    ordinal: usize,
+    count: usize,
+    next: usize,
+}
+impl Shard {
+    fn from_env() -> LabResult<Self> {
+        match (
+            std::env::var("CHOPINFER_F32_SHARD"),
+            std::env::var("CHOPINFER_F32_SHARDS"),
+        ) {
+            (Err(std::env::VarError::NotPresent), Err(std::env::VarError::NotPresent)) => {
+                Ok(Self {
+                    ordinal: 0,
+                    count: 1,
+                    next: 0,
+                })
+            }
+            (Ok(ordinal), Ok(count)) => {
+                let ordinal = ordinal.parse::<usize>().map_err(|e| e.to_string())?;
+                let count = count.parse::<usize>().map_err(|e| e.to_string())?;
+                if count != 2 || ordinal >= count {
+                    return Err("expected shard 0 or 1 of 2".into());
+                }
+                Ok(Self {
+                    ordinal,
+                    count,
+                    next: 0,
+                })
+            }
+            _ => Err("set both exact-F32 shard variables or neither".into()),
+        }
+    }
+    fn take(&mut self) -> Option<usize> {
+        let id = self.next;
+        self.next += 1;
+        (id.count_ones() as usize % self.count == self.ordinal).then_some(id)
+    }
+}
+
+#[test]
+fn cpu_shards_cover_every_case_once() {
+    let matrix = production_cases();
+    let total = coverage(&matrix)["bitwise_cases"].as_u64().unwrap() as usize;
+    let mut seen = BTreeSet::new();
+    for ordinal in 0..2 {
+        let mut shard = Shard {
+            ordinal,
+            count: 2,
+            next: 0,
+        };
+        for case in &matrix {
+            let mut timed_cases = 0;
+            for &rows in &case.rows {
+                if let Some(id) = shard.take() {
+                    assert!(seen.insert(id));
+                    timed_cases += usize::from(timed(rows));
+                }
+            }
+            assert!(
+                timed_cases >= 2,
+                "every entry has paired timings on both GPUs"
+            );
+        }
+        while shard.next < total {
+            if let Some(id) = shard.take() {
+                assert!(seen.insert(id));
+            }
+        }
+    }
+    assert_eq!(seen, (0..total).collect());
+}
+
 #[test]
 fn gpu_bitwise_shapes_and_edges() {
     // Libtest can print its test prefix without a newline under one test thread.
     println!();
+    let mut shard = Shard::from_env().unwrap();
     kernel_harness::gpu_test_with(timing_cubins(), 12 << 30, |session| {
         for case in production_cases() {
             let old = &case.old;
@@ -678,13 +802,23 @@ fn gpu_bitwise_shapes_and_edges() {
             let weights = ComparisonWeights::new(session, old, &b)?;
             drop(b);
             for rows in case.rows {
+                let Some(id) = shard.take() else { continue };
                 let (a, _) = random_operands(rows, 0, q.k, 0x7813_9231 + rows);
-                compare(session, old, rows, &a, &weights, old.symbol(), timed(rows))?;
+                compare(
+                    session,
+                    old,
+                    rows,
+                    &a,
+                    &weights,
+                    &format!("{} case={id}", old.symbol()),
+                    timed(rows),
+                )?;
             }
         }
         for old in edges() {
             let q = old.query();
             if q.n == 65536 {
+                let Some(id) = shard.take() else { continue };
                 let b: Vec<_> = (0..=u16::MAX).map(bf16_to_f32).collect();
                 compare(
                     session,
@@ -701,13 +835,14 @@ fn gpu_bitwise_shapes_and_edges() {
                         f32::NAN,
                     ],
                     &ComparisonWeights::new(session, &old, &b)?,
-                    "all_bf16_codes",
+                    &format!("all_bf16_codes case={id}"),
                     false,
                 )?;
                 continue;
             }
             for rows in EDGE_ROWS {
                 for witness in EDGE_WITNESSES {
+                    let Some(id) = shard.take() else { continue };
                     let (a, b) = cases::operands(&old, witness);
                     compare(
                         session,
@@ -715,11 +850,12 @@ fn gpu_bitwise_shapes_and_edges() {
                         rows,
                         &a[..rows as usize * q.k as usize],
                         &ComparisonWeights::new(session, &old, &b)?,
-                        &format!("{witness:?}"),
+                        &format!("{witness:?} case={id}"),
                         false,
                     )?;
                 }
                 for seed in 1..=RANDOM_CASES {
+                    let Some(id) = shard.take() else { continue };
                     let (mut a, mut b) = random_operands(rows, q.n, q.k, seed * 123_457);
                     if q.weight == WeightFormat::F32 {
                         for (index, value) in b.iter_mut().enumerate() {
@@ -743,12 +879,13 @@ fn gpu_bitwise_shapes_and_edges() {
                         rows,
                         &a,
                         &ComparisonWeights::new(session, &old, &b)?,
-                        "random_and_late_fallback",
+                        &format!("random_and_late_fallback case={id}"),
                         false,
                     )?;
                 }
             }
             if q.k == 129 {
+                let Some(id) = shard.take() else { continue };
                 let (mut a, b) = random_operands(32, q.n, q.k, 79);
                 let mut at = 0;
                 for sign in [0, 0x8000_0000] {
@@ -765,11 +902,17 @@ fn gpu_bitwise_shapes_and_edges() {
                     32,
                     &a,
                     &ComparisonWeights::new(session, &old, &b)?,
-                    "every_exponent_sign_and_mantissa_boundary",
+                    &format!("every_exponent_sign_and_mantissa_boundary case={id}"),
                     false,
                 )?;
             }
         }
+        assert_eq!(
+            shard.next,
+            coverage(&production_cases())["bitwise_cases"]
+                .as_u64()
+                .unwrap() as usize
+        );
         Ok(())
     })
     .unwrap()

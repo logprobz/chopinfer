@@ -2,7 +2,7 @@
 
 import unittest
 
-from check_f32_decode import check, records
+from check_f32_decode import check, check_shards, records
 
 
 EXPECTED = {
@@ -68,6 +68,36 @@ class TimingGate(unittest.TestCase):
     def test_unexecuted_test_fails(self):
         with self.assertRaisesRegex(ValueError, "did not execute"):
             check(log() + "skipping GPU test\n", EXPECTED)
+
+
+class ShardedGate(unittest.TestCase):
+    def setUp(self):
+        import copy
+        self.expected = copy.deepcopy(EXPECTED)
+        self.expected.update(shards=2, bitwise_cases=2, timing_cases=2, launch_timings=4)
+        self.expected["production"][0].update(rows=[48, 64], timing_rows=[48, 64])
+        self.logs = [log().replace("projection rows=48", "projection case=0 rows=48"),
+                     log().replace("projection rows=48", "projection case=1 rows=64")]
+
+    def test_complete_disjoint_shards_pass(self):
+        check_shards(self.logs, self.expected)
+
+    def test_missing_or_wrong_shard_fails(self):
+        with self.assertRaisesRegex(ValueError, "expected 2 shard logs"):
+            check_shards(self.logs[:1], self.expected)
+        with self.assertRaisesRegex(ValueError, "wrong shard"):
+            check_shards(self.logs[::-1], self.expected)
+
+    def test_duplicate_or_omitted_case_id_fails(self):
+        with self.assertRaisesRegex(ValueError, "duplicate case IDs"):
+            check_shards([self.logs[0] + self.logs[0], self.logs[1]], self.expected)
+        with self.assertRaisesRegex(ValueError, "omit expected case IDs"):
+            check_shards([self.logs[0], self.logs[1].replace("case=1", "case=2")], self.expected)
+
+    def test_one_failed_shard_cannot_hide_behind_the_other(self):
+        failed = self.logs[1].replace("1 passed; 0 failed", "0 passed; 1 failed")
+        with self.assertRaisesRegex(ValueError, "shard 1: GPU test did not pass"):
+            check_shards([self.logs[0], failed], self.expected)
 
 
 if __name__ == "__main__":

@@ -35,6 +35,7 @@ pub mod query_parallel;
 pub mod slices;
 pub mod sources;
 pub mod sources_prefill;
+pub mod sources_prefill_cache;
 
 use std::path::PathBuf;
 

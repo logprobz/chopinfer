@@ -414,6 +414,13 @@ impl Instance {
                 .iter()
                 .filter(|cubin| crate::serves(cubin.name, &shape))
                 .filter(|cubin| {
+                    crate::Kernels::loads_prefill_attention(
+                        cubin.name,
+                        &shape,
+                        self.config.kv.storage,
+                    )
+                })
+                .filter(|cubin| {
                     self.dspark.is_some()
                         || !crate::Kernels::drafter_only(cubin.name, shape.geometry)
                 })

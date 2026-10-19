@@ -22,6 +22,8 @@ pub mod mxfp8_fold_stream;
 pub mod norm_quantize;
 pub mod replicated_embedding;
 pub mod window_fused;
+#[allow(dead_code, reason = "the build script compiles the cubin spec")]
+mod prefill_attention;
 use kernels_sm120::backend::{F32ProjectionOffers, Sm120};
 
 /// The build's identity of the exact F32 projection cubins (`f32_head`,
@@ -195,6 +197,29 @@ impl crate::Kernels {
     /// Upper row bound of the measured query preparation bucket.
     pub(crate) fn latent_query_small_rows() -> u32 {
         latent_scheduled::QUERY_ROWS
+    }
+
+    pub(crate) fn prepare_latent_sources(
+        &self,
+        geometry: &model_deepseek41_contract::geometry::Geometry,
+        ranks: u32,
+        query: &kernel_core::latent_attention::LatentAttentionQuery,
+        need: kernel_core::backend::Need,
+    ) -> Result<
+        kernel_core::backend::Prepared<
+            kernel_core::latent_attention::LatentSourcesBuffers<kernel_core::backend::View>,
+        >,
+        kernel_core::backend::Refused,
+    > {
+        prefill_attention::prepare(self.backend.as_ref(), geometry, ranks, query, need)
+    }
+
+    pub(crate) fn loads_prefill_attention(
+        cubin: &str,
+        shape: &crate::shape::Shape,
+        storage: model_deepseek41_contract::state::KvStorage,
+    ) -> bool {
+        prefill_attention::loads(cubin, shape.geometry, shape.ranks(), storage)
     }
 
     /// The largest separately prepared dense decode bucket.

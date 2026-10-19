@@ -254,13 +254,7 @@ impl Ops {
                     &mut missing,
                     &names,
                     &format!("ratio-{ratio} latent attention"),
-                    latent::AttentionOps::prepare(
-                        kernels.backend.as_ref(),
-                        shape,
-                        ratio,
-                        storage,
-                        &asks,
-                    ),
+                    latent::AttentionOps::prepare(kernels, shape, ratio, storage, &asks),
                 )
             })
             .collect();

@@ -41,6 +41,8 @@ mod norm_quantize;
 mod own_cubin;
 #[allow(dead_code)]
 mod replicated_embedding;
+#[allow(dead_code, reason = "the bundle prepares the paired schedule")]
+mod prefill_attention;
 mod ring_gather_cubin;
 mod ring_gather_entries;
 #[allow(dead_code)]
@@ -124,6 +126,17 @@ pub fn selection(
     specs.extend(dspark_aux::cubins(geometries).expect("DSpark auxiliary cubins"));
     specs.extend(dspark_router::cubins(geometries).expect("DSpark router cubins"));
     let mut owners = Vec::new();
+    if geometries
+        .iter()
+        .any(|g| g.id == model_deepseek41_contract::geometry::FLASH.id)
+    {
+        let spec = prefill_attention::cubin().expect("paired prefill cubin");
+        owners.push((
+            spec.name.clone(),
+            model_deepseek41_contract::geometry::FLASH.id,
+        ));
+        specs.push((prefill_attention::FAMILY, spec));
+    }
     for geometry in geometries.iter().filter(|g| own_entries::has_gates(g)) {
         let spec = own_cubin::gate_cubin_spec(manifest, geometry);
         owners.push((spec.name.clone(), geometry.id));

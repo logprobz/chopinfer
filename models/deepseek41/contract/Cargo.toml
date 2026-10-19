@@ -127,3 +127,7 @@ path = "tests/sm120/ceil_prefill.rs"
 [[example]]
 name = "build_lagged_prefill"
 path = "examples/sm120/build_lagged_prefill.rs"
+
+[[example]]
+name = "build_prefill_attention"
+path = "examples/sm120/build_prefill_attention.rs"

@@ -518,7 +518,7 @@ impl AttentionOps {
     /// `storage`: the BF16 layout reads the same operands stored as BF16
     /// values (`latent::with_storage`).
     pub(crate) fn prepare(
-        backend: &dyn Backend,
+        kernels: &crate::Kernels,
         shape: &Shape,
         ratio: u32,
         storage: KvStorage,
@@ -539,7 +539,7 @@ impl AttentionOps {
             };
             let need = exact::need(capacity, exact::of_phase(kind, capacity));
             let op = asks.ask(format!("attention r{ratio} {kind:?}"), need, |need| {
-                backend.latent_attention_sources(&query, need)
+                kernels.prepare_latent_sources(shape.geometry, shape.ranks(), &query, need)
             })?;
             Ok((kind, op))
         })

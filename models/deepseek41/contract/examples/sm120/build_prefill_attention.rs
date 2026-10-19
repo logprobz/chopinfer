@@ -1,0 +1,50 @@
+//! Initialize or verify the separately locked paired-row prefill attention.
+#[path = "../../../bundle/src/sm120/latent.rs"]
+#[allow(dead_code)]
+mod latent;
+#[path = "../../../bundle/src/sm120/prefill_attention.rs"]
+#[allow(dead_code)]
+mod registration;
+use kernel_build::{BuildOptions, LockDir, Toolchain};
+use std::path::PathBuf;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let out = std::env::args_os()
+        .nth(1)
+        .map(PathBuf::from)
+        .ok_or("usage: build_prefill_attention OUT_DIR")?;
+    std::fs::create_dir_all(&out)?;
+    let out = std::fs::canonicalize(out)?;
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repository = std::fs::canonicalize(root.join("../../.."))?;
+    if out.starts_with(&repository) {
+        return Err("build outputs must stay outside the repository".into());
+    }
+    let specs = vec![registration::cubin()?];
+    let dir = root.join("../bundle/kernels.lock.d");
+    let mut options = BuildOptions::from_env();
+    options.emit_cargo_directives = false;
+    if options.profile_line_info {
+        return Err("lock verification requires line info off".into());
+    }
+    if options.lock_update && dir.join(format!("{}.lock", registration::FAMILY)).exists() {
+        return Err(
+            "build_prefill_attention only initializes a new family; it cannot replace one".into(),
+        );
+    }
+    let toolchain = Toolchain::detect()?;
+    if toolchain.skipped {
+        return Err("CUDA is required for the cubin build".into());
+    }
+    let lock = LockDir::new(dir).family(registration::FAMILY, specs.iter().map(|spec| &spec.name));
+    let built = kernel_build::build_in_families(&toolchain, &specs, &out, &lock, options, None)?;
+    assert_eq!(built.len(), specs.len());
+    if !options.lock_update {
+        kernel_build::report::BuildReport::read(
+            &out.join(kernel_build::report::BUILD_REPORT_FILE),
+        )?
+        .verify_current()?;
+    }
+    println!("verified {} paired prefill attention cubins", built.len());
+    Ok(())
+}

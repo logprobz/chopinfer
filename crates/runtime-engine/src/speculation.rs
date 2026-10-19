@@ -9,6 +9,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use runtime_scheduler::{DraftBudget, DraftLimits};
 
+pub mod confidence;
+
 /// The most drafts one item may verify in a step.
 pub const MAX_DRAFT_TOKENS: usize = 16;
 

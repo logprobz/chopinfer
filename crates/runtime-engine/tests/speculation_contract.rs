@@ -126,6 +126,8 @@ struct Model {
     copy_period: Option<usize>,
     /// (rows, items) of every executed step without prefill that verifies.
     verify_steps: Vec<(usize, usize)>,
+    /// A fake confidence result sink supplies a shorter proposal prefix.
+    confidence_caps: Vec<usize>,
 }
 
 /// A clock only the model advances, so step costs are exact.
@@ -149,6 +151,7 @@ impl Model {
             clock: None,
             copy_period: None,
             verify_steps: Vec::new(),
+            confidence_caps: Vec::new(),
         }
     }
 }
@@ -203,10 +206,15 @@ impl ModelExecutor for Model {
 
     fn draft_tokens_v1(
         &mut self,
-        _id: RequestId,
+        id: RequestId,
         history: &[u32],
         maximum: usize,
     ) -> Result<Vec<u32>, ExecutorError> {
+        let maximum = self
+            .confidence_caps
+            .get(id.get() as usize - 1)
+            .copied()
+            .map_or(maximum, |cap| cap.min(maximum));
         Ok(self.drafter.propose(history, maximum))
     }
 
@@ -504,6 +512,121 @@ fn every_drafter_policy_and_row_path_emits_exactly_the_reference_output() {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+#[test]
+fn confidence_selected_prefixes_preserve_target_tokens_and_logprob_bits() {
+    use runtime_engine::confidence::{
+        ConfidenceBudget, ConfidenceCandidate, VerifyBucketCost, allocate,
+    };
+    // Until the bundle callback exists, the fake sink returns its selected
+    // prefixes through the engine's existing shorter-host-proposal path.
+    // Target sampling, acceptance, stop handling and commits are production
+    // engine code, including seeded draws, penalties and top logprobs.
+    for count in [1, 8, 32] {
+        let probabilities: Vec<_> = (0..count)
+            .map(|item| {
+                if count > 1 && item % 3 == 0 {
+                    [0.0; 5]
+                } else {
+                    [0.9, 0.8, 0.1, 1.0, 1.0]
+                }
+            })
+            .collect();
+        let candidates: Vec<_> = probabilities
+            .iter()
+            .map(|probabilities| ConfidenceCandidate {
+                probabilities,
+                maximum_draft_tokens: 5,
+            })
+            .collect();
+        let plan = allocate(
+            &candidates,
+            ConfidenceBudget {
+                maximum_rows: count * 3,
+                fixed_micros: 10.0,
+            },
+            &[VerifyBucketCost {
+                rows: count * 3,
+                micros: 20.0,
+            }],
+        )
+        .unwrap();
+        assert!(plan.drafts.iter().any(|&k| k < 5));
+        let requests = if count == 1 {
+            vec![
+                EngineRequest::new(
+                    RequestId::new(1),
+                    vec![1, 2, 3],
+                    40,
+                    parameters(3, 40),
+                    19,
+                    vec![STOP],
+                    vocabulary(),
+                )
+                .unwrap(),
+            ]
+        } else {
+            requests(count as u64)
+        };
+        for rows in [Rows::Logits, Rows::Sampled] {
+            let expected = reference(&requests, rows);
+            for drafter in [
+                Drafter::Greedy,
+                Drafter::Wrong,
+                Drafter::Mostly,
+                Drafter::Noise,
+                Drafter::Stop,
+            ] {
+                let mut model = Model::new(drafter, rows);
+                model.confidence_caps = plan.drafts.clone();
+                let mut engine = Engine::new(
+                    config(Some(speculation(
+                        5,
+                        64,
+                        SpeculationMode::Fixed,
+                        DraftSource::Host,
+                    ))),
+                    model,
+                )
+                .unwrap();
+                let actual = run(&mut engine, &requests);
+                assert_eq!(actual, expected, "{count} {rows:?} {drafter:?}");
+                let logprob_bits = |outputs: &Outputs| {
+                    outputs
+                        .values()
+                        .flatten()
+                        .filter_map(|event| {
+                            if let EngineEventKind::Token {
+                                logprob,
+                                top_logprobs,
+                                ..
+                            } = event
+                            {
+                                Some((
+                                    logprob.to_bits(),
+                                    top_logprobs
+                                        .iter()
+                                        .map(|p| (p.token_id(), p.logprob().to_bits()))
+                                        .collect::<Vec<_>>(),
+                                ))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(logprob_bits(&actual), logprob_bits(&expected));
+                let metrics = engine.metrics().snapshot();
+                assert!(metrics.spec_verify_items > 0);
+                assert_eq!(
+                    metrics.spec_accepted_positions.iter().sum::<u64>(),
+                    metrics.spec_accepted_tokens
+                );
+                assert!(metrics.spec_emitted_tokens <= metrics.spec_rows);
             }
         }
     }

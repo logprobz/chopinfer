@@ -123,6 +123,12 @@ fn the_profile_follows_the_geometry_and_rank_count() {
         file,
         serde_json::from_str::<serde_json::Value>(model_deepseek41::package::PROFILES).unwrap()
     );
+    for name in ["tp4-ar", "tp4-dspark"] {
+        let profile = &file["profiles"][name];
+        assert_eq!(profile["prefill_chunk_tokens"], 8192);
+        assert_eq!(profile["max_batch_tokens"], 8192);
+        assert_eq!(profile["prefix_cache"], true);
+    }
     let name = if file["profiles"].get("tp4-dspark").is_some() {
         "tp4-dspark"
     } else {

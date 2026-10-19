@@ -32,6 +32,7 @@ use crate::shape::Shape;
 
 /// Enough disjoint staging for a maximum prefill and the decode phase.
 pub(crate) const TARGET_ROWS: u32 = PREFILL_TOKENS + DECODE_BATCH * MAX_VERIFY_ROWS;
+pub(crate) const DECODE_BASE: u32 = PREFILL_TOKENS;
 const DRAFT_ROWS: u32 = DECODE_BATCH * BLOCK_ROWS;
 static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
 
@@ -48,7 +49,6 @@ pub(crate) struct Device {
     pub stages: Vec<Vec<RankBuffers>>,
     pub diagnostic: Context,
     pub verified: Vec<u64>,
-    pub prefill_rows: u32,
 }
 
 pub(crate) struct Rank {
@@ -155,7 +155,6 @@ impl Device {
                 step_id: 0,
             },
             verified: Vec::new(),
-            prefill_rows: 0,
         })
     }
 

@@ -10,6 +10,7 @@ use runtime_bundle_abi::{
 use std::collections::BTreeMap;
 
 use super::calibration::{self, Context};
+use super::device::{DECODE_BASE, slice};
 use super::execution::{Diagnostic, DraftInput, Host, TargetRows};
 use super::state::{BLOCK_ROWS, CommitPlan, Kind, Projection};
 use crate::engram_rows::{self, Destination, EngramRows, Hashed, Mapped, Step, Table};
@@ -62,6 +63,10 @@ pub struct Staging {
 }
 
 pub struct Gathered {
+    phases: Vec<GatheredPhase>,
+}
+
+struct GatheredPhase {
     hashed: Hashed,
     destinations: Vec<Vec<Destination>>,
 }
@@ -139,11 +144,36 @@ impl Staging {
                 text: mask,
             });
         }
-        let steps = pending.iter().map(Pending::step).collect::<Vec<_>>();
+        let phases = [true, false]
+            .into_iter()
+            .map(|prefill| {
+                let steps = pending
+                    .iter()
+                    .filter(|row| matches!(row.rows.rows.kind, Kind::Prefill { .. }) == prefill)
+                    .map(Pending::step)
+                    .collect::<Vec<_>>();
+                self.hash_phase(&steps, prefill, ranks)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.pending = pending;
+        Ok(Gathered { phases })
+    }
+
+    fn hash_phase(
+        &self,
+        steps: &[Step<'_>],
+        prefill: bool,
+        ranks: &[Rank],
+    ) -> Result<GatheredPhase, String> {
         let hashed = self
             .rows
-            .hash(&steps)
+            .hash(steps)
             .map_err(|e| format!("Engram hash: {e:?}"))?;
+        if prefill && hashed.rows() > DECODE_BASE as usize {
+            return Err("DSpark prefill exceeds its Engram staging region".into());
+        }
+        let base = if prefill { 0 } else { u64::from(DECODE_BASE) };
+        let offset = base * self.columns as u64;
         let count = u64::try_from(
             hashed
                 .rows()
@@ -171,14 +201,16 @@ impl Staging {
                             return Err("DSpark Engram plane width differs from geometry".into());
                         }
                         Ok(Destination {
-                            codes: prefix(
+                            codes: slice(
                                 dest.codes,
+                                offset * table.codes.row_bytes,
                                 count
                                     .checked_mul(table.codes.row_bytes)
                                     .ok_or("Engram code bytes overflow")?,
                             )?,
-                            scales: prefix(
+                            scales: slice(
                                 dest.scales,
+                                offset * table.scales.row_bytes,
                                 count
                                     .checked_mul(table.scales.row_bytes)
                                     .ok_or("Engram scale bytes overflow")?,
@@ -188,8 +220,7 @@ impl Staging {
                     .collect::<Result<Vec<_>, String>>()
             })
             .collect::<Result<Vec<_>, String>>()?;
-        self.pending = pending;
-        Ok(Gathered {
+        Ok(GatheredPhase {
             hashed,
             destinations,
         })
@@ -275,21 +306,23 @@ impl<P: Program> Host for Adapter<'_, P> {
         self.staging.hash(rows, self.text, self.ranks)
     }
     fn upload_engram(&mut self, gathered: Gathered) -> Result<(), String> {
-        for (rank, destinations) in self.ranks.iter().zip(&gathered.destinations) {
-            self.staging
-                .rows
-                .gather(
-                    self.services,
-                    rank.stream,
-                    Mapped {
-                        image: rank.image,
-                        rank: rank.rank,
-                        tables: &rank.tables,
-                    },
-                    destinations,
-                    &gathered.hashed,
-                )
-                .map_err(|e| format!("Engram gather/upload: {e:?}"))?;
+        for phase in gathered.phases {
+            for (rank, destinations) in self.ranks.iter().zip(&phase.destinations) {
+                self.staging
+                    .rows
+                    .gather(
+                        self.services,
+                        rank.stream,
+                        Mapped {
+                            image: rank.image,
+                            rank: rank.rank,
+                            tables: &rank.tables,
+                        },
+                        destinations,
+                        &phase.hashed,
+                    )
+                    .map_err(|e| format!("Engram gather/upload: {e:?}"))?;
+            }
         }
         Ok(())
     }

@@ -231,7 +231,6 @@ impl Instance {
             return BundleStatusV1::InternalError;
         };
         device.diagnostic.step_id = id;
-        device.prefill_rows = step.prefill.live_tokens();
         device.verified = inputs
             .iter()
             .filter(|input| input.rows.kind.is_verify())

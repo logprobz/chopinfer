@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::buffers::rows;
-use crate::dspark::device::slice;
+use crate::dspark::device::{DECODE_BASE, slice};
 use crate::dspark::state::{CommitPlan, Projection};
 use crate::dspark::transfers::{self, ProjectionChunk};
 use crate::lower::Lowering;
@@ -145,11 +145,12 @@ impl Instance {
 
     pub(super) fn dspark_commit_features(&self, plan: &CommitPlan) -> Result<(), String> {
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
-        let mut offset = 0;
+        let mut offsets = [0, u64::from(DECODE_BASE)];
         let mut copies = Vec::new();
         // Bind every retention copy before issuing any physical mutation.
         for item in plan.items() {
-            let retention = transfers::retain_copies(device.config, *item, offset)?;
+            let phase = usize::from(!matches!(item.rows.kind, Kind::Prefill { .. }));
+            let retention = transfers::retain_copies(device.config, *item, offsets[phase])?;
             for (rank, buffers) in self.buffers.iter().enumerate() {
                 let features = device.features.bind(
                     buffers
@@ -165,24 +166,25 @@ impl Instance {
                         .map(|copy| (rank, copy)),
                 );
             }
-            offset += u64::from(item.rows.kind.target_rows()?);
+            offsets[phase] += u64::from(item.rows.kind.target_rows()?);
         }
-        let mut offset = 0;
+        let mut offsets = [0, u64::from(DECODE_BASE)];
         for item in plan.items() {
+            let phase = usize::from(!matches!(item.rows.kind, Kind::Prefill { .. }));
             if item.project_from_staging {
                 for stage in 0..device.config.stages {
                     for pass in transfers::staged_projection(
                         device.config,
                         *item,
                         stage,
-                        offset,
+                        offsets[phase],
                         device.config.window,
                     )? {
                         self.project_chunk(pass)?;
                     }
                 }
             }
-            offset += u64::from(item.rows.kind.target_rows()?);
+            offsets[phase] += u64::from(item.rows.kind.target_rows()?);
         }
         for (rank, copy) in copies {
             self.services

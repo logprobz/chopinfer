@@ -376,9 +376,6 @@ impl Instance {
         media: Option<PrefillMedia>,
     ) -> Result<Run, BundleStatusV1> {
         let (phase, arena, layout, graph) = self.phase_of(&inputs)?;
-        // Feature and Engram staging offsets depend on the preceding
-        // prefill's live rows. Keep this first adapter eager.
-        let graph = if self.dspark.is_some() { None } else { graph };
         let (head_rows, capacity) = if arena == PREFILL {
             (inputs.logit_rows().len() as u32, SCORED_ROWS)
         } else {

@@ -1,7 +1,7 @@
 //! Target hooks: raw feature taps, packed retained rows and Engram staging.
 
 use super::Instance;
-use crate::dspark::device::slice;
+use crate::dspark::device::{DECODE_BASE, slice};
 use crate::engram_rows::Destination;
 use crate::lower::Lowering;
 use crate::ops::Lowered;
@@ -44,7 +44,7 @@ impl Instance {
         let offset = if phase.prefill() {
             0
         } else {
-            u64::from(device.prefill_rows)
+            u64::from(DECODE_BASE)
         };
         let width = u64::from(crate::ops::dense::engram_k(device.shape.geometry));
         let destination = Destination {
@@ -73,7 +73,7 @@ impl Instance {
         let offset = if phase.prefill() {
             0
         } else {
-            u64::from(device.prefill_rows)
+            u64::from(DECODE_BASE)
         };
         let counts = device.prepared.feature_pack_counts(phase.rows(), 0)?.len();
         device

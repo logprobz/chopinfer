@@ -10,6 +10,56 @@ mod native_package;
 pub(super) use host::MappedHost;
 type Sink = RecordingSink<super::conformance::Limits>;
 
+#[test]
+fn mixed_prefill_and_draft_replay_the_same_target_graph() {
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    let (host, mut instance) = create(shape);
+    execute(&mut instance, &host, &super::prompt(7, 0, 0, 3, true));
+    instance.commit().unwrap();
+    let mut captures = 0;
+    for (prefill_start, prefill_rows, verify_start) in [(0, 2, 3), (2, 5, 4)] {
+        let batch = BatchRequestV1::new(
+            BatchWireVersionV1::V3,
+            vec![
+                BatchItemV1::new(8, false, prefill_rows, true, vec![9; prefill_rows as usize]),
+                BatchItemV1::verify(7, 6, true, vec![7]),
+            ],
+            vec![
+                BatchAppendV1::new(
+                    prefill_start,
+                    u64::from(prefill_rows),
+                    prefill_start + u64::from(prefill_rows),
+                    vec![8],
+                    None,
+                ),
+                BatchAppendV1::new(verify_start, 6, verify_start + 6, vec![0], None),
+            ],
+        )
+        .with_state_slots(vec![1, 0])
+        .encode()
+        .unwrap();
+        execute(&mut instance, &host, &batch);
+        instance.commit_accepted(&[kept(7, 1)]).unwrap();
+        let count = host
+            .journal
+            .borrow()
+            .iter()
+            .filter(|line| line.starts_with("capture "))
+            .count();
+        assert!(count > 0, "DSpark target did not capture a graph");
+        if captures > 0 {
+            assert_eq!(count, captures, "prefill length changed the graph key");
+        }
+        captures = count;
+    }
+    assert_eq!(state(&instance, 7).end, 5);
+    assert_eq!(state(&instance, 8).end, 7);
+    instance.retire_request(7).unwrap();
+    instance.retire_request(8).unwrap();
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
 pub(super) fn index(
     shape: &Shape,
     rank: u32,

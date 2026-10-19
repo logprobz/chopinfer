@@ -6,6 +6,100 @@ use runtime_bundle_abi::{HostServicesBackendV1, HostServicesTableV1};
 
 mod host;
 
+#[test]
+fn mixed_target_hashes_use_disjoint_fixed_staging_regions() {
+    let g = &model_deepseek41_contract::geometry::FLASH;
+    let columns = HashTables::of(g).unwrap().columns() as u64;
+    let width = columns * u64::from(g.shape.engram.head_dim);
+    let span = |id, bytes| {
+        Span::new(
+            runtime_bundle_abi::BundleDeviceBufferHandleV1::from_parts(1, id),
+            64,
+            bytes,
+        )
+    };
+    let rank = Rank {
+        stream: BundleStreamHandleV1::from_parts(1, 1),
+        image: BundleCompiledImageHandleV1::from_parts(1, 1),
+        rank: 0,
+        tables: (0..g.engram_layers())
+            .map(|_| Table {
+                codes: engram_rows::Plane {
+                    view: b"codes".to_vec(),
+                    row_bytes: u64::from(g.shape.engram.head_dim),
+                },
+                scales: engram_rows::Plane {
+                    view: b"scales".to_vec(),
+                    row_bytes: u64::from(g.shape.engram.head_dim) / 32,
+                },
+            })
+            .collect(),
+        destinations: (0..g.engram_layers())
+            .map(|layer| Destination {
+                codes: span(2 * layer + 1, (u64::from(DECODE_BASE) + 6) * width),
+                scales: span(2 * layer + 2, (u64::from(DECODE_BASE) + 6) * width / 32),
+            })
+            .collect(),
+    };
+    let mut staging = Staging::new(g).unwrap();
+    for prefill_rows in [2, 7] {
+        let rows = [
+            TargetRows {
+                rows: Rows {
+                    request: 1,
+                    slot: 0,
+                    start: 0,
+                    kind: Kind::Prefill { rows: prefill_rows },
+                },
+                tokens: vec![1; prefill_rows as usize],
+            },
+            TargetRows {
+                rows: Rows {
+                    request: 2,
+                    slot: 1,
+                    start: 0,
+                    kind: Kind::Decode { drafts: 2 },
+                },
+                tokens: vec![2, 3, 4],
+            },
+        ];
+        let gathered = staging
+            .hash(&rows, &BTreeMap::new(), std::slice::from_ref(&rank))
+            .unwrap();
+        assert_eq!(gathered.phases[0].hashed.rows(), prefill_rows as usize);
+        assert_eq!(gathered.phases[1].hashed.rows(), 3);
+        for (index, row) in rows.iter().enumerate() {
+            let expected = staging
+                .rows
+                .hash(&[Step {
+                    request: row.rows.request,
+                    tokens: &row.tokens,
+                    text: None,
+                }])
+                .unwrap();
+            assert_eq!(gathered.phases[index].hashed, expected);
+        }
+        for destination in &gathered.phases[0].destinations[0] {
+            assert_eq!(destination.codes.offset, 64);
+            assert_eq!(destination.codes.length, u64::from(prefill_rows) * width);
+        }
+        for destination in &gathered.phases[1].destinations[0] {
+            assert_eq!(
+                destination.codes.offset,
+                64 + u64::from(DECODE_BASE) * width
+            );
+            assert_eq!(destination.codes.length, 3 * width);
+            assert_eq!(
+                destination.scales.offset,
+                64 + u64::from(DECODE_BASE) * width / 32
+            );
+            assert_eq!(destination.scales.length, 3 * width / 32);
+        }
+        assert!(staging.rows.history(1).is_empty());
+        assert!(staging.rows.history(2).is_empty());
+    }
+}
+
 struct FakeProgram<'a> {
     services: &'a HostServicesV1,
     host: &'a bundle_runtime::fake_host::Backend<host::Package>,
@@ -112,8 +206,8 @@ fn run(shape: Shape, budget: u32, kept: Option<u32>) -> ResultCase {
                 },
             });
             destinations.push(Destination {
-                codes: alloc(6 * columns * dim),
-                scales: alloc(6 * columns * dim / 32),
+                codes: alloc((u64::from(DECODE_BASE) + 6) * columns * dim),
+                scales: alloc((u64::from(DECODE_BASE) + 6) * columns * dim / 32),
             });
         }
         ranks.push(Rank {

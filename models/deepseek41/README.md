@@ -51,13 +51,23 @@ safetensors headers to it before any payload is read. The official
 revision binds all 96,085 tensors, each claimed once
 (`compiler/tests/checkpoint_binding.rs`).
 
-`text_config.indexer_mma` is a reserved Boolean model option, defaulting to
-`false`. Enabling it is rejected at bundle admission. The tensor-core scorer
-remains a lab candidate: aggregate f64 error improved in its paired probe,
-but a quantizer-valid witness became worse and selections changed. Promotion
-requires real served operands at 8K, 32K and 128K: f64 selection agreement
-must be at least the SIMT path's in each context, with no larger aggregate
-score error. The synthetic witness is recorded separately.
+`text_config.indexer_mma` defaults to `true` for Flash. Native MXFP4 index
+keys use the qualified FP4 tensor-core scorer in prefill and decode; setting
+`--model-option text_config.indexer_mma=false` keeps the SIMT scorer for
+comparison. BF16 key storage retains SIMT. Selection, candidate production,
+provenance checks and failure publication keep their existing kernels.
+Queries that cannot be repacked exactly take the SIMT path for that row.
+
+On 2026-10-19, captured served operands at 8K, 32K and 128K gave exact f64
+top-k set agreement and recall of 1.0 for SIMT, BF16 MMA and native FP4 MMA:
+475,668 selections across 960 rows. All three had score RMSE 1.4289e-7 and
+maximum error 1.1509e-6. Both MMA paths had zero score-bit differences from
+SIMT across 24,772,608 compared words, including tails. This qualified the
+native scorer for promotion under the operator's accuracy rule. It is not
+a general bitwise replacement: the synthetic cancellation witness still
+loses a contribution preserved by SIMT, and randomized selections can differ.
+The served A/B checks round three, the new default and selectable SIMT on
+identical 8K, 32K and 128K prompts, including every published logprob bit.
 
 ## Reference
 

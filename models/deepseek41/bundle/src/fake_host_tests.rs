@@ -21,6 +21,7 @@ mod batch_limits;
 mod conformance;
 mod dspark;
 mod fold_stream;
+mod index_mma;
 mod index_query;
 mod media;
 mod norm_quantize;
@@ -836,7 +837,8 @@ fn journal_steps(host: &Rc<Host>) {
 /// workspace includes attention partials at the full token budget; its
 /// allocation and bound span lengths are part of these journals. Decode
 /// combines split mixing, measured projection and expert buckets, live
-/// position selection, measured weight prefetch and parallel ceil operations.
+/// position selection, parallel queries, native FP4 scores with exact query
+/// repacking, measured weight prefetch and parallel ceil operations.
 /// Prefill uses valid candidate work, existing folds below 128 rows,
 /// staged MXFP8 tiles for full rows and measured exact F32 row buckets.
 /// Large-row dense ceil uses the qualified prefill warp counts. Prefill HC

@@ -44,6 +44,7 @@ pub struct RuntimeField {
 pub struct RuntimeValues {
     pub index_topk: u32,
     pub candidate_topk_blocks: u32,
+    pub indexer_mma: bool,
 }
 
 const fn count(length: usize) -> u32 {
@@ -83,10 +84,17 @@ impl Geometry {
         ]
     }
 
+    pub const fn native_indexer_supported(&self) -> bool {
+        self.shape.indexer.heads == 32
+            && self.shape.indexer.dim == 128
+            && self.shape.candidates.block == 8
+    }
+
     pub const fn runtime_defaults(&self) -> RuntimeValues {
         RuntimeValues {
             index_topk: self.shape.indexer.top_k,
             candidate_topk_blocks: self.shape.candidates.top_blocks,
+            indexer_mma: self.native_indexer_supported(),
         }
     }
 
@@ -110,12 +118,14 @@ impl Geometry {
         {
             return Err(format!("unknown model option {name}"));
         }
-        if let Some(value) = values.get("text_config.indexer_mma") {
-            match value.as_bool() {
-                Some(false) => (),
-                Some(true) => return Err("text_config.indexer_mma is a lab candidate; serving activation is not qualified".into()),
-                None => return Err("text_config.indexer_mma requires a boolean".into()),
-            }
+        let mma = match values.get("text_config.indexer_mma") {
+            None => checkpoint.indexer_mma,
+            Some(value) => value
+                .as_bool()
+                .ok_or("text_config.indexer_mma requires a boolean")?,
+        };
+        if mma && !self.native_indexer_supported() {
+            return Err("text_config.indexer_mma is unsupported by this geometry".into());
         }
         let mut owned = std::collections::BTreeMap::new();
         for field in self.runtime_fields() {
@@ -129,7 +139,9 @@ impl Geometry {
             };
             owned.insert(field.name, value);
         }
-        self.runtime_values(|field| owned.get(field.name))
+        let mut runtime = self.runtime_values(|field| owned.get(field.name))?;
+        runtime.indexer_mma = mma;
+        Ok(runtime)
     }
 
     /// Each runtime field within its range and
@@ -141,6 +153,7 @@ impl Geometry {
         let mut values = RuntimeValues {
             index_topk: self.shape.indexer.top_k,
             candidate_topk_blocks: self.shape.candidates.top_blocks,
+            indexer_mma: self.native_indexer_supported(),
         };
         for field in self.runtime_fields() {
             let value = lookup(&field);
@@ -213,7 +226,9 @@ impl Geometry {
             .collect();
         options.push(ModelOptionV1 {
             name: "text_config.indexer_mma".into(),
-            definition: OptionDefinitionV1::Boolean { default: false },
+            definition: OptionDefinitionV1::Boolean {
+                default: checkpoint.indexer_mma,
+            },
             default_is_qualified: true,
         });
         options
@@ -364,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn indexer_mma_is_declared_off_and_cannot_select_serving() {
+    fn indexer_mma_defaults_on_and_simt_remains_selectable() {
         use runtime_bundle::model_options::{CAPABILITY, ModelOptionsV1, OptionDefinitionV1};
         use std::collections::BTreeMap;
         let defaults = FLASH.runtime_defaults();
@@ -375,7 +390,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             option.definition,
-            OptionDefinitionV1::Boolean { default: false }
+            OptionDefinitionV1::Boolean { default: true }
         );
         assert!(option.default_is_qualified);
         let declaration = ModelOptionsV1 {
@@ -383,26 +398,24 @@ mod tests {
             options,
         };
         let resolved = declaration.resolve(&BTreeMap::new()).unwrap();
-        assert_eq!(
-            resolved["text_config.indexer_mma"],
-            serde_json::json!(false)
-        );
+        assert_eq!(resolved["text_config.indexer_mma"], serde_json::json!(true));
         assert_eq!(
             FLASH.resolve_model_options(defaults, &resolved).unwrap(),
             defaults
         );
-        let enabled = declaration
+        let simt = declaration
             .resolve(&BTreeMap::from([(
                 "text_config.indexer_mma".into(),
-                "true".into(),
+                "false".into(),
             )]))
             .unwrap();
-        assert!(!declaration.is_qualified(&enabled));
-        assert!(
-            FLASH
-                .resolve_model_options(defaults, &enabled)
-                .unwrap_err()
-                .contains("serving activation is not qualified")
+        assert!(!declaration.is_qualified(&simt));
+        assert_eq!(
+            FLASH.resolve_model_options(defaults, &simt).unwrap(),
+            RuntimeValues {
+                indexer_mma: false,
+                ..defaults
+            }
         );
         for value in [
             serde_json::json!(0),

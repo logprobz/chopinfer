@@ -21,12 +21,17 @@ fn prefill_indexer_blocks_use_live_and_valid_grids() {
                     line.starts_with("launch ")
                         && line.contains(family)
                         && line.contains("_scores_v3")
+                        && !line.contains("_pack_fp4_v1")
                 })
                 .collect::<Vec<_>>()
         };
         let dense = scores("chop_position_indexer_");
         assert_eq!(dense.len(), 4 * 4 * 128);
         for line in dense {
+            assert_eq!(
+                line.contains("_mma_fp4_v1"),
+                kv.storage == KvStorage::Native
+            );
             assert!(line.contains("_scores_v3_live_v1"), "{line}");
             assert!(
                 line.contains("grid_x: 192, grid_y: 64, grid_z: 1"),
@@ -36,6 +41,10 @@ fn prefill_indexer_blocks_use_live_and_valid_grids() {
         let compact = scores("chop_position_blocks_");
         assert_eq!(compact.len(), 4 * 4 * 2);
         for line in compact {
+            assert_eq!(
+                line.contains("_mma_fp4_v1"),
+                kv.storage == KvStorage::Native
+            );
             assert!(line.contains("_scores_v3_valid_v1"), "{line}");
             assert!(
                 line.contains("grid_x: 192, grid_y: 4096, grid_z: 1"),

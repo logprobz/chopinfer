@@ -131,3 +131,7 @@ path = "examples/sm120/build_lagged_prefill.rs"
 [[example]]
 name = "build_prefill_attention"
 path = "examples/sm120/build_prefill_attention.rs"
+
+[[example]]
+name = "build_position_mma"
+path = "examples/sm120/build_position_mma.rs"

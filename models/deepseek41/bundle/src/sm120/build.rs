@@ -70,6 +70,7 @@ mod f32_split;
 #[path = "indexer.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod indexer;
+mod indexer_mma;
 #[path = "indexer_query.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod indexer_query;
@@ -181,6 +182,9 @@ pub fn selection(
         owners.push((indexer::blocks_cubin_name(geometry), geometry.id));
         owners.push((indexer::live_cubin_name(geometry), geometry.id));
         owners.push((indexer::valid_cubin_name(geometry), geometry.id));
+        if geometry.native_indexer_supported() {
+            owners.push((indexer_mma::cubin_name(geometry), geometry.id));
+        }
         owners.push((
             indexer::runtime_candidates_cubin_name(geometry),
             geometry.id,
@@ -269,6 +273,7 @@ pub fn selection(
     specs.extend(indexer::cubins(geometries).expect("deepseek41 indexer cubins"));
     specs.extend(indexer::live_cubins(geometries).expect("live position cubins"));
     specs.extend(indexer::valid_cubins(geometries).expect("valid position cubins"));
+    specs.extend(indexer_mma::cubins(geometries).expect("native MMA position cubins"));
     specs.extend(indexer::bf16_cubins(geometries).expect("deepseek41 BF16 indexer cubins"));
     specs.extend(compressor::cubins(geometries).expect("deepseek41 compressor cubins"));
     specs.extend(compressor_bf16::cubins(geometries).expect("deepseek41 BF16 index-key cubins"));

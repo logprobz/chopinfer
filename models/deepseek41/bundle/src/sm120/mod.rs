@@ -64,6 +64,8 @@ mod hc;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod indexer;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
+mod indexer_mma;
+#[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod indexer_query;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod indexer_query_parallel;
@@ -261,6 +263,7 @@ impl crate::Kernels {
             && (!cubin.starts_with("prefill_moe_")
                 || (cubin.ends_with("_compute_sm120")
                     && moe::streamed_qualified(shape.geometry, shape.ranks())))
+            && (!cubin.starts_with("position_mma_") || shape.runtime.indexer_mma)
             && (!cubin.starts_with("streamed_moe_")
                 || moe::streamed_qualified(shape.geometry, shape.ranks()))
     }
@@ -299,6 +302,11 @@ impl crate::Kernels {
         let sm120 = replicated_embedding::register(sm120, shape.geometry, shape.ranks());
         let sm120 = latent_scheduled::register_sources(sm120, shape.geometry, shape.ranks())?;
         let sm120 = indexer::register(sm120, shape.geometry);
+        let sm120 = if shape.runtime.indexer_mma {
+            sm120.with_native_position_scores()
+        } else {
+            sm120
+        };
         let sm120 = compressor::CompressorKernels::serving(shape.geometry)
             .map_err(|e| e.to_string())?
             .register(sm120);

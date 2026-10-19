@@ -30,6 +30,7 @@ mod dspark_entries;
 mod dspark_heads;
 mod dspark_ring_gather;
 mod indexer;
+mod indexer_mma;
 #[path = "../../../bundle/src/sm120/ring_gather.rs"]
 mod ring_gather;
 #[path = "../../../bundle/src/sm120/ring_gather_entries.rs"]

@@ -298,7 +298,7 @@ pub(crate) mod tests {
             Some(items),
         );
         bytes.extend_from_slice(&shape.geometry.context_tokens().to_le_bytes());
-        let options = serde_json::json!({"text_config.index_topk": shape.runtime.index_topk, "text_config.candidate_topk_blocks": shape.runtime.candidate_topk_blocks});
+        let options = serde_json::json!({"text_config.index_topk": shape.runtime.index_topk, "text_config.candidate_topk_blocks": shape.runtime.candidate_topk_blocks, "text_config.indexer_mma": shape.runtime.indexer_mma});
         append_options(&mut bytes, &options);
         bytes
     }
@@ -311,7 +311,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn create_refuses_the_parked_indexer_mma_option() {
+    fn create_selects_native_mma_or_simt_by_model_option() {
         let shape = crate::shape::topologies()[0];
         let complete = record(&shape, KV_LAYOUTS[0], 1, false);
         let tag = complete
@@ -330,16 +330,10 @@ pub(crate) mod tests {
             );
             let logs = std::cell::RefCell::new(Vec::new());
             let result = decode(&bytes, |line| logs.borrow_mut().push(line.to_owned()));
-            if enabled {
-                assert_eq!(result.unwrap_err(), BundleStatusV1::InvalidArgument);
-                assert!(
-                    logs.borrow()
-                        .iter()
-                        .any(|s| s.contains("serving activation is not qualified"))
-                );
-            } else {
-                assert_eq!(result.unwrap().shape.runtime, shape.runtime);
-            }
+            let mut expected = shape.runtime;
+            expected.indexer_mma = enabled;
+            assert_eq!(result.unwrap().shape.runtime, expected);
+            assert!(logs.borrow().is_empty());
         }
     }
 

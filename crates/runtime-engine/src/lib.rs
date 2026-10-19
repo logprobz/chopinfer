@@ -26,7 +26,7 @@ pub use prompt_lookup::{PromptLookupConfig, PromptLookupConfigError, PromptLooku
 pub use speculation::confidence;
 pub use speculation::{
     DraftCostModel, DraftSource, MAX_DRAFT_TOKENS, SpeculationConfig, SpeculationConfigError,
-    SpeculationMode,
+    SpeculationMode, StepCost, StepCosts, StepCostsError,
 };
 
 use media::{inject_runs, validate_media};

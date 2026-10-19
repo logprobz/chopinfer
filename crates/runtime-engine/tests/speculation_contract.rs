@@ -120,8 +120,10 @@ struct Model {
     kv: BTreeMap<RequestId, Vec<u32>>,
     pending: Vec<(RequestId, Vec<u32>, bool)>,
     corrupt_drafts: bool,
-    /// When set, each execution advances this clock by 1 ms per row.
+    /// When set, each execution advances this clock by `micros_per_row`
+    /// per row.
     clock: Option<Arc<AtomicU64>>,
+    micros_per_row: u64,
     /// When set, the model copies the token this many positions back.
     copy_period: Option<usize>,
     /// (rows, items) of every executed step without prefill that verifies.
@@ -149,6 +151,7 @@ impl Model {
             pending: Vec::new(),
             corrupt_drafts: false,
             clock: None,
+            micros_per_row: 1000,
             copy_period: None,
             verify_steps: Vec::new(),
             confidence_caps: Vec::new(),
@@ -267,7 +270,7 @@ impl ModelExecutor for Model {
             }
             assert_eq!(inputs.len(), append.additional_tokens());
             if let Some(clock) = &self.clock {
-                clock.fetch_add(1000 * inputs.len() as u64, Ordering::Relaxed);
+                clock.fetch_add(self.micros_per_row * inputs.len() as u64, Ordering::Relaxed);
             }
             if let Some(work) = item.sampling() {
                 let first_row = if item.draft().is_some() {
@@ -1131,4 +1134,110 @@ fn verify_warmup_waves_reach_every_planned_shape() {
         );
     }
     assert_eq!(engine.kv_stats().free_blocks(), KV_BLOCKS);
+}
+
+fn logprob_bits(outputs: &Outputs) -> Vec<(u64, Vec<(u32, u64)>)> {
+    outputs
+        .values()
+        .flatten()
+        .filter_map(|event| {
+            if let EngineEventKind::Token {
+                logprob,
+                top_logprobs,
+                ..
+            } = event
+            {
+                Some((
+                    logprob.to_bits(),
+                    top_logprobs
+                        .iter()
+                        .map(|p| (p.token_id(), p.logprob().to_bits()))
+                        .collect(),
+                ))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Tables that draft deep, draft shallow on every item, and never draft.
+fn tables() -> [runtime_engine::StepCosts; 3] {
+    [
+        "1:16000:4000:0:800,6:30000:3000:0:800",
+        "1:16000:100:0:9000,6:30000:100:0:5000",
+        "1:16000:90000:0:800,6:30000:90000:0:800",
+    ]
+    .map(|text| runtime_engine::StepCosts::parse(text).unwrap())
+}
+
+#[test]
+fn table_policies_emit_the_reference_tokens_and_logprob_bits() {
+    let requests = requests(20);
+    for rows in [Rows::Logits, Rows::Sampled] {
+        let expected = reference(&requests, rows);
+        for drafter in [
+            Drafter::Greedy,
+            Drafter::Wrong,
+            Drafter::Noise,
+            Drafter::Stop,
+            Drafter::Mostly,
+        ] {
+            for (index, costs) in tables().into_iter().enumerate() {
+                for source in [DraftSource::Bundle, DraftSource::Host] {
+                    for (drafts, verify_rows) in [(4, 64), (5, 24), (7, 12)] {
+                        let (actual, metrics) = speculative(
+                            &requests,
+                            drafter,
+                            rows,
+                            speculation(drafts, verify_rows, SpeculationMode::Table(costs), source)
+                                .with_draft_cost_model(runtime_engine::DraftCostModel::PerBlock),
+                        );
+                        assert_eq!(
+                            actual, expected,
+                            "{drafter:?} {rows:?} table {index} {source:?} K={drafts}"
+                        );
+                        assert_eq!(logprob_bits(&actual), logprob_bits(&expected));
+                        if index == 2 {
+                            // Drafting costs more than any expected gain.
+                            assert_eq!(metrics.spec_verify_items, 0);
+                        } else if matches!(drafter, Drafter::Greedy) {
+                            assert!(metrics.spec_verify_items > 0);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn table_plans_do_not_depend_on_measured_step_times() {
+    let requests = requests(20);
+    let costs = tables()[0];
+    let mut steps = Vec::new();
+    // Rows cost 1 ms or 50 ms on the engine's clock; the plans are the same.
+    for per_row in [1_000, 50_000] {
+        let time = Arc::new(AtomicU64::new(1));
+        let mut model = Model::new(Drafter::Mostly, Rows::Logits);
+        model.clock = Some(Arc::clone(&time));
+        model.micros_per_row = per_row;
+        let mut engine = Engine::new_with_observability(
+            config(Some(speculation(
+                5,
+                24,
+                SpeculationMode::Table(costs),
+                DraftSource::Bundle,
+            ))),
+            model,
+            Arc::new(ModelClock(time)),
+            EngineMetrics::default(),
+        )
+        .unwrap();
+        let outputs = run(&mut engine, &requests);
+        assert_eq!(outputs, reference(&requests, Rows::Logits));
+        steps.push(engine.executor().verify_steps.clone());
+    }
+    assert!(!steps[0].is_empty());
+    assert_eq!(steps[0], steps[1]);
 }

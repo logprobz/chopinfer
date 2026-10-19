@@ -10,6 +10,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use runtime_scheduler::{DraftBudget, DraftLimits};
 
 pub mod confidence;
+pub mod table;
+
+pub use table::{StepCost, StepCosts, StepCostsError};
 
 /// The most drafts one item may verify in a step.
 pub const MAX_DRAFT_TOKENS: usize = 16;
@@ -181,6 +184,10 @@ pub enum SpeculationMode {
     /// Drafts are added where they are expected to raise tokens per unit of
     /// step time, from per-request acceptance and measured step costs.
     Adaptive,
+    /// Each step's drafts maximize expected tokens per unit of step time,
+    /// from per-request acceptance and this fixed step-cost table. No
+    /// measured time enters a plan.
+    Table(StepCosts),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -817,6 +824,11 @@ impl SpeculationPolicy {
     /// differ by the catch-ups of the drafters that were fresh only in the
     /// first.
     pub(crate) fn observe_step(&mut self, drafts: &[usize], fresh: usize, micros: u64) {
+        if matches!(self.config.mode, SpeculationMode::Table(_)) {
+            // Table plans never read step times.
+            self.step_accepted = 0;
+            return;
+        }
         let items = drafts.len();
         let shape = DraftShape::from_counts(drafts);
         // What the step emitted per unit of time: one token per item plus
@@ -1065,6 +1077,49 @@ impl SpeculationPolicy {
             SpeculationMode::Adaptive => {
                 drafts = self.plan_adaptive(candidates, remaining, true);
             }
+            SpeculationMode::Table(costs) => {
+                drafts = self.plan_table(candidates, &costs, remaining);
+            }
+        }
+        drafts
+    }
+
+    /// Table mode: the table plan, then the periodic full-depth exploration
+    /// that keeps every position's acceptance observed. Both depend only on
+    /// the plan's inputs and the count of earlier drafting plans.
+    fn plan_table(
+        &mut self,
+        candidates: &[PlanCandidate<'_>],
+        costs: &StepCosts,
+        remaining: usize,
+    ) -> Vec<usize> {
+        let survival = candidates
+            .iter()
+            .map(|candidate| {
+                let depth = self.executable_at_most(candidate.maximum_draft_tokens);
+                (0..depth)
+                    .map(|position| candidate.acceptance.survival(position))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let table_candidates = candidates
+            .iter()
+            .zip(&survival)
+            .map(|(candidate, survival)| table::TableCandidate {
+                maximum_draft_tokens: candidate.maximum_draft_tokens,
+                survival,
+            })
+            .collect::<Vec<_>>();
+        let mut drafts = table::plan(
+            &table_candidates,
+            costs,
+            remaining,
+            self.config.maximum_draft_items.unwrap_or(usize::MAX),
+            &self.executable,
+        )
+        .drafts;
+        if drafts.iter().any(|&draft| draft > 0) {
+            self.explore_depth(candidates, &mut drafts, remaining);
         }
         drafts
     }

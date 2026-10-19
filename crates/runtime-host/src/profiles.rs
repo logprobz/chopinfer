@@ -97,6 +97,9 @@ pub(crate) struct Speculation {
     pub draft_cost: String,
     /// Packaging requirement, interpreted by the model's preparation tools.
     pub drafter: String,
+    /// The step-cost table of `table` mode, in `--speculation-costs` form.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub costs: Option<String>,
 }
 
 fn error(message: impl Into<String>) -> HostCommandErrorV1 {
@@ -178,13 +181,25 @@ impl Profile {
                 "profile requires qualification evidence and valid sequence limits",
             ));
         }
-        if !matches!(self.speculation.mode.as_str(), "fixed" | "adaptive")
-            || !matches!(
-                self.speculation.draft_cost.as_str(),
-                "per-token" | "per-block"
-            )
-        {
+        if !matches!(
+            self.speculation.mode.as_str(),
+            "fixed" | "adaptive" | "table"
+        ) || !matches!(
+            self.speculation.draft_cost.as_str(),
+            "per-token" | "per-block"
+        ) {
             return Err(error("invalid profile speculation mode or draft cost"));
+        }
+        if (self.speculation.mode == "table") != self.speculation.costs.is_some()
+            || self
+                .speculation
+                .costs
+                .as_deref()
+                .is_some_and(|costs| runtime_engine::StepCosts::parse(costs).is_err())
+        {
+            return Err(error(
+                "profile table speculation needs valid costs, which only it uses",
+            ));
         }
         if self
             .context_parallel_size
@@ -265,6 +280,9 @@ impl Profile {
         }
         if self.speculation.tokens > 0 {
             args.extend(["--speculation".into(), self.speculation.mode.clone()]);
+            if let Some(costs) = &self.speculation.costs {
+                args.extend(["--speculation-costs".into(), costs.clone()]);
+            }
         }
         args
     }
@@ -304,7 +322,8 @@ fn options(arguments: &[String]) -> Vec<(String, Vec<String>)> {
 
 /// `defaults` (a profile's options) under `explicit` options: an explicit
 /// flag replaces the default, `--speculative-tokens 0` also drops the
-/// default speculation mode, a non-TBT `--prefill-budget` the default TBT
+/// default speculation mode, an explicit mode other than `table` or zero
+/// speculative tokens the default speculation costs, a non-TBT `--prefill-budget` the default TBT
 /// target. Duplicate explicit flags are kept for the serve parser to refuse.
 pub(crate) fn apply_defaults(defaults: &[String], explicit: &[String]) -> Vec<String> {
     let explicit = options(explicit);
@@ -314,6 +333,10 @@ pub(crate) fn apply_defaults(defaults: &[String], explicit: &[String]) -> Vec<St
         flag == "--speculative-tokens"
             && values.first().and_then(|v| v.parse::<usize>().ok()) == Some(0)
     });
+    let replace_costs = disable_speculation
+        || explicit.iter().any(|(flag, values)| {
+            flag == "--speculation" && values.first().is_some_and(|v| v != "table")
+        });
     let disable_tbt = explicit.iter().any(|(flag, values)| {
         flag == "--prefill-budget" && values.first().is_some_and(|v| v != "tbt")
     });
@@ -335,6 +358,7 @@ pub(crate) fn apply_defaults(defaults: &[String], explicit: &[String]) -> Vec<St
         if (flag != "--model-option" && flags.contains(flag.as_str()))
             || option_replaced
             || (disable_speculation && flag == "--speculation")
+            || (replace_costs && flag == "--speculation-costs")
             || (disable_tbt && flag == "--decode-tbt-target-ms")
         {
             continue;
@@ -829,6 +853,76 @@ mod tests {
             refusal.contains("requires positive --speculative-tokens"),
             "{refusal}"
         );
+    }
+
+    /// A table profile passes its costs; explicit options replace or drop
+    /// them with the mode.
+    #[test]
+    fn table_profiles_pass_their_costs_unless_the_mode_changes() {
+        let costs = "1:15900:4400:0:780,8:22500:6000:0:780";
+        let mut entry = fixture()["profiles"]["test"].clone();
+        entry["speculation"]["mode"] = "table".into();
+        entry["speculation"]["costs"] = costs.into();
+        let profile = runtime_bundle::preparation::DirectProfile {
+            name: "test".into(),
+            profile: entry.clone(),
+        };
+        let mode = |explicit: &[&str]| {
+            let explicit: Vec<String> = explicit.iter().map(|w| (*w).into()).collect();
+            let resolved =
+                direct_arguments(&profile, 2, &explicit, Path::new("/cache/p-x")).unwrap();
+            match crate::parse_host_command_v1(&resolved.arguments).unwrap() {
+                crate::HostCommandV1::Serve {
+                    speculative_tokens,
+                    speculation_mode,
+                    ..
+                } => (speculative_tokens, speculation_mode),
+                _ => panic!("serve"),
+            }
+        };
+        let table = runtime_engine::SpeculationMode::Table(
+            runtime_engine::StepCosts::parse(costs).unwrap(),
+        );
+        assert_eq!(mode(&[]), (3, table));
+        assert_eq!(mode(&["--speculation", "table"]), (3, table));
+        let other = "1:10000:1:0:1";
+        assert_eq!(
+            mode(&["--speculation-costs", other]),
+            (
+                3,
+                runtime_engine::SpeculationMode::Table(
+                    runtime_engine::StepCosts::parse(other).unwrap()
+                )
+            )
+        );
+        assert_eq!(
+            mode(&["--speculation", "fixed"]),
+            (3, runtime_engine::SpeculationMode::Fixed)
+        );
+        assert_eq!(mode(&["--speculative-tokens", "0"]).0, 0);
+        // Costs belong to table mode only.
+        for (mode, costs) in [
+            ("table", None),
+            ("adaptive", Some(costs)),
+            ("table", Some("1:0:0:0:0")),
+        ] {
+            let mut bad = entry.clone();
+            bad["speculation"]["mode"] = mode.into();
+            let speculation = bad["speculation"].as_object_mut().unwrap();
+            match costs {
+                Some(costs) => speculation.insert("costs".into(), costs.into()),
+                None => speculation.remove("costs"),
+            };
+            let profile = runtime_bundle::preparation::DirectProfile {
+                name: "test".into(),
+                profile: bad,
+            };
+            let Err(refusal) = direct_arguments(&profile, 2, &[], Path::new("/cache/p-x")) else {
+                panic!("{mode} {costs:?} accepted");
+            };
+            let refusal = refusal.to_string();
+            assert!(refusal.contains("needs valid costs"), "{refusal}");
+        }
     }
 
     #[test]

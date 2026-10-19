@@ -38,7 +38,7 @@ use runtime_bundle_abi::{
 use runtime_engine::{
     DraftCostModel, DraftSource, Engine, EngineConfig, EngineMetrics, ExecutorError,
     ModelBatchItem, ModelExecutor, ModelTransaction, PromptLookupConfig, RequestId,
-    SpeculationConfig, SpeculationMode,
+    SpeculationConfig, SpeculationMode, StepCosts,
 };
 use runtime_kv::{KvCachePrecision, KvGeometry, KvMetrics, KvPool, PreparedAppendBatch};
 use runtime_model_api::ModelVocabulary;
@@ -144,7 +144,8 @@ serve --bundle DIR [--checkpoint DIR [--load-threads N]] [--profile NAME|FILE#NA
   [--kv-memory-fraction F] [--kv-pages N] [--kv-cache-dtype auto|bf16|fp8|mixed]
   [--context-parallel-size N]
   [--model-option NAME=VALUE]... [--list-model-options]
-  [--speculative-tokens N] [--speculative-rows N] [--speculation fixed|adaptive]
+  [--speculative-tokens N] [--speculative-rows N] [--speculation fixed|adaptive|table]
+  [--speculation-costs ITEMS:BASE:DRAFTING:DRAFTING_SQ:ROW,...]
   [--draft-cost per-token|per-block] [--prefix-cache on|off] [--verify-warmup on|off]
   [--prefill-budget fixed|decode-aware|tbt] [--prefill-itl-target-ms N | --prefill-decode-steps N]
   [--decode-tbt-target-ms N] [--mixed-min-prefill-tokens N] [--mixed-decode-steps N]
@@ -1232,6 +1233,7 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
             "--speculative-tokens",
             "--speculative-rows",
             "--speculation",
+            "--speculation-costs",
             "--draft-cost",
             "--prefix-cache",
             "--verify-warmup",
@@ -1408,6 +1410,13 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
             "--speculation requires positive --speculative-tokens",
         ));
     }
+    if matches!(parsed.speculation_mode, Some(SpeculationMode::Table(_)))
+        != parsed.speculation_costs.is_some()
+    {
+        return Err(usage_error(
+            "--speculation table requires --speculation-costs, which only it uses",
+        ));
+    }
     let mut http_options = parsed.http_options.clone();
     http_options.api_key = resolve_api_key_v1(
         http_options.api_key,
@@ -1493,7 +1502,10 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
                     .map_err(|_| usage_error("--speculative-rows must be at most 65535"))
             })
             .transpose()?,
-        speculation_mode: parsed.speculation_mode.unwrap_or(SpeculationMode::Adaptive),
+        speculation_mode: match (parsed.speculation_mode, parsed.speculation_costs) {
+            (Some(SpeculationMode::Table(_)), Some(costs)) => SpeculationMode::Table(costs),
+            (mode, _) => mode.unwrap_or(SpeculationMode::Adaptive),
+        },
         draft_cost_model: parsed.draft_cost_model.unwrap_or_default(),
         allowed_local_media_path: parsed.allowed_local_media_path.clone(),
         remote_media: Box::new(parsed.remote_media.clone()),
@@ -2080,6 +2092,7 @@ fn serving_identity_v1(
                     None => "off",
                     Some(SpeculationMode::Fixed) => "fixed",
                     Some(SpeculationMode::Adaptive) => "adaptive",
+                    Some(SpeculationMode::Table(_)) => "table",
                 }
                 .to_owned(),
                 tokens: speculation.map_or(0, SpeculationConfig::maximum_draft_tokens),
@@ -4514,6 +4527,8 @@ struct ArgumentsV1 {
     speculative_tokens: Option<usize>,
     speculative_rows: Option<usize>,
     speculation_mode: Option<SpeculationMode>,
+    /// `--speculation-costs`; table mode takes these costs.
+    speculation_costs: Option<StepCosts>,
     draft_cost_model: Option<DraftCostModel>,
     prefix_cache: Option<bool>,
     kv_offload_gib: Option<u64>,
@@ -4874,9 +4889,21 @@ impl ArgumentsV1 {
                     let mode = match value.as_str() {
                         "fixed" => SpeculationMode::Fixed,
                         "adaptive" => SpeculationMode::Adaptive,
-                        _ => return Err(usage_error("--speculation must be fixed or adaptive")),
+                        // The costs arrive with --speculation-costs.
+                        "table" => SpeculationMode::Table(StepCosts::default()),
+                        _ => {
+                            return Err(usage_error(
+                                "--speculation must be fixed, adaptive or table",
+                            ));
+                        }
                     };
                     set_once_v1(&mut parsed.speculation_mode, mode, flag)?;
+                }
+                "--speculation-costs" => {
+                    let costs = StepCosts::parse(value).map_err(|error| {
+                        usage_error(format!("invalid --speculation-costs: {error:?}"))
+                    })?;
+                    set_once_v1(&mut parsed.speculation_costs, costs, flag)?;
                 }
                 "--kv-cache-dtype" => {
                     let dtype = KvCacheDtypeV1::parse(value).ok_or_else(|| {
@@ -5072,6 +5099,7 @@ impl ArgumentsV1 {
             ("--speculative-tokens", self.speculative_tokens.is_some()),
             ("--speculative-rows", self.speculative_rows.is_some()),
             ("--speculation", self.speculation_mode.is_some()),
+            ("--speculation-costs", self.speculation_costs.is_some()),
             ("--draft-cost", self.draft_cost_model.is_some()),
             ("--kv-offload-gib", self.kv_offload_gib.is_some()),
             (
@@ -5562,7 +5590,7 @@ mod tests {
         BundleStateLayoutV1, BundleStateLifetimeV1, BundleTargetV1, BundleTopologyV1,
     };
 
-    use runtime_engine::{EngineConfig, SpeculationMode};
+    use runtime_engine::{EngineConfig, SpeculationMode, StepCosts};
     use runtime_kv::KvGeometry;
     use runtime_model_api::ModelVocabulary;
     use runtime_scheduler::{
@@ -6928,8 +6956,59 @@ mod tests {
         );
         assert!(
             refusal(&["serve", "--bundle", "a", "--speculation", "unknown"])
-                .contains("must be fixed or adaptive")
+                .contains("must be fixed, adaptive or table")
         );
+        // Table mode needs its costs, and only it takes them.
+        let costs = "1:15900:4400:0:780,8:22500:6000:0:780";
+        for words in [
+            &["--speculation", "table"][..],
+            &["--speculation", "adaptive", "--speculation-costs", costs][..],
+            &["--speculation-costs", costs][..],
+        ] {
+            let mut words = words.to_vec();
+            words.splice(
+                0..0,
+                ["serve", "--bundle", "a", "--speculative-tokens", "5"],
+            );
+            assert!(
+                refusal(&words).contains("--speculation table requires --speculation-costs"),
+                "{words:?}"
+            );
+        }
+        assert!(
+            refusal(&[
+                "serve",
+                "--bundle",
+                "a",
+                "--speculative-tokens",
+                "5",
+                "--speculation",
+                "table",
+                "--speculation-costs",
+                "8:1:1:1:1,1:1:1:1:1",
+            ])
+            .contains("invalid --speculation-costs")
+        );
+        let table = parse_host_command_v1(&arguments(&[
+            "serve",
+            "--bundle",
+            "a",
+            "--speculative-tokens",
+            "5",
+            "--speculation",
+            "table",
+            "--speculation-costs",
+            costs,
+        ]))
+        .unwrap();
+        let HostCommandV1::Serve {
+            speculation_mode: SpeculationMode::Table(parsed),
+            ..
+        } = table
+        else {
+            panic!("table mode expected");
+        };
+        assert_eq!(parsed, StepCosts::parse(costs).unwrap());
         let fixed = parse_host_command_v1(&arguments(&[
             "serve",
             "--bundle",

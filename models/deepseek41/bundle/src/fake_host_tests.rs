@@ -516,7 +516,7 @@ impl FakePackage for FakeHost {
                 "packed fold preparation must serialize normally"
             );
         } else {
-            self.device.check_launch(config);
+            self.device.check_launch_for(symbol, config);
         }
     }
     fn cubins() -> impl IntoIterator<Item = (&'static str, &'static [u8])> {

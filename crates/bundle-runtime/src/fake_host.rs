@@ -188,6 +188,9 @@ pub struct FakeDevice<O = NoObserver> {
     /// Every message the bundle logged, in order.
     pub logs: RefCell<Vec<String>>,
     pub symbol_names: RefCell<BTreeMap<u32, String>>,
+    /// Entries explicitly declared to use ordinary stream ordering. Every
+    /// other entry retains the fake host's PDL launch requirement.
+    pub ordinary_symbols: RefCell<BTreeSet<String>>,
     /// The configured maximum dynamic shared bytes, by symbol slot.
     symbol_dynamic_shared_bytes: RefCell<BTreeMap<u32, u32>>,
     /// The module of each symbol, and the cubin of each loaded module.
@@ -472,9 +475,18 @@ impl<O: JournalObserver> FakeDevice<O> {
 
     /// Every bundle launch serializes programmatically.
     pub fn check_launch(&self, config: LaunchConfigV1) {
+        self.check_launch_for("", config);
+    }
+
+    /// Check an explicitly declared ordinary entry or the default PDL form.
+    pub fn check_launch_for(&self, name: &str, config: LaunchConfigV1) {
         assert_eq!(
             config.flags,
-            BUNDLE_LAUNCH_FLAG_V1_PROGRAMMATIC_STREAM_SERIALIZATION
+            if self.ordinary_symbols.borrow().contains(name) {
+                0
+            } else {
+                BUNDLE_LAUNCH_FLAG_V1_PROGRAMMATIC_STREAM_SERIALIZATION
+            }
         );
     }
 
@@ -859,6 +871,38 @@ macro_rules! unused_host_services {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ordinary_launches_require_an_exact_symbol_declaration() {
+        let device = FakeDevice::<NoObserver>::default();
+        let mut config = LaunchConfigV1 {
+            flags: 0,
+            grid_x: 1,
+            grid_y: 1,
+            grid_z: 1,
+            block_x: 32,
+            block_y: 1,
+            block_z: 1,
+            shared_memory_bytes: 0,
+            cluster: runtime_bundle_abi::LaunchClusterV1::NONE,
+        };
+        let rejects = |name, config| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                device.check_launch_for(name, config)
+            }))
+            .is_err()
+        };
+        assert!(rejects("local_sum", config));
+        device
+            .ordinary_symbols
+            .borrow_mut()
+            .insert("local_sum".into());
+        device.check_launch_for("local_sum", config);
+        assert!(rejects("another_sum", config));
+        config.flags = BUNDLE_LAUNCH_FLAG_V1_PROGRAMMATIC_STREAM_SERIALIZATION;
+        assert!(rejects("local_sum", config));
+        device.check_launch(config);
+    }
 
     /// A residency query answers from the modelled device first, then the
     /// fixed reports, and leaves one nothing answers to the package.

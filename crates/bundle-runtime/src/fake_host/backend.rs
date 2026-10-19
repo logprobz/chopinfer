@@ -109,9 +109,10 @@ pub trait FakePackage {
     fn device(&self) -> &FakeDevice<Self::Observer>;
 
     /// Check launch policy, including model-declared ordered initializers.
-    /// The default retains the PDL requirement for every launch.
-    fn check_launch(&self, _symbol: &str, config: LaunchConfigV1) {
-        self.device().check_launch(config);
+    /// The default retains the PDL requirement for every launch the device
+    /// does not declare ordinary.
+    fn check_launch(&self, symbol: &str, config: LaunchConfigV1) {
+        self.device().check_launch_for(symbol, config);
     }
 
     /// The cubins the device names loaded modules by.

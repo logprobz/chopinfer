@@ -74,3 +74,34 @@ for relaunch, graph and PDL checks, and row, chunk and batch comparisons
 exercise the declared invariance. A CPU SASS audit rejects TF32, spills,
 stack use and missing PDL release/wait instructions. CPU declarations and
 build audits do not establish GPU correctness.
+
+The opt-in `position_live` family preserves the Position v3 score arithmetic
+and its score/index total order. Dense and compact scores use 192 CTAs per
+row with warp grid-stride loops over the device-visible positions. Threads
+clear the unused score tail with coalesced stores, preserving the full
+buffer's -inf padding without launching a CTA per four capacity positions.
+The score grid is independent of the host's context estimate.
+
+Selection partitions the visible range into 32 contiguous shards. Each
+shard retains its exact local top-k in position order. The global top-k is
+contained in their union: a key excluded from a shard already has at least
+k larger keys in that shard alone. A final exact cutoff over those lists
+and an ordered merge preserve lower-index ties and ascending output IDs.
+Warp ballots supply each scan's lane prefixes; shared warp counts supply
+the inter-warp prefix. Failed rows retain the previous status, score
+sanitization and output padding. The compact reader validates the complete
+ID record, including unused slots, before selecting its visible slots.
+
+The same path builds candidate block IDs with a fixed compiled stride,
+including smaller runtime `candidate_topk_blocks` counts. It preserves
+newest-block pinning, tags, visible counts and failure propagation. Its
+workspace holds block maxima followed by the local key lists; dense and
+compact selection need only the local key lists. All workspace is written
+before use on each replay. Previous entries and lock families remain
+available as the bitwise comparison controls.
+
+DeepSeek registers these variants for its four Full sources and four
+Reindex sources. Its index metadata already comes from one `index_upload`
+per step and one upload per rank. Reuse layers perform no new index query
+or selection. This scheduling change adds no rounding at the dot, weighted
+product or head sum and does not introduce FP4 MMA.

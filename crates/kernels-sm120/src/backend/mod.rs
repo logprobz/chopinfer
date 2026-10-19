@@ -115,6 +115,7 @@ pub mod own;
 mod pooled_indexer;
 mod position_blocks;
 mod position_indexer;
+mod position_live;
 mod position_query;
 mod projection;
 mod recurrent;
@@ -192,6 +193,7 @@ pub struct Sm120 {
     position_block_indexers: Vec<crate::pooled_indexer::position_blocks::Entry>,
     candidate_block_ids: Vec<crate::pooled_indexer::position_blocks::CandidateEntry>,
     runtime_candidate_block_ids: Vec<crate::pooled_indexer::position_blocks::CandidateEntry>,
+    live_position_indexer: bool,
     position_indexers: Vec<crate::pooled_indexer::position::Entry>,
     bf16_position_indexers: Vec<crate::pooled_indexer::position::Entry>,
     bf16_position_block_indexers: Vec<crate::pooled_indexer::position_blocks::Entry>,
@@ -616,6 +618,13 @@ impl Sm120 {
                 .into_iter()
                 .map(|entry| crate::pooled_indexer::position_candidates_runtime::entry(&entry)),
         );
+        self
+    }
+
+    /// Use the separately compiled live-context variants of every registered
+    /// position score/select and candidate-ID producer, including BF16.
+    pub fn with_live_position_indexer(mut self) -> Self {
+        self.live_position_indexer = true;
         self
     }
 
@@ -1596,7 +1605,12 @@ impl Backend for Sm120 {
         position_capacity: u32,
         need: Need,
     ) -> Result<Prepared<PositionSelectBuffers<View>>, Refused> {
-        position_indexer::select(&self.position_indexers, op, top_k, position_capacity, need)
+        position_live::prepare(
+            position_indexer::select(&self.position_indexers, op, top_k, position_capacity, need),
+            self.live_position_indexer,
+            need.capacity,
+            op.max_top_k,
+        )
     }
 
     fn position_indexer_with_storage(
@@ -1609,13 +1623,18 @@ impl Backend for Sm120 {
     ) -> Result<Prepared<PositionSelectBuffers<View>>, Refused> {
         match storage {
             IndexerKeyFormat::Fp4 => self.position_indexer(op, top_k, position_capacity, need),
-            IndexerKeyFormat::Bf16 => position_indexer::select_with_storage(
-                &self.bf16_position_indexers,
-                op,
-                top_k,
-                position_capacity,
-                need,
-                storage,
+            IndexerKeyFormat::Bf16 => position_live::prepare(
+                position_indexer::select_with_storage(
+                    &self.bf16_position_indexers,
+                    op,
+                    top_k,
+                    position_capacity,
+                    need,
+                    storage,
+                ),
+                self.live_position_indexer,
+                need.capacity,
+                op.max_top_k,
             ),
         }
     }
@@ -1631,13 +1650,18 @@ impl Backend for Sm120 {
             IndexerKeyFormat::Fp4 => {
                 self.position_block_indexer(op, top_k, position_capacity, need)
             }
-            IndexerKeyFormat::Bf16 => position_blocks::select_with_storage(
-                &self.bf16_position_block_indexers,
-                op,
-                top_k,
-                position_capacity,
-                need,
-                storage,
+            IndexerKeyFormat::Bf16 => position_live::prepare(
+                position_blocks::select_with_storage(
+                    &self.bf16_position_block_indexers,
+                    op,
+                    top_k,
+                    position_capacity,
+                    need,
+                    storage,
+                ),
+                self.live_position_indexer,
+                need.capacity,
+                op.indexer.max_top_k,
             ),
         }
     }
@@ -1658,12 +1682,17 @@ impl Backend for Sm120 {
         position_capacity: u32,
         need: Need,
     ) -> Result<Prepared<PositionBlockSelectBuffers<View>>, Refused> {
-        position_blocks::select(
-            &self.position_block_indexers,
-            op,
-            top_k,
-            position_capacity,
-            need,
+        position_live::prepare(
+            position_blocks::select(
+                &self.position_block_indexers,
+                op,
+                top_k,
+                position_capacity,
+                need,
+            ),
+            self.live_position_indexer,
+            need.capacity,
+            op.indexer.max_top_k,
         )
     }
 
@@ -1673,7 +1702,12 @@ impl Backend for Sm120 {
         position_capacity: u32,
         need: Need,
     ) -> Result<Prepared<CandidateBlockIdsBuffers<View>>, Refused> {
-        position_blocks::candidates(&self.candidate_block_ids, op, position_capacity, need)
+        position_live::prepare(
+            position_blocks::candidates(&self.candidate_block_ids, op, position_capacity, need),
+            self.live_position_indexer,
+            need.capacity,
+            op.top_k_blocks,
+        )
     }
 
     fn indexer_candidate_block_ids_runtime(
@@ -1683,12 +1717,17 @@ impl Backend for Sm120 {
         position_capacity: u32,
         need: Need,
     ) -> Result<Prepared<CandidateBlockIdsBuffers<View>>, Refused> {
-        position_blocks::candidates_with_count(
-            &self.runtime_candidate_block_ids,
-            op,
-            position_capacity,
-            need,
-            Some(top_k_blocks),
+        position_live::prepare(
+            position_blocks::candidates_with_count(
+                &self.runtime_candidate_block_ids,
+                op,
+                position_capacity,
+                need,
+                Some(top_k_blocks),
+            ),
+            self.live_position_indexer,
+            need.capacity,
+            op.top_k_blocks,
         )
     }
 

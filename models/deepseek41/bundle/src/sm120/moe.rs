@@ -3,7 +3,7 @@
 use kernel_build::CubinSpec;
 use kernel_core::gated_mlp::GatedMlpProjection;
 use kernels_sm120::backend::Sm120;
-use kernels_sm120::moe::chained::{LocalRoute, quantized, row_bias, streamed};
+use kernels_sm120::moe::chained::{LocalRoute, prefill, quantized, row_bias, streamed};
 use kernels_sm120::row::block_quantize::{self, Entry};
 use model_deepseek41_contract::admission::SUPPORTED_RANKS;
 use model_deepseek41_contract::geometry::Geometry;
@@ -13,6 +13,35 @@ use model_deepseek41_contract::serving::{DECODE_BATCH, MAX_VERIFY_ROWS, PREFILL_
 pub const FAMILY: &str = "routed_moe";
 pub const ACTIVE_FAMILY: &str = "routed_moe_active";
 pub const STREAMED_FAMILY: &str = "routed_moe_streamed";
+
+pub const PREFILL_FAMILY: &str = "routed_moe_prefill";
+
+/// Experimental exact prefill entries; serving keeps the measured decode
+/// policy and the old prefill entries until this family is qualified.
+pub fn prefill_projections(g: &Geometry) -> Result<Vec<quantized::Projection>, String> {
+    projections(g, 4)?
+        .into_iter()
+        .filter(|p| p.row_tile == 64)
+        .map(|p| p.with_prefill_tiles().map_err(|e| e.to_string()))
+        .collect()
+}
+pub fn prefill_cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {
+    let mut specs = Vec::new();
+    for g in geometries {
+        specs.push((
+            PREFILL_FAMILY,
+            prefill::cubin_spec(
+                &format!("prefill_moe_{}_compute_sm120", g.kernel_tag),
+                &prefill_projections(g)?,
+            ),
+        ));
+    }
+    specs.push((
+        PREFILL_FAMILY,
+        prefill::calibration_cubin_spec("prefill_moe_calibration_sm120"),
+    ));
+    Ok(specs)
+}
 
 /// TP4 streamed entries, with serving admission kept model-owned below.
 pub fn streamed_projections(g: &Geometry) -> Result<Vec<quantized::Projection>, String> {

@@ -1,0 +1,10 @@
+[
+  {
+    "name": "prefill_moe_calibration_sm120",
+    "source_closure_sha256": "68e6b01b181c90f7a08a2cd03d02cf218c459cf56b06e88b365f3cda49e1c6c4"
+  },
+  {
+    "name": "prefill_moe_deepseek41_compute_sm120",
+    "source_closure_sha256": "f08657ba3379c55b6abf1fa6852333c7cb8455a8bf32ea82263d779300d7a59d"
+  }
+]

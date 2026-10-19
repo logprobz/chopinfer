@@ -58,8 +58,10 @@ fn kernel_moe_prepares_all_geometries_rank_counts_and_phases() {
                             op.info().symbols.len(),
                             if kind == GatedMlpProjection::GateUp {
                                 if streamed { 5 } else { 2 }
+                            } else if streamed {
+                                4
                             } else {
-                                if streamed { 4 } else { 1 }
+                                1
                             }
                         );
                         assert_eq!(

@@ -139,6 +139,7 @@ impl crate::Kernels {
     pub fn loads(cubin: &str, shape: &crate::shape::Shape) -> bool {
         cubin != kernels_sm120::probes::CUBIN
             && !encoder::is_cubin(cubin)
+            && !cubin.starts_with("prefill_moe_")
             && (!cubin.starts_with("streamed_moe_")
                 || moe::streamed_qualified(shape.geometry, shape.ranks()))
     }

@@ -41,6 +41,18 @@ class Cone(unittest.TestCase):
                     plan = pc.cone(n, pc.chunks(n, captures, limit), captures, dspark)
                     self.assertEqual(fake_run(plan, True), fake_run(plan, False))
 
+    def test_guaranteed_chunks_bound_the_work_independently_of_prompt_length(self):
+        for chunk in [2048, 8192]:
+            for dspark in [False, True]:
+                plans = [pc.guaranteed(n, chunk, dspark) for n in [8192, 32768, 131072]]
+                # Only the final chunk adds final-layer logits work.
+                first = plans[0]["upper_output_rows"]
+                for plan in plans[1:]:
+                    multiple = plan["tokens"] // 8192
+                    self.assertEqual(plan["upper_output_rows"], (first - 64) * multiple + 64)
+                    self.assertGreater(plan["equal_layer_row_saving"], .20)
+        self.assertEqual(pc.guaranteed(8192, 8192, True, 1)["upper_output_rows"], 24302)
+
     def test_stale_cell_dependency_is_outside_the_old_suffix_union(self):
         plan = pc.cold(32768, 2048, True)
         writers = plan["snapshot_writers"][30720]

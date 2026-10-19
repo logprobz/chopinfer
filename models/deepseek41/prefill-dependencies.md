@@ -1,16 +1,15 @@
-An upper-layer prefill schedule conservative over every permitted future
-capture and chunk-end choice saves only about 5% of upper-layer output
-rows, or about 2.5% under an equal-cost layer-row timing model. With DSpark
-and prefix caching enabled this is below a 20% estimated TTFT threshold
-at 32K, so this work stops at analysis. No ABI, scheduler, bundle or kernel
-implementation is changed, and no GPU comparison job is staged.
+The accepted serving profile guarantees a fixed chunk grid (2048 or 8192
+rows), every prompt end, and complete state after each chunk. It restricts
+public prefill captures to those boundaries and publishes complete terminal
+decode state for multi-turn reuse. The exact dependency cone is implemented
+behind the optional bundle declaration. Default profiles retain full execution.
 
-With guaranteed future chunk ends, the smaller exact dependency cone is
-a union of intervals. The fixed-schedule calculation below preserves
-DSpark snapshot bytes and skips about 89.4% of complete upper-layer output
-rows at 32K, an estimated saving of 44.7% in the same timing model. Both
-results are CPU dataflow estimates, not measured TTFT or GPU correctness
-evidence. They describe different scheduling contracts.
+For the implemented 64-row outward alignment, the 32K equal-cost layer-row
+estimate is 20.07% at chunk size 2048 and 42.20% at 8192. These are CPU
+work-count estimates. GPU bitwise equality and measured TTFT remain pending.
+The earlier fixed-schedule and all-choice analyses below remain derivations
+of their respective contracts; their 44.7% estimate does not describe the
+stronger policy that makes every actual chunk end complete.
 
 The analysis was checked on 2026-10-19. Repository paths below are relative
 to the repository root. Vendor paths refer to
@@ -312,3 +311,97 @@ The eight oracle tests and the existing scheduler shared-prefix and
 granule tests pass on CPU. The conservative contract does not meet the
 implementation threshold; the smaller fixed-schedule contract remains a
 separate scheduling decision.
+
+The implemented complete-chunk contract (2026-10-19)
+
+Let an item's current chunk be [s,e). Earlier chunks have already committed
+exact state. For each upper layer l, C_l is [max(s,e-136),e), the new rows
+needed by every physical target-ring cell. Old cells outside this interval
+remain untouched. Q_39 starts with requested logits rows, empty in an
+intermediate chunk. Walking backward, expand Q_l outward to 64-row packed
+boundaries, set K_l = align64(W(Q_l) union C_l), and require
+X_l on K_l union F_l. W adds 127 preceding rows within the same item and
+current chunk; older keys come from its exact retained prefix. That input
+requirement becomes Q_(l-1). Union and alignment happen before proceeding
+to the preceding layer. Packed-item windows never cross item boundaries.
+This is `contract/src/prefill_cone.rs:127` and
+`bundle/src/instance/execute/skip.rs:183` under `models/deepseek41`.
+
+At layers 37-39, F_l contains the raw feature rows actually retained or
+projected by the drafter. Chunks of at most 134 rows retain all their rows.
+Larger chunks retain their final 128 raw rows, leaving the other six
+physical history cells unchanged from the preceding exact commit. A large
+chunk's direct projection additionally keeps every original projection
+dispatch overlapping the final 128-row window. At a non-128-aligned prompt
+end this can require up to 127 extra feature rows. Keeping the original
+dispatch size avoids changing the GEMM selected at the 64-row threshold
+(`bundle/src/dspark/transfers.rs:125`,
+`contract/src/prefill_cone.rs:118`). Those extra rows are projected, then
+overwritten in the ring, but are never copied into raw history. At aligned
+2048/8192 grid ends, only the last 128 features are needed.
+
+Layers 0-19 run completely. Layer 20's HC/input preparation, compressor,
+index-key production and compressed-KV write also run completely
+(`bundle/src/instance/execute/skip.rs:171`). Upper window producers run on
+K_l. Complete attention and MLP outputs run on Q_l, with their small HC,
+norm and quantizer prefix recomputed into local transient scratch. Carried
+HC streams, selections, candidates and window metadata keep original packed
+row addresses. Final streams and lagged pre coefficients are gathered in
+ascending logits order before the head. No skipped hidden row reaches the
+head. Engram remains entirely in the complete lower prefix.
+
+The scheduler's grid and capture restrictions are in
+`crates/runtime-scheduler/src/lib.rs:3596,3727`. The optional
+`chop_bundle_prefill_api_v1` export declares the grid and accepts a bounded
+envelope around unchanged batch bytes. Legacy tables and batch schemas
+remain unchanged; a legacy execute call always runs the full schedule.
+Scored/media requests and diagnostic per-layer taps use full execution.
+The device-result executor path also keeps full execution until it has a
+negotiated prefill entry; it still respects the declared capture grid.
+
+For terminal text decode, the engine supplies the accepted token history
+excluding its final sampled token, which has no KV yet. The scheduler
+publishes that complete boundary as a public anchor
+(`crates/runtime-scheduler/src/lib.rs:3123`). This covers autoregressive and
+accepted speculative histories. Existing private preemption snapshots keep
+their semantics. No intermediate historical decode boundary is synthesized.
+
+| Prompt rows | Chunk rows | Upper output rows skipped | Upper window rows skipped | Equal-row TTFT estimate |
+| --- | --- | --- | --- | --- |
+| 8192 | 2048 | 40.1172% | 35.1563% | 20.0586% |
+| 32768 | 2048 | 40.1465% | 35.1563% | 20.0732% |
+| 131072 | 2048 | 40.1538% | 35.1563% | 20.0769% |
+| 8192 | 8192 | 84.3750% | 82.8125% | 42.1875% |
+| 32768 | 8192 | 84.4043% | 82.8125% | 42.2021% |
+| 131072 | 8192 | 84.4116% | 82.8125% | 42.2058% |
+
+These counts are identical for AR-only and DSpark at these aligned lengths:
+the feature roots fit inside the target-ring roots. Without outward alignment,
+the corresponding 32K equal-row bounds are 21.2402% and 42.5838%. The
+implemented estimate is optimistic: layer 20's full producers, repeated input
+preparation, sparse dispatch overhead and snapshot costs are not free. At
+594 tokens/s, 32K takes about 55.2 seconds; proportional savings would be
+11.1 seconds or 23.3 seconds. These are estimates, not performance evidence.
+
+For a reusable prefix uniformly distributed across the 64-token residues of
+a C-token grid, and with no retained prompt/response anchor between grid
+points, additional recompute is 0,64,...,C-64. Its mean is (C-64)/2: 992
+rows for C=2048, or 4064 for C=8192. Its maximum is 1984 or 8128 rows.
+An exact retained prompt or response boundary loses no additional reuse.
+The last sampled response token still needs one row of computation because
+it has not been a model input; this is separate from the capture restriction.
+The actual workload mean depends on where turns diverge and cache eviction.
+
+Reproduce the implemented counts with:
+
+```sh
+python3 -B models/deepseek41/prefill_cone.py --contract guaranteed --chunk 2048
+python3 -B models/deepseek41/prefill_cone.py --contract guaranteed --chunk 8192
+```
+
+The diagnostic build's opt-in capture hook records full physical snapshot
+buffers, retained compressed/index pages and raw F32 logits. It records
+state both at each chunk commit and after prefix capture catches up the
+drafter. The GPU jobs must compare these bytes and served token/logprob bits,
+then measure cold TTFT with capture instrumentation disabled. CPU dependency
+and fake-host tests establish scheduling and address invariants only.

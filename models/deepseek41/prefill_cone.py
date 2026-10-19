@@ -138,15 +138,54 @@ def all_choices(tokens, dspark=True):
     return result
 
 
+def guaranteed(tokens, chunk, dspark, alignment=64):
+    """Complete physical state after every grid chunk, as the opt-in executor.
+
+    Previous chunks are exact external inputs. A projection touching the
+    last window retains its original dispatch shape, including a partial
+    overlap before the final window at unaligned prompt ends.
+    """
+    if tokens <= 0 or chunk <= 0 or alignment <= 0:
+        raise ValueError("positive prompt, chunk and alignment required")
+    plans = []
+    for first in range(0, tokens, chunk):
+        end = min(first + chunk, tokens)
+        n = end - first
+        align = lambda ranges: union(*[[(a // alignment * alignment,
+            min(n, (b + alignment - 1) // alignment * alignment))] for a, b in ranges])
+        captured = [(max(0, n - 136), n)]
+        feature_start = 0 if n <= 134 else max(0, (end - 128) // 128 * 128 - first)
+        features = [(feature_start, n)] if dspark else []
+        needed = [(n - 1, n)] if end == tokens else []
+        layers = []
+        for layer in range(39, 19, -1):
+            outputs = align(needed)
+            keys = align(union([(max(0, a - 127), b) for a, b in outputs], captured))
+            taps = features if layer in [37, 38, 39] else []
+            needed = union(keys, taps)
+            layers.append({"layer": layer, "outputs": outputs, "keys": keys, "features": taps})
+        plans.append({"start": first, "end": end, "layers": list(reversed(layers))})
+    outputs = sum(count(layer["outputs"]) for plan in plans for layer in plan["layers"])
+    keys = sum(count(layer["keys"]) for plan in plans for layer in plan["layers"])
+    return {"tokens": tokens, "chunk": chunk, "dspark": dspark, "alignment": alignment,
+        "upper_output_rows": outputs, "upper_window_kv_rows": keys,
+        "upper_output_skip_fraction": 1 - outputs / (20 * tokens),
+        "upper_window_kv_skip_fraction": 1 - keys / (20 * tokens),
+        "equal_layer_row_saving": (20 * tokens - outputs) / (40 * tokens), "chunks": plans}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--chunk", type=int, choices=[2048, 8192], default=2048)
     parser.add_argument("--tokens", type=int, nargs="+", default=[8192, 32768, 131072])
-    parser.add_argument("--contract", choices=["fixed", "all-choices"], default="fixed")
+    parser.add_argument("--contract", choices=["fixed", "all-choices", "guaranteed"], default="fixed")
+    parser.add_argument("--alignment", type=int, default=64)
     args = parser.parse_args()
     plans = [all_choices(n) for n in args.tokens] if args.contract == "all-choices" else [
         cold(n, args.chunk, dspark) for n in args.tokens for dspark in [False, True]
     ]
+    if args.contract == "guaranteed":
+        plans = [guaranteed(n, args.chunk, dspark, args.alignment) for n in args.tokens for dspark in [False, True]]
     print(json.dumps(plans, indent=2))
 
 

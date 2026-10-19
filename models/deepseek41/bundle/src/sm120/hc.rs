@@ -5,7 +5,8 @@
 //! head, which the final norm reads, in a cubin of its own so adding it
 //! kept the first cubin's bytes. The contracts are the model's
 //! (`model_deepseek41_contract::hc`). A separate split family serves
-//! buckets of at most 32 rows; larger buckets keep the original mixer.
+//! buckets of at most 32 rows. Prefill buckets from 256 rows share fn
+//! loads across eight rows; intermediate buckets keep the original mixer.
 
 use kernel_build::CubinSpec;
 use kernel_core::sinkhorn_hyper_connection::{
@@ -14,7 +15,7 @@ use kernel_core::sinkhorn_hyper_connection::{
 use kernels_sm120::backend::Sm120;
 use kernels_sm120::sinkhorn_hc::Geometry as Mixer;
 use kernels_sm120::sinkhorn_hc::lagged::{self, Entry};
-use kernels_sm120::sinkhorn_hc::lagged_split;
+use kernels_sm120::sinkhorn_hc::{lagged_split, lagged_tiled};
 use model_deepseek41_contract::geometry::Geometry;
 use model_deepseek41_contract::hc;
 use model_deepseek41_contract::serving::PREFILL_TOKENS;
@@ -26,6 +27,37 @@ pub const HEAD_F32_FAMILY: &str = "sinkhorn_hc_head_f32";
 /// Decode-only split entries, isolated from the existing cubins and locks.
 pub const SPLIT_FAMILY: &str = "sinkhorn_hc_lagged_split";
 pub const SPLIT_ROWS: u32 = 32;
+
+/// Prefill-only row tiles, isolated from the existing cubins and locks.
+pub const PREFILL_FAMILY: &str = "sinkhorn_hc_lagged_prefill";
+pub const PREFILL_FROM_ROWS: u32 = 256;
+pub const PREFILL_TILE: u32 = 8;
+
+pub fn prefill_entry(g: &Geometry) -> lagged_tiled::Entry {
+    lagged_tiled::entry(
+        super::rows::profile(g),
+        mixer(g),
+        PREFILL_TILE,
+        PREFILL_FROM_ROWS,
+        false,
+    )
+}
+
+pub fn prefill_cubins(geometries: &[Geometry]) -> Vec<(&'static str, CubinSpec)> {
+    geometries
+        .iter()
+        .map(|g| {
+            (
+                PREFILL_FAMILY,
+                lagged_tiled::cubin_spec(
+                    format!("sinkhorn_hc_{}_lagged_prefill_sm120", g.kernel_tag),
+                    &[prefill_entry(g)],
+                )
+                .expect("the lagged prefill geometry is valid"),
+            )
+        })
+        .collect()
+}
 
 pub fn split_entry(g: &Geometry) -> lagged_split::Entry {
     lagged_split::entry(
@@ -109,6 +141,7 @@ pub fn cubins(geometries: &[Geometry]) -> Vec<(&'static str, CubinSpec)> {
     served
         .chain(heads)
         .chain(split_cubins(geometries))
+        .chain(prefill_cubins(geometries))
         .collect()
 }
 
@@ -117,6 +150,7 @@ pub fn register(sm120: Sm120, g: &Geometry) -> Sm120 {
     sm120
         .with_sinkhorn_lagged(registered_entries(g))
         .with_sinkhorn_lagged_split([split_entry(g)])
+        .with_sinkhorn_lagged_tiled([prefill_entry(g)])
 }
 
 /// `g`'s original entries: the first cubin's, then the F32 head.

@@ -117,9 +117,13 @@ name = "build_fold_stream"
 path = "examples/sm120/build_fold_stream.rs"
 
 [[example]]
-name="build_ceil_prefill"
-path="examples/sm120/build_ceil_prefill.rs"
+name = "build_ceil_prefill"
+path = "examples/sm120/build_ceil_prefill.rs"
 
 [[test]]
-name="kernel_prefill_ceil"
-path="tests/sm120/ceil_prefill.rs"
+name = "kernel_prefill_ceil"
+path = "tests/sm120/ceil_prefill.rs"
+
+[[example]]
+name = "build_lagged_prefill"
+path = "examples/sm120/build_lagged_prefill.rs"

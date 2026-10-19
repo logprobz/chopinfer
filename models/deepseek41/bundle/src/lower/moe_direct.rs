@@ -139,6 +139,27 @@ mod tests {
                         ),
                     );
                 }
+                // Optional packed folds bind these private views in the
+                // integrated selector; unselected folds leave them unused.
+                let mut storage_id = 11000;
+                for tensor in ["w1", "w2", "w3"] {
+                    for kind in ["single", "pair"] {
+                        for role in ["packed0", "packed1", "state", "workspace"] {
+                            storage_id += 1;
+                            b.views.insert(
+                                format!(
+                                    "{}.fold_{kind}.{role}",
+                                    layer_view(0, &format!("ffn.shared_experts.{tensor}.weight"))
+                                ),
+                                DeviceBufferSpanV1::new(
+                                    BundleDeviceBufferHandleV1::from_parts(storage_id, rank + 1),
+                                    0,
+                                    1 << 32,
+                                ),
+                            );
+                        }
+                    }
+                }
                 let live = DeviceBufferSpanV1::new(
                     BundleDeviceBufferHandleV1::from_parts(999, rank + 1),
                     0,
@@ -242,6 +263,13 @@ mod tests {
                         );
                         let mut bad = b.clone();
                         bad.shared_workspace = bad.workspace;
+                        for (name, span) in &mut bad.views {
+                            if name.contains("ffn.shared_experts.")
+                                && (name.ends_with(".state") || name.ends_with(".workspace"))
+                            {
+                                *span = bad.workspace;
+                            }
+                        }
                         let bad = lower(&ops, &bad)
                             .into_iter()
                             .flat_map(|(_, ops)| ops.into_iter().map(|op| op.launch))

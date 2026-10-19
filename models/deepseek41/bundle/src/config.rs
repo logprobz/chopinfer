@@ -40,6 +40,7 @@ pub const KV_LAYOUTS: [KvLayout; 2] = [
 /// One instance's checked configuration.
 #[derive(Clone, Debug)]
 pub struct Configuration {
+    pub prefill: model_deepseek41_contract::prefill_profile::Profile,
     pub shape: Shape,
     pub create: CreateConfig,
     pub kv: KvLayout,
@@ -136,6 +137,11 @@ pub fn decode(bytes: &[u8], log: impl Fn(&str)) -> Result<Configuration, BundleS
             return Err(BundleStatusV1::InvalidArgument);
         }
     }
+    let prefill =
+        model_deepseek41_contract::prefill_profile::Profile::read(&options).map_err(|e| {
+            log(&e);
+            BundleStatusV1::InvalidArgument
+        })?;
     shape.runtime = shape
         .geometry
         .resolve_model_options(shape.geometry.runtime_defaults(), &options)
@@ -208,6 +214,7 @@ pub fn decode(bytes: &[u8], log: impl Fn(&str)) -> Result<Configuration, BundleS
         return Err(BundleStatusV1::Unsupported);
     }
     Ok(Configuration {
+        prefill,
         shape,
         create,
         kv,

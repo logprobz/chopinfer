@@ -31,3 +31,10 @@ runtime_bundle_abi::export_bundle_device_results_v1!(
     BUNDLE_DEEPSEEK41_DEVICE_RESULTS_API_V1,
     entry::execute::<Instance>
 );
+
+// An older host never calls this optional export and keeps the full schedule.
+runtime_bundle_abi::export_prefill_api_v1!(
+    BUNDLE_DEEPSEEK41_PREFILL_API_V1,
+    crate::instance::prefill::describe,
+    crate::instance::prefill::execute,
+);

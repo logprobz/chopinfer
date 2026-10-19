@@ -111,6 +111,7 @@ impl Geometry {
         checkpoint: RuntimeValues,
         values: &std::collections::BTreeMap<String, serde_json::Value>,
     ) -> Result<RuntimeValues, String> {
+        crate::prefill_profile::Profile::read(values)?;
         let defaults = self.model_options(checkpoint);
         if let Some(name) = values
             .keys()
@@ -223,6 +224,7 @@ impl Geometry {
                     default_is_qualified: default == field.qualified,
                 }
             })
+            .chain(crate::prefill_profile::declarations())
             .collect();
         options.push(ModelOptionV1 {
             name: "text_config.indexer_mma".into(),
@@ -231,6 +233,7 @@ impl Geometry {
             },
             default_is_qualified: true,
         });
+        options.sort_by(|a, b| a.name.cmp(&b.name));
         options
     }
 
@@ -346,8 +349,8 @@ mod tests {
             let values = resolve(top_k, blocks).unwrap();
             assert_eq!(values.candidate_topk_blocks, blocks);
             let options = FLASH.model_options(values);
-            assert_eq!(options[0].name, "text_config.candidate_topk_blocks");
-            assert_eq!(options[0].default_is_qualified, blocks == 2048);
+            assert_eq!(options[2].name, "text_config.candidate_topk_blocks");
+            assert_eq!(options[2].default_is_qualified, blocks == 2048);
         }
         for (top_k, blocks) in [(2, 1), (10, 2), (256, 32), (512, 64)] {
             let error = resolve(top_k, blocks).unwrap_err();
@@ -442,17 +445,18 @@ mod tests {
         let checkpoint = FLASH.check_runtime(&config).unwrap();
         assert_eq!(checkpoint.index_topk, 512);
         let options = FLASH.model_options(checkpoint);
-        assert_eq!(options.len(), 3);
-        assert_eq!(options[1].name, "text_config.index_topk");
+        assert_eq!(options.len(), 5);
+        assert_eq!(options[3].name, "text_config.index_topk");
+        assert_eq!(options[4].name, "text_config.indexer_mma");
         assert_eq!(
-            options[1].definition,
+            options[3].definition,
             OptionDefinitionV1::Integer {
                 default: 512,
                 minimum: 1,
                 maximum: 512
             }
         );
-        assert!(options[0].default_is_qualified);
+        assert!(options[2].default_is_qualified);
         assert_eq!(
             FLASH
                 .resolve_model_options(checkpoint, &BTreeMap::new())
@@ -471,7 +475,7 @@ mod tests {
             config["text_config"]["index_topk"] = top_k.into();
             let runtime = FLASH.check_runtime(&config).unwrap();
             assert_eq!(
-                FLASH.model_options(runtime)[1].default_is_qualified,
+                FLASH.model_options(runtime)[3].default_is_qualified,
                 top_k == 512
             );
         }

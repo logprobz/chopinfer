@@ -21,6 +21,7 @@ mod engram;
 pub(crate) mod execute;
 mod fold_stream;
 mod media;
+pub(crate) mod prefill;
 mod prefill_reduce;
 mod prefix;
 
@@ -81,6 +82,10 @@ pub struct Instance {
     held: Vec<Held>,
     collectives: Collectives,
     config: Configuration,
+    /// Immutable U32 cells indexed by their value, only for the opt-in profile.
+    prefill_counts: Vec<runtime_bundle_abi::DeviceBufferSpanV1>,
+    prefill_boundaries: Vec<runtime_bundle_sdk::prefill::Boundary>,
+    skip_prefill: bool,
     ranks: Vec<RankHandles>,
     /// AR logits readiness, acquired before scratch and graph captures.
     result_ready: Vec<runtime_bundle_abi::BundleEventHandleV1>,
@@ -279,6 +284,14 @@ impl Instance {
                     arena,
                     block_tables,
                 });
+            }
+            if self.config.prefill.skip {
+                let counts: Vec<u8> = (0..=model_deepseek41_contract::serving::PREFILL_TOKENS)
+                    .flat_map(u32::to_le_bytes)
+                    .collect();
+                let span = allocate_span(services, pool, stream, counts.len() as u64, held)?;
+                services.copy_host_to_device(stream, span, &counts)?;
+                self.prefill_counts.push(span);
             }
             let mut declared = Scratch::of_storage(&shape, self.config.kv.storage);
             if let Some(drafter) = &self.dspark {
@@ -743,6 +756,9 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         #[cfg(feature = "diagnostic-taps")]
         state_capture_root: std::env::var_os("CHOPINFER_DSPARK_STATE_DIR").map(Into::into),
         config,
+        prefill_counts: Vec::new(),
+        prefill_boundaries: Vec::new(),
+        skip_prefill: false,
         ranks: Vec::new(),
         result_ready: Vec::new(),
         symbols: Vec::new(),
@@ -823,6 +839,11 @@ impl Bundle for Instance {
     }
 
     fn execute(&mut self, request: &[u8], sink: &mut ExecuteResultSinkV1) -> BundleStatusV1 {
+        if self.ledger.step().is_some() {
+            return BundleStatusV1::InvalidState;
+        }
+        self.skip_prefill = false;
+        self.prefill_boundaries.clear();
         self.execute_step(request, sink)
     }
 

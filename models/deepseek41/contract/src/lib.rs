@@ -13,6 +13,7 @@ pub mod indexer;
 pub mod latent;
 pub mod latent_glue;
 pub mod prefill_cone;
+pub mod prefill_profile;
 pub mod projections;
 pub mod structure;
 

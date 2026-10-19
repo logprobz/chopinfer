@@ -111,3 +111,11 @@ path = "examples/sm120/build_moe_router_finish.rs"
 [[example]]
 name = "fold_bandwidth"
 path = "examples/sm120/build_fold_bandwidth.rs"
+
+[[example]]
+name = "build_compact_dense"
+path = "examples/sm120/build_compact_dense.rs"
+
+[[test]]
+name = "compact_dense"
+path = "tests/sm120/compact_dense/main.rs"

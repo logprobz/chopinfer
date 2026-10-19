@@ -1,0 +1,10 @@
+[
+  {
+    "name": "compact_dense_oracle_sm120",
+    "source_closure_sha256": "2e70018bfd05c5e1f9ade58a574c3ed5d1303a7cbc00c2a88f87361d2a3e327a"
+  },
+  {
+    "name": "compact_dense_prefill_sm120",
+    "source_closure_sha256": "2ea90d666dc194c6e9644019089b640fb64f8c84ffe596ca44879b04d74062fd"
+  }
+]

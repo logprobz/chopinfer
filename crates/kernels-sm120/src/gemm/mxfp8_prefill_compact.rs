@@ -29,7 +29,7 @@ impl Entry {
     pub fn tile(rows: u32) -> u32 {
         if rows <= 16 {
             16
-        } else if rows <= 32 {
+        } else if rows <= 128 {
             32
         } else {
             64

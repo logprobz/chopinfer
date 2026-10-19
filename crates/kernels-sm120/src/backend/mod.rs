@@ -682,6 +682,16 @@ impl Sm120 {
         self
     }
 
+    /// Register split lagged mixers. Their capacities bound the row counts
+    /// routed to them; larger buckets keep the one-CTA mixer.
+    pub fn with_sinkhorn_lagged_split(
+        mut self,
+        entries: impl IntoIterator<Item = crate::sinkhorn_hc::lagged_split::Entry>,
+    ) -> Self {
+        self.sinkhorn.lagged_split.extend(entries);
+        self
+    }
+
     /// The model's comm epilogue over the F32 all-reduce's sums
     /// (`comm::sinkhorn_split::entry`).
     pub fn with_sinkhorn_epilogue(mut self, entry: crate::comm::sinkhorn_split::Entry) -> Self {

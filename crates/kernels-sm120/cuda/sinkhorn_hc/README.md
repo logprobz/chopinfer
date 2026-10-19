@@ -423,3 +423,63 @@ in a separate cubin to preserve the existing cubins and ABI symbols.
   `poison::live_counts`.
 
 The conformance kit's case is `kit::cases::sinkhorn_lagged`.
+
+## Lagged split mix-collapse
+
+`lagged_split.cuh` spreads a lagged row's 128-K chains over eight warps per
+CTA, one chain per warp. At four streams of width 5120 this gives 20 CTAs
+per row. Each warp uses the original four products and butterfly for every
+mix. The last CTA, elected by the existing acquire/release ticket, folds
+all 160 chain sums from zero in increasing K order. Atomic arrival order
+never enters the arithmetic.
+
+The finisher stages only the chain table, with one padding float per mix.
+It rereads the immutable BF16 row for the original square reduction and
+collapse. This avoids holding the 40 KiB row and 15 KiB chain table together
+in static shared memory. F32 pre, post and comb, the lagged pre_in collapse,
+all Sinkhorn iterations, and the norm epsilon keep the one-CTA expressions.
+Partials need `rows * mixes * chains * 4` bytes. Tickets need four bytes per
+row, start at zero, and return to zero after every launch. Inactive rows
+write neither outputs nor scratch.
+
+The separately registered split entry's capacity bounds its routing range.
+Larger prepared buckets use the original entry. The current decode binding
+covers rows 1-32. No prefill speed claim is made: the staged GPU comparison must
+establish a faster prefill range before its binding changes. Existing
+cubins and lock families are unchanged.
+
+The standalone `kernel-lab-families` test `sinkhorn_hc_lagged_split` compares
+served and probe outputs against the frozen lagged cubins at every row count
+1-33 and at 128 rows. It checks projection and rstd against f64, collapse
+bits, bounded F32 pre/post and Sinkhorn input cells, and exact Sinkhorn
+normalizations. Cases include signed zeros, subnormals, NaN, infinities,
+large finite inputs and common-offset logits. Poisoned eager, relaunch,
+graph and PDL runs check partial live counts and tickets. A reversed-chain
+negative control must fail the projection comparison. The conformance kit
+also checks row, chunk and batch invariance behind dependency probes.
+
+The mixer and its following BF16 Plain norm have no row-status argument.
+The test runs that unchanged norm and the next ceil-MXFP8 quantizer on both
+outputs and compares normed values, codes, scales and sticky row status,
+including prior flags and inactive rows. Kernel timings at 1, 32 and 128
+rows follow bitwise comparison. GPU execution is required to establish
+these claims; CPU declaration checks and cubin builds alone are not GPU
+evidence.
+
+### Exact epilogue feasibility
+
+An expand/mix/norm epilogue is feasible if it retains the reduced BF16
+rounding, the F32 expand's separate multiply and FMA stream chain, the
+lagged mixer orders, and the existing Plain norm reduction and rounding.
+The current collective epilogue uses per-sublayer placement, BF16 post and
+comb, an HF-style norm, and width 4096. Its prepared backend emits the
+collective before a separate epilogue launch. It cannot serve lagged F32
+weights by changing a template argument.
+
+One launch including the collective also needs a 5120-wide transport,
+peer-residency admission, lagged pre input/output roles, and safe boundaries
+around stream mutation and final-head consumers. These are separate
+contract and lowering changes. A two-launch split with redundant Sinkhorn
+finalization could preserve the chains, but would need its own exactness
+and timing evidence. A Gram-matrix norm fold changes the reduction and is
+not used here.

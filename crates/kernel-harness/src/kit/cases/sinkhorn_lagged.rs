@@ -66,7 +66,12 @@ pub fn mix_collapse_case<'a>(
     if mix.placement != HyperConnectionPlacement::LaggedSinglePass || mix.fn_dtype != DType::F32 {
         return Err("the kit's lagged mix-collapse case covers a lagged mixer with F32 fn".into());
     }
-    if let Some((path, _)) = prepared.info().bytes.first() {
+    let info = prepared.info().clone();
+    if let Some((path, _)) = info
+        .bytes
+        .iter()
+        .find(|(path, _)| !matches!(path.as_str(), "scratch.partials" | "scratch.tickets"))
+    {
         return Err(format!(
             "the kit's lagged mix-collapse case binds no {path}"
         ));
@@ -110,8 +115,12 @@ pub fn mix_collapse_case<'a>(
         post: Spec::output(DType::F32, (Rows::Live, n)),
         comb: Spec::output(DType::F32, (Rows::Live, n * n)),
         scratch: MixScratch {
-            partials: None,
-            tickets: None,
+            partials: info
+                .bytes_of("scratch.partials")
+                .map(|bytes| Spec::scratch(bytes as usize)),
+            tickets: info
+                .bytes_of("scratch.tickets")
+                .map(|bytes| Spec::zeroed(bytes as usize)),
         },
         live_rows: Spec::live(),
     };

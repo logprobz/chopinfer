@@ -23,6 +23,7 @@
 //! nothing: they serve no op.
 
 pub mod lagged;
+pub mod lagged_split;
 pub mod mix_norm;
 pub mod mix_norm_batched;
 pub mod mix_norm_exact;

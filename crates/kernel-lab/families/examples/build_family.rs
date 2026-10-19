@@ -36,6 +36,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Standalone conformance needs its dependency probes and, for glue,
     // numerical controls. The full catalog still assigns each cubin once.
     let dependencies = match family {
+        "sinkhorn_hc_lagged_split" => &[
+            "sinkhorn_hc_lagged",
+            "dependency_probes",
+            "sinkhorn_hc_lagged_boundary",
+        ][..],
         "latent_window_bf16" => &[
             "dependency_probes",
             "latent_glue",

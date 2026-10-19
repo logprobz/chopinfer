@@ -67,6 +67,7 @@ pub(super) struct Selection {
     /// The lagged engine's mix-collapse, F32 expand and weighted head
     /// entries (`super::sinkhorn_lagged`).
     pub(super) lagged: Vec<sinkhorn_hc::lagged::Entry>,
+    pub(super) lagged_split: Vec<sinkhorn_hc::lagged_split::Entry>,
 }
 
 /// The mix-collapse's numerics, whichever entry runs it.

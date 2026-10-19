@@ -20,7 +20,7 @@ use super::sinkhorn::{
     Candidate, Selection, buffer, check_mixer, check_need, chosen, dense, fitting, planned, plans,
     uncapped,
 };
-use crate::sinkhorn_hc::{self, lagged};
+use crate::sinkhorn_hc::{self, lagged, lagged_split, split};
 
 /// The lagged mix-collapse's numerics: the per-sublayer one-CTA entry's
 /// projection, rstd and Sinkhorn, with the given collapse weights and F32
@@ -49,6 +49,7 @@ struct LaggedOp<K> {
     query: Query,
     plans: Vec<LaunchPlan>,
     info: OpInfo,
+    split: Option<(lagged_split::Entry, Vec<LaunchPlan>)>,
     kind: std::marker::PhantomData<fn() -> K>,
 }
 
@@ -105,6 +106,7 @@ impl<K> LaggedOp<K> {
             query: op,
             plans,
             info,
+            split: None,
             kind: std::marker::PhantomData,
         })
     }
@@ -139,14 +141,63 @@ pub(super) fn mix_collapse(
     op: &Query,
     need: Need,
 ) -> Result<Prepared<LaggedMixCollapseBuffers<View>>, Refused> {
-    let op = LaggedOp::new(
+    let mut prepared = LaggedOp::new(
         selection,
         *op,
         lagged::Op::MixCollapse { probe: false },
         LAGGED_MIX_COLLAPSE,
         need,
     )?;
-    Ok(Box::new(op))
+    let entries: Vec<_> = selection
+        .lagged_split
+        .iter()
+        .filter(|entry| {
+            entry.reference.op == lagged::Op::MixCollapse { probe: false }
+                && uncapped(entry.query()) == uncapped(*op)
+        })
+        .collect();
+    let capacity = entries
+        .iter()
+        .filter_map(|entry| entry.reference.capacity().ok())
+        .max()
+        .unwrap_or(0)
+        .min(need.capacity);
+    if capacity > 0 {
+        let candidates = entries
+            .into_iter()
+            .map(|entry| {
+                let symbol = entry.symbol();
+                Candidate::new(
+                    entry.clone(),
+                    &symbol,
+                    format!("{} split {:?}", launch_of(&entry.reference), entry.params()),
+                    entry.capacity(),
+                )
+                .claims(entry.invariance())
+            })
+            .collect();
+        let split_need = Need::rows(capacity)
+            .with_exact(kernel_core::properties::Invariance::any_rows(capacity));
+        let entry = chosen(
+            fitting(candidates, split_need, "lagged split")?,
+            "lagged split",
+        )?;
+        let split_plans = plans(capacity, |rows| entry.plan(rows, rows))?;
+        let Query::MixCollapse { mix, .. } = *op else {
+            unreachable!("validated mix-collapse");
+        };
+        prepared.info.bytes = vec![
+            (
+                "scratch.partials".into(),
+                split::partials_bytes(mix, capacity),
+            ),
+            ("scratch.tickets".into(), split::tickets_bytes(capacity)),
+        ];
+        prepared.info.symbols.push((entry.symbol(), 0));
+        prepared.split = Some((entry, split_plans));
+    }
+    need.check(&prepared.info)?;
+    Ok(Box::new(prepared))
 }
 
 impl PreparedOp<LaggedMixCollapseBuffers<View>> for LaggedOp<LaggedMixCollapseBuffers<View>> {
@@ -174,22 +225,42 @@ impl PreparedOp<LaggedMixCollapseBuffers<View>> for LaggedOp<LaggedMixCollapseBu
         buffers.post.covers(dense(rows, streams, 4)?)?;
         buffers.comb.covers(dense(rows, streams * streams, 4)?)?;
         buffers.live_rows.covers(4)?;
-        self.launch(
-            rows,
-            plan,
-            &[
-                buffers.x,
-                buffers.mixer.fn_,
-                buffers.mixer.base,
-                buffers.mixer.scale,
-                buffers.pre_in,
-                buffers.collapsed,
-                buffers.pre,
-                buffers.post,
-                buffers.comb,
-                buffers.live_rows,
-            ],
-        )
+        let mut values = vec![
+            buffers.x,
+            buffers.mixer.fn_,
+            buffers.mixer.base,
+            buffers.mixer.scale,
+            buffers.pre_in,
+            buffers.collapsed,
+            buffers.pre,
+            buffers.post,
+            buffers.comb,
+        ];
+        if let Some((entry, plans)) = &self.split
+            && let Some(&plan) = plans.get(rows as usize - 1)
+        {
+            let partials = buffers
+                .scratch
+                .partials
+                .ok_or(Refusal("lagged split needs partials"))?;
+            let tickets = buffers
+                .scratch
+                .tickets
+                .ok_or(Refusal("lagged split needs tickets"))?;
+            partials.covers(split::partials_bytes(mix, rows))?;
+            tickets.covers(split::tickets_bytes(rows))?;
+            values.extend([partials, tickets, buffers.live_rows]);
+            return Ok(vec![Launch {
+                symbol: entry.symbol(),
+                rows,
+                plan,
+                arguments: entry.pack_arguments(values.into_iter().map(buffer).collect())?,
+                collective: false,
+                persistent: false,
+            }]);
+        }
+        values.push(buffers.live_rows);
+        self.launch(rows, plan, &values)
     }
 }
 

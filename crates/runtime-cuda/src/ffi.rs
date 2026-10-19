@@ -7,6 +7,158 @@
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
 use std::ptr;
 
+pub(crate) mod host_work {
+    //! CUDA-ordered host work over storage retained by the safe transfer owner.
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    pub(crate) type HostWork =
+        Box<dyn FnOnce(&[u8], &mut [&mut [u8]]) -> Result<(), String> + Send>;
+    pub(crate) type HostResult = Arc<Mutex<Option<(u64, Result<(), String>)>>>;
+
+    struct Work {
+        input: (usize, usize),
+        outputs: Vec<(usize, usize)>,
+        call: HostWork,
+        result: HostResult,
+    }
+
+    // SAFETY-REVIEWED: this declaration matches cuda.h's CUhostFn signature.
+    unsafe extern "C" {
+        fn cuLaunchHostFunc(
+            stream: StreamHandle,
+            function: extern "C" fn(*mut c_void),
+            data: *mut c_void,
+        ) -> raw::CUresult;
+    }
+
+    extern "C" fn run(pointer: *mut c_void) {
+        // SAFETY-REVIEWED: enqueue transfers one Box to CUDA, invoked exactly once.
+        let work = unsafe { Box::from_raw(pointer.cast::<Work>()) };
+        let result = Arc::clone(&work.result);
+        let start = std::time::Instant::now();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // SAFETY-REVIEWED: private pinned allocations remain retained and inaccessible
+            // to the caller until completion; the preceding D2H has finished.
+            let input =
+                unsafe { std::slice::from_raw_parts(work.input.0 as *const u8, work.input.1) };
+            let mut outputs: Vec<_> = work
+                .outputs
+                .iter()
+                .map(|&(pointer, length)| {
+                    // SAFETY-REVIEWED: each range belongs to a distinct retained allocation.
+                    unsafe { std::slice::from_raw_parts_mut(pointer as *mut u8, length) }
+                })
+                .collect();
+            for output in &mut outputs {
+                output.fill(0);
+            }
+            (work.call)(input, &mut outputs)
+        }))
+        .unwrap_or_else(|_| Err("host transform panicked".into()));
+        let elapsed = u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        *result.lock().unwrap_or_else(|error| error.into_inner()) = Some((elapsed, outcome));
+    }
+
+    /// The owner must keep every allocation alive and inaccessible until the
+    /// enqueued work completes, including when a later enqueue fails.
+    pub(crate) fn enqueue(
+        stream: StreamHandle,
+        input: &PinnedAllocation,
+        input_bytes: usize,
+        outputs: &[(&PinnedAllocation, usize)],
+        call: HostWork,
+    ) -> (c_int, HostResult) {
+        let result = Arc::new(Mutex::new(None));
+        let work = Box::new(Work {
+            input: (input.pointer as usize, input_bytes),
+            outputs: outputs
+                .iter()
+                .map(|(buffer, bytes)| (buffer.pointer as usize, *bytes))
+                .collect(),
+            call,
+            result: Arc::clone(&result),
+        });
+        let pointer = Box::into_raw(work).cast();
+        // SAFETY-REVIEWED: the owner validated lengths and stream lifetime. CUDA owns
+        // the payload only after success. The callback makes no CUDA calls.
+        let code = result_code(unsafe { cuLaunchHostFunc(stream, run, pointer) });
+        if code != CUDA_SUCCESS {
+            // SAFETY-REVIEWED: a failed enqueue leaves ownership with this function.
+            drop(unsafe { Box::from_raw(pointer.cast::<Work>()) });
+        }
+        (code, result)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn invoke(
+            input: &[u8],
+            outputs: &mut [&mut [u8]],
+            call: HostWork,
+        ) -> (u64, Result<(), String>) {
+            let result = Arc::new(Mutex::new(None));
+            let work = Box::new(Work {
+                input: (input.as_ptr() as usize, input.len()),
+                outputs: outputs
+                    .iter_mut()
+                    .map(|bytes| (bytes.as_mut_ptr() as usize, bytes.len()))
+                    .collect(),
+                call,
+                result: Arc::clone(&result),
+            });
+            run(Box::into_raw(work).cast());
+            result.lock().unwrap().take().unwrap()
+        }
+
+        #[test]
+        fn host_work_initializes_outputs_and_publishes_completion() {
+            let mut a = [0xff; 6];
+            let mut b = [0xff; 4];
+            let (_, result) = invoke(
+                &[4, 5, 6],
+                &mut [&mut a, &mut b],
+                Box::new(|input, output| {
+                    output[0][1..4].copy_from_slice(input);
+                    output[1][0] = input[2];
+                    Ok(())
+                }),
+            );
+            assert_eq!(result, Ok(()));
+            assert_eq!(a, [0, 4, 5, 6, 0, 0]);
+            assert_eq!(b, [6, 0, 0, 0]);
+        }
+
+        #[test]
+        fn host_work_reports_errors_and_contains_panics() {
+            for panic in [false, true] {
+                let mut output = [0xff; 4];
+                let (_, result) = invoke(
+                    &[],
+                    &mut [&mut output],
+                    Box::new(move |_, _| {
+                        if panic {
+                            panic!("injected host failure");
+                        }
+                        Err("row outside table".into())
+                    }),
+                );
+                assert_eq!(
+                    result.unwrap_err(),
+                    if panic {
+                        "host transform panicked"
+                    } else {
+                        "row outside table"
+                    }
+                );
+                assert_eq!(output, [0; 4]);
+            }
+        }
+    }
+}
+
 mod raw {
     #![allow(
         dead_code,

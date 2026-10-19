@@ -6,6 +6,8 @@
 compile_error!("runtime-cuda supports only Linux x86_64 CUDA deployments");
 
 mod ffi;
+mod host_transform;
+pub use host_transform::{HostTransform, HostTransformStats, HostTransformTarget};
 mod page_copy;
 pub use page_copy::{PageCopyArena, PageCopyDirection, PageCopyPair};
 

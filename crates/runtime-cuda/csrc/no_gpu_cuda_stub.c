@@ -31,7 +31,7 @@ static _Thread_local int failure_operation;
 static _Thread_local int failure_code;
 static _Thread_local int denied_device = -1;
 static _Thread_local int denied_peer = -1;
-static _Thread_local size_t call_counts[34];
+static _Thread_local size_t call_counts[36];
 static _Thread_local void* current_context;
 static _Thread_local unsigned next_stream;
 static _Thread_local unsigned char peer_edges[8][8];
@@ -307,14 +307,23 @@ int runtime_cuda_encode_tensor_map(
   return 0;
 }
 
-int cuStreamWaitEvent(void* stream, void* event, unsigned int flags) {
-  (void)stream;
-  (void)event;
-  (void)flags;
-  return current_context == NULL ? 201 : 0;
+struct fake_event { unsigned flags; float timestamp; int recorded; void* stream; };
+int cuStreamWaitEvent(void* stream, void* handle, unsigned int flags) {
+  (void)stream; (void)flags;
+  int result = result_for(35); if (result) return result;
+  if (current_context == NULL) return 201;
+  struct fake_event* event = handle;
+  if (event->recorded) complete_allocations(event->stream, 0);
+  return 0;
 }
 
-struct fake_event { unsigned flags; float timestamp; int recorded; };
+int cuLaunchHostFunc(void* stream, void (*function)(void*), void* data) {
+  (void)stream;
+  int result = result_for(34); if (result) return result;
+  function(data);
+  return 0;
+}
+
 int cuEventCreate(void** output, unsigned flags) {
   struct fake_event* event = calloc(1, sizeof(*event));
   if (event == NULL) return 2;
@@ -327,6 +336,7 @@ int cuEventRecord(void* handle, void* stream) {
   int result = result_for(30); if (result) return result;
   struct fake_event* event = handle;
   event->recorded = 1;
+  event->stream = stream;
   event->timestamp = fake_clock;
   fake_clock += 2.0f;
   return 0;

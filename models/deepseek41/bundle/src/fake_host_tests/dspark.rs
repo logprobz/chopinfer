@@ -87,7 +87,7 @@ fn mixed_prefill_and_draft_replay_the_same_target_graph() {
     let (host, mut instance) = create(shape);
     execute(&mut instance, &host, &super::prompt(7, 0, 0, 3, true));
     instance.commit().unwrap();
-    let mut captures = 0;
+    let mut target_graphs = Vec::new();
     for (prefill_start, prefill_rows, verify_start) in [(0, 2, 3), (2, 5, 4)] {
         let batch = BatchRequestV1::new(
             BatchWireVersionV1::V3,
@@ -109,19 +109,41 @@ fn mixed_prefill_and_draft_replay_the_same_target_graph() {
         .with_state_slots(vec![1, 0])
         .encode()
         .unwrap();
+        let start = host.journal.borrow().len();
         execute(&mut instance, &host, &batch);
-        instance.commit_accepted(&[kept(7, 1)]).unwrap();
-        let count = host
-            .journal
-            .borrow()
+        let journal = host.journal.borrow();
+        let step = &journal[start..];
+        let gathered = step
             .iter()
-            .filter(|line| line.starts_with("capture "))
-            .count();
-        assert!(count > 0, "DSpark target did not capture a graph");
-        if captures > 0 {
-            assert_eq!(count, captures, "prefill length changed the graph key");
+            .rposition(|line| line.starts_with("mapped gather"))
+            .expect("draft IDs must reach Engram staging before target execution");
+        let target = &step[gathered + 1..];
+        let handles = |event: &str| {
+            let mut ids: Vec<_> = target
+                .iter()
+                .filter(|line| line.starts_with(event))
+                .map(|line| line.split_whitespace().nth(2).unwrap().to_owned())
+                .collect();
+            ids.sort();
+            ids
+        };
+        let captured = handles("captured ");
+        let replayed = handles("replay ");
+        if target_graphs.is_empty() {
+            assert!(
+                !captured.is_empty(),
+                "DSpark target did not capture a graph"
+            );
+            target_graphs = captured;
+        } else {
+            assert!(captured.is_empty(), "prefill length changed the graph key");
         }
-        captures = count;
+        assert_eq!(
+            replayed, target_graphs,
+            "target graph handles were not reused"
+        );
+        drop(journal);
+        instance.commit_accepted(&[kept(7, 1)]).unwrap();
     }
     assert_eq!(state(&instance, 7).end, 5);
     assert_eq!(state(&instance, 8).end, 7);

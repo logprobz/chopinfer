@@ -116,7 +116,7 @@ def preflight():
     env = os.environ.copy()
     for name in ["CHOPINFER_KERNEL_GPU", "CHOPINFER_KERNEL_GPUS", "CHOPINFER_KERNEL_REQUIRE"]:
         env.pop(name, None)
-    dry = checked([str(BINARY), "moe_active::", "--skip", "_gpu", "--nocapture"], env=env)
+    dry = checked([str(BINARY), "moe_active::", "--skip", "_gpu", "--skip", "prefill::", "--nocapture"], env=env)
     assert "3 passed; 0 failed" in dry and "skipping" not in dry
     (ROOT / "dry-run.log").write_text(dry)
     checked(["journalctl", "-k", "-n", "0", "--no-pager"])

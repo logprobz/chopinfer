@@ -18,6 +18,7 @@ use runtime_cuda::{DeviceBuffer, Function, Stream};
 use std::collections::BTreeMap;
 
 mod cases;
+mod prefill;
 mod profile;
 mod shared;
 use cases::{Case, Routing};
@@ -30,6 +31,7 @@ enum Mode {
     BlockWarps,
     Streamed,
     Previous,
+    PrefillGrouped,
 }
 
 struct Arena<'a> {
@@ -75,6 +77,7 @@ struct Arm {
     side: Vec<Launch>,
     sum: Vec<Launch>,
     active_list: View,
+    route_counts: View,
     outputs: Vec<View>,
     poison: Vec<View>,
     status: View,
@@ -157,6 +160,8 @@ fn arm(
     };
     let entries = if mode == Mode::Selected {
         Vec::new()
+    } else if mode == Mode::PrefillGrouped {
+        registration::prefill_projections(&FLASH)?
     } else if streamed {
         registration::streamed_projections(&FLASH)?
             .into_iter()
@@ -358,6 +363,7 @@ fn arm(
         poison,
         status,
         active_list: metadata.active_experts.unwrap(),
+        route_counts: metadata.counts.unwrap(),
     };
     shared::append(a, case, inputs, &mut arm, shared_weights)?;
     Ok(arm)

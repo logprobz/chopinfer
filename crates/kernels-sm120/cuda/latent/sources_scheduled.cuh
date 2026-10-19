@@ -9,6 +9,24 @@ using sources::exp_of;
 using sources::partial_index;
 using sources::tile_offset;
 
+__device__ __forceinline__ uint64_t load_eight(const uint8_t* pointer) {
+  if ((reinterpret_cast<uintptr_t>(pointer) & 7) == 0)
+    return *reinterpret_cast<const uint64_t*>(pointer);
+  uint64_t value = 0;
+#pragma unroll
+  for (int i = 0; i < 8; ++i) value |= uint64_t(pointer[i]) << (8 * i);
+  return value;
+}
+
+__device__ __forceinline__ uint32_t load_four(const uint8_t* pointer) {
+  if ((reinterpret_cast<uintptr_t>(pointer) & 3) == 0)
+    return *reinterpret_cast<const uint32_t*>(pointer);
+  uint32_t value = 0;
+#pragma unroll
+  for (int i = 0; i < 4; ++i) value |= uint32_t(pointer[i]) << (8 * i);
+  return value;
+}
+
 // Small row counts assign one head to each CTA. Every head keeps the
 // reference tile stream, split boundaries and arithmetic. Empty tiles
 // still update softmax state, including signed zero, in the same order.
@@ -145,25 +163,38 @@ __device__ void attention(
             output[m][n].v[i] = fmaf(output[m][n].v[i], rescale[n][i % 2], 0.0f);
       continue;
     }
-    for (int i = threadIdx.x; i < T::keys * T::latent / 2; i += T::threads) {
-      const int key = i / (T::latent / 2), d = (i % (T::latent / 2)) * 2;
-      uint32_t pair = 0;
+    // A 16-byte tile sector holds four independently rounded pairs. Its
+    // eight channels share one scale in both formats. Unaligned source
+    // strides keep byte loads, preserving the reference buffer contract.
+    for (int i = threadIdx.x; i < T::keys * T::latent / 8; i += T::threads) {
+      const int key = i / (T::latent / 8), d = (i % (T::latent / 8)) * 8;
+      uint32_t pairs[4] = {0, 0, 0, 0};
       if constexpr (Bf16) {
         if (valid[key] != 0) {
           const auto* values = reinterpret_cast<const uint16_t*>(code_rows[key]);
-          pair = uint32_t(values[d]) | uint32_t(values[d + 1]) << 16;
+#pragma unroll
+          for (int p = 0; p < 4; ++p)
+            pairs[p] = uint32_t(values[d + 2 * p]) | uint32_t(values[d + 2 * p + 1]) << 16;
         }
       } else if (valid[key] == 1) {
-        const auto code = *reinterpret_cast<const uint16_t*>(code_rows[key] + d);
-        const auto value = convert::unpack_f32_e4m3(code);
+        const uint64_t codes = load_eight(code_rows[key] + d);
         const float s = convert::unpack_f32_ue8m0(scale_rows[key][d / 32]).lo;
-        pair = attention::bf16_pair(value.lo * s, value.hi * s);
+#pragma unroll
+        for (int p = 0; p < 4; ++p) {
+          const auto value = convert::unpack_f32_e4m3(uint16_t(codes >> (16 * p)));
+          pairs[p] = attention::bf16_pair(value.lo * s, value.hi * s);
+        }
       } else if (valid[key] == 2) {
-        const auto value = convert::unpack_f32_e2m1(code_rows[key][d / 2]);
+        const uint32_t codes = load_four(code_rows[key] + d / 2);
         const float s = convert::unpack_f32_e4m3(scale_rows[key][d / 16]).lo;
-        pair = attention::bf16_pair(value.lo * s, value.hi * s);
+#pragma unroll
+        for (int p = 0; p < 4; ++p) {
+          const auto value = convert::unpack_f32_e2m1(uint8_t(codes >> (8 * p)));
+          pairs[p] = attention::bf16_pair(value.lo * s, value.hi * s);
+        }
       }
-      *reinterpret_cast<uint32_t*>(tile + tile_offset<T::keys>(key, d, phase) + (d % 8) * 2) = pair;
+      *reinterpret_cast<uint4*>(tile + tile_offset<T::keys>(key, d, phase)) =
+          make_uint4(pairs[0], pairs[1], pairs[2], pairs[3]);
     }
     __syncthreads();
     // QK: one chain from zero over this warp's 128 latent dims per key tile.

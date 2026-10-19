@@ -91,6 +91,10 @@ fn scheduled_sources_compile_without_spills() {
             .unwrap();
         assert!(body.contains("PREEXIT"));
         assert!(body.contains("ACQBULK"));
+        assert!(
+            body.contains("STS.128"),
+            "source widening must store complete 16-byte sectors"
+        );
     }
     std::fs::remove_dir_all(out).unwrap();
 }

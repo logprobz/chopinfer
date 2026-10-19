@@ -57,8 +57,32 @@ one observer's progress and include synchronization, not hardware stall
 counters. Resource queries report driver attributes and theoretical active
 CTAs per SM for the exact block/shared-memory request, plus estimated waves.
 
-All compilation and CPU checks use `tools/dev/heavy.sh`. The frozen pair
-runs the `attention_pair` binary with `gpu_decode --ignored --test-threads=1`.
+Compilation and CPU checks outside the GPU queue use `tools/dev/heavy.sh`.
+The GPU runner controls CPU affinity; its pair job invokes the frozen
+`attention_pair` binary directly with `gpu_decode --ignored --test-threads=1`.
 Its dry run verifies every module and symbol, launch shared-memory opt-ins,
 coverage parser controls and the kernel-lab timing probe. Actual byte-floor
 ratios, bottleneck attribution and speedups require the allocated GPU run.
+
+On 2026-10-19, the pair passed all nine variants at 250 W: 72 matrix cases,
+126 boundary cases, 1782 instrumented comparisons, 262144 widening pairs
+and four negative controls. Partial buffers and final outputs matched over
+poisoned and graph replays. The eight decode/verify splits and one prefill
+split retain their existing relation.
+
+The full 64-key tile with ordinary F32 widening and adaptive head grouping
+was the leading candidate. Median paired source-plus-merge ratios were
+1.000 at one row, 0.9365 at eight rows and 0.9320 at 32 verify rows. The
+latter two won all 24 tested context/format combinations each. Half-tile
+staging doubled theoretical resident CTAs but repeated widening and shared
+staging; its adaptive variant's corresponding ratios were 1.356, 1.250 and
+1.0663. For the leading full-tile candidate at 1K context, staging consumed
+76-81 percent of sampled mixed-source CTA cycles, including synchronization.
+These are instrumented intervals, not hardware stall counters.
+
+The host was compiling during the run, and the job has no host-quiet
+acceptance gate. Its timings remain informational. Keep serving unchanged
+until a quiet repeat confirms the eight-row and 32-row candidates. The
+shared preparation adapter can declare exact row/entry pairs, preserving
+reference validation, unlisted rows, shared-memory opt-ins and the ordered
+merge. Adding that adapter does not select a serving route.

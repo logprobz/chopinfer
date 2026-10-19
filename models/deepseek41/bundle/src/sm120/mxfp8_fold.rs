@@ -193,6 +193,8 @@ pub fn routed_query(query: Mxfp8FoldGemmQuery, rows: u32) -> Mxfp8FoldGemmQuery 
 // Flash SM120, 250 W, 2026-10-19: ticket timings were within 3% of the
 // split-fold baseline on both GPUs. Prefer the baseline for these ties.
 // Each row is (N, K, row-count ranges); all are single projections at G=1.
+// These are Flash measurements only, not performance evidence for another
+// geometry with the same matrix dimensions. Both paths preserve exact arithmetic.
 const SPLIT_FOLD_TIES: &[(u32, u32, &[RangeInclusive<u32>])] = &[
     (16384, 1280, &[3..=4, 7..=11]),
     (5120, 1152, &[1..=2, 9..=16]),

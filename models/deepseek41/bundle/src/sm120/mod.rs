@@ -69,7 +69,7 @@ mod latent_window_bf16;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod latent_window_stage;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
-mod moe;
+pub(crate) mod moe;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod reduce;
 pub mod ring_gather;
@@ -144,6 +144,32 @@ pub fn register_f32_projections(
 include!(concat!(env!("OUT_DIR"), "/argument_access.rs"));
 
 impl crate::Kernels {
+    // SM120 TP4, 250 W, 2026-10-19: the complete 128/top-3 Decode-1
+    // graph is bitwise and wins all three routing patterns, 198.13..198.16
+    // -> 60.88..60.94 us. Other buckets retain their measured selections.
+    pub(crate) fn measured_moe_floor(
+        shape: &crate::shape::Shape,
+        set: model_deepseek41_contract::moe::Experts,
+    ) -> Result<Option<crate::ops::moe::floor::Prepared>, kernel_core::backend::Refused> {
+        if !moe::streamed_qualified(shape.geometry, shape.ranks())
+            || (set.count, set.top_k) != (128, 3)
+        {
+            return Ok(None);
+        }
+        let entry = moe::floor_entries(shape.geometry)
+            .map_err(kernel_core::backend::Refused::Rule)?
+            .into_iter()
+            .find(|e| e.experts() == set.count)
+            .expect("declared expert bank");
+        crate::ops::moe::floor::Prepared::new(
+            entry,
+            model_deepseek41_contract::moe::router(shape.geometry, set)
+                .scaling_factor
+                .to_bits(),
+        )
+        .map(Some)
+    }
+
     /// Whether the locked entry declares this pointer argument as const input.
     pub(crate) fn const_input_argument(symbol: &str, index: usize) -> bool {
         CONST_INPUT_ARGUMENTS
@@ -175,7 +201,8 @@ impl crate::Kernels {
     /// Entries used only by the drafter's smaller expert bank. An AR-only
     /// instance has no consumer for these modules.
     pub fn drafter_only(cubin: &str, g: &model_deepseek41_contract::geometry::Geometry) -> bool {
-        cubin == ring_gather_entries::CUBIN
+        cubin.starts_with("floor_moe_")
+            || cubin == ring_gather_entries::CUBIN
             || cubin == dspark_router::cubin_name(g)
             || dspark_router::sum_cubins(g)
                 .iter()
@@ -191,7 +218,9 @@ impl crate::Kernels {
             && (!latent_scheduled::candidate_cubin(cubin)
                 || latent_scheduled::qualified(shape.geometry, shape.ranks()))
             && !encoder::is_cubin(cubin)
-            && !cubin.starts_with("floor_moe_")
+            && !cubin.starts_with("bandwidth_moe_")
+            && (!cubin.starts_with("floor_moe_")
+                || moe::streamed_qualified(shape.geometry, shape.ranks()))
             && (!cubin.starts_with("prefill_moe_")
                 || (cubin.ends_with("_compute_sm120")
                     && moe::streamed_qualified(shape.geometry, shape.ranks())))

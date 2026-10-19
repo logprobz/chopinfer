@@ -12,6 +12,8 @@
 //! The projections and routes are prepared for each kind of phase: a
 //! prefill's rows, a decode bucket's and a verify step's.
 
+pub(crate) mod floor;
+
 use kernel_core::backend::{Backend, Counts, Prepared, Refused, View};
 use kernel_core::contract::{MoeQuery, Refusal};
 use kernel_core::gated_mlp::GatedMlpProjection;
@@ -80,6 +82,7 @@ pub(crate) struct MoeOps {
     buckets: Vec<(OperationUse, Kind)>,
     /// Each rank's routed sum of F32 rows.
     sums: Vec<Prepared<RoutedSumBuffers<View>>>,
+    floor: Option<floor::Prepared>,
 }
 
 /// The route metadata's spans.
@@ -247,9 +250,14 @@ impl MoeOps {
                 })
             })
             .collect::<Result<_, _>>()?;
+        let floor = crate::Kernels::measured_moe_floor(shape, set)?;
+        if let Some(op) = &floor {
+            op.record(asks);
+        }
         let [prefill, decode, verify] = USES;
         Ok(MoeOps {
             quantize,
+            floor,
             kinds: [kind(prefill)?, kind(decode)?, kind(verify)?],
             buckets: crate::Kernels::moe_buckets(shape)
                 .iter()
@@ -264,6 +272,14 @@ impl MoeOps {
                 .collect::<Result<_, Refused>>()?,
             sums,
         })
+    }
+
+    pub(crate) fn floor(&self, phase: Phase) -> Option<&floor::Prepared> {
+        if matches!(phase, Phase::Decode(1)) {
+            self.floor.as_ref()
+        } else {
+            None
+        }
     }
 
     fn kind(&self, phase: Phase) -> &Kind {
@@ -477,6 +493,7 @@ mod tests {
                     Phase::Prefill { rows: 4096 },
                     Phase::Prefill { rows: 8192 },
                 ] {
+                    assert_eq!(ops.floor(phase).is_some(),shape.ranks()==4 && set.count==128 && matches!(phase,Phase::Decode(1)));
                     let kind = ops.kind(phase);
                     let compact = shape.ranks() == 4
                         && phase == Phase::Decode(1)

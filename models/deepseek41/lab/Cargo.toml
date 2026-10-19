@@ -57,6 +57,10 @@ path = "examples/sm120/build_dspark_ring_gather.rs"
 name = "build_moe_floor"
 path = "examples/sm120/build_moe_floor.rs"
 
+[[example]]
+name = "prefill_attention"
+path = "examples/sm120/prefill_attention.rs"
+
 [lints]
 workspace = true
 

@@ -125,6 +125,32 @@ mod tests {
                     ),
                 );
             }
+            let weights: Vec<_> = b
+                .views
+                .keys()
+                .filter(|name| name.ends_with(".weight"))
+                .cloned()
+                .collect();
+            for weight in weights {
+                for (paired, op) in ops.dense.as_ref().unwrap().stream_weight_ops(&weight) {
+                    let sizes = crate::ops::fold_stream::allocation_bytes(op, paired);
+                    for (role, bytes) in ["packed0", "packed1", "state", "workspace"]
+                        .into_iter()
+                        .zip(sizes)
+                        .filter(|(_, bytes)| *bytes > 0)
+                    {
+                        next += 1;
+                        b.views.insert(
+                            crate::ops::fold_stream::name(&weight, paired, role),
+                            DeviceBufferSpanV1::new(
+                                BundleDeviceBufferHandleV1::from_parts(next, rank + 1),
+                                0,
+                                bytes,
+                            ),
+                        );
+                    }
+                }
+            }
             let live = DeviceBufferSpanV1::new(
                 BundleDeviceBufferHandleV1::from_parts(999, rank + 1),
                 0,
@@ -193,6 +219,37 @@ mod tests {
                     }
                 }
             }
+            let name = crate::ops::fold_stream::name(
+                &layer_view(0, "ffn.shared_experts.w2.weight"),
+                false,
+                "workspace",
+            );
+            let private = b.views[&name];
+            let (stages, mut bad) = lower(&b);
+            let mut changed = 0;
+            for op in &mut bad {
+                for arg in &mut op.arguments.0 {
+                    if let Argument::DeviceBuffer(h) = arg {
+                        let span = op.bindings.get(*h).unwrap();
+                        if span.buffer == private.buffer {
+                            assert_eq!(span.offset, private.offset);
+                            assert!(span.length <= b.workspace.length);
+                            *h = op.bindings.bind(DeviceBufferSpanV1::new(
+                                b.workspace.buffer,
+                                b.workspace.offset,
+                                span.length,
+                            ));
+                            changed += 1;
+                        }
+                    }
+                }
+            }
+            assert_eq!(changed, 1);
+            assert!(
+                crate::shared_overlap::checked_units(&stages, &bad, &readonly)
+                    .unwrap_err()
+                    .contains("unordered scratch alias")
+            );
             b.shared_workspace = b.workspace;
             let (stages, bad) = lower(&b);
             assert!(

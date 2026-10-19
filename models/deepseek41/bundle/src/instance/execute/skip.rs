@@ -125,7 +125,7 @@ impl Plan {
                 prefix: prefix as u32,
             })
             .collect();
-        let logits: Vec<u32> = inputs.logit_rows().iter().map(|&row| row as u32).collect();
+        let logits = inputs.logit_rows();
         let cone = prefill_cone::Plan::new(g, &items, &logits, instance.dspark.is_some(), 64)?;
         let features: Vec<_> = if instance.dspark.is_some() {
             items

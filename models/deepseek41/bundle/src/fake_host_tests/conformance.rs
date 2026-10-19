@@ -233,6 +233,10 @@ conformance::suite! {
     startup: Served {
         tp4_ar: "tp4-ar",
         tp4_dspark: "tp4-dspark",
+        tp4_ar_upper_skip_2048: "tp4-ar-upper-skip-2048",
+        tp4_ar_upper_skip_8192: "tp4-ar-upper-skip-8192",
+        tp4_dspark_upper_skip_2048: "tp4-dspark-upper-skip-2048",
+        tp4_dspark_upper_skip_8192: "tp4-dspark-upper-skip-8192",
     }
     mod ar_tp1 {
         allocation_release: Model<AR_TP1> => AllocationRelease;
@@ -334,7 +338,18 @@ impl conformance::Startup for Served {
             }),
         }
         };
-        vec![serving("tp4-ar", 0), serving("tp4-dspark", 5)]
+        let mut configurations = vec![serving("tp4-ar", 0), serving("tp4-dspark", 5)];
+        for (mode, drafts) in [("ar", 0), ("dspark", 5)] {
+            for chunk in [2048, 8192] {
+                let mut entry = serving(&format!("tp4-{mode}-upper-skip-{chunk}"), drafts);
+                entry.model_options = BTreeMap::from([
+                    ("prefill_chunk_tokens".into(), chunk.to_string()),
+                    ("prefill_upper_skip".into(), "true".into()),
+                ]);
+                configurations.push(entry);
+            }
+        }
+        configurations
     }
     fn new(serving: &conformance::Serving) -> Self {
         let ranks = Ranks::new(serving.tensor_parallel).expect("a supported rank count");
@@ -353,12 +368,24 @@ impl conformance::Startup for Served {
         }
     }
     fn create(&self) -> Result<BundleInstanceV1, BundleAbiError> {
-        let record = crate::config::tests::record(
+        let mut record = crate::config::tests::record(
             &self.host.shape,
             self.host.kv,
             self.serving.sequences,
             false,
         );
+        if !self.serving.model_options.is_empty() {
+            let tag = runtime_bundle_abi::MODEL_OPTIONS_TAG_V1;
+            let at = record.windows(tag.len()).position(|w| w == tag).unwrap() + tag.len();
+            let mut options: serde_json::Value = serde_json::from_slice(&record[at + 4..]).unwrap();
+            for (key, value) in &self.serving.model_options {
+                options[key] = serde_json::from_str(value).unwrap();
+            }
+            let options = serde_json::to_vec(&options).unwrap();
+            record.truncate(at);
+            record.extend_from_slice(&(options.len() as u32).to_le_bytes());
+            record.extend_from_slice(&options);
+        }
         api().create(HostServicesTableV1::new(Rc::clone(&self.observed)), &record)
     }
     fn step(&self, items: &[conformance::Item]) -> Vec<u8> {

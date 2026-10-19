@@ -97,7 +97,8 @@ replaces them, for example with 32 sequences.
 | `--kv-cache-dtype auto\|bf16\|fp8\|mixed` | `auto` | `auto` uses the package's preferred KV layout; `mixed` its mixed-plane layout (each plane in its own code and scale format) |
 | `--prefix-cache on\|off` | `on` | Prefix reuse; `off` is a diagnostic escape hatch |
 | `--speculative-tokens N` | 0 (profiles set it) | Draft depth; 0 serves autoregressively and drops the profile's speculation |
-| `--speculation fixed\|adaptive` | `adaptive` | Adaptive drafts only when it pays; fixed always drafts N |
+| `--speculation fixed\|adaptive\|table` | `adaptive` | Adaptive drafts only when it pays; fixed always drafts N; table plans from `--speculation-costs` ([table mode](adaptive-speculation.md#table-mode)) |
+| `--speculation-costs ITEMS:BASE:STEP:DRAFTING:ROW,...` | none | Step-cost table of `--speculation table`, in microseconds; required by it and refused otherwise |
 | `--draft-cost per-token\|per-block` | `per-token` | Drafter cost model; DFlash profiles use `per-block` |
 | `--speculative-rows N` | package limit | Caps verify rows per step |
 | `--queue-depth N` | unbounded | Requests waiting beyond the live sequences; a full bounded queue returns HTTP 429 |

@@ -25,6 +25,31 @@ slows by more than that margin, the controller probes again after 16 idle
 plans. The controller is independent of model and bundle code; its tests run
 with `cargo test -p runtime-engine --locked --offline`.
 
+## Table mode
+
+`--speculation table` plans each step from a fixed step-cost table instead of
+measured step times, so a plan depends only on the batch, each request's
+verified outcomes and the table. `--speculation-costs` gives one entry per
+calibrated concurrency, `items:base:step:drafting:row` in microseconds: a
+step of `items` items, `d` of them drafting, with `rows` decode-phase rows
+costs `base + step + drafting * d + row * (rows - items)`, without `step` when
+no item drafts. `base` is the AR step; `step` is what drafting costs once per
+step (catch-up and drafter launches batched across items); `drafting` is each
+drafting item's share; `row` is each verify row beyond the items. Other
+concurrencies interpolate every coefficient linearly; beyond the table the
+nearest entry applies. A table holds at most 16 entries.
+
+A dynamic program over the number of drafting items and drafts picks the
+counts that maximize expected emitted tokens (one per item plus each draft's
+survival product from the request's acceptance estimate) per estimated
+microsecond, within the draft budget and the executable draft counts. Ties
+keep fewer drafts, then fewer drafting items, so no plan is timing dependent.
+With no draft paying for itself the step is AR. Every sixteenth drafting
+plan gives any unused draft budget to the drafting item likeliest to accept
+deeper, as adaptive mode does, so deeper positions stay observed. A profile sets the table with `speculation.costs`
+beside `"mode": "table"`; an explicit `--speculation` other than `table`, or
+`--speculative-tokens 0`, drops the profile's costs.
+
 ## State and verification contract
 
 Verification prepares K + 1 rows transactionally. Commit keeps only the

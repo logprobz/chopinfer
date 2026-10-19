@@ -71,6 +71,57 @@ fn backend(entries: Vec<Entry>) -> Sm120 {
 }
 
 #[test]
+fn split_decode_uses_two_launches_for_every_row_through_256() {
+    for weight in [WeightFormat::Bf16, WeightFormat::F32] {
+        let original = entry(weight);
+        let q = GemmQuery {
+            m_capacity: 8192,
+            ..original.query()
+        };
+        let usage = OperationUse {
+            capacity: 8192,
+            ..original.usage()
+        };
+        let e = Entry::new(q, usage, "split_test")
+            .unwrap()
+            .with_split_decode();
+        let prepared = backend(vec![e.clone()])
+            .projection(&operation(&e), usage, Need::rows(8192))
+            .unwrap()
+            .handle;
+        let mut b = buffers(&e);
+        b.scratch.weight_domain = Some(View {
+            handle: 10,
+            bytes: e.weight_domain_bytes(),
+        });
+        let workspace = View {
+            handle: 9,
+            bytes: prepared.info().workspace,
+        };
+        assert_eq!(prepared.initialize(&b).unwrap().len(), 1);
+        for rows in 1..=256 {
+            let launches = prepared
+                .launches(&b, workspace, Counts::rows(rows))
+                .unwrap();
+            assert_eq!(launches.len(), 2, "rows={rows}");
+            assert_eq!(launches[1].plan.grid, [2, rows.div_ceil(8), 1]);
+            let short = View {
+                bytes: e.decode_workspace_bytes(rows) - 1,
+                ..workspace
+            };
+            assert!(prepared.launches(&b, short, Counts::rows(rows)).is_err());
+        }
+        for rows in [257, 2048, 8192] {
+            let launches = prepared
+                .launches(&b, View::EMPTY, Counts::rows(rows))
+                .unwrap();
+            assert_eq!(launches.len(), 1);
+            assert_eq!(launches[0].symbol, e.baseline_symbol());
+        }
+    }
+}
+
+#[test]
 fn cached_weights_initialize_once_and_decode_preserves_every_chain_plane() {
     for weight in [WeightFormat::Bf16, WeightFormat::F32] {
         let mut q = entry(weight).query();

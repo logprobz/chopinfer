@@ -19,7 +19,11 @@ impl Entry {
     }
 
     pub fn baseline_symbol(&self) -> &str {
-        if self.cached {
+        if self.fused {
+            self.symbol
+                .strip_suffix("_split_v2")
+                .expect("split entry suffix")
+        } else if self.cached {
             self.symbol
                 .strip_suffix("_cached_v1")
                 .expect("cached entry suffix")
@@ -32,6 +36,11 @@ impl Entry {
     /// above the measured split-decode crossover. `symbols` instead lists
     /// the exports compiled by this entry's cubin specification.
     pub fn runtime_symbols(&self) -> Vec<String> {
+        if self.fused {
+            let mut symbols = self.symbols();
+            symbols.push(self.baseline_symbol().to_owned());
+            return symbols;
+        }
         if self.cached {
             let mut symbols = ["_weights", "_rows", "_decode", "_reduce"]
                 .map(|suffix| self.stage_symbol(suffix))
@@ -44,6 +53,11 @@ impl Entry {
     }
 
     pub fn symbols(&self) -> Vec<String> {
+        if self.fused {
+            return ["_weights", "_prepare", ""]
+                .map(|s| self.stage_symbol(s))
+                .to_vec();
+        }
         if self.cached {
             ["", "_weights", "_rows", "_decode", "_reduce"]
                 .map(|suffix| self.stage_symbol(suffix))
@@ -54,6 +68,9 @@ impl Entry {
     }
 
     pub fn stage_symbol(&self, suffix: &str) -> String {
+        if self.fused {
+            return format!("{}{suffix}_v2", self.symbol.trim_end_matches("_v2"));
+        }
         format!("{}{suffix}_v1", self.symbol.trim_end_matches("_v1"))
     }
 
@@ -62,6 +79,9 @@ impl Entry {
     }
 
     pub fn decode_workspace_bytes(&self, capacity: u32) -> u64 {
+        if self.fused {
+            return self.split_workspace_bytes(capacity);
+        }
         128 + u64::from(capacity.min(MAX_ROWS))
             * u64::from(self.query.n)
             * u64::from(self.query.k.div_ceil(128))
@@ -71,7 +91,11 @@ impl Entry {
     /// Splits are fixed groups of four 128-K chains, including a final
     /// partial group. Every chain has its own workspace plane.
     pub fn decode_plan(&self, rows: u32) -> Result<LaunchPlan, Refusal> {
-        if !self.cached || rows == 0 || rows > MAX_ROWS || rows > self.query.m_capacity {
+        if !self.cached
+            || rows == 0
+            || rows > self.decode_max_rows()
+            || rows > self.query.m_capacity
+        {
             return Err(Refusal("exact F32 decode rows exceed the declared bucket"));
         }
         self.stage_plan([
@@ -109,6 +133,9 @@ impl Entry {
     }
 
     pub fn entry_specs(&self) -> Vec<EntrySpec> {
+        if self.fused {
+            return self.split_specs();
+        }
         let mut specs = vec![self.entry_spec()];
         if !self.cached {
             return specs;

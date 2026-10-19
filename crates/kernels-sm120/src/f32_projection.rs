@@ -18,6 +18,7 @@ pub const HEADER: &str = "gemm/exact_f32.cuh";
 pub const IMPLEMENTATION: &str = "sm120.exact-f32.fold128.v1";
 
 mod decode;
+mod split;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Entry {
@@ -25,6 +26,7 @@ pub struct Entry {
     usage: OperationUse,
     symbol: String,
     cached: bool,
+    fused: bool,
 }
 
 impl Entry {
@@ -56,6 +58,7 @@ impl Entry {
             usage,
             symbol: format!("{stem}_v1"),
             cached: false,
+            fused: false,
         })
     }
     pub fn query(&self) -> GemmQuery {
@@ -92,6 +95,9 @@ impl Entry {
         Ok(plan)
     }
     pub fn entry_spec(&self) -> EntrySpec {
+        if self.fused {
+            return self.split_specs().pop().expect("split compute entry");
+        }
         if self.cached {
             return self.cached_spec();
         }
@@ -182,7 +188,9 @@ pub fn cubin_spec(name: impl Into<String>, entries: &[Entry]) -> Result<CubinSpe
         include_dirs: vec![],
         headers: vec![format!(
             "#include \"{}\"",
-            if entries.iter().any(Entry::uses_cached_weights) {
+            if entries.iter().any(Entry::uses_fused_split) {
+                "gemm/exact_f32_split.cuh"
+            } else if entries.iter().any(Entry::uses_cached_weights) {
                 "gemm/exact_f32_decode.cuh"
             } else {
                 HEADER

@@ -81,11 +81,14 @@ pub(super) fn prepare(
             .collect(),
     );
     if entry.uses_cached_weights() {
-        entry.decode_plan(need.capacity.min(32))?;
+        entry.decode_plan(need.capacity.min(entry.decode_max_rows()))?;
+        if entry.uses_fused_split() {
+            entry.prepare_plan(need.capacity.min(entry.decode_max_rows()))?;
+        }
         entry.stage_plan([entry.query().n.div_ceil(16), 1, 1])?;
         let elements = need
             .capacity
-            .min(32)
+            .min(entry.decode_max_rows())
             .checked_mul(entry.query().n)
             .ok_or(Refused::Rule("F32 reduction grid overflows".into()))?;
         entry.stage_plan([elements.div_ceil(128), 1, 1])?;
@@ -164,12 +167,43 @@ impl PreparedOp<ProjectionBuffers<View>> for Projection {
         b.live_rows.covers(4)?;
         if self.entry.uses_cached_weights() {
             let ptr = |v: View| Argument::DeviceBuffer(v.handle);
+            if self.entry.uses_fused_split() && rows <= self.entry.decode_max_rows() {
+                let flags = self.weight_domain(b)?;
+                workspace.covers(self.entry.decode_workspace_bytes(rows))?;
+                return Ok(vec![
+                    self.stage(
+                        "_prepare",
+                        rows,
+                        self.entry.prepare_plan(rows)?,
+                        vec![
+                            ptr(b.activation),
+                            ptr(b.live_rows),
+                            Argument::U32(rows),
+                            ptr(workspace),
+                        ],
+                    ),
+                    self.stage(
+                        "",
+                        rows,
+                        self.entry.decode_plan(rows)?,
+                        vec![
+                            ptr(b.activation),
+                            ptr(b.weights.codes),
+                            ptr(workspace),
+                            ptr(b.output),
+                            ptr(b.live_rows),
+                            Argument::U32(rows),
+                            ptr(flags),
+                        ],
+                    ),
+                ]);
+            }
             // SM120 at 250 W, 2026-10-19: split decode won through 32
             // measured rows, but cached prefill at 64 rows was 1.15-1.17x
             // slower for small-N projections. Keep 32 as the last measured
             // winning split bucket; all larger rows use the original
             // symbol, plan and arguments.
-            if rows <= 32 {
+            if !self.entry.uses_fused_split() && rows <= 32 {
                 let flags = self.weight_domain(b)?;
                 workspace.covers(self.entry.decode_workspace_bytes(rows))?;
                 return Ok(vec![

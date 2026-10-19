@@ -103,6 +103,7 @@ mod f32_wide;
 #[path = "indexer.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod indexer;
+mod indexer_hierarchical;
 mod indexer_mma;
 mod indexer_mma_guard;
 mod indexer_mma_guard_fast;
@@ -296,6 +297,7 @@ pub fn selection(
             owners.push((indexer_mma::cubin_name(geometry), geometry.id));
             owners.push((indexer_mma_guard::cubin_name(geometry), geometry.id));
             owners.push((indexer_mma_guard_fast::cubin_name(geometry), geometry.id));
+            owners.push((indexer_hierarchical::cubin_name(geometry), geometry.id));
         }
         owners.push((
             indexer::runtime_candidates_cubin_name(geometry),
@@ -420,6 +422,7 @@ pub fn selection(
     specs.extend(
         indexer_mma_guard_fast::cubins(geometries).expect("coarse guarded MMA position cubins"),
     );
+    specs.extend(indexer_hierarchical::cubins(geometries).expect("ordered position merge cubins"));
     specs.extend(indexer::bf16_cubins(geometries).expect("deepseek41 BF16 indexer cubins"));
     specs.extend(compressor::cubins(geometries).expect("deepseek41 compressor cubins"));
     specs.extend(compressor_bf16::cubins(geometries).expect("deepseek41 BF16 index-key cubins"));

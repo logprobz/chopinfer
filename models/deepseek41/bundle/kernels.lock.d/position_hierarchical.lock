@@ -1,0 +1,828 @@
+[
+  {
+    "name": "position_hierarchical_deepseek41_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_position_indexer_deepseek41_r2_all_select_v3_live_merge_v1_hier_group_v1_negative_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "batches",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "mask",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "width"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U32",
+            "name": "top_k"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "uint64_t"
+          },
+          {
+            "kind": "U64",
+            "name": "scratch_offset"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "intermediate",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r2_all_select_v3_live_merge_v1_hier_group_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "batches",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "mask",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "width"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U32",
+            "name": "top_k"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "uint64_t"
+          },
+          {
+            "kind": "U64",
+            "name": "scratch_offset"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "intermediate",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r2_all_select_v3_live_merge_v1_hier_final_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "batches",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "mask",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "width"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U32",
+            "name": "top_k"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "uint64_t"
+          },
+          {
+            "kind": "U64",
+            "name": "scratch_offset"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "intermediate",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r1_all_select_v3_live_merge_v1_hier_group_v1_negative_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "batches",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "mask",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "width"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U32",
+            "name": "top_k"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "uint64_t"
+          },
+          {
+            "kind": "U64",
+            "name": "scratch_offset"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "intermediate",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r1_all_select_v3_live_merge_v1_hier_group_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "batches",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "mask",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "width"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U32",
+            "name": "top_k"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "uint64_t"
+          },
+          {
+            "kind": "U64",
+            "name": "scratch_offset"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "intermediate",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r1_all_select_v3_live_merge_v1_hier_final_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "batches",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "mask",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "width"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U32",
+            "name": "top_k"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "uint64_t"
+          },
+          {
+            "kind": "U64",
+            "name": "scratch_offset"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "intermediate",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_position_blocks_deepseek41_r1_select_v3_valid_merge_v1_hier_group_v1_negative_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "batches",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "tags",
+            "cxx_type": "const uint64_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stored_tags",
+            "cxx_type": "const uint64_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stored_visible",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "source_status",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "width"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U32",
+            "name": "top_k"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "uint64_t"
+          },
+          {
+            "kind": "U64",
+            "name": "scratch_offset"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "intermediate",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_position_blocks_deepseek41_r1_select_v3_valid_merge_v1_hier_group_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "batches",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "tags",
+            "cxx_type": "const uint64_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stored_tags",
+            "cxx_type": "const uint64_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stored_visible",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "source_status",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "width"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U32",
+            "name": "top_k"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "uint64_t"
+          },
+          {
+            "kind": "U64",
+            "name": "scratch_offset"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "intermediate",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_position_blocks_deepseek41_r1_select_v3_valid_merge_v1_hier_final_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "tables",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "batches",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "positions",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "tags",
+            "cxx_type": "const uint64_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stored_tags",
+            "cxx_type": "const uint64_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "stored_visible",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "source_status",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "status",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "width"
+          },
+          {
+            "kind": "U32",
+            "name": "max_pages"
+          },
+          {
+            "kind": "U32",
+            "name": "top_k"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "uint64_t"
+          },
+          {
+            "kind": "U64",
+            "name": "scratch_offset"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "intermediate",
+            "cxx_type": "uint64_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "ba36d37be8ba91dba704775eddbc6ffcc34a1365dbda01870bed519ed95ca0e6",
+    "resources": [
+      {
+        "symbol": "chop_position_indexer_deepseek41_r2_all_select_v3_live_merge_v1_hier_group_v1_negative_v1",
+        "registers": 44,
+        "shared_static_bytes": 2104,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r2_all_select_v3_live_merge_v1_hier_group_v1",
+        "registers": 44,
+        "shared_static_bytes": 2104,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r2_all_select_v3_live_merge_v1_hier_final_v1",
+        "registers": 45,
+        "shared_static_bytes": 3184,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r1_all_select_v3_live_merge_v1_hier_group_v1_negative_v1",
+        "registers": 44,
+        "shared_static_bytes": 2104,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r1_all_select_v3_live_merge_v1_hier_group_v1",
+        "registers": 44,
+        "shared_static_bytes": 2104,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_position_indexer_deepseek41_r1_all_select_v3_live_merge_v1_hier_final_v1",
+        "registers": 45,
+        "shared_static_bytes": 3184,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_position_blocks_deepseek41_r1_select_v3_valid_merge_v1_hier_group_v1_negative_v1",
+        "registers": 43,
+        "shared_static_bytes": 2104,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_position_blocks_deepseek41_r1_select_v3_valid_merge_v1_hier_group_v1",
+        "registers": 43,
+        "shared_static_bytes": 2104,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_position_blocks_deepseek41_r1_select_v3_valid_merge_v1_hier_final_v1",
+        "registers": 43,
+        "shared_static_bytes": 3184,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

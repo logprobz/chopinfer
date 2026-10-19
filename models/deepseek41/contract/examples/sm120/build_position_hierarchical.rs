@@ -1,7 +1,10 @@
-//! Build the separately locked native MMA position scorers.
+//! Build the separately locked ordered position merge.
 #[path = "../../../bundle/src/sm120/indexer.rs"]
 #[allow(dead_code)]
 mod indexer;
+#[path = "../../../bundle/src/sm120/indexer_hierarchical.rs"]
+#[allow(dead_code)]
+mod registration;
 use kernel_build::{BuildOptions, LockDir, Toolchain};
 use model_deepseek41_contract::geometry::GEOMETRIES;
 use std::path::PathBuf;
@@ -18,36 +21,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if out.starts_with(&repository) {
         return Err("build outputs must stay outside the repository".into());
     }
-    use kernels_sm120::pooled_indexer::position_hierarchical as hierarchy;
-    let families = GEOMETRIES
-        .iter()
-        .filter(|g| g.native_indexer_supported())
-        .map(|g| {
-            let mut entries = Vec::new();
-            for entry in indexer::entries(g) {
-                let pair = hierarchy::dense_specs(&entry).unwrap();
-                entries.push(hierarchy::negative(pair[0].clone()));
-                entries.extend(pair);
-            }
-            for entry in indexer::block_entries(g) {
-                let pair = hierarchy::compact_specs(&entry).unwrap();
-                entries.push(hierarchy::negative(pair[0].clone()));
-                entries.extend(pair);
-            }
-            (
-                "position_hierarchical",
-                hierarchy::cubin_spec(
-                    format!("position_hierarchical_{}_sm120", g.kernel_tag),
-                    entries,
-                ),
-            )
-        })
-        .collect::<Vec<_>>();
+    let families = registration::cubins(GEOMETRIES)?;
     let specs = families
         .iter()
         .map(|(_, spec)| spec.clone())
         .collect::<Vec<_>>();
-    let dir = root.join("../lab/kernels.lock.d");
+    let serving = std::env::args().nth(2).as_deref() == Some("--serving");
+    let dir = root.join(if serving {
+        "../bundle/kernels.lock.d"
+    } else {
+        "../lab/kernels.lock.d"
+    });
     let mut options = BuildOptions::from_env();
     options.emit_cargo_directives = false;
     if options.profile_line_info {
@@ -77,6 +61,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?
         .verify_current()?;
     }
-    println!("verified {} native MMA position cubins", built.len());
+    println!("verified {} ordered position merge cubins", built.len());
     Ok(())
 }

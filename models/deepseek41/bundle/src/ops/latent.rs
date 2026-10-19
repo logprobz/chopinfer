@@ -40,6 +40,7 @@ use model_deepseek41_contract::state::KvStorage;
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
 use super::exact::{self, Kind};
+use super::row_buckets::RowBuckets;
 use super::{Asks, Bind, Lowered, NormViews};
 use crate::shape::Shape;
 
@@ -65,7 +66,7 @@ pub(crate) struct GlueOps {
     query_norm: Prepared<RmsNormBuffers<View>>,
     query_rope: Prepared<LatentQueryRopeBuffers<View>>,
     /// The circular write into the ring and the circular key lists.
-    window_write: Prepared<LatentWindowWriteBuffers<View>>,
+    window_write: RowBuckets<LatentWindowWriteBuffers<View>>,
     window_keys: Prepared<LatentWindowKeyBuffers<View>>,
     /// A prefill's gather of the retained ring prefix into its staged
     /// window, its write into the staged window and its staged key lists.
@@ -189,7 +190,7 @@ impl GlueOps {
         })?;
         let ring = latent_glue::ring(g);
         let write = latent_glue::window_write_for_storage(g, ring, storage);
-        let window_write = asks.ask("glue.window_write", every, |need| {
+        let window_write = RowBuckets::prepare(asks, "glue.window_write", every, |need| {
             backend.latent_window_write(&write, need)
         })?;
         let keys = latent_glue::window_keys(g, ring);
@@ -335,7 +336,7 @@ impl GlueOps {
             status_row_offset: 0,
         };
         let op = match first {
-            None => &self.window_write,
+            None => self.window_write.at(rows),
             Some(_) => &self.staged_write,
         };
         bind.launch_within(op, &buffers, views.workspace, Counts::rows(rows))

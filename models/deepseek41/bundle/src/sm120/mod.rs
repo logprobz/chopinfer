@@ -4,6 +4,7 @@
 //! here. Generic code names nothing in this module beyond constructing the
 //! backend and the own ops.
 
+pub mod ceil_parallel;
 pub mod dspark;
 #[allow(dead_code, reason = "the build compiles the drafter auxiliary entries")]
 mod dspark_aux;
@@ -180,6 +181,7 @@ impl crate::Kernels {
         let sm120 = mxfp8_fold::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = indexer_query::register(sm120, shape.geometry);
         let sm120 = latent_glue::register(sm120, shape.geometry, shape.ranks())?;
+        let sm120 = ceil_parallel::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = latent_window_stage::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = dspark_aux::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = latent_window_bf16::register(sm120);

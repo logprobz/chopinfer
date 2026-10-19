@@ -4,18 +4,19 @@
 //! scale, which its down projection reads. Its projections are dense
 //! (`super::dense`).
 
-use kernel_core::backend::{Backend, Counts, Prepared, Refused, View};
+use kernel_core::backend::{Backend, Counts, Refused, View};
 use kernel_core::contract::Refusal;
 use kernel_core::gated_mlp::quantized::SiluMulQuantizeBuffers;
 use model_deepseek41_contract::moe;
 use model_deepseek41_contract::serving::PREFILL_TOKENS;
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
+use super::row_buckets::RowBuckets;
 use super::{Asks, Bind, Lowered, exact};
 use crate::shape::Shape;
 
 pub(crate) struct SharedOps {
-    activation: Prepared<SiluMulQuantizeBuffers<View>>,
+    activation: RowBuckets<SiluMulQuantizeBuffers<View>>,
 }
 
 /// A step's spans of the activation: the F32 gate and up rows, the codes
@@ -38,7 +39,7 @@ impl SharedOps {
     ) -> Result<SharedOps, Refused> {
         let every = exact::need(PREFILL_TOKENS, exact::every_phase(super::verify_rows()));
         let query = moe::shared_activation(shape.geometry, shape.ranks());
-        let activation = asks.ask("shared.activation", every, |need| {
+        let activation = RowBuckets::prepare(asks, "shared.activation", every, |need| {
             backend.silu_mul_quantize(&query, need)
         })?;
         Ok(SharedOps { activation })
@@ -60,7 +61,7 @@ impl SharedOps {
             status: bind.view(views.status),
             status_row_offset: 0,
         };
-        bind.launch(&self.activation, &buffers, Counts::rows(rows))
+        bind.launch(self.activation.at(rows), &buffers, Counts::rows(rows))
     }
 }
 

@@ -809,6 +809,7 @@ fn every_geometry_topology_runs_the_fake_host_journal_and_lifecycle() {
             }
             let lines = host.device.journal.borrow().clone();
             assert_launches_fit_configured_shared(&lines, &topology);
+            assert_small_row_ceil_bindings(&lines);
             let layout = format!("{:?}", kv.storage).to_lowercase();
             if let Some(dir) = &export {
                 std::fs::create_dir_all(dir).unwrap();
@@ -1610,4 +1611,44 @@ fn a_non_finite_index_score_refuses_its_step_alone() {
     assert_eq!(views.rows(), 1);
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
+}
+
+/// Every captured small ceil launch uses the decode entry, including ops originally
+/// prepared once at prefill capacity. Larger rows keep the serial entry.
+fn assert_small_row_ceil_bindings(lines: &[String]) {
+    let mut checked = 0;
+    let mut capturing = false;
+    for line in lines {
+        if line.starts_with("capture ") {
+            capturing = true;
+        }
+        if line.starts_with("captured ") {
+            capturing = false;
+        }
+        if !line.starts_with("launch ") {
+            continue;
+        }
+        let symbol = line.split_whitespace().nth(2).unwrap();
+        if !(symbol.contains("_ceil") || symbol.contains("_shared_swiglu_")) {
+            continue;
+        }
+        let rows: u32 = line
+            .split("grid_x: ")
+            .nth(1)
+            .unwrap()
+            .split(',')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        if capturing || rows > model_deepseek41_contract::serving::DECODE_BATCH {
+            assert_eq!(
+                symbol.ends_with("_parallel_v1"),
+                rows <= model_deepseek41_contract::serving::DECODE_BATCH,
+                "{line}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 0);
 }

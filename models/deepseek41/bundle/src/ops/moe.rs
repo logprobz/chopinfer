@@ -25,6 +25,7 @@ use model_deepseek41_contract::moe::{self, Experts};
 use model_deepseek41_contract::serving::{DECODE_BATCH, MAX_VERIFY_ROWS, PREFILL_TOKENS};
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
+use super::row_buckets::RowBuckets;
 use super::{Asks, Bind, Lowered, exact};
 use crate::program::Phase;
 use crate::shape::Shape;
@@ -72,7 +73,7 @@ struct Kind {
 /// The routed MoE ops of an instance's backbone experts.
 pub(crate) struct MoeOps {
     /// The layer input's quantizer, the gate/up's activation.
-    quantize: Prepared<BlockQuantizeBuffers<View>>,
+    quantize: RowBuckets<BlockQuantizeBuffers<View>>,
     kinds: [Kind; 3],
     /// Prepare measured decode/verify ranges separately so phase-wide
     /// capacities cannot hide the 8/64-row streamed entries.
@@ -170,7 +171,7 @@ impl MoeOps {
         let ranks = shape.ranks();
         let refused = |error: String| Refused::Rule(error);
         let every = exact::need(PREFILL_TOKENS, exact::every_phase(super::verify_rows()));
-        let quantize = asks.ask("moe.quantize", every, |need| {
+        let quantize = RowBuckets::prepare(asks, "moe.quantize", every, |need| {
             backend.block_quantize(&moe::quantizer(g.shape.hidden), need)
         })?;
         let kind = |usage: OperationUse| -> Result<Kind, Refused> {
@@ -318,7 +319,7 @@ impl MoeOps {
             status: bind.view(views.status),
             status_row_offset: 0,
         };
-        bind.launch(&self.quantize, &buffers, Counts::rows(rows))
+        bind.launch(self.quantize.at(rows), &buffers, Counts::rows(rows))
     }
 
     pub(crate) fn routes(

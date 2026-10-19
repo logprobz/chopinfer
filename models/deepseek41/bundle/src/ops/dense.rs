@@ -22,6 +22,7 @@ use model_deepseek41_contract::serving::PREFILL_TOKENS;
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
 use super::moe::QuantizeViews;
+use super::row_buckets::RowBuckets;
 use super::{Asks, Bind, Lowered, exact};
 use crate::program::Phase;
 use crate::shape::Shape;
@@ -203,7 +204,7 @@ type QuantizedInput = (u32, DType);
 
 pub(crate) struct DenseOps {
     /// Each quantized input's quantizer, by width and type.
-    quantizers: Vec<(QuantizedInput, Prepared<BlockQuantizeBuffers<View>>)>,
+    quantizers: Vec<(QuantizedInput, RowBuckets<BlockQuantizeBuffers<View>>)>,
     /// Each projection's GEMM, by stage ID.
     gemms: Vec<(&'static str, Prepared<Mxfp8FoldGemmBuffers<View>>)>,
     decode: Vec<(&'static str, u32, Prepared<Mxfp8FoldGemmBuffers<View>>)>,
@@ -247,7 +248,9 @@ impl DenseOps {
                     ..moe::quantizer(width)
                 };
                 let what = format!("dense.quantize {input:?} w{width}");
-                let op = asks.ask(what, every, |need| backend.block_quantize(&query, need))?;
+                let op = RowBuckets::prepare(asks, what, every, |need| {
+                    backend.block_quantize(&query, need)
+                })?;
                 Ok(((width, input), op))
             })
             .collect::<Result<_, Refused>>()?;
@@ -305,7 +308,7 @@ impl DenseOps {
             status: bind.view(views.status),
             status_row_offset: 0,
         };
-        bind.launch(op, &buffers, Counts::rows(rows))
+        bind.launch(op.at(rows), &buffers, Counts::rows(rows))
     }
 
     /// Projection `id` of `rows` rows.

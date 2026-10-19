@@ -19,6 +19,7 @@ pub(crate) mod latent;
 pub(crate) mod logits;
 pub(crate) mod moe;
 mod reduce;
+mod row_buckets;
 mod rows;
 pub(crate) mod shared;
 

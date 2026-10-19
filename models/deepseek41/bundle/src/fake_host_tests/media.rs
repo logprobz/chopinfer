@@ -309,6 +309,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 }
 
 /// The pinned journal digest of the image lifecycle at each rank count.
+/// Parallel ceil bindings add 35 records per rank and select the new
+/// small-row symbols and thread blocks in the text decode after the image.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (14093, 0x385049ea13f21378)),
     (Ranks::TP4, (28143, 0x473ec84023fc7bf2)),

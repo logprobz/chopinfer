@@ -35,6 +35,8 @@ mod hc;
 #[allow(dead_code)]
 mod hc_expand_mix;
 #[allow(dead_code)]
+mod hc_mixer_probe;
+#[allow(dead_code)]
 mod hc_round_expand_mix;
 mod host_acceptance_cubin;
 mod host_acceptance_entries;
@@ -197,6 +199,9 @@ pub fn selection(
         owners.push((norm_quantize::cubin_name(geometry), geometry.id));
         owners.push((hc_expand_mix::cubin_name(geometry), geometry.id));
         owners.push((hc_round_expand_mix::cubin_name(geometry), geometry.id));
+        if geometry.id == model_deepseek41_contract::geometry::FLASH.id {
+            owners.push((hc_mixer_probe::cubin_name(geometry), geometry.id));
+        }
         owners.push((replicated_embedding::cubin_name(geometry), geometry.id));
         owners.push((ceil_parallel::cubin_name(geometry), geometry.id));
         owners.push((ceil_prefill::cubin_name(geometry), geometry.id));
@@ -301,6 +306,15 @@ pub fn selection(
     specs.extend(norm_quantize::cubins(geometries).expect("fused norm cubins"));
     specs.extend(hc_expand_mix::cubins(geometries).expect("fused expansion mixer cubins"));
     specs.extend(hc_round_expand_mix::cubins(geometries).expect("fused rounded expansion cubins"));
+    for geometry in geometries
+        .iter()
+        .filter(|g| g.id == model_deepseek41_contract::geometry::FLASH.id)
+    {
+        specs.extend(
+            hc_mixer_probe::cubins(std::slice::from_ref(geometry))
+                .expect("qualified warp mixer cubin"),
+        );
+    }
     specs.extend(replicated_embedding::cubins(geometries).expect("replicated embedding cubins"));
     specs.push((
         window_fused::FAMILY,

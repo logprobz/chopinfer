@@ -842,6 +842,16 @@ impl Sm120 {
         self
     }
 
+    /// Register measured warp mixers for explicitly qualified buckets.
+    /// Preparations above the largest bucket retain their original routes.
+    pub fn with_sinkhorn_lagged_warp(
+        mut self,
+        entry: crate::sinkhorn_hc::lagged_warp::Entry,
+    ) -> Self {
+        self.sinkhorn.lagged_warp.push(entry);
+        self
+    }
+
     /// The model's comm epilogue over the F32 all-reduce's sums
     /// (`comm::sinkhorn_split::entry`).
     pub fn with_sinkhorn_epilogue(mut self, entry: crate::comm::sinkhorn_split::Entry) -> Self {

@@ -16,7 +16,7 @@ use model_deepseek41_contract::serving::PREFILL_TOKENS;
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
 use super::{Asks, Bind, Lowered, exact};
-use crate::shape::Shape;
+use crate::{program::Phase, shape::Shape};
 
 /// The role paths of the mixer scratch a backend may list
 /// (`OpInfo::bytes`).
@@ -25,6 +25,7 @@ const TICKETS: &str = "scratch.tickets";
 
 pub(crate) struct HcOps {
     mix: Prepared<LaggedMixCollapseBuffers<View>>,
+    decode_mix: Prepared<LaggedMixCollapseBuffers<View>>,
     expand: Prepared<StreamExpandBuffers<View>>,
     head: Prepared<WeightedStreamHeadBuffers<View>>,
     fused: Option<Prepared<SinkhornExpandMixBuffers<View>>>,
@@ -88,6 +89,12 @@ impl HcOps {
             mix: asks.ask("hc.mix_collapse", need, |need| {
                 backend.sinkhorn_lagged_mix_collapse(&hc::mix_collapse(g, need.capacity), need)
             })?,
+            decode_mix: {
+                let need = exact::need(8, exact::every_phase(8));
+                asks.ask("hc.decode_mix", need, |need| {
+                    backend.sinkhorn_lagged_mix_collapse(&hc::mix_collapse(g, need.capacity), need)
+                })?
+            },
             expand: asks.ask("hc.expand", need, |need| {
                 backend.sinkhorn_expand(&hc::expand(g, need.capacity), need)
             })?,
@@ -206,9 +213,17 @@ impl HcOps {
         }
     }
 
+    fn mix_for_phase(&self, phase: Phase) -> &Prepared<LaggedMixCollapseBuffers<View>> {
+        if matches!(phase, Phase::Decode(1 | 8)) {
+            &self.decode_mix
+        } else {
+            &self.mix
+        }
+    }
+
     pub(crate) fn mix(
         &self,
-        rows: u32,
+        phase: Phase,
         views: &MixViews,
     ) -> Result<Vec<Lowered>, kernel_core::contract::Refusal> {
         let mut bind = Bind::default();
@@ -231,7 +246,11 @@ impl HcOps {
             },
             live_rows: view(views.live_rows),
         };
-        bind.launch(&self.mix, &buffers, Counts::rows(rows))
+        bind.launch(
+            self.mix_for_phase(phase),
+            &buffers,
+            Counts::rows(phase.rows()),
+        )
     }
 
     pub(crate) fn expand(
@@ -266,5 +285,37 @@ impl HcOps {
             live_rows: view(views.live_rows),
         };
         bind.launch(&self.head, &buffers, Counts::rows(rows))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bundle_runtime::geometry::Ranks;
+    use model_deepseek41_contract::geometry::FLASH;
+    #[test]
+    fn warp_mixer_is_limited_to_qualified_decode_buckets() {
+        for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
+            let shape = Shape::new(&FLASH, ranks).unwrap();
+            let kernels = crate::Kernels::new(&shape).unwrap();
+            let ops = HcOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default()).unwrap();
+            for rows in [1, 2, 4, 8, 16, 32] {
+                for phase in [
+                    Phase::Decode(rows),
+                    Phase::Prefill { rows },
+                    Phase::Verify { rows, items: 1 },
+                ] {
+                    let selected = ops
+                        .mix_for_phase(phase)
+                        .info()
+                        .symbols
+                        .iter()
+                        .any(|(s, _)| s.ends_with("hc_mixer_probe_warp_v1"));
+                    assert_eq!(selected, matches!(phase, Phase::Decode(1 | 8)), "{phase:?}");
+                }
+            }
+            assert_eq!(ops.scratch().partials, Some(32 * 15360));
+            assert_eq!(ops.scratch().tickets, Some(32 * 4));
+        }
     }
 }

@@ -147,10 +147,18 @@ pub fn cubins(geometries: &[Geometry]) -> Vec<(&'static str, CubinSpec)> {
 
 /// `sm120` with `g`'s lagged Sinkhorn entries registered.
 pub fn register(sm120: Sm120, g: &Geometry) -> Sm120 {
-    sm120
+    let sm120 = sm120
         .with_sinkhorn_lagged(registered_entries(g))
         .with_sinkhorn_lagged_split([split_entry(g)])
-        .with_sinkhorn_lagged_tiled([prefill_entry(g)])
+        .with_sinkhorn_lagged_tiled([prefill_entry(g)]);
+    if g.id == model_deepseek41_contract::geometry::FLASH.id {
+        sm120.with_sinkhorn_lagged_warp(kernels_sm120::sinkhorn_hc::lagged_warp::Entry {
+            source: super::hc_mixer_probe::entry(g),
+            buckets: vec![1, 8],
+        })
+    } else {
+        sm120
+    }
 }
 
 /// `g`'s original entries: the first cubin's, then the F32 head.

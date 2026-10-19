@@ -27,7 +27,15 @@ fn decode_fuses_77_hc_boundaries() {
                 let count = |part: &str| launches.iter().filter(|l| l.contains(part)).count();
                 assert_eq!(count("hc_round_expand_mix_partials_v1"), 77 * nr);
                 assert_eq!(count("hc_round_expand_mix_finish_v1"), 77 * nr);
-                assert_eq!(count("lagged_mix_collapse_split_v1"), 3 * nr);
+                assert_eq!(count("lagged_mix_collapse_split_v1"), 0);
+                assert_eq!(count("hc_mixer_probe_warp_v1"), 3 * nr);
+                assert_eq!(count("hc_chain_mix"), 0);
+                for line in launches.iter().filter(|l| l.contains("hc_mixer_probe")) {
+                    assert!(
+                        line.contains("hc_mixer_probe_warp_v1"),
+                        "diagnostic route entered serving"
+                    );
+                }
                 assert_eq!(count("chop_sinkhorn_hc_deepseek41_expand_f32_v1"), 3 * nr);
                 let embedding_round = usize::from(!peer);
                 assert_eq!(

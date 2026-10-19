@@ -1,3 +1,6 @@
+#[path = "../../../bundle/src/sm120/hc_mixer_probe.rs"]
+#[allow(dead_code)]
+mod hc_mixer_probe;
 #[path = "../../../bundle/src/sm120/hc.rs"]
 #[allow(dead_code)]
 mod registration;

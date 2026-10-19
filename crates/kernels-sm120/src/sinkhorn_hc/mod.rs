@@ -27,6 +27,7 @@ pub mod expand_mix;
 pub mod lagged;
 pub mod lagged_split;
 pub mod lagged_tiled;
+pub mod lagged_warp;
 pub mod mix_norm;
 pub mod mix_norm_batched;
 pub mod mix_norm_exact;

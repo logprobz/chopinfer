@@ -884,6 +884,9 @@ fn journal_steps(host: &Rc<Host>) {
 /// Shared expert scratch stays independent across every fork/join region.
 /// TP4 decode and verify use the measured direct-load MoE buckets, and the
 /// paired shared gate/up keeps no single packed folds.
+/// The qualified warp mixer retains its full cubin identity. Loading its
+/// eleven entries adds eleven resolves and twelve releases per rank;
+/// C1/C8 decode changes only three mixer symbols and their null stamp args.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",

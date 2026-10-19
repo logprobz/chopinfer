@@ -20,7 +20,7 @@ use super::sinkhorn::{
     Candidate, Selection, buffer, check_mixer, check_need, chosen, dense, fitting, planned, plans,
     uncapped,
 };
-use crate::sinkhorn_hc::{self, lagged, lagged_split, lagged_tiled, split};
+use crate::sinkhorn_hc::{self, lagged, lagged_split, lagged_tiled, lagged_warp, split};
 
 /// The lagged mix-collapse's numerics: the per-sublayer one-CTA entry's
 /// projection, rstd and Sinkhorn, with the given collapse weights and F32
@@ -51,6 +51,7 @@ struct LaggedOp<K> {
     info: OpInfo,
     split: Option<(lagged_split::Entry, Vec<LaunchPlan>)>,
     tiled: Option<(lagged_tiled::Entry, Vec<LaunchPlan>)>,
+    warp: Option<lagged_warp::Entry>,
     kind: std::marker::PhantomData<fn() -> K>,
 }
 
@@ -109,6 +110,7 @@ impl<K> LaggedOp<K> {
             info,
             split: None,
             tiled: None,
+            warp: None,
             kind: std::marker::PhantomData,
         })
     }
@@ -230,6 +232,51 @@ pub(super) fn mix_collapse(
             .push((entry.reference.symbol.clone(), 0));
         prepared.tiled = Some((entry, tiled_plans));
     }
+    let mut candidates = Vec::new();
+    for entry in &selection.lagged_warp {
+        if uncapped(entry.source.reference.query()) != uncapped(*op) {
+            continue;
+        }
+        let capacity = entry.capacity()?;
+        if need.capacity > capacity {
+            continue;
+        }
+        let symbol = entry.symbol();
+        candidates.push(
+            Candidate::new(
+                entry.clone(),
+                &symbol,
+                format!(
+                    "{} warp-null {:?} {:?}",
+                    launch_of(&entry.source.reference.reference),
+                    entry.source.reference.params(),
+                    entry.buckets
+                ),
+                Ok(capacity),
+            )
+            .claims(entry.source.reference.invariance()),
+        );
+    }
+    if !candidates.is_empty() {
+        let entry = chosen(fitting(candidates, need, "lagged warp")?, "lagged warp")?;
+        let Query::MixCollapse { mix, .. } = *op else {
+            unreachable!("validated mixer");
+        };
+        if prepared.split.is_none() {
+            prepared.info.bytes = vec![
+                (
+                    "scratch.partials".into(),
+                    split::partials_bytes(mix, need.capacity),
+                ),
+                (
+                    "scratch.tickets".into(),
+                    split::tickets_bytes(need.capacity),
+                ),
+            ];
+        }
+        prepared.info.symbols.push((entry.symbol(), 0));
+        prepared.warp = Some(entry);
+    }
     need.check(&prepared.info)?;
     Ok(Box::new(prepared))
 }
@@ -270,6 +317,29 @@ impl PreparedOp<LaggedMixCollapseBuffers<View>> for LaggedOp<LaggedMixCollapseBu
             buffers.post,
             buffers.comb,
         ];
+        if let Some(entry) = &self.warp
+            && entry.buckets.contains(&rows)
+        {
+            let partials = buffers
+                .scratch
+                .partials
+                .ok_or(Refusal("warp mixer needs partials"))?;
+            let tickets = buffers
+                .scratch
+                .tickets
+                .ok_or(Refusal("warp mixer needs tickets"))?;
+            partials.covers(split::partials_bytes(mix, rows))?;
+            tickets.covers(split::tickets_bytes(rows))?;
+            values.extend([partials, tickets, buffers.live_rows]);
+            return Ok(vec![Launch {
+                symbol: entry.symbol(),
+                rows,
+                plan: entry.source.reference.plan(rows, rows)?,
+                arguments: entry.pack_arguments(values.into_iter().map(buffer).collect())?,
+                collective: false,
+                persistent: false,
+            }]);
+        }
         if let Some((entry, plans)) = &self.split
             && let Some(&plan) = plans.get(rows as usize - 1)
         {
@@ -454,6 +524,84 @@ mod tests {
 
     fn handles(handles: impl IntoIterator<Item = u64>) -> Vec<Argument> {
         handles.into_iter().map(Argument::DeviceBuffer).collect()
+    }
+
+    #[test]
+    fn measured_warp_buckets_keep_the_split_abi_and_other_preparations() {
+        let geometry = sinkhorn_hc::Geometry {
+            capacity: 32,
+            ..LAB
+        };
+        let source = sinkhorn_hc::mixer_probe::Entry {
+            reference: lagged_split::entry(LAB_PROFILE, geometry, false),
+            prefix: "chop_hc_qualified".into(),
+        };
+        let warp = lagged_warp::Entry {
+            source,
+            buckets: vec![1, 8],
+        };
+        let backend = backend()
+            .with_sinkhorn_lagged_split([warp.source.reference.clone()])
+            .with_sinkhorn_lagged_warp(warp.clone());
+        let buffers = LaggedMixCollapseBuffers {
+            x: view(1, u64::MAX),
+            mixer: MixerWeights {
+                fn_: view(2, u64::MAX),
+                base: view(3, u64::MAX),
+                scale: view(4, u64::MAX),
+            },
+            pre_in: view(5, u64::MAX),
+            collapsed: view(6, u64::MAX),
+            pre: view(7, u64::MAX),
+            post: view(8, u64::MAX),
+            comb: view(9, u64::MAX),
+            scratch: MixScratch {
+                partials: Some(view(10, u64::MAX)),
+                tickets: Some(view(11, u64::MAX)),
+            },
+            live_rows: view(12, 4),
+        };
+        for capacity in [8, 32, 8192] {
+            let op = backend
+                .sinkhorn_lagged_mix_collapse(&mix_collapse(capacity), Need::rows(capacity))
+                .unwrap();
+            assert_eq!(op.info().implementation, LAGGED_MIX_COLLAPSE);
+            assert_eq!(
+                op.info().symbols.iter().any(|(s, _)| s == &warp.symbol()),
+                capacity == 8
+            );
+            for rows in [1, 2, 4, 8, 16, 32, 33, 8192]
+                .into_iter()
+                .filter(|r| *r <= capacity)
+            {
+                let launches = op
+                    .launches(&buffers, View::EMPTY, Counts::rows(rows))
+                    .unwrap();
+                let launch = &launches[0];
+                let selected = capacity == 8 && [1, 8].contains(&rows);
+                assert_eq!(launch.symbol == warp.symbol(), selected);
+                if selected {
+                    assert_eq!(launch.plan, warp.source.reference.plan(rows, rows).unwrap());
+                    let mut args = handles(1..=12);
+                    args.push(Argument::NullDevicePointer);
+                    assert_eq!(launch.arguments.0, args);
+                } else {
+                    assert_eq!(launch.arguments.0.len(), if rows <= 32 { 12 } else { 10 });
+                }
+            }
+        }
+        assert!(warp.pack_arguments(handles(1..=11)).is_err());
+        let mut bad = warp.clone();
+        for buckets in [vec![], vec![0], vec![8, 1], vec![1, 1], vec![33]] {
+            bad.buckets = buckets;
+            assert!(bad.capacity().is_err());
+        }
+        let mut short = buffers;
+        short.scratch.partials = Some(view(10, 15359));
+        let op = backend
+            .sinkhorn_lagged_mix_collapse(&mix_collapse(8), Need::rows(8))
+            .unwrap();
+        assert!(op.launches(&short, View::EMPTY, Counts::rows(1)).is_err());
     }
 
     #[test]

@@ -357,7 +357,7 @@ impl Lowering<'_> {
             tickets: self.buffers.mix_tickets,
             live_rows: self.inputs.live_tokens,
         };
-        ops.mix(phase.rows(), &views)
+        ops.mix(phase, &views)
             .map(Some)
             .map_err(|refusal| format!("mix-collapse: {refusal}"))
     }

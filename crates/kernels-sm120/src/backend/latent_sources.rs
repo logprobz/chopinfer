@@ -63,10 +63,19 @@ pub(super) fn prepare(
             &digest[..16]
         ),
         selected.guarantees,
-        vec![
-            (entry.symbol(), entry.dynamic_shared_bytes()),
-            (entry.merge_symbol(), 0),
-        ],
+        // Serving configures each resolved function from this metadata.
+        // Derive its limit from every admitted plan, including row variants.
+        [(entry.symbol(), 0), (entry.merge_symbol(), 1)]
+            .into_iter()
+            .map(|(symbol, index)| {
+                let shared = plans
+                    .iter()
+                    .map(|pair| pair[index].dynamic_shared_bytes)
+                    .max()
+                    .unwrap();
+                (symbol, shared)
+            })
+            .collect(),
     );
     info.bytes
         .push(("workspace".into(), entry.workspace_bytes(need.capacity)));

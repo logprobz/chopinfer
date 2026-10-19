@@ -2269,6 +2269,14 @@ mod tests {
                 execution: crate::precision::execution::BlockScaledExecution::ExactDecodedBf16Mma,
             }, Need::rows(4),
         );
+        mxfp8_prefill_gemm: Empty.mxfp8_prefill_gemm(
+            &crate::mxfp8_gemm::Mxfp8FoldGemmQuery {
+                m_capacity: 4, n: 64, k: 160, groups: 1,
+                activation_row_stride: 160, activation_group_stride: 160,
+                output: DType::F32,
+                execution: crate::precision::execution::BlockScaledExecution::NativeBlockScaledMma,
+            }, Need::rows(4),
+        );
         mxfp8_fold_gemm_pair: Empty.mxfp8_fold_gemm_pair(
             &crate::mxfp8_gemm::Mxfp8FoldGemmQuery {
                 m_capacity: 4, n: 64, k: 160, groups: 1,

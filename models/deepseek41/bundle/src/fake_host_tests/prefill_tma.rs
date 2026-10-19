@@ -15,7 +15,7 @@ fn prefill_dense_launches_use_staged_tiles() {
         let lines = host.device.journal.borrow();
         let dense: Vec<_> = lines
             .iter()
-            .filter(|l| l.starts_with("launch ") && l.contains("chop_deepseek41_mxfp8_fold_"))
+            .filter(|l| l.starts_with("launch ") && l.contains("chop_deepseek41_mxfp8_"))
             .collect();
         assert_eq!(
             dense.len(),
@@ -49,9 +49,21 @@ fn prefill_dense_launches_use_staged_tiles() {
         let lines = host.device.journal.borrow();
         let dense: Vec<_> = lines[from..]
             .iter()
-            .filter(|l| l.starts_with("launch ") && l.contains("chop_deepseek41_mxfp8_fold_"))
+            .filter(|l| l.starts_with("launch ") && l.contains("chop_deepseek41_mxfp8_"))
             .collect();
-        assert_eq!(dense.len(), 4 * 330);
+        // Decode keeps its qualified ticket and split-fold completion paths.
+        // Each paired shared gate/up replaces two individual projections.
+        let completed = dense
+            .iter()
+            .filter(|line| {
+                let symbol = line.split_whitespace().nth(2).unwrap();
+                (symbol.contains("mxfp8_ticket_") && !symbol.ends_with("_initialize_v2"))
+                    || (symbol.contains("mxfp8_decode_")
+                        && !symbol.ends_with("_admit_v1")
+                        && !symbol.ends_with("_partials_v1"))
+            })
+            .count();
+        assert_eq!(completed, 4 * (330 - 40));
         assert!(dense.iter().all(|l| !l.contains("_prefill_tma_v1")));
         drop(lines);
         instance.commit().unwrap();

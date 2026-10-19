@@ -133,14 +133,16 @@ pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, Strin
         .into_iter()
         .map(|entry| entry.symbol)
         .collect();
-    let backend = entries(g, ranks)?.into_iter().fold(backend, |backend, entry| {
-        let backend = if prefill.contains(&entry.symbol) {
-            backend.with_mxfp8_prefill(entry.clone())
-        } else {
-            backend
-        };
-        backend.with_mxfp8_fold(entry)
-    });
+    let backend = entries(g, ranks)?
+        .into_iter()
+        .fold(backend, |backend, entry| {
+            let backend = if prefill.contains(&entry.symbol) {
+                backend.with_mxfp8_prefill(entry.clone())
+            } else {
+                backend
+            };
+            backend.with_mxfp8_fold(entry)
+        });
     let backend = decode_entries(g, ranks)?
         .into_iter()
         .fold(backend, Sm120::with_mxfp8_fold_decode);

@@ -449,7 +449,7 @@ mod tests {
     }
 
     #[test]
-    fn small_rows_use_selected_folds_and_prefill_keeps_the_original_entry() {
+    fn small_rows_use_selected_folds_and_prefill_uses_staged_tiles() {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let kernels = crate::Kernels::new(&shape).unwrap();
         let ops = DenseOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default()).unwrap();
@@ -509,6 +509,11 @@ mod tests {
                                 "mxfp8_ticket_"
                             }))
                     );
+                } else if phase.prefill() {
+                    assert_eq!(calls.len(), 2);
+                    assert!(calls[0].launch.symbol.ends_with("_admit_v1"));
+                    assert!(calls[1].launch.symbol.ends_with("_prefill_tma_v1"));
+                    assert_eq!(calls[1].launch.plan.grid[0], q.n.div_ceil(128));
                 } else {
                     assert_eq!(calls.len(), 1);
                     assert!(calls[0].launch.symbol.contains("mxfp8_fold_m8192"));

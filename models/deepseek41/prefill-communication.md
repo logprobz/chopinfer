@@ -83,11 +83,12 @@ do not establish numerical equality or a speedup.
 
 ## BF16 gather after the rank sum
 
-Experimental `CHOPINFER_DEEPSEEK41_PREFILL_BF16_GATHER=1` registers the
-existing phased F32 rounded transport for target prefills at TP4, with
-whole 1024-element hidden-row granules and at least 512 rows per call.
-The default and value `0` retain the composed F32 scatter, F32 gather and
-BF16 round. The overlap switch selects the compute schedule independently.
+Flash defaults to the existing phased F32 rounded transport for target
+prefills at TP4, with whole 1024-element hidden-row granules and at least
+512 rows per call. `CHOPINFER_DEEPSEEK41_PREFILL_BF16_GATHER=0` retains the
+composed F32 scatter, F32 gather and BF16 round. Value `1` opts other
+compatible geometries into the transport. The overlap switch selects the
+compute schedule independently and still defaults to sequential execution.
 
 Every owner adds F32 partials from zero in ascending rank order, converts
 its final sum once with the same BF16 conversion, then gathers BF16. The
@@ -98,8 +99,7 @@ The separate F32 logits gather is unchanged.
 
 At 8192 rows of width 5120 and TP4, each rank's gather payload falls from
 125829120 to 62914560 bytes per reduction. Across 81 hidden reductions,
-that saves 5096079360 bytes per rank per chunk. This is a byte count, not
-a measured speedup. The existing phased entry also changes the sending
+that saves 5096079360 bytes per rank per chunk. The existing phased entry also changes the sending
 schedule and uses 16 senders plus 32 workers, so its timing is not a pure
 ablation of payload width.
 
@@ -113,5 +113,19 @@ transport. A failed drain or partial rank submission poisons the instance.
 
 CPU checks cover all 81 reductions, odd rows, phase isolation, admission
 fallback, exact reset spans and the 644 micro-schedule scratch regions.
-GPU bitwise output/state comparisons and paired timing remain required
-before either experimental switch becomes a default.
+On 2026-10-19, Flash TP4 at 250 W passed exact served token/logprob and
+full-vocabulary F32 comparisons against the sequential control and its
+repeat. Prefix snapshots, committed KV bytes and restored continuations
+matched at 8192, 24576, 32767 and 32768 tokens. The paired F32/BF16/BF16/F32
+GPU envelopes were 3571.3/3452.6 ms at offset 0 and 5731.5/5645.3 ms at
+offset 24576. Wall medians improved from 3762.2 to 3627.4 ms and from
+5829.1 to 5759.1 ms. No Xids were recorded. The automatic route is limited
+to the measured Flash geometry and retains the residency fallback.
+
+The attention-only overlap changed the GPU envelope by less than 10 ms
+per chunk. Its second half projection overlaps the first reduction, but
+only about 15 ms of independent projection work is available across all
+layers. The two-part schedule overlaps roughly 425 to 435 ms of compute
+and communication, but increases the envelope about 150 ms. Its 4095/4096
+row parts miss the exact F32 tiled routes, and HC mixing slows during
+concurrent communication. Both overlap modes remain explicit experiments.

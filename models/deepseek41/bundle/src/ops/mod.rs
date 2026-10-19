@@ -110,7 +110,7 @@ impl Ops {
                 top_k: shape.geometry.shape.moe.top_k,
             },
         );
-        if reduce::requested()
+        if reduce::requested(shape)
             && shape.ranks() == 4
             && shape.dims().hidden.is_multiple_of(1024)
             && shape.geometry.layers() < 256

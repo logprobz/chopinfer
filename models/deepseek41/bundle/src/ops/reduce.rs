@@ -20,12 +20,40 @@ use super::{Asks, Bind, Lowered, exact};
 use crate::program::Phase;
 use crate::shape::Shape;
 
-pub(crate) fn requested() -> bool {
+fn selected(shape: &Shape, setting: Option<&str>) -> bool {
+    match setting {
+        Some("1") => true,
+        None => shape.geometry == &model_deepseek41_contract::geometry::FLASH,
+        _ => false,
+    }
+}
+
+pub(crate) fn requested(_shape: &Shape) -> bool {
     #[cfg(test)]
     return IN_TESTS.get();
     #[cfg(not(test))]
     {
-        std::env::var("CHOPINFER_DEEPSEEK41_PREFILL_BF16_GATHER").as_deref() == Ok("1")
+        let setting = std::env::var("CHOPINFER_DEEPSEEK41_PREFILL_BF16_GATHER");
+        match setting {
+            Ok(value) => selected(_shape, Some(&value)),
+            Err(std::env::VarError::NotPresent) => selected(_shape, None),
+            Err(std::env::VarError::NotUnicode(_)) => false,
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn bf16_gather_defaults_to_the_qualified_geometry_and_keeps_the_control() {
+    use bundle_runtime::geometry::Ranks;
+    use model_deepseek41_contract::geometry::{FLASH, GEOMETRIES};
+    for geometry in GEOMETRIES {
+        let shape = Shape::new(geometry, Ranks::TP4).unwrap();
+        assert_eq!(selected(&shape, None), geometry == &FLASH);
+        assert!(selected(&shape, Some("1")));
+        for value in ["0", "", "invalid"] {
+            assert!(!selected(&shape, Some(value)));
+        }
     }
 }
 

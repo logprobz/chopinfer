@@ -143,6 +143,16 @@ pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, Strin
 pub const TICKET_FAMILY: &str = "mxfp8_fold_ticket";
 pub const SMALL_CAPACITY: u32 = 64;
 
+/// Keep the measured small-row split-fold winner for the TP2 query projection.
+/// Capacity selects an existing family; it does not change the arithmetic.
+pub fn small_query(query: Mxfp8FoldGemmQuery, rows: u32) -> Mxfp8FoldGemmQuery {
+    let split = (1..=2).contains(&rows) && (query.n, query.k, query.groups) == (16384, 1280, 1);
+    Mxfp8FoldGemmQuery {
+        m_capacity: if split { 32 } else { SMALL_CAPACITY },
+        ..query
+    }
+}
+
 pub fn ticket_entries(
     g: &Geometry,
     ranks: u32,

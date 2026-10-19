@@ -254,11 +254,8 @@ impl DenseOps {
         let mut decode = Vec::new();
         let mut paired = Vec::new();
         for dense in projections(shape) {
-            let query = Mxfp8FoldGemmQuery {
-                m_capacity: crate::sm120::mxfp8_fold::SMALL_CAPACITY,
-                ..dense.query
-            };
             for capacity in 1..=crate::sm120::mxfp8_fold::SMALL_CAPACITY {
+                let query = crate::sm120::mxfp8_fold::small_query(dense.query, capacity);
                 let need = exact::need(capacity, exact::verify(capacity));
                 let op = asks.ask(
                     format!("dense.{} decode {capacity}", dense.id),
@@ -398,6 +395,31 @@ mod tests {
     use bundle_runtime::geometry::Ranks;
     use kernel_core::contract::Validate;
     use model_deepseek41_contract::geometry::FLASH;
+
+    #[test]
+    fn tp2_query_projection_keeps_split_folds_for_one_and_two_rows() {
+        for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
+            let shape = Shape::new(&FLASH, ranks).unwrap();
+            let kernels = crate::Kernels::new(&shape).unwrap();
+            let ops =
+                DenseOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default()).unwrap();
+            for rows in [1, 2, 3, 4, 32, 64] {
+                let op = &ops
+                    .decode
+                    .iter()
+                    .find(|(id, capacity, _)| *id == "attention.q-b" && *capacity == rows)
+                    .unwrap()
+                    .2;
+                let split = ranks == Ranks::TP2 && rows <= 2;
+                assert_eq!(op.info().symbols.len(), if split { 3 } else { 2 });
+                assert!(op.info().symbols.iter().all(|(s, _)| s.contains(if split {
+                    "mxfp8_decode_"
+                } else {
+                    "mxfp8_ticket_"
+                })));
+            }
+        }
+    }
 
     #[test]
     fn small_rows_use_ticket_folds_and_prefill_keeps_the_original_entry() {

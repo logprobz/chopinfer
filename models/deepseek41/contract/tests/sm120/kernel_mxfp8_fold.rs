@@ -28,19 +28,36 @@ fn ticket_entries_bind_all_topologies_through_sixty_four_rows() {
             let backend = registration::register(Sm120::new(), g, ranks).unwrap();
             for entry in registration::ticket_entries(g, ranks).unwrap() {
                 for rows in 1..=64 {
+                    let query = registration::small_query(entry.query, rows);
                     let info = if entry.paired {
                         backend
-                            .mxfp8_fold_gemm_pair(&entry.query, Need::rows(rows))
+                            .mxfp8_fold_gemm_pair(&query, Need::rows(rows))
                             .unwrap()
                             .info()
                             .clone()
                     } else {
                         backend
-                            .mxfp8_fold_gemm(&entry.query, Need::rows(rows))
+                            .mxfp8_fold_gemm(&query, Need::rows(rows))
                             .unwrap()
                             .info()
                             .clone()
                     };
+                    if query.m_capacity == 32 {
+                        let baseline = registration::decode_entries(g, ranks)
+                            .unwrap()
+                            .into_iter()
+                            .find(|old| old.query == query && old.paired == entry.paired)
+                            .unwrap();
+                        assert_eq!(
+                            info.symbols
+                                .iter()
+                                .map(|(s, _)| s.clone())
+                                .collect::<Vec<_>>(),
+                            baseline.symbols()
+                        );
+                        assert_eq!(info.workspace, baseline.workspace(rows).unwrap());
+                        continue;
+                    }
                     assert_eq!(info.symbols.len(), 2);
                     assert_eq!(info.workspace, entry.workspace(rows).unwrap());
                     assert!(

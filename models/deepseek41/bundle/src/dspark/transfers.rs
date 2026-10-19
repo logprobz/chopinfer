@@ -129,13 +129,14 @@ pub fn staged_retained_projection(
     staged_row: u64,
     max_rows: u32,
 ) -> Result<Vec<ProjectionChunk>> {
-    staged_projection_from(
-        config,
-        item,
-        stage,
-        staged_row,
-        max_rows,
-        u64::from(item.retain_offset),
+    let first = item.rows.start + u64::from(item.retain_offset);
+    // Keep whole original dispatches. Cutting one can choose a different
+    // main-projection kernel at the 64-row boundary.
+    Ok(
+        staged_projection(config, item, stage, staged_row, max_rows)?
+            .into_iter()
+            .filter(|chunk| chunk.position + u64::from(chunk.rows) > first)
+            .collect(),
     )
 }
 

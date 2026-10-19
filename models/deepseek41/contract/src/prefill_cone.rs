@@ -112,6 +112,17 @@ pub struct Plan {
     pub features: Rows,
 }
 
+/// Preserve the original drafter projection dispatch shapes at a prompt end
+/// that splits a 128-row ring block. The overwritten prefix of that final
+/// block must also exist; changing a dispatch's M can select another GEMM.
+pub fn feature_offset(prefix: u32, rows: u32, window: u32) -> u32 {
+    if rows <= window + MAX_VERIFY_ROWS {
+        return 0;
+    }
+    let retained = prefix + rows - window;
+    (retained / window * window).saturating_sub(prefix)
+}
+
 impl Plan {
     pub fn new(
         g: &Geometry,
@@ -165,12 +176,7 @@ impl Plan {
         let features = if dspark {
             Rows::new(items.iter().map(|item| {
                 let count = item.rows.end - item.rows.start;
-                let keep = if count > window + MAX_VERIFY_ROWS {
-                    window
-                } else {
-                    count
-                };
-                item.rows.end - keep..item.rows.end
+                item.rows.start + feature_offset(item.prefix, count, window)..item.rows.end
             }))
         } else {
             Rows::default()
@@ -349,10 +355,7 @@ mod tests {
                 64,
             )
             .unwrap();
-            assert_eq!(
-                plan.features.count(),
-                if count <= 134 { count } else { 128 }
-            );
+            assert_eq!(plan.features.count(), count - feature_offset(0, count, 128));
             assert!(plan.layers.iter().all(|l| l.outputs.count() == count));
         }
     }

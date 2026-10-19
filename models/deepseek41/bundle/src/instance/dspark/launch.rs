@@ -184,7 +184,12 @@ impl Instance {
             let phase = usize::from(!matches!(item.rows.kind, Kind::Prefill { .. }));
             if item.project_from_staging {
                 for stage in 0..device.config.stages {
-                    for pass in transfers::staged_projection(
+                    let project = if self.skip_prefill && phase == 0 {
+                        transfers::staged_retained_projection
+                    } else {
+                        transfers::staged_projection
+                    };
+                    for pass in project(
                         device.config,
                         *item,
                         stage,

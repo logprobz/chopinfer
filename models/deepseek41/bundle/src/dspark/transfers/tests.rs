@@ -358,11 +358,21 @@ fn retained_prefill_projection_matches_every_final_ring_cell() {
                         cells
                     };
                     assert_eq!(final_cells(&full), final_cells(&narrow));
-                    assert_eq!(rows(&narrow).len(), window as usize);
+                    assert!(rows(&narrow).len() >= window as usize);
+                    assert!(rows(&narrow).len() < 2 * window as usize);
+                    let first = item.rows.start + u64::from(item.retain_offset);
+                    assert_eq!(
+                        narrow,
+                        full.iter()
+                            .filter(|chunk| chunk.position + u64::from(chunk.rows) > first)
+                            .copied()
+                            .collect::<Vec<_>>()
+                    );
                     assert!(
                         rows(&narrow)
                             .iter()
-                            .all(|&(_, source, _)| source >= 37 + u64::from(item.retain_offset))
+                            .all(|&(_, source, _)| source + u64::from(window)
+                                > 37 + u64::from(item.retain_offset))
                     );
                     // Physical raw-history copies are independent of projection.
                     let copies = retain_copies(config, item, 37).unwrap();

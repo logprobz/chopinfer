@@ -12,7 +12,7 @@ separate `stage32_v1` candidate retains only 32 decoded keys at a time and
 loads query B fragments directly from global memory. It stages the two
 halves for QK, then stages them again for PV. Dynamic shared memory becomes
 42,240 bytes. Compilation with nvcc 13.2.86 reports 180-182 registers per
-thread, 1024 static shared bytes, no local memory and no stack. Two CTAs
+thread, a 1024-byte shared section, no local memory and no stack. Two CTAs
 can fit the resource limits, compared with one for the original entry.
 The extra source loads may offset that occupancy benefit; GPU timing must
 decide whether the candidate is useful.
@@ -88,6 +88,25 @@ checks that loads-only contains no MMA instructions. Static instruction
 counts are not executed instruction counts. Hardware counters are not
 available to the job, so it does not claim measured DRAM/L2 bytes or
 hardware stall reasons.
+
+The resource probe records compiler shared-section bytes separately from
+the driver's static shared allocation. For the window half-tile entry,
+the compiler reports 1024 bytes while `CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES`
+reports zero. The driver accepts 42,240 dynamic bytes and reports two
+resident CTAs per SM. Equating the two shared-memory fields caused the
+first software profiling job to stop before launching attention. The
+corrected probe uses `cuOccupancyMaxActiveBlocksPerMultiprocessor` for
+residency and keeps strict checks on registers, spills, launch limits and
+positive occupancy. It retains both shared-memory observations in its
+report without inferring why their accounting differs.
+
+Every subprocess writes stdout, stderr, command and exit status into its
+run directory before status validation. This includes snapshot checks,
+resource queries, power checks, attention and the kernel journal. The
+resource trace identifies the logical rank, symbol and API at each step;
+timeout cleanup reaps the subprocess before reporting failure. CPU tests
+reproduce the shared-memory mismatch and check failure logging, timeouts,
+missing executables and both pair-device masks.
 
 The `traffic` command counts unique encoded payload in the exact dense
 fixture, excluding metadata, transaction granularity and repeated scale

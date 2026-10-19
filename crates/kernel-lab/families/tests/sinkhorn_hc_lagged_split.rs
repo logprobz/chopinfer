@@ -11,7 +11,7 @@ use kernel_harness::conformance::Probes;
 use kernel_harness::kit::{Outcome, cases::sinkhorn_lagged as kit};
 use kernel_harness::launch::{Bindings, launch};
 use kernel_harness::poison::{self, CopyProducer, LiveProducer, Replay, WriteMap};
-use kernel_harness::{LabResult, Session};
+use kernel_harness::{Cubins, LabResult, Session};
 use kernel_lab_families::{
     sinkhorn_hc_lagged_boundary as boundary, sinkhorn_hc_lagged_split as family,
 };
@@ -82,6 +82,172 @@ fn backend(capacity: u32) -> Sm120 {
             },
             false,
         )])
+}
+
+const TIMING_CUBIN: &str = "probe_sm120";
+const TIMING_SYMBOLS: &[&str] = &[
+    "chop_probe_flush_v1",
+    "chop_probe_read_v1",
+    "chop_probe_gate_v1",
+];
+
+fn timing_identity() -> LabResult<Value> {
+    let lock = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../kernels.lock");
+    let records: Vec<Value> =
+        serde_json::from_slice(&std::fs::read(lock).map_err(err)?).map_err(err)?;
+    records
+        .into_iter()
+        .find(|record| record["name"] == TIMING_CUBIN)
+        .ok_or("kernel-lab lock lacks the original timing probe".into())
+}
+
+fn timing_symbols(identity: &Value) -> LabResult<Vec<String>> {
+    identity["entries"]
+        .as_array()
+        .ok_or("probe identity has no entries")?
+        .iter()
+        .map(|entry| {
+            entry["symbol"]
+                .as_str()
+                .map(str::to_owned)
+                .ok_or("probe identity entry has no symbol".into())
+        })
+        .collect()
+}
+
+// The family modules used by all three GPU paths. The original kernel-lab
+// timing module is added separately, checked against its unchanged lock.
+fn gpu_specs() -> Vec<kernel_build::CubinSpec> {
+    family::cubins()
+        .into_iter()
+        .chain(lagged::lab_cubin_specs())
+        .chain(boundary::cubins())
+        .chain([kernels_sm120::probes::cubin_spec()])
+        .collect()
+}
+
+fn named_cubins(images: Vec<(String, Vec<u8>, Vec<String>)>) -> Cubins {
+    let mut bytes = Vec::new();
+    let mut entries = Vec::new();
+    // Cubins keeps static tables. The staged image set is loaded once per
+    // test process, then retained for every session that uses its functions.
+    for (name, image, symbols) in images {
+        let name: &'static str = Box::leak(name.into_boxed_str());
+        let image: &'static [u8] = Box::leak(image.into_boxed_slice());
+        let symbols: &'static [&'static str] = Box::leak(
+            symbols
+                .into_iter()
+                .map(|symbol| &*Box::leak(symbol.into_boxed_str()))
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        );
+        bytes.push((name, image));
+        entries.push((name, symbols));
+    }
+    Cubins::new(
+        Box::leak(bytes.into_boxed_slice()),
+        Box::leak(entries.into_boxed_slice()),
+    )
+}
+
+fn staged_cubins() -> LabResult<Cubins> {
+    static CUBINS: std::sync::OnceLock<LabResult<Cubins>> = std::sync::OnceLock::new();
+    CUBINS
+        .get_or_init(|| {
+            let root = PathBuf::from(
+                std::env::var_os("CHOPINFER_LAGGED_SPLIT_CUBINS")
+                    .ok_or("prebuilt lagged split cubins required")?,
+            );
+            let report =
+                kernel_build::report::BuildReport::read(&root.join("kernel-build-report.json"))
+                    .map_err(err)?;
+            report.verify_current().map_err(err)?;
+            let mut images = gpu_specs()
+                .into_iter()
+                .map(|spec| {
+                    if !report.cubins.iter().any(|cubin| cubin.name == spec.name) {
+                        return Err(format!("staged build report lacks {}", spec.name));
+                    }
+                    let image =
+                        std::fs::read(root.join(format!("{}.cubin", spec.name))).map_err(err)?;
+                    Ok((
+                        spec.name,
+                        image,
+                        spec.entries.into_iter().map(|entry| entry.symbol).collect(),
+                    ))
+                })
+                .collect::<LabResult<Vec<_>>>()?;
+            let identity = timing_identity()?;
+            let image = std::fs::read(root.join(format!("{TIMING_CUBIN}.cubin"))).map_err(err)?;
+            if identity["cubin_sha256"].as_str() != Some(kernel_build::digest(&image).as_str()) {
+                return Err("staged probe_sm120 differs from the original kernel-lab lock".into());
+            }
+            images.push((TIMING_CUBIN.into(), image, timing_symbols(&identity)?));
+            Ok(named_cubins(images))
+        })
+        .clone()
+}
+
+fn gpu_test(run: impl FnOnce(&Session) -> LabResult<()>) -> LabResult<Option<()>> {
+    if kernel_harness::selected_ordinals()?.is_none() {
+        return kernel_harness::gpu_test(512 << 20, run);
+    }
+    kernel_harness::gpu_test_with(staged_cubins()?, 512 << 20, run)
+}
+
+#[test]
+fn cpu_gpu_paths_resolve_their_cubins_and_symbols() {
+    let specs = gpu_specs();
+    let mut images: Vec<_> = specs
+        .iter()
+        .map(|spec| {
+            (
+                spec.name.clone(),
+                vec![1],
+                spec.entries
+                    .iter()
+                    .map(|entry| entry.symbol.clone())
+                    .collect(),
+            )
+        })
+        .collect();
+    images.push((
+        TIMING_CUBIN.into(),
+        vec![1],
+        timing_symbols(&timing_identity().unwrap()).unwrap(),
+    ));
+    let cubins = named_cubins(images);
+    for spec in &specs {
+        assert_eq!(cubins.bytes(&spec.name).unwrap(), &[1]);
+        for entry in &spec.entries {
+            assert!(
+                cubins
+                    .entries(&spec.name)
+                    .unwrap()
+                    .contains(&entry.symbol.as_str())
+            );
+        }
+    }
+    assert_eq!(cubins.bytes(TIMING_CUBIN).unwrap(), &[1]);
+    for symbol in TIMING_SYMBOLS {
+        assert!(cubins.entries(TIMING_CUBIN).unwrap().contains(symbol));
+    }
+    // The job dry run sets this directory and checks the real staged
+    // images through the same resolver all GPU paths use, without CUDA.
+    if std::env::var_os("CHOPINFER_LAGGED_SPLIT_CUBINS").is_some() {
+        let staged = staged_cubins().unwrap();
+        for spec in &specs {
+            assert!(!staged.bytes(&spec.name).unwrap().is_empty());
+            assert_eq!(
+                staged.entries(&spec.name).unwrap(),
+                cubins.entries(&spec.name).unwrap()
+            );
+        }
+        assert!(!staged.bytes(TIMING_CUBIN).unwrap().is_empty());
+        for symbol in TIMING_SYMBOLS {
+            assert!(staged.entries(TIMING_CUBIN).unwrap().contains(symbol));
+        }
+    }
 }
 
 #[test]
@@ -431,11 +597,7 @@ fn oracle_check(input: &Inputs, output: &[Vec<u8>], rows: usize) -> LabResult<()
 }
 
 fn load(session: &Session, name: &str) -> LabResult<Module> {
-    let root = PathBuf::from(
-        std::env::var_os("CHOPINFER_LAGGED_SPLIT_CUBINS")
-            .ok_or("prebuilt lagged split cubins required")?,
-    );
-    session.load_cubin(&std::fs::read(root.join(format!("{name}.cubin"))).map_err(err)?)
+    session.module(name)
 }
 
 fn run_bucket(session: &Session, rows: usize, special: u32) -> LabResult<Value> {
@@ -573,13 +735,7 @@ fn run_bucket(session: &Session, rows: usize, special: u32) -> LabResult<Value> 
 
 #[test]
 fn lagged_split_bitwise_oracle_status_on_gpu() {
-    let ran = kernel_harness::gpu_test(512 << 20, |session| {
-        let root = PathBuf::from(
-            std::env::var_os("CHOPINFER_LAGGED_SPLIT_CUBINS").ok_or("prebuilt cubins required")?,
-        );
-        kernel_build::report::BuildReport::read(&root.join("kernel-build-report.json"))
-            .and_then(|r| r.verify_current())
-            .map_err(err)?;
+    let ran = gpu_test(|session| {
         let mut cases = vec![];
         for rows in (1..=33).chain([128]) {
             cases.push(run_bucket(session, rows, 0)?);
@@ -601,7 +757,7 @@ fn lagged_split_bitwise_oracle_status_on_gpu() {
 
 #[test]
 fn lagged_split_properties_on_gpu() {
-    let ran = kernel_harness::gpu_test(512 << 20, |session| {
+    let ran = gpu_test(|session| {
         let query = reference(false).query;
         let need = Need::rows(4).with_exact(Invariance::any_rows(4));
         let prepared = backend(32)
@@ -652,7 +808,7 @@ fn lagged_split_properties_on_gpu() {
 
 #[test]
 fn lagged_split_times_on_gpu() {
-    let ran = kernel_harness::gpu_test(512 << 20, |session| {
+    let ran = gpu_test(|session| {
         let old = load(session, &lagged::served_cubin())?;
         let new = load(session, family::CUBIN)?;
         let mut times = vec![];

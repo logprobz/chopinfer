@@ -25,11 +25,13 @@ fn target_graphs_capture_each_exact_verify_width() {
         assert_eq!(sink.draft_tokens(), [(7, vec![0; (rows - 1) as usize])]);
         let journal = host.journal.borrow();
         let step = &journal[begin..];
-        let gathered = step
+        // The async gather captures both target pieces before its wait.
+        // Hashing separates the drafter graphs from the full target schedule.
+        let hashed = step
             .iter()
-            .rposition(|line| line.starts_with("mapped gather"))
+            .position(|line| line.contains(crate::sm120::engram_hash_entries::SYMBOL))
             .unwrap();
-        let target = &step[gathered + 1..];
+        let target = &step[hashed + 1..];
         let handles = |event: &str| {
             let mut ids: Vec<_> = target
                 .iter()
@@ -45,9 +47,10 @@ fn target_graphs_capture_each_exact_verify_width() {
             assert!(captured.is_empty());
             assert_eq!(&replayed, previous);
         } else {
-            assert!(
-                !captured.is_empty(),
-                "width {rows} reused another width's graph"
+            assert_eq!(
+                captured.len(),
+                8,
+                "width {rows} must capture a prefix and suffix on every rank"
             );
             assert_eq!(replayed, captured);
             graphs.insert(rows, captured);

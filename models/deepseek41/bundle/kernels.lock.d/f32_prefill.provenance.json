@@ -1,0 +1,10 @@
+[
+  {
+    "name": "f32_prefill_deepseek41_n32_sm120",
+    "source_closure_sha256": "7efab20bf2d09e7c657ffebd21d6b2d62194fbc0b07f85e8bf0fcb3a56962dab"
+  },
+  {
+    "name": "f32_prefill_deepseek41_n64_sm120",
+    "source_closure_sha256": "e1426a4c1181301826bf9eb098004dd72934f9b7f8946d9d47b316149ebea870"
+  }
+]

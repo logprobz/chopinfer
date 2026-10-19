@@ -110,13 +110,18 @@ pub fn register_f32_projections(
     geometry: &model_deepseek41_contract::geometry::Geometry,
     ranks: u32,
 ) -> Result<Sm120, String> {
-    let entries = f32_split::entries(geometry, ranks)?;
+    let entries = f32_split::entries(geometry, ranks)?
+        .into_iter()
+        .map(|entry| f32_prefill::serving_entry(geometry, entry))
+        .collect::<Result<Vec<_>, _>>()?;
     let cubins = [
         f32_split::cubin_name(geometry),
         f32_decode::cubin_name(geometry),
         f32_dense::cubin_name(geometry),
         f32_head::cubin_name(geometry),
         dspark_router::cubin_name(geometry),
+        f32_prefill::cubin_name(geometry, 32),
+        f32_prefill::cubin_name(geometry, 64),
     ];
     let available = crate::CUBINS
         .iter()

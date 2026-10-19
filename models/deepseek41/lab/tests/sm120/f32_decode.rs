@@ -1,6 +1,6 @@
 //! Bitwise baseline comparisons and paired cold-weight launch timings.
 use bundle_deepseek41::sm120::{
-    f32_head, f32_split, fold_cubin_for_symbol, register_f32_projections,
+    f32_head, f32_prefill, f32_split, fold_cubin_for_symbol, register_f32_projections,
 };
 use kernel_build::{BuildOptions, CubinSpec, EntryParam, EntrySpec, LockDir, Toolchain};
 use kernel_core::backend::{Backend, Counts, Launch, Need, Prepared, View};
@@ -25,7 +25,7 @@ const CUBIN: &str = "f32_split_edges";
 const LEGACY_CUBIN: &str = "f32_decode_edges";
 const TIMING_ROWS: [u32; 12] = [1, 2, 4, 8, 16, 32, 33, 48, 64, 128, 192, 256];
 const MAX_SLOWDOWN_RATIO: f32 = 1.03;
-const VERIFY_RATIO: f32 = 0.2;
+const VERIFY_GOAL_RATIO: f32 = 0.2;
 // User-specified bandwidth roofline: 1.6 TB/s, with actual stored weights.
 const BYTES_PER_US: f64 = 1_600_000.;
 const EDGE_ROWS: [u32; 4] = [1, 32, 33, 256];
@@ -59,6 +59,7 @@ impl HostCase {
 
 struct ProductionCase {
     old: Entry,
+    candidate: Entry,
     rows: Vec<u32>,
 }
 
@@ -75,6 +76,7 @@ fn production_cases() -> Vec<ProductionCase> {
                 .map(Entry::with_split_decode)
                 .unwrap();
             for entry in f32_split::entries(g, ranks).unwrap() {
+                let entry = f32_prefill::serving_entry(g, entry).unwrap();
                 let maximum = if entry == head {
                     bundle_deepseek41::buffers::logits_rows()
                 } else {
@@ -98,15 +100,20 @@ fn production_cases() -> Vec<ProductionCase> {
                 .strip_suffix("_v1_split_v2")
                 .expect("registered cached entry retains its baseline stem");
             let old = Entry::new(entry.query(), entry.usage(), stem).unwrap();
-            assert_eq!(old.clone().with_split_decode(), entry);
+            assert_eq!(old.symbol(), entry.baseline_symbol());
             let mut rows = sampled_rows();
+            rows.extend(entry.prefill_buckets().iter().map(|&(rows, _)| rows));
             if maximum > 256 {
                 rows.extend([512, 2048]);
             }
             rows.push(maximum);
             rows.sort_unstable();
             rows.dedup();
-            ProductionCase { old, rows }
+            ProductionCase {
+                old,
+                candidate: entry,
+                rows,
+            }
         })
         .collect()
 }
@@ -150,22 +157,31 @@ fn coverage(matrix: &[ProductionCase]) -> serde_json::Value {
         .count();
     let launch_timings: usize = matrix
         .iter()
-        .flat_map(|case| &case.rows)
-        .filter(|&&rows| timed(rows))
-        .map(|&rows| {
-            if rows <= 32 {
-                4
-            } else if rows <= 256 {
-                3
-            } else {
-                2
-            }
+        .map(|case| {
+            case.rows
+                .iter()
+                .filter(|&&rows| timed(rows))
+                .map(|&rows| {
+                    if case.candidate.entry_for_rows(rows).uses_prefill_tiles() {
+                        3
+                    } else if rows <= 32 {
+                        4
+                    } else if rows <= 256 {
+                        3
+                    } else {
+                        2
+                    }
+                })
+                .sum::<usize>()
         })
         .sum();
     serde_json::json!({
         "production": matrix.iter().map(|case| serde_json::json!({
             "baseline": case.old.symbol(),
-            "candidate": case.old.clone().with_split_decode().symbol(),
+            "candidate": case.candidate.symbol(),
+            "prefill_buckets": case.candidate.prefill_buckets(),
+            "routed_rows": case.rows.iter().copied().filter(|&rows|
+                rows <= case.candidate.decode_max_rows() || case.candidate.entry_for_rows(rows).uses_prefill_tiles()).collect::<Vec<_>>(),
             "n": case.old.query().n,
             "k": case.old.query().k,
             "weight_bytes": case.old.weight_bytes(),
@@ -174,7 +190,7 @@ fn coverage(matrix: &[ProductionCase]) -> serde_json::Value {
             "timing_rows": case.rows.iter().copied().filter(|&rows| timed(rows)).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
         "maximum_slowdown_ratio": MAX_SLOWDOWN_RATIO,
-        "verify_maximum_ratio": VERIFY_RATIO,
+        "verify_goal_ratio": VERIFY_GOAL_RATIO,
         "bytes_per_us": BYTES_PER_US,
         "production_cases": production_cases,
         "edge_cases": edge_cases,
@@ -196,7 +212,7 @@ fn cpu_production_matrix_covers_registered_entries() {
     let matrix = production_cases();
     let covered: BTreeSet<_> = matrix
         .iter()
-        .flat_map(|case| case.old.clone().with_split_decode().symbols())
+        .flat_map(|case| case.candidate.symbols())
         .collect();
     let compiled: BTreeSet<_> = f32_split::cubins(GEOMETRIES)
         .unwrap()
@@ -217,10 +233,8 @@ fn cpu_production_matrix_covers_registered_entries() {
                 .map(Entry::with_split_decode)
                 .unwrap();
             for entry in f32_split::entries(g, ranks).unwrap() {
-                let case = matrix
-                    .iter()
-                    .find(|case| case.old.clone().with_split_decode() == entry)
-                    .unwrap();
+                let entry = f32_prefill::serving_entry(g, entry).unwrap();
+                let case = matrix.iter().find(|case| case.candidate == entry).unwrap();
                 let maximum = if entry == head {
                     bundle_deepseek41::buffers::logits_rows()
                 } else {
@@ -231,7 +245,10 @@ fn cpu_production_matrix_covers_registered_entries() {
                     "{} lacks its maximum {maximum} rows",
                     entry.symbol()
                 );
-                for rows in sampled_rows() {
+                for rows in sampled_rows()
+                    .into_iter()
+                    .chain(entry.prefill_buckets().iter().map(|&(rows, _)| rows))
+                {
                     assert!(
                         case.rows.contains(&rows),
                         "{} lacks {rows} rows",
@@ -536,9 +553,12 @@ fn cpu_weight_codes_preserve_all_bf16_payloads() {
 
 impl ComparisonWeights {
     fn new(session: &Session, old: &Entry, b: &[f32]) -> LabResult<Self> {
-        let new = old.clone().with_split_decode();
+        Self::routed(session, old, old.clone().with_split_decode(), b)
+    }
+
+    fn routed(session: &Session, old: &Entry, new: Entry, b: &[f32]) -> LabResult<Self> {
         let legacy = old.clone().with_decode();
-        let modules = [old, &new, &legacy]
+        let mut modules = [old, &new, &legacy]
             .into_iter()
             .map(|entry| {
                 let bytes = fold_cubin_for_symbol(entry.symbol())
@@ -552,7 +572,30 @@ impl ComparisonWeights {
                     });
                 session.load_cubin(bytes)
             })
-            .collect::<Result<_, _>>()?;
+            .collect::<Result<Vec<_>, _>>()?;
+        if !new.prefill_buckets().is_empty() {
+            for features in [32, 64] {
+                let tiled = old
+                    .clone()
+                    .with_prefill_tiles(features)
+                    .map_err(|e| e.to_string())?;
+                let bytes = fold_cubin_for_symbol(tiled.symbol())
+                    .ok_or("missing serving prefill cubin")?
+                    .1;
+                let module = session.load_cubin(bytes)?;
+                module
+                    .function(tiled.symbol())
+                    .map_err(|e| e.to_string())?
+                    .set_max_dynamic_shared_memory(
+                        tiled
+                            .prefill_plan(1)
+                            .map_err(|e| e.to_string())?
+                            .dynamic_shared_bytes,
+                    )
+                    .map_err(|e| e.to_string())?;
+                modules.push(module);
+            }
+        }
         Self::with_modules(session, old, new, b, modules)
     }
 
@@ -763,6 +806,8 @@ pub(super) fn compare(
             .all(|launch| launch.symbol == old.symbol())
         {
             &modules[0]
+        } else if !new.uses_prefill_tiles() && new.entry_for_rows(rows).uses_prefill_tiles() {
+            &modules[3 + usize::from(new.entry_for_rows(rows).prefill_features() == 64)]
         } else if !new.uses_prefill_tiles() && rows <= 32 {
             &modules[2]
         } else {
@@ -997,7 +1042,7 @@ fn gpu_bitwise_shapes_and_edges() {
             let q = old.query();
             let weights_start = Instant::now();
             let (_, b) = random_operands(0, q.n, q.k, 0x7813_9231);
-            let weights = ComparisonWeights::new(session, old, &b)?;
+            let weights = ComparisonWeights::routed(session, old, case.candidate.clone(), &b)?;
             drop(b);
             println!(
                 "F32_SETUP {} total_ms={}",

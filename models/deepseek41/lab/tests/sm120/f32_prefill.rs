@@ -163,7 +163,7 @@ fn coverage() -> serde_json::Value {
 }
 
 #[test]
-fn cpu_prefill_matrix_covers_candidates_and_keeps_serving_unchanged() {
+fn cpu_prefill_matrix_covers_candidates_and_serving_buckets() {
     let compiled: BTreeSet<_> = registration::cubins(GEOMETRIES)
         .unwrap()
         .into_iter()
@@ -176,8 +176,8 @@ fn cpu_prefill_matrix_covers_candidates_and_keeps_serving_unchanged() {
                 let candidate = old.clone().with_prefill_tiles(tile).unwrap();
                 covered.extend(candidate.symbols());
                 assert!(
-                    fold_cubin_for_symbol(candidate.symbol()).is_none(),
-                    "unmeasured candidate entered serving"
+                    fold_cubin_for_symbol(candidate.symbol()).is_some(),
+                    "qualified candidate is missing from the serving build"
                 );
                 for rows in ROWS {
                     let op = prepared(&candidate, rows);
@@ -193,17 +193,33 @@ fn cpu_prefill_matrix_covers_candidates_and_keeps_serving_unchanged() {
                 let op = backend
                     .projection(&cases::operation(&old), old.usage(), Need::rows(8192))
                     .unwrap();
-                assert!(
-                    op.handle
-                        .info()
-                        .symbols
-                        .iter()
-                        .all(|(s, _)| !s.contains("_tiles_n"))
+                let selected =
+                    registration::serving_entry(g, old.clone().with_split_decode()).unwrap();
+                assert_eq!(
+                    op.handle.info().workspace,
+                    selected.decode_workspace_bytes(8192)
                 );
+                for &(rows, features) in selected.prefill_buckets() {
+                    let tiled = old.clone().with_prefill_tiles(features).unwrap();
+                    assert_eq!(selected.entry_for_rows(rows), tiled);
+                    assert!(op.handle.info().symbols.contains(&(
+                        tiled.symbol().into(),
+                        tiled.prefill_plan(rows).unwrap().dynamic_shared_bytes
+                    )));
+                }
+                for rows in [258, 510, 514, 2046, 2050, 4096, 8190] {
+                    assert!(!selected.entry_for_rows(rows).uses_prefill_tiles());
+                }
             }
         }
     }
     assert_eq!(covered, compiled);
+    assert_eq!(registration::BUCKETS.len(), 45);
+    let unique: BTreeSet<_> = registration::BUCKETS
+        .iter()
+        .map(|b| (b.n, b.k, b.rows))
+        .collect();
+    assert_eq!(unique.len(), 45);
     let total = coverage()["bitwise_cases"].as_u64().unwrap() as usize;
     let mut seen = BTreeSet::new();
     for ordinal in 0..2 {

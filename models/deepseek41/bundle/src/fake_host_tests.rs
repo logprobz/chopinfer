@@ -95,6 +95,52 @@ fn exact_f32_classifies_the_head_once_and_splits_decode_without_rescanning_weigh
 }
 
 #[test]
+fn exact_f32_prefill_routes_measured_rows_and_preserves_unmeasured_rows() {
+    for (rows, tile) in [
+        (512, Some(64)),
+        (2048, Some(32)),
+        (4096, None),
+        (8192, Some(64)),
+    ] {
+        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+        let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+        let mut instance = create(&host, 1);
+        step(
+            &mut instance,
+            &prompt(7, 0, 0, rows, true),
+            &mut Views::default(),
+        );
+        let journal = host.device.journal.borrow();
+        assert_launches_fit_configured_shared(&journal, &shape.topology());
+        let router = "chop_deepseek41_dense_f32_m8192_n384_k5120_v1";
+        let expected =
+            tile.map_or_else(|| router.to_owned(), |n| format!("{router}_tiles_n{n}_v1"));
+        let calls: Vec<_> = journal
+            .iter()
+            .filter(|line| line.starts_with("launch ") && line.contains(router))
+            .collect();
+        assert!(
+            calls
+                .iter()
+                .any(|line| line.contains(&format!("{expected} LaunchConfig"))),
+            "rows={rows}"
+        );
+        assert!(
+            calls
+                .iter()
+                .all(|line| !line.contains("_tiles_n") || !line.contains("_weights"))
+        );
+        if tile.is_none() {
+            assert!(calls.iter().all(|line| !line.contains("_tiles_n")));
+        }
+        drop(journal);
+        instance.retire_request(7).unwrap();
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
+}
+
+#[test]
 fn runtime_candidate_pool_reaches_its_separate_producer() {
     for kv in KV_LAYOUTS {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();

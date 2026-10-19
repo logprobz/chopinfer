@@ -3,8 +3,9 @@
 //! `DecodeOrder::ExactF32Operands`), each bound through
 //! `Backend::projection` at the served prefill capacity, which every
 //! phase's rows fit. The prepared op chooses the ordered split entry at
-//! rows <= 256 for decode and verification. Larger rows retain the prefill
-//! entry. Split decode reads the weight-domain
+//! rows <= 256 for decode and verification. Larger rows select only the
+//! measured tiles declared in `sm120::f32_prefill`; other counts retain
+//! the original entry. Both optimized paths read the weight-domain
 //! table cached at instance creation.
 //!
 //! Beside the head (`ops::head`) they are the vendor's F32 or plain

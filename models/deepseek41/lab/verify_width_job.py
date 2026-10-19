@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run a frozen served verify-width comparison with the existing perf runner."""
 import argparse
+import collections
 import concurrent.futures
 import hashlib
 import json
@@ -24,7 +25,25 @@ def bits(value):
     return struct.pack("!d", value).hex()
 
 
-def canonical(response):
+def top_logprob_stats(rows, sampled=False):
+    counts = collections.Counter(map(len, rows))
+    return {"requested_top_logprobs": 5, "positions": len(rows),
+            "key_count_histogram": {str(size): counts[size] for size in range(1, 7)},
+            "collapsed_positions": sum(count for size, count in counts.items() if size < 5),
+            "collapsed_entries": sum(max(0, 5 - size) * count for size, count in counts.items()),
+            "sixth_key_positions": counts[6],
+            # A sampled row can lose its extra token's label too, so counts
+            # below five cannot recover every collision from token strings.
+            "collapse_counts_are_lower_bounds": sampled}
+
+
+def capture_stats(captured):
+    cases = [case for rows in captured.values() for case in rows]
+    return top_logprob_stats([top for case in cases for top in case["canonical"]["top_bits"]],
+                             sampled=any(case["request"].get("temperature", 0) > 0 for case in cases))
+
+
+def canonical(response, *, sampled=False):
     if len(response["choices"]) != 1:
         raise ValueError("one completion is required")
     choice = response["choices"][0]
@@ -35,16 +54,28 @@ def canonical(response):
             or len(ids) != OUTPUT_TOKENS or any(type(i) is not int for i in ids)):
         raise ValueError("incomplete completion")
     for name in ("tokens", "token_logprobs", "top_logprobs"):
-        if len(scores[name]) != OUTPUT_TOKENS:
+        if not isinstance(scores[name], list) or len(scores[name]) != OUTPUT_TOKENS:
             raise ValueError("incomplete logprobs")
-    if any(not isinstance(row, dict) or not 1 <= len(row) <= 5
-           or any(not isinstance(key, str) for key in row)
-           for row in scores["top_logprobs"]):
-        raise ValueError("invalid top logprobs")
+    if any(not isinstance(token, str) for token in scores["tokens"]):
+        raise ValueError("invalid token labels")
+    selected = [bits(p) for p in scores["token_logprobs"]]
+    tops = []
+    for position, row in enumerate(scores["top_logprobs"]):
+        if (not isinstance(row, dict) or not 1 <= len(row) <= (6 if sampled else 5)
+                or any(not isinstance(key, str) for key in row)):
+            raise ValueError(f"invalid top logprobs at position {position}: "
+                             f"expected 1-{6 if sampled else 5} token-string keys")
+        top = {key: bits(p) for key, p in sorted(row.items())}
+        # Completions include the sampled token when it ranks below the
+        # requested alternatives. Keep that sixth key and compare its bits,
+        # as well as every surviving key after token-label collisions.
+        if len(top) == 6 and top.get(scores["tokens"][position]) != selected[position]:
+            raise ValueError(f"invalid sixth top-logprob key at position {position}: "
+                             "emitted token and selected logprob bits must match")
+        tops.append(top)
     return {"token_ids": ids, "tokens": scores["tokens"],
-            "selected_bits": [bits(p) for p in scores["token_logprobs"]],
-            "top_bits": [{key: bits(p) for key, p in sorted(row.items())}
-                         for row in scores["top_logprobs"]]}
+            "selected_bits": selected, "top_bits": tops,
+            "top_logprob_stats": top_logprob_stats(tops, sampled)}
 
 
 def compare(left, right):
@@ -60,10 +91,12 @@ def compare(left, right):
             for field in ("token_ids", "tokens", "selected_bits", "top_bits"):
                 if a["canonical"][field] != b["canonical"][field]:
                     differences.append({"case": name, "item": item, "field": field})
-    return {"bitwise": not differences, "differences": differences}
+    return {"bitwise": not differences, "differences": differences,
+            "top_logprob_keying": "token_string",
+            "top_logprob_stats": {"base": capture_stats(left), "new": capture_stats(right)}}
 
 
-def capture(p, server, prompts):
+def capture(p, server, prompts, name):
     result = {}
     for concurrency in CONCURRENCIES:
         for temperature in (0, 1):
@@ -76,13 +109,24 @@ def capture(p, server, prompts):
                         "top_p": 1, "seed": 19 + index, "logprobs": 5,
                         "return_token_ids": True, "stream": False}
                 barrier.wait(timeout=20)
-                response = json.loads(p.http(server.url, "/v1/completions", body, timeout=240))
-                if response["usage"]["prompt_tokens"] != len(prompts[index]):
-                    raise ValueError("prompt coverage differs")
-                return {"request": body, "canonical": canonical(response), "response": response}
+                directory = server.directory / "responses" / name / f"c{concurrency}-t{temperature}"
+                p.write(directory / f"{index:03d}.request.json", body)
+                raw = p.http(server.url, "/v1/completions", body, timeout=240)
+                path = directory / f"{index:03d}.response.json"
+                path.write_text(raw, encoding="utf-8")
+                try:
+                    response = json.loads(raw)
+                    if response["usage"]["prompt_tokens"] != len(prompts[index]):
+                        raise ValueError("prompt coverage differs")
+                    normalized = canonical(response, sampled=temperature > 0)
+                except (ValueError, KeyError, TypeError) as error:
+                    raise ValueError(f"{error}; raw response saved to {path}") from error
+                return {"request": body, "canonical": normalized, "response": response}
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
                 result[f"c{concurrency}-t{temperature}"] = list(pool.map(request, range(concurrency)))
+            p.write(server.directory / f"{name}.json", result)
+            p.write(server.directory / f"{name}-stats.json", capture_stats(result))
     return result
 
 
@@ -165,10 +209,12 @@ def run(args):
                         "model": p.MODEL, "prompt": p.bench.stream_prompt("diverse", i),
                         "add_special_tokens": False}))['tokens'] for i in range(32)]
                     p.write(output / "prompts.json", prompts)
-                first = capture(p, server, prompts)
+                first = capture(p, server, prompts, "exactness")
                 p.write(server.directory / "exactness.json", first)
-                repeat = capture(p, server, prompts)
+                record["exactness"] = capture_stats(first)
+                repeat = capture(p, server, prompts, "repeat")
                 p.write(server.directory / "repeat.json", repeat)
+                record["repeat"] = capture_stats(repeat)
                 result["comparisons"][name + "-repeat"] = compare(first, repeat)
                 captures[name] = first
                 if profile == "tp4-dspark":

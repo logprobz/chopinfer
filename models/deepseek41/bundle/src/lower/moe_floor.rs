@@ -83,7 +83,7 @@ mod tests {
     fn measured_floor_lowering_keeps_the_shared_workspace_disjoint() {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let kernels = crate::Kernels::new(&shape).unwrap();
-        let ops = Ops::prepare_set(
+        let mut ops = Ops::prepare_set(
             &kernels,
             &shape,
             KvStorage::Native,
@@ -92,6 +92,8 @@ mod tests {
                 top_k: 3,
             },
         );
+        // This test audits the retained floor path, not the direct default.
+        ops.moe.as_mut().unwrap().retain_reference_in_test();
         assert!(ops.moe.as_ref().unwrap().floor(Phase::Decode(1)).is_some());
         for rank in 0..4 {
             let mut b = buffers(&shape, rank);

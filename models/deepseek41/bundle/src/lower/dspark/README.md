@@ -20,8 +20,10 @@ The caller uses these operations in order:
 
 1. Bind each committed projection chunk from `dspark::features` and
    `dspark::transfers`. `catch_up` applies `main_proj`, `main_norm` and the
-   stage's KV projection, then writes the native committed ring. Check all
-   row status words before acknowledging a projection cursor.
+   stage's KV projection, then writes the native committed ring.
+   `catch_up_stages` projects rows gathered from several slots through
+   every stage with one main projection. Check all row status words before
+   acknowledging a projection cursor.
 2. Copy the committed physical window into a separate per-item window with
    `rings::stage`. Reserve five additional cells. Upload `metadata`, run
    `initialize` once, then run every stage's `block` in order. Use

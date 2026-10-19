@@ -14,8 +14,15 @@ row separately from committed history.
 For each step:
 
 1. Pass all prefill IDs, or one input/bonus ID per decode item, to `execute`.
-   It projects every missing committed row through each stage before any
-   target execution, including on K=0 steps.
+   Before drafting it projects each drafting item's missing committed rows
+   through every stage. Items that do not draft defer their rows to their
+   next drafting step, and rows older than the newest `window` are skipped
+   because later rows overwrite their ring cells. Deferred rows of all
+   drafting items share launches of at most 32 rows, where both dense
+   projections are one-row exact and the other operations are row-local,
+   and one main projection serves all stages. A commit wider than 32 rows (a prefill chunk or restored window)
+   catches up at the item's next step in the per-stage passes of an eager
+   catch-up, so every projected row keeps its eager bits.
 2. `Host::draft` computes all five block positions, the sequential Markov
    head and confidence scores. Use the shared `WindowBlockVisibility`
    contract with `DraftBlock::main_rows` as its projected-row count. Draft

@@ -2176,7 +2176,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "718c1ee0fb90890950e1ed723eb03ebf93b597753cf972dc7448b55866365149",
+    "cubin_sha256": "9cd55e9673c55ac7ebe84c04ef92c92fb80689108b2306cf0da7c684b3ba3c55",
     "resources": [
       {
         "symbol": "chop_mxfp8_fold_m1_n7_k32_g1_f32_v2_prefill_reference_v1_prefill_tma_v1_admit_v1",
@@ -2333,8 +2333,8 @@
       },
       {
         "symbol": "chop_mxfp8_fold_m8_n17_k160_g2_f32_v2_prefill_reference_v1_prefill_tma_v1",
-        "registers": 168,
-        "shared_static_bytes": 1056,
+        "registers": 71,
+        "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 384,
@@ -2351,8 +2351,8 @@
       },
       {
         "symbol": "chop_mxfp8_fold_m8_n17_k160_g2_bf16_v2_prefill_reference_v1_prefill_tma_v1",
-        "registers": 168,
-        "shared_static_bytes": 1056,
+        "registers": 71,
+        "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 384,
@@ -2369,8 +2369,8 @@
       },
       {
         "symbol": "chop_mxfp8_fold_m17_n9_k576_g3_f32_v2_prefill_reference_v1_prefill_tma_v1",
-        "registers": 168,
-        "shared_static_bytes": 1056,
+        "registers": 66,
+        "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 384,
@@ -2387,8 +2387,8 @@
       },
       {
         "symbol": "chop_mxfp8_fold_m17_n9_k576_g3_bf16_v2_prefill_reference_v1_prefill_tma_v1",
-        "registers": 168,
-        "shared_static_bytes": 1056,
+        "registers": 66,
+        "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 384,

@@ -21,8 +21,23 @@ pub fn control_symbol(e: &Entry) -> String {
     format!("{}_single_chain_control_v1", symbol(e))
 }
 
-pub fn specs(e: &Entry) -> Result<Vec<EntrySpec>, Refusal> {
+fn validate(e: &Entry) -> Result<(), Refusal> {
     e.validate()?;
+    let q = e.query;
+    if q.k > i32::MAX as u32 - 127
+        || q.groups
+            .checked_mul(q.n)
+            .is_none_or(|height| height > i32::MAX as u32)
+    {
+        return Err(Refusal(
+            "prefill TMA coordinates or rounded K exceed signed bounds",
+        ));
+    }
+    Ok(())
+}
+
+pub fn specs(e: &Entry) -> Result<Vec<EntrySpec>, Refusal> {
+    validate(e)?;
     let q = e.query;
     let ptr = |name: &str, ty: &str| P::DevicePointer {
         name: name.into(),
@@ -104,6 +119,7 @@ pub fn control_spec(e: &Entry) -> Result<EntrySpec, Refusal> {
 }
 
 pub fn plan(e: &Entry, rows: u32) -> Result<LaunchPlan, Refusal> {
+    validate(e)?;
     let mut p = e.plan(rows)?;
     p.grid = [
         e.query.n.div_ceil(TILE),
@@ -128,6 +144,7 @@ pub fn arguments(
     b: Mxfp8FoldGemmBuffers<u64>,
     rows: u32,
 ) -> Result<ArgumentList, Refusal> {
+    validate(e)?;
     let q = e.query;
     let map = |base_buffer, width: u32, height: u32| TensorMap {
         base_buffer,

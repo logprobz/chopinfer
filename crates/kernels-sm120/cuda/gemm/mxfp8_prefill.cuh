@@ -123,7 +123,9 @@ __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight
   ptx::griddep_wait();
   const uint32_t live = min(rows, *live_rows);
   if (token0 >= live) return;
-  if (token0 + tile > live) {
+  // A partial K box may not read padding or the next activation group.
+  // Dense unpadded rows use the tensor map's out-of-bounds zero fill.
+  if (token0 + tile > live || (K % 128 != 0 && RowStride > K)) {
     tail<N, K, Groups, RowStride, GroupStride, F32Output, SingleChain>(
         activations, weights, activation_scales, weight_scales, output,
         status, status_offset, live, token0, column0, group);

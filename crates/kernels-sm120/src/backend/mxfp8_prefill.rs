@@ -83,3 +83,31 @@ impl PreparedOp<Mxfp8FoldGemmBuffers<View>> for Op {
         ])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kernel_core::contract::DType;
+    use kernel_core::precision::execution::BlockScaledExecution;
+
+    #[test]
+    fn refuse_prefill_shapes_past_signed_tma_and_fold_bounds() {
+        for (n, k, groups) in [(1 << 30, 32, 2), (1, i32::MAX as u32 - 31, 1)] {
+            let q = Mxfp8FoldGemmQuery {
+                m_capacity: 16,
+                n,
+                k,
+                groups,
+                activation_row_stride: k * groups,
+                activation_group_stride: k,
+                output: DType::F32,
+                execution: BlockScaledExecution::NativeBlockScaledMma,
+            };
+            // These are legal for the old pointer-based engine, but not
+            // for the staged engine's signed coordinates and fold count.
+            let entry = Entry::new(q, "chop_prefill_bound_v1").unwrap();
+            assert!(prepare(std::slice::from_ref(&entry), &q, Need::rows(16)).is_err());
+            assert!(tiled::specs(&entry).is_err());
+        }
+    }
+}

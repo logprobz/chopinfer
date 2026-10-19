@@ -347,8 +347,18 @@ impl Instance {
         }
         // The existing routine schema uses bounded best-effort logging. It
         // reports exposed time without making logging a coordinator wait.
-        let message = serde_json::json!({"schema":"chopinfer.deepseek41.step-shape.v1","phase":"dspark-engram","items":pending.inputs.len(),"rows":pending.text.len(),"host_ns":stats.host_nanoseconds,"exposed_ns":stats.exposed_nanoseconds});
-        let _ = self.services.log(message.to_string().as_bytes());
+        let message = format!(
+            concat!(
+                "{{\"schema\":\"chopinfer.deepseek41.step-shape.v1\",",
+                "\"phase\":\"dspark-engram\",\"items\":{},\"rows\":{},",
+                "\"host_ns\":{},\"exposed_ns\":{}}}"
+            ),
+            pending.inputs.len(),
+            pending.text.len(),
+            stats.host_nanoseconds,
+            stats.exposed_nanoseconds
+        );
+        let _ = self.services.log(message.as_bytes());
         let cycle = &mut self.dspark.as_mut().expect("drafter retained").cycle;
         cycle.gathering = false;
         cycle.pending.as_mut().expect("pending cycle").result = Some(DeviceTarget {

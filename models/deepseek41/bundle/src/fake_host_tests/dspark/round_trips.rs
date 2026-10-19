@@ -71,6 +71,18 @@ fn warm_cycle_host_boundary_inventory() {
             let position = 3 + u64::from(cycle * verify_rows);
             let result = execute(&mut instance, &host, &batch(position, verify_rows, true));
             assert_eq!(result.draft_tokens().len(), items as usize);
+            let logs = host.logs.borrow();
+            let timing = logs
+                .iter()
+                .rev()
+                .find(|line| line.contains("\"phase\":\"dspark-engram\""))
+                .expect("device gather timing record");
+            let timing: serde_json::Value = serde_json::from_str(timing).unwrap();
+            assert_eq!(timing["schema"], "chopinfer.deepseek41.step-shape.v1");
+            assert_eq!(timing["items"], items);
+            assert_eq!(timing["rows"], items * verify_rows);
+            assert!(timing["host_ns"].is_u64() && timing["exposed_ns"].is_u64());
+            drop(logs);
             let commit = host.journal.borrow().len();
             instance
                 .commit_accepted(

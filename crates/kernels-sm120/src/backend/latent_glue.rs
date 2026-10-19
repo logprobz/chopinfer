@@ -272,6 +272,7 @@ use kernel_core::precision::quantizer::{
 pub(super) fn window_write(
     backend: &dyn Backend,
     entries: &[Entry],
+    fused_entries: Option<&[crate::latent::window_fused::Entry]>,
     op: &LatentWindowWrite,
     need: Need,
 ) -> Result<Prepared<LatentWindowWriteBuffers<View>>, Refused> {
@@ -359,8 +360,37 @@ pub(super) fn window_write(
         op.numerical_contract_id()?,
         quantizer.info().implementation
     ));
+    let fused = if let Some(entries) = fused_entries {
+        let chosen = choose(
+            "fused latent window",
+            entries.iter().filter(|e| e.kv == op.kv).map(|e| {
+                Candidate::new(
+                    e.clone(),
+                    &e.symbol,
+                    format!("{:?}", e.spec()),
+                    kernel_core::properties::Invariance::any_rows(e.capacity),
+                )
+                .capacity(e.capacity)
+            }),
+            need,
+        )?;
+        chosen.entry.plan(need.capacity)?;
+        if info.workspace != 0 {
+            return Err(Refusal("fused window requires a workspace-free quantizer").into());
+        }
+        info.symbols = vec![(chosen.entry.symbol.clone(), 0)];
+        info.guarantees = info.guarantees.meet(chosen.guarantees);
+        info.implementation = format!(
+            "sm120.latent-window-fused.v1:{}",
+            op.numerical_contract_id()?
+        );
+        Some(chosen.entry)
+    } else {
+        None
+    };
     need.check(&info)?;
     Ok(Box::new(WriteOp {
+        fused,
         rotate,
         store,
         quantizer,
@@ -371,6 +401,7 @@ pub(super) fn window_write(
 }
 
 struct WriteOp {
+    fused: Option<crate::latent::window_fused::Entry>,
     rotate: Entry,
     store: Entry,
     quantizer: Prepared<BlockQuantizeBuffers<View>>,
@@ -527,6 +558,27 @@ impl PreparedOp<LatentWindowWriteBuffers<View>> for WriteOp {
                 Argument::U64(b.status_row_offset),
             ],
         )?);
+        if let Some(entry) = &self.fused {
+            // Keep the composed path's validation and exact argument values.
+            let mut args = launches[0].arguments.0.clone();
+            args.extend([
+                Argument::DeviceBuffer(b.quantized_codes.handle),
+                Argument::DeviceBuffer(b.quantized_scales.handle),
+            ]);
+            let store = &launches.last().expect("window store").arguments.0;
+            args.extend_from_slice(&store[2..8]);
+            args.extend_from_slice(&store[9..14]);
+            let arguments = ArgumentList(args);
+            arguments.validate()?;
+            return Ok(vec![Launch {
+                symbol: entry.symbol.clone(),
+                rows: counts.rows,
+                plan: entry.plan(counts.rows)?,
+                arguments,
+                collective: false,
+                persistent: false,
+            }]);
+        }
         Ok(launches)
     }
 }

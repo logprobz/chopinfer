@@ -220,6 +220,7 @@ pub struct Sm120 {
     row_rmsnorms: Vec<crate::row::RowInstantiation>,
     block_quantizers: Vec<crate::row::block_quantize::Entry>,
     norm_quantizers: Vec<crate::row::rmsnorm_quantize::Entry>,
+    fused_windows: Vec<crate::latent::window_fused::Entry>,
     silu_mul_quantizers: Vec<crate::row::silu_mul_quantize::Entry>,
     mxfp8_folds: Vec<crate::gemm::mxfp8_fold::Entry>,
     mxfp8_prefills: Vec<crate::gemm::mxfp8_fold::Entry>,
@@ -278,6 +279,11 @@ impl Sm120 {
 
     /// Register a compiled block quantizer. The backend matches its complete
     /// input rounding, scale rule, output form and width at preparation.
+    pub fn with_latent_window_fused(mut self, entry: crate::latent::window_fused::Entry) -> Self {
+        self.fused_windows.push(entry);
+        self
+    }
+
     pub fn with_rmsnorm_quantize(mut self, entry: crate::row::rmsnorm_quantize::Entry) -> Self {
         self.norm_quantizers.push(entry);
         self
@@ -1548,7 +1554,15 @@ impl Backend for Sm120 {
         op: &kernel_core::latent_glue::LatentWindowWrite,
         need: Need,
     ) -> Result<Prepared<kernel_core::latent_glue::LatentWindowWriteBuffers<View>>, Refused> {
-        latent_glue::window_write(self, &self.latent_glue, op, need)
+        latent_glue::window_write(self, &self.latent_glue, None, op, need)
+    }
+
+    fn latent_window_write_fused(
+        &self,
+        op: &kernel_core::latent_glue::LatentWindowWrite,
+        need: Need,
+    ) -> Result<Prepared<kernel_core::latent_glue::LatentWindowWriteBuffers<View>>, Refused> {
+        latent_glue::window_write(self, &self.latent_glue, Some(&self.fused_windows), op, need)
     }
 
     fn latent_window_keys(

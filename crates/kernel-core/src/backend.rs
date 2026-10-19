@@ -1003,6 +1003,18 @@ pub trait Backend: Send + Sync {
         Err(Refused::Unsupported)
     }
 
+    /// The same window-write contract with a single producer/epilogue launch.
+    /// Reads `Counts::rows` and the device live count. An unavailable fusion
+    /// refuses rather than silently substituting a multi-launch chain.
+    fn latent_window_write_fused(
+        &self,
+        op: &crate::latent_glue::LatentWindowWrite,
+        need: Need,
+    ) -> Result<Prepared<crate::latent_glue::LatentWindowWriteBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
     /// Causal physical window slots in increasing absolute-position order.
     /// Launches read `Counts::rows`; the device live count selects written rows.
     fn latent_window_keys(
@@ -2405,6 +2417,9 @@ mod tests {
             &crate::latent_window_stage::LatentWindowStage { kv: crate::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32, latent: 512, window: 128, ring_slots: 136, staged_slots: 512 }, Need::rows(4)
         );
         latent_window_write: Empty.latent_window_write(
+            &crate::latent_glue::LatentWindowWrite { kv: crate::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32, latent: 512, rotary: 64, epsilon_bits: 1e-20_f32.to_bits(), addressing: crate::latent_glue::WindowAddressing::Circular { slots: 136 } }, Need::rows(32)
+        );
+        latent_window_write_fused: Empty.latent_window_write_fused(
             &crate::latent_glue::LatentWindowWrite { kv: crate::latent_attention::LatentKvFormat::Fp8E4M3Ue8M0Block32, latent: 512, rotary: 64, epsilon_bits: 1e-20_f32.to_bits(), addressing: crate::latent_glue::WindowAddressing::Circular { slots: 136 } }, Need::rows(32)
         );
         latent_window_keys: Empty.latent_window_keys(

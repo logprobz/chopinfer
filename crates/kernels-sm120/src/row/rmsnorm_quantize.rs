@@ -63,8 +63,8 @@ impl Entry {
             dynamic_shared_bytes: 0,
             workspace_bytes: 0,
             cluster: [1, 1, 1],
-            // The reused norm signals before its epilogue completes.
-            pdl: false,
+            // The wrapper defers the reused norm's early signal.
+            pdl: true,
         };
         crate::backend::check_plan(&plan)?;
         Ok(plan)

@@ -62,7 +62,7 @@ fn fused_norm_preserves_the_contract_and_refuses_aliases_and_short_roles() {
             let calls = launch(&b, rows).unwrap();
             assert_eq!(calls.len(), 1);
             assert_eq!(calls[0].plan.block, [256, 1, 1]);
-            assert!(!calls[0].plan.pdl);
+            assert!(calls[0].plan.pdl);
             assert_eq!(calls[0].plan.workspace_bytes, 0);
             assert_eq!(calls[0].arguments.0[8], Argument::U64(2));
         }
@@ -165,6 +165,10 @@ fn fused_norm_compiles_without_spills_or_stack_and_keeps_legacy_sources() {
     let source = include_str!("../cuda/row/rmsnorm_quantize.cuh");
     assert!(source.contains("rmsnorm<Width,0,0,false>"));
     assert!(source.contains("rmsnorm_f32<Width>"));
-    assert!(source.contains("block_quantize_parallel::quantize_group<0,F32,false,FloorBits>"));
+    assert!(source.contains("ceil_epilogue<Width,F32,FloorBits>"));
+    assert!(
+        include_str!("../cuda/row/ceil_epilogue.cuh")
+            .contains("block_quantize_parallel::quantize_group<0,F32,false,FloorBits>")
+    );
     std::fs::remove_dir_all(root).unwrap();
 }

@@ -333,7 +333,7 @@ pub fn ticket_cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, Cubin
         .collect()
 }
 
-pub const DECODE_BUCKETS: [u32; 6] = [1, 2, 4, 8, 16, 32];
+pub use model_deepseek41_contract::serving::DECODE_BUCKETS;
 pub const DECODE_FAMILY: &str = "mxfp8_fold_decode";
 
 #[derive(Clone, Debug)]

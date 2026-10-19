@@ -441,7 +441,7 @@ mod tests {
                 assert!(op.info().symbols.iter().all(|(s, _)| s.contains(if split {
                     "mxfp8_decode_"
                 } else {
-                    "mxfp8_ticket_"
+                    "mxfp8_prefetch_"
                 })));
             }
             assert_eq!(ops.decode.len(), projections(&shape).len() * 64);
@@ -506,7 +506,7 @@ mod tests {
                             .all(|call| call.launch.symbol.contains(if split {
                                 "mxfp8_decode_"
                             } else {
-                                "mxfp8_ticket_"
+                                "mxfp8_prefetch_"
                             }))
                     );
                 } else if phase.prefill() {
@@ -533,7 +533,7 @@ mod tests {
                     assert!(
                         calls
                             .iter()
-                            .all(|c| c.launch.symbol.contains("_pair_f32_v2"))
+                            .all(|c| c.launch.symbol.contains("_pair_f32_v3"))
                     );
                 }
             }

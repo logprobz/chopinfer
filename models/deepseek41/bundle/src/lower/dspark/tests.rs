@@ -125,7 +125,7 @@ fn main_projection_uses_ticket_folds_only_through_sixty_four_rows() {
             let launches = prepared.main(count, &views).unwrap();
             let ticket = launches
                 .iter()
-                .filter(|l| l.launch.symbol.contains("mxfp8_ticket"))
+                .filter(|l| l.launch.symbol.contains("mxfp8_prefetch"))
                 .count();
             assert_eq!(ticket, if count <= 64 { 2 } else { 0 });
             assert_eq!(launches.len(), if count <= 64 { 5 } else { 4 });

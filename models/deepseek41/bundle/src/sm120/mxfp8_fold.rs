@@ -146,12 +146,13 @@ pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, Strin
     let backend = decode_entries(g, ranks)?
         .into_iter()
         .fold(backend, Sm120::with_mxfp8_fold_decode);
-    Ok(ticket_entries(g, ranks)?
+    Ok(prefetch_entries(g, ranks)?
         .into_iter()
         .fold(backend, Sm120::with_mxfp8_fold_ticket))
 }
 
 pub const TICKET_FAMILY: &str = "mxfp8_fold_ticket";
+pub const PREFETCH_FAMILY: &str = "mxfp8_fold_prefetch";
 pub const SMALL_CAPACITY: u32 = 64;
 
 // Flash SM120, 250 W, 2026-10-19: ticket timings were within 3% of the
@@ -202,6 +203,63 @@ pub fn ticket_entries(
                 old.paired,
             )
             .map_err(|e| e.to_string())
+        })
+        .collect()
+}
+
+pub fn prefetch_entries(
+    g: &Geometry,
+    ranks: u32,
+) -> Result<Vec<kernels_sm120::gemm::mxfp8_fold_ticket::Entry>, String> {
+    ticket_entries(g, ranks)?
+        .into_iter()
+        .map(|old| {
+            let q = old.query;
+            kernels_sm120::gemm::mxfp8_fold_ticket::Entry::new(
+                q,
+                format!(
+                    "chop_deepseek41_mxfp8_prefetch_n{}_k{}_g{}_{}_v3",
+                    q.n,
+                    q.k,
+                    q.groups,
+                    if old.paired { "pair_f32" } else { "f32" }
+                ),
+                old.paired,
+            )
+            .map(|entry| entry.with_weight_prefetch())
+            .map_err(|e| e.to_string())
+        })
+        .collect()
+}
+
+pub fn prefetch_catalog(
+    g: &Geometry,
+) -> Result<Vec<kernels_sm120::gemm::mxfp8_fold_ticket::Entry>, String> {
+    let mut all = BTreeMap::new();
+    for &ranks in admission::SUPPORTED_RANKS {
+        for entry in prefetch_entries(g, ranks)? {
+            all.insert(entry.symbol.clone(), entry);
+        }
+    }
+    Ok(all.into_values().collect())
+}
+
+pub fn prefetch_cubin_name(g: &Geometry) -> String {
+    format!("mxfp8_fold_prefetch_{}_sm120_v3", g.kernel_tag)
+}
+
+pub fn prefetch_cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {
+    geometries
+        .iter()
+        .map(|g| {
+            Ok((
+                PREFETCH_FAMILY,
+                kernels_sm120::gemm::mxfp8_fold_ticket::cubin_spec(
+                    &prefetch_cubin_name(g),
+                    &prefetch_catalog(g)?,
+                )
+                .map_err(|e| e.to_string())?,
+            ))
         })
         .collect()
 }

@@ -9,24 +9,35 @@ use model_deepseek41_contract::{admission, geometry, projections};
 use std::collections::BTreeSet;
 
 #[test]
-fn ticket_entries_bind_all_topologies_through_sixty_four_rows() {
-    let specs = registration::ticket_cubins(geometry::GEOMETRIES).unwrap();
+fn prefetch_entries_bind_all_topologies_through_sixty_four_rows() {
+    let baselines = registration::ticket_cubins(geometry::GEOMETRIES).unwrap();
+    for g in geometry::GEOMETRIES {
+        let old = registration::ticket_catalog(g).unwrap();
+        let spec = baselines
+            .iter()
+            .find(|(_, s)| s.name == registration::ticket_cubin_name(g))
+            .unwrap();
+        assert_eq!(spec.0, registration::TICKET_FAMILY);
+        assert_eq!(spec.1.entries.len(), old.len() * 2);
+        assert!(old.iter().all(|e| !e.prefetch_weights));
+    }
+    let specs = registration::prefetch_cubins(geometry::GEOMETRIES).unwrap();
     assert!(
         specs
             .iter()
-            .all(|(family, _)| *family == registration::TICKET_FAMILY)
+            .all(|(family, _)| *family == registration::PREFETCH_FAMILY)
     );
     for g in geometry::GEOMETRIES {
-        let catalog = registration::ticket_catalog(g).unwrap();
+        let catalog = registration::prefetch_catalog(g).unwrap();
         let spec = &specs
             .iter()
-            .find(|(_, s)| s.name == registration::ticket_cubin_name(g))
+            .find(|(_, s)| s.name == registration::prefetch_cubin_name(g))
             .unwrap()
             .1;
         assert_eq!(spec.entries.len(), catalog.len() * 2);
         for &ranks in admission::SUPPORTED_RANKS {
             let backend = registration::register(Sm120::new(), g, ranks).unwrap();
-            for entry in registration::ticket_entries(g, ranks).unwrap() {
+            for entry in registration::prefetch_entries(g, ranks).unwrap() {
                 for rows in 1..=64 {
                     let query = registration::small_query(entry.query, rows);
                     let info = if entry.paired {

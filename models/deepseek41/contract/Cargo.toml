@@ -99,3 +99,7 @@ path = "examples/sm120/build_prefill_mxfp8.rs"
 [[test]]
 name = "kernel_prefill_mxfp8"
 path = "tests/sm120/prefill_mxfp8.rs"
+
+[[example]]
+name = "build_fold_prefetch"
+path = "examples/sm120/build_fold_prefetch.rs"

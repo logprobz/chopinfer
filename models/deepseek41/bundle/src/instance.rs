@@ -42,6 +42,7 @@ use bundle_runtime::state::{Extent, RequestState};
 use bundle_runtime::table::{InstanceTable, Live};
 use bundle_runtime::transaction::{self, Ended, Failure, Retire, Stage, Steps};
 use bundle_runtime::upload::{BlockTableMirror, InputLayout, PhaseArena};
+use kernel_core::allocation::Traversal;
 use model_deepseek41_contract::serving::{
     DeepSeek, INDEX_SCHEMA, MAX_VERIFY_ROWS, PAGE_TOKENS, RANK_IMAGE_ROLE, REQUEST_STATE_ID,
     index_role,
@@ -256,6 +257,10 @@ impl Instance {
             views.push(acquire::spans(placed));
         }
         acquire::grant_peers(services, &ranks, held)?;
+        if self.ops.prefill_dma && self.dspark.is_none() {
+            self.dma =
+                execute::dma::acquire(services, &ranks, self.config.shape.dims().hidden, held)?;
+        }
         let limits = model_limits(&self.config);
         let layouts = [
             InputLayout::prefill_capacity_within::<DeepSeek>(items),
@@ -276,7 +281,7 @@ impl Instance {
             .cycle()
             .take(crate::buffers::scratch_rows() as usize * shape.dims().hc.streams as usize * 4)
             .collect();
-        for &(_, pool, stream) in &ranks {
+        for (rank, &(_, pool, stream)) in ranks.iter().enumerate() {
             for (phase, bytes) in layouts.into_iter().enumerate() {
                 let arena = allocate_span(services, pool, stream, bytes, held)?;
                 let block_tables = allocate_span(services, pool, stream, tables, held)?;
@@ -297,9 +302,29 @@ impl Instance {
             if let Some(drafter) = &self.dspark {
                 drafter.reserve_engram(&mut declared);
             }
+            // Named traversal has the same leaf order as bind. Route only the
+            // peer-visible planes to the private allocation owner; arithmetic
+            // and copies keep their explicit compute/communication streams.
+            let mut owners = Vec::new();
+            declared.visit_named(&mut |name, _| {
+                let owner = if matches!(name, "partial" | "reduced" | "embedded") {
+                    self.dma.get(rank).map_or(stream, |dma| dma.owner)
+                } else {
+                    stream
+                };
+                owners.push(owner);
+            });
+            let mut owners = owners.into_iter();
             let bound = bundle_runtime::scratch::bind(declared, |bytes| {
-                allocate_span(services, pool, stream, bytes, held)
+                allocate_span(
+                    services,
+                    pool,
+                    owners.next().expect("one owner per declared scratch leaf"),
+                    bytes,
+                    held,
+                )
             })?;
+            assert!(owners.next().is_none(), "scratch traversal orders agree");
             services.copy_host_to_device(stream, bound.first_pre, &first_pre)?;
             scratch.push(bound);
             // The mixer scratch the mix-collapse lists; its tickets start
@@ -644,9 +669,10 @@ impl Instance {
         if execute::overlap::enabled() && self.ops.reduce.is_some() {
             self.overlap = execute::overlap::acquire(services, &ranks, held)?;
         }
-        if self.ops.prefill_dma && self.dspark.is_none() {
-            self.dma =
-                execute::dma::acquire(services, &ranks, self.config.shape.dims().hidden, held)?;
+        // Allocations on a private stream must exist before either active
+        // lane can use them. No peer-visible plane has a create-time producer.
+        for dma in &self.dma {
+            services.synchronize_stream(dma.owner)?;
         }
         acquire::synchronize(log, &ranks)?;
         self.ranks = ranks;
@@ -828,6 +854,7 @@ impl Bundle for Instance {
     }
 
     fn release_graphs(&mut self) -> Result<(), BundleAbiError> {
+        execute::dma::drain(self)?;
         self.graphs.release_all(&self.services)?;
         if let Some(device) = &mut self.dspark
             && let Some(gather) = device.cycle.gather

@@ -226,3 +226,147 @@ fn prefill_dma_partial_copy_failure_poisoning_prevents_capture_or_retry() {
         assert_eq!(*host.device.journal.borrow(), submitted);
     }
 }
+
+mod owner_host;
+
+#[test]
+fn prefill_dma_owns_peer_buffers_away_from_compute_and_copy_streams() {
+    use owner_host::OwnerHost;
+    for mode in [0, 2] {
+        let host = host();
+        let observed = Rc::new(OwnerHost::new(Rc::clone(&host)));
+        let record = crate::config::tests::record(&host.shape, host.kv, 4, false);
+        let mut instance = with_dma(true, || {
+            with_mode(mode, || {
+                api()
+                    .create(HostServicesTableV1::new(Rc::clone(&observed)), &record)
+                    .unwrap()
+            })
+        });
+        let created = host.device.journal.borrow().clone();
+        host.device.journal.borrow_mut().clear();
+        step(
+            &mut instance,
+            &prompt(7, 0, 0, 8191, true),
+            &mut Views::default(),
+        );
+        step(
+            &mut instance,
+            &decode(&[(7, 0, 8191, 9)]),
+            &mut Views::default(),
+        );
+        let journal = host.device.journal.borrow().clone();
+        let execution = journal
+            .iter()
+            .filter(|line| line.starts_with("launch ") || line.starts_with("peer-copy "))
+            .map(|line| {
+                line.split_whitespace()
+                    .nth(1)
+                    .unwrap()
+                    .parse::<u32>()
+                    .unwrap()
+            })
+            .collect::<BTreeSet<_>>();
+        let peers = journal
+            .iter()
+            .filter(|line| line.starts_with("peer-copy "))
+            .flat_map(|line| {
+                super::shared_overlap::journal_spans(line)
+                    .into_iter()
+                    .map(|span| span.0)
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(peers.len(), 16);
+        let owners = observed.owners.borrow();
+        let lifetime = peers
+            .iter()
+            .map(|buffer| owners[buffer].0)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(lifetime.len(), 4);
+        assert!(
+            lifetime.is_disjoint(&execution),
+            "peer ownership must not fence compute or copy streams"
+        );
+        assert_eq!(
+            peers.iter().map(|buffer| owners[buffer].1).sum::<u64>(),
+            4 * 480 * 1024 * 1024
+        );
+        for &stream in &lifetime {
+            let last = created
+                .iter()
+                .rposition(|line| {
+                    line.starts_with("owned-allocate ")
+                        && line.split_whitespace().nth(2) == Some(&stream.to_string())
+                })
+                .unwrap();
+            assert!(
+                created[last + 1..]
+                    .iter()
+                    .any(|line| line == &format!("synchronize {stream}")),
+                "allocation-ready fence"
+            );
+        }
+        drop(owners);
+        assert!(audit(&journal).unwrap() > 0);
+        assert!(
+            audit(
+                &journal
+                    .iter()
+                    .filter(|line| !line.starts_with("wait "))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            )
+            .is_err()
+        );
+        host.device.journal.borrow_mut().clear();
+        instance.destroy().unwrap();
+        let released = host.device.journal.borrow();
+        let first_free = released
+            .iter()
+            .position(|line| line.starts_with("free "))
+            .unwrap();
+        for stream in execution {
+            assert!(
+                released[..first_free]
+                    .iter()
+                    .any(|line| line == &format!("synchronize {stream}")),
+                "drain final compute and DMA before free"
+            );
+        }
+        assert!(observed.owners.borrow().is_empty());
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
+}
+
+#[test]
+fn prefill_dma_failed_teardown_retains_private_buffers() {
+    let host = host();
+    let observed = Rc::new(owner_host::OwnerHost::new(Rc::clone(&host)));
+    let record = crate::config::tests::record(&host.shape, host.kv, 4, false);
+    let mut instance = with_dma(true, || {
+        with_mode(2, || {
+            api()
+                .create(HostServicesTableV1::new(Rc::clone(&observed)), &record)
+                .unwrap()
+        })
+    });
+    step(
+        &mut instance,
+        &prompt(7, 0, 0, 8191, true),
+        &mut Views::default(),
+    );
+    let main = *host.device.rank_streams.borrow().get(&0).unwrap();
+    host.device.journal.borrow_mut().clear();
+    observed.fail_sync.set(Some(main));
+    assert_eq!(
+        instance.destroy(),
+        Err(BundleAbiError::Status(BundleStatusV1::HostError))
+    );
+    let retained = host.device.journal.borrow().clone();
+    assert!(!retained.iter().any(|line| line.starts_with("free ")));
+    assert!(!observed.owners.borrow().is_empty());
+    assert!(host.acquired.get() > host.released.get());
+    // The SDK makes a failed destroy terminal and retains the resources.
+    assert_eq!(instance.destroy(), Err(BundleAbiError::Poisoned));
+    assert_eq!(*host.device.journal.borrow(), retained);
+}

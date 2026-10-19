@@ -11,6 +11,9 @@ use runtime_bundle_abi::{
 };
 
 pub(crate) struct Rank {
+    /// Allocation/free and the host's automatic peer-copy joins only. Keeping
+    /// this off both active lanes avoids serializing disjoint row parts.
+    pub(crate) owner: BundleStreamHandleV1,
     inbox: DeviceBufferSpanV1,
     events: [BundleEventHandleV1; 8],
 }
@@ -23,11 +26,13 @@ pub(crate) fn acquire(
 ) -> Result<Vec<Rank>, BundleAbiError> {
     ranks
         .iter()
-        .map(|&(context, pool, stream)| {
+        .map(|&(context, pool, _)| {
+            let owner = services.create_stream(context, 1)?;
+            held.push(Held::Stream(owner));
             let inbox = allocate_span(
                 services,
                 pool,
-                stream,
+                owner,
                 u64::from(PREFILL_TOKENS) * u64::from(width) * 4,
                 held,
             )?;
@@ -38,11 +43,32 @@ pub(crate) fn acquire(
                 events.push(event);
             }
             Ok(Rank {
+                owner,
                 inbox,
                 events: events.try_into().expect("eight DMA events"),
             })
         })
         .collect()
+}
+
+pub(crate) fn drain(instance: &Instance) -> Result<(), BundleAbiError> {
+    if instance.dma.is_empty() {
+        return Ok(());
+    }
+    // Peer-copy owner joins cover DMA, not subsequent compute reads. Establish
+    // completion even after a nonpoisoned step error before any graph or
+    // privately owned buffer can be released. The shared entry layer refuses
+    // destruction of poisoned instances before reaching this function.
+    for stream in instance
+        .ranks
+        .iter()
+        .map(|rank| rank.2)
+        .chain(instance.overlap.iter().map(|rank| rank.lane.stream))
+        .chain(instance.side_lanes.iter().map(|lanes| lanes.side))
+    {
+        instance.services.synchronize_stream(stream)?;
+    }
+    Ok(())
 }
 
 fn subspan(
@@ -368,3 +394,6 @@ impl Plan {
         result
     }
 }
+
+#[cfg(test)]
+mod ownership_tests;

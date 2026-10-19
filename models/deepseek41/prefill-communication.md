@@ -189,3 +189,32 @@ audit retains its const-input checks. A release CPU fixture reduced part
 construction and DMA auditing from 405.9 to 37.6 ms. This changes no launch,
 event, copy, arithmetic or mutation order; served wall-time confirmation is
 still required.
+
+### Private allocation ownership
+
+With DMA enabled, each rank allocates `partial`, `reduced`, `embedded` and
+its inbox on a private lifetime stream. This stream performs no compute or
+transport work. The qualified host still queues completion waits on both
+allocation owners after a peer copy; those waits now land on lifetime
+streams instead of delaying unrelated rows on compute. Using the busy
+communication stream as the allocation owner would also introduce avoidable
+copy dependencies, so the lifetime stream is separate from both lanes.
+
+The existing buffers total 480 MiB per rank at 8192 rows and width 5120.
+Their ownership changes without adding tensor storage or staging copies.
+There is one additional CUDA stream per rank. Allocation completion is
+established before create returns. Every explicit producer/consumer event,
+range-disjointness audit and final peer-read join remains in place. Before
+normal destruction releases graphs or buffers, the bundle drains compute,
+communication and shared-expert streams, including after a nonpoisoned step
+error. A failed drain releases no buffer; the SDK makes failed destruction terminal
+and retains resources under the existing lifecycle rule.
+
+Six CPU ordering tests cover the qualified implicit joins, independent row
+parts, subsequent reuse, allocation readiness, final compute reads and the
+memory accounting. The model host journal records actual allocation owners
+and inserts the qualified host's implicit copy waits; it checks all peer
+regions, creation and destruction fences, failed drain retention and the
+existing scratch audit. The ownership regression fails with compute-owned
+buffers. GPU bitwise equality and wall-time gains remain to be qualified on
+the integrated runtime. DMA and overlap remain default off.

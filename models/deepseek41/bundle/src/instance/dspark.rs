@@ -3,6 +3,8 @@
 mod features;
 mod graphs;
 mod launch;
+#[cfg(feature = "diagnostic-taps")]
+mod state_capture;
 
 use std::collections::BTreeMap;
 
@@ -227,6 +229,12 @@ impl Instance {
                 return BundleStatusV1::InvalidArgument;
             }
         };
+        #[cfg(feature = "diagnostic-taps")]
+        for phase in [&step.prefill, &step.decode] {
+            for (&request, pages) in phase.request_ids.iter().zip(&phase.block_tables) {
+                self.state_capture_pages.insert(request, pages.clone());
+            }
+        }
         let device = self.dspark.as_mut().expect("enabled drafter");
         let Some(id) = device.diagnostic.step_id.checked_add(1) else {
             return BundleStatusV1::InternalError;

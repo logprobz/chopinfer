@@ -13,9 +13,10 @@ crate-type = ["rlib", "cdylib"]
 
 [features]
 # Per-layer taps of prefills (`src/taps.rs`); never in a serving build.
-diagnostic-taps = []
+diagnostic-taps = ["dep:serde_json"]
 
 [dependencies]
+serde_json = { workspace = true, optional = true }
 bundle-runtime.workspace = true
 frontend-format.workspace = true
 kernel-build.workspace = true

@@ -106,6 +106,8 @@ pub struct Instance {
     side_lanes: Vec<crate::shared_overlap::Lanes>,
     /// A full draft program for each exact item count, sharing graph ownership.
     draft_graphs: BTreeMap<u32, GraphCache<DeepSeek>>,
+    #[cfg(feature = "diagnostic-taps")]
+    state_capture_pages: BTreeMap<u64, Vec<i32>>,
     /// Per-layer taps of prefills (`crate::taps`), when the environment
     /// asks for them.
     taps: crate::taps::StepTaps,
@@ -684,6 +686,8 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         shared_overlap: crate::shared_overlap::Settings::from_env(),
         side_lanes: Vec::new(),
         draft_graphs: BTreeMap::new(),
+        #[cfg(feature = "diagnostic-taps")]
+        state_capture_pages: BTreeMap::new(),
         config,
         ranks: Vec::new(),
         symbols: Vec::new(),
@@ -814,6 +818,11 @@ impl Steps for Instance {
         }) {
             return Err(BundleStatusV1::InvalidState);
         }
+        #[cfg(feature = "diagnostic-taps")]
+        self.capture_dspark_state(request).map_err(|error| {
+            self.log(&error);
+            BundleStatusV1::InternalError
+        })?;
         Ok(())
     }
 
@@ -823,6 +832,8 @@ impl Steps for Instance {
         if self.dspark.is_some() {
             if let Ended::Cancelled(step) = ended {
                 for item in &step.items {
+                    #[cfg(feature = "diagnostic-taps")]
+                    self.state_capture_pages.remove(&item.request);
                     self.dspark_forget(item.request);
                 }
             }
@@ -899,5 +910,20 @@ pub(crate) fn dspark_context(
             .state()
             .context(request)
             .cloned()
+    })
+}
+
+#[cfg(all(test, feature = "diagnostic-taps"))]
+pub(crate) fn capture_dspark_state_for_test(
+    handle: runtime_bundle_abi::BundleHandleV1,
+    request: u64,
+    root: &std::path::Path,
+) -> Result<(), String> {
+    INSTANCES.with(|table| {
+        table
+            .borrow_mut()
+            .get_mut(handle)
+            .expect("a live instance")
+            .capture_dspark_state_to(request, root)
     })
 }

@@ -10,6 +10,77 @@ mod native_package;
 pub(super) use host::MappedHost;
 type Sink = RecordingSink<super::conformance::Limits>;
 
+#[cfg(feature = "diagnostic-taps")]
+#[test]
+fn diagnostic_state_sidecar_contains_each_committed_snapshot_piece() {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let root =
+        std::path::PathBuf::from(std::env::var_os("CHOPINFER_DATA").expect("external test data"))
+            .join("deepseek41-tests")
+            .join(format!(
+                "dspark-state-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+    std::fs::create_dir_all(root.join("first")).unwrap();
+    std::fs::create_dir_all(root.join("second")).unwrap();
+    let shape = Shape::new(&FLASH, Ranks::TP1).unwrap();
+    let (host, mut instance) = create(shape);
+    execute(&mut instance, &host, &super::prompt(7, 0, 0, 3, true));
+    instance.commit().unwrap();
+    execute(&mut instance, &host, &verify(7, 0, 3, 2));
+    instance.commit_accepted(&[kept(7, 1)]).unwrap();
+    for name in ["first", "second"] {
+        crate::instance::capture_dspark_state_for_test(instance.handle(), 7, &root.join(name))
+            .unwrap();
+    }
+    let first = root.join("first/request-7");
+    let second = root.join("second/request-7");
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(first.join("state.json")).unwrap()).unwrap();
+    assert_eq!(metadata["end"], 4);
+    let pieces = metadata["pieces"].as_array().unwrap();
+    for name in ["dspark.features", "dspark.ring"] {
+        assert!(pieces.iter().any(|piece| piece["buffer"] == name));
+    }
+    let bytes: u64 = pieces
+        .iter()
+        .map(|piece| piece["bytes"].as_u64().unwrap())
+        .sum();
+    assert_eq!(
+        std::fs::metadata(first.join("rank-0.bin")).unwrap().len(),
+        bytes
+    );
+    let paged = metadata["paged_pieces"].as_array().unwrap();
+    assert!(!paged.is_empty());
+    assert!(paged.iter().all(|piece| piece["logical_page"] == 0));
+    let paged_bytes: u64 = paged
+        .iter()
+        .map(|piece| piece["bytes"].as_u64().unwrap())
+        .sum();
+    assert_eq!(
+        std::fs::metadata(first.join("kv-rank-0.bin"))
+            .unwrap()
+            .len(),
+        paged_bytes
+    );
+    assert!(
+        paged_bytes
+            < model_deepseek41_contract::state::request_state(&FLASH, KvStorage::Native, true)
+                .page_bytes()
+    );
+    for name in ["state.json", "rank-0.bin", "kv-rank-0.bin"] {
+        assert_eq!(
+            std::fs::read(first.join(name)).unwrap(),
+            std::fs::read(second.join(name)).unwrap()
+        );
+    }
+    instance.retire_request(7).unwrap();
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn mixed_prefill_and_draft_replay_the_same_target_graph() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();

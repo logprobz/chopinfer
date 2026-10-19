@@ -2157,6 +2157,22 @@ mod tests {
         }
     }
 
+    fn expand_mix() -> crate::sinkhorn_expand_mix::SinkhornExpandMixQuery {
+        crate::sinkhorn_expand_mix::SinkhornExpandMixQuery {
+            mix: crate::sinkhorn_hyper_connection::SinkhornMix {
+                streams: 4,
+                width: 256,
+                iterations: 20,
+                eps_bits: 1e-6_f32.to_bits(),
+                norm_eps_bits: 1e-5_f32.to_bits(),
+                order: crate::sinkhorn_hyper_connection::SinkhornOrder::RowSoftmaxThenColumnFirst,
+                placement:
+                    crate::sinkhorn_hyper_connection::HyperConnectionPlacement::LaggedSinglePass,
+                fn_dtype: DType::F32,
+            },
+        }
+    }
+
     fn ngram() -> NgramQuery {
         NgramQuery::PleGate {
             streams: 4,
@@ -2327,6 +2343,13 @@ mod tests {
             0,
             Need::rows(4),
         );
+        replicated_embedding: Empty.replicated_embedding(
+            &crate::replicated_embedding::ReplicatedEmbedding {
+                vocab: 64, width: 32, ranks: 2, streams: 4,
+            },
+            0,
+            Need::rows(4),
+        );
         logits_top_k: Empty.logits_top_k(&RowQuery::LogitsArgmax { vocab: 64 }, Need::rows(4));
         sharded_argmax_partial: Empty.sharded_argmax_partial(
             &RowQuery::ShardedArgmaxPartial {
@@ -2351,6 +2374,8 @@ mod tests {
         ngram_hash_gather: Empty.ngram_hash_gather(&ngram(), 2, 0, Need::rows(4));
         ple_gate: Empty.ple_gate(&ngram(), Need::rows(4));
         sinkhorn_mix_collapse: Empty.sinkhorn_mix_collapse(&sinkhorn(), Need::rows(4));
+        sinkhorn_expand_mix: Empty.sinkhorn_expand_mix(&expand_mix(), Need::rows(4));
+        sinkhorn_round_expand_mix: Empty.sinkhorn_round_expand_mix(&expand_mix(), Need::rows(4));
         sinkhorn_lagged_mix_collapse: Empty.sinkhorn_lagged_mix_collapse(&sinkhorn(), Need::rows(4));
         sinkhorn_mix_collapse_norm: Empty.sinkhorn_mix_collapse_norm(&sinkhorn(), Need::rows(4));
         sinkhorn_expand: Empty.sinkhorn_expand(&sinkhorn(), Need::rows(4));
@@ -2384,6 +2409,14 @@ mod tests {
                 output: DType::F32,
                 execution: crate::precision::execution::BlockScaledExecution::NativeBlockScaledMma,
             }, Need::rows(4),
+        );
+        mxfp8_fold_gemm_stream: Empty.mxfp8_fold_gemm_stream(
+            &crate::mxfp8_gemm::Mxfp8FoldGemmQuery {
+                m_capacity: 4, n: 64, k: 160, groups: 1,
+                activation_row_stride: 160, activation_group_stride: 160,
+                output: DType::F32,
+                execution: crate::precision::execution::BlockScaledExecution::ExactDecodedBf16Mma,
+            }, false, Need::rows(4),
         );
         block_quantize: Empty.block_quantize(
             &crate::precision::quantizer::BlockQuantizeQuery {

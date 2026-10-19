@@ -175,14 +175,19 @@ mod tests {
                         &InputLayout::decode_within(Items::new(1).unwrap()),
                     )
                 };
-                for rows in [1, 2, 4, 6, 8, 16, 32, 48, 64, 192] {
-                    let phase = if rows == 6 || rows > 32 {
+                let phases = [1, 2, 3, 4, 5, 6, 7, 8, 16, 32]
+                    .map(Phase::Decode)
+                    .into_iter()
+                    .chain([1, 2, 3, 4, 5, 6, 7, 8, 16, 32, 48, 64, 192].map(|rows| {
                         Phase::Verify {
                             rows,
                             items: rows.div_ceil(6),
                         }
-                    } else {
-                        Phase::Decode(rows)
+                    }));
+                for phase in phases {
+                    let rows = match phase {
+                        Phase::Decode(rows) | Phase::Verify { rows, .. } => rows,
+                        _ => unreachable!(),
                     };
                     let selected = ops.moe.as_ref().unwrap().direct(phase).is_some();
                     let lower = |op: &Ops, buffers: &crate::buffers::RankBuffers| {

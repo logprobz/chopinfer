@@ -15,10 +15,16 @@ use model_deepseek41_contract::moe::Experts;
 // Backbone C1/C8: 76.16/284.40 -> 65.22/255.17 us per full MoE.
 // Drafter C1/C8: 61.65/126.51 -> 47.22/112.38 us against the qualified path.
 // Prefetch loses at larger dispersed buckets. No unmeasured rows are inferred.
+// Verify 1/2/4/5/8/16/32 also passed complete bitwise graphs on both GPUs.
+// Their paired direct gains span 3.1..18.3% across three route patterns.
+// The host was busy, so those timings are informational until the separate
+// idle-host confirmation passes. Verify-8 All: 279.26 -> 249.71 us for
+// the backbone and 124.13 -> 111.66 us for the drafter. No local folds or
+// route-fusion entries are selected; their gains did not hold over direct.
 fn buckets(set: Experts) -> Vec<(ExecutionPhase, u32)> {
     use ExecutionPhase::{Decode, Verify};
     let mut out = [1, 2, 4, 8, 16, 32].map(|n| (Decode, n)).to_vec();
-    out.extend([(Verify, 6), (Verify, 64)]);
+    out.extend([1, 2, 4, 5, 6, 8, 16, 32, 64].map(|rows| (Verify, rows)));
     if set.count == 128 {
         out.push((Verify, 48));
     }
@@ -248,13 +254,16 @@ mod tests {
                             && match phase {
                                 ExecutionPhase::Decode => [1, 2, 4, 8, 16, 32].contains(&rows),
                                 ExecutionPhase::Verify => {
-                                    rows == 6 || rows == 64 || (set.count == 128 && rows == 48)
+                                    [1, 2, 4, 5, 6, 8, 16, 32, 64].contains(&rows)
+                                        || (set.count == 128 && rows == 48)
                                 }
                                 _ => false,
                             };
                         assert_eq!(
                             ops.iter().any(|(p, n, _)| *p == phase && *n == rows),
-                            wanted
+                            wanted,
+                            "{phase:?} rows={rows} experts={}",
+                            set.count
                         );
                     }
                 }

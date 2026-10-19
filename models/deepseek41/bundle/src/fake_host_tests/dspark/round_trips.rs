@@ -164,14 +164,14 @@ fn warm_cycle_host_boundary_inventory() {
                     "four final rank checks and one ID/confidence packet"
                 );
                 assert_eq!(
-                    totals["async_device_to_host"], 1,
-                    "one batched ID copy feeds the pinned host gather"
+                    totals["async_device_to_host"], 2,
+                    "disjoint ID slices feed the two layer gathers"
                 );
-                assert_eq!(totals["physical_readbacks"], 6);
-                assert_eq!(totals["mapped_waits"], 4);
+                assert_eq!(totals["physical_readbacks"], 7);
+                assert_eq!(totals["mapped_waits"], 8);
                 assert_eq!(
-                    totals["graph_replays"], 16,
-                    "one catch-up, one draft and two target pieces per rank"
+                    totals["graph_replays"], 20,
+                    "one catch-up, one draft and three target pieces per rank"
                 );
                 assert_eq!(
                     totals["graph_captures"], 0,

@@ -895,11 +895,11 @@ impl Bundle for Instance {
     fn release_graphs(&mut self) -> Result<(), BundleAbiError> {
         execute::dma::drain(self)?;
         self.graphs.release_all(&self.services)?;
-        if let Some(device) = &mut self.dspark
-            && let Some(gather) = device.cycle.gather
-        {
-            self.services.release_mapped_gather(gather)?;
-            device.cycle.gather = None;
+        if let Some(device) = &mut self.dspark {
+            while let Some(layer) = device.cycle.layers.last() {
+                self.services.release_mapped_gather(layer.gather)?;
+                device.cycle.layers.pop();
+            }
         }
         Ok(())
     }

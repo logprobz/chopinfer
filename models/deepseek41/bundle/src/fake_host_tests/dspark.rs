@@ -6,6 +6,7 @@ use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVe
 
 mod catch_up;
 pub(super) mod host;
+mod layers;
 #[cfg(test)]
 mod native_package;
 mod results;

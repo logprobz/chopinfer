@@ -554,11 +554,12 @@ impl Instance {
                 };
                 !self.graphs.contains(key)
                     || self.dspark.as_ref().is_some_and(|device| {
-                        device
-                            .cycle
-                            .tail
-                            .as_ref()
-                            .is_none_or(|tail| !tail.contains(key))
+                        device.cycle.layers.is_empty()
+                            || device
+                                .cycle
+                                .layers
+                                .iter()
+                                .any(|layer| !layer.graphs.contains(key))
                     })
             })
             .collect()

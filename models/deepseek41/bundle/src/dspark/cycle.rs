@@ -19,12 +19,20 @@ pub(crate) struct Cycle {
     pub hash: HashDevice,
     pub memory: Option<HashMemory>,
     pub diagnostics: Option<DeviceBufferSpanV1>,
-    pub gather: Option<BundleMappedGatherHandleV1>,
+    pub layers: Vec<LayerGather>,
     pub gathering: bool,
     pub draft_done: Vec<runtime_bundle_abi::BundleEventHandleV1>,
     pub draft_joined: Option<runtime_bundle_abi::BundleEventHandleV1>,
     pub pending: Option<Pending>,
-    pub tail: Option<GraphCache<DeepSeek>>,
+}
+
+/// A layer owns its pinned gather slot and the target piece consuming it.
+pub(crate) struct LayerGather {
+    pub layer: u32,
+    pub gather: BundleMappedGatherHandleV1,
+    pub indices: DeviceBufferSpanV1,
+    pub destinations: Vec<DeviceBufferSpanV1>,
+    pub graphs: GraphCache<DeepSeek>,
 }
 impl Cycle {
     pub fn new(hash: HashDevice) -> Self {
@@ -32,12 +40,11 @@ impl Cycle {
             hash,
             memory: None,
             diagnostics: None,
-            gather: None,
+            layers: Vec::new(),
             gathering: false,
             draft_done: Vec::new(),
             draft_joined: None,
             pending: None,
-            tail: None,
         }
     }
 }

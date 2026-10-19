@@ -1,7 +1,7 @@
 //! Device target tokens and overlapped mapped rows, behind the lifecycle adapter.
 mod graphs;
 use super::Instance;
-use crate::dspark::cycle::Pending;
+use crate::dspark::cycle::{LayerGather, Pending};
 use crate::dspark::device::{DECODE_BASE, slice};
 use crate::dspark::execution::{DraftInput, Input};
 use crate::dspark::staging::DeviceTarget;
@@ -40,7 +40,7 @@ impl Instance {
             .ok_or(BundleAbiError::InvalidRange("DSpark mapped tables"))?;
         let shape = device.cycle.hash.shape;
         let columns = shape.columns();
-        let mut planes = Vec::new();
+        let mut layer_planes = vec![Vec::new(); tables.len()];
         for (rank, buffers) in self.buffers.iter().enumerate() {
             let destinations = device
                 .engram_destinations(&buffers.scratch)
@@ -55,12 +55,12 @@ impl Instance {
                     .map_err(|_| {
                         BundleAbiError::InvalidRange("DSpark mapped destination extent")
                     })?;
-                    planes.push(MappedGatherPlaneV1 {
+                    layer_planes[layer].push(MappedGatherPlaneV1 {
                         image,
                         rank: rank as u32,
                         view_id: plane.view.clone(),
                         row_bytes: plane.row_bytes,
-                        index_offset: layer as u64 * u64::from(shape.stride) * columns * 4,
+                        index_offset: 0,
                         stream: self.ranks[rank].2,
                         destination,
                     });
@@ -77,7 +77,6 @@ impl Instance {
         let joined = self.services.create_event(self.ranks[0].0)?;
         self.held.push(Held::Event(joined));
         device.cycle.draft_joined = Some(joined);
-        device.cycle.tail = Some(GraphCache::sharing(&self.graphs));
         for &(context, _, _) in &self.ranks {
             for events in [
                 &mut device.results.target_ready,
@@ -91,11 +90,21 @@ impl Instance {
         let ready = self.services.create_event(self.ranks[0].0)?;
         self.held.push(Held::Event(ready));
         device.results.ready = Some(ready);
-        device.cycle.gather = Some(self.services.create_mapped_gather(
-            self.ranks[0].2,
-            memory.ids,
-            &planes,
-        )?);
+        let bytes = u64::from(shape.stride) * columns * 4;
+        for (index, planes) in layer_planes.into_iter().enumerate() {
+            let indices = slice(memory.ids, index as u64 * bytes, bytes)
+                .map_err(|_| BundleAbiError::InvalidRange("DSpark layer hash extent"))?;
+            let gather = self
+                .services
+                .create_mapped_gather(self.ranks[0].2, indices, &planes)?;
+            device.cycle.layers.push(LayerGather {
+                layer: device.shape.geometry.shape.engram.layers[index],
+                gather,
+                indices,
+                destinations: planes.iter().map(|plane| plane.destination).collect(),
+                graphs: GraphCache::sharing(&self.graphs),
+            });
+        }
         Ok(())
     }
 
@@ -258,13 +267,14 @@ impl Instance {
             )
             .map_err(|e| format!("Engram device hash launch: {e:?}"))?;
         }
-        let gather = device
-            .cycle
-            .gather
-            .ok_or("DSpark mapped gather is absent")?;
-        self.services
-            .enqueue_mapped_gather(gather, u64::from(rows) * device.cycle.hash.shape.columns())
-            .map_err(|e| e.to_string())?;
+        for layer in &device.cycle.layers {
+            self.services
+                .enqueue_mapped_gather(
+                    layer.gather,
+                    u64::from(rows) * device.cycle.hash.shape.columns(),
+                )
+                .map_err(|e| e.to_string())?;
+        }
         self.dspark
             .as_mut()
             .expect("drafter retained")
@@ -273,15 +283,17 @@ impl Instance {
         Ok(())
     }
 
-    pub(crate) fn wait_dspark_rows(&self) -> Result<(), BundleAbiError> {
+    pub(crate) fn wait_dspark_rows(&self, layer: usize) -> Result<(), BundleAbiError> {
         let Some(device) = &self.dspark else {
             return Ok(());
         };
         if device.cycle.gathering {
             let gather = device
                 .cycle
-                .gather
-                .ok_or(BundleAbiError::InvalidRange("DSpark mapped gather"))?;
+                .layers
+                .get(layer)
+                .ok_or(BundleAbiError::InvalidRange("DSpark mapped layer"))?
+                .gather;
             for &(_, _, stream) in &self.ranks {
                 self.services.wait_mapped_gather(gather, stream)?;
             }
@@ -299,15 +311,24 @@ impl Instance {
         let Some(pending) = &device.cycle.pending else {
             return Ok(());
         };
-        let gather = device
-            .cycle
-            .gather
-            .ok_or("DSpark mapped gather is absent")?;
-        let stats = self
-            .services
-            .complete_mapped_gather(gather)
-            .map_err(|e| e.to_string())?
-            .ok_or("DSpark mapped upload is incomplete at target boundary")?;
+        // Add the host callback scopes and each consumer's exposed wait.
+        // Per-layer values retain attribution when the callbacks overlap.
+        let mut host_ns = 0_u64;
+        let mut exposed_ns = 0_u64;
+        let mut layers = Vec::new();
+        for layer in &device.cycle.layers {
+            let stats = self
+                .services
+                .complete_mapped_gather(layer.gather)
+                .map_err(|e| e.to_string())?
+                .ok_or("DSpark mapped layer upload is incomplete at target boundary")?;
+            host_ns += stats.host_nanoseconds;
+            exposed_ns += stats.exposed_nanoseconds;
+            layers.push(format!(
+                "{{\"layer\":{},\"host_ns\":{},\"exposed_ns\":{}}}",
+                layer.layer, stats.host_nanoseconds, stats.exposed_nanoseconds,
+            ));
+        }
         let packet = device
             .cycle
             .diagnostics
@@ -370,14 +391,15 @@ impl Instance {
             concat!(
                 "{{\"schema\":\"chopinfer.deepseek41.step-shape.v1\",",
                 "\"phase\":\"dspark-engram\",\"items\":{},\"rows\":{},",
-                "\"host_ns\":{},\"exposed_ns\":{},\"device_results\":{},\"bundle_readbacks\":{},\"explicit_bundle_syncs\":0}}"
+                "\"host_ns\":{},\"exposed_ns\":{},\"device_results\":{},\"bundle_readbacks\":{},\"layers\":[{}],\"explicit_bundle_syncs\":0}}"
             ),
             pending.inputs.len(),
             pending.text.len(),
-            stats.host_nanoseconds,
-            stats.exposed_nanoseconds,
+            host_ns,
+            exposed_ns,
             device.results.metadata.is_some(),
-            self.ranks.len() + 2
+            self.ranks.len() + 1 + device.cycle.layers.len(),
+            layers.join(","),
         );
         let _ = self.services.log(message.as_bytes());
         let cycle = &mut self.dspark.as_mut().expect("drafter retained").cycle;

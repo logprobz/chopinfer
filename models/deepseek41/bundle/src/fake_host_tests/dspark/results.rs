@@ -185,7 +185,7 @@ fn device_results_preserve_draft_order_wait_for_sampling_and_collect_once() {
                     .unwrap();
                 let timing: serde_json::Value = serde_json::from_str(timing).unwrap();
                 assert_eq!(timing["device_results"], true);
-                assert_eq!(timing["bundle_readbacks"], shape.ranks() + 2);
+                assert_eq!(timing["bundle_readbacks"], shape.ranks() + 3);
                 assert_eq!(timing["explicit_bundle_syncs"], 0);
                 drop(log);
                 let packet = sink.completion.unwrap();

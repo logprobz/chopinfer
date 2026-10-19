@@ -109,6 +109,7 @@ class StepLogs(unittest.TestCase):
             with self.assertRaises(job.StepError):
                 job.run_step(out, 'timeout', [sys.executable, '-c', script], timeout=1)
             record = json.loads((out / 'timeout.step.json').read_text())
+            self.assertGreaterEqual(record['ended_unix_seconds'],record['started_unix_seconds'])
             self.assertIn('TimeoutExpired', record['error'])
             self.assertLess(record['exit_code'], 0)
             self.assertIn('started', (out / 'timeout.stderr.log').read_text())
@@ -141,6 +142,51 @@ class StepLogs(unittest.TestCase):
     def test_imports_do_not_initialize_cuda(self):
         script = "import ctypes; ctypes.CDLL=lambda *a,**k: (_ for _ in ()).throw(AssertionError('CUDA loaded')); import prefill_attention_resources"
         subprocess.run([sys.executable, '-B', '-c', script], cwd=Path(__file__).parent, check=True)
+
+
+class DecisionJob(unittest.TestCase):
+    def exercise(self, corrupt=False):
+        calls = []
+        def step(name, args, timeout, **kwargs):
+            calls.append((name, timeout, kwargs['env']['CHOPINFER_KERNEL_TIMEOUT_SECS']))
+            variant = args[-1]
+            if args[1] == 'decision-check':
+                return '\n'.join(f'prefix PASS prefill_attention_bitwise rank={rank} variant={variant} rows=8192 workspace=true output=true replay=true f64=true candidate=pair reuse_cases=true' for rank in range(1 if corrupt else 2))
+            self.assertEqual(len([c for c in calls if c[0].startswith('check-')]), 3)
+            return '\n'.join(f'prefix TIMING prefill_decision rank={rank} variant={variant} rows=8192 old_total_us=29 candidate_total_us=6 paired_ratio=0.21 candidate=pair warmup=1 samples=3' for rank in range(2))
+        with tempfile.TemporaryDirectory() as directory:
+            result = job.decision_steps(step, {}, Path(directory))
+        return calls, result
+
+    def test_three_bitwise_phases_precede_three_bounded_timing_phases(self):
+        calls, result = self.exercise()
+        self.assertEqual([c[0] for c in calls], ['check-window','check-mixed64','check-mixed32','time-window','time-mixed64','time-mixed32'])
+        self.assertEqual([c[1:] for c in calls], [(95,'90')]*3 + [(50,'45')]*3)
+        self.assertEqual(len(result['timings']), 6)
+        self.assertEqual(result['bitwise_variants'], ['window','mixed64','mixed32'])
+
+    def test_missing_bitwise_rank_prevents_timing(self):
+        with self.assertRaises(AssertionError):
+            self.exercise(corrupt=True)
+
+    def test_timing_timeout_preserves_completed_bitwise_results(self):
+        def step(name, args, timeout, **kwargs):
+            if name.startswith('time-'):
+                raise job.StepError('timing deadline')
+            return '\n'.join(f'prefix PASS prefill_attention_bitwise rank={rank} variant={args[-1]} rows=8192 workspace=true output=true replay=true f64=true candidate=pair reuse_cases=true' for rank in range(2))
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            with self.assertRaises(job.StepError):
+                job.decision_steps(step, {}, out)
+            progress = json.loads((out/'decision-progress.json').read_text())
+            self.assertEqual(progress, dict(bitwise_variants=['window','mixed64','mixed32'],timings=[]))
+
+    def test_timing_parser_rejects_missing_duplicate_nan_and_wrong_samples(self):
+        good = '\n'.join(f'prefix TIMING prefill_decision rank={rank} variant=window rows=8192 old_total_us=29 candidate_total_us=6 paired_ratio=0.21 candidate=pair warmup=1 samples=3' for rank in range(2))
+        self.assertEqual(len(job.parse_decision_timing(good,'window')), 2)
+        for bad in [good.splitlines()[0],good+'\n'+good,good.replace('candidate_total_us=6','candidate_total_us=nan'),good.replace('samples=3','samples=7'),good+'\nFAILED',good.replace('candidate=pair','candidate=vector')]:
+            with self.assertRaises((AssertionError,ValueError)):
+                job.parse_decision_timing(bad,'window')
 
 
 if __name__ == '__main__':

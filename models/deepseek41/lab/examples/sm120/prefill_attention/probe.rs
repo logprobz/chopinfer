@@ -548,6 +548,81 @@ pub fn run_reuse(sessions: &[Session]) -> LabResult<()> {
     Ok(())
 }
 
+// The routing decision needs one case per distinct kernel, with the winning
+// paired schedule. Full all-layer experiments remain available separately.
+fn phase<T>(
+    name: &str,
+    rank: usize,
+    entry: &sources::Entry,
+    work: impl FnOnce() -> LabResult<T>,
+) -> LabResult<T> {
+    let started = std::time::Instant::now();
+    let unix_ms = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    };
+    println!(
+        "PHASE prefill_decision phase={name} state=begin rank={rank} variant={} unix_ms={}",
+        variant(entry),
+        unix_ms()
+    );
+    let result = work();
+    println!(
+        "PHASE prefill_decision phase={name} state=end rank={rank} variant={} unix_ms={} elapsed_ms={} success={}",
+        variant(entry),
+        unix_ms(),
+        started.elapsed().as_millis(),
+        result.is_ok()
+    );
+    result
+}
+
+pub fn decision(sessions: &[Session], selected: &str, check: bool) -> LabResult<()> {
+    exclusive(sessions)?;
+    let entry = entries()?
+        .into_iter()
+        .find(|entry| variant(entry) == selected)
+        .ok_or("decision variant must be window, mixed64 or mixed32")?;
+    for (rank, session) in sessions.iter().enumerate() {
+        let rig = phase("fixture", rank, &entry, || {
+            Rig::scheduled(session, entry.clone(), rank as u32 + 1, Schedule::Pair)
+        })?;
+        if check {
+            phase("bitwise", rank, &entry, || correctness(session, rank, &rig))?;
+        } else {
+            phase("combined", rank, &entry, || {
+                // Keep the dense 8192-row fixture unchanged between A/B arms.
+                let graphs = [0, 1]
+                    .map(|arm| session.capture(|stream| rig.combined(stream, arm)))
+                    .into_iter()
+                    .collect::<LabResult<Vec<_>>>()?;
+                let measured = kernel_harness::with_timing_label(
+                    &format!("prefill_decision.rank{rank}.{selected}.combined"),
+                    || {
+                        kernel_harness::time_ab(
+                            session,
+                            1,
+                            3,
+                            [EvictionMode::Write; 2],
+                            |arm, stream| graphs[arm].launch(stream).map_err(|e| e.to_string()),
+                        )
+                    },
+                )?;
+                println!(
+                    "TIMING prefill_decision rank={rank} variant={selected} rows={ROWS} old_total_us={} candidate_total_us={} paired_ratio={} candidate=pair warmup=1 samples=3",
+                    measured.arms[0].median_ms * 1000.0,
+                    measured.arms[1].median_ms * 1000.0,
+                    measured.paired_ratio
+                );
+                Ok(())
+            })?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -126,7 +126,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     let mode = args
         .first()
-        .ok_or("usage: prefill_attention build|check|run|run-reuse|ablation|traffic OUT")?;
+        .ok_or("usage: prefill_attention build|check|run|run-reuse|decision-check|decision-time|ablation|traffic OUT [VARIANT]")?;
     let out = Path::new(args.get(1).ok_or("missing OUT")?);
     if mode == "build" {
         return build(out);
@@ -149,6 +149,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if mode == "ablation" {
         if kernel_harness::gpu_test_multi_with(cubins, 4 << 30, probe::ablation)?.is_none() {
             return Err("GPU ablation did not execute".into());
+        }
+        return Ok(());
+    }
+    if mode == "decision-check" || mode == "decision-time" {
+        let selected = args.get(2).ok_or("missing decision variant")?;
+        if args.len() != 3 || !["window", "mixed64", "mixed32"].contains(&selected.as_str()) {
+            return Err("invalid decision arguments".into());
+        }
+        if kernel_harness::gpu_test_multi_with(cubins, 4 << 30, |sessions| {
+            probe::decision(sessions, selected, mode == "decision-check")
+        })?
+        .is_none()
+        {
+            return Err("GPU decision phase did not execute".into());
         }
         return Ok(());
     }

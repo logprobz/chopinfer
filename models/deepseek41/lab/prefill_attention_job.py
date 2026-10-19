@@ -135,6 +135,61 @@ def reuse_controls():
         else: raise AssertionError('all-layer control accepted corrupt output')
     print('PASS reuse_controls all_40_layers=true both_candidates=true bitwise_before_timing=true')
 
+DECISION_VARIANTS = ('window', 'mixed64', 'mixed32')
+
+def clean_gpu_output(text):
+    assert not re.search(r'\bFAILED\b|panicked at|SKIP|skipping|did not execute', text)
+    for failed, ignored in re.findall(r'test result:.*?; (\d+) failed; (\d+) ignored', text):
+        assert int(failed) == int(ignored) == 0
+
+def parse_decision_gates(text, variant):
+    clean_gpu_output(text)
+    gates = re.findall(r'PASS prefill_attention_bitwise rank=(\d+) variant=(\w+) rows=8192 workspace=true output=true replay=true f64=true candidate=pair reuse_cases=true', text)
+    assert sorted(gates) == [('0',variant),('1',variant)], gates
+    assert 'TIMING prefill_' not in text, 'timing entered the correctness phase'
+
+def parse_decision_timing(text, variant):
+    clean_gpu_output(text)
+    records = []
+    for match in re.finditer(r'TIMING prefill_decision ([^\n]+)', text):
+        row = dict(re.findall(r'(\w+)=([^\s]+)', match[1]))
+        assert row['variant'] == variant and row['rows'] == '8192' and row['candidate'] == 'pair'
+        assert row['warmup'] == '1' and row['samples'] == '3'
+        for field in ('old_total_us','candidate_total_us','paired_ratio'):
+            row[field] = float(row[field])
+            assert math.isfinite(row[field]) and row[field] > 0
+        records.append(row)
+    assert sorted(row['rank'] for row in records) == ['0','1']
+    return records
+
+def decision_steps(step, env, out):
+    result = dict(bitwise_variants=[],timings=[])
+    def save():
+        (out/'decision-progress.json').write_text(json.dumps(result,indent=2)+'\n')
+    save()
+    for variant in DECISION_VARIANTS:
+        log = step(f'check-{variant}', [str(BINARY),'decision-check',str(CUBINS),variant],95,
+                   env=dict(env,CHOPINFER_KERNEL_TIMEOUT_SECS='90'))
+        parse_decision_gates(log,variant)
+        result['bitwise_variants'].append(variant)
+        save()
+    for variant in DECISION_VARIANTS:
+        log = step(f'time-{variant}', [str(BINARY),'decision-time',str(CUBINS),variant],50,
+                   env=dict(env,CHOPINFER_KERNEL_TIMEOUT_SECS='45'))
+        result['timings'].extend(parse_decision_timing(log,variant))
+        save()
+    return result
+
+def decision_controls():
+    for variant in DECISION_VARIANTS:
+        text = '\n'.join(f'prefix PASS prefill_attention_bitwise rank={rank} variant={variant} rows=8192 workspace=true output=true replay=true f64=true candidate=pair reuse_cases=true' for rank in range(2))
+        parse_decision_gates(text,variant)
+        for bad in [text.splitlines()[0],text+'\n'+text,text+'\nFAILED',text+'\nTIMING prefill_decision']:
+            try: parse_decision_gates(bad,variant)
+            except AssertionError: pass
+            else: raise AssertionError('decision gate accepted incomplete evidence')
+    print('PASS decision_controls variants=3 ranks=2 candidate=pair samples=3 bitwise_before_timing=true')
+
 class StepError(RuntimeError):
     pass
 
@@ -145,7 +200,7 @@ def run_step(out, name, args, timeout=30, *, env=None, cwd=None, check=True):
         raise ValueError(f'invalid step name: {name}')
     stdout_path, stderr_path = out / f'{name}.stdout.log', out / f'{name}.stderr.log'
     record = dict(command=[str(arg) for arg in args], cwd=str(cwd or Path.cwd()),
-                  timeout_seconds=timeout, exit_code=None,
+                  timeout_seconds=timeout, exit_code=None, started_unix_seconds=time.time(),
                   stdout=str(stdout_path), stderr=str(stderr_path))
     child, error = None, None
     started = time.monotonic()
@@ -175,6 +230,7 @@ def run_step(out, name, args, timeout=30, *, env=None, cwd=None, check=True):
                     child.wait()
             if child is not None:
                 record['exit_code'] = child.returncode
+            record['ended_unix_seconds'] = time.time()
             record['elapsed_seconds'] = time.monotonic() - started
             (out / f'{name}.step.json').write_text(json.dumps(record, indent=2) + '\n')
     if error is not None or (check and record['exit_code'] != 0):
@@ -183,10 +239,14 @@ def run_step(out, name, args, timeout=30, *, env=None, cwd=None, check=True):
 
 def main():
     flags = set(sys.argv[1:])
-    assert flags <= {'--dry-run','--resources-only','--reuse'} and len(flags) == len(sys.argv[1:])
+    assert flags <= {'--dry-run','--resources-only','--reuse','--decision'} and len(flags) == len(sys.argv[1:])
     dry = '--dry-run' in flags
     resources_only = '--resources-only' in flags
     reuse = '--reuse' in flags
+    decision = '--decision' in flags
+    assert not (reuse and decision)
+    assert not (decision and resources_only)
+    deadline = time.monotonic() + 500 if decision else None
     visible = os.environ.get('CUDA_VISIBLE_DEVICES','')
     start = int(time.time())
     out = Path(os.environ.get('L11_ABLATION_RUN_DIR', ROOT / f'{"dry" if dry else "run"}-{start}-{os.getpid()}'))
@@ -195,7 +255,10 @@ def main():
     result = {'exit_code':1, 'dry_run':dry, 'resources_only':resources_only,
               'visible_devices':visible, 'device_order':os.environ.get('CUDA_DEVICE_ORDER')}
     def step(name, args, timeout=30, **kwargs):
-        return run_step(out, name, args, timeout, **kwargs)[0]
+        if deadline is not None:
+            timeout = min(timeout,max(0.001,deadline-time.monotonic()))
+        stdout, _ = run_step(out, name, args, timeout, **kwargs)
+        return stdout + '\n' + (out/f'{name}.stderr.log').read_text() if name.startswith(('check-','time-')) else stdout
     def interrupted(signum, frame): raise InterruptedError(f'signal {signum}')
     signal.signal(signal.SIGTERM,interrupted)
     signal.signal(signal.SIGINT,interrupted)
@@ -208,6 +271,7 @@ def main():
         step('hashes', ['sha256sum','--check','--quiet',str(ROOT/'SHA256SUMS')], cwd=ROOT)
         controls()
         if reuse: reuse_controls()
+        if decision: decision_controls()
         manifest = json.loads((CUBINS/'snapshot.json').read_text())
         requests = json.loads((ROOT/'resource-requests.json').read_text())
         checked = step('snapshot', [str(BINARY),'check',str(CUBINS)])
@@ -229,11 +293,13 @@ def main():
         gpu_timeout = 700 if reuse else 1050
         env.update(CHOPINFER_KERNEL_GPUS='0,1',CHOPINFER_KERNEL_REQUIRE='1',CHOPINFER_KERNEL_TIMEOUT_SECS=str(gpu_timeout),
                    CHOPINFER_KERNEL_RECEIPTS=str(out/'receipts'))
-        resources = step('resources', [sys.executable,'-B',str(ROOT/'prefill_attention_resources.py')],90,env=env)
+        resources = step('resources', [sys.executable,'-B',str(ROOT/'prefill_attention_resources.py')],30 if decision else 90,env=env)
         (out/'resources.json').write_text(resources)
         data = json.loads(resources)
         assert [r['rank'] for r in data['ranks']] == [0,1] and all(len(r['functions']) == len(requests) for r in data['ranks'])
-        if not resources_only:
+        if decision:
+            result.update(decision_steps(step,env,out))
+        elif not resources_only:
             log = step('gpu', [str(BINARY),'run-reuse' if reuse else 'ablation',str(CUBINS)],gpu_timeout,env=env)
             log += '\n' + (out/'gpu.stderr.log').read_text()
             result.update(parse_reuse(log,manifest['layers']) if reuse else parse(log))

@@ -20,10 +20,10 @@ pub(crate) mod moe_floor;
 pub mod mxfp8_fold;
 pub mod mxfp8_fold_stream;
 pub mod norm_quantize;
-pub mod replicated_embedding;
-pub mod window_fused;
 #[allow(dead_code, reason = "the build script compiles the cubin spec")]
 mod prefill_attention;
+pub mod replicated_embedding;
+pub mod window_fused;
 use kernels_sm120::backend::{F32ProjectionOffers, Sm120};
 
 /// The build's identity of the exact F32 projection cubins (`f32_head`,

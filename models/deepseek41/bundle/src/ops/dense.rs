@@ -257,8 +257,8 @@ impl DenseOps {
         let mut decode = Vec::new();
         let mut paired = Vec::new();
         for dense in projections(shape) {
-            for capacity in 1..=crate::sm120::mxfp8_fold::SMALL_CAPACITY {
-                let query = crate::sm120::mxfp8_fold::small_query(dense.query, capacity);
+            for capacity in 1..=crate::Kernels::dense_decode_capacity() {
+                let query = crate::Kernels::dense_decode_query(dense.query, capacity);
                 let need = exact::need(capacity, exact::verify(capacity));
                 let op = asks.ask(
                     format!("dense.{} decode {capacity}", dense.id),
@@ -320,7 +320,7 @@ impl DenseOps {
         workspace: DeviceBufferSpanV1,
     ) -> Result<Vec<Lowered>, Refusal> {
         let rows = phase.rows();
-        let op = if !phase.prefill() && rows <= crate::sm120::mxfp8_fold::SMALL_CAPACITY {
+        let op = if !phase.prefill() && rows <= crate::Kernels::dense_decode_capacity() {
             &self
                 .decode
                 .iter()

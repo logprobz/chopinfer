@@ -186,7 +186,7 @@ impl Prepared {
             execution: BlockScaledExecution::NativeBlockScaledMma,
         };
         let main_project = backend.mxfp8_fold_gemm(&query, need)?;
-        let capacity = crate::sm120::mxfp8_fold::SMALL_CAPACITY;
+        let capacity = crate::Kernels::dense_decode_capacity();
         let main_project_small = backend.mxfp8_fold_gemm(
             &Mxfp8FoldGemmQuery {
                 m_capacity: capacity,
@@ -409,7 +409,7 @@ impl Prepared {
             status: bind.view(v.status),
             status_row_offset: 0,
         };
-        let projection = if count <= crate::sm120::mxfp8_fold::SMALL_CAPACITY {
+        let projection = if count <= crate::Kernels::dense_decode_capacity() {
             &self.main_project_small
         } else {
             &self.main_project

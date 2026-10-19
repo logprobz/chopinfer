@@ -127,6 +127,19 @@ pub fn register_f32_projections(
 }
 
 impl crate::Kernels {
+    /// The largest separately prepared dense decode bucket.
+    pub(crate) fn dense_decode_capacity() -> u32 {
+        mxfp8_fold::SMALL_CAPACITY
+    }
+
+    /// Select the qualified dense fold query for an exact decode row count.
+    pub(crate) fn dense_decode_query(
+        query: kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery,
+        rows: u32,
+    ) -> kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery {
+        mxfp8_fold::small_query(query, rows)
+    }
+
     /// Entries used only by the drafter's smaller expert bank. An AR-only
     /// instance has no consumer for these modules.
     pub fn drafter_only(cubin: &str, g: &model_deepseek41_contract::geometry::Geometry) -> bool {

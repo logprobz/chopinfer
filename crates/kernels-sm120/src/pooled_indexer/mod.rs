@@ -948,5 +948,6 @@ mod tests {
 
 pub mod position_live;
 pub mod position_mma;
+pub mod position_mma_guard;
 
 pub mod position_valid;

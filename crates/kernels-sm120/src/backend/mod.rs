@@ -204,6 +204,7 @@ pub struct Sm120 {
     live_position_indexer: bool,
     tiled_position_scores: bool,
     native_position_scores: bool,
+    guarded_position_scores: bool,
     valid_position_candidates: bool,
     position_indexers: Vec<crate::pooled_indexer::position::Entry>,
     bf16_position_indexers: Vec<crate::pooled_indexer::position::Entry>,
@@ -739,7 +740,16 @@ impl Sm120 {
         self.valid_position_candidates = true;
         self.tiled_position_scores = false;
         self.native_position_scores = true;
+        self.guarded_position_scores = false;
         self
+    }
+
+    /// Bound every native dot to an exact F32 domain; repair other scores
+    /// with the original SIMT sequence. BF16 storage remains SIMT.
+    pub fn with_guarded_position_scores(self) -> Self {
+        let mut result = self.with_native_position_scores();
+        result.guarded_position_scores = true;
+        result
     }
 
     /// Use the separately compiled live-context variants of every registered
@@ -1861,6 +1871,7 @@ impl Backend for Sm120 {
                 op,
             ),
             self.native_position_scores,
+            self.guarded_position_scores,
             op,
             need.capacity,
         )
@@ -1959,6 +1970,7 @@ impl Backend for Sm120 {
                 self.valid_position_candidates,
             ),
             self.native_position_scores && op.block_size == 8,
+            self.guarded_position_scores,
             &op.indexer,
             need.capacity,
         )

@@ -1,6 +1,6 @@
 //! Add exact query repacking before native FP4 scores. Selection and candidate
 //! validation retain their current entries and disjoint workspace range.
-use crate::pooled_indexer::position_mma as mma;
+use crate::pooled_indexer::{position_mma as mma, position_mma_guard as guard};
 use kernel_core::{
     backend::{Counts, Launch, OpInfo, Prepared, PreparedOp, Refused, View},
     contract::{Argument, ArgumentList, Refusal},
@@ -10,6 +10,7 @@ use kernel_core::{
 pub(super) fn prepare<B: 'static>(
     original: Result<Prepared<B>, Refused>,
     enabled: bool,
+    guarded: bool,
     query: &PositionIndexerQuery,
     rows: u32,
 ) -> Result<Prepared<B>, Refused> {
@@ -20,10 +21,26 @@ pub(super) fn prepare<B: 'static>(
     let mut info = original.info().clone();
     let workspace = mma::Workspace::new(info.workspace, rows)?;
     let score = info.symbols[0].0.clone();
-    info.symbols[0].0 = mma::score_symbol(&score);
-    info.symbols.insert(0, (mma::pack_symbol(&score), 0));
+    let (score_symbol, pack_symbol, implementation) = if guarded {
+        (
+            guard::score_symbol(&score),
+            guard::pack_symbol(&score),
+            "guarded-native-fp4",
+        )
+    } else {
+        (
+            mma::score_symbol(&score),
+            mma::pack_symbol(&score),
+            "native-fp4",
+        )
+    };
+    info.symbols[0].0 = score_symbol;
+    info.symbols.insert(0, (pack_symbol, 0));
     info.workspace = workspace.bytes;
-    info.implementation = format!("sm120.position-native-fp4.v1({})", info.implementation);
+    info.implementation = format!(
+        "sm120.position-{implementation}.v1({})",
+        info.implementation
+    );
     Ok(Box::new(Native {
         original,
         info,

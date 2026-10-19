@@ -199,7 +199,9 @@ pub(super) fn pages(
             return Err(Refusal("position indexer page stride is below its plane"));
         }
         if stride % 4 != 0 {
-            return Err(Refusal("position indexer page stride is not 4-byte aligned"));
+            return Err(Refusal(
+                "position indexer page stride is not 4-byte aligned",
+            ));
         }
         let end = u64::from(keys.pages - 1)
             .checked_mul(stride)
@@ -646,7 +648,9 @@ mod tests {
                     }
                     assert_eq!(
                         pages(&bad, query, 129),
-                        Err(Refusal("position indexer page stride is not 4-byte aligned"))
+                        Err(Refusal(
+                            "position indexer page stride is not 4-byte aligned"
+                        ))
                     );
                 }
             }

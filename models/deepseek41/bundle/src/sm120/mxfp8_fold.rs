@@ -513,6 +513,7 @@ pub const PREFILL_SPLIT_FAMILY: &str = "mxfp8_prefill_split";
 pub fn prefill_split_cubin_name(g: &Geometry) -> String {
     format!("mxfp8_prefill_split_{}_sm120", g.kernel_tag)
 }
+#[allow(dead_code, reason = "the build compiles the split prefill entries")]
 pub fn prefill_split_cubins(
     geometries: &[Geometry],
 ) -> Result<Vec<(&'static str, CubinSpec)>, String> {

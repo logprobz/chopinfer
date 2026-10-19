@@ -107,7 +107,7 @@ impl HcOps {
                 backend.sinkhorn_lagged_mix_collapse(&hc::mix_collapse(g, need.capacity), need)
             })?,
             decode_mix: {
-                let need = exact::need(8, exact::every_phase(8));
+                let need = exact::need(32, exact::every_phase(32));
                 asks.ask("hc.decode_mix", need, |need| {
                     backend.sinkhorn_lagged_mix_collapse(&hc::mix_collapse(g, need.capacity), need)
                 })?
@@ -215,7 +215,10 @@ impl HcOps {
     }
 
     pub(crate) fn has_finish_norm(&self, phase: Phase) -> bool {
-        matches!(phase, Phase::Decode(1 | 8)) && self.finish_norm.is_some()
+        matches!(
+            phase,
+            Phase::Decode(1 | 8) | Phase::Verify { rows: 6 | 32, .. }
+        ) && self.finish_norm.is_some()
     }
 
     pub(crate) fn round_expand_mix_norm(
@@ -267,7 +270,10 @@ impl HcOps {
     }
 
     fn mix_for_phase(&self, phase: Phase) -> &Prepared<LaggedMixCollapseBuffers<View>> {
-        if matches!(phase, Phase::Decode(1 | 8)) {
+        if matches!(
+            phase,
+            Phase::Decode(1 | 8) | Phase::Verify { rows: 6 | 32, .. }
+        ) {
             &self.decode_mix
         } else {
             &self.mix
@@ -347,12 +353,108 @@ mod tests {
     use bundle_runtime::geometry::Ranks;
     use model_deepseek41_contract::geometry::FLASH;
     #[test]
-    fn warp_mixer_is_limited_to_qualified_decode_buckets() {
+    fn verify_tail_selection_does_not_change_standalone_producer_buckets() {
+        use kernel_core::rmsnorm_quantize::RmsNormQuantizeBuffers;
+        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+        let kernels = crate::Kernels::new(&shape).unwrap();
+        let ops = HcOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default()).unwrap();
+        let tail = ops.finish_norm.as_ref().unwrap();
+        let spans: std::collections::BTreeMap<_, _> = tail
+            .info()
+            .bytes
+            .iter()
+            .enumerate()
+            .map(|(i, (name, bytes))| {
+                (
+                    name.as_str(),
+                    View {
+                        handle: i as u64 + 1,
+                        bytes: *bytes,
+                    },
+                )
+            })
+            .collect();
+        let v = |name: &str| spans[name];
+        let hc = SinkhornRoundExpandMixBuffers {
+            x: v("hc.x"),
+            sum: v("hc.sum"),
+            rounded: v("hc.rounded"),
+            post_in: v("hc.post_in"),
+            comb_in: v("hc.comb_in"),
+            expanded: v("hc.expanded"),
+            fn_: v("hc.fn_"),
+            base: v("hc.base"),
+            scale: v("hc.scale"),
+            pre_in: v("hc.pre_in"),
+            collapsed: v("hc.collapsed"),
+            pre: v("hc.pre"),
+            post: v("hc.post"),
+            comb: v("hc.comb"),
+            live_rows: v("hc.live_rows"),
+        };
+        let workspace = View {
+            handle: 100,
+            bytes: tail.info().workspace,
+        };
+        for rows in [1, 2, 4, 6, 8, 16, 32] {
+            let standalone = ops
+                .round_fused
+                .as_ref()
+                .unwrap()
+                .launches(&hc, workspace, Counts::rows(rows))
+                .unwrap();
+            let expected = match rows {
+                1 => "chop_deepseek41_hc_round_chain_w8_v1",
+                8 => "chop_deepseek41_hc_round_chain_w4_v1",
+                _ => "chop_deepseek41_hc_round_expand_mix_partials_v1",
+            };
+            assert_eq!(standalone[0].symbol, expected);
+            for widened in [
+                None,
+                Some(View {
+                    handle: 101,
+                    bytes: 32 * 5120 * 4,
+                }),
+            ] {
+                let buffers = SinkhornRoundNormBuffers {
+                    hc,
+                    norm: RmsNormQuantizeBuffers {
+                        input: hc.collapsed,
+                        weight: v("norm.weight"),
+                        normed: v("norm.normed"),
+                        widened,
+                        codes: v("norm.codes"),
+                        scales: v("norm.scales"),
+                        live_rows: hc.live_rows,
+                        status: v("norm.status"),
+                        status_row_offset: 0,
+                    },
+                };
+                let chain = tail
+                    .launches(&buffers, workspace, Counts::rows(rows))
+                    .unwrap();
+                if matches!(rows, 1 | 6 | 8 | 32) {
+                    assert_eq!(chain.len(), 2);
+                    assert!(chain[1].symbol.ends_with("hc_finish_norm_w32_v1"));
+                    assert!(chain[0].symbol.ends_with(if rows == 1 {
+                        "hc_round_chain_w8_v1"
+                    } else {
+                        "hc_round_chain_w4_v1"
+                    }));
+                } else {
+                    assert_eq!(chain.len(), 3);
+                    assert_eq!(chain[0].symbol, standalone[0].symbol);
+                }
+            }
+        }
+    }
+    #[test]
+    fn warp_mixer_is_limited_to_qualified_decode_and_verify_buckets() {
         for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
             let shape = Shape::new(&FLASH, ranks).unwrap();
             let kernels = crate::Kernels::new(&shape).unwrap();
             let ops = HcOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default()).unwrap();
-            for rows in [1, 2, 4, 8, 16, 32] {
+            for rows in [1, 2, 4, 6, 8, 16, 32] {
                 for phase in [
                     Phase::Decode(rows),
                     Phase::Prefill { rows },
@@ -364,11 +466,12 @@ mod tests {
                         .symbols
                         .iter()
                         .any(|(s, _)| s.ends_with("hc_mixer_probe_warp_v1"));
-                    assert_eq!(selected, matches!(phase, Phase::Decode(1 | 8)), "{phase:?}");
-                    assert_eq!(
-                        ops.has_finish_norm(phase),
-                        matches!(phase, Phase::Decode(1 | 8))
+                    let qualified = matches!(
+                        phase,
+                        Phase::Decode(1 | 8) | Phase::Verify { rows: 6 | 32, .. }
                     );
+                    assert_eq!(selected, qualified, "{phase:?}");
+                    assert_eq!(ops.has_finish_norm(phase), qualified);
                 }
             }
             assert_eq!(ops.scratch().partials, Some(32 * 15360));

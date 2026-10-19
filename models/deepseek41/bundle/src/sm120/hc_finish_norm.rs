@@ -27,13 +27,18 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
         .collect()
 }
 
-/// Only the measured Flash decode buckets use the 1024-thread tail.
+/// Only measured Flash decode and verify buckets use the 1024-thread tail.
 pub fn register(
     backend: kernels_sm120::backend::Sm120,
     g: &Geometry,
 ) -> kernels_sm120::backend::Sm120 {
     if g.id == model_deepseek41_contract::geometry::FLASH.id {
-        backend.with_sinkhorn_finish_norm(entry(g), vec![1, 8])
+        backend
+            .with_sinkhorn_finish_norm(entry(g), vec![1, 6, 8, 32])
+            .with_sinkhorn_finish_norm_chain(
+                super::hc_round_chain::entry(g),
+                vec![(1, 8), (6, 4), (8, 4), (32, 4)],
+            )
     } else {
         backend
     }

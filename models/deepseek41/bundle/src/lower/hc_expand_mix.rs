@@ -25,8 +25,10 @@ fn successor(g: &Geometry, layer: u32, sublayer: Sublayer) -> Option<(u32, Subla
 }
 impl Lowering<'_> {
     fn has_expand_mix(&self, phase: Phase) -> bool {
-        matches!(phase, Phase::Decode(_))
-            && self.ops.hc.as_ref().is_some_and(|ops| ops.has_expand_mix())
+        self.ops.hc.as_ref().is_some_and(|ops| {
+            ops.has_expand_mix()
+                && (matches!(phase, Phase::Decode(_)) || ops.has_finish_norm(phase))
+        })
     }
     pub(super) fn mix_was_fused(&self, phase: Phase, layer: u32, sublayer: Sublayer) -> bool {
         if !self.has_expand_mix(phase) {

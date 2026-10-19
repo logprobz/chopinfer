@@ -184,7 +184,7 @@ pub(super) fn journal_spans(line: &str) -> Vec<Span> {
 
 /// Audit the submitted journal independently of the production checker.
 /// The quantizer before each fork identifies the three immutable inputs.
-fn audit_scratch(lines: &[String]) -> (usize, usize) {
+pub(super) fn audit_scratch(lines: &[String]) -> (usize, usize) {
     let mut regions = 0;
     let mut collisions = 0;
     for at in 1..lines.len().saturating_sub(2) {

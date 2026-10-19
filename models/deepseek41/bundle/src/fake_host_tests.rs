@@ -42,6 +42,7 @@ mod prefill_skip;
 mod prefill_tma;
 mod producer_epilogues;
 mod shared_overlap;
+mod verify_hc;
 use crate::shape::Shape;
 use model_deepseek41_contract::state::KvStorage;
 

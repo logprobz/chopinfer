@@ -220,6 +220,7 @@ fn fire(
     }
     Ok(())
 }
+#[allow(clippy::too_many_arguments)]
 fn compare<B>(
     session: &Session,
     arena: &mut Arena<'_>,

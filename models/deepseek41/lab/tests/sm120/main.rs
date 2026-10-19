@@ -18,7 +18,10 @@ mod dspark_cubin;
 mod dspark_entries;
 mod dspark_heads;
 mod indexer;
+// The indexer registrations; the lab builds none of the separately locked
+// runtime candidate producers.
 #[path = "../../../bundle/src/sm120/indexer.rs"]
+#[allow(dead_code)]
 mod indexer_entries;
 mod indexer_query;
 #[path = "../../../bundle/src/sm120/indexer_query.rs"]

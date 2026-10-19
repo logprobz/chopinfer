@@ -936,6 +936,8 @@ fn journal_steps(host: &Rc<Host>) {
 /// This two-row lifecycle retains its source launches. The image lifecycle
 /// selects the C1 producer and cached source; its ordered merge is unchanged.
 /// Retained launches keep their argument lists and numerical contracts.
+/// Decode uses the qualified four-group ordered position merge and disjoint
+/// score-tail lists. Prefill and verify retain their original merge.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",

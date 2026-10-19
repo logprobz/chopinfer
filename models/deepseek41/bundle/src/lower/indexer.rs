@@ -137,6 +137,21 @@ impl Lowering<'_> {
             index_selected(scratch.index_selected, source, scratch_rows(), top_k),
         )?;
         let mut launches = Vec::new();
+        let hierarchy =
+            crate::Kernels::hierarchical_indexer_enabled(self.shape, self.kv.storage, phase);
+        let select = |calls| {
+            if hierarchy {
+                crate::Kernels::hierarchical_indexer_select(
+                    calls,
+                    scratch.index_scores,
+                    phase.rows(),
+                    width,
+                )
+                .map_err(error)
+            } else {
+                Ok(calls)
+            }
+        };
         // A phase has at most two batch sizes (full blocks and a final tail).
         // Keep their prepared ops local to this eager lowering, never cached
         // across a changed position upload or a decode graph replay.
@@ -186,10 +201,10 @@ impl Lowering<'_> {
             };
             let row_tags = block(scratch.row_tags, global_first, n);
             if reindex {
-                launches.extend(
+                launches.extend(select(
                     ops.reindex(ratio, n, width, &views, row_tags, candidates)
                         .map_err(error)?,
-                );
+                )?);
                 continue;
             }
             if let Some(factory) = factory {
@@ -220,7 +235,7 @@ impl Lowering<'_> {
                 }
                 continue;
             }
-            launches.extend(ops.select(ratio, n, width, &views).map_err(error)?);
+            launches.extend(select(ops.select(ratio, n, width, &views).map_err(error)?)?);
             if layer == g.shape.candidates.source {
                 launches.extend(
                     ops.produce(

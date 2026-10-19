@@ -9,6 +9,67 @@ use super::sources;
 use crate::Profile;
 
 pub const HEADER: &str = "latent/sources_prefill.cuh";
+pub const PROFILE_WORDS: u64 = 9;
+
+#[derive(Clone, Copy, Debug)]
+pub enum ProfileMode {
+    Full,
+    Loads,
+    Resident,
+}
+
+impl ProfileMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Loads => "loads",
+            Self::Resident => "resident",
+        }
+    }
+}
+
+pub fn profile_symbol(reference: &sources::Entry, mode: ProfileMode) -> String {
+    format!(
+        "chop_latent_sources_{}_profile_{}_v1",
+        reference.name,
+        mode.name()
+    )
+}
+
+/// Lab-only ablations. Full keeps reference arithmetic; Loads and Resident
+/// are diagnostic workloads with different outputs, never serving entries.
+pub fn profile_cubin_spec(
+    profile: Profile,
+    entries: &[sources::Entry],
+) -> Result<CubinSpec, Refusal> {
+    let mut spec = sources::cubin_spec(profile, entries)?;
+    spec.name = format!("latent_sources_prefill_profile_{}_sm120", profile.tag());
+    spec.headers = vec![format!("#include \"{HEADER}\"")];
+    spec.entries.clear();
+    for entry in entries {
+        validate(entry)?;
+        for (mode, cxx) in [
+            (ProfileMode::Full, "Full"),
+            (ProfileMode::Loads, "Loads"),
+            (ProfileMode::Resident, "Resident"),
+        ] {
+            let mut body = entry.entry_specs()?.remove(0);
+            if !body.body.starts_with("chop::latent::sources::attention<") {
+                return Err(Refusal("profiling requires the grouped reference body"));
+            }
+            body.symbol = profile_symbol(entry, mode);
+            body.params.push(kernel_build::EntryParam::DevicePointer {
+                name: "stamps".into(),
+                cxx_type: "uint64_t".into(),
+            });
+            body.body = body.body.replace("chop::latent::sources::attention<", &format!(
+                "chop::latent::sources_prefill::profile_attention<chop::latent::sources_prefill::ProfileMode::{cxx},"
+            )).replace(");", ",stamps);");
+            spec.entries.push(body);
+        }
+    }
+    Ok(spec)
+}
 
 fn validate(reference: &sources::Entry) -> Result<sources::Shape, Refusal> {
     reference.contract()?;
@@ -108,6 +169,22 @@ mod tests {
                         .starts_with("chop::latent::sources_prefill::attention<")
                 );
                 assert_eq!(spec.min_blocks, 2);
+                let profiling =
+                    profile_cubin_spec(profile, std::slice::from_ref(&reference)).unwrap();
+                assert_eq!(profiling.entries.len(), 3);
+                for (mode, entry) in [ProfileMode::Full, ProfileMode::Loads, ProfileMode::Resident]
+                    .into_iter()
+                    .zip(&profiling.entries)
+                {
+                    assert_eq!(entry.symbol, profile_symbol(&reference, mode));
+                    assert_eq!(
+                        &entry.params[..entry.params.len() - 1],
+                        reference.params().unwrap()
+                    );
+                    assert!(entry.body.ends_with(",stamps);"));
+                    assert_eq!(entry.max_threads, 128);
+                    assert_eq!(entry.min_blocks, 1);
+                }
                 for rows in [1, 17, 8192] {
                     let old = reference.plan(rows).unwrap();
                     let new = plan(&reference, rows).unwrap();

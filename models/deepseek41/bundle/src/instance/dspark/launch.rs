@@ -49,19 +49,14 @@ impl Instance {
         for (rank, buffers) in self.buffers.iter().enumerate() {
             let stream = self.ranks[rank].2;
             let mut status = vec![0; live as usize * 4];
-            self.services
-                .synchronize_stream(stream)
-                .map_err(|e| format!("DSpark synchronize: {e:?}"))?;
             for plane in [
                 buffers.scratch.row_status,
                 buffers.scratch.shared_row_status,
             ] {
+                // The host service returns after the stream-ordered readback completes.
                 self.services
                     .copy_device_to_host(stream, &mut status, rows(plane, live))
                     .map_err(|e| format!("DSpark status: {e:?}"))?;
-                self.services
-                    .synchronize_stream(stream)
-                    .map_err(|e| format!("DSpark synchronize: {e:?}"))?;
                 if status.iter().any(|&byte| byte != 0) {
                     return Err(format!("DSpark quantized input on rank {rank} is invalid"));
                 }

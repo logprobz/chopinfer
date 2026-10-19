@@ -92,6 +92,11 @@ fn warm_cycle_host_boundary_inventory() {
                     + 2;
                 assert!(draft < gather);
                 assert!(execute[gathered - 1].starts_with("upload "));
+                assert_eq!(
+                    counts(&execute[..gather])["stream_syncs"],
+                    0,
+                    "completed status readbacks must not be bracketed by stream drains"
+                );
                 let totals = counts(&journal[start..]);
                 assert_eq!(
                     totals["graph_captures"], 0,

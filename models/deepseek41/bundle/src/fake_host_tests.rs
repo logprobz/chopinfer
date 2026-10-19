@@ -673,37 +673,38 @@ fn journal_steps(host: &Rc<Host>) {
 
 /// The pinned journal digest of each Flash topology and KV layout. The
 /// workspace includes attention partials at the full token budget; its
-/// allocation and bound span lengths are part of these journals.
+/// allocation and bound span lengths are part of these journals. The
+/// decode mixer adds its split module, partials and zeroed tickets.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (12688, 0xbb2f2941eb2d4350),
+        (12696, 0xaa8ae0ce44bbdb76),
     ),
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (12686, 0xfaeb7a056e82d4b2),
+        (12694, 0xc8f9895ddd5c8e53),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (25253, 0x5bac5ee6b0c2de70),
+        (25269, 0x071933a25cdfd58f),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (25249, 0x6d6c29eb8bb4eecb),
+        (25265, 0x0f0bb2503e8c9880),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
-        (50391, 0x80c58842d55a5f66),
+        (50423, 0x5d931fb2dfa4f897),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (50383, 0xc8f58831e3f036ba),
+        (50415, 0x479f151d0cd77fab),
     ),
 ];
 
@@ -868,7 +869,7 @@ fn a_partial_instance_launches_the_lowered_stages_in_program_order() {
         "chop_comm_allgather_scattered_f32_v1",
         "chop_row_rounding_round_deepseek41_w5120_v1",
         kernels_sm120_broadcast(),
-        "chop_sinkhorn_hc_deepseek41_lagged_mix_collapse_v1",
+        "chop_sinkhorn_hc_deepseek41_lagged_mix_collapse_split_v1",
         "chop_row_rmsnorm_deepseek41_w5120_v1",
         "chop_sinkhorn_hc_deepseek41_expand_f32_v1",
         "chop_sinkhorn_hc_deepseek41_weighted_head_f32_v1",

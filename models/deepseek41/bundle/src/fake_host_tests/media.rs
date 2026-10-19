@@ -310,8 +310,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 
 /// The pinned journal digest of the image lifecycle at each rank count.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
-    (Ranks::TP2, (14077, 0xa9ca104832ea459b)),
-    (Ranks::TP4, (28111, 0x7e67d8d27861b164)),
+    (Ranks::TP2, (14093, 0x385049ea13f21378)),
+    (Ranks::TP4, (28143, 0x473ec84023fc7bf2)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native
@@ -398,6 +398,15 @@ fn an_image_prefill_journals_at_two_and_four_ranks() {
         // The encoder's entries load with their planned dynamic shared
         // memory, as the program's do.
         assert_launches_fit_configured_shared(&lines, &topology);
+        if let Some(dir) = std::env::var_os("CHOPINFER_DEEPSEEK41_GEOMETRY_JOURNAL_DIR") {
+            let dir = std::path::PathBuf::from(dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join(format!("{topology}.media.journal")),
+                lines.join("\n"),
+            )
+            .unwrap();
+        }
         if let Err(observed) = check_journal(&lines, expected, &format!("{topology}.media.journal"))
         {
             mismatches.push(format!("{topology}: {observed}"));

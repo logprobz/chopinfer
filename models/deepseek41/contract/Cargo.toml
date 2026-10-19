@@ -44,3 +44,11 @@ path = "examples/sm120/build_window_bf16.rs"
 [[example]]
 name = "build_position_candidates_runtime"
 path = "examples/sm120/build_position_candidates_runtime.rs"
+
+[[example]]
+name = "build_lagged_split"
+path = "examples/sm120/build_lagged_split.rs"
+
+[[test]]
+name = "kernel_hc_split"
+path = "tests/sm120/kernel_hc_split.rs"

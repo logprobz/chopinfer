@@ -4,7 +4,8 @@
 //! prefill's rows, one cubin per geometry, and its unrounded F32 weighted
 //! head, which the final norm reads, in a cubin of its own so adding it
 //! kept the first cubin's bytes. The contracts are the model's
-//! (`model_deepseek41_contract::hc`).
+//! (`model_deepseek41_contract::hc`). A separate split family serves
+//! buckets of at most 32 rows; larger buckets keep the original mixer.
 
 use kernel_build::CubinSpec;
 use kernel_core::sinkhorn_hyper_connection::{
@@ -13,6 +14,7 @@ use kernel_core::sinkhorn_hyper_connection::{
 use kernels_sm120::backend::Sm120;
 use kernels_sm120::sinkhorn_hc::Geometry as Mixer;
 use kernels_sm120::sinkhorn_hc::lagged::{self, Entry};
+use kernels_sm120::sinkhorn_hc::lagged_split;
 use model_deepseek41_contract::geometry::Geometry;
 use model_deepseek41_contract::hc;
 use model_deepseek41_contract::serving::PREFILL_TOKENS;
@@ -21,6 +23,36 @@ use model_deepseek41_contract::serving::PREFILL_TOKENS;
 pub const FAMILY: &str = "sinkhorn_hc_lagged";
 /// The lock family of the F32 weighted head cubins, one per geometry.
 pub const HEAD_F32_FAMILY: &str = "sinkhorn_hc_head_f32";
+/// Decode-only split entries, isolated from the existing cubins and locks.
+pub const SPLIT_FAMILY: &str = "sinkhorn_hc_lagged_split";
+pub const SPLIT_ROWS: u32 = 32;
+
+pub fn split_entry(g: &Geometry) -> lagged_split::Entry {
+    lagged_split::entry(
+        super::rows::profile(g),
+        Mixer {
+            capacity: SPLIT_ROWS,
+            ..mixer(g)
+        },
+        false,
+    )
+}
+
+pub fn split_cubins(geometries: &[Geometry]) -> Vec<(&'static str, CubinSpec)> {
+    geometries
+        .iter()
+        .map(|g| {
+            (
+                SPLIT_FAMILY,
+                lagged_split::cubin_spec(
+                    format!("sinkhorn_hc_{}_lagged_split_sm120", g.kernel_tag),
+                    &[split_entry(g)],
+                )
+                .expect("the lagged split geometry is valid"),
+            )
+        })
+        .collect()
+}
 
 /// The name of `g`'s lagged Sinkhorn cubin.
 pub fn cubin_name(g: &Geometry) -> String {
@@ -63,7 +95,7 @@ pub fn head_f32_entry(g: &Geometry) -> Entry {
 }
 
 /// Every geometry's lagged Sinkhorn cubin, then every geometry's F32
-/// weighted head cubin, each with its lock family.
+/// weighted head and decode split cubins, each with its lock family.
 pub fn cubins(geometries: &[Geometry]) -> Vec<(&'static str, CubinSpec)> {
     let served = geometries
         .iter()
@@ -74,15 +106,20 @@ pub fn cubins(geometries: &[Geometry]) -> Vec<(&'static str, CubinSpec)> {
             lagged::cubin_spec(head_f32_cubin_name(g), &[head_f32_entry(g)]),
         )
     });
-    served.chain(heads).collect()
+    served
+        .chain(heads)
+        .chain(split_cubins(geometries))
+        .collect()
 }
 
 /// `sm120` with `g`'s lagged Sinkhorn entries registered.
 pub fn register(sm120: Sm120, g: &Geometry) -> Sm120 {
-    sm120.with_sinkhorn_lagged(registered_entries(g))
+    sm120
+        .with_sinkhorn_lagged(registered_entries(g))
+        .with_sinkhorn_lagged_split([split_entry(g)])
 }
 
-/// `g`'s entries `register` registers: the first cubin's, then the F32 head.
+/// `g`'s original entries: the first cubin's, then the F32 head.
 pub fn registered_entries(g: &Geometry) -> Vec<Entry> {
     entries(g).into_iter().chain([head_f32_entry(g)]).collect()
 }

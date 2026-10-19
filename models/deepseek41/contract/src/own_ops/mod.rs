@@ -13,6 +13,7 @@ use kernel_core::backend::{Need, Prepared, Refused, View};
 
 pub mod dspark;
 pub mod engram;
+pub mod ring_gather;
 pub mod rope;
 pub mod widen;
 
@@ -28,6 +29,17 @@ use widen::{WidenRows, WidenRowsBuffers};
 pub trait OwnOps: Send + Sync {
     /// The backend's name in refusals and reports, such as `sm120`.
     fn name(&self) -> &str;
+
+    /// Copy committed ring slots into draft rows. Counts::rows is the item
+    /// capacity; the device live_items count selects the items copied.
+    fn dspark_ring_gather(
+        &self,
+        op: &ring_gather::RingGather,
+        need: Need,
+    ) -> Result<Prepared<ring_gather::RingGatherBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
 
     /// Correct one position of each DSpark block on a vocabulary shard.
     /// Launches read Counts::rows as the item capacity; the device live_rows
@@ -120,6 +132,15 @@ mod tests {
     fn every_method_refuses_by_default() {
         let backend = Nothing;
         assert_eq!(backend.name(), "nothing");
+        unsupported(backend.dspark_ring_gather(
+            &ring_gather::RingGather {
+                bytes: 64,
+                source_stride: 64,
+                destination_stride: 80,
+                slots: 4,
+            },
+            Need::rows(4),
+        ));
         unsupported(backend.dspark_markov_step(
             &MarkovStep {
                 rank: 256,

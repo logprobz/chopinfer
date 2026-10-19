@@ -49,5 +49,9 @@ path = "examples/sm120/build_staged_window_keys.rs"
 name = "build_ceil_parallel"
 path = "examples/sm120/build_ceil_parallel.rs"
 
+[[example]]
+name = "build_dspark_ring_gather"
+path = "examples/sm120/build_dspark_ring_gather.rs"
+
 [lints]
 workspace = true

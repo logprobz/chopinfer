@@ -71,6 +71,8 @@ mod rows;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod shared;
 mod widen;
+pub mod ring_gather;
+pub mod ring_gather_entries;
 
 /// The serving latent cubins and symbols, for the model's kernel lab.
 pub fn latent_cubins()

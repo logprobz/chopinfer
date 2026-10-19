@@ -31,6 +31,17 @@ impl Sm120Own {
 }
 
 impl OwnOps for Sm120Own {
+    fn dspark_ring_gather(
+        &self,
+        op: &model_deepseek41_contract::own_ops::ring_gather::RingGather,
+        need: Need,
+    ) -> Result<
+        Prepared<model_deepseek41_contract::own_ops::ring_gather::RingGatherBuffers<View>>,
+        Refused,
+    > {
+        super::ring_gather::prepare(*op, need)
+    }
+
     fn dspark_markov_step(
         &self,
         op: &MarkovStep,

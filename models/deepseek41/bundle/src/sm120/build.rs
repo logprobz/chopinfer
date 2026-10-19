@@ -29,6 +29,8 @@ mod hc;
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod latent;
 mod own_cubin;
+mod ring_gather_cubin;
+mod ring_gather_entries;
 // The build compiles the entries; the bundle launches them.
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod compressor;
@@ -95,6 +97,10 @@ pub fn selection(
 ) -> Selection {
     let mut specs = vec![(own_entries::FAMILY, own_cubin::rope_cubin_spec(manifest))];
     specs.push((dspark_entries::FAMILY, dspark_cubin::cubin_spec(manifest)));
+    specs.push((
+        ring_gather_entries::FAMILY,
+        ring_gather_cubin::cubin_spec(manifest),
+    ));
     specs.extend(dspark_aux::cubins(geometries).expect("DSpark auxiliary cubins"));
     specs.extend(dspark_router::cubins(geometries).expect("DSpark router cubins"));
     let mut owners = Vec::new();

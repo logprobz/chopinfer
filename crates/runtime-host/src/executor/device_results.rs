@@ -7,6 +7,8 @@ use runtime_engine::{AcceptedPrefix, AsyncInputDependency};
 pub(super) struct DeviceResults {
     metadata: DeviceCycleMetadataV1,
     dependency: Option<AsyncInputDependency>,
+    // Retain owners before submission, including partial or failed enqueue.
+    contexts: BTreeMap<u64, (runtime_bundle_abi::BundleContextHandleV1, u32)>,
     drafts: BTreeMap<RequestId, BundleDeviceDraftsV1>,
     leases: Vec<Box<dyn std::any::Any>>,
     expanded: Vec<ModelBatchItem>,
@@ -137,6 +139,7 @@ impl DeviceResults {
         Ok(Self {
             metadata,
             dependency: None,
+            contexts: BTreeMap::new(),
             drafts: BTreeMap::new(),
             leases: Vec::new(),
             expanded,
@@ -145,6 +148,18 @@ impl DeviceResults {
             ready: Vec::new(),
             completion: None,
         })
+    }
+
+    pub(super) fn dependency(&self) -> AsyncInputDependency {
+        self.dependency.unwrap_or_default()
+    }
+
+    pub(super) fn epoch(&self) -> u64 {
+        self.metadata.cycle_epoch
+    }
+
+    fn retain_context(&mut self, context: runtime_bundle_abi::BundleContextHandleV1, rank: u32) {
+        self.contexts.entry(context.raw).or_insert((context, rank));
     }
 
     fn require_epoch(&self, epoch: u64) -> HostServiceResultV1<()> {
@@ -287,6 +302,7 @@ impl CollectingSinkV1<'_> {
             submitted.logits.logits = part;
             submitted.output.offset += (at - start) as u64 * DEVICE_SAMPLE_RECORD_BYTES_V1;
             submitted.output.length = count as u64 * DEVICE_SAMPLE_RECORD_BYTES_V1;
+            device.retain_context(part.context, part.rank);
             sampler.sample_device_logits(
                 submitted,
                 &device.expanded[at..at + count].iter().collect::<Vec<_>>(),
@@ -323,6 +339,7 @@ impl CollectingSinkV1<'_> {
             if items.iter().any(|item| item.draft().is_some()) {
                 return Err(BundleStatusV1::Unsupported);
             }
+            device.retain_context(raw.context, raw.rank);
             let ticket = sampler.issue_ready_logits(
                 BundleReadyLogitsViewV1 {
                     logits: part,
@@ -367,6 +384,7 @@ impl CollectingSinkV1<'_> {
         {
             return Err(BundleStatusV1::InvalidArgument);
         }
+        device.retain_context(completion.packet.context, completion.packet.rank);
         let ticket = sampler.enqueue_device_readback(completion.packet)?;
         device.completion = Some((
             completion,
@@ -376,6 +394,35 @@ impl CollectingSinkV1<'_> {
                 ticket: Some(ticket),
             },
         ));
+        Ok(())
+    }
+
+    pub(super) fn discard_device(&mut self) -> HostServiceResultV1<()> {
+        let Some(device) = &mut self.device else {
+            return Ok(());
+        };
+        let sampler = self.sampler.as_ref().ok_or(BundleStatusV1::Unsupported)?;
+        let mut failure = None;
+        for &(context, rank) in device.contexts.values() {
+            if let Err(error) = sampler.drain_device_results(context, rank) {
+                failure.get_or_insert(error);
+            }
+        }
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        // The backend drained all tickets, including failed enqueues that
+        // never returned one. Do not cancel these stale tickets in Drop.
+        for (pending, _) in &mut device.ready {
+            pending.ticket = None;
+        }
+        if let Some((_, pending)) = &mut device.completion {
+            pending.ticket = None;
+        }
+        device.contexts.clear();
+        device.ready.clear();
+        device.completion = None;
+        device.leases.clear();
         Ok(())
     }
 
@@ -466,6 +513,10 @@ mod tests {
         collects: Cell<usize>,
         cancels: Cell<usize>,
         fail_collection: Cell<bool>,
+        fail_drain: Cell<bool>,
+        fail_issue: Cell<bool>,
+        drains: RefCell<Vec<u64>>,
+        trace: Rc<RefCell<Vec<&'static str>>>,
     }
     impl DeviceLogitsSamplerV1 for Sampler {
         fn sample_view(
@@ -477,6 +528,19 @@ mod tests {
         }
         fn supports_device_results(&self) -> bool {
             true
+        }
+        fn drain_device_results(
+            &self,
+            context: BundleContextHandleV1,
+            _: u32,
+        ) -> HostServiceResultV1<()> {
+            self.drains.borrow_mut().push(context.raw);
+            self.trace.borrow_mut().push("drain");
+            if self.fail_drain.get() {
+                Err(BundleStatusV1::HostError)
+            } else {
+                Ok(())
+            }
         }
         fn retain_device_drafts(
             &self,
@@ -498,7 +562,11 @@ mod tests {
                     .collect(),
                 dispatch,
             ));
-            Ok(())
+            if self.fail_issue.get() {
+                Err(BundleStatusV1::HostError)
+            } else {
+                Ok(())
+            }
         }
         fn issue_ready_logits(
             &self,
@@ -797,5 +865,235 @@ mod tests {
         drop(sink);
         assert_eq!(sampler.collects.get(), 0);
         assert_eq!(sampler.cancels.get(), 1);
+    }
+    struct Owner {
+        trace: Rc<RefCell<Vec<&'static str>>>,
+        poisoned: bool,
+        fail_cancel: bool,
+    }
+    impl Owner {
+        fn new(sampler: &Sampler) -> Self {
+            Self {
+                trace: sampler.trace.clone(),
+                poisoned: false,
+                fail_cancel: false,
+            }
+        }
+        fn poison(&mut self) {
+            self.poisoned = true;
+            self.trace.borrow_mut().push("poison");
+        }
+    }
+    impl BundleExecutionV1 for Owner {
+        fn execute_batch(
+            &mut self,
+            _: &[u8],
+            _: ResultSinkLimitsV1,
+        ) -> Result<Vec<OwnedLogitsRowV1>, BundleAbiError> {
+            self.trace.borrow_mut().push("execute");
+            Ok(Vec::new())
+        }
+        fn commit(&mut self) -> Result<(), BundleAbiError> {
+            self.trace.borrow_mut().push("commit");
+            Ok(())
+        }
+        fn cancel(&mut self) -> Result<(), BundleAbiError> {
+            self.trace.borrow_mut().push("cancel");
+            if self.fail_cancel {
+                self.poison();
+                Err(BundleAbiError::Poisoned)
+            } else {
+                Ok(())
+            }
+        }
+        fn destroy(&mut self) -> Result<(), BundleAbiError> {
+            self.trace.borrow_mut().push("destroy");
+            Ok(())
+        }
+        fn is_poisoned(&self) -> bool {
+            self.poisoned
+        }
+    }
+
+    #[test]
+    fn submission_returns_before_collection_for_ar_and_verify_batches() {
+        for concurrency in [1, 8, 32] {
+            for k in [0, 2] {
+                let items = (1..=concurrency).map(|id| item(id, k)).collect::<Vec<_>>();
+                let sampler = Rc::new(Sampler::default());
+                let mut sink = sink(&items, sampler.clone());
+                sink.device_dependency(1).unwrap();
+                if k == 0 {
+                    sampler
+                        .packet
+                        .replace((0..concurrency).flat_map(|_| sample_record(4, 0)).collect());
+                    sink.device_ready(logits(0, concurrency as u32)).unwrap();
+                } else {
+                    for id in 1..=concurrency {
+                        sink.device_drafts(draft(id, k as u32)).unwrap();
+                    }
+                    let rows = concurrency as u32 * 3;
+                    for first in (0..rows).step_by(64) {
+                        let mut request = sample_request(first, (rows - first).min(64));
+                        request.output.offset = u64::from(first) * 256;
+                        sink.device_sample(request).unwrap();
+                    }
+                    let mut packet = Vec::new();
+                    for _ in &items {
+                        packet.extend(
+                            BundleAcceptanceResultV1 {
+                                cycle_epoch: 9,
+                                accepted_drafts: 0,
+                                emitted_rows: 1,
+                                flags: BUNDLE_ACCEPTANCE_REJECTED_V1,
+                                status: 0,
+                                failure_row: BUNDLE_ACCEPTANCE_NO_FAILURE_V1,
+                                reserved: 0,
+                            }
+                            .to_le_bytes(),
+                        );
+                    }
+                    packet.extend((0..rows).flat_map(|_| sample_record(4, 0)));
+                    sampler.packet.replace(packet);
+                    sink.device_completion(completion(concurrency as u32, rows))
+                        .unwrap();
+                }
+                let mut owner = Owner::new(&sampler);
+                let pending = PendingBundleExecutionV1::submitted(&mut owner, sink, Owner::poison);
+                assert_eq!(
+                    pending.input_dependency(),
+                    AsyncInputDependency::DeviceFeedback
+                );
+                assert_eq!(pending.cycle_epoch(), Some(9));
+                assert_eq!(
+                    sampler.collects.get(),
+                    0,
+                    "host preparation precedes the result fence"
+                );
+                assert!(!sampler.issued.borrow().is_empty());
+                let rows = pending.collect().unwrap();
+                assert_eq!(rows.sampled.len(), concurrency as usize * (k + 1));
+                assert!(
+                    rows.sampled
+                        .iter()
+                        .all(|row| row.logprob().to_bits() == (-0.3125_f64).to_bits())
+                );
+                assert_eq!(sampler.collects.get(), 1);
+                assert!(
+                    owner.trace.borrow().is_empty(),
+                    "collection does not finalize the bundle"
+                );
+                owner.commit().unwrap();
+                assert_eq!(*owner.trace.borrow(), ["commit"]);
+            }
+        }
+    }
+
+    #[test]
+    fn submission_drop_and_cancel_fence_before_bundle_rewrites() {
+        for explicit in [false, true] {
+            let items = vec![item(1, 0)];
+            let sampler = Rc::new(Sampler::default());
+            let mut sink = sink(&items, sampler.clone());
+            sink.device_dependency(0).unwrap();
+            sink.device_ready(logits(0, 1)).unwrap();
+            let mut owner = Owner::new(&sampler);
+            let pending = PendingBundleExecutionV1::submitted(&mut owner, sink, Owner::poison);
+            if explicit {
+                pending.cancel().unwrap();
+            } else {
+                drop(pending);
+            }
+            assert_eq!(*owner.trace.borrow(), ["drain", "cancel"]);
+            assert_eq!(
+                sampler.collects.get(),
+                0,
+                "cancelled output is never decoded"
+            );
+            assert_eq!(
+                sampler.cancels.get(),
+                0,
+                "drained tickets are not cancelled twice"
+            );
+        }
+    }
+
+    #[test]
+    fn partial_submission_without_a_completion_drains_every_owner() {
+        let items = vec![item(1, 0), item(2, 0)];
+        let sampler = Rc::new(Sampler::default());
+        let mut sink = sink(&items, sampler.clone());
+        sink.device_dependency(1).unwrap();
+        sink.device_sample(sample_request(0, 1)).unwrap();
+        let mut second = sample_request(1, 1);
+        second.logits.logits.context = BundleContextHandleV1::from_parts(1, 2);
+        second.logits.logits.rank = 1;
+        sampler.fail_issue.set(true);
+        assert_eq!(sink.device_sample(second), Err(BundleStatusV1::HostError));
+        let mut owner = Owner::new(&sampler);
+        let pending = PendingBundleExecutionV1::submitted(&mut owner, sink, Owner::poison);
+        assert!(
+            pending.collect().is_err(),
+            "missing packet is never publishable"
+        );
+        assert_eq!(sampler.drains.borrow().len(), 2);
+        assert_eq!(*owner.trace.borrow(), ["drain", "drain", "cancel"]);
+    }
+
+    #[test]
+    fn failed_submission_fence_poison_prevents_cancel_and_double_finalization() {
+        let items = vec![item(1, 0)];
+        let sampler = Rc::new(Sampler::default());
+        let mut sink = sink(&items, sampler.clone());
+        sink.device_dependency(1).unwrap();
+        sink.device_ready(logits(0, 1)).unwrap();
+        sampler.fail_drain.set(true);
+        let mut owner = Owner::new(&sampler);
+        let pending = PendingBundleExecutionV1::submitted(&mut owner, sink, Owner::poison);
+        assert!(pending.cancel().is_err());
+        assert!(owner.poisoned);
+        assert_eq!(*owner.trace.borrow(), ["drain", "poison"]);
+        assert_eq!(sampler.collects.get(), 0);
+    }
+
+    #[test]
+    fn collection_and_cancel_failures_keep_the_instance_terminal() {
+        for cancel_fails in [false, true] {
+            let items = vec![item(1, 0)];
+            let sampler = Rc::new(Sampler::default());
+            let mut sink = sink(&items, sampler.clone());
+            sink.device_dependency(0).unwrap();
+            sink.device_ready(logits(0, 1)).unwrap();
+            sampler.fail_collection.set(true);
+            let mut owner = Owner::new(&sampler);
+            owner.fail_cancel = cancel_fails;
+            let pending = PendingBundleExecutionV1::submitted(&mut owner, sink, Owner::poison);
+            assert!(pending.collect().is_err());
+            assert_eq!(owner.poisoned, cancel_fails);
+            assert_eq!(
+                owner
+                    .trace
+                    .borrow()
+                    .iter()
+                    .filter(|&&call| call == "cancel")
+                    .count(),
+                1
+            );
+            assert_eq!(&owner.trace.borrow()[..2], ["drain", "cancel"]);
+        }
+    }
+
+    #[test]
+    fn legacy_submission_still_collects_synchronously_and_defaults_to_host_values() {
+        let sampler = Sampler::default();
+        let mut owner = Owner::new(&sampler);
+        let pending = owner
+            .submit_with_device_sampling(&[], ResultSinkLimitsV1::new(1, 8, 8), &[], None, None)
+            .unwrap();
+        assert_eq!(pending.input_dependency(), AsyncInputDependency::HostValues);
+        assert_eq!(pending.cycle_epoch(), None);
+        assert_eq!(*sampler.trace.borrow(), ["execute"]);
+        pending.cancel().unwrap();
+        assert_eq!(*sampler.trace.borrow(), ["execute", "cancel"]);
     }
 }

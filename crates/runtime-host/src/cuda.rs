@@ -331,6 +331,17 @@ impl CudaHostDeviceV1 {
         Ok(Box::new(buffers))
     }
 
+    pub(crate) fn drain_device_results(
+        &mut self,
+        context: DeviceObjectV1,
+    ) -> HostDeviceResultV1<()> {
+        self.context(context)?;
+        if let Some(sampler) = self.samplers.get_mut(&context.get()) {
+            sampler.drain_device_results()?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn cancel_device_readback(
         &mut self,
         context: DeviceObjectV1,

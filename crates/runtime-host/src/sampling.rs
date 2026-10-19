@@ -935,6 +935,15 @@ impl DeviceSamplingSession {
         Ok(ticket)
     }
 
+    pub(crate) fn drain_device_results(&mut self) -> SamplingResult<()> {
+        if let Some(readback) = &mut self.readback {
+            readback.cancel()?;
+        }
+        self.retire_pending()?;
+        self.readback_submissions.clear();
+        Ok(())
+    }
+
     pub(crate) fn discard_readback(&mut self, ticket: u64) -> SamplingResult<()> {
         self.readback
             .as_mut()
@@ -2245,5 +2254,48 @@ mod device_submission_lifetime_tests {
         assert!(sampler.device_submissions.is_empty());
         logits.release().unwrap();
         output.release().unwrap();
+    }
+    #[test]
+    fn cancellation_drains_partial_submissions_and_retains_leases_after_a_failed_fence() {
+        for with_readback in [false, true] {
+            fake_driver::reset();
+            let context = Driver::initialize()
+                .unwrap()
+                .retain_primary_context(0)
+                .unwrap();
+            let owner = context.stream().unwrap();
+            let pool = context.default_memory_pool().unwrap();
+            let logits = pool.allocate(&owner, 32).unwrap();
+            let output = pool.allocate(&owner, 256).unwrap();
+            owner.synchronize().unwrap();
+            let mut sampler = DeviceSamplingSession::new(context.clone()).unwrap();
+            // A failed issue can retain its pointers without recording done.
+            sampler.device_submissions.push_back(DeviceSubmission {
+                serial: 1,
+                done: None,
+                _logits: logits.clone(),
+                _output: output.clone(),
+            });
+            let ready = context.event().unwrap();
+            ready.record(&sampler.stream).unwrap();
+            let ticket =
+                with_readback.then(|| sampler.enqueue_readback(&output, 0, 256, &ready).unwrap());
+            fake_driver::fail_next(5, 719);
+            assert_eq!(
+                sampler.drain_device_results(),
+                Err(BundleStatusV1::HostError)
+            );
+            assert!(logits.release().is_err());
+            assert!(output.release().is_err());
+            assert_eq!(sampler.device_submissions.len(), 1);
+            sampler.drain_device_results().unwrap();
+            assert!(sampler.device_submissions.is_empty());
+            assert!(sampler.readback_submissions.is_empty());
+            if let Some(ticket) = ticket {
+                assert!(sampler.collect_readback(ticket).is_err());
+            }
+            logits.release().unwrap();
+            output.release().unwrap();
+        }
     }
 }

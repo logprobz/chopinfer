@@ -6,11 +6,13 @@
 //! engine's commit and rollback onto the ABI's `commit` and `cancel`.
 
 mod device_results;
+mod submission;
 use device_results::{DeviceResults, cycle_metadata};
 use runtime_bundle_abi::device_results::{
     BundleDeviceCompletionV1, BundleDeviceDraftsV1, DeviceCycleMetadataV1,
 };
 use runtime_engine::AcceptedPrefix;
+pub use submission::PendingBundleExecutionV1;
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -378,6 +380,16 @@ pub trait DeviceLogitsSamplerV1 {
     fn supports_device_results(&self) -> bool {
         false
     }
+    /// Fences all private sampler/readback work for this owner before an
+    /// abandoned bundle transaction can rewrite or release its storage.
+    fn drain_device_results(
+        &self,
+        _context: runtime_bundle_abi::BundleContextHandleV1,
+        _rank: u32,
+    ) -> HostServiceResultV1<()> {
+        Err(BundleStatusV1::Unsupported)
+    }
+
     fn retain_device_drafts(
         &self,
         _drafts: BundleDeviceDraftsV1,
@@ -864,6 +876,24 @@ pub trait BundleExecutionV1 {
     ) -> Result<BatchEmissionsV1, BundleAbiError> {
         self.execute_with_sampling(request, limits, items, sampler)
     }
+    /// Submits one batch. The guard owns collection and cancellation until
+    /// it returns the still-uncommitted emissions. Legacy implementations
+    /// collect synchronously before returning a ready guard.
+    fn submit_with_device_sampling<'a>(
+        &'a mut self,
+        request: &[u8],
+        limits: ResultSinkLimitsV1,
+        items: &'a [ModelBatchItem],
+        sampler: Option<Rc<dyn DeviceLogitsSamplerV1>>,
+        metadata: Option<DeviceCycleMetadataV1>,
+    ) -> Result<PendingBundleExecutionV1<'a, Self>, BundleAbiError>
+    where
+        Self: Sized,
+    {
+        let rows = self.execute_with_device_sampling(request, limits, items, sampler, metadata)?;
+        Ok(PendingBundleExecutionV1::ready(self, rows))
+    }
+
     /// Evidence from the most recent failed execute: no host work or results,
     /// no pending transaction, and a usable instance. Unknown is not recoverable.
     fn last_execute_refusal(&self) -> Option<&str> {
@@ -1064,6 +1094,19 @@ impl BundleExecutionV1 for LoadedBundleInstanceV1 {
         sampler: Option<Rc<dyn DeviceLogitsSamplerV1>>,
         metadata: Option<DeviceCycleMetadataV1>,
     ) -> Result<BatchEmissionsV1, BundleAbiError> {
+        self.submit_with_device_sampling(request, limits, items, sampler, metadata)?
+            .collect()
+    }
+
+    fn submit_with_device_sampling<'a>(
+        &'a mut self,
+        request: &[u8],
+        limits: ResultSinkLimitsV1,
+        items: &'a [ModelBatchItem],
+        sampler: Option<Rc<dyn DeviceLogitsSamplerV1>>,
+        metadata: Option<DeviceCycleMetadataV1>,
+    ) -> Result<PendingBundleExecutionV1<'a, Self>, BundleAbiError> {
+        let deferred = metadata.is_some();
         let device = metadata
             .map(|metadata| {
                 DeviceResults::new(
@@ -1078,8 +1121,6 @@ impl BundleExecutionV1 for LoadedBundleInstanceV1 {
             })
             .transpose()
             .map_err(BundleAbiError::Status)?;
-        // Declare before the sink so its remaining buffers drop inside this scope.
-        let _collect_phase;
         let mut sink = CollectingSinkV1 {
             limits,
             rows: Vec::new(),
@@ -1096,34 +1137,33 @@ impl BundleExecutionV1 for LoadedBundleInstanceV1 {
         };
         {
             let _phase = PhaseTimer::traced(StepPhase::BundleExecute);
-            Self::execute(self, request, &mut sink)?;
-        }
-        _collect_phase = PhaseTimer::traced(StepPhase::ResultCollect);
-        if let Err(status) = sink.collect_pending() {
-            Self::cancel(self)?;
-            return Err(BundleAbiError::Status(status));
-        }
-        let accepted_prefixes = match sink.collect_device() {
-            Ok(prefixes) => prefixes,
-            Err(status) => {
-                Self::cancel(self)?;
-                return Err(BundleAbiError::Status(status));
+            if let Err(error) = Self::execute(self, request, &mut sink) {
+                // A failed callback may have issued private-stream consumers.
+                // Fence them before dropping any borrowed result ownership.
+                if sink.discard_device().is_err() {
+                    self.poison_pending_execution();
+                }
+                return Err(error);
             }
-        };
-        Ok(BatchEmissionsV1 {
-            accepted_prefixes,
-            rows: sink.rows,
-            sampled: sink.sampled,
-            prompt_view_rows: sink.prompt_view_rows,
-            drafts: sink
-                .drafts
-                .into_iter()
-                .map(|(id, tokens)| OwnedDraftTokensV1 {
-                    request_id: id.get(),
-                    tokens,
-                })
-                .collect(),
-        })
+        }
+        if deferred {
+            Ok(PendingBundleExecutionV1::submitted(
+                self,
+                sink,
+                Self::poison_pending_execution,
+            ))
+        } else {
+            // Keep legacy collection on the stack and at its original boundary.
+            let _phase = PhaseTimer::traced(StepPhase::ResultCollect);
+            let rows = match sink.finish_emissions() {
+                Ok(rows) => rows,
+                Err(status) => {
+                    Self::cancel(self)?;
+                    return Err(BundleAbiError::Status(status));
+                }
+            };
+            Ok(PendingBundleExecutionV1::ready(self, rows))
+        }
     }
 
     fn commit(&mut self) -> Result<(), BundleAbiError> {

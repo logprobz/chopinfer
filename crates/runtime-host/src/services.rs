@@ -1894,6 +1894,22 @@ impl crate::executor::DeviceLogitsSamplerV1
         true
     }
 
+    fn drain_device_results(
+        &self,
+        context: BundleContextHandleV1,
+        rank: u32,
+    ) -> HostServiceResultV1<()> {
+        let mut state = self.state.borrow_mut();
+        let record = state
+            .contexts
+            .get(slot_key_v1(context.generation(), context.slot())?)?;
+        if record.rank != rank {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let object = record.object;
+        state.device.drain_device_results(object)
+    }
+
     fn retain_device_drafts(
         &self,
         drafts: runtime_bundle_abi::device_results::BundleDeviceDraftsV1,

@@ -4,7 +4,7 @@
 //! `Backend::projection` at the served prefill capacity, which every
 //! phase's rows fit. The prepared op chooses the ordered split entry at
 //! rows <= 256 for decode and verification. Larger rows select only the
-//! measured tiles declared in `sm120::f32_prefill`; other counts retain
+//! measured tiles declared in `sm120::f32_prefill` and `sm120::f32_blocked`; other counts retain
 //! the original entry. Both optimized paths read the weight-domain
 //! table cached at instance creation.
 //!

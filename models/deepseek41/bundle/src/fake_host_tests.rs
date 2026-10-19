@@ -142,14 +142,14 @@ fn exact_f32_classifies_the_head_once_and_splits_decode_without_rescanning_weigh
 
 #[test]
 fn exact_f32_prefill_routes_measured_rows_and_preserves_unmeasured_rows() {
-    for (rows, tile) in [
-        (512, Some(64)),
-        (2048, Some(32)),
-        (4094, None),
-        (4095, Some(64)),
-        (4096, Some(64)),
-        (4097, None),
-        (8192, Some(64)),
+    for (rows, suffix) in [
+        (512, "_blocked_m32_v1"),
+        (2048, "_blocked_m32_v1"),
+        (4094, ""),
+        (4095, "_tiles_n64_v1"),
+        (4096, "_blocked_m32_v1"),
+        (4097, ""),
+        (8192, "_blocked_m32_v1"),
     ] {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let host = FakeHost::new(shape, KV_LAYOUTS[0]);
@@ -162,8 +162,7 @@ fn exact_f32_prefill_routes_measured_rows_and_preserves_unmeasured_rows() {
         let journal = host.device.journal.borrow();
         assert_launches_fit_configured_shared(&journal, &shape.topology());
         let router = "chop_deepseek41_dense_f32_m8192_n384_k5120_v1";
-        let expected =
-            tile.map_or_else(|| router.to_owned(), |n| format!("{router}_tiles_n{n}_v1"));
+        let expected = format!("{router}{suffix}");
         let calls: Vec<_> = journal
             .iter()
             .filter(|line| line.starts_with("launch ") && line.contains(router))
@@ -179,8 +178,9 @@ fn exact_f32_prefill_routes_measured_rows_and_preserves_unmeasured_rows() {
                 .iter()
                 .all(|line| !line.contains("_tiles_n") || !line.contains("_weights"))
         );
-        if tile.is_none() {
+        if suffix.is_empty() {
             assert!(calls.iter().all(|line| !line.contains("_tiles_n")));
+            assert!(calls.iter().all(|line| !line.contains("_blocked_m")));
         }
         drop(journal);
         instance.retire_request(7).unwrap();

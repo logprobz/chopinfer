@@ -473,13 +473,16 @@ pub(super) fn prepared(entry: &Entry, rows: u32) -> Prepared<ProjectionBuffers<V
 
 fn run_launches(
     session: &Session,
-    module: &Module,
+    modules: &[&Module],
     bindings: &launch::Bindings<'_>,
     launches: &[Launch],
     stream: &Stream,
 ) -> LabResult<()> {
     for l in launches {
-        let function = module.function(&l.symbol).map_err(|e| e.to_string())?;
+        let function = modules
+            .iter()
+            .find_map(|module| module.function(&l.symbol).ok())
+            .ok_or_else(|| format!("missing comparison entry {}", l.symbol))?;
         launch::launch(
             &session.context,
             &function,
@@ -595,6 +598,24 @@ impl ComparisonWeights {
                     .map_err(|e| e.to_string())?;
                 modules.push(module);
             }
+        }
+        if let Some(&(rows, _)) = new.blocked_prefill_buckets().first() {
+            let blocked = new.entry_for_rows(rows);
+            let bytes = fold_cubin_for_symbol(blocked.symbol())
+                .ok_or("missing blocked prefill cubin")?
+                .1;
+            let module = session.load_cubin(bytes)?;
+            module
+                .function(blocked.symbol())
+                .map_err(|e| e.to_string())?
+                .set_max_dynamic_shared_memory(
+                    blocked
+                        .prefill_plan(rows)
+                        .map_err(|e| e.to_string())?
+                        .dynamic_shared_bytes,
+                )
+                .map_err(|e| e.to_string())?;
+            modules.push(module);
         }
         Self::with_modules(session, old, new, b, modules)
     }
@@ -779,7 +800,7 @@ pub(super) fn compare(
     if !weights.initialized.get() {
         let init = ops[1].initialize(&buffers(4)).map_err(|e| e.to_string())?;
         poison::poison(session, &[domain])?;
-        run_launches(session, &modules[1], &bindings, &init, &session.stream)?;
+        run_launches(session, &[&modules[1]], &bindings, &init, &session.stream)?;
         let flags = poison::read(session, domain)?;
         for &(tile, expected) in &weights.expected_flags {
             let actual = u32::from_le_bytes(flags[tile * 4..tile * 4 + 4].try_into().unwrap());
@@ -799,26 +820,12 @@ pub(super) fn compare(
             .launches(&buffers(4), view(7), Counts::rows(rows))
             .unwrap(),
     ];
-    let runtime_modules = [
-        &modules[0],
-        if launches[1]
-            .iter()
-            .all(|launch| launch.symbol == old.symbol())
-        {
-            &modules[0]
-        } else if !new.uses_prefill_tiles() && new.entry_for_rows(rows).uses_prefill_tiles() {
-            &modules[3 + usize::from(new.entry_for_rows(rows).prefill_features() == 64)]
-        } else if !new.uses_prefill_tiles() && rows <= 32 {
-            &modules[2]
-        } else {
-            &modules[1]
-        },
-    ];
+    let runtime_modules = [vec![&modules[0]], modules.iter().collect::<Vec<_>>()];
     let graphs = [
         session
-            .capture(|s| run_launches(session, runtime_modules[0], &bindings, &launches[0], s))?,
+            .capture(|s| run_launches(session, &runtime_modules[0], &bindings, &launches[0], s))?,
         session
-            .capture(|s| run_launches(session, runtime_modules[1], &bindings, &launches[1], s))?,
+            .capture(|s| run_launches(session, &runtime_modules[1], &bindings, &launches[1], s))?,
     ];
     let setup_ms = setup_start.elapsed().as_secs_f64() * 1000.;
     let checks_start = Instant::now();
@@ -845,7 +852,7 @@ pub(super) fn compare(
                 } else {
                     run_launches(
                         session,
-                        runtime_modules[arm],
+                        &runtime_modules[arm],
                         &bindings,
                         &launches[arm],
                         &session.stream,
@@ -900,7 +907,7 @@ pub(super) fn compare(
                 let graph = session.capture(|s| {
                     run_launches(
                         session,
-                        runtime_modules[arm],
+                        &runtime_modules[arm],
                         &bindings,
                         std::slice::from_ref(l),
                         s,
@@ -914,7 +921,7 @@ pub(super) fn compare(
                     |s| {
                         run_launches(
                             session,
-                            runtime_modules[arm],
+                            &runtime_modules[arm],
                             &bindings,
                             &entries[..index],
                             s,

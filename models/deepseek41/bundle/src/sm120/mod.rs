@@ -153,6 +153,7 @@ pub fn register_f32_projections(
         dspark_router::cubin_name(geometry),
         f32_prefill::cubin_name(geometry, 32),
         f32_prefill::cubin_name(geometry, 64),
+        f32_blocked::serving_cubin_name(geometry),
     ];
     let available = crate::CUBINS
         .iter()

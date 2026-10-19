@@ -66,6 +66,8 @@ mod compressor_bf16;
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod dense;
 #[allow(dead_code)]
+mod f32_blocked;
+#[allow(dead_code)]
 mod f32_decode;
 #[path = "f32_dense.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
@@ -278,6 +280,9 @@ pub fn selection(
         for features in f32_prefill::TILE_FEATURES {
             owners.push((f32_prefill::cubin_name(geometry, features), geometry.id));
         }
+        if geometry.id == model_deepseek41_contract::geometry::FLASH.id {
+            owners.push((f32_blocked::serving_cubin_name(geometry), geometry.id));
+        }
         owners.push((shared::cubin_name(geometry), geometry.id));
         owners.push((mxfp8_fold::cubin_name(geometry), geometry.id));
         owners.push((mxfp8_fold::decode_cubin_name(geometry), geometry.id));
@@ -362,6 +367,12 @@ pub fn selection(
             .map(|spec| (f32_prefill::FAMILY, spec)),
     );
     specs.extend(shared::cubins(geometries).expect("deepseek41 shared expert cubins"));
+    specs.extend(
+        f32_blocked::serving_cubins(geometries)
+            .expect("blocked prefill F32 cubins")
+            .into_iter()
+            .map(|spec| (f32_blocked::SERVING_FAMILY, spec)),
+    );
     specs.push(("dependencies", kernels_sm120::probes::cubin_spec()));
     specs.extend(indexer_query::cubins(geometries).expect("deepseek41 query preparation cubins"));
     specs.extend(
@@ -504,6 +515,7 @@ fn main() {
                     .iter()
                     .any(|&features| cubin.name == f32_prefill::cubin_name(g, features))
                     || cubin.name == f32_split::cubin_name(g)
+                    || cubin.name == f32_blocked::serving_cubin_name(g)
                     || cubin.name == f32_decode::cubin_name(g)
                     || cubin.name == f32_head::cubin_name(g)
                     || cubin.name == f32_dense::cubin_name(g)

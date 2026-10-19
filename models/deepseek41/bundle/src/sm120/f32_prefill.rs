@@ -451,7 +451,8 @@ pub fn serving_entry(g: &Geometry, entry: Entry) -> Result<Entry, String> {
         .filter(|bucket| (bucket.n, bucket.k) == (q.n, q.k))
         .map(|bucket| (bucket.rows, bucket.features))
         .collect();
-    entry
+    let entry = entry
         .with_prefill_buckets(buckets)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    super::f32_blocked::serving_entry(g, entry)
 }

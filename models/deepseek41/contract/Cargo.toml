@@ -89,6 +89,10 @@ name = "build_f32_split"
 path = "examples/sm120/build_f32_split.rs"
 
 [[example]]
+name = "build_f32_blocked"
+path = "examples/sm120/build_f32_blocked.rs"
+
+[[example]]
 name = "build_position_valid"
 path = "examples/sm120/build_position_valid.rs"
 

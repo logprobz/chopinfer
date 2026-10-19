@@ -200,8 +200,19 @@ fn cpu_prefill_matrix_covers_candidates_and_serving_buckets() {
                     selected.decode_workspace_bytes(8192)
                 );
                 for &(rows, features) in selected.prefill_buckets() {
-                    let tiled = old.clone().with_prefill_tiles(features).unwrap();
-                    assert_eq!(selected.entry_for_rows(rows), tiled);
+                    let previous = old.clone().with_prefill_tiles(features).unwrap();
+                    let tiled = selected.entry_for_rows(rows);
+                    assert_eq!(
+                        tiled.stage_symbol("_prepare"),
+                        previous.stage_symbol("_prepare")
+                    );
+                    assert_eq!(
+                        tiled.prefill_workspace_bytes(rows),
+                        previous.prefill_workspace_bytes(rows)
+                    );
+                    if tiled.blocked_prefill_rows() == 0 {
+                        assert_eq!(tiled, previous);
+                    }
                     assert!(op.handle.info().symbols.contains(&(
                         tiled.symbol().into(),
                         tiled.prefill_plan(rows).unwrap().dynamic_shared_bytes

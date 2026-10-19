@@ -376,6 +376,7 @@ fn artifacts() -> PathBuf {
 }
 
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_F32_DECODE_ARTIFACTS"]
 fn cpu_build_edge_cases() {
     let toolchain = Toolchain::detect().unwrap();
     assert!(!toolchain.skipped, "CUDA compilation is required");
@@ -984,6 +985,7 @@ fn cpu_shards_cover_every_case_once() {
 }
 
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_F32_DECODE_ARTIFACTS"]
 fn gpu_bitwise_shapes_and_edges() {
     // Libtest can print its test prefix without a newline under one test thread.
     println!();

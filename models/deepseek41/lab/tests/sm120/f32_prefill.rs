@@ -108,6 +108,7 @@ fn edge_spec() -> CubinSpec {
 }
 
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_F32_PREFILL_ARTIFACTS"]
 fn cpu_build_prefill_candidates() {
     let mut specs = registration::cubins(GEOMETRIES).unwrap();
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("kernels.lock.d");
@@ -237,6 +238,7 @@ fn timing_cubins() -> Cubins {
 }
 
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_F32_PREFILL_ARTIFACTS"]
 fn gpu_prefill_bitwise_and_timings() {
     println!();
     let mut shard = Shard::from_env().unwrap();

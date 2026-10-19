@@ -122,6 +122,7 @@ pub(super) fn check(report: &kit::Report, expected: usize, gpu: bool) {
 }
 
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_DEEPSEEK41_FOLD_CUBINS"]
 fn decode_fold_dry_run() {
     println!("{}", modules::check().unwrap());
     let cubins = modules::timing_cubins().unwrap();
@@ -690,6 +691,7 @@ pub(super) fn compare_with(
 }
 
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_DEEPSEEK41_FOLD_CUBINS"]
 fn decode_fold_gpu() {
     let cubins = modules::timing_cubins().unwrap();
     kernel_harness::gpu_test_multi_with(cubins, 3 << 30, |sessions| {

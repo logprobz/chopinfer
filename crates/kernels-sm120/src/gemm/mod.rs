@@ -7,6 +7,7 @@ pub mod mid;
 pub mod mxfp8_fold;
 pub mod mxfp8_fold_decode;
 pub mod mxfp8_fold_ticket;
+pub mod mxfp8_prefill;
 pub mod prefetch;
 pub mod stacked;
 pub use construction::{DenseRequest, instantiate};

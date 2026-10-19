@@ -668,6 +668,16 @@ pub trait Backend: Send + Sync {
         Err(Refused::Unsupported)
     }
 
+    /// Explicit staged prefill with the native fold128 contract.
+    fn mxfp8_prefill_gemm(
+        &self,
+        op: &crate::mxfp8_gemm::Mxfp8FoldGemmQuery,
+        need: Need,
+    ) -> Result<Prepared<crate::mxfp8_gemm::Mxfp8FoldGemmBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
     /// Two equal-shaped MXFP8 projections sharing activation and status
     /// views, with distinct weights and outputs. Reads `Counts::rows` and
     /// the device live count. Each output keeps its own 128-K fold chain.

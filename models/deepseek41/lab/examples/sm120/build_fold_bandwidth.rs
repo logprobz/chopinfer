@@ -1,7 +1,7 @@
 #[path = "../../sm120/fold_bandwidth.rs"]
 #[allow(dead_code)]
 mod family;
-pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out = std::path::PathBuf::from(
         std::env::args_os()

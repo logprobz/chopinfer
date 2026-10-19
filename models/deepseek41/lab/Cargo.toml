@@ -107,3 +107,7 @@ path = "examples/sm120/build_hc_finish_norm.rs"
 [[example]]
 name = "build_moe_router_finish"
 path = "examples/sm120/build_moe_router_finish.rs"
+
+[[example]]
+name = "fold_bandwidth"
+path = "examples/sm120/build_fold_bandwidth.rs"

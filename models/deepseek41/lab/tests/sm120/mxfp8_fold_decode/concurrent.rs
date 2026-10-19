@@ -2,7 +2,7 @@
 use super::*;
 use runtime_cuda::{DeviceBuffer, KernelArgument, LaunchConfig};
 
-pub(super) struct Case<'a> {
+pub(crate) struct Case<'a> {
     pub images: &'a [Vec<u8>],
     pub buffers: &'a [DeviceBuffer],
     pub bindings: &'a Bindings<'a>,
@@ -14,7 +14,7 @@ pub(super) struct Case<'a> {
     pub persistent: Option<(&'a [Launch], &'a [Function], usize)>,
 }
 
-pub(super) fn check(session: &Session, case: Case<'_>) -> LabResult<()> {
+pub(crate) fn check(session: &Session, case: Case<'_>) -> LabResult<()> {
     let copy = |buffer: &DeviceBuffer, bytes: &[u8]| {
         buffer
             .copy_from_bytes(bytes, &session.stream)

@@ -1,5 +1,5 @@
 //! Paired old/new measurements on every serving Flash dense shape.
-mod concurrent;
+pub(super) mod concurrent;
 pub(super) mod modules;
 use bundle_deepseek41::sm120::{fold_cubin_for_symbol, mxfp8_fold as registration};
 use kernel_core::backend::{Backend, Counts, Launch, Need, View};
@@ -39,7 +39,7 @@ fn entries() -> Vec<Entry> {
     registration::decode_catalog(&FLASH).unwrap()
 }
 
-fn topologies(entry: &Entry) -> Vec<u32> {
+pub(super) fn topologies(entry: &Entry) -> Vec<u32> {
     SUPPORTED_RANKS
         .iter()
         .copied()
@@ -232,7 +232,7 @@ fn compare(session: &Session, entry: &Entry, rows: u32) -> LabResult<serde_json:
 }
 
 pub(super) struct Weights {
-    buffers: Vec<runtime_cuda::DeviceBuffer>,
+    pub(super) buffers: Vec<runtime_cuda::DeviceBuffer>,
 }
 pub(super) fn pattern(bytes: u64, seed: usize) -> Vec<u8> {
     (0..bytes as usize)

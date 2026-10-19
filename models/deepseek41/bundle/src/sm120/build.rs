@@ -13,6 +13,8 @@ use model_deepseek41_contract::geometry::GEOMETRIES;
 
 #[allow(dead_code)]
 mod ceil_parallel;
+#[allow(dead_code)]
+mod ceil_prefill;
 #[allow(dead_code, reason = "the bundle registers the auxiliary entries")]
 mod dspark_aux;
 mod dspark_cubin;
@@ -140,6 +142,7 @@ pub fn selection(
         owners.push((hc_round_expand_mix::cubin_name(geometry), geometry.id));
         owners.push((replicated_embedding::cubin_name(geometry), geometry.id));
         owners.push((ceil_parallel::cubin_name(geometry), geometry.id));
+        owners.push((ceil_prefill::cubin_name(geometry), geometry.id));
         owners.push((rows::cubin_name(geometry), geometry.id));
         owners.push((rows::final_norm_cubin_name(geometry), geometry.id));
         owners.push((reduce::rounding_cubin(geometry), geometry.id));
@@ -244,6 +247,7 @@ pub fn selection(
         window_fused::cubin().expect("fused window cubin"),
     ));
     specs.extend(ceil_parallel::cubins(geometries).expect("parallel ceil cubins"));
+    specs.extend(ceil_prefill::cubins(geometries).expect("prefill ceil cubins"));
     specs.extend(rows::cubins(geometries).expect("deepseek41 row cubins"));
     specs.extend(reduce::cubins(geometries));
     specs.extend(hc::cubins(geometries));

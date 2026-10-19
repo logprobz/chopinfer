@@ -721,4 +721,55 @@ mod tests {
             ]
         );
     }
+    #[test]
+    fn dense_ceil_prefill_keeps_decode_and_verify_entries() {
+        use model_deepseek41_contract::serving::DECODE_BATCH;
+        assert_eq!(
+            super::super::verify_rows(),
+            DECODE_BATCH,
+            "extend the preserved row buckets before increasing verify capacity"
+        );
+        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+        let kernels = crate::Kernels::new(&shape).unwrap();
+        let ops = DenseOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default()).unwrap();
+        let span = |index, length| {
+            DeviceBufferSpanV1::new(
+                runtime_bundle_abi::BundleDeviceBufferHandleV1::from_parts(index, 1),
+                0,
+                length,
+            )
+        };
+        for entry in crate::sm120::ceil_prefill::baseline_quantizers(&FLASH, 4).unwrap() {
+            let width = entry.query.width;
+            for rows in [1, DECODE_BATCH, DECODE_BATCH + 1, 1024, 2048, 8192] {
+                let elements = u64::from(rows) * u64::from(width);
+                let views = QuantizeViews {
+                    input: span(
+                        1,
+                        elements
+                            * if entry.query.input == DType::F32 {
+                                4
+                            } else {
+                                2
+                            },
+                    ),
+                    codes: span(2, elements),
+                    scales: span(3, elements / 32),
+                    live_rows: span(4, 4),
+                    status: span(5, u64::from(rows) * 4),
+                };
+                let calls = ops
+                    .quantize(width, entry.query.input, rows, &views)
+                    .unwrap();
+                assert_eq!(calls.len(), 1);
+                let call = &calls[0].launch;
+                if rows <= DECODE_BATCH {
+                    assert!(call.symbol.ends_with("_parallel_v1"), "{}", call.symbol);
+                } else {
+                    assert!(call.symbol.ends_with("_prefill_w8_v1"), "{}", call.symbol);
+                    assert_eq!(call.plan.block, [256, 1, 1]);
+                }
+            }
+        }
+    }
 }

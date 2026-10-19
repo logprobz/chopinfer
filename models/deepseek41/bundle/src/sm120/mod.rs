@@ -5,6 +5,7 @@
 //! backend and the own ops.
 
 pub mod ceil_parallel;
+pub mod ceil_prefill;
 pub mod dspark;
 #[allow(dead_code, reason = "the build compiles the drafter auxiliary entries")]
 mod dspark_aux;
@@ -280,7 +281,7 @@ impl crate::Kernels {
         let sm120 = moe::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = routed_sum::register(sm120, shape.geometry);
         let sm120 = dspark_router::register(sm120, shape.geometry);
-        let sm120 = dense::register(sm120, shape.geometry, shape.ranks())?;
+        let sm120 = ceil_prefill::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = shared::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = mxfp8_fold::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = mxfp8_fold_stream::register(sm120, shape.geometry, shape.ranks())?;

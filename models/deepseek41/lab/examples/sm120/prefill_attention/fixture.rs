@@ -130,30 +130,15 @@ impl Inputs {
         )?;
         write(
             &self.window_keys,
-            &integers((0..ROWS).flat_map(|row| {
-                (0..WINDOW).map(move |key| {
-                    if adversarial && (row % 31 == 0 || key % 7 == 6) {
-                        -1
-                    } else if adversarial && key == 63 {
-                        SLOTS as i32
-                    } else {
-                        (row + key) as i32
-                    }
-                })
-            })),
+            &integers(
+                (0..ROWS)
+                    .flat_map(|row| (0..WINDOW).map(move |key| window_key(row, key, adversarial))),
+            ),
         )?;
         write(
             &self.compressed_keys,
             &integers((0..ROWS).flat_map(|row| {
-                (0..512).map(move |key| {
-                    if adversarial && (row % 31 == 0 || key % 5 == 4) {
-                        -1
-                    } else if adversarial && key == 64 {
-                        CONTEXT as i32
-                    } else {
-                        ((key * 47 + row * 13 + seed) % (CONTEXT - ROWS + row + 1)) as i32
-                    }
-                })
+                (0..512).map(move |key| compressed_key(row, key, seed, adversarial))
             })),
         )?;
         write(
@@ -169,5 +154,90 @@ impl Inputs {
             })),
         )?;
         Ok(())
+    }
+}
+
+fn window_key(row: u32, key: u32, adversarial: bool) -> i32 {
+    if adversarial && (row % 31 == 0 || key % 7 == 6) {
+        -1
+    } else if adversarial && key == 63 {
+        SLOTS as i32
+    } else {
+        (row + key) as i32
+    }
+}
+fn compressed_key(row: u32, key: u32, seed: u32, adversarial: bool) -> i32 {
+    if adversarial && row % 31 == 0 {
+        -1
+    } else if adversarial && key == 64 {
+        CONTEXT as i32
+    } else if adversarial && key % 5 == 4 {
+        -1
+    } else {
+        ((key * 47 + row * 13 + seed) % (CONTEXT - ROWS + row + 1)) as i32
+    }
+}
+
+// Unique encoded payload bytes, excluding caches, transaction granularity,
+// repeated scale-load instructions and metadata. Logical positions suffice:
+// the profile fixture's reversed physical page table is a bijection.
+fn unions(rows: u32, seed: u32, group: u32) -> (u64, u64) {
+    use std::collections::BTreeSet;
+    let mut totals = (0, 0);
+    for first in (0..rows).step_by(group as usize) {
+        let mut window = BTreeSet::new();
+        let mut compressed = BTreeSet::new();
+        for row in first..(first + group).min(rows) {
+            for key in 0..WINDOW {
+                window.insert(window_key(row, key, false));
+            }
+            for key in 0..512 {
+                compressed.insert(compressed_key(row, key, seed, false));
+            }
+        }
+        totals.0 += window.len() as u64;
+        totals.1 += compressed.len() as u64;
+    }
+    totals
+}
+
+pub fn traffic() -> LabResult<serde_json::Value> {
+    let window_bytes = WIDTH as u64 + WIDTH as u64 / 32;
+    let compressed_bytes = WIDTH as u64 / 2 + WIDTH as u64 / 16;
+    let groups = [1, 8, 16, 64, ROWS].into_iter().map(|group| {
+        let (window, compressed) = unions(ROWS, 120, group);
+        serde_json::json!({
+            "query_rows_per_group":group,
+            "window_unique_rows_summed_over_groups":window,
+            "compressed_unique_rows_summed_over_groups":compressed,
+            "encoded_bytes_with_head_reuse":window * window_bytes + compressed * compressed_bytes,
+            "encoded_bytes_with_two_head_groups":2 * (window * window_bytes + compressed * compressed_bytes),
+        })
+    }).collect::<Vec<_>>();
+    Ok(serde_json::json!({
+        "model":"unique encoded payload, not measured DRAM/L2 traffic",
+        "rows":ROWS,"heads":HEADS,"width":WIDTH,"window_keys":WINDOW,"compressed_keys":512,"seed":120,
+        "q_bytes":u64::from(ROWS) * HEADS as u64 * WIDTH as u64 * 2,
+        "partial_write_bytes":u64::from(ROWS) * HEADS as u64 * (WIDTH as u64 + 2) * 4,
+        "baseline_gather_passes":1,"stage32_gather_passes":2,"reuse":groups,
+        "window_union_64_query_rows":{"positions":191,"bf16_bytes":191 * WIDTH * 2,
+            "native_bytes":191 * window_bytes},
+        "ideal_shared_tile_bytes":{"baseline_stores":u64::from(ROWS) * 2 * 640 * WIDTH as u64 * 2,
+            "stage32_stores":u64::from(ROWS) * 2 * 640 * WIDTH as u64 * 4,
+            "qk_pv_loads_each_variant":u64::from(ROWS) * 2 * 640 * WIDTH as u64 * 4},
+    }))
+}
+
+#[cfg(test)]
+mod traffic_tests {
+    use super::*;
+    #[test]
+    fn window_union_counts_overlap_without_claiming_cache_bytes() {
+        assert_eq!(unions(64, 120, 1).0, 64 * 128);
+        assert_eq!(unions(64, 120, 64).0, 191);
+        assert_eq!(unions(64, 120, 8).0, 8 * 135);
+        assert_eq!(unions(1, 120, 1), (128, 512));
+        assert_eq!(window_key(0, 0, true), -1);
+        assert_eq!(compressed_key(1, 64, 120, true), CONTEXT as i32);
     }
 }

@@ -43,6 +43,8 @@ fn specs() -> Result<Vec<CubinSpec>, String> {
         old,
         sources_prefill::cubin_spec(latent::profile(&FLASH), &entries)
             .map_err(|e| e.to_string())?,
+        sources_prefill::profile_cubin_spec(latent::profile(&FLASH), &entries)
+            .map_err(|e| e.to_string())?,
         timing::spec(),
     ])
 }
@@ -120,7 +122,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     let mode = args
         .first()
-        .ok_or("usage: prefill_attention build|check|run OUT")?;
+        .ok_or("usage: prefill_attention build|check|run|ablation|traffic OUT")?;
     let out = Path::new(args.get(1).ok_or("missing OUT")?);
     if mode == "build" {
         return build(out);
@@ -128,7 +130,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cubins = snapshot(out)?;
     if mode == "check" {
         cubins.bytes("probe_sm120")?;
-        println!("PASS prefill_attention_snapshot modules=3 entries=13 probe_sm120=true");
+        println!("PASS prefill_attention_snapshot modules=4 entries=22 probe_sm120=true");
+        return Ok(());
+    }
+    if mode == "traffic" {
+        println!("{}", serde_json::to_string_pretty(&probe::traffic()?)?);
+        return Ok(());
+    }
+    if mode == "ablation" {
+        if kernel_harness::gpu_test_multi_with(cubins, 4 << 30, probe::ablation)?.is_none() {
+            return Err("GPU ablation did not execute".into());
+        }
         return Ok(());
     }
     if mode != "run" {

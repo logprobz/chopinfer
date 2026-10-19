@@ -9,8 +9,11 @@ use kernels_sm120::{
 use model_deepseek41_contract::geometry::FLASH;
 use runtime_cuda::{DeviceBuffer, Function, KernelArgument as Arg, Module, Stream};
 
+#[path = "ablation.rs"]
+mod ablations;
 #[path = "fixture.rs"]
 mod fixture;
+pub use ablations::run as ablation;
 use fixture::{HEADS, Inputs, ROWS, SLOTS, WIDTH, WINDOW};
 
 struct Arm {
@@ -85,7 +88,7 @@ impl Rig {
         })
     }
 
-    fn attention(&self, stream: &Stream, arm: usize) -> LabResult<()> {
+    fn arguments(&self, arm: usize, window_budget: u32, compressed_budget: u32) -> Vec<Arg<'_>> {
         let input = &self.inputs;
         let selected = &self.arms[arm];
         let LatentAttentionQuery::Attention {
@@ -111,7 +114,7 @@ impl Rig {
             Arg::U32(1),
             Arg::U32(1),
             Arg::U32(WINDOW),
-            Arg::U32(WINDOW),
+            Arg::U32(window_budget),
             Arg::U32(softmax_scale_bits),
         ];
         if second_fp4_keys {
@@ -124,9 +127,15 @@ impl Rig {
                 Arg::U32(input.pages),
                 Arg::U32(1),
                 Arg::U32(512),
-                Arg::U32(input.compressed_budget),
+                Arg::U32(compressed_budget),
             ]);
         }
+        args
+    }
+
+    fn attention(&self, stream: &Stream, arm: usize) -> LabResult<()> {
+        let selected = &self.arms[arm];
+        let args = self.arguments(arm, WINDOW, self.inputs.compressed_budget);
         let plan = if selected.candidate {
             sources_prefill::plan(&self.entry, ROWS)
         } else {
@@ -279,6 +288,10 @@ fn ratio(entry: &sources::Entry) -> u32 {
     }
 }
 
+pub fn traffic() -> LabResult<serde_json::Value> {
+    fixture::traffic()
+}
+
 fn timings(s: &Session, rank: usize, rig: &Rig) -> LabResult<()> {
     for (layer, &compression) in FLASH
         .shape
@@ -345,7 +358,7 @@ fn timings(s: &Session, rank: usize, rig: &Rig) -> LabResult<()> {
     Ok(())
 }
 
-pub fn run(sessions: &[Session]) -> LabResult<()> {
+fn exclusive(sessions: &[Session]) -> LabResult<()> {
     if sessions.len() != 2 {
         return Err("prefill lab requires an allocated GPU pair".into());
     }
@@ -371,6 +384,11 @@ pub fn run(sessions: &[Session]) -> LabResult<()> {
             return Err("prefill lab refuses limited SM affinity".into());
         }
     }
+    Ok(())
+}
+
+pub fn run(sessions: &[Session]) -> LabResult<()> {
+    exclusive(sessions)?;
     let entries = entries()?;
     // Gate all types on both devices before emitting any timing results.
     for (rank, session) in sessions.iter().enumerate() {

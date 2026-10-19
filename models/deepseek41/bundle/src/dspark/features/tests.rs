@@ -230,3 +230,51 @@ fn binding_refuses_bad_spans_and_partial_transfer_plans_before_io() {
             .is_err()
     );
 }
+
+#[test]
+fn batched_gathers_copy_retained_rows_into_contiguous_staging() {
+    let (config, layout, retained, staged) = setup();
+    let bound = layout.bind(retained, staged).unwrap();
+    let row = layout.row_bytes();
+    let segment = crate::dspark::transfers::GatherSegment {
+        request: 17,
+        slot: 1,
+        position: 300,
+        rows: 4,
+        history_row: config.history_cell(1, 300),
+        staged_row: 6,
+    };
+    let copy = bound.gather(segment).unwrap();
+    assert_eq!(copy.source.buffer, retained.buffer);
+    assert_eq!(
+        copy.source.offset,
+        retained.offset + config.history_cell(1, 300) * row
+    );
+    assert_eq!(copy.destination.buffer, staged.buffer);
+    assert_eq!(copy.destination.offset, staged.offset + 6 * row);
+    assert_eq!(copy.source.length, 4 * row);
+    assert_eq!(copy.destination.length, 4 * row);
+    assert_eq!(
+        bound.batch_source(10).unwrap(),
+        Span::new(staged.buffer, staged.offset, 10 * row)
+    );
+    // Another slot's cell, and rows across the history wrap, are refused.
+    assert!(
+        bound
+            .gather(crate::dspark::transfers::GatherSegment {
+                history_row: config.history_cell(2, 300),
+                ..segment
+            })
+            .is_err()
+    );
+    let wrap = config.history_capacity() - 2;
+    assert!(
+        bound
+            .gather(crate::dspark::transfers::GatherSegment {
+                position: wrap,
+                history_row: config.history_cell(1, wrap),
+                ..segment
+            })
+            .is_err()
+    );
+}

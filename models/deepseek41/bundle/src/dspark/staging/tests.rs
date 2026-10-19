@@ -115,6 +115,15 @@ impl Program for FakeProgram<'_> {
         ));
         Ok(())
     }
+    fn project_rows(&mut self, passes: &[RowProjection]) -> Result<(), String> {
+        for pass in passes {
+            self.host
+                .events
+                .borrow_mut()
+                .push(format!("project rows {} {}", pass.start, pass.count));
+        }
+        Ok(())
+    }
     fn draft(&mut self, inputs: &[DraftInput]) -> Result<(), String> {
         self.host.events.borrow_mut().push("draft".into());
         let mut ids = Vec::new();

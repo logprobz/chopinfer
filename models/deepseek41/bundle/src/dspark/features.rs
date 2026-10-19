@@ -5,7 +5,7 @@
 //! spans. All copies of a plan are bound before any copy is submitted.
 
 use super::state::{Config, Result};
-use super::transfers::{ProjectionChunk, RetainCopy, SnapshotCopy, Source};
+use super::transfers::{GatherSegment, ProjectionChunk, RetainCopy, SnapshotCopy, Source};
 use model_deepseek41_contract::geometry::Geometry;
 use runtime_bundle_abi::DeviceBufferSpanV1 as Span;
 
@@ -154,6 +154,32 @@ impl Features {
                 })
             })
             .collect()
+    }
+
+    /// Copy one segment's retained rows into the batched launch's staging
+    /// input. Catch-up precedes target staging, so these rows are free.
+    pub fn gather(self, segment: GatherSegment) -> Result<Copy> {
+        let c = self.layout.config;
+        if segment.slot >= c.slots
+            || segment.history_row != c.history_cell(segment.slot, segment.position)
+        {
+            return Err("DSpark gather reads another slot or position");
+        }
+        self.layout
+            .history_rows(segment.history_row, segment.rows)?;
+        Ok(Copy {
+            source: self
+                .layout
+                .rows(self.retained, segment.history_row, segment.rows)?,
+            destination: self
+                .layout
+                .rows(self.staged, segment.staged_row, segment.rows)?,
+        })
+    }
+
+    /// The contiguous staging input of a batched launch of `rows` rows.
+    pub fn batch_source(self, rows: u32) -> Result<Span> {
+        self.layout.rows(self.staged, 0, rows)
     }
 
     /// Compact chronological rows copied out after projection cursors catch up.

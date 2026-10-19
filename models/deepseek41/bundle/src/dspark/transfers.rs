@@ -6,7 +6,7 @@
 //! every chunk. A chunk never crosses a source wrap or a destination wrap,
 //! so its ring writes are disjoint even on a parallel device launch.
 
-use super::state::{CommitItem, Config, Kind, Projection, Result, Snapshot};
+use super::state::{CommitItem, Config, Kind, Projection, Result, RowProjection, Snapshot};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Source {
@@ -24,6 +24,26 @@ pub struct ProjectionChunk {
     pub source: Source,
     /// Row within this stage's `[slot][window]` KV allocation.
     pub ring_row: u64,
+}
+
+/// Retained rows of one request gathered into contiguous staging rows for
+/// a batched launch. A segment never crosses a history wrap.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GatherSegment {
+    pub request: u64,
+    pub slot: u32,
+    pub position: u64,
+    pub rows: u32,
+    pub history_row: u64,
+    /// Row of the launch's contiguous staging input.
+    pub staged_row: u64,
+}
+
+/// One launch through every stage over gathered rows of several requests.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchLaunch {
+    pub segments: Vec<GatherSegment>,
+    pub rows: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -105,6 +125,56 @@ pub fn retained_projection(
         position += count;
     }
     Ok(chunks)
+}
+
+/// Pack batched passes, in order, into launches of at most `max_rows` rows.
+/// A pass holds at most one window of one slot, so its ring writes are
+/// disjoint, and different slots own disjoint rings.
+pub fn batched_projection(
+    config: Config,
+    passes: &[RowProjection],
+    max_rows: u32,
+) -> Result<Vec<BatchLaunch>> {
+    if max_rows == 0 {
+        return Err("invalid DSpark batched projection");
+    }
+    let history = config.history_capacity();
+    let mut launches: Vec<BatchLaunch> = Vec::new();
+    for (index, pass) in passes.iter().enumerate() {
+        range(config, pass.slot, pass.start, pass.count)?;
+        if pass.count > config.window
+            || passes[..index]
+                .iter()
+                .any(|other| other.request == pass.request || other.slot == pass.slot)
+        {
+            return Err("invalid DSpark batched projection");
+        }
+        let mut position = pass.start;
+        let end = pass.start + u64::from(pass.count);
+        while position < end {
+            if launches.last().is_none_or(|launch| launch.rows == max_rows) {
+                launches.push(BatchLaunch {
+                    segments: Vec::new(),
+                    rows: 0,
+                });
+            }
+            let launch = launches.last_mut().expect("open launch");
+            let count = (end - position)
+                .min(u64::from(max_rows - launch.rows))
+                .min(history - position % history);
+            launch.segments.push(GatherSegment {
+                request: pass.request,
+                slot: pass.slot,
+                position,
+                rows: count as u32,
+                history_row: config.history_cell(pass.slot, position),
+                staged_row: u64::from(launch.rows),
+            });
+            launch.rows += count as u32;
+            position += count;
+        }
+    }
+    Ok(launches)
 }
 
 /// Project every accepted row of a large prefill chunk before staging is

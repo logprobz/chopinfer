@@ -372,7 +372,11 @@ fn cancellation_keeps_raw_history_and_completed_catch_up() {
 fn every_stage_must_catch_up_before_any_target_execution() {
     let mut memory = Memory::new();
     memory.run(vec![prefill(41, 0, 0, 8)], &[], 7);
+    // An AR step defers the rows the drafter has not projected.
     memory.state.prepare(vec![decode(41, 0, 8, 0)]).unwrap();
+    assert!(memory.state.begin_execution().unwrap().is_empty());
+    memory.state.cancel().unwrap();
+    memory.state.prepare(vec![decode(41, 0, 8, 1)]).unwrap();
     for stage in 0..3 {
         assert!(memory.state.begin_execution().is_err());
         let pass = memory.state.projection(41, stage, 64).unwrap().unwrap();
@@ -380,8 +384,65 @@ fn every_stage_must_catch_up_before_any_target_execution() {
         memory.state.projected(pass).unwrap();
         assert!(memory.state.projected(pass).is_err());
     }
-    assert!(memory.state.begin_execution().unwrap().is_empty());
+    assert_eq!(memory.state.begin_execution().unwrap().len(), 1);
     assert!(memory.state.projection(41, 0, 1).is_err());
+}
+
+#[test]
+fn a_bulk_commit_must_catch_up_before_any_target_execution() {
+    let mut state = State::new(config()).unwrap().with_batch_rows(2).unwrap();
+    state.prepare(vec![prefill(41, 0, 0, 3)]).unwrap();
+    state.begin_execution().unwrap();
+    state.executed().unwrap();
+    let plan = state.begin_commit(&[]).unwrap();
+    state.complete_commit(plan).unwrap();
+    assert_eq!(state.context(41).unwrap().bulk(), Some((0, 3)));
+    state.prepare(vec![decode(41, 0, 3, 0)]).unwrap();
+    assert!(state.begin_execution().is_err());
+    // Batched rows never cover a bulk range.
+    state.skip_unread(41).unwrap();
+    assert_eq!(state.row_projection(41).unwrap(), None);
+    for stage in 0..3 {
+        let pass = state.projection(41, stage, 2).unwrap().unwrap();
+        assert_eq!((pass.start, pass.count), (0, 2));
+        state.projected(pass).unwrap();
+        let pass = state.projection(41, stage, 2).unwrap().unwrap();
+        assert_eq!((pass.start, pass.count), (2, 1));
+        state.projected(pass).unwrap();
+    }
+    assert_eq!(state.context(41).unwrap().bulk(), None);
+    assert!(state.begin_execution().unwrap().is_empty());
+}
+
+#[test]
+fn batched_projections_skip_overwritten_rows_and_reject_stale_passes() {
+    let mut state = State::new(config()).unwrap().with_batch_rows(2).unwrap();
+    let mut end = 0;
+    for rows in [vec![prefill(41, 0, 0, 1)], vec![prefill(41, 0, 1, 1)]]
+        .into_iter()
+        .chain((2..9).map(|start| vec![decode(41, 0, start, 0)]))
+    {
+        state.prepare(rows).unwrap();
+        state.begin_execution().unwrap();
+        state.executed().unwrap();
+        let plan = state.begin_commit(&[]).unwrap();
+        state.complete_commit(plan).unwrap();
+        end += 1;
+    }
+    assert_eq!(end, 9);
+    assert_eq!(state.context(41).unwrap().projected(), &[0; 3]);
+    state.prepare(vec![decode(41, 0, 9, 1)]).unwrap();
+    // A pass must follow the skip.
+    assert!(state.row_projection(41).is_err());
+    state.skip_unread(41).unwrap();
+    assert_eq!(state.context(41).unwrap().projected(), &[5; 3]);
+    let pass = state.row_projection(41).unwrap().unwrap();
+    assert_eq!((pass.slot, pass.start, pass.count), (0, 5, 4));
+    state.projected_rows(pass).unwrap();
+    assert!(state.projected_rows(pass).is_err());
+    assert_eq!(state.row_projection(41).unwrap(), None);
+    assert_eq!(state.begin_execution().unwrap().len(), 1);
+    assert!(state.skip_unread(41).is_err());
 }
 
 #[test]
@@ -711,4 +772,198 @@ fn device_failure_poisons_all_lifecycle_mutations() {
             )
             .is_err()
     );
+}
+
+/// A pass of one stage, as `projection` issued it: request, stage, start
+/// and count.
+type Pass = (u64, u32, u64, u32);
+
+/// The serving runtime's order: drafting items and bulk commits catch up,
+/// other items defer.
+struct Deferred {
+    memory: Memory,
+    passes: Vec<Pass>,
+    batched: Vec<(u64, u64, u32)>,
+}
+
+impl Deferred {
+    fn new() -> Self {
+        let mut memory = Memory::new();
+        memory.state = State::new(config()).unwrap().with_batch_rows(2).unwrap();
+        Self {
+            memory,
+            passes: Vec::new(),
+            batched: Vec::new(),
+        }
+    }
+
+    fn catch_up(&mut self, request: u64) {
+        let m = &mut self.memory;
+        m.state.skip_unread(request).unwrap();
+        if let Some(pass) = m.state.row_projection(request).unwrap() {
+            assert!(pass.count <= m.state.config().window);
+            self.batched.push((request, pass.start, pass.count));
+            for stage in 0..m.state.config().stages {
+                for position in pass.start..pass.start + u64::from(pass.count) {
+                    let feature = m.raw[&m.state.config().history_cell(pass.slot, position)];
+                    assert_eq!(feature.position, position);
+                    m.project(pass.slot, stage, feature, false);
+                }
+            }
+            m.state.projected_rows(pass).unwrap();
+        }
+        if m.state.has_bulk(request) {
+            for stage in 0..m.state.config().stages {
+                while let Some(pass) = m.state.projection(request, stage, 3).unwrap() {
+                    self.passes.push((request, stage, pass.start, pass.count));
+                    for position in pass.start..pass.start + u64::from(pass.count) {
+                        let feature = m.raw[&m.state.config().history_cell(pass.slot, position)];
+                        m.project(pass.slot, stage, feature, false);
+                    }
+                    m.state.projected(pass).unwrap();
+                }
+            }
+        }
+        assert!(!m.state.has_bulk(request));
+    }
+
+    fn run(&mut self, rows: Vec<Rows>, kept: &[(u64, u32)], salt: u64) -> Vec<DraftBlock> {
+        self.memory.state.prepare(rows.clone()).unwrap();
+        for row in &rows {
+            if self.memory.state.needs_catch_up(row.request)
+                && (row.kind.drafts() > 0 || self.memory.state.has_bulk(row.request))
+            {
+                self.catch_up(row.request);
+            }
+        }
+        let blocks = self.memory.state.begin_execution().unwrap();
+        let staged = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.request,
+                    (0..row.kind.target_rows().unwrap())
+                        .map(|offset| {
+                            Feature::new(row.request, row.start + u64::from(offset), salt)
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        self.memory.state.executed().unwrap();
+        let plan = self.memory.state.begin_commit(kept).unwrap();
+        self.memory.apply(&plan, &staged);
+        self.memory.state.complete_commit(plan).unwrap();
+        blocks
+    }
+}
+
+/// Eager passes, recorded by wrapping `Memory::catch_up`.
+fn eager_passes(memory: &mut Memory, rows: &[Rows], passes: &mut Vec<Pass>) {
+    for row in rows {
+        if memory.state.context(row.request).is_none() {
+            continue;
+        }
+        for stage in 0..memory.state.config().stages {
+            while let Some(pass) = memory.state.projection(row.request, stage, 3).unwrap() {
+                passes.push((row.request, stage, pass.start, pass.count));
+                for position in pass.start..pass.start + u64::from(pass.count) {
+                    let feature =
+                        memory.raw[&memory.state.config().history_cell(pass.slot, position)];
+                    memory.project(pass.slot, stage, feature, false);
+                }
+                memory.state.projected(pass).unwrap();
+            }
+        }
+    }
+}
+
+#[test]
+fn deferred_catch_up_drafts_from_the_eager_rings_and_keeps_wide_passes() {
+    let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+    let mut next = |bound: u32| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed % u64::from(bound)) as u32
+    };
+    let mut eager = Memory::new();
+    let mut eager_log = Vec::new();
+    let mut deferred = Deferred::new();
+    let mut ends = [0_u64; 2];
+    // Prefills of one to three rows: three rows are a bulk commit.
+    for (request, end) in (41..).zip(&mut ends) {
+        let rows = 1 + next(3);
+        let step = vec![prefill(request, request as u32 - 41, 0, rows)];
+        eager.run(step.clone(), &[], 7);
+        deferred.run(step, &[], 7);
+        *end = u64::from(rows);
+    }
+    while ends.iter().all(|&end| end + 6 < config().context_tokens) {
+        let mut rows = Vec::new();
+        let mut kept = Vec::new();
+        for (index, end) in ends.iter().enumerate() {
+            let request = 41 + index as u64;
+            // Mostly AR steps, so deferred rows outlive the window.
+            let drafts = if next(4) == 0 { 1 + next(5) } else { 0 };
+            rows.push(decode(request, index as u32, *end, drafts));
+            if drafts > 0 {
+                kept.push((request, 1 + next(drafts + 1)));
+            }
+        }
+        // Eager: catch everything up before execution, recording passes.
+        eager.state.prepare(rows.clone()).unwrap();
+        eager_passes(&mut eager, &rows, &mut eager_log);
+        eager.state.cancel().unwrap();
+        let eager_blocks = eager.run(rows.clone(), &kept, 7);
+        let blocks = deferred.run(rows.clone(), &kept, 7);
+        assert_eq!(blocks, eager_blocks);
+        // Every drafting item reads the eager ring contents.
+        for block in &blocks {
+            let window = u64::from(config().window);
+            for stage in 0..config().stages {
+                for position in block.main_rows.saturating_sub(window)..block.main_rows {
+                    let cell = (block.slot, stage, position % window);
+                    assert_eq!(deferred.memory.rings[&cell], eager.rings[&cell]);
+                    assert_eq!(eager.rings[&cell].position, position);
+                }
+            }
+        }
+        for (index, end) in ends.iter_mut().enumerate() {
+            let request = 41 + index as u64;
+            *end = deferred.memory.state.context(request).unwrap().end;
+            assert_eq!(*end, eager.state.context(request).unwrap().end);
+        }
+    }
+    // Every pass wider than the batch bound ran identically; the rest ran
+    // in batches of at most one window.
+    let wide = eager_log
+        .iter()
+        .filter(|pass| pass.3 > 2)
+        .copied()
+        .collect::<Vec<_>>();
+    assert!(!wide.is_empty());
+    assert_eq!(
+        deferred
+            .passes
+            .iter()
+            .filter(|pass| pass.3 > 2)
+            .copied()
+            .collect::<Vec<_>>(),
+        wide
+    );
+    assert!(!deferred.batched.is_empty());
+    // Deferral skipped rows the window had already overwritten.
+    let projected = deferred
+        .memory
+        .journal
+        .iter()
+        .filter(|event| matches!(event, Event::Project { .. }))
+        .count();
+    let eager_projected = eager
+        .journal
+        .iter()
+        .filter(|event| matches!(event, Event::Project { .. }))
+        .count();
+    assert!(projected < eager_projected, "{projected} {eager_projected}");
 }

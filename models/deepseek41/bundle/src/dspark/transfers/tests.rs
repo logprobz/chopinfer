@@ -382,3 +382,113 @@ fn retained_prefill_projection_matches_every_final_ring_cell() {
         }
     }
 }
+
+/// Deferred rows of `request` in `slot`: `count` K=0 commits after a
+/// restored window ending at `start`, ready for one batched pass.
+fn deferred(state: &mut State, request: u64, slot: u32, start: u64, count: u32) {
+    let window = state.config().window;
+    state
+        .restore(
+            request,
+            slot,
+            Snapshot {
+                start: start.saturating_sub(u64::from(window)),
+                end: start,
+                window,
+                stages: state.config().stages,
+            },
+        )
+        .unwrap();
+    for stage in 0..state.config().stages {
+        while let Some(pass) = state.projection(request, stage, u32::MAX).unwrap() {
+            state.projected(pass).unwrap();
+        }
+    }
+    for offset in 0..u64::from(count) {
+        state
+            .prepare(vec![Rows {
+                request,
+                slot,
+                start: start + offset,
+                kind: Kind::Decode { drafts: 0 },
+            }])
+            .unwrap();
+        state.begin_execution().unwrap();
+        state.executed().unwrap();
+        let plan = state.begin_commit(&[]).unwrap();
+        state.complete_commit(plan).unwrap();
+    }
+}
+
+#[test]
+fn batched_launches_pack_passes_in_order_and_split_at_history_wraps() {
+    let config = config(8);
+    let history = config.history_capacity();
+    let mut state = State::new(config).unwrap();
+    // Request 41's rows cross its history wrap; request 42's do not.
+    deferred(&mut state, 41, 2, history - 3, 7);
+    deferred(&mut state, 42, 0, 20, 5);
+    let passes = [41, 42]
+        .map(|request| {
+            state.skip_unread(request).unwrap();
+            state.row_projection(request).unwrap().unwrap()
+        })
+        .to_vec();
+    assert_eq!(
+        passes
+            .iter()
+            .map(|pass| (pass.start, pass.count))
+            .collect::<Vec<_>>(),
+        [(history - 3, 7), (20, 5)]
+    );
+    let launches = batched_projection(config, &passes, 4).unwrap();
+    let shape = launches
+        .iter()
+        .map(|launch| {
+            (
+                launch.rows,
+                launch
+                    .segments
+                    .iter()
+                    .map(|s| (s.request, s.position, s.rows, s.history_row, s.staged_row))
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let cell = |slot, position| config.history_cell(slot, position);
+    assert_eq!(
+        shape,
+        [
+            (
+                4,
+                vec![
+                    (41, history - 3, 3, cell(2, history - 3), 0),
+                    (41, history, 1, cell(2, history), 3),
+                ]
+            ),
+            (
+                4,
+                vec![
+                    (41, history + 1, 3, cell(2, history + 1), 0),
+                    (42, 20, 1, cell(0, 20), 3)
+                ]
+            ),
+            (4, vec![(42, 21, 4, cell(0, 21), 0)]),
+        ]
+    );
+    // Every row once, in pass order, and no segment crosses a history wrap.
+    let rows = launches
+        .iter()
+        .flat_map(|launch| &launch.segments)
+        .flat_map(|s| (0..u64::from(s.rows)).map(move |row| (s.request, s.position + row)))
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len(), 12);
+    assert!(
+        launches
+            .iter()
+            .flat_map(|launch| &launch.segments)
+            .all(|s| { s.history_row % history + u64::from(s.rows) <= history })
+    );
+    assert!(batched_projection(config, &passes, 0).is_err());
+    assert!(batched_projection(config, &[passes[0], passes[0]], 4).is_err());
+}

@@ -3,7 +3,7 @@
 use super::*;
 use crate::buffers::rows;
 use crate::dspark::device::{DECODE_BASE, slice};
-use crate::dspark::state::{CommitPlan, Projection};
+use crate::dspark::state::{CommitPlan, Projection, RowProjection};
 use crate::dspark::transfers::{self, ProjectionChunk};
 use crate::lower::Lowering;
 use crate::lower::dspark::heads::{HeadViews, Peer, PositionViews};
@@ -152,6 +152,112 @@ impl Instance {
             self.project_chunk(chunk)?;
         }
         Ok(())
+    }
+
+    /// Gather every pass's retained rows into contiguous staging rows and
+    /// project them through every stage, one launch per batch, checking row
+    /// status once per launch.
+    pub(super) fn dspark_project_rows(&self, passes: &[RowProjection]) -> Result<(), String> {
+        let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
+        let config = device.config;
+        let batch_rows = device
+            .runtime
+            .as_ref()
+            .map_or(crate::dspark::state::BATCH_PROJECTION_ROWS, |runtime| {
+                runtime.state().batch_rows()
+            });
+        for batch in transfers::batched_projection(config, passes, batch_rows)? {
+            self.project_batch(&batch)?;
+        }
+        Ok(())
+    }
+
+    fn project_batch(&self, batch: &transfers::BatchLaunch) -> Result<(), String> {
+        let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
+        let mut positions = Vec::with_capacity(batch.rows as usize);
+        let mut slots = Vec::with_capacity(batch.rows as usize);
+        let mut last = vec![u32::MAX; device.config.slots as usize];
+        for segment in &batch.segments {
+            for row in 0..u64::from(segment.rows) {
+                positions.push((segment.position + row) as u32);
+                slots.push(segment.slot);
+            }
+            last[segment.slot as usize] = (segment.position + u64::from(segment.rows) - 1) as u32;
+        }
+        let (positions, slots, last) = (words(positions), words(slots), words(last));
+        let mut programs = Vec::new();
+        for (rank, buffers) in device.stages[0].iter().enumerate() {
+            let stream = self.ranks[rank].2;
+            let stored = &device.ranks[rank];
+            let features = device.features.bind(
+                buffers
+                    .state
+                    .named("dspark.features")
+                    .ok_or("DSpark features are absent")?,
+                stored.packed,
+            )?;
+            for segment in &batch.segments {
+                let copy = features.gather(*segment)?;
+                self.services
+                    .copy_device_to_device(stream, copy.destination, copy.source)
+                    .map_err(|e| format!("DSpark catch-up gather: {e:?}"))?;
+            }
+            upload(
+                &self.services,
+                stream,
+                stored.inputs.live_tokens,
+                &batch.rows.to_le_bytes(),
+            )?;
+            upload(&self.services, stream, stored.inputs.positions, &positions)?;
+            upload(&self.services, stream, stored.inputs.token_batch, &slots)?;
+            upload(&self.services, stream, stored.last, &last)?;
+            self.services
+                .zero_device_buffer(stream, rows(buffers.scratch.row_status, batch.rows))
+                .map_err(|e| format!("DSpark status clear: {e:?}"))?;
+            self.services
+                .zero_device_buffer(stream, rows(buffers.scratch.shared_row_status, batch.rows))
+                .map_err(|e| format!("DSpark shared status clear: {e:?}"))?;
+            let stages = device
+                .stages
+                .iter()
+                .enumerate()
+                .map(|(stage, bound)| {
+                    let buffers = &bound[rank];
+                    let ring = dspark::rings::committed(
+                        &device.shape,
+                        self.extent,
+                        &buffers.state,
+                        stage as u32,
+                    )?;
+                    let base = Lowering {
+                        shape: &device.shape,
+                        ops: &device.ops,
+                        buffers,
+                        peers: bound,
+                        inputs: &stored.inputs,
+                        rank: rank as u32,
+                        kv: self.kv_extent(),
+                        head_rows: batch.rows,
+                    };
+                    Ok((base, ring))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let ring = stages.first().ok_or("DSpark has no stage")?.1;
+            programs.push(dspark::catch_up_stages(
+                &device.prepared,
+                &stages,
+                batch.rows,
+                &CatchUpViews {
+                    raw_features: features.batch_source(batch.rows)?,
+                    feature_codes: stored.feature_codes,
+                    feature_scales: stored.feature_scales,
+                    ring,
+                    row_slots: stored.inputs.token_batch,
+                    last: stored.last,
+                },
+            )?);
+        }
+        self.drafter_launch(programs, batch.rows)
     }
 
     pub(super) fn dspark_commit_features(&self, plan: &CommitPlan) -> Result<(), String> {

@@ -45,6 +45,15 @@ impl Host for FakeHost {
         )
     }
 
+    fn project_rows(&mut self, passes: &[RowProjection]) -> Result<(), Self::Error> {
+        let detail = passes
+            .iter()
+            .map(|pass| format!("{} {} {}", pass.request, pass.start, pass.count))
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.event("project_rows", detail)
+    }
+
     fn draft(&mut self, inputs: &[DraftInput]) -> Result<(), Self::Error> {
         self.event("draft", inputs.len().to_string())?;
         self.ids.clear();
@@ -227,6 +236,10 @@ fn setup() -> (Runtime, FakeHost) {
         context_tokens: 256,
         position_capacity: 256,
     })
+    .unwrap()
+    // The three restored rows are a bulk commit: they catch up in the
+    // per-stage passes of an eager catch-up.
+    .with_batch_rows(2)
     .unwrap();
     state
         .restore(
@@ -555,7 +568,7 @@ fn cancellation_preserves_history_and_reports_only_emitted_positions_as_cancelle
 }
 
 #[test]
-fn zero_budget_catches_up_without_drafting_or_id_readback() {
+fn zero_budget_defers_catch_up_without_drafting_or_id_readback() {
     let (mut runtime, mut host) = setup();
     for start in 3..11 {
         let mut item = input(0);
@@ -569,8 +582,141 @@ fn zero_budget_catches_up_without_drafting_or_id_readback() {
             .iter()
             .any(|entry| entry.starts_with("draft ") || entry.starts_with("read_"))
     );
-    assert_eq!(runtime.state().context(41).unwrap().projected(), &[10; 3]);
+    // Only the restored bulk projected, at the first step.
+    assert_eq!(
+        host.journal
+            .iter()
+            .filter(|entry| entry.starts_with("project"))
+            .count(),
+        6
+    );
+    assert_eq!(runtime.state().context(41).unwrap().projected(), &[3; 3]);
     assert_eq!(host.committed[&41].len(), 11);
+    // A snapshot catch-up skips the rows the four-row window overwrites.
+    runtime.catch_up(&mut host, 41).unwrap();
+    assert_eq!(host.journal.last().unwrap(), "project_rows 41 7 4");
+    assert_eq!(runtime.state().context(41).unwrap().projected(), &[11; 3]);
+    runtime.state().snapshot(41).unwrap();
+}
+
+#[test]
+fn deferred_rows_of_drafting_items_share_one_batched_projection() {
+    let (mut runtime, mut host) = setup();
+    runtime
+        .restore_after_copy(
+            42,
+            1,
+            Snapshot {
+                start: 0,
+                end: 2,
+                window: 4,
+                stages: 3,
+            },
+        )
+        .unwrap();
+    host.committed.insert(42, vec![1, 2]);
+    let other = |start, budget| Input {
+        rows: Rows {
+            request: 42,
+            slot: 1,
+            start,
+            kind: Kind::Decode { drafts: budget },
+        },
+        tokens: vec![3],
+    };
+    // Request 41's restored rows are bulk and project eagerly at its first
+    // step, before request 42's deferred rows.
+    runtime
+        .execute(&mut host, &[input(0), other(2, 0)])
+        .unwrap();
+    runtime.commit(&mut host, &[]).unwrap();
+    assert_eq!(
+        host.journal
+            .iter()
+            .filter(|entry| entry.starts_with("project"))
+            .cloned()
+            .collect::<Vec<_>>(),
+        [
+            "project 41 0 0 2",
+            "project 41 0 2 1",
+            "project 41 1 0 2",
+            "project 41 1 2 1",
+            "project 41 2 0 2",
+            "project 41 2 2 1",
+        ]
+    );
+    host.journal.clear();
+    let mut first = input(1);
+    first.rows.start = 4;
+    runtime.execute(&mut host, &[first, other(3, 2)]).unwrap();
+    assert_eq!(
+        host.journal[0], "project_rows 41 3 1, 42 0 3",
+        "{:?}",
+        host.journal
+    );
+    assert_eq!(host.journal[1], "draft 2");
+    runtime.commit(&mut host, &[(41, 2), (42, 2)]).unwrap();
+    // Two-row verify commits stay within the batch bound: deferred again.
+    host.journal.clear();
+    let mut first = input(0);
+    first.rows.start = 6;
+    runtime.execute(&mut host, &[first, other(5, 0)]).unwrap();
+    assert!(
+        !host
+            .journal
+            .iter()
+            .any(|entry| entry.starts_with("project"))
+    );
+    runtime.commit(&mut host, &[]).unwrap();
+    assert_eq!(runtime.state().context(41).unwrap().projected(), &[4; 3]);
+    assert_eq!(runtime.state().context(42).unwrap().projected(), &[3; 3]);
+}
+
+#[test]
+fn a_failed_batched_projection_poisons_without_advancing_cursors() {
+    let (mut runtime, mut host) = setup();
+    runtime.execute(&mut host, &[input(0)]).unwrap();
+    runtime.commit(&mut host, &[]).unwrap();
+    host.fail = Some("project_rows");
+    let mut item = input(5);
+    item.rows.start = 4;
+    assert_eq!(
+        runtime.execute(&mut host, &[item.clone()]),
+        Err(Error::Host("injected host failure"))
+    );
+    assert!(runtime.state().is_poisoned());
+    assert!(runtime.execute(&mut host, &[item]).is_err());
+    assert_eq!(runtime.state().context(41).unwrap().projected(), &[3; 3]);
+    assert_eq!(host.committed[&41], vec![1, 2, 3, 4]);
+}
+
+#[test]
+fn a_bulk_verify_commit_catches_up_eagerly_at_the_next_step() {
+    let (mut runtime, mut host) = setup();
+    runtime.execute(&mut host, &[input(2)]).unwrap();
+    runtime.commit(&mut host, &[(41, 3)]).unwrap();
+    assert_eq!(runtime.state().context(41).unwrap().bulk(), Some((3, 6)));
+    host.journal.clear();
+    let mut item = input(0);
+    item.rows.start = 6;
+    runtime.execute(&mut host, &[item]).unwrap();
+    assert_eq!(
+        host.journal
+            .iter()
+            .filter(|entry| entry.starts_with("project"))
+            .cloned()
+            .collect::<Vec<_>>(),
+        [
+            "project 41 0 3 2",
+            "project 41 0 5 1",
+            "project 41 1 3 2",
+            "project 41 1 5 1",
+            "project 41 2 3 2",
+            "project 41 2 5 1",
+        ]
+    );
+    runtime.commit(&mut host, &[]).unwrap();
+    assert_eq!(runtime.state().context(41).unwrap().bulk(), None);
 }
 
 #[test]

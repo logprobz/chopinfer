@@ -1,13 +1,14 @@
 //! The synchronous boundary between drafting and target verification.
 //!
 //! The host supplies prepared model operations and pinned Engram staging.
-//! This module orders them: committed-feature catch-up, full draft block,
-//! bounded ID readback, CPU hash/gather, upload, then target verification.
-//! Confidence is collected after target execution for diagnostics and never
-//! selects serving rows.
+//! This module orders them: committed-feature catch-up of the drafting
+//! items and of bulk commits, full draft block, bounded ID readback, CPU
+//! hash/gather, upload, then target verification. Confidence is read only
+//! for diagnostics and never selects serving rows.
 
 use super::state::{
-    self, BLOCK_ROWS, CommitPlan, DraftBlock, Kind, Projection, Rows, Snapshot, State,
+    self, BLOCK_ROWS, CommitPlan, DraftBlock, Kind, Projection, RowProjection, Rows, Snapshot,
+    State,
 };
 
 const WIDTH: usize = BLOCK_ROWS as usize;
@@ -76,7 +77,11 @@ pub trait Host {
     type Error;
     type Gathered;
 
+    /// Project one bulk pass of one stage, as an eager catch-up would.
     fn project_committed(&mut self, pass: Projection) -> Result<(), Self::Error>;
+    /// Project the rows of every pass through every stage, in launches of
+    /// at most the state's batch rows that may mix requests.
+    fn project_rows(&mut self, passes: &[RowProjection]) -> Result<(), Self::Error>;
     /// Compute all five positions, sequential Markov sampling and the
     /// confidence head, regardless of each block's emitted prefix length.
     fn draft(&mut self, inputs: &[DraftInput]) -> Result<(), Self::Error>;
@@ -143,14 +148,42 @@ impl Runtime {
 
     /// Also used before a prefix snapshot while there is no target step.
     pub fn catch_up<H: Host>(&mut self, host: &mut H, request: u64) -> Result<(), Error<H::Error>> {
-        for stage in 0..self.state.config().stages {
-            while let Some(pass) = self
-                .state
-                .projection(request, stage, self.projection_rows)
-                .map_err(Error::State)?
-            {
-                self.host_result(host.project_committed(pass))?;
-                self.state.projected(pass).map_err(Error::State)?;
+        self.catch_up_all(host, &[request])
+    }
+
+    /// Batched launches project every request's readable deferred rows,
+    /// then each bulk commit runs the per-stage passes of an eager catch-up.
+    fn catch_up_all<H: Host>(
+        &mut self,
+        host: &mut H,
+        requests: &[u64],
+    ) -> Result<(), Error<H::Error>> {
+        let mut passes = Vec::new();
+        for &request in requests {
+            self.state.skip_unread(request).map_err(Error::State)?;
+            if let Some(pass) = self.state.row_projection(request).map_err(Error::State)? {
+                passes.push(pass);
+            }
+        }
+        if !passes.is_empty() {
+            self.host_result(host.project_rows(&passes))?;
+            for pass in passes {
+                self.state.projected_rows(pass).map_err(Error::State)?;
+            }
+        }
+        for &request in requests {
+            if !self.state.has_bulk(request) {
+                continue;
+            }
+            for stage in 0..self.state.config().stages {
+                while let Some(pass) = self
+                    .state
+                    .projection(request, stage, self.projection_rows)
+                    .map_err(Error::State)?
+                {
+                    self.host_result(host.project_committed(pass))?;
+                    self.state.projected(pass).map_err(Error::State)?;
+                }
             }
         }
         Ok(())
@@ -176,11 +209,18 @@ impl Runtime {
             .prepare(inputs.iter().map(|input| input.rows).collect())
             .map_err(Error::State)?;
         self.diagnostics.clear();
-        for input in inputs {
-            if self.state.context(input.rows.request).is_some() {
-                self.catch_up(host, input.rows.request)?;
-            }
-        }
+        // Items that do not draft defer their rows to their next drafting
+        // step; a bulk commit catches up now, as it would eagerly.
+        let catching_up = inputs
+            .iter()
+            .map(|input| input.rows.request)
+            .zip(inputs.iter().map(|input| input.rows.kind.drafts() > 0))
+            .filter(|&(request, drafting)| {
+                self.state.needs_catch_up(request) && (drafting || self.state.has_bulk(request))
+            })
+            .map(|(request, _)| request)
+            .collect::<Vec<_>>();
+        self.catch_up_all(host, &catching_up)?;
         let blocks = self.state.begin_execution().map_err(Error::State)?;
         let drafting = inputs
             .iter()

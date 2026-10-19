@@ -1,9 +1,15 @@
 //! Transactional bookkeeping, independent of device launches and weights.
 //!
-//! Before any continuing target step, including K=0, each stage catches up
-//! from retained committed features. Draft KV lives outside the main ring.
-//! Cancellation therefore leaves committed history and completed projections
-//! valid. Only accepted target rows are copied from staging on commit.
+//! A drafting step first catches its stages up from retained committed
+//! features. Other items defer their catch-up: the drafter reads only the
+//! newest `window` committed rows, so rows that later rows overwrite in the
+//! ring are skipped, and the rest project when the item next drafts. A
+//! commit wider than the one-row-exact launch bound instead catches up at
+//! the item's next step in the same passes as an eager catch-up, so every
+//! projected row keeps the bits of an eager catch-up. Draft KV lives outside
+//! the main ring. Cancellation therefore leaves committed history and
+//! completed projections valid. Only accepted target rows are copied from
+//! staging on commit.
 //!
 //! A slot retains `window + MAX_VERIFY_ROWS` raw rows. A larger accepted
 //! prefill chunk projects every row directly from target staging during
@@ -14,6 +20,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub const BLOCK_ROWS: u32 = model_deepseek41_contract::serving::MAX_DRAFT_TOKENS;
 pub const MAX_VERIFY_ROWS: u32 = model_deepseek41_contract::serving::MAX_VERIFY_ROWS;
+/// The most rows one batched catch-up launch projects. Up to this many rows,
+/// every catch-up operation gives a row the bits of that row projected alone
+/// (the dense projections are one-row exact up to the verify bound), so rows
+/// of any items may share a launch.
+pub const BATCH_PROJECTION_ROWS: u32 = model_deepseek41_contract::serving::DECODE_BATCH;
 pub type Result<T> = std::result::Result<T, &'static str>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -106,6 +117,9 @@ pub struct Context {
     pub end: u64,
     projected: Vec<u64>,
     lease: u64,
+    /// Committed rows wider than one batched launch, still to project in
+    /// the per-stage passes an eager catch-up runs.
+    bulk: Option<(u64, u64)>,
 }
 
 impl Context {
@@ -116,6 +130,25 @@ impl Context {
     pub fn lease(&self) -> u64 {
         self.lease
     }
+
+    /// The bulk range still to project with per-stage passes, if any.
+    pub fn bulk(&self) -> Option<(u64, u64)> {
+        self.bulk
+    }
+
+    /// The first row the drafter can still read: rows before the newest
+    /// `window` are overwritten in the ring by later rows. A bulk range is
+    /// never skipped, as its passes must match an eager catch-up.
+    fn unread_end(&self, window: u32) -> u64 {
+        let readable = self.end.saturating_sub(u64::from(window));
+        let limit = self.bulk.map_or(self.end, |(start, _)| start);
+        let cursor = self.projected.iter().copied().min().unwrap_or(self.end);
+        cursor.max(readable.min(limit))
+    }
+
+    fn caught_up(&self) -> bool {
+        self.projected.iter().all(|&cursor| cursor == self.end)
+    }
 }
 
 /// One bounded projection pass from retained raw rows. The lease prevents
@@ -125,6 +158,18 @@ pub struct Projection {
     pub request: u64,
     pub slot: u32,
     pub stage: u32,
+    pub start: u64,
+    pub count: u32,
+    lease: u64,
+}
+
+/// Rows of one request that project through every stage in batched
+/// launches, together with other requests' rows. Each row keeps the bits
+/// of an eager one-row-exact catch-up.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RowProjection {
+    pub request: u64,
+    pub slot: u32,
     pub start: u64,
     pub count: u32,
     lease: u64,
@@ -207,6 +252,7 @@ pub struct State {
     pending: Option<Pending>,
     serial: u64,
     poisoned: bool,
+    batch_rows: u32,
 }
 
 impl State {
@@ -218,7 +264,21 @@ impl State {
             pending: None,
             serial: 0,
             poisoned: false,
+            batch_rows: BATCH_PROJECTION_ROWS,
         })
+    }
+
+    /// Bound batched catch-up launches, and so bulk commits, at `rows`.
+    pub fn with_batch_rows(mut self, rows: u32) -> Result<Self> {
+        if rows == 0 {
+            return Err("invalid DSpark batch projection rows");
+        }
+        self.batch_rows = rows;
+        Ok(self)
+    }
+
+    pub fn batch_rows(&self) -> u32 {
+        self.batch_rows
     }
 
     pub fn config(&self) -> Config {
@@ -389,6 +449,96 @@ impl State {
             return Err("stale or noncontiguous DSpark projection");
         }
         *cursor = end;
+        if let Some((_, bulk_end)) = context.bulk
+            && context.projected.iter().all(|&cursor| cursor >= bulk_end)
+        {
+            context.bulk = None;
+        }
+        Ok(())
+    }
+
+    /// Whether `request` has deferred rows the drafter can still read, or
+    /// a bulk commit to project.
+    pub fn needs_catch_up(&self, request: u64) -> bool {
+        self.committed
+            .get(&request)
+            .is_some_and(|context| !context.caught_up())
+    }
+
+    pub fn has_bulk(&self, request: u64) -> bool {
+        self.committed
+            .get(&request)
+            .is_some_and(|context| context.bulk.is_some())
+    }
+
+    /// Advance every stage past rows the drafter can no longer read. Later
+    /// rows overwrite their ring cells, so no launch projects them.
+    pub fn skip_unread(&mut self, request: u64) -> Result<()> {
+        self.can_project()?;
+        let window = self.config.window;
+        let context = self
+            .committed
+            .get_mut(&request)
+            .ok_or("DSpark context missing")?;
+        let start = context.unread_end(window);
+        for cursor in &mut context.projected {
+            *cursor = (*cursor).max(start);
+        }
+        Ok(())
+    }
+
+    /// The rows before any bulk range that batched launches project through
+    /// every stage. Call `skip_unread` first; every stage must agree.
+    pub fn row_projection(&self, request: u64) -> Result<Option<RowProjection>> {
+        self.can_project()?;
+        let context = self
+            .committed
+            .get(&request)
+            .ok_or("DSpark context missing")?;
+        let start = context.projected.first().copied().unwrap_or(context.end);
+        if context.projected.iter().any(|&cursor| cursor != start)
+            || start != context.unread_end(self.config.window)
+            || start < context.retained_start
+        {
+            return Err("DSpark batched projection needs aligned stages");
+        }
+        let stop = context.bulk.map_or(context.end, |(bulk, _)| bulk);
+        let count = stop.saturating_sub(start);
+        if count > u64::from(self.config.window) {
+            return Err("DSpark batched projection exceeds the window");
+        }
+        Ok((count > 0).then_some(RowProjection {
+            request,
+            slot: context.slot,
+            start,
+            count: count as u32,
+            lease: context.lease,
+        }))
+    }
+
+    /// Acknowledge a batched projection after every launch holding its rows
+    /// completed on every rank.
+    pub fn projected_rows(&mut self, pass: RowProjection) -> Result<()> {
+        self.can_project()?;
+        let context = self
+            .committed
+            .get_mut(&pass.request)
+            .ok_or("DSpark context missing")?;
+        let end = pass
+            .start
+            .checked_add(u64::from(pass.count))
+            .ok_or("DSpark projection overflow")?;
+        let stop = context.bulk.map_or(context.end, |(bulk, _)| bulk);
+        if pass.lease != context.lease
+            || pass.slot != context.slot
+            || pass.count == 0
+            || pass.start < context.retained_start
+            || end > stop
+            || context.projected.iter().any(|&cursor| cursor != pass.start)
+        {
+            return Err("stale or noncontiguous DSpark batched projection");
+        }
+        context.projected.fill(end);
         Ok(())
     }
 
@@ -402,10 +552,7 @@ impl State {
         }
         for row in &pending.rows {
             if self.committed.get(&row.request).is_some_and(|context| {
-                context
-                    .projected
-                    .iter()
-                    .any(|&cursor| cursor != context.end)
+                context.bulk.is_some() || (row.kind.drafts() > 0 && !context.caught_up())
             }) {
                 return Err("DSpark stages need catch-up before execution");
             }
@@ -512,6 +659,7 @@ impl State {
                     end: 0,
                     projected: vec![0; self.config.stages as usize],
                     lease: plan.transaction,
+                    bulk: None,
                 });
             context.end = row.start + u64::from(item.kept);
             if item.project_from_staging {
@@ -521,6 +669,9 @@ impl State {
                 context.retained_start = context
                     .retained_start
                     .max(context.end.saturating_sub(self.config.history_capacity()));
+                if item.kept > self.batch_rows {
+                    context.bulk = Some((row.start, context.end));
+                }
             }
         }
         self.pending = None;
@@ -546,11 +697,7 @@ impl State {
             .committed
             .get(&request)
             .ok_or("DSpark context missing")?;
-        if context
-            .projected
-            .iter()
-            .any(|&cursor| cursor != context.end)
-        {
+        if !context.caught_up() {
             return Err("DSpark stages need catch-up before snapshot");
         }
         Ok(Snapshot {
@@ -594,6 +741,8 @@ impl State {
                 end: snapshot.end,
                 projected: vec![snapshot.start; self.config.stages as usize],
                 lease,
+                bulk: (snapshot.end - snapshot.start > u64::from(self.batch_rows))
+                    .then_some((snapshot.start, snapshot.end)),
             },
         );
         self.serial = lease;

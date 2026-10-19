@@ -835,3 +835,87 @@ fn instance_mixed_phases_keep_disjoint_features_and_refuse_slot_aliases_before_i
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
 }
+
+/// One verify step drafting `drafts` for every (request, slot, start) item.
+fn verify_all(items: &[(u64, u64, u64)], drafts: u32) -> Vec<u8> {
+    let rows = u64::from(drafts + 1);
+    let mut batch = Vec::new();
+    let mut appends = Vec::new();
+    for &(request, slot, start) in items {
+        batch.push(BatchItemV1::verify(request, drafts + 1, true, vec![7]));
+        appends.push(BatchAppendV1::new(
+            start,
+            rows,
+            start + rows,
+            (0..(start + rows).div_ceil(64))
+                .map(|page| slot * 8 + page)
+                .collect(),
+            None,
+        ));
+    }
+    BatchRequestV1::new(BatchWireVersionV1::V3, batch, appends)
+        .with_state_slots(items.iter().map(|item| item.1).collect())
+        .encode()
+        .unwrap()
+}
+
+/// Catch-up programs launched since `from`, one per rank each: only
+/// catch-up quantizes raw feature rows (three 5120-wide target taps).
+fn catch_up_launches(host: &Host, from: usize) -> usize {
+    host.journal.borrow()[from..]
+        .iter()
+        .filter(|line| {
+            line.starts_with("launch ")
+                && line.split_whitespace().nth(2)
+                    == Some("chop_deepseek41_dspark_quantize_w15360_bf16_v1")
+        })
+        .count()
+}
+
+#[test]
+fn ar_steps_defer_catch_up_and_drafting_items_share_one_batched_launch() {
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    let (host, mut instance) = create(shape);
+    for (request, slot) in [(7, 0), (8, 1)] {
+        execute(
+            &mut instance,
+            &host,
+            &super::prompt(request, slot, 0, 3, true),
+        );
+        instance.commit().unwrap();
+    }
+    // The three-row prefills are within the batch bound and defer.
+    let mut end = 3;
+    for _ in 0..3 {
+        let from = host.journal.borrow().len();
+        execute(
+            &mut instance,
+            &host,
+            &super::decode(&[(7, 0, end, 7), (8, 1, end, 7)]),
+        );
+        instance.commit().unwrap();
+        assert_eq!(catch_up_launches(&host, from), 0);
+        end += 1;
+        for request in [7, 8] {
+            assert_eq!(state(&instance, request).projected(), vec![0; 3]);
+        }
+    }
+    // Two drafting items' deferred rows share one batched program: all
+    // three stages share its main projection.
+    let from = host.journal.borrow().len();
+    execute(
+        &mut instance,
+        &host,
+        &verify_all(&[(7, 0, end), (8, 1, end)], 1),
+    );
+    assert_eq!(catch_up_launches(&host, from), shape.ranks() as usize);
+    for request in [7, 8] {
+        assert_eq!(state(&instance, request).projected(), vec![end; 3]);
+    }
+    instance.commit_accepted(&[kept(7, 2), kept(8, 1)]).unwrap();
+    for request in [7, 8] {
+        instance.retire_request(request).unwrap();
+    }
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}

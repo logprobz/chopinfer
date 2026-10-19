@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use super::calibration::{self, Context};
 use super::device::{DECODE_BASE, slice};
 use super::execution::{Diagnostic, DraftInput, Host, Input, TargetRows};
-use super::state::{BLOCK_ROWS, CommitPlan, Kind, Projection};
+use super::state::{BLOCK_ROWS, CommitPlan, Kind, Projection, RowProjection};
 use crate::engram_rows::{self, Destination, EngramRows, Hashed, Mapped, Step, Table};
 
 /// Bounded diagnostics returned after device target execution. Confidence
@@ -27,6 +27,7 @@ pub struct DeviceTarget {
 /// publishing results. A failed validation poisons the lifecycle.
 pub trait Program {
     fn project_committed(&mut self, pass: Projection) -> Result<(), String>;
+    fn project_rows(&mut self, passes: &[RowProjection]) -> Result<(), String>;
     fn draft(&mut self, inputs: &[DraftInput]) -> Result<(), String>;
     fn target(&mut self, rows: &[TargetRows]) -> Result<(), String>;
     /// Device-resident decode target, with committed lookback and text masks.
@@ -312,6 +313,9 @@ impl<P: Program> Host for Adapter<'_, P> {
 
     fn project_committed(&mut self, pass: Projection) -> Result<(), String> {
         self.program.project_committed(pass)
+    }
+    fn project_rows(&mut self, passes: &[RowProjection]) -> Result<(), String> {
+        self.program.project_rows(passes)
     }
     fn draft(&mut self, inputs: &[DraftInput]) -> Result<(), String> {
         self.program.draft(inputs)

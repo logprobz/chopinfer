@@ -13,7 +13,9 @@ use std::collections::BTreeMap;
 
 use crate::dspark::execution::{Input, TargetRows};
 use crate::dspark::staging::{Adapter, Program, Rank, Readback};
-use crate::dspark::state::{BLOCK_ROWS, CommitPlan, Kind, Projection, Rows, Snapshot};
+use crate::dspark::state::{
+    BLOCK_ROWS, CommitPlan, Kind, Projection, RowProjection, Rows, Snapshot,
+};
 use bundle_runtime::inputs::{PackedStep, PhaseInputs};
 use bundle_runtime::ledger::CommitPlan as LedgerCommit;
 use runtime_bundle_abi::{BundleStatusV1, ExecuteResultSinkV1, HostServicesV1};
@@ -33,6 +35,10 @@ struct Work<'a> {
 impl Program for Work<'_> {
     fn project_committed(&mut self, pass: Projection) -> Result<(), String> {
         self.instance.dspark_project(pass)
+    }
+
+    fn project_rows(&mut self, passes: &[RowProjection]) -> Result<(), String> {
+        self.instance.dspark_project_rows(passes)
     }
 
     fn draft(&mut self, inputs: &[crate::dspark::execution::DraftInput]) -> Result<(), String> {

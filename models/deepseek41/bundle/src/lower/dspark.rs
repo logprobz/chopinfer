@@ -269,11 +269,42 @@ pub fn catch_up(
     count: u32,
     v: &CatchUpViews,
 ) -> Result<Vec<Lowered>, String> {
-    let g = base.shape.geometry;
-    if base.shape != &prepared.shape()
-        || stage >= g.dspark_stages()
-        || base.kv.storage != KvStorage::Native
-    {
+    let mut result = catch_up_main(prepared, base, count, v)?;
+    result.extend(catch_up_store(prepared, base, stage, count, v, v.ring)?);
+    Ok(result)
+}
+
+/// Project gathered rows, of one or several slots, into every stage's
+/// committed ring. The main projection is shared by all stages, so it runs
+/// once with the same operations and rows as each stage's own catch-up.
+/// `stages` holds each stage's lowering (its `stage_views`) and ring, in
+/// stage order; `v.ring` is unused.
+pub fn catch_up_stages(
+    prepared: &Prepared,
+    stages: &[(Lowering<'_>, Window)],
+    count: u32,
+    v: &CatchUpViews,
+) -> Result<Vec<Lowered>, String> {
+    let Some((first, _)) = stages.first() else {
+        return Err("DSpark batched catch-up needs every stage's ring".into());
+    };
+    if stages.len() != first.shape.geometry.dspark_stages() as usize {
+        return Err("DSpark batched catch-up needs every stage's ring".into());
+    }
+    let mut result = catch_up_main(prepared, first, count, v)?;
+    for (stage, (base, ring)) in (0..).zip(stages) {
+        result.extend(catch_up_store(prepared, base, stage, count, v, *ring)?);
+    }
+    Ok(result)
+}
+
+fn catch_up_main(
+    prepared: &Prepared,
+    base: &Lowering<'_>,
+    count: u32,
+    v: &CatchUpViews,
+) -> Result<Vec<Lowered>, String> {
+    if base.shape != &prepared.shape() || base.kv.storage != KvStorage::Native {
         return Err("DSpark catch-up geometry or native KV binding differs".into());
     }
     let phase = Phase::Prefill { rows: count };
@@ -309,11 +340,30 @@ pub fn catch_up(
             )
             .map_err(|e| e.to_string())?,
     );
+    Ok(result)
+}
+
+/// The stage's KV projection reads the main projection's normalized codes,
+/// which neither it nor the ring write overwrites.
+fn catch_up_store(
+    prepared: &Prepared,
+    base: &Lowering<'_>,
+    stage: u32,
+    count: u32,
+    v: &CatchUpViews,
+    ring: Window,
+) -> Result<Vec<Lowered>, String> {
+    let g = base.shape.geometry;
+    if stage >= g.dspark_stages() {
+        return Err("DSpark catch-up geometry or native KV binding differs".into());
+    }
+    let phase = Phase::Prefill { rows: count };
+    let s = &base.buffers.scratch;
+    let row = |span| crate::buffers::rows(span, count);
     let layer = g.layers() + stage;
-    result.extend(
-        base.stage(phase, Stage::Project(layer, "attention.kv"))?
-            .ok_or("DSpark catch-up KV projection is unavailable")?,
-    );
+    let mut result = base
+        .stage(phase, Stage::Project(layer, "attention.kv"))?
+        .ok_or("DSpark catch-up KV projection is unavailable")?;
     result.extend(
         prepared
             .store_main(
@@ -329,7 +379,7 @@ pub fn catch_up(
                     row_slots: v.row_slots,
                     first: None,
                     last: v.last,
-                    window: v.ring,
+                    window: ring,
                     codes: row(s.window_codes),
                     scales: row(s.window_scales),
                     live_rows: base.inputs.live_tokens,

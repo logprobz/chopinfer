@@ -8,9 +8,9 @@ import prefill_selected_capture as capture
 
 class Gates(unittest.TestCase):
     def test_prefixed_pair_gates_require_both_ranks_and_exact_evidence(self):
-        text='\n'.join(f'prefix PASS prefill_cache rank={r} variant=mixed32 offset=8192 rows=8192 workspace=true output=true replay=true f64=true cache_guards=true guard_control=true disjoint=true refresh=true actual_selected=true selected_sha256={"a"*64} cache_bytes=42' for r in [0,1])
+        text='\n'.join(f'prefix PASS prefill_cache rank={r} variant=mixed32 offset=8192 rows=8192 workspace=true output=true replay=true f64=true cache_guards=true guard_control=true disjoint=true refresh=true actual_selected=true page_cases=3 selected_sha256={"a"*64} cache_bytes=42' for r in [0,1])
         self.assertEqual(len(job.gate(text,'mixed32',8192,8192,False)),2)
-        for bad in [text.splitlines()[0],text+'\n'+text,text.replace('disjoint=true','disjoint=false'),text.replace('rows=8192','rows=32'),text+'\nFAILED']:
+        for bad in [text.splitlines()[0],text+'\n'+text,text.replace('disjoint=true','disjoint=false'),text.replace('rows=8192','rows=32'),text.replace('page_cases=3','page_cases=0'),text+'\nFAILED']:
             with self.assertRaises(AssertionError):job.gate(bad,'mixed32',8192,8192,False)
     def test_timing_rejects_missing_producer_and_nonfinite_values(self):
         text='\n'.join(f'prefix TIMING prefill_cache rank={r} variant=mixed64 offset=0 rows=8192 paired_total_us=6 cached_total_us=3 producer_us=1 ratio=0.5 samples=3 cache_bytes=42 actual_selected=true' for r in [0,1])

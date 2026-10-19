@@ -27,9 +27,10 @@ def gate(text,variant,offset,rows,timing):
                 assert 0<float(r[name])<1e9
         assert sorted(r['rank'] for r in records)==['0','1']
         return records
-    records=re.findall(r'PASS prefill_cache rank=(\d+) variant=(\w+) offset=(\d+) rows=(\d+) workspace=true output=true replay=true f64=true cache_guards=true guard_control=true disjoint=true refresh=true actual_selected=true selected_sha256=([0-9a-f]{64}) cache_bytes=(\d+)',text)
+    records=re.findall(r'PASS prefill_cache rank=(\d+) variant=(\w+) offset=(\d+) rows=(\d+) workspace=true output=true replay=true f64=true cache_guards=true guard_control=true disjoint=true refresh=true actual_selected=true page_cases=(\d+) selected_sha256=([0-9a-f]{64}) cache_bytes=(\d+)',text)
     assert len(records)==2 and sorted(r[0] for r in records)==['0','1']
     assert all(r[1]==variant and int(r[2])==offset and int(r[3])==rows for r in records)
+    assert all(int(r[4]) == (0 if variant=='window' else 3) for r in records)
     return records
 
 def main():

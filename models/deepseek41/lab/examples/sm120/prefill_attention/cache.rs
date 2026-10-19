@@ -645,8 +645,27 @@ pub fn run(
                 }
             }
         }
+        let page_cases = if rig.pages.is_some() {
+            for page in [-1, rig.rig.inputs.pages as i32, 0] {
+                rig.rig.inputs.set_case(s, 101, false, lists.rows)?;
+                lists.install(s, &rig.rig.inputs, lists.rows)?;
+                let tables = page.to_le_bytes().repeat(rig.rig.inputs.pages as usize);
+                rig.rig
+                    .inputs
+                    .tables
+                    .copy_from_bytes(&tables, &s.stream)
+                    .map_err(|e| e.to_string())?;
+                rig.poison(s)?;
+                graph.launch(&s.stream).map_err(|e| e.to_string())?;
+                rig.rig.compare(s, lists.rows)?;
+                rig.check_cache(s, lists.rows)?;
+            }
+            3
+        } else {
+            0
+        };
         println!(
-            "PASS prefill_cache rank={rank} variant={selected} offset={offset} rows={} workspace=true output=true replay=true f64=true cache_guards=true guard_control=true disjoint=true refresh=true actual_selected=true selected_sha256={} cache_bytes={}",
+            "PASS prefill_cache rank={rank} variant={selected} offset={offset} rows={} workspace=true output=true replay=true f64=true cache_guards=true guard_control=true disjoint=true refresh=true actual_selected=true page_cases={page_cases} selected_sha256={} cache_bytes={}",
             lists.rows, lists.hash, rig.layout.bytes
         );
     }

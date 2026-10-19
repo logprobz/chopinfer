@@ -17,6 +17,7 @@ use kernel_core::precision::{
 pub const HEADER: &str = "gemm/exact_f32.cuh";
 pub const IMPLEMENTATION: &str = "sm120.exact-f32.fold128.v1";
 
+pub mod blocked;
 mod decode;
 mod prefill;
 mod split;

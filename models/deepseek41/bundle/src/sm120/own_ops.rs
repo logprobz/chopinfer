@@ -31,6 +31,22 @@ impl Sm120Own {
 }
 
 impl OwnOps for Sm120Own {
+    fn dspark_acceptance(
+        &self,
+        op: &model_deepseek41_contract::own_ops::acceptance::Acceptance,
+        need: Need,
+    ) -> Result<
+        Prepared<model_deepseek41_contract::own_ops::acceptance::AcceptanceBuffers<View>>,
+        Refused,
+    > {
+        if op.vocab != self.geometry.shape.vocab {
+            return Err(Refused::Rule(
+                "DSpark acceptance differs from the bound vocabulary".into(),
+            ));
+        }
+        super::acceptance::prepare(*op, need)
+    }
+
     fn engram_hash(
         &self,
         op: &model_deepseek41_contract::own_ops::engram_hash::EngramHash,

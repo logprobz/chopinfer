@@ -11,6 +11,8 @@ use std::path::PathBuf;
 use kernel_build::{LockDir, ModelLock, Toolchain};
 use model_deepseek41_contract::geometry::GEOMETRIES;
 
+mod acceptance_cubin;
+mod acceptance_entries;
 #[allow(dead_code)]
 mod ceil_parallel;
 #[allow(dead_code)]
@@ -131,6 +133,10 @@ pub fn selection(
     specs.push((
         engram_hash_entries::FAMILY,
         engram_hash_cubin::cubin_spec(manifest),
+    ));
+    specs.push((
+        acceptance_entries::FAMILY,
+        acceptance_cubin::cubin_spec(manifest),
     ));
     specs.extend(dspark_aux::cubins(geometries).expect("DSpark auxiliary cubins"));
     specs.extend(dspark_router::cubins(geometries).expect("DSpark router cubins"));

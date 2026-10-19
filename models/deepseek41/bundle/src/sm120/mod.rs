@@ -43,6 +43,8 @@ pub(crate) mod own_entries;
 pub(crate) mod own_ops;
 // The build compiles each registration file's cubins; the bundle registers
 // their entries.
+pub mod acceptance;
+pub mod acceptance_entries;
 #[allow(dead_code, reason = "the build compiles the entries and declarations")]
 mod compressor;
 #[allow(dead_code, reason = "the build compiles the entries and declarations")]
@@ -273,10 +275,12 @@ impl crate::Kernels {
 
     /// Whether an instance loads `cubin` with the program's cubins: every
     /// cubin but the dependency probes, which only the kernel lab launches,
-    /// and the vision encoder's, which only an encoder instance loads.
+    /// the unwired acceptance reducer, and the vision encoder's, which only
+    /// an encoder instance loads.
     /// Streamed MoE modules load only for the qualified topology.
     pub fn loads(cubin: &str, shape: &crate::shape::Shape) -> bool {
         cubin != kernels_sm120::probes::CUBIN
+            && cubin != acceptance_entries::CUBIN
             && (!latent_scheduled::candidate_cubin(cubin)
                 || latent_scheduled::qualified(shape.geometry, shape.ranks()))
             && !encoder::is_cubin(cubin)

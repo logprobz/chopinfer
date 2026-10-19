@@ -20,6 +20,12 @@ mod round_artifacts;
 mod window_fused;
 // The own ops: the bundle's entries, cubin specification and `OwnOps`
 // implementation, and their tests.
+#[path = "../../../bundle/src/sm120/acceptance.rs"]
+mod acceptance;
+#[path = "../../../bundle/src/sm120/acceptance_entries.rs"]
+#[allow(dead_code)]
+mod acceptance_entries;
+mod acceptance_test;
 mod compressor;
 #[path = "../../../bundle/src/sm120/dspark.rs"]
 mod dspark;

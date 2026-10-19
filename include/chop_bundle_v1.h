@@ -1259,6 +1259,66 @@ typedef struct chop_bundle_acceptance_result_v1 {
   uint32_t reserved;
 } chop_bundle_acceptance_result_v1;
 
+/* Optional device-result records. Spans and ready events remain borrowed
+ * until all consumers and final collection finish. The host checks handle
+ * generations, context ownership and capacity before submitting work. */
+#define CHOP_DEVICE_RESULTS_HOST_VALUES_V1 UINT32_C(0)
+#define CHOP_DEVICE_RESULTS_DEVICE_FEEDBACK_V1 UINT32_C(1)
+#define CHOP_DEVICE_SAMPLE_RECORD_BYTES_V1 UINT32_C(256)
+typedef struct chop_bundle_ready_device_view_v1 {
+  chop_bundle_context_handle_v1 context;
+  uint32_t rank;
+  uint32_t reserved;
+  chop_bundle_device_buffer_view_v1 buffer;
+  chop_bundle_event_handle_v1 ready;
+} chop_bundle_ready_device_view_v1;
+typedef struct chop_bundle_device_drafts_v1 {
+  uint32_t struct_size;
+  uint32_t flags;
+  uint64_t cycle_epoch;
+  uint64_t request_id;
+  uint64_t slot_generation;
+  uint32_t requested_tokens;
+  uint32_t computed_tokens;
+  uint64_t token_stride_bytes;
+  chop_bundle_ready_device_view_v1 proposals;
+  chop_bundle_device_buffer_view_v1 confidence;
+} chop_bundle_device_drafts_v1;
+typedef struct chop_bundle_ready_logits_view_v1 {
+  uint32_t struct_size;
+  uint32_t flags;
+  uint64_t cycle_epoch;
+  chop_bundle_logits_view_v1 logits;
+  chop_bundle_event_handle_v1 ready;
+} chop_bundle_ready_logits_view_v1;
+typedef struct chop_bundle_device_sampling_request_v1 {
+  uint32_t struct_size;
+  uint32_t reserved;
+  chop_bundle_ready_logits_view_v1 logits;
+  chop_bundle_device_buffer_view_v1 output;
+  chop_bundle_event_handle_v1 done;
+} chop_bundle_device_sampling_request_v1;
+typedef struct chop_bundle_device_completion_v1 {
+  uint32_t struct_size;
+  uint32_t flags;
+  uint64_t cycle_epoch;
+  uint32_t item_count;
+  uint32_t sample_rows;
+  uint64_t acceptance_offset;
+  uint64_t samples_offset;
+  chop_bundle_ready_device_view_v1 packet;
+} chop_bundle_device_completion_v1;
+/* Metadata arrays are immutable through the enclosing execute. Items are
+ * 56-byte little-endian records: request ID, slot generation, acceptance
+ * input. Stop IDs are packed U32 termination IDs. Copy before retaining. */
+typedef struct chop_bundle_device_cycle_view_v1 {
+  uint32_t struct_size;
+  uint32_t reserved;
+  uint64_t cycle_epoch;
+  chop_bundle_byte_view_v1 items;
+  chop_bundle_byte_view_v1 termination_stop_ids;
+} chop_bundle_device_cycle_view_v1;
+
 /* Draft tokens are little-endian u32 values. Emit before logits for this item. */
 typedef struct chop_bundle_draft_tokens_v1 {
   uint32_t struct_size;
@@ -1290,6 +1350,38 @@ typedef struct chop_bundle_execute_result_sink_v1 {
   /* Optional speculation tail. Check struct_size before reading this field. */
   chop_bundle_emit_draft_tokens_fn_v1 emit_draft_tokens;
 } chop_bundle_execute_result_sink_v1;
+
+/* Separate pointer-based sink, used only by the optional export below.
+ * The legacy execute's by-value sink and signature are unchanged. Every
+ * callback is required when this extension is used. Short tables are refused. */
+typedef chop_bundle_status_v1 (*chop_bundle_describe_device_cycle_fn_v1)(void *, chop_bundle_device_cycle_view_v1 *);
+typedef chop_bundle_status_v1 (*chop_bundle_declare_input_dependency_fn_v1)(void *, uint32_t);
+typedef chop_bundle_status_v1 (*chop_bundle_emit_device_drafts_fn_v1)(void *, const chop_bundle_device_drafts_v1 *);
+typedef chop_bundle_status_v1 (*chop_bundle_sample_device_logits_fn_v1)(void *, const chop_bundle_device_sampling_request_v1 *);
+typedef chop_bundle_status_v1 (*chop_bundle_emit_ready_logits_fn_v1)(void *, const chop_bundle_ready_logits_view_v1 *);
+typedef chop_bundle_status_v1 (*chop_bundle_emit_device_completion_fn_v1)(void *, const chop_bundle_device_completion_v1 *);
+typedef struct chop_bundle_device_result_sink_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  chop_bundle_execute_result_sink_v1 base;
+  chop_bundle_describe_device_cycle_fn_v1 describe_device_cycle_v1;
+  chop_bundle_declare_input_dependency_fn_v1 declare_input_dependency_v1;
+  chop_bundle_emit_device_drafts_fn_v1 emit_device_drafts_v1;
+  chop_bundle_sample_device_logits_fn_v1 sample_device_logits_v1;
+  chop_bundle_emit_ready_logits_fn_v1 emit_ready_logits_view_v1;
+  chop_bundle_emit_device_completion_fn_v1 emit_device_completion_v1;
+} chop_bundle_device_result_sink_v1;
+typedef chop_bundle_status_v1 (*chop_bundle_execute_device_results_fn_v1)(
+    chop_bundle_handle_v1, chop_bundle_byte_view_v1, const chop_bundle_device_result_sink_v1 *);
+typedef struct chop_bundle_device_results_api_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  chop_bundle_execute_device_results_fn_v1 execute_device_results_v1;
+} chop_bundle_device_results_api_v1;
+/* Optional export under chop.device-results.v1. Loading it does not enable
+ * execution: the host must explicitly admit the package and select this path. */
+const chop_bundle_device_results_api_v1 *chop_bundle_get_device_results_api_v1(void);
+
 
 /*
  * Once the host calls create, it keeps that service table, every callback in it,

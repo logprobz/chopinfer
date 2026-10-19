@@ -4,6 +4,13 @@
 //! is usable only after its completion dependency and all sampler rows have
 //! been validated. Request and slot membership are checked by the caller.
 
+mod sink;
+pub use sink::*;
+mod cycle;
+pub use cycle::*;
+mod views;
+pub use views::*;
+
 use crate::BundleStatusV1;
 
 pub const BUNDLE_ACCEPTANCE_INPUT_BYTES_V1: usize = 40;
@@ -29,6 +36,23 @@ pub struct BundleAcceptanceInputV1 {
 }
 
 impl BundleAcceptanceInputV1 {
+    pub fn from_le_bytes(bytes: &[u8]) -> Result<Self, BundleStatusV1> {
+        if bytes.len() != BUNDLE_ACCEPTANCE_INPUT_BYTES_V1 {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let word = |at| u32::from_le_bytes(bytes[at..at + 4].try_into().expect("bounded word"));
+        Ok(Self {
+            cycle_epoch: u64::from_le_bytes(bytes[..8].try_into().expect("bounded epoch")),
+            remaining_tokens: u64::from_le_bytes(bytes[8..16].try_into().expect("bounded budget")),
+            first_sample_row: word(16),
+            draft_item_index: word(20),
+            draft_tokens: word(24),
+            stop_offset: word(28),
+            stop_count: word(32),
+            reserved: word(36),
+        })
+    }
+
     /// Validate every range before a reducer can index its device inputs.
     pub fn validate(
         self,

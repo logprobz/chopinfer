@@ -2929,6 +2929,7 @@ struct ResultSinkStateV1<'a, S: LogitsRowSinkV1> {
     limits: ResultSinkLimitsV1,
     emitted_rows: u64,
     emitted_logits: u64,
+    device_cycle: Option<EncodedDeviceCycleV1>,
 }
 
 /// Installs a native result sink around `sink` for exactly one `callback` call.
@@ -2942,6 +2943,7 @@ pub(crate) fn with_result_sink_v1<S: LogitsRowSinkV1, T>(
         limits,
         emitted_rows: 0,
         emitted_logits: 0,
+        device_cycle: None,
     });
     let raw = BundleExecuteResultSinkV1 {
         struct_size: struct_size_v1::<BundleExecuteResultSinkV1>(),
@@ -6923,5 +6925,607 @@ mod frontend_tests {
             unsafe { table.close.unwrap()(frontend) },
             BundleStatusV1::Success
         );
+    }
+}
+
+// The device-result extension keeps the legacy by-value sink unchanged.
+use crate::device_results::{
+    BundleDeviceCompletionV1, BundleDeviceCycleViewV1, BundleDeviceDraftsV1,
+    BundleDeviceResultSinkV1, BundleDeviceSamplingRequestV1, BundleExecuteDeviceResultsFnV1,
+    BundleReadyLogitsViewV1, DEVICE_CYCLE_ITEM_BYTES_V1, DeviceCycleMetadataV1,
+};
+
+struct EncodedDeviceCycleV1 {
+    epoch: u64,
+    items: Vec<u8>,
+    stops: Vec<u8>,
+}
+
+pub(crate) fn invoke_bundle_device_results_v1<S: LogitsRowSinkV1>(
+    execute: BundleExecuteDeviceResultsFnV1,
+    handle: BundleHandleV1,
+    request: &[u8],
+    sink: &mut S,
+) -> Result<BundleStatusV1, BundleAbiError> {
+    let metadata = match sink.device_cycle_metadata() {
+        Ok(metadata) => {
+            metadata
+                .validate(sink.limits())
+                .map_err(BundleAbiError::Status)?;
+            Some(EncodedDeviceCycleV1 {
+                epoch: metadata.cycle_epoch,
+                items: metadata.encode_items(),
+                stops: metadata
+                    .termination_stop_ids
+                    .iter()
+                    .flat_map(|id| id.to_le_bytes())
+                    .collect(),
+            })
+        }
+        Err(BundleStatusV1::Unsupported) => None,
+        Err(status) => return Err(BundleAbiError::Status(status)),
+    };
+    with_result_sink_v1(sink, |base| {
+        result_sink_state_from_user_data_v1::<S>(base.user_data)?
+            .borrow_mut()
+            .device_cycle = metadata;
+        let raw = BundleDeviceResultSinkV1 {
+            struct_size: struct_size_v1::<BundleDeviceResultSinkV1>(),
+            abi_version: BUNDLE_ABI_VERSION_V1,
+            base,
+            describe_device_cycle_v1: Some(describe_device_cycle_trampoline_v1::<S>),
+            declare_input_dependency_v1: Some(declare_input_dependency_trampoline_v1::<S>),
+            emit_device_drafts_v1: Some(emit_device_drafts_trampoline_v1::<S>),
+            sample_device_logits_v1: Some(sample_device_logits_trampoline_v1::<S>),
+            emit_ready_logits_view_v1: Some(emit_ready_logits_trampoline_v1::<S>),
+            emit_device_completion_v1: Some(emit_device_completion_trampoline_v1::<S>),
+        };
+        // SAFETY-REVIEWED: request, table, metadata and user_data live through this exact call.
+        Ok(unsafe { execute(handle, BundleByteViewV1::from_bytes(request), &raw) })
+    })
+}
+
+/// Decode one borrowed record with a size prefix, without reading a short tail.
+/// # Safety
+/// The pointer is the borrowed record supplied by the native callback. Its
+/// header describes the readable bytes for this call.
+// SAFETY-REVIEWED: called only by the typed extension entry and callbacks below.
+unsafe fn read_device_result_record_v1<T: Copy>(pointer: *const T) -> Result<T, BundleAbiError> {
+    validate_input_pointer_v1(pointer, "device result record")?;
+    // SAFETY-REVIEWED: a native record supplies at least its fixed size prefix.
+    let size = unsafe { pointer.cast::<u32>().read() };
+    if (size as usize) < std::mem::size_of::<T>() {
+        return Err(BundleAbiError::Status(BundleStatusV1::Unsupported));
+    }
+    // SAFETY-REVIEWED: the declared size covers T and the native caller lends that record.
+    Ok(unsafe { pointer.read() })
+}
+
+/// Decode the optional execute entry without extending the legacy signature.
+/// # Safety
+/// The native caller lends the request, extended sink and its user_data for
+/// this call. The sink's size prefix describes its readable bytes.
+// SAFETY-REVIEWED: owns the pointer decode for the generated extension entry.
+pub unsafe fn dispatch_bundle_execute_device_results_v1(
+    handle: BundleHandleV1,
+    request: BundleByteViewV1,
+    sink: *const BundleDeviceResultSinkV1,
+    execute: impl FnOnce(BundleHandleV1, &[u8], &mut ExecuteResultSinkV1) -> BundleStatusV1,
+) -> BundleStatusV1 {
+    catch_panic_callback_status_v1(|| {
+        // SAFETY-REVIEWED: these are the native entry's borrowed record and bytes.
+        let table = unsafe { read_device_result_record_v1(sink)? };
+        table.validate()?;
+        let mut sink = ExecuteResultSinkV1::new(table.base)?.with_device_results(table)?;
+        with_byte_view_v1(request, |request| execute(handle, request, &mut sink))
+    })
+}
+
+pub(crate) fn device_results_describe(
+    table: &BundleDeviceResultSinkV1,
+    limits: ResultSinkLimitsV1,
+) -> Result<DeviceCycleMetadataV1, BundleAbiError> {
+    let callback = table
+        .describe_device_cycle_v1
+        .ok_or(BundleAbiError::MissingExecuteResultCallback)?;
+    let mut raw = BundleDeviceCycleViewV1::empty();
+    // SAFETY-REVIEWED: the enclosing execute owns the table and this output record.
+    status_result(unsafe { callback(table.base.user_data, &mut raw) })?;
+    if raw.struct_size != struct_size_v1::<BundleDeviceCycleViewV1>()
+        || raw.reserved != 0
+        || raw.items.length / DEVICE_CYCLE_ITEM_BYTES_V1 as u64 > limits.maximum_rows
+        || raw.items.length > (1 << 20) * DEVICE_CYCLE_ITEM_BYTES_V1 as u64
+        || raw.termination_stop_ids.length > (1 << 20) * 4
+    {
+        return Err(BundleAbiError::Status(BundleStatusV1::InvalidArgument));
+    }
+    // The getter retains immutable storage through the enclosing execute.
+    let items = copy_byte_view_v1(raw.items)?;
+    let stops = copy_byte_view_v1(raw.termination_stop_ids)?;
+    DeviceCycleMetadataV1::decode(raw.cycle_epoch, &items, &stops, limits)
+        .map_err(BundleAbiError::Status)
+}
+
+pub(crate) fn device_results_dependency(
+    table: &BundleDeviceResultSinkV1,
+    dependency: u32,
+) -> Result<(), BundleAbiError> {
+    let callback = table
+        .declare_input_dependency_v1
+        .ok_or(BundleAbiError::MissingExecuteResultCallback)?;
+    // SAFETY-REVIEWED: the enclosing execute owns the table and its user_data.
+    status_result(unsafe { callback(table.base.user_data, dependency) })
+}
+
+macro_rules! invoke_device_result_record {
+    ($name:ident, $field:ident, $record:ty) => {
+        pub(crate) fn $name(
+            table: &BundleDeviceResultSinkV1,
+            record: $record,
+        ) -> Result<(), BundleAbiError> {
+            let callback = table
+                .$field
+                .ok_or(BundleAbiError::MissingExecuteResultCallback)?;
+            // SAFETY-REVIEWED: table and borrowed fixed-width record live through the call.
+            status_result(unsafe { callback(table.base.user_data, &record) })
+        }
+    };
+}
+invoke_device_result_record!(
+    device_results_drafts,
+    emit_device_drafts_v1,
+    BundleDeviceDraftsV1
+);
+invoke_device_result_record!(
+    device_results_sample,
+    sample_device_logits_v1,
+    BundleDeviceSamplingRequestV1
+);
+invoke_device_result_record!(
+    device_results_ready,
+    emit_ready_logits_view_v1,
+    BundleReadyLogitsViewV1
+);
+invoke_device_result_record!(
+    device_results_completion,
+    emit_device_completion_v1,
+    BundleDeviceCompletionV1
+);
+
+// SAFETY-REVIEWED: the execute owns user_data and the caller lends one writable output record.
+unsafe extern "C" fn describe_device_cycle_trampoline_v1<S: LogitsRowSinkV1>(
+    user_data: *mut c_void,
+    output: *mut BundleDeviceCycleViewV1,
+) -> BundleStatusV1 {
+    catch_panic_callback_status_v1(|| {
+        validate_output_pointer_v1(output, "device cycle metadata")?;
+        let state = result_sink_state_from_user_data_v1::<S>(user_data)?;
+        let state = state
+            .try_borrow()
+            .map_err(|_| BundleAbiError::Lifecycle("reentrant result sink"))?;
+        let Some(metadata) = &state.device_cycle else {
+            return Ok(BundleStatusV1::Unsupported);
+        };
+        let raw = BundleDeviceCycleViewV1 {
+            cycle_epoch: metadata.epoch,
+            items: BundleByteViewV1::from_bytes(&metadata.items),
+            termination_stop_ids: BundleByteViewV1::from_bytes(&metadata.stops),
+            ..BundleDeviceCycleViewV1::empty()
+        };
+        // SAFETY-REVIEWED: output is writable; the backing vectors stay immutable through execute.
+        unsafe {
+            output.write(raw);
+        }
+        Ok(BundleStatusV1::Success)
+    })
+}
+
+// SAFETY-REVIEWED: user_data is installed by this execute's sink wrapper.
+unsafe extern "C" fn declare_input_dependency_trampoline_v1<S: LogitsRowSinkV1>(
+    user_data: *mut c_void,
+    dependency: u32,
+) -> BundleStatusV1 {
+    catch_panic_callback_status_v1(|| {
+        if dependency > 1 {
+            return Ok(BundleStatusV1::Unsupported);
+        }
+        let state = result_sink_state_from_user_data_v1::<S>(user_data)?;
+        let mut state = state
+            .try_borrow_mut()
+            .map_err(|_| BundleAbiError::Lifecycle("reentrant result sink"))?;
+        Ok(host_unit_status_v1(
+            state.sink.declare_input_dependency(dependency),
+        ))
+    })
+}
+
+macro_rules! receive_device_result_record {
+    ($name:ident, $record:ty, $validate:expr, $handler:expr) => {
+        // SAFETY-REVIEWED: the enclosing execute lends this record and installs user_data.
+        unsafe extern "C" fn $name<S: LogitsRowSinkV1>(
+            user_data: *mut c_void,
+            pointer: *const $record,
+        ) -> BundleStatusV1 {
+            catch_panic_callback_status_v1(|| {
+                // SAFETY-REVIEWED: the native callback supplied this typed, size-prefixed record.
+                let record = unsafe { read_device_result_record_v1(pointer)? };
+                ($validate)(record)?;
+                let state = result_sink_state_from_user_data_v1::<S>(user_data)?;
+                let mut state = state
+                    .try_borrow_mut()
+                    .map_err(|_| BundleAbiError::Lifecycle("reentrant result sink"))?;
+                ($handler)(&mut *state, record)
+            })
+        }
+    };
+}
+receive_device_result_record!(
+    emit_device_drafts_trampoline_v1,
+    BundleDeviceDraftsV1,
+    |record: BundleDeviceDraftsV1| record.validate().map_err(BundleAbiError::Status),
+    |state: &mut ResultSinkStateV1<'_, S>, record| Ok(host_unit_status_v1(
+        state.sink.emit_device_drafts(record)
+    ))
+);
+receive_device_result_record!(
+    sample_device_logits_trampoline_v1,
+    BundleDeviceSamplingRequestV1,
+    |record: BundleDeviceSamplingRequestV1| record.validate(),
+    |state: &mut ResultSinkStateV1<'_, S>, record: BundleDeviceSamplingRequestV1| {
+        charge_result_capacity_rows_v1(
+            state.limits,
+            &mut state.emitted_rows,
+            &mut state.emitted_logits,
+            u64::from(record.logits.logits.row_count),
+            u64::from(record.logits.logits.live_width),
+        )?;
+        Ok(host_unit_status_v1(state.sink.sample_device_logits(record)))
+    }
+);
+receive_device_result_record!(
+    emit_ready_logits_trampoline_v1,
+    BundleReadyLogitsViewV1,
+    |record: BundleReadyLogitsViewV1| record.validate(),
+    |state: &mut ResultSinkStateV1<'_, S>, record: BundleReadyLogitsViewV1| {
+        charge_result_capacity_rows_v1(
+            state.limits,
+            &mut state.emitted_rows,
+            &mut state.emitted_logits,
+            u64::from(record.logits.row_count),
+            u64::from(record.logits.live_width),
+        )?;
+        Ok(host_unit_status_v1(
+            state.sink.emit_ready_logits_view(record),
+        ))
+    }
+);
+receive_device_result_record!(
+    emit_device_completion_trampoline_v1,
+    BundleDeviceCompletionV1,
+    |record: BundleDeviceCompletionV1| record.validate().map_err(BundleAbiError::Status),
+    |state: &mut ResultSinkStateV1<'_, S>, record: BundleDeviceCompletionV1| {
+        if u64::from(record.sample_rows) > state.limits.maximum_rows {
+            return Err(BundleAbiError::ExecuteResultCapacity);
+        }
+        Ok(host_unit_status_v1(
+            state.sink.emit_device_completion(record),
+        ))
+    }
+);
+
+/// Export the optional execute entry without changing the legacy API table.
+#[macro_export]
+macro_rules! export_bundle_device_results_v1 {
+    ($api:ident, $execute:expr $(,)?) => {
+        // SAFETY-REVIEWED: the generated entry delegates its borrowed pointers to the ABI decoder.
+        #[allow(unsafe_code)]
+        unsafe extern "C" fn __bundle_execute_device_results_v1(
+            handle: $crate::BundleHandleV1, request: $crate::BundleByteViewV1,
+            sink: *const $crate::device_results::BundleDeviceResultSinkV1,
+        ) -> $crate::BundleStatusV1 {
+            // SAFETY-REVIEWED: these are the exact arguments received from the native host.
+            let execute = $execute;
+            // SAFETY-REVIEWED: the native entry lends its request and sink for this call.
+            unsafe { $crate::dispatch_bundle_execute_device_results_v1(handle, request, sink, execute) }
+        }
+        pub static $api: $crate::device_results::BundleDeviceResultsApiV1 = $crate::device_results::BundleDeviceResultsApiV1 {
+            struct_size: ::core::mem::size_of::<$crate::device_results::BundleDeviceResultsApiV1>() as u32,
+            abi_version: $crate::BUNDLE_ABI_VERSION_V1,
+            execute_device_results_v1: Some(__bundle_execute_device_results_v1),
+        };
+        // SAFETY-REVIEWED: this export returns a live immutable static table with the declared C layout.
+        #[allow(unsafe_code)]
+        #[unsafe(no_mangle)]
+        pub extern "C" fn chop_bundle_get_device_results_api_v1() -> *const $crate::device_results::BundleDeviceResultsApiV1 {
+            &$api
+        }
+    };
+}
+
+#[cfg(test)]
+mod device_result_hook_tests {
+    use super::*;
+    use crate::BUNDLE_LOGITS_ELEMENT_V1_F32;
+    use crate::device_results::*;
+
+    #[derive(Default)]
+    struct Sink {
+        calls: Vec<&'static str>,
+    }
+    impl LogitsRowSinkV1 for Sink {
+        fn limits(&self) -> ResultSinkLimitsV1 {
+            ResultSinkLimitsV1::new(4, 8, 32)
+        }
+        fn emit_row(&mut self, _: OwnedLogitsRowV1) -> HostServiceResultV1<()> {
+            self.calls.push("legacy");
+            Ok(())
+        }
+        fn device_results_enabled(&self) -> bool {
+            true
+        }
+        fn device_cycle_metadata(&self) -> HostServiceResultV1<DeviceCycleMetadataV1> {
+            Ok(DeviceCycleMetadataV1 {
+                cycle_epoch: 9,
+                items: vec![DeviceCycleItemV1 {
+                    request_id: 11,
+                    slot_generation: 2,
+                    acceptance: BundleAcceptanceInputV1 {
+                        cycle_epoch: 9,
+                        remaining_tokens: 4,
+                        first_sample_row: 0,
+                        draft_item_index: 0,
+                        draft_tokens: 1,
+                        stop_offset: 0,
+                        stop_count: 1,
+                        reserved: 0,
+                    },
+                }],
+                termination_stop_ids: vec![3],
+            })
+        }
+        fn declare_input_dependency(&mut self, _: u32) -> HostServiceResultV1<()> {
+            self.calls.push("dependency");
+            Ok(())
+        }
+        fn emit_device_drafts(&mut self, _: BundleDeviceDraftsV1) -> HostServiceResultV1<()> {
+            self.calls.push("drafts");
+            Ok(())
+        }
+        fn sample_device_logits(
+            &mut self,
+            _: BundleDeviceSamplingRequestV1,
+        ) -> HostServiceResultV1<()> {
+            self.calls.push("sample");
+            Ok(())
+        }
+        fn emit_ready_logits_view(
+            &mut self,
+            _: BundleReadyLogitsViewV1,
+        ) -> HostServiceResultV1<()> {
+            self.calls.push("ready");
+            Ok(())
+        }
+        fn emit_device_completion(
+            &mut self,
+            _: BundleDeviceCompletionV1,
+        ) -> HostServiceResultV1<()> {
+            self.calls.push("completion");
+            Ok(())
+        }
+    }
+    fn buffer(slot: u32, length: u64) -> BundleDeviceBufferViewV1 {
+        BundleDeviceBufferViewV1 {
+            buffer: BundleDeviceBufferHandleV1::from_parts(1, slot),
+            length,
+            ..BundleDeviceBufferViewV1::empty()
+        }
+    }
+    fn ready(rows: u32) -> BundleReadyLogitsViewV1 {
+        BundleReadyLogitsViewV1 {
+            struct_size: struct_size_v1::<BundleReadyLogitsViewV1>(),
+            flags: 0,
+            cycle_epoch: 9,
+            ready: BundleEventHandleV1::from_parts(1, 3),
+            logits: BundleLogitsViewV1 {
+                context: BundleContextHandleV1::from_parts(1, 1),
+                element_type: BUNDLE_LOGITS_ELEMENT_V1_F32,
+                buffer: buffer(2, u64::from(rows) * 8 * 4),
+                row_stride_elements: 8,
+                row_count: rows,
+                live_width: 8,
+                ..BundleLogitsViewV1::empty()
+            },
+        }
+    }
+    fn run_extension(
+        _: BundleHandleV1,
+        request: &[u8],
+        sink: &mut ExecuteResultSinkV1,
+    ) -> BundleStatusV1 {
+        assert!(sink.device_results_enabled());
+        let cycle = sink.device_cycle_metadata().unwrap();
+        assert_eq!(cycle.cycle_epoch, 9);
+        assert_eq!(cycle.items[0].slot_generation, 2);
+        assert_eq!(cycle.termination_stop_ids, [3]);
+        if request == b"capacity" {
+            assert_eq!(
+                sink.emit_ready_logits_view(ready(5)),
+                Err(BundleAbiError::ExecuteResultCapacity)
+            );
+            assert_eq!(sink.emitted_rows(), 0);
+            return BundleStatusV1::Success;
+        }
+        if request == b"ready" {
+            sink.emit_ready_logits_view(ready(2)).unwrap();
+            assert_eq!(sink.emitted_rows(), 2);
+            return BundleStatusV1::Success;
+        }
+        sink.declare_input_dependency(DEVICE_RESULTS_DEVICE_FEEDBACK_V1)
+            .unwrap();
+        sink.emit_device_drafts(BundleDeviceDraftsV1 {
+            struct_size: struct_size_v1::<BundleDeviceDraftsV1>(),
+            flags: 0,
+            cycle_epoch: 9,
+            request_id: 11,
+            slot_generation: 2,
+            requested_tokens: 1,
+            computed_tokens: 5,
+            token_stride_bytes: 4,
+            proposals: BundleReadyDeviceViewV1 {
+                context: BundleContextHandleV1::from_parts(1, 1),
+                rank: 0,
+                reserved: 0,
+                buffer: buffer(7, 20),
+                ready: BundleEventHandleV1::from_parts(1, 8),
+            },
+            confidence: BundleDeviceBufferViewV1::empty(),
+        })
+        .unwrap();
+        sink.sample_device_logits(BundleDeviceSamplingRequestV1 {
+            struct_size: struct_size_v1::<BundleDeviceSamplingRequestV1>(),
+            reserved: 0,
+            logits: ready(2),
+            output: BundleDeviceBufferViewV1 {
+                offset: 32,
+                ..buffer(4, 512)
+            },
+            done: BundleEventHandleV1::from_parts(1, 5),
+        })
+        .unwrap();
+        sink.emit_device_completion(BundleDeviceCompletionV1 {
+            struct_size: struct_size_v1::<BundleDeviceCompletionV1>(),
+            flags: 0,
+            cycle_epoch: 9,
+            item_count: 1,
+            sample_rows: 2,
+            acceptance_offset: 0,
+            samples_offset: 32,
+            packet: BundleReadyDeviceViewV1 {
+                context: BundleContextHandleV1::from_parts(1, 1),
+                rank: 0,
+                reserved: 0,
+                buffer: buffer(4, 544),
+                ready: BundleEventHandleV1::from_parts(1, 5),
+            },
+        })
+        .unwrap();
+        assert_eq!(
+            sink.emitted_rows(),
+            2,
+            "completion must not charge the same rows twice"
+        );
+        BundleStatusV1::Success
+    }
+    crate::export_bundle_device_results_v1!(TEST_DEVICE_API, run_extension);
+
+    #[test]
+    fn native_device_hooks_preserve_metadata_and_charge_rows_once() {
+        for (request, expected) in [
+            (
+                &b"cycle"[..],
+                vec!["dependency", "drafts", "sample", "completion"],
+            ),
+            (&b"ready"[..], vec!["ready"]),
+            (&b"capacity"[..], vec![]),
+        ] {
+            let mut sink = Sink::default();
+            let execute = TEST_DEVICE_API.validate().unwrap();
+            assert_eq!(
+                invoke_bundle_device_results_v1(
+                    execute,
+                    BundleHandleV1::from_parts(1, 1),
+                    request,
+                    &mut sink
+                )
+                .unwrap(),
+                BundleStatusV1::Success
+            );
+            assert_eq!(sink.calls, expected);
+        }
+    }
+
+    #[test]
+    fn legacy_sink_does_not_expose_device_callbacks() {
+        let mut sink = Sink::default();
+        with_result_sink_v1(&mut sink, |raw| {
+            let sink = ExecuteResultSinkV1::new(raw).unwrap();
+            assert!(!sink.device_results_enabled());
+            assert_eq!(
+                sink.device_cycle_metadata(),
+                Err(BundleAbiError::Status(BundleStatusV1::Unsupported))
+            );
+        });
+        assert!(sink.calls.is_empty());
+    }
+
+    // SAFETY-REVIEWED: the fixture forwards only a local size prefix to test short-record refusal.
+    unsafe extern "C" fn short_sink(
+        handle: BundleHandleV1,
+        request: BundleByteViewV1,
+        _: *const BundleDeviceResultSinkV1,
+    ) -> BundleStatusV1 {
+        #[repr(C, align(8))]
+        struct Header {
+            bytes: u32,
+            version: u32,
+        }
+        let header = Header {
+            bytes: 8,
+            version: BUNDLE_ABI_VERSION_V1,
+        };
+        // SAFETY-REVIEWED: the advertised eight bytes are live; the decoder must not read a tail.
+        unsafe {
+            dispatch_bundle_execute_device_results_v1(
+                handle,
+                request,
+                ptr::from_ref(&header).cast(),
+                |_, _, _| panic!("short sink reached bundle"),
+            )
+        }
+    }
+
+    // SAFETY-REVIEWED: the input table lives for the call; the fixture copies it before removing one callback.
+    unsafe extern "C" fn partial_sink(
+        handle: BundleHandleV1,
+        request: BundleByteViewV1,
+        raw: *const BundleDeviceResultSinkV1,
+    ) -> BundleStatusV1 {
+        // SAFETY-REVIEWED: invoke_bundle_device_results_v1 supplied a complete live table.
+        let mut raw = unsafe { raw.read() };
+        raw.sample_device_logits_v1 = None;
+        // SAFETY-REVIEWED: this local full table lives through the dispatch.
+        unsafe {
+            dispatch_bundle_execute_device_results_v1(handle, request, &raw, |_, _, _| {
+                panic!("partial sink reached bundle")
+            })
+        }
+    }
+
+    #[test]
+    fn short_and_partial_device_sinks_are_refused_before_callbacks() {
+        for execute in [short_sink as BundleExecuteDeviceResultsFnV1, partial_sink] {
+            let mut sink = Sink::default();
+            assert_eq!(
+                invoke_bundle_device_results_v1(
+                    execute,
+                    BundleHandleV1::from_parts(1, 1),
+                    b"",
+                    &mut sink
+                )
+                .unwrap(),
+                BundleStatusV1::Unsupported
+            );
+            assert!(sink.calls.is_empty());
+        }
+        let short = crate::device_results::BundleDeviceResultsApiV1 {
+            struct_size: 8,
+            ..TEST_DEVICE_API
+        };
+        assert!(short.validate().is_err());
+        let missing = crate::device_results::BundleDeviceResultsApiV1 {
+            execute_device_results_v1: None,
+            ..TEST_DEVICE_API
+        };
+        assert!(missing.validate().is_err());
     }
 }

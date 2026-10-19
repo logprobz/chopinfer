@@ -23,7 +23,6 @@ pub use host_services::{
     TensorMapSwizzleV1, TensorMapV1, UnsupportedHostServicesBackendV1,
 };
 pub use loader::{BundleLibraryV1, BundleLoaderError, LoadedBundleInstanceV1};
-pub use trampoline::call_weight_transform_v1;
 pub use trampoline::{
     BUNDLE_PREFIX_STATE_V1_MAX_PAGES, BUNDLE_PREFIX_STATE_V1_MAX_TOKENS, CustomOperationV1,
     HostServicesTableV1, HostServicesV1, PrefixStateRequestV1, catch_panic_api_pointer_v1,
@@ -32,6 +31,7 @@ pub use trampoline::{
     dispatch_bundle_create_v1, dispatch_bundle_execute_v1, dispatch_bundle_prefix_state_v1,
     dispatch_custom_operation_v1, dispatch_weight_plan_v1, dispatch_weight_transform_v1,
 };
+pub use trampoline::{call_weight_transform_v1, dispatch_bundle_execute_device_results_v1};
 
 use std::ffi::c_void;
 use std::fmt;
@@ -1518,6 +1518,7 @@ impl BundleExecuteResultSinkV1 {
 /// slices, so it never builds or retains a pointer-backed row.
 pub struct ExecuteResultSinkV1 {
     raw: BundleExecuteResultSinkV1,
+    device_results: Option<device_results::BundleDeviceResultSinkV1>,
     emitted_rows: u64,
     emitted_logits: u64,
 }
@@ -1527,6 +1528,7 @@ impl ExecuteResultSinkV1 {
         validate_execute_result_sink_v1(raw)?;
         Ok(Self {
             raw,
+            device_results: None,
             emitted_rows: 0,
             emitted_logits: 0,
         })
@@ -3115,6 +3117,7 @@ fn validate_host_services(raw: &BundleHostServicesV1) -> Result<(), BundleAbiErr
 #[derive(Clone, Copy)]
 pub struct BundleApiV1 {
     raw: BundleRawApiV1,
+    device_results: Option<device_results::BundleExecuteDeviceResultsFnV1>,
     retire_request_v1: Option<BundleRetireRequestFnV1>,
     commit_accepted_v1: Option<BundleCommitAcceptedFnV1>,
     prefix_cache_v1: Option<PrefixCacheCallbacksV1>,
@@ -3122,6 +3125,19 @@ pub struct BundleApiV1 {
 }
 
 impl BundleApiV1 {
+    pub fn with_device_results_api(
+        mut self,
+        api: device_results::BundleDeviceResultsApiV1,
+    ) -> Result<Self, BundleAbiError> {
+        self.device_results = Some(api.validate()?);
+        Ok(self)
+    }
+
+    #[must_use]
+    pub const fn supports_device_results(&self) -> bool {
+        self.device_results.is_some()
+    }
+
     /// Captures only the copied prefix, even when its size advertises a tail.
     pub fn new(raw: BundleRawApiV1) -> Result<Self, BundleAbiError> {
         validate_bundle_api_header_v1(raw.header())?;
@@ -3138,6 +3154,7 @@ impl BundleApiV1 {
         }
         Ok(Self {
             raw,
+            device_results: None,
             retire_request_v1: None,
             commit_accepted_v1: None,
             prefix_cache_v1: None,
@@ -3259,6 +3276,19 @@ impl BundleApiV1 {
         if !handle.has_generation() {
             return Err(BundleAbiError::InvalidHandle);
         }
+        if result_sink.device_results_enabled() {
+            let execute = self
+                .device_results
+                .ok_or(BundleAbiError::MissingApiCallback(
+                    "execute_device_results_v1",
+                ))?;
+            return status_result(trampoline::invoke_bundle_device_results_v1(
+                execute,
+                handle,
+                request,
+                result_sink,
+            )?);
+        }
         let execute = self
             .raw
             .execute
@@ -3355,6 +3385,43 @@ struct ObservedExecuteSinkV1<'a, S> {
 }
 
 impl<S: LogitsRowSinkV1> LogitsRowSinkV1 for ObservedExecuteSinkV1<'_, S> {
+    fn device_results_enabled(&self) -> bool {
+        self.sink.device_results_enabled()
+    }
+    fn device_cycle_metadata(&self) -> HostServiceResultV1<device_results::DeviceCycleMetadataV1> {
+        self.sink.device_cycle_metadata()
+    }
+    fn declare_input_dependency(&mut self, dependency: u32) -> HostServiceResultV1<()> {
+        self.sink.declare_input_dependency(dependency)
+    }
+    fn emit_device_drafts(
+        &mut self,
+        drafts: device_results::BundleDeviceDraftsV1,
+    ) -> HostServiceResultV1<()> {
+        self.emitted = true;
+        self.sink.emit_device_drafts(drafts)
+    }
+    fn sample_device_logits(
+        &mut self,
+        request: device_results::BundleDeviceSamplingRequestV1,
+    ) -> HostServiceResultV1<()> {
+        self.emitted = true;
+        self.sink.sample_device_logits(request)
+    }
+    fn emit_ready_logits_view(
+        &mut self,
+        view: device_results::BundleReadyLogitsViewV1,
+    ) -> HostServiceResultV1<()> {
+        self.emitted = true;
+        self.sink.emit_ready_logits_view(view)
+    }
+    fn emit_device_completion(
+        &mut self,
+        completion: device_results::BundleDeviceCompletionV1,
+    ) -> HostServiceResultV1<()> {
+        self.emitted = true;
+        self.sink.emit_device_completion(completion)
+    }
     fn limits(&self) -> ResultSinkLimitsV1 {
         self.sink.limits()
     }
@@ -3373,6 +3440,11 @@ impl<S: LogitsRowSinkV1> LogitsRowSinkV1 for ObservedExecuteSinkV1<'_, S> {
 }
 
 impl BundleInstanceV1 {
+    #[must_use]
+    pub const fn supports_device_results(&self) -> bool {
+        self.api.supports_device_results()
+    }
+
     /// Diagnostic for a failed execute proven to have used only host logging.
     /// The V1 failed-execute contract guarantees no pending transaction.
     #[must_use]

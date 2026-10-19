@@ -248,6 +248,7 @@ pub struct BundleLibraryV1 {
     weight_transform: Option<crate::weight_plan::BundleWeightTransformFnV1>,
     /// The optional chat frontend export.
     frontend: Option<crate::BundleFrontendApiFnV1>,
+    device_results: Option<crate::device_results::BundleGetDeviceResultsApiFnV1>,
 }
 
 impl BundleLibraryV1 {
@@ -342,12 +343,21 @@ impl BundleLibraryV1 {
         let frontend = optional(crate::frontend::FRONTEND_API_SYMBOL_V1).map(|symbol| unsafe {
             std::mem::transmute::<*mut c_void, crate::BundleFrontendApiFnV1>(symbol)
         });
+        // SAFETY-REVIEWED: the optional export is resolved by its exact name and C signature.
+        let device_results =
+            optional(crate::device_results::DEVICE_RESULTS_API_SYMBOL_V1).map(|symbol| unsafe {
+                std::mem::transmute::<
+                    *mut c_void,
+                    crate::device_results::BundleGetDeviceResultsApiFnV1,
+                >(symbol)
+            });
         Ok(Self {
             api,
             library,
             weight_plan,
             weight_transform,
             frontend,
+            device_results,
         })
     }
 
@@ -419,6 +429,53 @@ impl BundleLibraryV1 {
         self.api.supports_prefix_state_slot()
     }
 
+    #[must_use]
+    pub const fn has_device_results_export(&self) -> bool {
+        self.device_results.is_some()
+    }
+
+    /// Validate the optional export only after the caller admits its manifest capability.
+    pub fn validate_device_results_api_v1(
+        &self,
+    ) -> Result<crate::device_results::BundleDeviceResultsApiV1, BundleAbiError> {
+        let getter = self
+            .device_results
+            .ok_or(BundleAbiError::MissingApiCallback("device results export"))?;
+        // SAFETY-REVIEWED: the loaded module owns this immutable table for the library lifetime.
+        let pointer = unsafe { getter() };
+        if pointer.is_null() {
+            return Err(BundleAbiError::InvalidHandle);
+        }
+        // SAFETY-REVIEWED: a native table provides its header before its optional tail is read.
+        let header = unsafe { pointer.cast::<BundleApiHeaderV1>().read() };
+        crate::validate_table_header(
+            "device results API",
+            header.struct_size,
+            std::mem::size_of::<crate::device_results::BundleDeviceResultsApiV1>() as u32,
+            header.abi_version,
+        )?;
+        // SAFETY-REVIEWED: the validated header covers the known table prefix.
+        let api = unsafe { pointer.read() };
+        api.validate()?;
+        Ok(api)
+    }
+
+    /// Create an explicitly opted-in instance. Ordinary create does not invoke
+    /// or enable the separate export, even when the module offers it.
+    pub fn create_device_results_v1(
+        &self,
+        host_services: HostServicesTableV1,
+        configuration: &[u8],
+    ) -> Result<LoadedBundleInstanceV1, BundleAbiError> {
+        let api = self
+            .api
+            .with_device_results_api(self.validate_device_results_api_v1()?)?;
+        Ok(LoadedBundleInstanceV1 {
+            instance: api.create(host_services, configuration)?,
+            library: Arc::clone(&self.library),
+        })
+    }
+
     pub fn create(
         &self,
         host_services: HostServicesTableV1,
@@ -444,6 +501,11 @@ pub struct LoadedBundleInstanceV1 {
 }
 
 impl LoadedBundleInstanceV1 {
+    #[must_use]
+    pub const fn supports_device_results(&self) -> bool {
+        self.instance.supports_device_results()
+    }
+
     #[must_use]
     pub fn last_execute_refusal(&self) -> Option<&str> {
         self.instance.last_execute_refusal()

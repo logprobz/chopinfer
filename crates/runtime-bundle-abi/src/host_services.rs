@@ -689,6 +689,43 @@ impl ResultSinkLimitsV1 {
 /// The ABI copies each row into owned storage before this trait sees it, so a
 /// host sink never holds an ABI pointer.
 pub trait LogitsRowSinkV1 {
+    /// Explicit opt-in to the separate device-result execute export.
+    fn device_results_enabled(&self) -> bool {
+        false
+    }
+    fn device_cycle_metadata(
+        &self,
+    ) -> HostServiceResultV1<crate::device_results::DeviceCycleMetadataV1> {
+        Err(BundleStatusV1::Unsupported)
+    }
+    fn declare_input_dependency(&mut self, _dependency: u32) -> HostServiceResultV1<()> {
+        Err(BundleStatusV1::Unsupported)
+    }
+    fn emit_device_drafts(
+        &mut self,
+        _drafts: crate::device_results::BundleDeviceDraftsV1,
+    ) -> HostServiceResultV1<()> {
+        Err(BundleStatusV1::Unsupported)
+    }
+    fn sample_device_logits(
+        &mut self,
+        _request: crate::device_results::BundleDeviceSamplingRequestV1,
+    ) -> HostServiceResultV1<()> {
+        Err(BundleStatusV1::Unsupported)
+    }
+    fn emit_ready_logits_view(
+        &mut self,
+        _view: crate::device_results::BundleReadyLogitsViewV1,
+    ) -> HostServiceResultV1<()> {
+        Err(BundleStatusV1::Unsupported)
+    }
+    fn emit_device_completion(
+        &mut self,
+        _completion: crate::device_results::BundleDeviceCompletionV1,
+    ) -> HostServiceResultV1<()> {
+        Err(BundleStatusV1::Unsupported)
+    }
+
     /// Reports the bounds the ABI enforces before it forwards any row.
     fn limits(&self) -> ResultSinkLimitsV1;
 

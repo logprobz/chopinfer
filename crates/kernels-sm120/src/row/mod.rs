@@ -14,6 +14,7 @@ pub mod precision;
 pub mod replicated_embedding;
 pub mod rmsnorm;
 pub mod rmsnorm_quantize;
+pub mod rmsnorm_quantize_tiles;
 pub mod rmsnorm_tree;
 pub mod rounding;
 pub mod silu_mul_quantize;

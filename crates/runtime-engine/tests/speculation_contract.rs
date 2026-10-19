@@ -1164,9 +1164,9 @@ fn logprob_bits(outputs: &Outputs) -> Vec<(u64, Vec<(u32, u64)>)> {
 /// Tables that draft deep, draft shallow on every item, and never draft.
 fn tables() -> [runtime_engine::StepCosts; 3] {
     [
-        "1:16000:4000:0:800,6:30000:3000:0:800",
-        "1:16000:100:0:9000,6:30000:100:0:5000",
-        "1:16000:90000:0:800,6:30000:90000:0:800",
+        "1:16000:0:4000:800,6:30000:0:3000:800",
+        "1:16000:0:100:9000,6:30000:0:100:5000",
+        "1:16000:0:90000:800,6:30000:0:90000:800",
     ]
     .map(|text| runtime_engine::StepCosts::parse(text).unwrap())
 }

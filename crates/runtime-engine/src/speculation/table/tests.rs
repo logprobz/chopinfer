@@ -6,15 +6,13 @@ fn costs(entries: &[(u16, u32, u32, u32, u32)]) -> StepCosts {
     StepCosts::new(
         &entries
             .iter()
-            .map(
-                |&(items, base_us, drafting_us, drafting_sq_us, row_us)| StepCost {
-                    items,
-                    base_us,
-                    drafting_us,
-                    drafting_sq_us,
-                    row_us,
-                },
-            )
+            .map(|&(items, base_us, step_us, drafting_us, row_us)| StepCost {
+                items,
+                base_us,
+                step_us,
+                drafting_us,
+                row_us,
+            })
             .collect::<Vec<_>>(),
     )
     .unwrap()
@@ -43,17 +41,24 @@ fn candidates(survival: &[Vec<f64>]) -> Vec<TableCandidate<'_>> {
 
 #[test]
 fn tables_parse_validate_and_interpolate_between_concurrencies() {
-    let table = StepCosts::parse("1:16000:4000:0:800, 8:32000:2000:100:600").unwrap();
+    let table = StepCosts::parse("1:16000:0:4000:800, 8:32000:100:2000:600").unwrap();
     assert_eq!(table.entries().len(), 2);
     assert_eq!(table.estimate(1, 0, 1), 16000.0);
     assert_eq!(table.estimate(1, 1, 6), 16000.0 + 4000.0 + 5.0 * 800.0);
+    // The step cost counts once when any item drafts, never without.
+    assert_eq!(table.estimate(8, 0, 8), 32000.0);
+    assert_eq!(table.estimate(8, 1, 9), 32000.0 + 100.0 + 2000.0 + 600.0);
+    assert_eq!(
+        table.estimate(8, 6, 32),
+        32000.0 + 100.0 + 6.0 * 2000.0 + 24.0 * 600.0
+    );
     // Three sevenths of the way in items, so is every coefficient.
     let weight = 3.0 / 7.0;
     let mid = 16000.0 + weight * 16000.0;
+    let step = weight * 100.0;
     let drafting = 4000.0 - weight * 2000.0;
-    let square = weight * 100.0;
     let row = 800.0 - weight * 200.0;
-    let expected = mid + 2.0 * drafting + 4.0 * square + 3.0 * row;
+    let expected = mid + step + 2.0 * drafting + 3.0 * row;
     assert!((table.estimate(4, 2, 7) - expected).abs() < 1e-9);
     // Beyond the table the nearest entry applies.
     assert_eq!(table.estimate(32, 0, 32), 32000.0);
@@ -70,7 +75,7 @@ fn tables_parse_validate_and_interpolate_between_concurrencies() {
     // Equal tables share one copy.
     assert!(std::ptr::eq(
         table.entries(),
-        StepCosts::parse("1:16000:4000:0:800,8:32000:2000:100:600")
+        StepCosts::parse("1:16000:0:4000:800,8:32000:100:2000:600")
             .unwrap()
             .entries()
     ));
@@ -88,7 +93,7 @@ fn tables_parse_validate_and_interpolate_between_concurrencies() {
 #[test]
 fn c1_drafts_its_full_block_when_rows_are_cheap_and_none_when_ar_is_faster() {
     // Round 4 C1: a K=0 step about 16 ms, a full K=5 verify about 24 ms.
-    let table = costs(&[(1, 15900, 4400, 0, 780)]);
+    let table = costs(&[(1, 15900, 0, 4400, 780)]);
     let accepting = [survival(&[0.88, 0.78, 0.70, 0.69, 0.66])];
     let plan = plan(&candidates(&accepting), &table, 5, usize::MAX, &ALL);
     assert_eq!(plan.drafts, [5]);
@@ -99,7 +104,7 @@ fn c1_drafts_its_full_block_when_rows_are_cheap_and_none_when_ar_is_faster() {
     assert_eq!(plan.expected_tokens, 1.0);
     assert_eq!(plan.estimated_us, 15900.0);
     // So does any drafter when the drafting pass costs more than the step.
-    let slow = costs(&[(1, 15900, 80000, 0, 780)]);
+    let slow = costs(&[(1, 15900, 0, 80000, 780)]);
     assert_eq!(
         super::plan(&candidates(&accepting), &slow, 5, usize::MAX, &ALL).drafts,
         [0]
@@ -112,7 +117,7 @@ fn drafting_cost_concentrates_drafts_and_row_cost_spreads_them() {
         .map(|_| survival(&[0.8, 0.79, 0.78, 0.84, 0.46]))
         .collect::<Vec<_>>();
     // Each drafting item costs far more than a row: few items, full depth.
-    let per_item = costs(&[(8, 30000, 6000, 0, 300)]);
+    let per_item = costs(&[(8, 30000, 0, 6000, 300)]);
     let plan = plan(&candidates(&acceptance), &per_item, 24, usize::MAX, &ALL);
     assert!(plan.drafts.iter().all(|&k| k == 0 || k >= 4), "{plan:?}");
     assert!(
@@ -121,11 +126,32 @@ fn drafting_cost_concentrates_drafts_and_row_cost_spreads_them() {
     );
     // Drafting passes are cheap and rows are not: every item drafts, and
     // the 24-draft budget is not spent on deep positions.
-    let per_row = costs(&[(8, 30000, 100, 0, 1500)]);
+    let per_row = costs(&[(8, 30000, 0, 100, 1500)]);
     let plan = super::plan(&candidates(&acceptance), &per_row, 24, usize::MAX, &ALL);
     assert!(
         plan.drafts.iter().all(|&k| (1..=3).contains(&k)),
         "{plan:?}"
+    );
+}
+
+#[test]
+fn a_per_step_drafting_cost_is_shared_by_every_drafting_item() {
+    // Fit to the deferred-catch-up candidate at C8: one drafter launch per
+    // step, little per drafting item, rows about as dear as items.
+    let table = costs(&[(8, 22300, 4400, 700, 780)]);
+    let acceptance = (0..8)
+        .map(|_| survival(&[0.8, 0.79, 0.78, 0.84, 0.46]))
+        .collect::<Vec<_>>();
+    let plan = plan(&candidates(&acceptance), &table, 24, usize::MAX, &ALL);
+    assert!(plan.drafts.iter().all(|&k| k >= 2), "{plan:?}");
+    assert!(plan.expected_tokens / plan.estimated_us > 8.0 / 22300.0);
+    // The same costs per item, without the shared step, favour fewer items.
+    let per_item = costs(&[(8, 22300, 0, 4400 + 700, 780)]);
+    let alone = super::plan(&candidates(&acceptance), &per_item, 24, usize::MAX, &ALL);
+    assert!(
+        alone.drafts.iter().filter(|&&k| k > 0).count()
+            < plan.drafts.iter().filter(|&&k| k > 0).count(),
+        "{alone:?} {plan:?}"
     );
 }
 
@@ -194,7 +220,7 @@ fn plans_match_an_exhaustive_search() {
             items as u16,
             1000 + next(30000) as u32,
             next(8000) as u32,
-            next(500) as u32,
+            next(4000) as u32,
             next(3000) as u32,
         )]);
         let remaining = next(13) as usize;
@@ -235,7 +261,7 @@ fn equal_candidates_and_repeated_inputs_give_one_plan() {
     let acceptance = (0..4)
         .map(|_| survival(&[0.9, 0.9, 0.9]))
         .collect::<Vec<_>>();
-    let table = costs(&[(4, 20000, 5000, 0, 500)]);
+    let table = costs(&[(4, 20000, 0, 5000, 500)]);
     let first = plan(&candidates(&acceptance), &table, 6, usize::MAX, &ALL);
     for _ in 0..8 {
         assert_eq!(

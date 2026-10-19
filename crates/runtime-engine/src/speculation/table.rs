@@ -12,15 +12,17 @@ pub const MAX_STEP_COSTS: usize = 16;
 
 /// Step time at one concurrency: a step of `items` items, `drafting` of
 /// which draft, with `rows` decode-phase rows in all, takes
-/// `base_us + drafting_us * drafting + drafting_sq_us * drafting^2 +
-/// row_us * (rows - items)` microseconds. `base_us` is the step with no
-/// drafts, so a plan without drafts is the AR step of this engine.
+/// `base_us + step_us + drafting_us * drafting + row_us * (rows - items)`
+/// microseconds, without `step_us` when no item drafts. `base_us` is the
+/// step with no drafts, so a plan without drafts is the AR step of this
+/// engine; `step_us` is what drafting costs once per step whatever the
+/// number of drafting items (launches the drafter batches across them).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct StepCost {
     pub items: u16,
     pub base_us: u32,
+    pub step_us: u32,
     pub drafting_us: u32,
-    pub drafting_sq_us: u32,
     pub row_us: u32,
 }
 
@@ -90,9 +92,9 @@ impl StepCosts {
         Ok(Self { entries })
     }
 
-    /// Parses `items:base:drafting:drafting_sq:row` entries separated by
-    /// commas, all in whole microseconds, for example
-    /// `1:15900:4400:0:780,8:28000:4400:0:780`.
+    /// Parses `items:base:step:drafting:row` entries separated by commas,
+    /// all in whole microseconds, for example
+    /// `1:13500:4400:700:760,8:22300:4400:700:780`.
     pub fn parse(text: &str) -> Result<Self, StepCostsError> {
         let entries = text
             .split(',')
@@ -102,14 +104,14 @@ impl StepCosts {
                     .map(|field| field.trim().parse::<u32>())
                     .collect::<Result<Vec<_>, _>>()
                     .map_err(|_| StepCostsError::Syntax)?;
-                let [items, base_us, drafting_us, drafting_sq_us, row_us] = fields[..] else {
+                let [items, base_us, step_us, drafting_us, row_us] = fields[..] else {
                     return Err(StepCostsError::Syntax);
                 };
                 Ok(StepCost {
                     items: u16::try_from(items).map_err(|_| StepCostsError::Invalid)?,
                     base_us,
+                    step_us,
                     drafting_us,
-                    drafting_sq_us,
                     row_us,
                 })
             })
@@ -128,13 +130,13 @@ impl StepCosts {
         let at = |entry: &StepCost| {
             [
                 f64::from(entry.base_us),
+                f64::from(entry.step_us),
                 f64::from(entry.drafting_us),
-                f64::from(entry.drafting_sq_us),
                 f64::from(entry.row_us),
             ]
         };
         let upper = entries.partition_point(|entry| usize::from(entry.items) < items);
-        let [base, linear, square, row] = if upper == 0 {
+        let [base, step, per_item, row] = if upper == 0 {
             at(&entries[0])
         } else if upper == entries.len() {
             at(&entries[entries.len() - 1])
@@ -145,10 +147,8 @@ impl StepCosts {
             let (low, high) = (at(low), at(high));
             std::array::from_fn(|index| low[index] + weight * (high[index] - low[index]))
         };
-        let drafting = drafting as f64;
-        base + linear * drafting
-            + square * drafting * drafting
-            + row * rows.saturating_sub(items) as f64
+        let step = if drafting > 0 { step } else { 0.0 };
+        base + step + per_item * drafting as f64 + row * rows.saturating_sub(items) as f64
     }
 }
 

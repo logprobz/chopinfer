@@ -30,7 +30,7 @@ DSpark verification; and window-only, ratio-1 and ratio-2 sources. Context
 is the visible length of the first query. Verification adds five following
 positions. Sparse lists retain a randomly selected cached prefix. The
 physical pool retains the full requested context, with shuffled page IDs.
-Unselected cells remain poisoned rather than compacting the address range. The
+Unselected cells remain poisoned across that full address range. The
 source check compares every output byte and every F32 split-workspace byte.
 Additional cases cover window and page boundaries, holes, poisoned unused
 cells, unaligned strides, inactive rows and signed-zero state. A wrong sink
@@ -43,9 +43,10 @@ decode and verification retain eight splits.
 
 Timings are isolated per-stage measurements with cold-cache preparation.
 Source, output merge and their combined path use alternating A/B and B/A
-rounds. Query and window preparation are timed separately; query inputs are
-restored outside the timed interval. These measurements are not a serving
-step or a complete projection-to-projection layer benchmark.
+rounds. Latent query and window preparation are timed separately; query inputs
+are restored outside the timed interval. Index-query stages belong to their
+separate lab. These measurements are not a serving step or a complete
+projection-to-projection layer benchmark.
 
 The KV floor counts unique selected payload cells, not the allocated cache:
 528 bytes per native window cell and 288 bytes per compressed cell at width

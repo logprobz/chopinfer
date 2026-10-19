@@ -9,10 +9,7 @@ mod glue;
 #[path = "../../../bundle/src/sm120/latent.rs"]
 #[allow(dead_code)]
 mod latent;
-#[path = "../../../bundle/src/sm120/indexer_query.rs"]
-#[allow(dead_code)]
-mod query;
-#[path = "../../tests/attention_pair/probe.rs"]
+#[path = "../../tests/sm120/attention_pair/probe.rs"]
 mod state_probe;
 
 use kernel_build::{BuildOptions, CubinSpec, LockDir, Toolchain};
@@ -102,7 +99,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .into_iter()
         .filter(|(family, _)| *family != "latent_sources_bf16")
         .chain(glue::cubins(GEOMETRIES)?)
-        .chain(query::cubins(GEOMETRIES)?)
     {
         families.entry(family).or_default().push(spec);
     }

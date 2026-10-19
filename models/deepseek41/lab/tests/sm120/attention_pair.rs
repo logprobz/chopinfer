@@ -1,19 +1,16 @@
 //! Frozen old/new attention comparisons and per-stage timings. No GPU test builds code.
 
-#[path = "../../bundle/src/sm120/latent_scheduled.rs"]
+#[path = "../../../bundle/src/sm120/latent_scheduled.rs"]
 #[allow(dead_code)]
 mod candidate;
 #[path = "attention_pair/fixture.rs"]
 mod fixture;
-#[path = "../../bundle/src/sm120/latent_glue.rs"]
+#[path = "../../../bundle/src/sm120/latent_glue.rs"]
 #[allow(dead_code)]
 mod glue;
-#[path = "../../bundle/src/sm120/latent.rs"]
+#[path = "../../../bundle/src/sm120/latent.rs"]
 #[allow(dead_code)]
 mod latent;
-#[path = "../../bundle/src/sm120/indexer_query.rs"]
-#[allow(dead_code)]
-mod query;
 #[path = "attention_pair/stages.rs"]
 mod stages;
 #[path = "attention_pair/probe.rs"]
@@ -304,7 +301,6 @@ fn frozen_modules() {
         .into_iter()
         .filter(|(family, _)| *family != "latent_sources_bf16")
         .chain(glue::cubins(GEOMETRIES).unwrap())
-        .chain(query::cubins(GEOMETRIES).unwrap())
         .map(|(_, s)| s)
         .collect::<Vec<_>>();
     specs.extend(candidate::cubins(GEOMETRIES).unwrap());

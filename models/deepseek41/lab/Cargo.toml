@@ -62,4 +62,4 @@ path = "examples/sm120/build_attention_pair.rs"
 
 [[test]]
 name = "attention_pair"
-path = "tests/attention_pair.rs"
+path = "tests/sm120/attention_pair.rs"

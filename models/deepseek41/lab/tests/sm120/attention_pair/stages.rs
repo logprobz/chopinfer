@@ -1,4 +1,4 @@
-//! Isolated timings of the unchanged query and window preparation kernels.
+//! Isolated timings of latent query candidates and window preparation kernels.
 use super::*;
 use fixture::{Rng, f32s, u32s};
 use kernel_build::{EntryParam, EntrySpec};
@@ -130,13 +130,9 @@ pub fn measure(session: &Session, modules: &Modules, case: Case) -> LabResult<()
     let rows = case.rows();
     let g = geometry();
     let mut rng = Rng(0x78a1_5f2e_4492_771d ^ case.context as u64);
-    let query_entry = query::entry(g);
-    let query_quant = query::quantizer(g);
     let latent_quant = glue::quantizers().remove(0);
     let query_values = f32s((0..rows * fixture::HEADS * fixture::WIDTH).map(|_| rng.value()));
     let norm_values = f32s((0..rows * fixture::WIDTH).map(|_| rng.value()));
-    let position_values = f32s((0..rows * query_quant.query.width as usize).map(|_| rng.value()));
-    let table_positions = case.context + case.per_sequence();
     let table = |pairs: usize| f32s((0..pairs).map(|i| if i % 2 == 0 { 0.8 } else { 0.6 }));
     let data = BTreeMap::from([
         ("query_original", query_values.clone()),
@@ -154,23 +150,6 @@ pub fn measure(session: &Session, modules: &Modules, case: Case) -> LabResult<()
         ),
         ("live", u32s([rows as u32])),
         ("status", vec![0; rows * 4]),
-        ("position_input", position_values),
-        (
-            "position_rotated",
-            vec![0; rows * query_quant.query.width as usize * 4],
-        ),
-        (
-            "position_table",
-            table(table_positions * query_entry.rotary_dim as usize),
-        ),
-        (
-            "position_codes",
-            vec![0; query_quant.output_bytes(rows as u32) as usize],
-        ),
-        (
-            "position_scales",
-            vec![0; query_quant.scale_bytes(rows as u32) as usize],
-        ),
         (
             "window_codes",
             vec![0; latent_quant.output_bytes(rows as u32) as usize],
@@ -237,42 +216,6 @@ pub fn measure(session: &Session, modules: &Modules, case: Case) -> LabResult<()
             ],
         )?,
     )];
-    if case.ratio != 0 {
-        calls.push((
-            "index_query_rope",
-            call(
-                query_entry.spec().map_err(|e| e.to_string())?,
-                query_entry.plan(rows as u32).map_err(|e| e.to_string())?,
-                rows as u32,
-                &[
-                    ("input", ptr("position_input")),
-                    ("cos_sin", ptr("position_table")),
-                    ("positions", ptr("positions")),
-                    ("live_rows", ptr("live")),
-                    ("rotated", ptr("position_rotated")),
-                    ("status", ptr("status")),
-                    ("status_row_offset", Argument::U64(0)),
-                    ("table_positions", Argument::U32(table_positions as u32)),
-                ],
-            )?,
-        ));
-        calls.push((
-            "index_query_quantize",
-            call(
-                query_quant.spec(),
-                query_quant.plan(rows as u32).map_err(|e| e.to_string())?,
-                rows as u32,
-                &[
-                    ("input", ptr("position_rotated")),
-                    ("output", ptr("position_codes")),
-                    ("scales", ptr("position_scales")),
-                    ("live_rows", ptr("live")),
-                    ("status", ptr("status")),
-                    ("status_row_offset", Argument::U64(0)),
-                ],
-            )?,
-        ));
-    }
     let window = entry(Kernel::WindowRotate);
     let write = model_deepseek41_contract::latent_glue::window_write_for_storage(
         g,

@@ -67,6 +67,7 @@ pub mod row_exchange;
 pub mod rows;
 pub mod sampling;
 pub mod select;
+pub mod sinkhorn_expand_mix;
 pub mod sinkhorn_hyper_connection;
 pub mod sinkhorn_hyper_connection_oracle;
 pub mod sparse_attention_oracle;

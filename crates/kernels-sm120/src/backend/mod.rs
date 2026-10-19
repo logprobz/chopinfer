@@ -130,6 +130,7 @@ mod rows;
 mod select;
 mod silu_mul_quantize;
 mod sinkhorn;
+mod sinkhorn_expand_mix;
 mod sinkhorn_lagged;
 
 pub use attention::AttentionEntries;
@@ -220,6 +221,7 @@ pub struct Sm120 {
     row_rmsnorms: Vec<crate::row::RowInstantiation>,
     block_quantizers: Vec<crate::row::block_quantize::Entry>,
     norm_quantizers: Vec<crate::row::rmsnorm_quantize::Entry>,
+    expand_mix: Vec<crate::sinkhorn_hc::expand_mix::Entry>,
     fused_windows: Vec<crate::latent::window_fused::Entry>,
     silu_mul_quantizers: Vec<crate::row::silu_mul_quantize::Entry>,
     mxfp8_folds: Vec<crate::gemm::mxfp8_fold::Entry>,
@@ -281,6 +283,14 @@ impl Sm120 {
     /// input rounding, scale rule, output form and width at preparation.
     pub fn with_latent_window_fused(mut self, entry: crate::latent::window_fused::Entry) -> Self {
         self.fused_windows.push(entry);
+        self
+    }
+
+    pub fn with_sinkhorn_expand_mix(
+        mut self,
+        entry: crate::sinkhorn_hc::expand_mix::Entry,
+    ) -> Self {
+        self.expand_mix.push(entry);
         self
     }
 
@@ -1337,6 +1347,15 @@ impl Backend for Sm120 {
         need: Need,
     ) -> Result<Prepared<MixCollapseNormBuffers<View>>, Refused> {
         sinkhorn::mix_collapse_norm(&self.sinkhorn, op, need)
+    }
+
+    fn sinkhorn_expand_mix(
+        &self,
+        op: &kernel_core::sinkhorn_expand_mix::SinkhornExpandMixQuery,
+        need: Need,
+    ) -> Result<Prepared<kernel_core::sinkhorn_expand_mix::SinkhornExpandMixBuffers<View>>, Refused>
+    {
+        sinkhorn_expand_mix::prepare(&self.expand_mix, op, need)
     }
 
     fn sinkhorn_lagged_mix_collapse(

@@ -573,6 +573,18 @@ pub trait Backend: Send + Sync {
         Err(Refused::Unsupported)
     }
 
+    /// Expand BF16 streams with F32 weights, then run the next lagged mixer.
+    /// Only post/post_in and comb/comb_in may alias; backend workspace is
+    /// separate from every named role. Counts::rows bounds the device live count.
+    fn sinkhorn_expand_mix(
+        &self,
+        op: &crate::sinkhorn_expand_mix::SinkhornExpandMixQuery,
+        need: Need,
+    ) -> Result<Prepared<crate::sinkhorn_expand_mix::SinkhornExpandMixBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
     /// A mixer's lagged mix-collapse before a sublayer (`MixCollapse` with
     /// the lagged single-pass placement), which collapses with the previous
     /// sublayer's `pre` and stores its own.

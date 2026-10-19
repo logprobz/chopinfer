@@ -22,6 +22,7 @@
 //! entries write them at every row count). The lab's probes declare
 //! nothing: they serve no op.
 
+pub mod expand_mix;
 pub mod lagged;
 pub mod lagged_split;
 pub mod mix_norm;

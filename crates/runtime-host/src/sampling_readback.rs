@@ -25,7 +25,7 @@ pub(crate) struct SamplingReadback {
 }
 
 impl SamplingReadback {
-    #[cfg(test)]
+    #[cfg(all(test, feature = "cuda-fake-driver-tests"))]
     fn new(context: &Context) -> Result<Self> {
         Self::on_private_stream(
             context,

@@ -99,3 +99,28 @@ workspace holds block maxima followed by the local key lists; dense and
 compact selection need only the local key lists. All workspace is written
 before use on each replay. Previous entries and lock families remain
 available as the bitwise comparison controls.
+
+The `position_valid` variant keeps that dense path and specializes only
+compact scoring/selection and candidate maxima. A binary search finds the
+end of a valid retained ID prefix, so smaller runtime candidate budgets do
+not score or select the padded slots. Selection still validates all IDs,
+including the tail: malformed records sanitize the entire score row and
+fail. Score padding, missing pages, lower-index ties and ascending outputs
+retain their previous meaning.
+
+Candidate maxima use 32 fixed CTAs per row and visit only the device-visible
+block count. Their unused internal scratch is not written or read. The
+live gather retains its exact cutoff, row tags, visible counts, newest-block
+pin, runtime budget and full output padding. Its explicit count validation
+handles malformed empty rows even when the maxima stage writes no block.
+
+These planners also serve prefill. A caller can split an 8192-row chunk into
+64-row dense/candidate blocks and 4096-row reindex blocks. Each row still
+reads its own causal position from device metadata. The `position_prefill`
+lab test compares all rows at offsets 0, 8192, 24576 and 122880, in native
+and BF16 storage, using both compression ratios and candidate budgets 2048
+and 1024. It checks every score byte, retained record and selection, poisons
+all outputs and workspace, and rejects wrong causal counts and a gather
+that consumes poisoned scratch beyond visibility. Per-kernel event times
+sum full row blocks; a pair job joins the two 4096-row shards into complete
+8192-row measurements. CPU tests establish coverage and dispatch only.

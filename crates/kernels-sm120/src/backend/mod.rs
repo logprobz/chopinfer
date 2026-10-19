@@ -194,6 +194,7 @@ pub struct Sm120 {
     candidate_block_ids: Vec<crate::pooled_indexer::position_blocks::CandidateEntry>,
     runtime_candidate_block_ids: Vec<crate::pooled_indexer::position_blocks::CandidateEntry>,
     live_position_indexer: bool,
+    valid_position_candidates: bool,
     position_indexers: Vec<crate::pooled_indexer::position::Entry>,
     bf16_position_indexers: Vec<crate::pooled_indexer::position::Entry>,
     bf16_position_block_indexers: Vec<crate::pooled_indexer::position_blocks::Entry>,
@@ -625,6 +626,14 @@ impl Sm120 {
     /// position score/select and candidate-ID producer, including BF16.
     pub fn with_live_position_indexer(mut self) -> Self {
         self.live_position_indexer = true;
+        self
+    }
+
+    /// Use separately compiled valid-prefix compact readers and candidate maxima along
+    /// with the live dense reader. Existing live catalogs remain separate.
+    pub fn with_valid_position_candidates(mut self) -> Self {
+        self.live_position_indexer = true;
+        self.valid_position_candidates = true;
         self
     }
 
@@ -1610,6 +1619,7 @@ impl Backend for Sm120 {
             self.live_position_indexer,
             need.capacity,
             op.max_top_k,
+            false,
         )
     }
 
@@ -1635,6 +1645,7 @@ impl Backend for Sm120 {
                 self.live_position_indexer,
                 need.capacity,
                 op.max_top_k,
+                false,
             ),
         }
     }
@@ -1662,6 +1673,7 @@ impl Backend for Sm120 {
                 self.live_position_indexer,
                 need.capacity,
                 op.indexer.max_top_k,
+                self.valid_position_candidates,
             ),
         }
     }
@@ -1693,6 +1705,7 @@ impl Backend for Sm120 {
             self.live_position_indexer,
             need.capacity,
             op.indexer.max_top_k,
+            self.valid_position_candidates,
         )
     }
 
@@ -1707,6 +1720,7 @@ impl Backend for Sm120 {
             self.live_position_indexer,
             need.capacity,
             op.top_k_blocks,
+            self.valid_position_candidates,
         )
     }
 
@@ -1728,6 +1742,7 @@ impl Backend for Sm120 {
             self.live_position_indexer,
             need.capacity,
             op.top_k_blocks,
+            self.valid_position_candidates,
         )
     }
 

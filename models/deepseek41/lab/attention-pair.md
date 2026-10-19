@@ -29,11 +29,17 @@ The `attention_pair` test binary covers 72 combinations: visible contexts
 DSpark verification; and window-only, ratio-1 and ratio-2 sources. Context
 is the visible length of the first query. Verification adds five following
 positions. Sparse lists retain a randomly selected cached prefix. The
+physical pool retains the full requested context, with shuffled page IDs.
+Unselected cells remain poisoned rather than compacting the address range. The
 source check compares every output byte and every F32 split-workspace byte.
 Additional cases cover window and page boundaries, holes, poisoned unused
 cells, unaligned strides, inactive rows and signed-zero state. A wrong sink
 multiplicity must change the result. Query comparisons also cover NaNs, overflow, sticky
 status, invalid RoPE tables and zero live rows.
+The signed-zero diagnostic uses the existing one-split prefill reference,
+so two live tiles and a following empty tile share one ordered reduction.
+Its candidate is isolated in the lab's `latent_sources_state_probe` family;
+decode and verification retain eight splits.
 
 Timings are isolated per-stage measurements with cold-cache preparation.
 Source, output merge and their combined path use alternating A/B and B/A

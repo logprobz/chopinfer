@@ -140,11 +140,15 @@ impl Fixture {
                 }
             }
         }
-        let mut page_keys = compressed_live
-            .iter()
-            .map(|&(s, p)| (s, p / page))
-            .collect::<BTreeSet<_>>()
-            .into_iter()
+        // Keep the physical cache extent at the requested context. Compacting
+        // selected pages would hide the long-context address working set.
+        let cached_pages = if case.ratio == 0 {
+            0
+        } else {
+            ((case.context + case.per_sequence() - 1) / case.ratio).div_ceil(page)
+        };
+        let mut page_keys = (0..case.sequences)
+            .flat_map(|sequence| (0..cached_pages).map(move |page| (sequence, page)))
             .collect::<Vec<_>>();
         for i in (1..page_keys.len()).rev() {
             let j = rng.next() as usize % (i + 1);

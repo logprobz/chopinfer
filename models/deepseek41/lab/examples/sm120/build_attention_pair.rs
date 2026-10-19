@@ -12,6 +12,8 @@ mod latent;
 #[path = "../../../bundle/src/sm120/indexer_query.rs"]
 #[allow(dead_code)]
 mod query;
+#[path = "../../tests/attention_pair/probe.rs"]
+mod state_probe;
 
 use kernel_build::{BuildOptions, CubinSpec, LockDir, Toolchain};
 use model_deepseek41_contract::geometry::GEOMETRIES;
@@ -137,6 +139,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "dependency_probes",
         &[kernels_sm120::probes::cubin_spec()],
         false,
+    )?);
+    let probe_locks = root.join("kernels.lock.d");
+    modules.extend(build_family(
+        &toolchain,
+        &directory,
+        &probe_locks,
+        state_probe::FAMILY,
+        &[state_probe::cubin()?],
+        initialize
+            && !probe_locks
+                .join(format!("{}.lock", state_probe::FAMILY))
+                .exists(),
     )?);
     modules.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
     std::fs::write(

@@ -16,6 +16,9 @@ mod latent;
 mod query;
 #[path = "attention_pair/stages.rs"]
 mod stages;
+#[path = "attention_pair/probe.rs"]
+#[allow(dead_code)]
+mod state_probe;
 
 use fixture::{Case, DeviceFixture, Fixture};
 use kernel_core::contract::AttentionPhase;
@@ -231,6 +234,14 @@ fn cpu_matrix_covers_decode_and_six_row_verify() {
         shapes.insert((case.context, case.sequences, case.rows(), case.ratio));
     }
     assert_eq!(shapes.len(), 72);
+    let (old, new) = state_probe::pair().unwrap();
+    assert_eq!(old.splits, 1);
+    assert_eq!(new.splits, 1);
+    let LatentAttentionQuery::Attention { max_keys, .. } = old.query else {
+        unreachable!()
+    };
+    assert!(max_keys.div_ceil(64) >= 3);
+    assert_eq!(old.params().unwrap(), new.params().unwrap());
 }
 
 #[test]
@@ -248,6 +259,12 @@ fn cpu_visibility_and_bandwidth_floor_use_selected_cells() {
             let entry = reference(case);
             let fixture = Fixture::new(case, &entry);
             fixture.launches(&entry).unwrap();
+            let expected_pages = if ratio == 0 {
+                0
+            } else {
+                (context / ratio).div_ceil(64 / ratio)
+            };
+            assert_eq!(fixture.pages, expected_pages + 1);
             let compressed = if ratio == 0 {
                 0
             } else {
@@ -292,6 +309,7 @@ fn frozen_modules() {
         .collect::<Vec<_>>();
     specs.extend(candidate::cubins(GEOMETRIES).unwrap());
     specs.push(candidate::query_cubin());
+    specs.push(state_probe::cubin().unwrap());
     specs.push(kernels_sm120::probes::cubin_spec());
     let records = manifest().unwrap();
     assert_eq!(records.len(), specs.len() + 1);
@@ -455,11 +473,7 @@ fn signed_zero(session: &Session, modules: &Modules) -> LabResult<()> {
         holes: false,
         inactive: 0,
     };
-    let old = reference(case);
-    let new = candidate::entries(geometry(), 4)?
-        .into_iter()
-        .find(|e| e.query == old.query)
-        .ok_or("candidate query")?;
+    let (old, new) = state_probe::pair()?;
     let mut host = Fixture::new(case, &old);
     host.data.get_mut("q").unwrap().fill(0);
     for head in 0..fixture::HEADS {

@@ -265,9 +265,6 @@ impl Lowering<'_> {
     ) -> Result<Option<Vec<Lowered>>, String> {
         match phase {
             Phase::Prefill { .. } => {
-                let Some(glue) = &self.ops.glue else {
-                    return Ok(None);
-                };
                 let Some(write) = self.ring_write(phase, layer, true)? else {
                     return Ok(None);
                 };
@@ -276,14 +273,29 @@ impl Lowering<'_> {
                 let mut launches = if self.prefill_row_origin.is_some_and(|first| first > 0) {
                     Vec::new()
                 } else {
-                    glue.stage(self.ring(layer)?, self.staged(), &self.stage_views())
-                        .map_err(|refusal| format!("window staging of layer {layer}: {refusal}"))?
+                    let Some(prefix) = self.prefill_window_prefix(layer)? else {
+                        return Ok(None);
+                    };
+                    prefix
                 };
                 launches.extend(write);
                 Ok(Some(launches))
             }
             Phase::Decode(_) | Phase::Verify { .. } => self.ring_write(phase, layer, false),
         }
+    }
+
+    /// Gather the original chunk's retained ring prefix once before any
+    /// window writes, including when the first retained row is nonzero.
+    /// WindowKv gathers automatically at origin zero; callers starting at
+    /// a later origin issue this first with the original item metadata.
+    pub fn prefill_window_prefix(&self, layer: u32) -> Result<Option<Vec<Lowered>>, String> {
+        let Some(glue) = &self.ops.glue else {
+            return Ok(None);
+        };
+        glue.stage(self.ring(layer)?, self.staged(), &self.stage_views())
+            .map(Some)
+            .map_err(|refusal| format!("window staging of layer {layer}: {refusal}"))
     }
 
     /// A prefill's window keys of layer `layer` into its ring, after its

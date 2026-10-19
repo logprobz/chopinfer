@@ -1,4 +1,6 @@
-//! Serving bindings and compact mapping against the sealed real operands.
+#[path = "indexer_mma_guard.rs"]
+mod guard;
+// Serving bindings and compact mapping against the sealed real operands.
 use kernel_core::{
     attention::BlockTables,
     backend::{Backend, Counts, Launch, Need, Prepared, View},
@@ -279,6 +281,9 @@ fn compare<B>(
 #[test]
 #[ignore = "requires a staged directory named by CHOPINFER_INDEX_CAPTURE_MANIFEST and idle GPUs"]
 fn gpu_serving_scores_and_failure_paths_match_simt() {
+    captured_comparisons(backend);
+}
+fn captured_comparisons(backend: fn(bool) -> Sm120) {
     let ran = kernel_harness::gpu_test(2 << 30, |session| {
         let manifest = PathBuf::from(
             std::env::var_os("CHOPINFER_INDEX_CAPTURE_MANIFEST")

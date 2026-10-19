@@ -345,14 +345,7 @@ impl<'a> DeviceFixture<'a> {
                 .collect(),
         };
         for call in calls {
-            kernel_harness::launch::launch(
-                &session.context,
-                &modules.function(&call.symbol)?,
-                stream,
-                call.plan,
-                &call.arguments,
-                &bindings,
-            )?;
+            modules.launch(session, stream, call, &bindings)?;
         }
         Ok(())
     }

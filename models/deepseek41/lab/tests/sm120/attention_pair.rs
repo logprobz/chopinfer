@@ -11,6 +11,8 @@ mod glue;
 #[path = "../../../bundle/src/sm120/latent.rs"]
 #[allow(dead_code)]
 mod latent;
+#[path = "attention_pair/launch.rs"]
+mod launch;
 #[path = "attention_pair/stages.rs"]
 mod stages;
 #[path = "attention_pair/probe.rs"]
@@ -139,33 +141,46 @@ fn cubins() -> LabResult<Cubins> {
 }
 
 struct Modules {
-    modules: BTreeMap<String, runtime_cuda::Module>,
-    symbols: BTreeMap<String, String>,
+    functions: BTreeMap<String, runtime_cuda::Function>,
+    configured: BTreeMap<String, u32>,
 }
 impl Modules {
     fn load(session: &Session) -> LabResult<Self> {
-        let mut modules = BTreeMap::new();
-        let mut symbols = BTreeMap::new();
+        let mut functions = BTreeMap::new();
         for record in manifest()? {
-            let name = record["name"].as_str().ok_or("module name")?.to_owned();
-            modules.insert(name.clone(), session.load_cubin(&image(&record)?)?);
+            let module = session.load_cubin(&image(&record)?)?;
             for symbol in record["symbols"].as_array().ok_or("symbols")? {
                 let symbol = symbol.as_str().ok_or("symbol")?.to_owned();
-                if symbols.insert(symbol, name.clone()).is_some() {
+                let function = module
+                    .function(&symbol)
+                    .map_err(|e| format!("{symbol}: {e}"))?;
+                if functions.insert(symbol, function).is_some() {
                     return Err("duplicate frozen symbol".into());
                 }
             }
         }
-        Ok(Self { modules, symbols })
+        let configured = launch::configure(&launch::limits()?, |symbol, shared| {
+            let function = functions
+                .get(symbol)
+                .ok_or_else(|| format!("missing frozen symbol {symbol}"))?;
+            function
+                .set_max_dynamic_shared_memory(shared)
+                .map_err(|e| format!("{symbol}: opt in to {shared} shared bytes: {e}"))?;
+            eprintln!(
+                "ATTENTION_CONFIGURE {}",
+                json!({"symbol": symbol, "dynamic_shared_bytes": shared})
+            );
+            Ok(())
+        })?;
+        Ok(Self {
+            functions,
+            configured,
+        })
     }
-    fn function(&self, symbol: &str) -> LabResult<runtime_cuda::Function> {
-        let name = self
-            .symbols
+    fn function(&self, symbol: &str) -> LabResult<&runtime_cuda::Function> {
+        self.functions
             .get(symbol)
-            .ok_or_else(|| format!("missing frozen symbol {symbol}"))?;
-        self.modules[name]
-            .function(symbol)
-            .map_err(|e| e.to_string())
+            .ok_or_else(|| format!("missing frozen symbol {symbol}"))
     }
 }
 

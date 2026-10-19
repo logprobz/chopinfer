@@ -82,14 +82,7 @@ fn check_query(
                     .copy_from_bytes(bytes, &session.stream)
                     .map_err(|e| e.to_string())?;
             }
-            kernel_harness::launch::launch(
-                &session.context,
-                &modules.function(&call.symbol)?,
-                &session.stream,
-                call.plan,
-                &call.arguments,
-                bindings,
-            )?;
+            modules.launch(session, &session.stream, call, bindings)?;
             let mut result = Vec::new();
             for name in ["query", "native_q", "status"] {
                 let mut bytes = vec![0; data[name].len()];
@@ -324,7 +317,6 @@ pub fn measure(session: &Session, modules: &Modules, case: Case) -> LabResult<()
     );
     calls.insert(1, ("query_rope_candidate", parallel));
     for (stage, call) in calls {
-        let function = modules.function(&call.symbol)?;
         let timing = kernel_harness::time_prepared(
             session,
             2,
@@ -344,16 +336,7 @@ pub fn measure(session: &Session, modules: &Modules, case: Case) -> LabResult<()
                 }
                 Ok(())
             },
-            |stream| {
-                kernel_harness::launch::launch(
-                    &session.context,
-                    &function,
-                    stream,
-                    call.plan,
-                    &call.arguments,
-                    &bindings,
-                )
-            },
+            |stream| modules.launch(session, stream, &call, &bindings),
         )?;
         println!(
             "ATTENTION_STAGE {}",

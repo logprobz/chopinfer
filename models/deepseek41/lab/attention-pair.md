@@ -48,6 +48,17 @@ are restored outside the timed interval. Index-query stages belong to their
 separate lab. These measurements are not a serving step or a complete
 projection-to-projection layer benchmark.
 
+The frozen loader resolves and retains each function once. It uses the
+prepared operation's per-symbol limits, as serving does, to opt sources
+into 83,200 bytes of dynamic shared memory before any launch. CPU checks
+cover all source entries and row schedules, refuse a missing opt-in above
+48 KiB, and propagate attribute-setting failures. A serving fake-host
+check verifies the actual configuration calls on every rank. Each lab
+launch logs its symbol, grid, block, shared-memory request and configured
+limit before submission, and includes the same launch shape in an error.
+The harness's device gate holds timed work until the complete launch
+sequence is queued, so host tracing stays outside the measured interval.
+
 The KV floor counts unique selected payload cells, not the allocated cache:
 528 bytes per native window cell and 288 bytes per compressed cell at width
 512. Receipts also count payload staged repeatedly across heads and rows.

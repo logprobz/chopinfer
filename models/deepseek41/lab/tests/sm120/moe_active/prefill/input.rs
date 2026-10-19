@@ -9,6 +9,7 @@ pub struct Source {
     pub bf16: View,
     pub wide: View,
     pub router: QuantizedWeights<View>,
+    pub weight_domain: View,
 }
 
 pub fn source(a: &mut Arena<'_>, case: Case) -> LabResult<Source> {
@@ -46,6 +47,17 @@ pub fn source(a: &mut Arena<'_>, case: Case) -> LabResult<Source> {
             }
         }
     }
+    let domain = kernel_harness::kit::cases::f32_projection::weight_domains(
+        &weights
+            .chunks_exact(2)
+            .map(|bytes| bf16_to_f32(u16::from_le_bytes(bytes.try_into().unwrap())))
+            .collect::<Vec<_>>(),
+        5120,
+        WeightFormat::Bf16,
+    )
+    .into_iter()
+    .flat_map(u32::to_le_bytes)
+    .collect();
     let mut data = |bytes: Vec<u8>, count: u64| {
         if a.session.is_some() {
             a.bytes(&bytes)
@@ -56,6 +68,7 @@ pub fn source(a: &mut Arena<'_>, case: Case) -> LabResult<Source> {
     Ok(Source {
         bf16: data(bf16, u64::from(case.rows) * 5120 * 2)?,
         wide: data(wide, u64::from(case.rows) * 5120 * 4)?,
+        weight_domain: data(domain, u64::from(case.set.count.div_ceil(16)) * 4)?,
         router: QuantizedWeights {
             codes: data(weights, u64::from(case.set.count) * 5120 * 2)?,
             local_scales: None,
@@ -134,7 +147,10 @@ pub fn prepend(
         activation_global: None,
         routing: None,
         scratch: ProjectionScratch {
-            weight_domain: None,
+            weight_domain: op
+                .info()
+                .bytes_of("scratch.weight_domain")
+                .map(|_| source.weight_domain),
             partial: View::EMPTY,
             semaphores: View::EMPTY,
             unused: View::EMPTY,

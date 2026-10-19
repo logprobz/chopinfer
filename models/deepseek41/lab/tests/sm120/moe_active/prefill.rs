@@ -377,13 +377,13 @@ fn prefill_cpu_dry_run() {
                 !arms[0]
                     .launches
                     .iter()
-                    .any(|op| op.symbol.contains("_prefill_"))
+                    .any(|op| op.symbol.contains("_prefill_") && op.symbol.contains("before_"))
             );
             assert_eq!(
                 arms[1]
                     .launches
                     .iter()
-                    .filter(|op| op.symbol.contains("_prefill_"))
+                    .filter(|op| op.symbol.contains("_prefill_") && op.symbol.contains("before_"))
                     .count(),
                 8
             );

@@ -331,7 +331,7 @@ impl DenseOps {
         workspace: DeviceBufferSpanV1,
     ) -> Result<Vec<Lowered>, Refusal> {
         let rows = phase.rows();
-        let op = if phase.prefill() {
+        let op = if phase.prefill() && rows >= 128 {
             &self
                 .prefill_gemms
                 .iter()
@@ -340,7 +340,7 @@ impl DenseOps {
                     "DeepSeek V4.1 has no dense prefill projection of this ID",
                 ))?
                 .1
-        } else if rows <= crate::Kernels::dense_decode_capacity() {
+        } else if !phase.prefill() && rows <= crate::Kernels::dense_decode_capacity() {
             &self
                 .decode
                 .iter()
@@ -470,7 +470,7 @@ mod tests {
     }
 
     #[test]
-    fn small_rows_use_selected_folds_and_prefill_uses_staged_tiles() {
+    fn small_prefills_use_fold_and_full_tiles_use_staging() {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let kernels = crate::Kernels::new(&shape).unwrap();
         let ops = DenseOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default()).unwrap();
@@ -501,7 +501,13 @@ mod tests {
                     items: 16,
                 },
                 Phase::Prefill { rows: 1 },
+                Phase::Prefill { rows: 17 },
                 Phase::Prefill { rows: 64 },
+                Phase::Prefill { rows: 127 },
+                Phase::Prefill { rows: 128 },
+                Phase::Prefill { rows: 129 },
+                Phase::Prefill { rows: 1000 },
+                Phase::Prefill { rows: 8191 },
                 Phase::Verify { rows: 6, items: 1 },
             ] {
                 let rows = u64::from(phase.rows());
@@ -530,7 +536,7 @@ mod tests {
                                 false
                             )))
                     );
-                } else if phase.prefill() {
+                } else if phase.prefill() && phase.rows() >= 128 {
                     assert_eq!(calls.len(), 2);
                     assert!(calls[0].launch.symbol.ends_with("_admit_v1"));
                     assert!(calls[1].launch.symbol.ends_with("_prefill_tma_v1"));

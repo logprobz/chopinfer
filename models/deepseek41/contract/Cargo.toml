@@ -159,3 +159,7 @@ path = "examples/sm120/build_f32_wide.rs"
 [[example]]
 name = "build_position_mma_guard_fast"
 path = "examples/sm120/build_position_mma_guard_fast.rs"
+
+[[example]]
+name = "build_position_hierarchical"
+path = "examples/sm120/build_position_hierarchical.rs"

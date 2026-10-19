@@ -358,6 +358,18 @@ impl crate::Kernels {
             ],
         })
     }
+
+    /// Only the target's optional prefill reduction registers this entry.
+    pub(crate) fn prefill_reduction_backend(
+        shape: &crate::shape::Shape,
+    ) -> Box<dyn kernel_core::backend::Backend> {
+        Box::new(reduce::register(Sm120::new(), shape.geometry).with_phased_f32_all_reduce())
+    }
+
+    pub(crate) fn prefill_reduction_plans()
+    -> Result<Vec<(&'static str, kernel_core::contract::LaunchPlan)>, String> {
+        kernels_sm120::backend::rounded_phased_admission_plans().map_err(|error| error.to_string())
+    }
 }
 
 // The build script includes the registration files, and so does the

@@ -28,6 +28,8 @@ pub(crate) mod shared;
 pub(crate) use compressor::{PlaneViews, PoolingViews, WriteViews};
 pub(crate) use dense::GemmViews;
 pub(crate) use hc::{ExpandViews, HeadViews, MixViews};
+#[cfg(test)]
+pub(crate) use reduce::with_bf16_gather;
 pub(crate) use reduce::{PeerViews, ReduceViews, WidenViews};
 pub(crate) use rows::{EmbeddingViews, NormViews, StreamViews, verify_rows};
 
@@ -99,7 +101,7 @@ impl Ops {
     /// Prepares every op of an instance of `shape` on `kernels` over KV
     /// pages in `storage`, recording each family they refuse.
     pub(crate) fn prepare(kernels: &Kernels, shape: &Shape, storage: KvStorage) -> Ops {
-        Self::prepare_set(
+        let mut ops = Self::prepare_set(
             kernels,
             shape,
             storage,
@@ -107,7 +109,22 @@ impl Ops {
                 count: shape.geometry.shape.moe.experts,
                 top_k: shape.geometry.shape.moe.top_k,
             },
-        )
+        );
+        if reduce::requested()
+            && shape.ranks() == 4
+            && shape.dims().hidden.is_multiple_of(1024)
+            && shape.geometry.layers() < 256
+        {
+            let asks = Asks::default();
+            if let Some(reduce) = &mut ops.reduce {
+                let backend = Kernels::prefill_reduction_backend(shape);
+                if let Err(error) = reduce.prepare_prefill(backend.as_ref(), shape, &asks) {
+                    ops.missing.push(format!("prefill BF16 gather: {error}"));
+                }
+            }
+            ops.asked.extend(asks.asked());
+        }
+        ops
     }
 
     /// Prepare the same backbone operations for one declared expert bank.

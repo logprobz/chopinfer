@@ -46,7 +46,7 @@ impl Lowering<'_> {
         let reduced = reduce
             .reduce(
                 self.rank,
-                rows,
+                crate::program::Phase::Prefill { rows },
                 &ReduceViews {
                     input: range(scratch.partial)?,
                     output: range(scratch.reduced)?,

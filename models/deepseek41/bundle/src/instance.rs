@@ -21,6 +21,7 @@ mod engram;
 pub(crate) mod execute;
 mod fold_stream;
 mod media;
+mod prefill_reduce;
 mod prefix;
 
 use std::cell::RefCell;
@@ -101,6 +102,7 @@ pub struct Instance {
     steps: std::cell::Cell<u64>,
     overlap: Vec<execute::overlap::Rank>,
     layer_overlap: bool,
+    prefill_reduce_runs: u64,
     /// Run the lowered stages alone (`PARTIAL`).
     partial: bool,
     /// Each rank's decode and verify graphs by bucket.
@@ -423,6 +425,14 @@ impl Instance {
                     )
                 })
                 .filter(|cubin| {
+                    cubin.name != "comm_rounded_phased_deepseek41_sm120"
+                        || self
+                            .ops
+                            .reduce
+                            .as_ref()
+                            .is_some_and(|ops| ops.prefill_prepared())
+                })
+                .filter(|cubin| {
                     self.dspark.is_some()
                         || !crate::Kernels::drafter_only(cubin.name, shape.geometry)
                 })
@@ -738,6 +748,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         steps: std::cell::Cell::new(0),
         overlap: Vec::new(),
         layer_overlap: execute::overlap::layers_enabled(),
+        prefill_reduce_runs: 0,
         partial,
         taps,
         engram,
@@ -751,6 +762,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         let result = status(error);
         return Err(Failed::releasing(instance, result));
     }
+    instance.admit_prefill_reduce();
     instance.log(&format!(
         "{} KV pages per rank, {} items; ops prepared on {} and {}",
         instance.kv_pages,

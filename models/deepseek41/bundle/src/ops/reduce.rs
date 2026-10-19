@@ -17,7 +17,38 @@ use model_deepseek41_contract::serving::PREFILL_TOKENS;
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
 use super::{Asks, Bind, Lowered, exact};
+use crate::program::Phase;
 use crate::shape::Shape;
+
+pub(crate) fn requested() -> bool {
+    #[cfg(test)]
+    return IN_TESTS.get();
+    #[cfg(not(test))]
+    {
+        std::env::var("CHOPINFER_DEEPSEEK41_PREFILL_BF16_GATHER").as_deref() == Ok("1")
+    }
+}
+
+#[cfg(test)]
+thread_local! { static IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+#[cfg(test)]
+pub(crate) fn with_bf16_gather<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            IN_TESTS.set(self.0);
+        }
+    }
+    let _reset = Reset(IN_TESTS.replace(enabled));
+    run()
+}
+
+struct Prefill {
+    reduces: Vec<Prepared<AllReduceBuffers<View>>>,
+    first_state: usize,
+    admitted: bool,
+}
 
 /// The all-reduces of an instance, each prepared for a prefill's rows.
 pub(crate) struct ReduceOps {
@@ -29,6 +60,7 @@ pub(crate) struct ReduceOps {
     /// role order.
     state: Vec<u64>,
     width: u32,
+    prefill: Option<Prefill>,
 }
 
 /// One hidden row of the all-reduce: every rank's F32 partial summed in F32
@@ -106,7 +138,58 @@ impl ReduceOps {
             widen,
             state,
             width: shape.dims().hidden,
+            prefill: None,
         })
+    }
+
+    /// A separate operation and state range keep decode and verify on their
+    /// original transport. Create must admit every rank before use.
+    pub(crate) fn prepare_prefill(
+        &mut self,
+        backend: &dyn Backend,
+        shape: &Shape,
+        asks: &Asks,
+    ) -> Result<(), Refused> {
+        let need = exact::need(PREFILL_TOKENS, exact::every_phase(super::verify_rows()));
+        let query = query(shape);
+        let reduces = (0..shape.ranks())
+            .map(|rank| {
+                asks.ask(format!("reduce.prefill_bf16 rank {rank}"), need, |need| {
+                    backend.all_reduce(&query, rank, need)
+                })
+            })
+            .collect::<Result<Vec<_>, Refused>>()?;
+        let state = &reduces[0].info().state;
+        if reduces.iter().any(|op| op.info().state != *state) {
+            return Err(Refused::Rule(
+                "prefill reduction ranks disagree on state".into(),
+            ));
+        }
+        let first_state = self.state.len();
+        self.state.extend_from_slice(state);
+        self.prefill = Some(Prefill {
+            reduces,
+            first_state,
+            admitted: false,
+        });
+        Ok(())
+    }
+
+    pub(crate) fn prefill_prepared(&self) -> bool {
+        self.prefill.is_some()
+    }
+
+    pub(crate) fn admit_prefill(&mut self, admitted: bool) {
+        if let Some(prefill) = &mut self.prefill {
+            prefill.admitted = admitted;
+        }
+    }
+
+    pub(crate) fn prefill_state(&self) -> Option<std::ops::Range<usize>> {
+        self.prefill
+            .as_ref()
+            .filter(|p| p.admitted)
+            .map(|p| p.first_state..self.state.len())
     }
 
     /// The bytes of each comm state region every rank allocates.
@@ -118,11 +201,22 @@ impl ReduceOps {
     pub(crate) fn reduce(
         &self,
         rank: u32,
-        rows: u32,
+        phase: Phase,
         views: &ReduceViews,
     ) -> Result<Vec<Lowered>, Refusal> {
-        let op = self
-            .reduces
+        let rows = phase.rows();
+        let (ops, state) = match &self.prefill {
+            Some(p) if p.admitted && phase.prefill() && rows >= 512 => {
+                (&p.reduces, p.first_state..self.state.len())
+            }
+            candidate => (
+                &self.reduces,
+                0..candidate
+                    .as_ref()
+                    .map_or(self.state.len(), |p| p.first_state),
+            ),
+        };
+        let op = ops
             .get(rank as usize)
             .ok_or(Refusal("DeepSeek V4.1 has no all-reduce for this rank"))?;
         let mut bind = Bind::default();
@@ -133,11 +227,19 @@ impl ReduceOps {
             ranks: views
                 .peers
                 .iter()
-                .map(|peer| RankViews {
-                    output: bind.view(peer.output),
-                    state: peer.state.iter().map(|&span| bind.view(span)).collect(),
+                .map(|peer| {
+                    Ok(RankViews {
+                        output: bind.view(peer.output),
+                        state: peer
+                            .state
+                            .get(state.clone())
+                            .ok_or(Refusal("prefill reduction state is missing"))?
+                            .iter()
+                            .map(|&span| bind.view(span))
+                            .collect(),
+                    })
                 })
-                .collect(),
+                .collect::<Result<_, Refusal>>()?,
         };
         bind.launch(op, &buffers, Counts::rows(rows))
     }
@@ -154,6 +256,9 @@ impl ReduceOps {
             .reduces
             .get(rank as usize)
             .ok_or(Refusal("no all-reduce for this rank"))?;
+        // Decode keeps the original transport's state, ahead of any prefill
+        // gather's range.
+        let state = 0..self.prefill.as_ref().map_or(self.state.len(), |p| p.first_state);
         let mut bind = Bind::default();
         let buffers = AllReduceBuffers {
             input: bind.view(views.input),
@@ -162,11 +267,19 @@ impl ReduceOps {
             ranks: views
                 .peers
                 .iter()
-                .map(|peer| RankViews {
-                    output: bind.view(peer.output),
-                    state: peer.state.iter().map(|&span| bind.view(span)).collect(),
+                .map(|peer| {
+                    Ok(RankViews {
+                        output: bind.view(peer.output),
+                        state: peer
+                            .state
+                            .get(state.clone())
+                            .ok_or(Refusal("reduction state is missing"))?
+                            .iter()
+                            .map(|&span| bind.view(span))
+                            .collect(),
+                    })
                 })
-                .collect(),
+                .collect::<Result<_, Refusal>>()?,
         };
         let Some(round) = op.defer_bf16_round(&buffers, View::EMPTY, Counts::rows(rows))? else {
             return Ok(None);

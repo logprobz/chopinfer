@@ -80,3 +80,38 @@ existing status, commit and capture paths.
 This mode remains experimental until full-chunk GPU bitwise comparisons,
 prefix-hit comparisons and paired timings pass. Its CPU ordering checks
 do not establish numerical equality or a speedup.
+
+## BF16 gather after the rank sum
+
+Experimental `CHOPINFER_DEEPSEEK41_PREFILL_BF16_GATHER=1` registers the
+existing phased F32 rounded transport for target prefills at TP4, with
+whole 1024-element hidden-row granules and at least 512 rows per call.
+The default and value `0` retain the composed F32 scatter, F32 gather and
+BF16 round. The overlap switch selects the compute schedule independently.
+
+Every owner adds F32 partials from zero in ascending rank order, converts
+its final sum once with the same BF16 conversion, then gathers BF16. The
+embedding broadcast and attention/MoE HC expansion already consume BF16.
+HC streams are BF16 even though the expansion computes in F32; its
+coefficients, the rank partials, final head/norm and logits remain F32.
+The separate F32 logits gather is unchanged.
+
+At 8192 rows of width 5120 and TP4, each rank's gather payload falls from
+125829120 to 62914560 bytes per reduction. Across 81 hidden reductions,
+that saves 5096079360 bytes per rank per chunk. This is a byte count, not
+a measured speedup. The existing phased entry also changes the sending
+schedule and uses 16 senders plus 32 workers, so its timing is not a pure
+ablation of payload width.
+
+Create prepares a separate operation and protocol-state range for the
+optional target prefill path. Every rank must admit both phased grids
+against reported residency; missing, restricted or MPS reports retain
+the composed fallback. Decode, verify and the drafter retain their
+original operations and state ranges. Protocol tags reset only after a
+quiescent join and well before they repeat, without resetting the composed
+transport. A failed drain or partial rank submission poisons the instance.
+
+CPU checks cover all 81 reductions, odd rows, phase isolation, admission
+fallback, exact reset spans and the 644 micro-schedule scratch regions.
+GPU bitwise output/state comparisons and paired timing remain required
+before either experimental switch becomes a default.

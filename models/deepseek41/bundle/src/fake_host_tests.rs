@@ -29,6 +29,7 @@ mod position_valid;
 mod prefill_attention;
 mod prefill_micro;
 mod prefill_overlap;
+mod prefill_reduce;
 mod prefill_tma;
 mod producer_epilogues;
 mod shared_overlap;

@@ -933,6 +933,12 @@ impl Instance {
             Ok(step) => step,
             Err(error) => return error,
         };
+        if !step.prefill.request_ids.is_empty()
+            && let Err(error) = self.quiesce_prefill_reduce()
+        {
+            self.log(&format!("prefill reduction reset: {error}"));
+            return status(error);
+        }
         if self.dspark.is_some() {
             let mut rows = items(&step.prefill);
             rows.extend(items(&step.decode));

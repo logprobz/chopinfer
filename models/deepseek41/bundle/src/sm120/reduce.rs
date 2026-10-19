@@ -74,7 +74,16 @@ pub fn cubins(geometries: &[Geometry]) -> Vec<(&'static str, CubinSpec)> {
     comm.name = COMM_CUBIN.into();
     comm.entries
         .retain(|entry| COMM_SYMBOLS.contains(&entry.symbol.as_str()));
-    let mut specs = vec![(COMM_FAMILY, comm)];
+    let mut phased =
+        kernels_sm120::comm::phased_f32::cubin_spec("comm_rounded_phased_deepseek41_sm120".into());
+    phased.entries.retain(|entry| {
+        [
+            kernels_sm120::comm::phased_f32::ROUND_SYMBOL,
+            kernels_sm120::comm::phased_f32::ONE_SHOT_ROUND_SYMBOL,
+        ]
+        .contains(&entry.symbol.as_str())
+    });
+    let mut specs = vec![(COMM_FAMILY, comm), ("comm_rounded_phased", phased)];
     for g in geometries {
         specs.push((
             ROUNDING_FAMILY,

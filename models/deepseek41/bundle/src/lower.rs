@@ -447,7 +447,7 @@ impl Lowering<'_> {
             return Ok(None);
         };
         let views = self.reduce_views(phase, output)?;
-        ops.reduce(self.rank, phase.rows(), &views)
+        ops.reduce(self.rank, phase, &views)
             .map(Some)
             .map_err(|refusal| format!("all-reduce: {refusal}"))
     }

@@ -238,6 +238,10 @@ fn prefill_micro_reduces_both_parts_at_every_boundary() {
 #[test]
 fn prefill_micro_journal_preserves_cross_boundary_scratch_lifetimes() {
     let (host, journal) = capture(8191);
+    audit_journal(&host, &journal, "chop_comm_reduce_scatter_f32_v1");
+}
+
+pub(super) fn audit_journal(host: &Host, journal: &[String], comm_symbol: &str) {
     let mains = host.device.rank_streams.borrow();
     let mut regions = 0;
     for (&rank, &main) in mains.iter() {
@@ -261,7 +265,7 @@ fn prefill_micro_journal_preserves_cross_boundary_scratch_lifetimes() {
         };
         let side = lines
             .iter()
-            .filter(|s| s.starts_with("launch ") && s.contains("chop_comm_reduce_scatter_f32_v1"))
+            .filter(|s| s.starts_with("launch ") && s.contains(comm_symbol))
             .map(|s| s.split_whitespace().nth(1).unwrap().parse::<u32>().unwrap())
             .next()
             .unwrap();

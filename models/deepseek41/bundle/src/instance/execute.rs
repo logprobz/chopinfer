@@ -311,6 +311,7 @@ impl Instance {
         head_rows: u32,
         images: bool,
         cache_offset: Option<crate::ops::latent::CacheRange>,
+        positions: &[i32],
     ) -> Result<Programs, BundleStatusV1> {
         let stages = crate::program::stages(self.config.shape.geometry, phase);
         let mut programs = Vec::new();
@@ -360,7 +361,7 @@ impl Instance {
                     (_, true, Stage::EngramGate(layer)) => self
                         .text_flags(rank)
                         .and_then(|text| lowering.engram_gate_masked(phase, layer, text)),
-                    _ => lowering.stage_with_prefill_cache(phase, stage, cache_offset),
+                    _ => lowering.stage_with_prefill_context(phase, stage, positions, cache_offset),
                 };
                 let lowered = match lowered {
                     Ok(Some(lowered)) => lowered,
@@ -440,6 +441,7 @@ impl Instance {
                 head_rows,
                 media.is_some(),
                 cache,
+                &inputs.positions,
             )?
         };
         let mut tails = Vec::new();

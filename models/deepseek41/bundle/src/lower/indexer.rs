@@ -1,7 +1,6 @@
-//! Lowering of the indexer's stages through `crate::ops::indexer`. Each
-//! selection runs in row blocks: a dense block's scores are `[FULL_BLOCK,
-//! position capacity]`, so the candidate source publishes a block's IDs
-//! before the next block reuses the scores.
+//! Lowering of the indexer's stages through `crate::ops::indexer`. Native
+//! eager full-index batches use a bounded score stride. Every source finishes
+//! selection and candidate publication before the next batch reuses scores.
 
 use kernel_core::attention::BlockTables;
 use model_deepseek41_contract::indexer;
@@ -61,6 +60,27 @@ impl Lowering<'_> {
         phase: Phase,
         layer: u32,
     ) -> Result<Option<Vec<Lowered>>, String> {
+        self.index_select_inner(phase, layer, None)
+    }
+
+    pub(super) fn index_select_prefill(
+        &self,
+        phase: Phase,
+        layer: u32,
+        positions: &[i32],
+    ) -> Result<Option<Vec<Lowered>>, String> {
+        if !phase.prefill() || positions.len() != phase.rows() as usize {
+            return Err("prefill index metadata does not match its local query rows".into());
+        }
+        self.index_select_inner(phase, layer, Some(positions))
+    }
+
+    fn index_select_inner(
+        &self,
+        phase: Phase,
+        layer: u32,
+        positions: Option<&[i32]>,
+    ) -> Result<Option<Vec<Lowered>>, String> {
         let Some(ops) = &self.ops.select else {
             return Ok(None);
         };
@@ -90,6 +110,23 @@ impl Lowering<'_> {
         let top_k = g.shape.indexer.top_k;
         let reindex = indexer::block_selection(g, layer, REINDEX_BLOCK).is_some();
         let size = if reindex { REINDEX_BLOCK } else { FULL_BLOCK };
+        let factory = ops
+            .prefill
+            .as_ref()
+            .filter(|_| !reindex && positions.is_some());
+        let batches = if let Some(factory) = factory {
+            factory
+                .batches(layer, positions.unwrap(), scratch.index_scores.length)
+                .map_err(error)?
+        } else {
+            (0..phase.rows())
+                .step_by(size as usize)
+                .map(|first| indexer::prefill::Batch {
+                    rows: first..(first + size).min(phase.rows()),
+                    width,
+                })
+                .collect()
+        };
         let origin = self.prefill_row_origin.filter(|_| phase.prefill());
         let status = self.carried(
             phase,
@@ -100,13 +137,22 @@ impl Lowering<'_> {
             index_selected(scratch.index_selected, source, scratch_rows(), top_k),
         )?;
         let mut launches = Vec::new();
-        for first in (0..phase.rows()).step_by(size as usize) {
-            let n = size.min(phase.rows() - first);
+        // A phase has at most two batch sizes (full blocks and a final tail).
+        // Keep their prepared ops local to this eager lowering, never cached
+        // across a changed position upload or a decode graph replay.
+        let mut prepared = std::collections::BTreeMap::new();
+        for batch in batches {
+            let first = batch.rows.start;
+            let n = batch.rows.end - first;
+            let width = batch.width;
             let global_first = origin
                 .unwrap_or(0)
                 .checked_add(first)
                 .ok_or("index row origin overflows")?;
-            let live_rows = if origin.is_some() && reindex {
+            let live_rows = if factory.is_some() {
+                crate::buffers::index_prefill_count(scratch.block_live, n)
+                    .map_err(|e| e.to_string())?
+            } else if origin.is_some() && reindex {
                 // A micro-batch is at most one reindex block. Its stable
                 // count differs from the full chunk's block count.
                 if phase.rows() > REINDEX_BLOCK {
@@ -144,6 +190,34 @@ impl Lowering<'_> {
                     ops.reindex(ratio, n, width, &views, row_tags, candidates)
                         .map_err(error)?,
                 );
+                continue;
+            }
+            if let Some(factory) = factory {
+                if let std::collections::btree_map::Entry::Vacant(entry) =
+                    prepared.entry((n, width))
+                {
+                    entry.insert(factory.prepare(
+                        layer,
+                        n,
+                        width,
+                        self.buffers.workspace.length,
+                    )?);
+                }
+                let op = &prepared[&(n, width)];
+                launches.extend(op.select(n, width, &views).map_err(error)?);
+                if layer == g.shape.candidates.source {
+                    launches.extend(
+                        op.produce(
+                            n,
+                            width,
+                            &views,
+                            block(scratch.index_visible, global_first, n),
+                            row_tags,
+                            candidates,
+                        )
+                        .map_err(error)?,
+                    );
+                }
                 continue;
             }
             launches.extend(ops.select(ratio, n, width, &views).map_err(error)?);

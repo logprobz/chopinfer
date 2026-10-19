@@ -176,14 +176,14 @@ kernel_core::scratch_record! {
         pub rope_compressed_rows: value,
         /// The index heads' F32 weights `[rows, index heads]`.
         pub index_weights: value,
-        /// A selection's F32 scores of one row block: the dense
-        /// selection's `[FULL_BLOCK, position capacity]` or the compact
-        /// one's `[REINDEX_BLOCK, block slots]`.
+        /// Reusable F32 scores for full-capacity or bounded eager batches,
+        /// or compact `[REINDEX_BLOCK, block slots]` selection.
         pub index_scores: value,
         /// Each row's U64 tag and the candidate source's visible
         /// compressed count (I32), and each row block's U32 live count,
         /// the dense blocks' then the compact blocks', which the step
-        /// uploads.
+        /// uploads. Qualified native prefill appends an immutable table of
+        /// counts 0..=8192 after that mutable prefix.
         pub row_tags: value,
         pub index_visible: value,
         pub block_live: value,
@@ -356,7 +356,12 @@ impl Scratch<Allocation> {
             row_tags: row(U64),
             index_visible: row(I32),
             block_live: Allocation::bytes(
-                u64::from(blocks(FULL_BLOCK) + blocks(REINDEX_BLOCK)) * I32,
+                index_live_bytes()
+                    + if crate::ops::indexer::prefill::enabled(shape, storage) {
+                        u64::from(PREFILL_TOKENS + 1) * I32
+                    } else {
+                        0
+                    },
             ),
             candidate_ids: row(u64::from(shape.geometry.shape.candidates.top_blocks) * I32),
             candidate_tags: row(U64),
@@ -445,6 +450,50 @@ pub fn block_live(live: DeviceBufferSpanV1, rows: u32, block: u32) -> DeviceBuff
         live.offset + u64::from(first + block) * I32,
         I32,
     )
+}
+
+fn index_live_bytes() -> u64 {
+    u64::from(blocks(FULL_BLOCK) + blocks(REINDEX_BLOCK)) * I32
+}
+
+/// Immutable eager counts follow the unchanged mutable 64/4096-row counts.
+pub(crate) fn index_prefill_counts(
+    live: DeviceBufferSpanV1,
+) -> Result<DeviceBufferSpanV1, BundleAbiError> {
+    let first = index_live_bytes();
+    let bytes = u64::from(PREFILL_TOKENS + 1) * I32;
+    if first + bytes > live.length {
+        return Err(BundleAbiError::InvalidRange(
+            "prefill index count table is absent",
+        ));
+    }
+    let offset = live
+        .offset
+        .checked_add(first)
+        .ok_or(BundleAbiError::InvalidRange(
+            "prefill count offset overflows",
+        ))?;
+    offset
+        .checked_add(bytes)
+        .ok_or(BundleAbiError::InvalidRange("prefill count end overflows"))?;
+    Ok(DeviceBufferSpanV1::new(live.buffer, offset, bytes))
+}
+
+pub(crate) fn index_prefill_count(
+    live: DeviceBufferSpanV1,
+    rows: u32,
+) -> Result<DeviceBufferSpanV1, BundleAbiError> {
+    if rows > PREFILL_TOKENS {
+        return Err(BundleAbiError::InvalidRange(
+            "prefill index row count exceeds its table",
+        ));
+    }
+    let table = index_prefill_counts(live)?;
+    Ok(DeviceBufferSpanV1::new(
+        table.buffer,
+        table.offset + u64::from(rows) * I32,
+        I32,
+    ))
 }
 
 /// The per-item request state of one rank: each buffer of the declaration
@@ -629,6 +678,32 @@ mod tests {
     use bundle_runtime::geometry::Ranks;
     use kernel_core::allocation::Traversal;
     use model_deepseek41_contract::geometry::FLASH;
+
+    #[test]
+    fn prefill_index_counts_are_disjoint_and_bounded() {
+        let handle = runtime_bundle_abi::BundleDeviceBufferHandleV1::from_parts(1, 1);
+        let prefix = index_live_bytes();
+        let bytes = prefix + u64::from(PREFILL_TOKENS + 1) * 4;
+        let full = DeviceBufferSpanV1::new(handle, 256, bytes);
+        let table = index_prefill_counts(full).unwrap();
+        assert_eq!(table.offset, 256 + prefix);
+        for n in [0, 1, 64, 512, 4096, 8192] {
+            let count = index_prefill_count(full, n).unwrap();
+            assert_eq!(count.offset, table.offset + u64::from(n) * 4);
+            assert_eq!(count.length, 4);
+            assert!(count.offset + count.length <= table.offset + table.length);
+        }
+        for size in [FULL_BLOCK, REINDEX_BLOCK] {
+            let last = block_live(full, size, blocks(size) - 1);
+            assert!(last.offset + last.length <= table.offset);
+        }
+        assert!(index_prefill_count(full, 8193).is_err());
+        assert!(index_prefill_counts(DeviceBufferSpanV1::new(handle, 256, bytes - 1)).is_err());
+        assert!(
+            index_prefill_counts(DeviceBufferSpanV1::new(handle, u64::MAX - 1, bytes)).is_err()
+        );
+        assert!(index_prefill_counts(DeviceBufferSpanV1::new(handle, 0, prefix)).is_err());
+    }
 
     #[test]
     fn scratch_ranges_preserve_data_scale_and_status_offsets() {

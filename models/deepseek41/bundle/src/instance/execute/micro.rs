@@ -203,7 +203,12 @@ impl Plan {
                     let phase = Phase::Prefill { rows: rows[part] };
                     let lower = |stage| {
                         lowering
-                            .stage(phase, stage)?
+                            .stage_with_positions(
+                                phase,
+                                stage,
+                                &run.inputs.positions
+                                    [first as usize..(first + rows[part]) as usize],
+                            )?
                             .ok_or_else(|| format!("prefill part has no lowering for {stage:?}"))
                     };
                     let mut compute = Calls::default();

@@ -24,6 +24,8 @@ use runtime_bundle_abi::DeviceBufferSpanV1;
 use super::{Asks, Bind, Lowered, exact};
 use crate::shape::Shape;
 
+pub(crate) mod prefill;
+
 pub(crate) struct IndexerOps {
     /// The query preparation every index source shares: the heads, width
     /// and rotation are the same at each.
@@ -84,7 +86,7 @@ impl IndexerOps {
     }
 }
 
-/// Rows of one dense selection launch: its scores are 256 MiB at a
+/// Rows of one full-capacity selection launch: its scores are 256 MiB at a
 /// 2^20-position capacity.
 pub(crate) const FULL_BLOCK: u32 = 64;
 
@@ -98,6 +100,7 @@ pub(crate) struct SelectOps {
     full: Vec<(u32, Prepared<PositionSelectBuffers<View>>)>,
     producer: Prepared<CandidateBlockIdsBuffers<View>>,
     reindex: Vec<(u32, Prepared<PositionBlockSelectBuffers<View>>)>,
+    pub(crate) prefill: Option<prefill::Factory>,
 }
 
 /// A source's index keys in the serving pages, as one row block's
@@ -230,6 +233,7 @@ impl SelectOps {
             full,
             producer,
             reindex,
+            prefill: prefill::Factory::new(shape, storage),
         })
     }
 
@@ -247,6 +251,15 @@ impl SelectOps {
             .iter()
             .find(|(of, _)| *of == ratio)
             .ok_or(Refusal("DeepSeek V4.1 fully selects at no such ratio"))?;
+        Self::select_prepared(op, rows, width, views)
+    }
+
+    fn select_prepared(
+        op: &Prepared<PositionSelectBuffers<View>>,
+        rows: u32,
+        width: u32,
+        views: &SelectViews,
+    ) -> Result<Vec<Lowered>, Refusal> {
         let mut bind = Bind::default();
         let buffers = PositionSelectBuffers {
             q: bind.view(views.q),
@@ -280,6 +293,33 @@ impl SelectOps {
         output: CandidateViews,
         workspace: DeviceBufferSpanV1,
     ) -> Result<Vec<Lowered>, Refusal> {
+        Self::produce_prepared(
+            &self.producer,
+            rows,
+            width,
+            scores,
+            visible_positions,
+            row_tags,
+            status,
+            live_rows,
+            output,
+            workspace,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn produce_prepared(
+        op: &Prepared<CandidateBlockIdsBuffers<View>>,
+        rows: u32,
+        width: u32,
+        scores: DeviceBufferSpanV1,
+        visible_positions: DeviceBufferSpanV1,
+        row_tags: DeviceBufferSpanV1,
+        status: DeviceBufferSpanV1,
+        live_rows: DeviceBufferSpanV1,
+        output: CandidateViews,
+        workspace: DeviceBufferSpanV1,
+    ) -> Result<Vec<Lowered>, Refusal> {
         let mut bind = Bind::default();
         let buffers = CandidateBlockIdsBuffers {
             scores: bind.view(scores),
@@ -289,7 +329,7 @@ impl SelectOps {
             live_rows: bind.view(live_rows),
             output: record(&mut bind, output, width),
         };
-        bind.launch_within(&self.producer, &buffers, workspace, Counts::rows(rows))
+        bind.launch_within(op, &buffers, workspace, Counts::rows(rows))
     }
 
     /// A Reindex source's compact selection of a block of `rows` rows over

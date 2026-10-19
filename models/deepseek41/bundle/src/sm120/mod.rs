@@ -441,6 +441,13 @@ impl crate::Kernels {
         })
     }
 
+    /// The eager indexer uses the same guarded registrations as the target.
+    pub(crate) fn prefill_indexer_backend(
+        shape: &crate::shape::Shape,
+    ) -> Box<dyn kernel_core::backend::Backend> {
+        Box::new(indexer::register(Sm120::new(), shape.geometry).with_guarded_position_scores())
+    }
+
     /// Only the target's optional prefill reduction registers this entry.
     pub(crate) fn prefill_reduction_backend(
         shape: &crate::shape::Shape,

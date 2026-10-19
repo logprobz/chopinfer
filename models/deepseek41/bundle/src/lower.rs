@@ -130,6 +130,33 @@ impl Lowering<'_> {
         }
     }
 
+    /// Use the exact uploaded eager positions for bounded full-index work.
+    pub(crate) fn stage_with_positions(
+        &self,
+        phase: Phase,
+        stage: Stage,
+        positions: &[i32],
+    ) -> Result<Option<Vec<Lowered>>, String> {
+        self.stage_with_prefill_context(phase, stage, positions, None)
+    }
+
+    /// Combine exact eager index positions with an admitted decoded key cache.
+    pub(crate) fn stage_with_prefill_context(
+        &self,
+        phase: Phase,
+        stage: Stage,
+        positions: &[i32],
+        cache: Option<crate::ops::latent::CacheRange>,
+    ) -> Result<Option<Vec<Lowered>>, String> {
+        if let Stage::IndexSelect(layer) = stage
+            && phase.prefill()
+        {
+            self.index_select_prefill(phase, layer, positions)
+        } else {
+            self.stage_with_prefill_cache(phase, stage, cache)
+        }
+    }
+
     /// `stage`'s launches in `phase`, or `None` while it is not lowered.
     pub fn stage(&self, phase: Phase, stage: Stage) -> Result<Option<Vec<Lowered>>, String> {
         self.stage_with_prefill_cache(phase, stage, None)

@@ -326,6 +326,16 @@ impl Instance {
                 )
             })?;
             assert!(owners.next().is_none(), "scratch traversal orders agree");
+            if crate::ops::indexer::prefill::enabled(&shape, self.config.kv.storage) {
+                let counts: Vec<u8> = (0..=model_deepseek41_contract::serving::PREFILL_TOKENS)
+                    .flat_map(u32::to_le_bytes)
+                    .collect();
+                services.copy_host_to_device(
+                    stream,
+                    crate::buffers::index_prefill_counts(bound.block_live)?,
+                    &counts,
+                )?;
+            }
             services.copy_host_to_device(stream, bound.first_pre, &first_pre)?;
             scratch.push(bound);
             // The mixer scratch the mix-collapse lists; its tickets start

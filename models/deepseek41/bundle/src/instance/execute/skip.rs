@@ -165,8 +165,13 @@ impl Plan {
                         Some(instance.dspark_feature(&base, run.phase, id)?)
                     }
                     // Only this full-width prefix has qualified cached attention.
-                    // Retained key/output parts below keep their native row origins.
-                    _ => base.stage_with_prefill_cache(run.phase, stage, run.cache)?,
+                    // Retained parts below keep their native row origins.
+                    _ => base.stage_with_prefill_context(
+                        run.phase,
+                        stage,
+                        &run.inputs.positions,
+                        run.cache,
+                    )?,
                 };
                 push(&mut program, stage, required(ops, stage)?);
             }
@@ -226,7 +231,14 @@ impl Plan {
                         push(
                             &mut program,
                             stage,
-                            required(lowering.stage(phase, stage)?, stage)?,
+                            required(
+                                lowering.stage_with_positions(
+                                    phase,
+                                    stage,
+                                    &run.inputs.positions[range.start as usize..range.end as usize],
+                                )?,
+                                stage,
+                            )?,
                         );
                     }
                 }
@@ -254,7 +266,14 @@ impl Plan {
                         push(
                             &mut program,
                             stage,
-                            required(lowering.stage(phase, stage)?, stage)?,
+                            required(
+                                lowering.stage_with_positions(
+                                    phase,
+                                    stage,
+                                    &run.inputs.positions[range.start as usize..range.end as usize],
+                                )?,
+                                stage,
+                            )?,
                         );
                     }
                 }

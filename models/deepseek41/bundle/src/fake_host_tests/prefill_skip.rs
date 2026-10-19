@@ -4,6 +4,30 @@ use runtime_bundle_sdk::prefill::{Boundary, encode};
 
 type Sink = RecordingSink<super::conformance::Limits>;
 
+#[test]
+fn bounded_indexer_keeps_upper_skip_query_and_candidate_origins() {
+    let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+    let mut instance = create_profile(&host, 8192, true);
+    let request = encode(
+        &prompt(1, 0, 0, 8192, true),
+        &[Boundary {
+            request_id: 1,
+            prompt_tokens: 8192,
+            chunk_end: 8192,
+            chunk_tokens: 8192,
+        }],
+    )
+    .unwrap();
+    instance
+        .execute_prefill(&request, &mut Sink::default())
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
+    super::position_valid::audit_batched(&host, &host.device.journal.borrow(), true).unwrap();
+    instance.commit().unwrap();
+    instance.retire_request(1).unwrap();
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
 fn create_profile(host: &Rc<Host>, chunk: u32, skip: bool) -> BundleInstanceV1 {
     let mut record = crate::config::tests::record(&host.shape, host.kv, 4, false);
     let at = record

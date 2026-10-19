@@ -229,3 +229,88 @@ fn qualified_norm_tiles_preserve_abi_and_only_select_measured_buckets() {
         );
     }
 }
+
+#[test]
+fn cached_norm_selects_only_qualified_buckets_and_retains_alias_refusals() {
+    let q = query(DType::Bf16);
+    let entry = Entry::new(q, 32, "norm_reference").unwrap();
+    let tiles = kernels_sm120::row::rmsnorm_quantize_tiles::Entry {
+        reference: entry.clone(),
+        prefix: "norm_tile".into(),
+    };
+    let cached = kernels_sm120::row::rmsnorm_quantize_cached::Entry {
+        reference: entry.clone(),
+        prefix: "norm_cache".into(),
+    };
+    let baseline = Sm120::new()
+        .with_rmsnorm_quantize(entry.clone())
+        .with_rmsnorm_quantize_tiles(tiles.clone(), vec![1, 8]);
+    let old = baseline.rmsnorm_quantize(&q, Need::rows(32)).unwrap();
+    let backend = baseline.with_rmsnorm_quantize_cached(cached.clone(), vec![(1, 32), (8, 32)]);
+    let op = backend.rmsnorm_quantize(&q, Need::rows(32)).unwrap();
+    assert_eq!(op.info().implementation, old.info().implementation);
+    assert_eq!(op.info().bytes, old.info().bytes);
+    assert_eq!(op.info().workspace, 0);
+    for rows in [1, 2, 4, 8, 16, 32] {
+        for widened in [false, true] {
+            let mut b = buffers();
+            if !widened {
+                b.widened = None;
+            }
+            let reference = old.launches(&b, View::EMPTY, Counts::rows(rows)).unwrap();
+            let actual = op.launches(&b, View::EMPTY, Counts::rows(rows)).unwrap();
+            assert_eq!(actual.len(), 1);
+            assert_eq!(actual[0].arguments, reference[0].arguments);
+            let selected = [1, 8].contains(&rows);
+            assert_eq!(
+                actual[0].symbol,
+                if selected {
+                    cached.symbols()[2].clone()
+                } else {
+                    entry.symbol.clone()
+                }
+            );
+            assert_eq!(
+                actual[0].plan.grid,
+                if selected { [1, rows, 1] } else { [rows, 1, 1] }
+            );
+            assert_eq!(
+                actual[0].plan.block,
+                [if selected { 1024 } else { 256 }, 1, 1]
+            );
+            assert!(actual[0].plan.pdl);
+            assert_eq!(actual[0].plan.workspace_bytes, 0);
+            let mut bad = b;
+            bad.input = bad.normed;
+            assert!(op.launches(&bad, View::EMPTY, Counts::rows(rows)).is_err());
+            bad = b;
+            bad.codes.bytes = 1;
+            assert!(op.launches(&bad, View::EMPTY, Counts::rows(rows)).is_err());
+            bad = b;
+            bad.status_row_offset = u64::MAX;
+            assert!(op.launches(&bad, View::EMPTY, Counts::rows(rows)).is_err());
+        }
+    }
+    for buckets in [
+        vec![],
+        vec![(0, 32)],
+        vec![(1, 4)],
+        vec![(1, 32), (1, 16)],
+        vec![(8, 32), (1, 32)],
+        vec![(33, 32)],
+    ] {
+        assert!(
+            Sm120::new()
+                .with_rmsnorm_quantize(entry.clone())
+                .with_rmsnorm_quantize_cached(cached.clone(), buckets)
+                .rmsnorm_quantize(&q, Need::rows(32))
+                .is_err()
+        );
+    }
+    assert!(
+        backend
+            .with_rmsnorm_quantize_cached(cached, vec![(1, 32)])
+            .rmsnorm_quantize(&q, Need::rows(32))
+            .is_err()
+    );
+}

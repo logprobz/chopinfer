@@ -7,8 +7,14 @@ use kernel_core::sinkhorn_expand_mix::{
     SinkhornExpandMixQuery as Query, SinkhornRoundExpandMixBuffers as Buffers,
 };
 
+pub(super) type Chains = (
+    crate::sinkhorn_hc::round_chain_partials::Entry,
+    Vec<(u32, u32)>,
+);
+
 pub(super) fn prepare(
     entries: &[Entry],
+    chains: &[Chains],
     query: &Query,
     need: Need,
 ) -> Result<Prepared<Buffers<View>>, Refused> {
@@ -39,6 +45,31 @@ pub(super) fn prepare(
         chosen.guarantees,
         entry.symbols().into_iter().map(|s| (s, 0)).collect(),
     );
+    let mut chain_entry = None;
+    for (candidate, buckets) in chains.iter().filter(|(e, _)| e.reference.query == *query) {
+        candidate.validate()?;
+        if buckets.is_empty() || buckets.windows(2).any(|p| p[0].0 >= p[1].0) {
+            return Err(Refusal("invalid qualified rounded chain buckets").into());
+        }
+        for &(rows, warps) in buckets {
+            candidate.plan(rows, rows, warps)?;
+        }
+        if candidate.reference.symbol != entry.symbol
+            || candidate.reference.capacity < need.capacity
+        {
+            continue;
+        }
+        if chain_entry.is_some() {
+            return Err(Refusal("ambiguous rounded chain entries").into());
+        }
+        for &(_, warps) in buckets {
+            let symbol = (candidate.symbols()[usize::from(warps == 8)].clone(), 0);
+            if !info.symbols.contains(&symbol) {
+                info.symbols.push(symbol);
+            }
+        }
+        chain_entry = Some((candidate.clone(), buckets.clone()));
+    }
     info.workspace = entry.workspace(need.capacity)?;
     let m = query.mix;
     let rows = u64::from(need.capacity);
@@ -67,12 +98,14 @@ pub(super) fn prepare(
     need.check(&info)?;
     Ok(Box::new(Op {
         entry,
+        chains: chain_entry,
         capacity: need.capacity,
         info,
     }))
 }
 struct Op {
     entry: Entry,
+    chains: Option<Chains>,
     capacity: u32,
     info: OpInfo,
 }
@@ -170,11 +203,19 @@ impl PreparedOp<Buffers<View>> for Op {
                 d(b.live_rows),
             ],
         ];
-        Ok(self
-            .entry
-            .symbols()
+        let mut symbols = self.entry.symbols();
+        let mut plans = self.entry.plans(rows)?;
+        if let Some((entry, warps)) = self
+            .chains
+            .as_ref()
+            .and_then(|(e, b)| b.iter().find(|(r, _)| *r == rows).map(|&(_, w)| (e, w)))
+        {
+            symbols[0] = entry.symbols()[usize::from(warps == 8)].clone();
+            plans[0] = entry.plan(rows, rows, warps)?;
+        }
+        Ok(symbols
             .into_iter()
-            .zip(self.entry.plans(rows)?)
+            .zip(plans)
             .zip(arguments)
             .map(|((symbol, plan), arguments)| Launch {
                 symbol,

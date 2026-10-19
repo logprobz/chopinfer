@@ -187,3 +187,88 @@ fn tasks_use_virtual_ctas_and_only_entry_wrappers_own_grid_dependencies() {
     let spec = expand_mix::cubin_spec("round_expand_mix", &[entry()]).unwrap();
     assert_eq!(spec.entries.len(), 2);
 }
+
+#[test]
+fn measured_chain_buckets_keep_the_finisher_arguments_and_workspace_exact() {
+    let reference = entry();
+    let chain = kernels_sm120::sinkhorn_hc::round_chain_partials::Entry {
+        reference: reference.clone(),
+        prefix: "chain".into(),
+    };
+    let old = Sm120::new()
+        .with_sinkhorn_round_expand_mix(reference.clone())
+        .sinkhorn_round_expand_mix(&reference.query, Need::rows(32))
+        .unwrap();
+    let backend = Sm120::new()
+        .with_sinkhorn_round_expand_mix(reference.clone())
+        .with_sinkhorn_round_chain(chain.clone(), vec![(1, 8), (8, 4)]);
+    let op = backend
+        .sinkhorn_round_expand_mix(&reference.query, Need::rows(32))
+        .unwrap();
+    assert_eq!(op.info().implementation, old.info().implementation);
+    assert_eq!(op.info().bytes, old.info().bytes);
+    assert_eq!(op.info().workspace, old.info().workspace);
+    for rows in [1, 2, 4, 8, 16, 32] {
+        let mut b = buffers();
+        b.post = b.post_in;
+        b.comb = b.comb_in;
+        let ws = View {
+            handle: 15,
+            bytes: reference.workspace(rows).unwrap(),
+        };
+        let expected = old.launches(&b, ws, Counts::rows(rows)).unwrap();
+        let actual = op.launches(&b, ws, Counts::rows(rows)).unwrap();
+        assert_eq!(actual.len(), 2);
+        for i in 0..2 {
+            assert_eq!(actual[i].arguments, expected[i].arguments);
+            assert_eq!(
+                actual[i].plan.workspace_bytes,
+                expected[i].plan.workspace_bytes
+            );
+            assert!(actual[i].plan.pdl);
+        }
+        assert_eq!(actual[1].symbol, expected[1].symbol);
+        assert_eq!(actual[1].plan, expected[1].plan);
+        let (name, grid, block) = match rows {
+            1 => (chain.symbols()[1].clone(), 160, 256),
+            8 => (chain.symbols()[0].clone(), 160, 128),
+            _ => (reference.symbols()[0].clone(), 20, 256),
+        };
+        assert_eq!(actual[0].symbol, name);
+        assert_eq!(actual[0].plan.grid, [grid, rows, 1]);
+        assert_eq!(actual[0].plan.block, [block, 1, 1]);
+        for control in 0..4 {
+            let mut bad = b;
+            let mut scratch = ws;
+            match control {
+                0 => scratch.bytes -= 1,
+                1 => scratch.handle = b.x.handle,
+                2 => bad.rounded = b.sum,
+                _ => bad.fn_.bytes = 1,
+            };
+            assert!(op.launches(&bad, scratch, Counts::rows(rows)).is_err());
+        }
+    }
+    for buckets in [
+        vec![],
+        vec![(0, 8)],
+        vec![(1, 16)],
+        vec![(1, 8), (1, 4)],
+        vec![(8, 4), (1, 8)],
+        vec![(33, 4)],
+    ] {
+        assert!(
+            Sm120::new()
+                .with_sinkhorn_round_expand_mix(reference.clone())
+                .with_sinkhorn_round_chain(chain.clone(), buckets)
+                .sinkhorn_round_expand_mix(&reference.query, Need::rows(32))
+                .is_err()
+        );
+    }
+    assert!(
+        backend
+            .with_sinkhorn_round_chain(chain, vec![(1, 8)])
+            .sinkhorn_round_expand_mix(&reference.query, Need::rows(32))
+            .is_err()
+    );
+}

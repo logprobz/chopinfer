@@ -5,9 +5,12 @@ use kernel_core::contract::{DType, Refusal, Validate};
 use kernel_core::properties::Invariance;
 use kernel_core::rmsnorm_quantize::{RmsNormQuantizeBuffers, RmsNormQuantizeQuery};
 
+pub(super) type Cached = (crate::row::rmsnorm_quantize_cached::Entry, Vec<(u32, u32)>);
+
 pub(super) fn prepare(
     entries: &[Entry],
     tiles: &[(crate::row::rmsnorm_quantize_tiles::Entry, Vec<u32>)],
+    cached: &[Cached],
     query: &RmsNormQuantizeQuery,
     need: Need,
 ) -> Result<Prepared<RmsNormQuantizeBuffers<View>>, Refused> {
@@ -61,6 +64,40 @@ pub(super) fn prepare(
         info.symbols.push((candidate.symbols()[1].clone(), 0));
         tiled = Some((candidate.clone(), buckets.clone()));
     }
+    let mut cached_entry = None;
+    for (candidate, buckets) in cached
+        .iter()
+        .filter(|(e, _)| resolved(e.reference.query) == resolved(*query))
+    {
+        candidate.validate()?;
+        if buckets.is_empty() || buckets.windows(2).any(|p| p[0].0 >= p[1].0) {
+            return Err(Refusal("invalid qualified cached norm buckets").into());
+        }
+        for &(rows, warps) in buckets {
+            candidate.plan(rows, rows, warps)?;
+        }
+        if candidate.reference.symbol != entry.symbol
+            || candidate.reference.capacity < need.capacity
+        {
+            continue;
+        }
+        if cached_entry.is_some() {
+            return Err(Refusal("ambiguous cached norm entries").into());
+        }
+        for &(_, warps) in buckets {
+            let index = match warps {
+                8 => 0,
+                16 => 1,
+                32 => 2,
+                _ => unreachable!(),
+            };
+            let symbol = (candidate.symbols()[index].clone(), 0);
+            if !info.symbols.contains(&symbol) {
+                info.symbols.push(symbol);
+            }
+        }
+        cached_entry = Some((candidate.clone(), buckets.clone()));
+    }
     let values = u64::from(need.capacity) * u64::from(query.norm.width);
     let bytes = if query.norm.input == DType::F32 { 4 } else { 2 };
     info.bytes = vec![
@@ -76,6 +113,7 @@ pub(super) fn prepare(
     Ok(Box::new(Op {
         entry,
         tiled,
+        cached: cached_entry,
         capacity: need.capacity,
         info,
     }))
@@ -84,6 +122,7 @@ pub(super) fn prepare(
 struct Op {
     entry: Entry,
     tiled: Option<(crate::row::rmsnorm_quantize_tiles::Entry, Vec<u32>)>,
+    cached: Option<Cached>,
     capacity: u32,
     info: OpInfo,
 }
@@ -145,7 +184,22 @@ impl PreparedOp<RmsNormQuantizeBuffers<View>> for Op {
             .tiled
             .as_ref()
             .filter(|(_, buckets)| buckets.contains(&rows));
-        let (symbol, plan) = if let Some((entry, _)) = selected {
+        let cached = self
+            .cached
+            .as_ref()
+            .and_then(|(e, b)| b.iter().find(|(r, _)| *r == rows).map(|&(_, w)| (e, w)));
+        let (symbol, plan) = if let Some((entry, warps)) = cached {
+            let index = match warps {
+                8 => 0,
+                16 => 1,
+                32 => 2,
+                _ => unreachable!(),
+            };
+            (
+                entry.symbols()[index].clone(),
+                entry.plan(rows, counts.rows, warps)?,
+            )
+        } else if let Some((entry, _)) = selected {
             (
                 entry.symbols()[1].clone(),
                 entry.plan(rows, counts.rows, true)?,

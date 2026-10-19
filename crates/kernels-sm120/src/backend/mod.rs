@@ -230,8 +230,10 @@ pub struct Sm120 {
     block_quantizers: Vec<crate::row::block_quantize::Entry>,
     norm_quantizers: Vec<crate::row::rmsnorm_quantize::Entry>,
     norm_tiles: Vec<(crate::row::rmsnorm_quantize_tiles::Entry, Vec<u32>)>,
+    norm_cached: Vec<rmsnorm_quantize::Cached>,
     expand_mix: Vec<crate::sinkhorn_hc::expand_mix::Entry>,
     round_expand_mix: Vec<crate::sinkhorn_hc::round_expand_mix::Entry>,
+    round_chains: Vec<sinkhorn_round_expand_mix::Chains>,
     replicated_embeddings: Vec<crate::row::replicated_embedding::Entry>,
     fused_windows: Vec<crate::latent::window_fused::Entry>,
     silu_mul_quantizers: Vec<crate::row::silu_mul_quantize::Entry>,
@@ -311,6 +313,16 @@ impl Sm120 {
         self
     }
 
+    /// Use measured (row bucket, warp count) pairs for the rounded producer.
+    pub fn with_sinkhorn_round_chain(
+        mut self,
+        entry: crate::sinkhorn_hc::round_chain_partials::Entry,
+        buckets: Vec<(u32, u32)>,
+    ) -> Self {
+        self.round_chains.push((entry, buckets));
+        self
+    }
+
     pub fn with_sinkhorn_round_expand_mix(
         mut self,
         entry: crate::sinkhorn_hc::round_expand_mix::Entry,
@@ -336,6 +348,16 @@ impl Sm120 {
         self.norm_tiles.push((entry, buckets));
         self
     }
+    /// Cached groups take precedence over tiled entries in qualified buckets.
+    pub fn with_rmsnorm_quantize_cached(
+        mut self,
+        entry: crate::row::rmsnorm_quantize_cached::Entry,
+        buckets: Vec<(u32, u32)>,
+    ) -> Self {
+        self.norm_cached.push((entry, buckets));
+        self
+    }
+
     pub fn with_rmsnorm_quantize(mut self, entry: crate::row::rmsnorm_quantize::Entry) -> Self {
         self.norm_quantizers.push(entry);
         self
@@ -1305,7 +1327,13 @@ impl Backend for Sm120 {
         need: Need,
     ) -> Result<Prepared<kernel_core::rmsnorm_quantize::RmsNormQuantizeBuffers<View>>, Refused>
     {
-        rmsnorm_quantize::prepare(&self.norm_quantizers, &self.norm_tiles, op, need)
+        rmsnorm_quantize::prepare(
+            &self.norm_quantizers,
+            &self.norm_tiles,
+            &self.norm_cached,
+            op,
+            need,
+        )
     }
 
     fn silu_mul_quantize(
@@ -1464,7 +1492,7 @@ impl Backend for Sm120 {
         Prepared<kernel_core::sinkhorn_expand_mix::SinkhornRoundExpandMixBuffers<View>>,
         Refused,
     > {
-        sinkhorn_round_expand_mix::prepare(&self.round_expand_mix, op, need)
+        sinkhorn_round_expand_mix::prepare(&self.round_expand_mix, &self.round_chains, op, need)
     }
 
     fn replicated_embedding(

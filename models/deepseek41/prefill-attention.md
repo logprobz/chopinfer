@@ -319,3 +319,43 @@ GPU qualification.
 With upper-layer skipping, only the twenty full-width prefix layers benefit
 from the cache. The full forty-layer timing projection above does not describe
 that route; its total saving needs a serving measurement.
+
+## Retained prefill rows
+
+The native Flash TP4 mixed64 prefill entry also admits the measured row
+counts 64, 192, ..., 2496. These are the upper-layer dependency cone's
+query intervals for an 8192-row chunk. The existing paired body uses the
+same arguments, partial workspace and merge, with half as many CTAs,
+256 threads and 85,504 dynamic shared bytes. Other smaller row counts,
+window/mixed32 entries, BF16 storage and other topologies retain their
+existing routes. Full 8192-row routing remains unchanged.
+
+On two SM120 GPUs at 250 W, measured on 2026-10-19, all 320 layer,
+candidate, device and offset comparisons passed before timing. Gates
+compare F32 partials and BF16 output exactly, with changed-query/live-count
+graph replay, poison guards, f64 controls, invalid pages and shared or
+shifted selections. Selected and window lists were captured from serving;
+Q and native KV values were synthetic. Timings use one warmup and three
+interleaved samples, including the original merge.
+
+| Offset | Device | Original twenty-layer total | Paired total |
+| ---: | --- | ---: | ---: |
+| 0 | A | 94.055 ms | 19.809 ms |
+| 0 | B | 93.946 ms | 19.805 ms |
+| 24576 | A | 94.544 ms | 20.030 ms |
+| 24576 | B | 94.413 ms | 20.039 ms |
+
+The totals sum the per-layer medians for 25,600 query rows across the
+twenty retained layers. They save 74.1-74.5 ms per chunk in the lab,
+approximately 4.7x for this attention work. They are not served chunk
+latencies. One-row vector staging is 8-16 microseconds faster than paired
+at 64 rows, while paired still improves that point by about 3x over the
+original. Serving keeps the already-loaded paired module at that point.
+
+This routing adds no scratch or cache producer. It leaves carried query
+metadata, selected/window row origins, main/side streams, events and peer
+transfers unchanged. Retained rows remain on native key storage. The
+decode-once cache still applies only to its full-width prefix, and the
+4096-row attention parts keep their existing route. The fake-host audit
+permits only the attention symbol, grid, block and dynamic shared-memory
+changes; the original merge and all other launch arguments remain exact.

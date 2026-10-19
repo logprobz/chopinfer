@@ -11,6 +11,7 @@
 
 use kernel_core::backend::{Need, Prepared, Refused, View};
 
+pub mod acceptance;
 pub mod dspark;
 pub mod engram;
 pub mod engram_hash;
@@ -30,6 +31,16 @@ use widen::{WidenRows, WidenRowsBuffers};
 pub trait OwnOps: Send + Sync {
     /// The backend's name in refusals and reports, such as `sm120`.
     fn name(&self) -> &str;
+
+    /// Reduce existing sampler rows. Counts::rows is the live item count.
+    fn dspark_acceptance(
+        &self,
+        op: &acceptance::Acceptance,
+        need: Need,
+    ) -> Result<Prepared<acceptance::AcceptanceBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
 
     /// Hash every live target position. Counts::rows is the live row count.
     fn engram_hash(
@@ -143,6 +154,15 @@ mod tests {
     fn every_method_refuses_by_default() {
         let backend = Nothing;
         assert_eq!(backend.name(), "nothing");
+        unsupported(backend.dspark_acceptance(
+            &acceptance::Acceptance {
+                vocab: 32,
+                sample_rows: 6,
+                draft_items: 1,
+                stop_ids: 1,
+            },
+            Need::rows(1),
+        ));
         unsupported(backend.engram_hash(
             &engram_hash::EngramHash {
                 vocab: 129280,

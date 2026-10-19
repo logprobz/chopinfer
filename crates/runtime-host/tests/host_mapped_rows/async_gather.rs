@@ -157,6 +157,8 @@ fn exercise<D: HostDeviceBackendV1 + 'static>(device: D, delayed: bool, label: &
     host.enqueue_mapped_gather(gather, 1).unwrap();
     for &(_, _, stream) in &ranks {
         host.wait_mapped_gather(gather, stream).unwrap();
+        // Match the ordinary result boundary before querying completion.
+        host.synchronize_stream(stream).unwrap();
     }
     assert_eq!(
         complete(gather),
@@ -203,4 +205,27 @@ fn async_gather_uses_event_ordered_cuda_transfers_and_releases_pinned_storage() 
         "async-driver",
     );
     assert_eq!(runtime_cuda::fake_driver::ordering_violations(), 0);
+}
+
+#[cfg(all(feature = "linux-cuda-host", not(feature = "cuda-fake-driver-tests")))]
+#[test]
+fn async_gather_gpu_preserves_bytes_across_two_ranks_and_pending_release() {
+    let Ok(devices) = std::env::var("CHOPINFER_KERNEL_GPUS") else {
+        eprintln!("skipped: CHOPINFER_KERNEL_GPUS is not set");
+        return;
+    };
+    let devices: Vec<i32> = devices
+        .split(',')
+        .map(|word| word.trim().parse().expect("GPU ordinal"))
+        .collect();
+    assert!(
+        devices.contains(&0) && devices.contains(&1),
+        "fixture requires GPUs 0 and 1"
+    );
+    exercise(
+        runtime_host::cuda::CudaHostDeviceV1::new().unwrap(),
+        false,
+        "async-gpu",
+    );
+    println!("async gather GPU byte parity, bounds, reuse and pending release passed");
 }

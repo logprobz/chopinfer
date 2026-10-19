@@ -52,6 +52,8 @@ mod dense;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 pub(crate) mod encoder;
 pub(crate) mod encoders;
+pub mod engram_hash;
+pub mod engram_hash_entries;
 pub mod f32_decode;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod f32_dense;
@@ -261,7 +263,8 @@ impl crate::Kernels {
         if cubin.starts_with("floor_moe_") || cubin.starts_with("bandwidth_moe_") {
             return false;
         }
-        cubin == ring_gather_entries::CUBIN
+        cubin == engram_hash_entries::CUBIN
+            || cubin == ring_gather_entries::CUBIN
             || cubin == dspark_router::cubin_name(g)
             || dspark_router::sum_cubins(g)
                 .iter()

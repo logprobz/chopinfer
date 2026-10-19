@@ -29,6 +29,12 @@ mod dspark_cubin;
 mod dspark_entries;
 mod dspark_heads;
 mod dspark_ring_gather;
+#[path = "../../../bundle/src/sm120/engram_hash.rs"]
+mod engram_hash;
+#[path = "../../../bundle/src/sm120/engram_hash_entries.rs"]
+#[allow(dead_code, reason = "the bundle build owns the lock family")]
+mod engram_hash_entries;
+mod engram_hash_test;
 mod indexer;
 mod indexer_mma;
 #[path = "../../../bundle/src/sm120/ring_gather.rs"]

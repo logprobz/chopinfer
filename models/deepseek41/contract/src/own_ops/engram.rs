@@ -238,6 +238,23 @@ impl HashTables {
         })
     }
 
+    pub fn raw_vocab(&self) -> u32 {
+        self.token_map.len() as u32
+    }
+
+    /// Integer constants for the device hash, with exact U64 encodings.
+    /// Header: compressed vocabulary size and pad ID, then the token map,
+    /// layer multipliers, primes and offsets in their contract order.
+    pub fn device_words(&self) -> Vec<u64> {
+        [u64::from(self.compressed_vocab), self.pad as u64]
+            .into_iter()
+            .chain(self.token_map.iter().map(|&id| u64::from(id)))
+            .chain(self.multipliers.iter().map(|&value| value as u64))
+            .chain(self.primes.iter().copied())
+            .chain(self.offsets.iter().copied())
+            .collect()
+    }
+
     /// The Engram layout the tables hash for.
     pub fn engram(&self) -> Engram {
         self.engram

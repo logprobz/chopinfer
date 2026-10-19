@@ -54,6 +54,10 @@ name = "build_dspark_ring_gather"
 path = "examples/sm120/build_dspark_ring_gather.rs"
 
 [[example]]
+name = "build_engram_hash"
+path = "examples/sm120/build_engram_hash.rs"
+
+[[example]]
 name = "build_moe_floor"
 path = "examples/sm120/build_moe_floor.rs"
 

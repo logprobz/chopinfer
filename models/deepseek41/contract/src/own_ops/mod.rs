@@ -13,6 +13,7 @@ use kernel_core::backend::{Need, Prepared, Refused, View};
 
 pub mod dspark;
 pub mod engram;
+pub mod engram_hash;
 pub mod ring_gather;
 pub mod rope;
 pub mod widen;
@@ -29,6 +30,16 @@ use widen::{WidenRows, WidenRowsBuffers};
 pub trait OwnOps: Send + Sync {
     /// The backend's name in refusals and reports, such as `sm120`.
     fn name(&self) -> &str;
+
+    /// Hash every live target position. Counts::rows is the live row count.
+    fn engram_hash(
+        &self,
+        op: &engram_hash::EngramHash,
+        need: Need,
+    ) -> Result<Prepared<engram_hash::EngramHashBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
 
     /// Copy committed ring slots into draft rows. Counts::rows is the item
     /// capacity; the device live_items count selects the items copied.
@@ -132,6 +143,17 @@ mod tests {
     fn every_method_refuses_by_default() {
         let backend = Nothing;
         assert_eq!(backend.name(), "nothing");
+        unsupported(backend.engram_hash(
+            &engram_hash::EngramHash {
+                vocab: 129280,
+                ngram: 4,
+                heads: 8,
+                layers: 2,
+                items: 1,
+                stride: 6,
+            },
+            Need::rows(6),
+        ));
         unsupported(backend.dspark_ring_gather(
             &ring_gather::RingGather {
                 bytes: 64,

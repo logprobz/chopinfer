@@ -31,6 +31,28 @@ impl Sm120Own {
 }
 
 impl OwnOps for Sm120Own {
+    fn engram_hash(
+        &self,
+        op: &model_deepseek41_contract::own_ops::engram_hash::EngramHash,
+        need: Need,
+    ) -> Result<
+        Prepared<model_deepseek41_contract::own_ops::engram_hash::EngramHashBuffers<View>>,
+        Refused,
+    > {
+        let g = self.geometry;
+        let e = g.shape.engram;
+        if op.vocab != g.shape.vocab
+            || op.ngram != e.max_ngram
+            || op.heads != e.heads
+            || op.layers != e.layers.len() as u32
+        {
+            return Err(Refused::Rule(
+                "Engram hash differs from the bound geometry".into(),
+            ));
+        }
+        super::engram_hash::prepare(*op, need)
+    }
+
     fn dspark_ring_gather(
         &self,
         op: &model_deepseek41_contract::own_ops::ring_gather::RingGather,

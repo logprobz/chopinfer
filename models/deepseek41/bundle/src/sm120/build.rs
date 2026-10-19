@@ -25,6 +25,8 @@ mod dspark_router;
 #[path = "encoder.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod encoder;
+mod engram_hash_cubin;
+mod engram_hash_entries;
 #[path = "hc.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod hc;
@@ -125,6 +127,10 @@ pub fn selection(
     specs.push((
         ring_gather_entries::FAMILY,
         ring_gather_cubin::cubin_spec(manifest),
+    ));
+    specs.push((
+        engram_hash_entries::FAMILY,
+        engram_hash_cubin::cubin_spec(manifest),
     ));
     specs.extend(dspark_aux::cubins(geometries).expect("DSpark auxiliary cubins"));
     specs.extend(dspark_router::cubins(geometries).expect("DSpark router cubins"));

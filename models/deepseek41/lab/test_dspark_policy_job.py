@@ -64,6 +64,21 @@ class Parsers(unittest.TestCase):
         self.assertEqual([(c["drafting_items"], c["steps"]) for c in costs], [(0, 1), (5, 3)])
         self.assertEqual(costs[1]["median_us"], {"catch_up": 900, "draft": 4000, "target": 50})
 
+    def test_server_args_replace_flags_the_runner_sets_and_append_the_rest(self):
+        command = ["chopinfer", "serve", "--speculative-tokens", "5", "--speculation", "adaptive",
+                   "--draft-cost", "per-block"]
+        costs = "1:13500:4400:700:760,8:22300:4400:700:780"
+        self.assertEqual(
+            job.server_args(command, ["--speculation", "table", "--speculation-costs", costs]),
+            ["chopinfer", "serve", "--speculative-tokens", "5", "--speculation", "table",
+             "--draft-cost", "per-block", "--speculation-costs", costs])
+        self.assertEqual(command[5], "adaptive")
+        for bad in (["--speculation"], ["table", "--speculation"]):
+            with self.assertRaises(ValueError):
+                job.server_args(command, bad)
+        with self.assertRaises(ValueError):
+            job.server_args(command + ["--speculation", "fixed"], ["--speculation", "table"])
+
     def test_log_lines_read_only_the_phase_bytes(self):
         with tempfile.TemporaryDirectory() as directory:
             server = Server(directory)

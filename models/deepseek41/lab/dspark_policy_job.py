@@ -208,6 +208,24 @@ def decision(passes):
             "timing_evidence": all(t == "evidence" for c in result.values() for t in c["timing"])}
 
 
+def server_args(command, extra):
+    """`command` with each `--flag value` pair of `extra` replacing the same
+    flag's value, or appended when the command lacks the flag. The serve
+    parser refuses a repeated flag, so an arm cannot simply append one."""
+    if len(extra) % 2 or not all(flag.startswith("--") for flag in extra[::2]):
+        raise ValueError("server arguments must be --flag value pairs")
+    command = list(command)
+    for flag, value in zip(extra[::2], extra[1::2]):
+        positions = [index for index, word in enumerate(command[:-1]) if word == flag]
+        if len(positions) > 1:
+            raise ValueError(f"the runner passes {flag} more than once")
+        if positions:
+            command[positions[0] + 1] = value
+        else:
+            command += [flag, value]
+    return command
+
+
 def run(args):
     stage = Path(args.stage).resolve()
     sys.path.insert(0, str(stage))
@@ -246,9 +264,10 @@ def run(args):
             parent.mkdir()
             server = p.Server(parent, "tp4-dspark", dry=args.dry_run, use_nsys=False)
             extra = manifest["arms"][arm].get("server_args", [])
-            if extra and not args.dry_run:
-                server.launch = [*server.launch, *extra]
-                server.server_command = [*server.server_command, *extra]
+            # The dry run records the serve command it would run.
+            server.server_command = server_args(server.server_command, extra)
+            if not args.dry_run:
+                server.launch = server_args(server.launch, extra)
             record = {"arm": arm, "server_args": extra, "decode": {}}
             result["passes"].append(record)
             try:

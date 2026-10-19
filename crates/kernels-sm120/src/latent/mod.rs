@@ -1118,3 +1118,5 @@ pub mod window_stage;
 pub mod staged_window_keys;
 
 pub mod window_fused;
+
+pub mod sources_decode;

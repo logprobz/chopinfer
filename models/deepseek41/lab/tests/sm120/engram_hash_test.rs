@@ -138,6 +138,58 @@ fn engram_hash_gpu_functions_resolve_in_embedded_cubins() {
     std::fs::remove_dir(root).unwrap();
 }
 
+fn replay_images(
+    input: model_deepseek41_contract::own_ops::engram_hash::HashInput<'_>,
+    status: &[u32],
+) -> Vec<Vec<u8>> {
+    // The dependency producer rewrites U32 words. The kernel still reads
+    // one U8 per live row; only the fixture's backing storage is padded.
+    let mut text = input.text.to_vec();
+    text.resize(text.len().next_multiple_of(4), 0);
+    vec![
+        input.tokens.iter().flat_map(|x| x.to_le_bytes()).collect(),
+        input
+            .token_batch
+            .iter()
+            .flat_map(|x| x.to_le_bytes())
+            .collect(),
+        input.q_start.iter().flat_map(|x| x.to_le_bytes()).collect(),
+        input.history.iter().flat_map(|x| x.to_le_bytes()).collect(),
+        text,
+        status.iter().flat_map(|x| x.to_le_bytes()).collect(),
+    ]
+}
+
+#[test]
+fn every_hash_fixture_rewrite_is_word_sized_without_changing_text_bytes() {
+    use model_deepseek41_contract::own_ops::engram_hash::HashInput;
+    for items in [1_usize, 8, 32] {
+        for width in 1..=6 {
+            let rows = items * width;
+            let text = (0..rows).map(|r| u8::from(r % 3 != 1)).collect::<Vec<_>>();
+            let images = replay_images(
+                HashInput {
+                    tokens: &vec![0; rows],
+                    token_batch: &vec![0; rows],
+                    q_start: &vec![0; items],
+                    history: &vec![-1; items * 3],
+                    text: &text,
+                },
+                &vec![0; rows],
+            );
+            for (operand, bytes) in images.iter().enumerate() {
+                assert!(
+                    !bytes.is_empty() && bytes.len().is_multiple_of(4),
+                    "items={items} width={width} operand={operand} has {} bytes",
+                    bytes.len()
+                );
+            }
+            assert_eq!(&images[4][..rows], text);
+            assert!(images[4][rows..].iter().all(|&byte| byte == 0));
+        }
+    }
+}
+
 #[test]
 fn engram_hash_gpu_matches_integer_oracle_under_poison_and_graph_replay() {
     kernel_harness::gpu_test(64 << 20, |session| {
@@ -208,14 +260,16 @@ fn engram_hash_gpu_matches_integer_oracle_under_poison_and_graph_replay() {
                     &mut expected_status,
                 )
                 .map_err(|e| e.to_string())?;
-                let images: Vec<Vec<u8>> = vec![
-                    tokens.iter().flat_map(|x| x.to_le_bytes()).collect(),
-                    batch.iter().flat_map(|x| x.to_le_bytes()).collect(),
-                    starts.iter().flat_map(|x| x.to_le_bytes()).collect(),
-                    history.iter().flat_map(|x| x.to_le_bytes()).collect(),
-                    text,
-                    seed.iter().flat_map(|x| x.to_le_bytes()).collect(),
-                ];
+                let images = replay_images(
+                    HashInput {
+                        tokens: &tokens,
+                        token_batch: &batch,
+                        q_start: &starts,
+                        history: &history,
+                        text: &text,
+                    },
+                    &seed,
+                );
                 let inputs = images
                     .iter()
                     .map(|bytes| upload(bytes))

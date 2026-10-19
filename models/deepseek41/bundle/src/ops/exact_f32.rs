@@ -3,8 +3,8 @@
 //! `DecodeOrder::ExactF32Operands`), each bound through
 //! `Backend::projection` at the served prefill capacity, which every
 //! phase's rows fit. The prepared op chooses the ordered split entry at
-//! rows <= 32 for decode and verification. Larger rows retain the prefill
-//! entry above the measured crossover. Split decode reads the weight-domain
+//! rows <= 256 for decode and verification. Larger rows retain the prefill
+//! entry. Split decode reads the weight-domain
 //! table cached at instance creation.
 //!
 //! Beside the head (`ops::head`) they are the vendor's F32 or plain

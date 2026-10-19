@@ -80,3 +80,7 @@ path = "examples/sm120/build_position_live.rs"
 [[example]]
 name = "build_f32_decode"
 path = "examples/sm120/build_f32_decode.rs"
+
+[[example]]
+name = "build_f32_split"
+path = "examples/sm120/build_f32_split.rs"

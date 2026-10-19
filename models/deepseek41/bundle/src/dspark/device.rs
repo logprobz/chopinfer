@@ -160,7 +160,10 @@ impl Device {
     }
 
     pub fn workspace(&self) -> u64 {
-        self.ops.workspace().max(self.prepared.workspace())
+        self.ops
+            .workspace()
+            .max(self.prepared.workspace())
+            .max(self.heads.workspace())
     }
 
     pub fn shared_bytes(&self) -> std::collections::BTreeMap<String, u32> {

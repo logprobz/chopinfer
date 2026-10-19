@@ -122,7 +122,7 @@ impl Heads {
                     exact_f32::query(width, g.shape.hidden),
                 )?,
                 exact_f32::USE,
-                every,
+                Need::rows(DECODE_BATCH * BLOCK_ROWS),
             )?
             .handle;
         let embedding = (0..shape.ranks())
@@ -228,7 +228,7 @@ impl Heads {
         })
     }
 
-    pub(crate) fn symbols(&self) -> impl Iterator<Item = &(String, u32)> {
+    fn infos(&self) -> impl Iterator<Item = &kernel_core::backend::OpInfo> {
         [
             self.collapse.info(),
             self.norm.info(),
@@ -244,7 +244,14 @@ impl Heads {
         .chain(self.reduce.iter().map(|op| op.info()))
         .chain(self.partial.iter().map(|op| op.info()))
         .chain(self.gather.iter().map(|op| op.info()))
-        .flat_map(|info| &info.symbols)
+    }
+
+    pub(crate) fn symbols(&self) -> impl Iterator<Item = &(String, u32)> {
+        self.infos().flat_map(|info| &info.symbols)
+    }
+
+    pub(crate) fn workspace(&self) -> u64 {
+        self.infos().map(|info| info.workspace).max().unwrap_or(0)
     }
 
     /// Per-rank persistent collective regions, zeroed once and kept

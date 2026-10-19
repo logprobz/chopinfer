@@ -45,6 +45,7 @@ pub mod f32_decode;
 mod f32_dense;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 pub mod f32_head;
+pub mod f32_split;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod hc;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
@@ -105,9 +106,9 @@ pub fn register_f32_projections(
     geometry: &model_deepseek41_contract::geometry::Geometry,
     ranks: u32,
 ) -> Result<Sm120, String> {
-    let entries = f32_decode::entries(geometry, ranks)?;
+    let entries = f32_split::entries(geometry, ranks)?;
     let cubins = [
-        f32_decode::cubin_name(geometry),
+        f32_split::cubin_name(geometry),
         f32_dense::cubin_name(geometry),
         f32_head::cubin_name(geometry),
         dspark_router::cubin_name(geometry),

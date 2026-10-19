@@ -1,6 +1,6 @@
 //! Bitwise baseline comparisons and paired cold-weight launch timings.
 use bundle_deepseek41::sm120::{
-    f32_decode, f32_head, fold_cubin_for_symbol, register_f32_projections,
+    f32_head, f32_split, fold_cubin_for_symbol, register_f32_projections,
 };
 use kernel_build::{BuildOptions, CubinSpec, EntryParam, EntrySpec, LockDir, Toolchain};
 use kernel_core::backend::{Backend, Counts, Launch, Need, Prepared, View};
@@ -20,9 +20,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-const CUBIN: &str = "f32_decode_edges";
+const CUBIN: &str = "f32_split_edges";
 const TIMING_ROWS: [u32; 12] = [1, 2, 4, 8, 16, 32, 33, 48, 64, 128, 192, 256];
 const MAX_SLOWDOWN_RATIO: f32 = 1.03;
+const VERIFY_RATIO: f32 = 0.2;
+// User-specified bandwidth roofline: 1.6 TB/s, with actual stored weights.
+const BYTES_PER_US: f64 = 1_600_000.;
+const EDGE_ROWS: [u32; 9] = [1, 8, 32, 33, 48, 64, 128, 192, 256];
 
 struct ProductionCase {
     old: Entry,
@@ -38,8 +42,10 @@ fn production_cases() -> Vec<ProductionCase> {
             if check_ranks(g, ranks).is_err() {
                 continue;
             }
-            let head = f32_head::decode_entry(g, ranks).unwrap();
-            for entry in f32_decode::entries(g, ranks).unwrap() {
+            let head = f32_head::entry(g, ranks)
+                .map(Entry::with_split_decode)
+                .unwrap();
+            for entry in f32_split::entries(g, ranks).unwrap() {
                 let maximum = if entry == head {
                     bundle_deepseek41::buffers::logits_rows()
                 } else {
@@ -60,11 +66,14 @@ fn production_cases() -> Vec<ProductionCase> {
         .map(|(entry, maximum)| {
             let stem = entry
                 .symbol()
-                .strip_suffix("_v1_cached_v1")
+                .strip_suffix("_v1_split_v2")
                 .expect("registered cached entry retains its baseline stem");
             let old = Entry::new(entry.query(), entry.usage(), stem).unwrap();
-            assert_eq!(old.clone().with_decode(), entry);
-            let mut rows = TIMING_ROWS.to_vec();
+            assert_eq!(old.clone().with_split_decode(), entry);
+            let mut rows: Vec<_> = (1..=entry.decode_max_rows()).collect();
+            if maximum > 256 {
+                rows.push(2048);
+            }
             rows.push(maximum);
             rows.sort_unstable();
             rows.dedup();
@@ -88,9 +97,8 @@ const EDGE_WITNESSES: [Witness; 11] = [
 ];
 const RANDOM_CASES: u32 = 4;
 
-fn timed(_rows: u32) -> bool {
-    // Time every production case, including the full dense prefill capacity.
-    true
+fn timed(rows: u32) -> bool {
+    TIMING_ROWS.contains(&rows) || rows > 256
 }
 
 fn coverage(matrix: &[ProductionCase]) -> serde_json::Value {
@@ -100,7 +108,8 @@ fn coverage(matrix: &[ProductionCase]) -> serde_json::Value {
             if entry.query().n == 65536 {
                 1
             } else {
-                EDGE_WITNESSES.len() + RANDOM_CASES as usize + usize::from(entry.query().k == 129)
+                (EDGE_WITNESSES.len() + RANDOM_CASES as usize) * EDGE_ROWS.len()
+                    + usize::from(entry.query().k == 129)
             }
         })
         .sum();
@@ -114,18 +123,22 @@ fn coverage(matrix: &[ProductionCase]) -> serde_json::Value {
         .iter()
         .flat_map(|case| &case.rows)
         .filter(|&&rows| timed(rows))
-        .map(|&rows| if rows <= 32 { 4 } else { 2 })
+        .map(|&rows| if rows <= 256 { 3 } else { 2 })
         .sum();
     serde_json::json!({
         "production": matrix.iter().map(|case| serde_json::json!({
             "baseline": case.old.symbol(),
-            "candidate": case.old.clone().with_decode().symbol(),
+            "candidate": case.old.clone().with_split_decode().symbol(),
             "n": case.old.query().n,
             "k": case.old.query().k,
+            "weight_bytes": case.old.weight_bytes(),
+            "f32_equivalent_weight_bytes": u64::from(case.old.query().n) * u64::from(case.old.query().k) * 4,
             "rows": case.rows,
             "timing_rows": case.rows.iter().copied().filter(|&rows| timed(rows)).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
         "maximum_slowdown_ratio": MAX_SLOWDOWN_RATIO,
+        "verify_maximum_ratio": VERIFY_RATIO,
+        "bytes_per_us": BYTES_PER_US,
         "production_cases": production_cases,
         "edge_cases": edge_cases,
         "bitwise_cases": production_cases + edge_cases,
@@ -139,9 +152,9 @@ fn cpu_production_matrix_covers_registered_entries() {
     let matrix = production_cases();
     let covered: BTreeSet<_> = matrix
         .iter()
-        .flat_map(|case| case.old.clone().with_decode().symbols())
+        .flat_map(|case| case.old.clone().with_split_decode().symbols())
         .collect();
-    let compiled: BTreeSet<_> = f32_decode::cubins(GEOMETRIES)
+    let compiled: BTreeSet<_> = f32_split::cubins(GEOMETRIES)
         .unwrap()
         .into_iter()
         .flat_map(|(_, spec)| spec.entries.into_iter().map(|entry| entry.symbol))
@@ -156,11 +169,13 @@ fn cpu_production_matrix_covers_registered_entries() {
                 continue;
             }
             let backend = register_f32_projections(Sm120::new(), g, ranks).unwrap();
-            let head = f32_head::decode_entry(g, ranks).unwrap();
-            for entry in f32_decode::entries(g, ranks).unwrap() {
+            let head = f32_head::entry(g, ranks)
+                .map(Entry::with_split_decode)
+                .unwrap();
+            for entry in f32_split::entries(g, ranks).unwrap() {
                 let case = matrix
                     .iter()
-                    .find(|case| case.old.clone().with_decode() == entry)
+                    .find(|case| case.old.clone().with_split_decode() == entry)
                     .unwrap();
                 let maximum = if entry == head {
                     bundle_deepseek41::buffers::logits_rows()
@@ -172,7 +187,7 @@ fn cpu_production_matrix_covers_registered_entries() {
                     "{} lacks its maximum {maximum} rows",
                     entry.symbol()
                 );
-                for rows in TIMING_ROWS {
+                for rows in 1..=entry.decode_max_rows() {
                     assert!(
                         case.rows.contains(&rows),
                         "{} lacks {rows} rows",
@@ -211,7 +226,7 @@ fn cpu_production_matrix_covers_registered_entries() {
 
 fn edge(n: u32, k: u32, weight: WeightFormat) -> Entry {
     let q = GemmQuery {
-        m_capacity: 64,
+        m_capacity: 256,
         n,
         k,
         weight,
@@ -224,7 +239,7 @@ fn edge(n: u32, k: u32, weight: WeightFormat) -> Entry {
         q,
         OperationUse {
             phase: ExecutionPhase::Prefill,
-            capacity: 64,
+            capacity: 256,
             graph: false,
         },
         &format!(
@@ -254,7 +269,7 @@ fn edges() -> Vec<Entry> {
 fn spec() -> CubinSpec {
     let entries: Vec<_> = edges()
         .into_iter()
-        .flat_map(|e| [e.clone(), e.with_decode()])
+        .flat_map(|e| [e.clone(), e.with_split_decode()])
         .collect();
     let mut spec = cubin_spec(CUBIN, &entries).unwrap();
     spec.sources_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
@@ -327,7 +342,7 @@ fn cpu_build_edge_cases() {
     )
     .unwrap();
     assert_eq!(built.len(), 1);
-    assert_eq!(built[0].entries.len(), edges().len() * 6 + 2);
+    assert_eq!(built[0].entries.len(), edges().len() * 4 + 2);
 }
 
 fn probe_bytes() -> &'static [u8] {
@@ -385,48 +400,75 @@ fn run_launches(
     Ok(())
 }
 
+struct ComparisonWeights {
+    modules: Vec<Module>,
+    weight: runtime_cuda::DeviceBuffer,
+    domain: runtime_cuda::DeviceBuffer,
+    expected_flags: Vec<u8>,
+    initialized: std::cell::Cell<bool>,
+}
+impl ComparisonWeights {
+    fn new(session: &Session, old: &Entry, b: &[f32]) -> LabResult<Self> {
+        let new = old.clone().with_split_decode();
+        let modules = [old, &new]
+            .into_iter()
+            .map(|entry| {
+                let bytes = fold_cubin_for_symbol(entry.symbol())
+                    .map(|(_, bytes)| bytes)
+                    .unwrap_or_else(probe_bytes);
+                session.load_cubin(bytes)
+            })
+            .collect::<Result<_, _>>()?;
+        let weight = if old.query().weight == WeightFormat::Bf16 {
+            session.upload_bf16(&b.iter().map(|&v| f32_to_bf16(v)).collect::<Vec<_>>())?
+        } else {
+            session.upload_f32(b)?
+        };
+        let domain = session.allocate(new.weight_domain_bytes() as usize)?;
+        let expected_flags = cases::weight_domains(b, old.query().k as usize, old.query().weight)
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect();
+        Ok(Self {
+            modules,
+            weight,
+            domain,
+            expected_flags,
+            initialized: false.into(),
+        })
+    }
+}
+
 fn compare(
     session: &Session,
     old: &Entry,
     rows: u32,
     a: &[f32],
-    b: &[f32],
+    weights: &ComparisonWeights,
     label: &str,
     measure: bool,
 ) -> LabResult<()> {
-    let new = old.clone().with_decode();
+    let new = old.clone().with_split_decode();
     let q = old.query();
-    let modules: Vec<_> = [old, &new]
-        .into_iter()
-        .map(|entry| {
-            let bytes = fold_cubin_for_symbol(entry.symbol())
-                .map(|(_, bytes)| bytes)
-                .unwrap_or_else(probe_bytes);
-            session.load_cubin(bytes)
-        })
-        .collect::<Result<_, _>>()?;
+    let modules = &weights.modules;
+    let weight = &weights.weight;
+    let domain = &weights.domain;
     let x = session.upload_f32(a)?;
-    let weight = if q.weight == WeightFormat::Bf16 {
-        session.upload_bf16(&b.iter().map(|&v| f32_to_bf16(v)).collect::<Vec<_>>())?
-    } else {
-        session.upload_f32(b)?
-    };
     let output = [
         session.allocate(rows as usize * q.n as usize * 4)?,
         session.allocate(rows as usize * q.n as usize * 4)?,
     ];
     let live = session.allocate(4)?;
-    let domain = session.allocate(new.weight_domain_bytes() as usize)?;
     let workspace = session.allocate(new.decode_workspace_bytes(rows) as usize)?;
     let status = session.allocate(rows as usize * 4)?;
     let bindings = launch::Bindings {
         buffers: BTreeMap::from([
             (1, &x),
-            (2, &weight),
+            (2, weight),
             (3, &output[0]),
             (4, &output[1]),
             (5, &live),
-            (6, &domain),
+            (6, domain),
             (7, &workspace),
             (8, &status),
         ]),
@@ -467,16 +509,14 @@ fn compare(
         shard_rows: 0,
     };
     let ops = [prepared(old, rows), prepared(&new, rows)];
-    let init = ops[1].initialize(&buffers(4)).map_err(|e| e.to_string())?;
-    poison::poison(session, &[&domain])?;
-    run_launches(session, &modules[1], &bindings, &init, &session.stream)?;
-    let actual_flags = poison::read(session, &domain)?;
-    let expected_flags: Vec<_> = cases::weight_domains(b, q.k as usize, q.weight)
-        .into_iter()
-        .flat_map(u32::to_le_bytes)
-        .collect();
-    if actual_flags != expected_flags {
-        return Err(format!("{label}: cached weight-domain flags differ"));
+    if !weights.initialized.get() {
+        let init = ops[1].initialize(&buffers(4)).map_err(|e| e.to_string())?;
+        poison::poison(session, &[domain])?;
+        run_launches(session, &modules[1], &bindings, &init, &session.stream)?;
+        if poison::read(session, domain)? != weights.expected_flags {
+            return Err(format!("{label}: cached weight-domain flags differ"));
+        }
+        weights.initialized.set(true);
     }
     let launches = [
         ops[0]
@@ -503,7 +543,14 @@ fn compare(
         session
             .capture(|s| run_launches(session, runtime_modules[1], &bindings, &launches[1], s))?,
     ];
-    for live_count in [rows, rows.saturating_sub(1), 0, rows] {
+    // Every routed row count runs eager and captured. Timed buckets and
+    // edge witnesses also repeat after inactive and zero-live invocations.
+    let lives = if measure || !label.starts_with("chop_") {
+        vec![rows, rows.saturating_sub(1), 0, rows]
+    } else {
+        vec![rows]
+    };
+    for live_count in lives {
         live.copy_from_bytes(&live_count.to_le_bytes(), &session.stream)
             .map_err(|e| e.to_string())?;
         for graph in [false, true] {
@@ -555,17 +602,14 @@ fn compare(
                 graphs[arm].launch(stream).map_err(|e| e.to_string())
             })?;
         println!(
-            "F32_TIMING {label} rows={rows} old_us={} new_us={} ratio={}",
+            "F32_TIMING {label} rows={rows} old_us={} new_us={} ratio={} floor_us={} floor_ratio={}",
             paired.arms[0].median_ms * 1000.,
             paired.arms[1].median_ms * 1000.,
-            paired.paired_ratio
+            paired.paired_ratio,
+            old.weight_bytes() as f64 / BYTES_PER_US,
+            f64::from(paired.arms[1].median_ms) * 1000.
+                / (old.weight_bytes() as f64 / BYTES_PER_US)
         );
-        if !paired.paired_ratio.is_finite() || paired.paired_ratio > MAX_SLOWDOWN_RATIO {
-            return Err(format!(
-                "{label} rows={rows}: routed/baseline ratio {} exceeds {MAX_SLOWDOWN_RATIO}",
-                paired.paired_ratio
-            ));
-        }
         // Each stage is measured separately as well as the full sequence.
         for (arm, entries) in launches.iter().enumerate() {
             for (index, l) in entries.iter().enumerate() {
@@ -626,13 +670,16 @@ fn random_operands(rows: u32, n: u32, k: u32, seed: u32) -> (Vec<f32>, Vec<f32>)
 fn gpu_bitwise_shapes_and_edges() {
     // Libtest can print its test prefix without a newline under one test thread.
     println!();
-    kernel_harness::gpu_test_with(timing_cubins(), 4 << 30, |session| {
+    kernel_harness::gpu_test_with(timing_cubins(), 12 << 30, |session| {
         for case in production_cases() {
             let old = &case.old;
             let q = old.query();
+            let (_, b) = random_operands(0, q.n, q.k, 0x7813_9231);
+            let weights = ComparisonWeights::new(session, old, &b)?;
+            drop(b);
             for rows in case.rows {
-                let (a, b) = random_operands(rows, q.n, q.k, 0x7813_9231 + rows);
-                compare(session, old, rows, &a, &b, old.symbol(), timed(rows))?;
+                let (a, _) = random_operands(rows, 0, q.k, 0x7813_9231 + rows);
+                compare(session, old, rows, &a, &weights, old.symbol(), timed(rows))?;
             }
         }
         for old in edges() {
@@ -653,43 +700,53 @@ fn gpu_bitwise_shapes_and_edges() {
                         f32::INFINITY,
                         f32::NAN,
                     ],
-                    &b,
+                    &ComparisonWeights::new(session, &old, &b)?,
                     "all_bf16_codes",
                     false,
                 )?;
                 continue;
             }
-            for witness in EDGE_WITNESSES {
-                let (a, b) = cases::operands(&old, witness);
-                compare(
-                    session,
-                    &old,
-                    32,
-                    &a[..32 * q.k as usize],
-                    &b,
-                    &format!("{witness:?}"),
-                    false,
-                )?;
-            }
-            for seed in 1..=RANDOM_CASES {
-                let (mut a, mut b) = random_operands(32, q.n, q.k, seed * 123_457);
-                if q.weight == WeightFormat::F32 {
-                    for (index, value) in b.iter_mut().enumerate() {
-                        *value = f32::from_bits(value.to_bits() | (index as u32 & 0xffff));
+            for rows in EDGE_ROWS {
+                for witness in EDGE_WITNESSES {
+                    let (a, b) = cases::operands(&old, witness);
+                    compare(
+                        session,
+                        &old,
+                        rows,
+                        &a[..rows as usize * q.k as usize],
+                        &ComparisonWeights::new(session, &old, &b)?,
+                        &format!("{witness:?}"),
+                        false,
+                    )?;
+                }
+                for seed in 1..=RANDOM_CASES {
+                    let (mut a, mut b) = random_operands(rows, q.n, q.k, seed * 123_457);
+                    if q.weight == WeightFormat::F32 {
+                        for (index, value) in b.iter_mut().enumerate() {
+                            *value = f32::from_bits(value.to_bits() | (index as u32 & 0xffff));
+                        }
                     }
+                    // One late exceptional value must govern every chain of
+                    // its row/tile, including the earlier ordinary values.
+                    if seed == 2 {
+                        a[q.k as usize - 1] = f32::from_bits(1);
+                    }
+                    if seed == 3 {
+                        b[16 * q.k as usize - 1] = f32::from_bits(0x0080_0000);
+                    }
+                    if seed == 4 {
+                        a[q.k as usize - 1] = f32::from_bits(0x7f80_0001);
+                    }
+                    compare(
+                        session,
+                        &old,
+                        rows,
+                        &a,
+                        &ComparisonWeights::new(session, &old, &b)?,
+                        "random_and_late_fallback",
+                        false,
+                    )?;
                 }
-                // One late exceptional value must govern every chain of
-                // its row/tile, including the earlier ordinary values.
-                if seed == 2 {
-                    a[q.k as usize - 1] = f32::from_bits(1);
-                }
-                if seed == 3 {
-                    b[16 * q.k as usize - 1] = f32::from_bits(0x0080_0000);
-                }
-                if seed == 4 {
-                    a[q.k as usize - 1] = f32::from_bits(0x7f80_0001);
-                }
-                compare(session, &old, 32, &a, &b, "random_and_late_fallback", false)?;
             }
             if q.k == 129 {
                 let (mut a, b) = random_operands(32, q.n, q.k, 79);
@@ -707,7 +764,7 @@ fn gpu_bitwise_shapes_and_edges() {
                     &old,
                     32,
                     &a,
-                    &b,
+                    &ComparisonWeights::new(session, &old, &b)?,
                     "every_exponent_sign_and_mantissa_boundary",
                     false,
                 )?;

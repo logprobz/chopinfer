@@ -267,6 +267,12 @@ fn registered_heads_prepare_every_row_count() {
                 .unwrap()
                 .handle;
             let view = |handle, bytes| View { handle, bytes };
+            let domain_bytes = op.info().bytes_of("scratch.weight_domain");
+            let selected = if domain_bytes.is_some() {
+                entry.clone().with_decode()
+            } else {
+                entry.clone()
+            };
             let roles = ProjectionBuffers {
                 activation: view(1, u64::from(rows) * u64::from(q.k) * 4),
                 live_rows: view(2, 4),
@@ -279,19 +285,30 @@ fn registered_heads_prepare_every_row_count() {
                 },
                 activation_global: None,
                 routing: None,
-                scratch: scratch(|| view(5, 16)),
+                scratch: ProjectionScratch {
+                    weight_domain: domain_bytes.map(|bytes| view(6, bytes)),
+                    ..scratch(|| view(5, 16))
+                },
                 row_offset: 0,
                 shard_rows: 0,
             };
             let launches = op
-                .launches(&roles, View::EMPTY, Counts::rows(rows))
+                .launches(&roles, view(7, op.info().workspace), Counts::rows(rows))
                 .unwrap();
-            assert_eq!(launches.len(), 1);
-            assert_eq!(launches[0].symbol, entry.symbol());
-            assert_eq!(
-                launches[0].plan.grid,
-                [q.n.div_ceil(16), rows.div_ceil(8), 1]
-            );
+            if domain_bytes.is_some() && rows <= 32 {
+                assert_eq!(launches.len(), 3);
+                assert_eq!(launches[0].symbol, selected.stage_symbol("_rows"));
+                assert_eq!(launches[1].symbol, selected.stage_symbol("_decode"));
+                assert_eq!(launches[2].symbol, selected.stage_symbol("_reduce"));
+                assert_eq!(launches[1].plan, selected.decode_plan(rows).unwrap());
+            } else {
+                assert_eq!(launches.len(), 1);
+                assert_eq!(launches[0].symbol, selected.symbol());
+                assert_eq!(
+                    launches[0].plan.grid,
+                    [q.n.div_ceil(16), rows.div_ceil(8), 1]
+                );
+            }
         }
         let report = kit::conform(&backend, &ModelModules, None, &[required(entry)]).unwrap();
         assert_eq!(report.prepared().len(), 1);

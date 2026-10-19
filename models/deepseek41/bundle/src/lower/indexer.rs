@@ -46,7 +46,7 @@ impl Lowering<'_> {
             live_rows: self.inputs.live_tokens,
             output: rows(scratch.index_prepared, phase.rows()),
             workspace: self.buffers.workspace,
-            status: rows(scratch.row_status, phase.rows()),
+            status: self.carried(phase, scratch.row_status)?,
         };
         ops.prepare_query(phase.rows(), compressor.table_rows(), &views)
             .map(Some)
@@ -90,18 +90,41 @@ impl Lowering<'_> {
         let top_k = g.shape.indexer.top_k;
         let reindex = indexer::block_selection(g, layer, REINDEX_BLOCK).is_some();
         let size = if reindex { REINDEX_BLOCK } else { FULL_BLOCK };
-        let status = index_status(scratch.index_status, source, phase.rows());
-        let selected = index_selected(scratch.index_selected, source, phase.rows(), top_k);
+        let origin = self.prefill_row_origin.filter(|_| phase.prefill());
+        let status = self.carried(
+            phase,
+            index_status(scratch.index_status, source, scratch_rows()),
+        )?;
+        let selected = self.carried(
+            phase,
+            index_selected(scratch.index_selected, source, scratch_rows(), top_k),
+        )?;
         let mut launches = Vec::new();
-        for (index, first) in (0..phase.rows()).step_by(size as usize).enumerate() {
+        for first in (0..phase.rows()).step_by(size as usize) {
             let n = size.min(phase.rows() - first);
-            let live_rows = block_live(scratch.block_live, size, index as u32);
+            let global_first = origin
+                .unwrap_or(0)
+                .checked_add(first)
+                .ok_or("index row origin overflows")?;
+            let live_rows = if origin.is_some() && reindex {
+                // A micro-batch is at most one reindex block. Its stable
+                // count differs from the full chunk's block count.
+                if phase.rows() > REINDEX_BLOCK {
+                    return Err("prefill part exceeds one reindex block".into());
+                }
+                self.inputs.live_tokens
+            } else {
+                if !global_first.is_multiple_of(size) {
+                    return Err("prefill row origin splits an index block".into());
+                }
+                block_live(scratch.block_live, size, global_first / size)
+            };
             let status = slice(status, 4, first, n);
             let candidates = CandidateViews {
-                ids: block(scratch.candidate_ids, first, n),
-                row_tags: block(scratch.candidate_tags, first, n),
-                visible_positions: block(scratch.candidate_visible, first, n),
-                status: block(scratch.candidate_status, first, n),
+                ids: block(scratch.candidate_ids, global_first, n),
+                row_tags: block(scratch.candidate_tags, global_first, n),
+                visible_positions: block(scratch.candidate_visible, global_first, n),
+                status: block(scratch.candidate_status, global_first, n),
             };
             let views = SelectViews {
                 workspace: self.buffers.workspace,
@@ -115,7 +138,7 @@ impl Lowering<'_> {
                 status,
                 output: slice(selected, u64::from(top_k) * 4, first, n),
             };
-            let row_tags = block(scratch.row_tags, first, n);
+            let row_tags = block(scratch.row_tags, global_first, n);
             if reindex {
                 launches.extend(
                     ops.reindex(ratio, n, width, &views, row_tags, candidates)
@@ -130,7 +153,7 @@ impl Lowering<'_> {
                         n,
                         width,
                         scratch.index_scores,
-                        block(scratch.index_visible, first, n),
+                        block(scratch.index_visible, global_first, n),
                         row_tags,
                         status,
                         live_rows,

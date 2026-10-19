@@ -320,11 +320,9 @@ fn run(shape: Shape, budget: u32, kept: Option<u32>) -> ResultCase {
             .filter(|(_, line)| line.starts_with("read "))
             .collect::<Vec<_>>();
         assert_eq!(reads.len(), 2);
-        assert!(
-            reads
-                .iter()
-                .all(|(i, line)| line.as_str() == "read 20" && *i < gathers[0])
-        );
+        assert!(reads.iter().all(|(_, line)| line.as_str() == "read 20"));
+        assert!(reads[0].0 < gathers[0]);
+        assert!(reads[1].0 > target);
         assert_eq!(
             diagnostic[0].confidence_bits,
             [
@@ -430,4 +428,124 @@ fn restore_and_reuse_replace_the_engram_history() {
             ]
         );
     }
+}
+
+#[test]
+fn deferred_adapter_keeps_confidence_bits_and_commits_only_retained_text_history() {
+    struct DeviceProgram {
+        expected_history: Vec<i64>,
+    }
+    const BITS: [u32; 5] = [0x7fc00123, 0x80000000, 1, 0x7f800000, 0xff800000];
+    impl Program for DeviceProgram {
+        fn project_committed(&mut self, _: Projection) -> Result<(), String> {
+            Ok(())
+        }
+        fn draft(&mut self, _: &[DraftInput]) -> Result<(), String> {
+            Ok(())
+        }
+        fn target(&mut self, _: &[TargetRows]) -> Result<(), String> {
+            Err("unexpected host target".into())
+        }
+        fn commit_features(&mut self, _: &CommitPlan) -> Result<(), String> {
+            Ok(())
+        }
+        fn device_target(
+            &mut self,
+            inputs: &[Input],
+            drafts: &[DraftInput],
+            history: &[i64],
+            text: &[u8],
+        ) -> Result<Option<DeviceTarget>, String> {
+            assert_eq!(inputs.len(), 1);
+            assert_eq!(drafts.len(), 1);
+            assert_eq!(history, self.expected_history);
+            assert_eq!(text, [0, 1, 1]);
+            Ok(Some(DeviceTarget {
+                ids: vec![[10, 11, 12, 13, 14]],
+                confidence_bits: vec![BITS],
+            }))
+        }
+    }
+    let g = &model_deepseek41_contract::geometry::FLASH;
+    let hash = HashTables::of(g).unwrap();
+    let past = vec![
+        hash.compress(1, true).unwrap(),
+        hash.compress(2, true).unwrap(),
+    ];
+    let mut program = DeviceProgram {
+        expected_history: [vec![-1], past.clone()].concat(),
+    };
+    let table = HostServicesTableV1::new(std::rc::Rc::new(
+        runtime_bundle_abi::UnsupportedHostServicesBackendV1,
+    ));
+    let services = table.caller();
+    // No transfer service or valid device handle exists: any hidden fallback
+    // readback makes this test fail instead of returning cached diagnostics.
+    let empty = Span::new(
+        runtime_bundle_abi::BundleDeviceBufferHandleV1::from_raw(0),
+        0,
+        0,
+    );
+    let readback = Readback {
+        stream: BundleStreamHandleV1::from_raw(0),
+        draft_ids: empty,
+        confidence: empty,
+    };
+    let mut staging = Staging::new(g).unwrap();
+    staging.restore(7, &[1, 2], None).unwrap();
+    let config = Config {
+        slots: 1,
+        stages: 3,
+        window: 4,
+        max_prefill_rows: 16,
+        context_tokens: 128,
+        position_capacity: 128,
+    };
+    let mut state = State::new(config).unwrap();
+    state
+        .restore(
+            7,
+            0,
+            crate::dspark::state::Snapshot {
+                start: 0,
+                end: 2,
+                window: 4,
+                stages: 3,
+            },
+        )
+        .unwrap();
+    let mut runtime = Runtime::new(state, g.shape.vocab, 4).unwrap();
+    let text = BTreeMap::from([(7, vec![false])]);
+    let mut adapter = Adapter {
+        program: &mut program,
+        services,
+        staging: &mut staging,
+        ranks: &[],
+        readback: &readback,
+        text: &text,
+        diagnostic: Context {
+            instance_id: 1,
+            step_id: 1,
+        },
+    };
+    runtime
+        .execute(
+            &mut adapter,
+            &[Input {
+                rows: Rows {
+                    request: 7,
+                    slot: 0,
+                    start: 2,
+                    kind: Kind::Decode { drafts: 2 },
+                },
+                tokens: vec![4],
+            }],
+        )
+        .unwrap();
+    assert_eq!(adapter.staging.rows.history(7), past);
+    assert!(adapter.staging.confidence.is_none());
+    let records = runtime.commit(&mut adapter, &[(7, 1)]).unwrap();
+    assert_eq!(records[0].confidence_bits, BITS);
+    assert_eq!(adapter.staging.rows.history(7), [past, vec![-1]].concat());
+    assert!(adapter.staging.pending.is_empty());
 }

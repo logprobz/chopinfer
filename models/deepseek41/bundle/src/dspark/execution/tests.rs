@@ -16,6 +16,7 @@ struct FakeHost {
     records: Vec<Diagnostic>,
     fail: Option<&'static str>,
     bad_tail_id: bool,
+    device_target: bool,
     confidence_override: Option<[f32; WIDTH]>,
 }
 
@@ -86,6 +87,42 @@ impl Host for FakeHost {
             self.logits.push(logits);
         }
         Ok(())
+    }
+
+    fn device_target(
+        &mut self,
+        inputs: &[Input],
+        drafts: &[DraftInput],
+    ) -> Result<Option<Vec<[u32; WIDTH]>>, Self::Error> {
+        if !self.device_target {
+            return Ok(None);
+        }
+        self.event("device_hash_gather", drafts.len().to_string())?;
+        let mut position = 0;
+        let target = inputs
+            .iter()
+            .map(|input| {
+                let mut tokens = input.tokens.clone();
+                if input.rows.kind.drafts() > 0 {
+                    tokens.extend_from_slice(
+                        &self.ids[position][..input.rows.kind.drafts() as usize],
+                    );
+                    position += 1;
+                }
+                TargetRows {
+                    rows: input.rows,
+                    tokens,
+                }
+            })
+            .collect::<Vec<_>>();
+        self.target_rows = target.clone();
+        self.target(&target)?;
+        self.event("device_results", drafts.len().to_string())?;
+        let mut ids = self.ids.clone();
+        if self.bad_tail_id {
+            ids[0][WIDTH - 1] = u32::MAX;
+        }
+        Ok(Some(ids))
     }
 
     fn read_draft_ids(&mut self, ids: &mut [[u32; WIDTH]]) -> Result<(), Self::Error> {
@@ -643,4 +680,63 @@ fn host_failures_poison_the_instance_without_publishing_target_rows() {
         assert_eq!(host.committed[&41], vec![1, 2, 3]);
         assert_eq!(runtime.state().context(41).unwrap().end, 3);
     }
+}
+
+#[test]
+fn deferred_target_matches_host_rows_commits_and_diagnostics_at_every_budget_and_depth() {
+    for budget in 1..=BLOCK_ROWS {
+        for kept in 1..=budget + 1 {
+            let (mut eager, mut a) = setup();
+            let (mut deferred, mut b) = setup();
+            b.device_target = true;
+            let expected = eager.execute(&mut a, &[input(budget)]).unwrap();
+            let actual = deferred.execute(&mut b, &[input(budget)]).unwrap();
+            assert_eq!(actual, expected);
+            assert_eq!(b.target_rows, a.target_rows);
+            assert_eq!(b.target_prefixes, a.target_prefixes);
+            assert!(!b.journal.iter().any(|line| line.starts_with("read_ids ")
+                || line.starts_with("hash_gather ")
+                || line.starts_with("upload ")));
+            let at = |prefix: &str| {
+                b.journal
+                    .iter()
+                    .position(|line| line.starts_with(prefix))
+                    .unwrap()
+            };
+            assert!(at("target ") < at("device_results "));
+            assert!(at("device_results ") < at("read_confidence "));
+            assert_eq!(
+                deferred.commit(&mut b, &[(41, kept)]).unwrap(),
+                eager.commit(&mut a, &[(41, kept)]).unwrap()
+            );
+            assert_eq!(b.committed, a.committed);
+            assert_eq!(
+                deferred.state().context(41).unwrap().end,
+                eager.state().context(41).unwrap().end
+            );
+        }
+    }
+}
+
+#[test]
+fn deferred_failure_poison_and_cancellation_keep_committed_history() {
+    for failure in ["device_hash_gather", "target", "device_results"] {
+        let (mut runtime, mut host) = setup();
+        host.device_target = true;
+        host.fail = Some(failure);
+        assert!(runtime.execute(&mut host, &[input(5)]).is_err());
+        assert!(runtime.state().is_poisoned());
+        assert_eq!(host.committed[&41], [1, 2, 3]);
+    }
+    let (mut runtime, mut host) = setup();
+    host.device_target = true;
+    runtime.execute(&mut host, &[input(2)]).unwrap();
+    let diagnostics = runtime.cancel(&mut host).unwrap();
+    assert_eq!(diagnostics[0].outcomes[..2], [Outcome::Cancelled; 2]);
+    assert_eq!(host.committed[&41], [1, 2, 3]);
+    let (mut runtime, mut host) = setup();
+    host.device_target = true;
+    host.bad_tail_id = true;
+    assert!(runtime.execute(&mut host, &[input(1)]).is_err());
+    assert!(runtime.state().is_poisoned());
 }

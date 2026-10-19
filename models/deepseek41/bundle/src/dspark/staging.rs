@@ -11,9 +11,16 @@ use std::collections::BTreeMap;
 
 use super::calibration::{self, Context};
 use super::device::{DECODE_BASE, slice};
-use super::execution::{Diagnostic, DraftInput, Host, TargetRows};
+use super::execution::{Diagnostic, DraftInput, Host, Input, TargetRows};
 use super::state::{BLOCK_ROWS, CommitPlan, Kind, Projection};
 use crate::engram_rows::{self, Destination, EngramRows, Hashed, Mapped, Step, Table};
+
+/// Bounded diagnostics returned after device target execution. Confidence
+/// stays as raw words so NaN payloads and signed zero survive unchanged.
+pub struct DeviceTarget {
+    pub ids: Vec<[u32; BLOCK_ROWS as usize]>,
+    pub confidence_bits: Vec<[u32; BLOCK_ROWS as usize]>,
+}
 
 /// The prepared program's device work. Projection callbacks may enqueue work;
 /// target, prefix-capture and commit boundaries validate saved status before
@@ -22,6 +29,18 @@ pub trait Program {
     fn project_committed(&mut self, pass: Projection) -> Result<(), String>;
     fn draft(&mut self, inputs: &[DraftInput]) -> Result<(), String>;
     fn target(&mut self, rows: &[TargetRows]) -> Result<(), String>;
+    /// Device-resident decode target, with committed lookback and text masks.
+    /// None is a refusal before work; successful results follow verification.
+    fn device_target(
+        &mut self,
+        _inputs: &[Input],
+        _drafts: &[DraftInput],
+        _history: &[i64],
+        _text: &[u8],
+    ) -> Result<Option<DeviceTarget>, String> {
+        Ok(None)
+    }
+
     fn commit_features(&mut self, plan: &CommitPlan) -> Result<(), String>;
 }
 
@@ -58,9 +77,11 @@ impl Pending {
 pub struct Staging {
     rows: EngramRows,
     columns: usize,
+    lookback: usize,
     layers: usize,
     head_dim: u64,
     pending: Vec<Pending>,
+    confidence: Option<Vec<[u32; BLOCK_ROWS as usize]>>,
 }
 
 pub struct Gathered {
@@ -84,10 +105,12 @@ impl Staging {
         let hash = HashTables::of(g)?;
         Ok(Self {
             columns: hash.columns(),
+            lookback: hash.engram().max_ngram as usize - 1,
             layers: g.shape.engram.layers.len(),
             head_dim: u64::from(g.shape.engram.head_dim),
             rows: EngramRows::new(hash),
             pending: Vec::new(),
+            confidence: None,
         })
     }
 
@@ -110,17 +133,13 @@ impl Staging {
     /// provisional rows; explicit clearing also releases their host memory.
     pub fn cancel(&mut self) {
         self.pending.clear();
+        self.confidence = None;
     }
 
-    fn hash(
-        &mut self,
+    fn pending_rows(
         rows: &[TargetRows],
         text: &BTreeMap<u64, Vec<bool>>,
-        ranks: &[Rank],
-    ) -> Result<Gathered, String> {
-        if ranks.is_empty() {
-            return Err("DSpark Engram staging needs every rank".into());
-        }
+    ) -> Result<Vec<Pending>, String> {
         let mut pending = Vec::with_capacity(rows.len());
         for row in rows {
             let mask = match text.get(&row.rows.request) {
@@ -145,6 +164,19 @@ impl Staging {
                 text: mask,
             });
         }
+        Ok(pending)
+    }
+
+    fn hash(
+        &mut self,
+        rows: &[TargetRows],
+        text: &BTreeMap<u64, Vec<bool>>,
+        ranks: &[Rank],
+    ) -> Result<Gathered, String> {
+        if ranks.is_empty() {
+            return Err("DSpark Engram staging needs every rank".into());
+        }
+        let pending = Self::pending_rows(rows, text)?;
         let phases = [true, false]
             .into_iter()
             .map(|prefill| {
@@ -293,6 +325,15 @@ impl<P: Program> Host for Adapter<'_, P> {
             .map_err(|e| format!("DSpark draft readback: {e:?}"))
     }
     fn read_confidence(&mut self, scores: &mut [[f32; BLOCK_ROWS as usize]]) -> Result<(), String> {
+        if let Some(words) = self.staging.confidence.take() {
+            if words.len() != scores.len() {
+                return Err("DSpark confidence block count differs".into());
+            }
+            for (to, from) in scores.iter_mut().zip(words) {
+                *to = from.map(f32::from_bits);
+            }
+            return Ok(());
+        }
         let mut bytes = vec![0; scores.len() * BLOCK_ROWS as usize * 4];
         let source = prefix(self.readback.confidence, bytes.len() as u64)?;
         self.services
@@ -301,6 +342,55 @@ impl<P: Program> Host for Adapter<'_, P> {
         for (score, bytes) in scores.iter_mut().flatten().zip(bytes.chunks_exact(4)) {
             *score = f32::from_bits(u32::from_le_bytes(bytes.try_into().expect("one F32 word")));
         }
+        Ok(())
+    }
+    fn device_target(
+        &mut self,
+        inputs: &[Input],
+        drafts: &[DraftInput],
+    ) -> Result<Option<Vec<[u32; BLOCK_ROWS as usize]>>, String> {
+        if drafts.is_empty()
+            || inputs
+                .iter()
+                .any(|input| !matches!(input.rows.kind, Kind::Decode { .. }))
+        {
+            return Ok(None);
+        }
+        let lookback = self.staging.lookback;
+        let mut history = Vec::with_capacity(inputs.len() * lookback);
+        let mut text = Vec::new();
+        for input in inputs {
+            let past = self.staging.rows.history(input.rows.request);
+            if past.len() > lookback {
+                return Err("Engram committed lookback exceeds its bound".into());
+            }
+            history.extend(std::iter::repeat_n(
+                model_deepseek41_contract::own_ops::engram::DEAD,
+                lookback - past.len(),
+            ));
+            history.extend_from_slice(past);
+            let anchor = match self.text.get(&input.rows.request) {
+                None => true,
+                Some(mask) if mask.len() == 1 => mask[0],
+                Some(_) => return Err("DSpark text mask does not cover the decode anchor".into()),
+            };
+            text.push(u8::from(anchor));
+            text.extend(std::iter::repeat_n(1, input.rows.kind.drafts() as usize));
+        }
+        let Some(result) = self
+            .program
+            .device_target(inputs, drafts, &history, &text)?
+        else {
+            return Ok(None);
+        };
+        if result.ids.len() != drafts.len() || result.confidence_bits.len() != drafts.len() {
+            return Err("DSpark device diagnostics differ from the draft block count".into());
+        }
+        self.staging.confidence = Some(result.confidence_bits);
+        Ok(Some(result.ids))
+    }
+    fn retain_target_rows(&mut self, rows: &[TargetRows]) -> Result<(), String> {
+        self.staging.pending = Staging::pending_rows(rows, self.text)?;
         Ok(())
     }
     fn hash_and_gather(&mut self, rows: &[TargetRows]) -> Result<Gathered, String> {

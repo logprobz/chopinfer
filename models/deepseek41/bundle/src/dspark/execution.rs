@@ -83,6 +83,22 @@ pub trait Host {
     /// Copy exactly five int32 IDs per drafting item, after drafting finishes.
     fn read_draft_ids(&mut self, ids: &mut [[u32; WIDTH]]) -> Result<(), Self::Error>;
     fn read_confidence(&mut self, scores: &mut [[f32; WIDTH]]) -> Result<(), Self::Error>;
+    /// An optional device target path, after draft production. A successful
+    /// result means target verification and its output validation finished.
+    /// All five IDs must be checked before publishing any logits or drafts.
+    /// None means no work was issued and the ordinary host path is required.
+    fn device_target(
+        &mut self,
+        _inputs: &[Input],
+        _drafts: &[DraftInput],
+    ) -> Result<Option<Vec<[u32; WIDTH]>>, Self::Error> {
+        Ok(None)
+    }
+    /// Retain the returned target rows for commit after device execution.
+    fn retain_target_rows(&mut self, _rows: &[TargetRows]) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     fn hash_and_gather(&mut self, rows: &[TargetRows]) -> Result<Self::Gathered, Self::Error>;
     fn upload_engram(&mut self, gathered: Self::Gathered) -> Result<(), Self::Error>;
     /// Run every target row and stage its raw attention-input features.
@@ -180,6 +196,7 @@ impl Runtime {
             })
             .collect::<Vec<_>>();
         let mut emitted = Vec::with_capacity(blocks.len());
+        let mut device_target = false;
         if !blocks.is_empty() {
             let draft_inputs = blocks
                 .iter()
@@ -190,8 +207,23 @@ impl Runtime {
                 })
                 .collect::<Vec<_>>();
             self.host_result(host.draft(&draft_inputs))?;
-            let mut ids = vec![[u32::MAX; WIDTH]; blocks.len()];
-            self.host_result(host.read_draft_ids(&mut ids))?;
+            let ids = match self.host_result(host.device_target(inputs, &draft_inputs))? {
+                Some(ids) => {
+                    device_target = true;
+                    ids
+                }
+                None => {
+                    let mut ids = vec![[u32::MAX; WIDTH]; blocks.len()];
+                    self.host_result(host.read_draft_ids(&mut ids))?;
+                    ids
+                }
+            };
+            if ids.len() != blocks.len() {
+                self.state.poison();
+                return Err(Error::State(
+                    "DSpark device result count differs from its blocks",
+                ));
+            }
             if ids.iter().flatten().any(|&token| token >= self.vocab) {
                 self.state.poison();
                 return Err(Error::State(
@@ -216,9 +248,13 @@ impl Runtime {
                 });
             }
         }
-        let gathered = self.host_result(host.hash_and_gather(&target))?;
-        self.host_result(host.upload_engram(gathered))?;
-        self.host_result(host.target(&target))?;
+        if device_target {
+            self.host_result(host.retain_target_rows(&target))?;
+        } else {
+            let gathered = self.host_result(host.hash_and_gather(&target))?;
+            self.host_result(host.upload_engram(gathered))?;
+            self.host_result(host.target(&target))?;
+        }
         if !blocks.is_empty() {
             let mut scores = vec![[f32::NAN; WIDTH]; blocks.len()];
             self.host_result(host.read_confidence(&mut scores))?;

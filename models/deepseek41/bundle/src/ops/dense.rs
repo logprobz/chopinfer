@@ -332,8 +332,14 @@ impl DenseOps {
     ) -> Result<Vec<Lowered>, Refusal> {
         let rows = phase.rows();
         let op = if phase.prefill() {
-            &self.prefill_gemms.iter().find(|(of, _)| *of == id)
-                .ok_or(Refusal("DeepSeek V4.1 has no dense prefill projection of this ID"))?.1
+            &self
+                .prefill_gemms
+                .iter()
+                .find(|(of, _)| *of == id)
+                .ok_or(Refusal(
+                    "DeepSeek V4.1 has no dense prefill projection of this ID",
+                ))?
+                .1
         } else if rows <= crate::Kernels::dense_decode_capacity() {
             &self
                 .decode

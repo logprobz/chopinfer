@@ -80,6 +80,60 @@ def controls():
         else: raise AssertionError('parser accepted corrupt control')
     print('PASS ablation_controls prefixed_markers=true incomplete_duplicate_nan_failed_ignored=true')
 
+
+def parse_reuse(text, layers):
+    assert len(layers) == 40 and sorted(layers).count(0) == 2
+    assert not re.search(r'\bFAILED\b|panicked at|SKIP|skipping|did not execute', text)
+    modes = ('vector', 'pair')
+    variants = ('window', 'mixed64', 'mixed32')
+    gates = list(re.finditer(r'PASS prefill_attention_bitwise rank=(\d+) variant=(\w+) rows=8192 workspace=true output=true replay=true f64=true candidate=(\w+) reuse_cases=true', text))
+    assert len(gates) == 12
+    assert {(int(m[1]),m[2],m[3]) for m in gates} == set(itertools.product(range(2),variants,modes))
+    records = {}
+    fields = ('old_attention_us','candidate_attention_us','old_merge_us','candidate_merge_us',
+              'old_total_us','candidate_total_us','gflop','paired_ratio')
+    for match in re.finditer(r'TIMING prefill_attention ([^\n]+)', text):
+        assert match.start() > max(g.end() for g in gates), 'timing preceded a bitwise gate'
+        row = dict(re.findall(r'(\w+)=([^\s]+)', match[1]))
+        key = (int(row['rank']),int(row['layer']),row['candidate'])
+        assert key not in records and key[0] in (0,1) and 0 <= key[1] < 40 and key[2] in modes
+        assert row['rows'] == '8192' and row['variant'] == variants[layers[key[1]]]
+        for field in fields:
+            row[field] = float(row[field])
+            assert math.isfinite(row[field]) and row[field] > 0, (field,row)
+        expected = 4 * 8192 * 16 * 512 * (128 if layers[key[1]] == 0 else 640) / 1e9
+        assert math.isclose(row['gflop'], expected, rel_tol=1e-9)
+        records[key] = row
+    assert set(records) == set(itertools.product(range(2),range(40),modes)), 'incomplete all-layer timing matrix'
+    totals = []
+    for rank, mode in itertools.product(range(2),modes):
+        selected = [r for k,r in records.items() if k[0] == rank and k[2] == mode]
+        old = sum(r['old_total_us'] for r in selected)
+        candidate = sum(r['candidate_total_us'] for r in selected)
+        totals.append(dict(rank=rank,candidate=mode,old_total_us=old,candidate_total_us=candidate,
+                           ratio=candidate/old,faster=candidate<old))
+    return dict(timings=list(records.values()),totals=totals)
+
+
+def reuse_controls():
+    layers = [0]*2 + [2]*18 + [1]*20
+    lines = []
+    for rank,variant,mode in itertools.product(range(2),('window','mixed64','mixed32'),('vector','pair')):
+        lines.append(f'prefix PASS prefill_attention_bitwise rank={rank} variant={variant} rows=8192 workspace=true output=true replay=true f64=true candidate={mode} reuse_cases=true')
+    for rank,layer,mode in itertools.product(range(2),range(40),('vector','pair')):
+        variant = ('window','mixed64','mixed32')[layers[layer]]
+        gflop = 4*8192*16*512*(128 if layers[layer]==0 else 640)/1e9
+        lines.append(f'prefix TIMING prefill_attention rank={rank} layer={layer} variant={variant} rows=8192 old_attention_us=10 candidate_attention_us=5 old_merge_us=1 candidate_merge_us=1 old_total_us=11 candidate_total_us=6 gflop={gflop} paired_ratio=0.55 candidate={mode}')
+    text = '\n'.join(lines)
+    assert len(parse_reuse(text,layers)['timings']) == 160
+    for bad in [text.replace(lines[-1],''),text+'\n'+lines[-1],text.replace('candidate_attention_us=5','candidate_attention_us=nan'),
+                text.replace('reuse_cases=true','reuse_cases=false'),text.replace('f64=true','f64=false'),
+                lines[12]+'\n'+text,text+'\nFAILED\n']:
+        try: parse_reuse(bad,layers)
+        except (AssertionError,ValueError,KeyError): pass
+        else: raise AssertionError('all-layer control accepted corrupt output')
+    print('PASS reuse_controls all_40_layers=true both_candidates=true bitwise_before_timing=true')
+
 class StepError(RuntimeError):
     pass
 
@@ -127,9 +181,11 @@ def run_step(out, name, args, timeout=30, *, env=None, cwd=None, check=True):
     return stdout_path.read_text(), record['exit_code']
 
 def main():
-    dry = sys.argv[1:] == ['--dry-run']
-    resources_only = sys.argv[1:] == ['--resources-only']
-    assert not sys.argv[1:] or dry or resources_only
+    flags = set(sys.argv[1:])
+    assert flags <= {'--dry-run','--resources-only','--reuse'} and len(flags) == len(sys.argv[1:])
+    dry = '--dry-run' in flags
+    resources_only = '--resources-only' in flags
+    reuse = '--reuse' in flags
     visible = os.environ.get('CUDA_VISIBLE_DEVICES','')
     start = int(time.time())
     out = Path(os.environ.get('L11_ABLATION_RUN_DIR', ROOT / f'{"dry" if dry else "run"}-{start}-{os.getpid()}'))
@@ -150,8 +206,11 @@ def main():
     try:
         step('hashes', ['sha256sum','--check','--quiet',str(ROOT/'SHA256SUMS')], cwd=ROOT)
         controls()
+        if reuse: reuse_controls()
+        manifest = json.loads((CUBINS/'snapshot.json').read_text())
+        requests = json.loads((ROOT/'resource-requests.json').read_text())
         checked = step('snapshot', [str(BINARY),'check',str(CUBINS)])
-        assert 'PASS prefill_attention_snapshot modules=4 entries=22 probe_sm120=true' in checked
+        assert f'PASS prefill_attention_snapshot modules={len(manifest["modules"])} entries={len(requests)+4} probe_sm120=true' in checked
         if dry:
             result['exit_code'] = 0
             print('PASS ablation_job_dry_run no_gpu_access=true')
@@ -171,10 +230,11 @@ def main():
         resources = step('resources', [sys.executable,'-B',str(ROOT/'prefill_attention_resources.py')],90,env=env)
         (out/'resources.json').write_text(resources)
         data = json.loads(resources)
-        assert [r['rank'] for r in data['ranks']] == [0,1] and all(len(r['functions']) == 18 for r in data['ranks'])
+        assert [r['rank'] for r in data['ranks']] == [0,1] and all(len(r['functions']) == len(requests) for r in data['ranks'])
         if not resources_only:
-            log = step('gpu', [str(BINARY),'ablation',str(CUBINS)],1050,env=env)
-            result.update(parse(log + '\n' + (out/'gpu.stderr.log').read_text()))
+            log = step('gpu', [str(BINARY),'run-reuse' if reuse else 'ablation',str(CUBINS)],1050,env=env)
+            log += '\n' + (out/'gpu.stderr.log').read_text()
+            result.update(parse_reuse(log,manifest['layers']) if reuse else parse(log))
         result['exit_code'] = 0
     except BaseException as error:
         result['error'] = repr(error)

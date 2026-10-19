@@ -1,6 +1,7 @@
 use super::{REFERENCE, entries};
-use kernel_core::backend::{Backend, Need};
-use kernel_core::latent_attention::LatentAttentionQuery;
+use kernel_core::backend::{Backend, Counts, Launch, Need, OpInfo, Prepared, PreparedOp, View};
+use kernel_core::contract::{LaunchPlan, Refusal};
+use kernel_core::latent_attention::{LatentAttentionQuery, LatentSourcesBuffers};
 use kernel_harness::{LabResult, Session, eviction::EvictionMode, kit::cases, launch};
 use kernels_sm120::{
     backend::Sm120,
@@ -16,6 +17,41 @@ mod fixture;
 pub use ablations::run as ablation;
 use fixture::{HEADS, Inputs, ROWS, SLOTS, WIDTH, WINDOW};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Schedule {
+    Stage32,
+    Vector,
+    Pair,
+}
+impl Schedule {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Stage32 => "stage32",
+            Self::Vector => "vector",
+            Self::Pair => "pair",
+        }
+    }
+    fn module(self) -> &'static str {
+        match self {
+            Self::Stage32 => "latent_sources_prefill_deepseek41_sm120",
+            Self::Vector => "latent_sources_prefill_reuse1_deepseek41_sm120",
+            Self::Pair => "latent_sources_prefill_reuse2_deepseek41_sm120",
+        }
+    }
+    fn symbol(self, entry: &sources::Entry) -> String {
+        match self {
+            Self::Stage32 => sources_prefill::symbol(entry),
+            _ => sources_prefill::reuse_symbol(entry, if self == Self::Pair { 2 } else { 1 }),
+        }
+    }
+    fn plan(self, entry: &sources::Entry, rows: u32) -> Result<LaunchPlan, Refusal> {
+        match self {
+            Self::Stage32 => sources_prefill::plan(entry, rows),
+            _ => sources_prefill::reuse_plan(entry, rows, if self == Self::Pair { 2 } else { 1 }),
+        }
+    }
+}
+
 struct Arm {
     workspace: DeviceBuffer,
     output: DeviceBuffer,
@@ -27,11 +63,21 @@ struct Rig {
     inputs: Inputs,
     arms: [Arm; 2],
     merge: Function,
+    schedule: Schedule,
     _modules: [Module; 2],
 }
 
 impl Rig {
     fn new(s: &Session, entry: sources::Entry, seed: u32) -> LabResult<Self> {
+        Self::scheduled(s, entry, seed, Schedule::Stage32)
+    }
+
+    fn scheduled(
+        s: &Session,
+        entry: sources::Entry,
+        seed: u32,
+        schedule: Schedule,
+    ) -> LabResult<Self> {
         let LatentAttentionQuery::Attention {
             page_size,
             second_fp4_keys,
@@ -46,16 +92,16 @@ impl Rig {
             return Err("expected TP4 local attention geometry".into());
         }
         let reference = s.module(REFERENCE)?;
-        let candidate = s.module("latent_sources_prefill_deepseek41_sm120")?;
+        let candidate = s.module(schedule.module())?;
         let make_arm = |module: &Module, candidate: bool| -> LabResult<Arm> {
             let symbol = if candidate {
-                sources_prefill::symbol(&entry)
+                schedule.symbol(&entry)
             } else {
                 entry.symbol()
             };
             let attention = module.function(&symbol).map_err(|e| e.to_string())?;
             let plan = if candidate {
-                sources_prefill::plan(&entry, ROWS)
+                schedule.plan(&entry, ROWS)
             } else {
                 entry.plan(ROWS)
             }
@@ -84,6 +130,7 @@ impl Rig {
                 .function(&entry.merge_symbol())
                 .map_err(|e| e.to_string())?,
             entry,
+            schedule,
             _modules: [reference, candidate],
         })
     }
@@ -137,7 +184,7 @@ impl Rig {
         let selected = &self.arms[arm];
         let args = self.arguments(arm, WINDOW, self.inputs.compressed_budget);
         let plan = if selected.candidate {
-            sources_prefill::plan(&self.entry, ROWS)
+            self.schedule.plan(&self.entry, ROWS)
         } else {
             self.entry.plan(ROWS)
         }
@@ -218,7 +265,63 @@ impl Rig {
     }
 }
 
-fn oracle(s: &Session, entry: &sources::Entry) -> LabResult<()> {
+// Adapt only the lab launch geometry. The reference still validates all
+// buffer roles and supplies the oracle's numerical contract and merge.
+struct ScheduledOp {
+    reference: Prepared<LatentSourcesBuffers<View>>,
+    info: OpInfo,
+    entry: sources::Entry,
+    schedule: Schedule,
+}
+impl PreparedOp<LatentSourcesBuffers<View>> for ScheduledOp {
+    fn info(&self) -> &OpInfo {
+        &self.info
+    }
+    fn launches(
+        &self,
+        buffers: &LatentSourcesBuffers<View>,
+        workspace: View,
+        counts: Counts,
+    ) -> Result<Vec<Launch>, Refusal> {
+        let mut launches = self.reference.launches(buffers, workspace, counts)?;
+        for launch in &mut launches {
+            if launch.symbol == self.entry.symbol() {
+                launch.symbol = self.schedule.symbol(&self.entry);
+                launch.plan = self.schedule.plan(&self.entry, counts.rows)?;
+            }
+        }
+        Ok(launches)
+    }
+}
+
+fn scheduled_op(
+    entry: &sources::Entry,
+    schedule: Schedule,
+    capacity: u32,
+) -> LabResult<Prepared<LatentSourcesBuffers<View>>> {
+    let backend = Sm120::new().with_latent_sources(entry.clone());
+    let prepared = backend
+        .latent_attention_sources(&entry.query, Need::rows(capacity))
+        .map_err(|e| e.to_string())?;
+    let mut info = prepared.info().clone();
+    for (symbol, shared) in &mut info.symbols {
+        if *symbol == entry.symbol() {
+            *symbol = schedule.symbol(entry);
+            *shared = schedule
+                .plan(entry, capacity)
+                .map_err(|e| e.to_string())?
+                .dynamic_shared_bytes;
+        }
+    }
+    Ok(Box::new(ScheduledOp {
+        reference: prepared,
+        info,
+        entry: entry.clone(),
+        schedule,
+    }))
+}
+
+fn oracle(s: &Session, entry: &sources::Entry, schedule: Schedule) -> LabResult<()> {
     let backend = Sm120::new().with_latent_sources(entry.clone());
     let prepared = backend
         .latent_attention_sources(&entry.query, Need::rows(4))
@@ -226,29 +329,29 @@ fn oracle(s: &Session, entry: &sources::Entry) -> LabResult<()> {
     let case = cases::latent_sources::numerical_case(entry.query, 4, prepared)?;
     let images = case.images();
     let reference = s.module(REFERENCE)?;
-    let candidate = s.module("latent_sources_prefill_deepseek41_sm120")?;
+    let candidate = s.module(schedule.module())?;
+    let scheduled = scheduled_op(entry, schedule, 4)?;
+    let new_case = cases::latent_sources::numerical_case(entry.query, 4, scheduled)?;
     let old_lookup = |symbol: &str| reference.function(symbol).map_err(|e| e.to_string());
     let new_lookup = |symbol: &str| {
-        if symbol == entry.symbol() {
-            candidate
-                .function(&sources_prefill::symbol(entry))
-                .map_err(|e| e.to_string())
+        if symbol == schedule.symbol(entry) {
+            candidate.function(symbol).map_err(|e| e.to_string())
         } else {
             old_lookup(symbol)
         }
     };
     let old = case.launch(s, &old_lookup, &images, 4)?;
-    let new = case.launch(s, &new_lookup, &images, 4)?;
+    let new = new_case.launch(s, &new_lookup, &images, 4)?;
     if old != new {
         return Err("small oracle case differs bitwise".into());
     }
     case.judge_outputs(&images, 4, &old)?;
-    case.judge_outputs(&images, 4, &new)?;
+    new_case.judge_outputs(&images, 4, &new)?;
     Ok(())
 }
 
 fn correctness(s: &Session, rank: usize, rig: &Rig) -> LabResult<()> {
-    oracle(s, &rig.entry)?;
+    oracle(s, &rig.entry, rig.schedule)?;
     let graph = s.capture(|stream| {
         rig.combined(stream, 0)?;
         rig.combined(stream, 1)
@@ -263,9 +366,20 @@ fn correctness(s: &Session, rank: usize, rig: &Rig) -> LabResult<()> {
         graph.launch(&s.stream).map_err(|e| e.to_string())?;
         rig.compare(s, live)?;
     }
+    if rig.schedule != Schedule::Stage32 {
+        for shifted in [false, true] {
+            rig.inputs.set_case(s, 91, false, ROWS - 1)?;
+            rig.inputs.share_selected_pairs(s, 91, shifted)?;
+            rig.poison(s)?;
+            graph.launch(&s.stream).map_err(|e| e.to_string())?;
+            rig.compare(s, ROWS - 1)?;
+        }
+    }
     println!(
-        "PASS prefill_attention_bitwise rank={rank} variant={} rows={ROWS} workspace=true output=true replay=true f64=true",
-        variant(&rig.entry)
+        "PASS prefill_attention_bitwise rank={rank} variant={} rows={ROWS} workspace=true output=true replay=true f64=true candidate={} reuse_cases={}",
+        variant(&rig.entry),
+        rig.schedule.name(),
+        rig.schedule != Schedule::Stage32
     );
     Ok(())
 }
@@ -344,7 +458,7 @@ fn timings(s: &Session, rank: usize, rig: &Rig) -> LabResult<()> {
             * f64::from(WINDOW + rig.inputs.compressed_budget)
             / 1e9;
         println!(
-            "TIMING prefill_attention rank={rank} layer={layer} variant={} rows={ROWS} old_attention_us={} candidate_attention_us={} old_merge_us={} candidate_merge_us={} old_total_us={} candidate_total_us={} gflop={gflop} paired_ratio={}",
+            "TIMING prefill_attention rank={rank} layer={layer} variant={} rows={ROWS} old_attention_us={} candidate_attention_us={} old_merge_us={} candidate_merge_us={} old_total_us={} candidate_total_us={} gflop={gflop} paired_ratio={} candidate={}",
             variant(&rig.entry),
             attention.arms[0].median_ms * 1000.0,
             attention.arms[1].median_ms * 1000.0,
@@ -352,7 +466,8 @@ fn timings(s: &Session, rank: usize, rig: &Rig) -> LabResult<()> {
             merge[1],
             total.arms[0].median_ms * 1000.0,
             total.arms[1].median_ms * 1000.0,
-            total.paired_ratio
+            total.paired_ratio,
+            rig.schedule.name()
         );
     }
     Ok(())
@@ -406,6 +521,28 @@ pub fn run(sessions: &[Session]) -> LabResult<()> {
     Ok(())
 }
 
+pub fn run_reuse(sessions: &[Session]) -> LabResult<()> {
+    exclusive(sessions)?;
+    let entries = entries()?;
+    for (rank, session) in sessions.iter().enumerate() {
+        for schedule in [Schedule::Vector, Schedule::Pair] {
+            for entry in &entries {
+                let rig = Rig::scheduled(session, entry.clone(), rank as u32 + 1, schedule)?;
+                correctness(session, rank, &rig)?;
+            }
+        }
+    }
+    for (rank, session) in sessions.iter().enumerate() {
+        for schedule in [Schedule::Vector, Schedule::Pair] {
+            for entry in &entries {
+                let rig = Rig::scheduled(session, entry.clone(), rank as u32 + 1, schedule)?;
+                timings(session, rank, &rig)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -441,6 +578,19 @@ mod tests {
             let case = cases::latent_sources::numerical_case(entry.query, 4, prepared).unwrap();
             assert_eq!(case.capacity(), 4);
             assert!(!case.images().bytes("q").unwrap().is_empty());
+            for schedule in [Schedule::Vector, Schedule::Pair] {
+                let prepared = scheduled_op(&entry, schedule, 4).unwrap();
+                let symbol = schedule.symbol(&entry);
+                assert!(prepared.info().symbols.iter().any(|(s, bytes)| s == &symbol
+                    && *bytes == schedule.plan(&entry, 4).unwrap().dynamic_shared_bytes));
+                let candidate_case =
+                    cases::latent_sources::numerical_case(entry.query, 4, prepared).unwrap();
+                assert_eq!(candidate_case.capacity(), 4);
+                assert_eq!(
+                    candidate_case.images().bytes("q").unwrap(),
+                    case.images().bytes("q").unwrap()
+                );
+            }
         }
     }
 }

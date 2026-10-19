@@ -56,6 +56,17 @@ pub struct Inputs {
 }
 
 impl Inputs {
+    pub fn share_selected_pairs(&self, s: &Session, seed: u32, shifted: bool) -> LabResult<()> {
+        let keys = integers((0..ROWS).flat_map(|row| {
+            (0..512).map(move |key| {
+                compressed_key(row & !1, key + u32::from(shifted) * (row % 2), seed, false)
+            })
+        }));
+        self.compressed_keys
+            .copy_from_bytes(&keys, &s.stream)
+            .map_err(|e| e.to_string())
+    }
+
     pub fn new(s: &Session, page: u32, second: bool, seed: u32) -> LabResult<Self> {
         let pages = CONTEXT / page;
         let stride = page as usize * (WIDTH / 2 + WIDTH / 16);

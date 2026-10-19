@@ -134,6 +134,10 @@ class StepLogs(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             job.controls()
 
+    def test_all_layer_controls_require_both_exact_candidates(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            job.reuse_controls()
+
     def test_imports_do_not_initialize_cuda(self):
         script = "import ctypes; ctypes.CDLL=lambda *a,**k: (_ for _ in ()).throw(AssertionError('CUDA loaded')); import prefill_attention_resources"
         subprocess.run([sys.executable, '-B', '-c', script], cwd=Path(__file__).parent, check=True)

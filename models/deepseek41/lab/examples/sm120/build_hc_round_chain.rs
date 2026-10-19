@@ -3,6 +3,7 @@
 #[allow(dead_code)]
 mod hc_round_expand_mix;
 #[path = "../../../bundle/src/sm120/hc_round_chain.rs"]
+#[allow(dead_code, reason = "the bundle registers the measured entries")]
 mod registration;
 use kernel_build::{BuildOptions, LockDir, Toolchain};
 use model_deepseek41_contract::geometry::GEOMETRIES;

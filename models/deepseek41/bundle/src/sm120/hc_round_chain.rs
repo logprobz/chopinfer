@@ -1,5 +1,6 @@
-//! Lab-only rounded HC producers with the served partial workspace layout.
+//! Exact rounded HC producers with the served partial workspace layout.
 use kernel_build::CubinSpec;
+use kernels_sm120::backend::Sm120;
 use kernels_sm120::sinkhorn_hc::round_chain_partials::Entry;
 use model_deepseek41_contract::geometry::Geometry;
 pub const FAMILY: &str = "sinkhorn_hc_round_chain";
@@ -24,4 +25,13 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
             ))
         })
         .collect()
+}
+
+/// Select only the measured Flash decode buckets.
+pub fn register(backend: Sm120, g: &Geometry) -> Sm120 {
+    if g.id == model_deepseek41_contract::geometry::FLASH.id {
+        backend.with_sinkhorn_round_chain(entry(g), vec![(1, 8), (8, 4)])
+    } else {
+        backend
+    }
 }

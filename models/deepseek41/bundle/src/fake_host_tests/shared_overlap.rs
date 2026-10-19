@@ -204,6 +204,7 @@ fn audit_scratch(lines: &[String]) -> (usize, usize) {
         } else if [
             "chop_norm_quantize_deepseek41_input_v1",
             "chop_norm_quantize_deepseek41_input_tiles_v1",
+            "chop_norm_quantize_deepseek41_input_cached32_v1",
         ]
         .iter()
         .any(|symbol| lines[at - 1].contains(symbol))
@@ -304,6 +305,7 @@ fn scratch_audit_recognizes_norm_tiles_and_rejects_overlapping_writes() {
     for symbol in [
         "chop_norm_quantize_deepseek41_input_v1",
         "chop_norm_quantize_deepseek41_input_tiles_v1",
+        "chop_norm_quantize_deepseek41_input_cached32_v1",
     ] {
         let arguments = (1..=8)
             .map(|handle| span(handle, 0, 5120))

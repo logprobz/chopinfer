@@ -3,6 +3,7 @@
 #[allow(dead_code)]
 mod norm_quantize;
 #[path = "../../../bundle/src/sm120/norm_quantize_cached.rs"]
+#[allow(dead_code, reason = "the bundle registers the measured entries")]
 mod registration;
 use kernel_build::{BuildOptions, LockDir, Toolchain};
 use model_deepseek41_contract::geometry::GEOMETRIES;

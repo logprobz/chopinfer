@@ -1,5 +1,6 @@
-//! Lab-only cached ceil groups with the original RMS tree.
+//! Exact cached ceil groups with the original RMS tree.
 use kernel_build::CubinSpec;
+use kernels_sm120::backend::Sm120;
 use kernels_sm120::row::rmsnorm_quantize_cached::Entry;
 use model_deepseek41_contract::geometry::Geometry;
 pub const FAMILY: &str = "norm_quantize_cached";
@@ -26,4 +27,13 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
             ))
         })
         .collect()
+}
+
+/// Select only the measured Flash decode buckets.
+pub fn register(backend: Sm120, g: &Geometry) -> Sm120 {
+    if g.id == model_deepseek41_contract::geometry::FLASH.id {
+        backend.with_rmsnorm_quantize_cached(entry(g), vec![(1, 32), (8, 32)])
+    } else {
+        backend
+    }
 }

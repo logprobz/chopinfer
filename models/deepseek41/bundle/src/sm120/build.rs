@@ -36,6 +36,9 @@ mod hc;
 mod hc_expand_mix;
 #[allow(dead_code)]
 mod hc_mixer_probe;
+#[path = "hc_round_chain.rs"]
+#[allow(dead_code, reason = "the bundle registers the measured entries")]
+mod hc_round_chain;
 #[allow(dead_code)]
 mod hc_round_expand_mix;
 mod host_acceptance_cubin;
@@ -46,6 +49,9 @@ mod latent;
 mod latent_scheduled;
 #[allow(dead_code)]
 mod norm_quantize;
+#[path = "norm_quantize_cached.rs"]
+#[allow(dead_code, reason = "the bundle registers the measured entries")]
+mod norm_quantize_cached;
 #[path = "norm_quantize_tiles.rs"]
 mod norm_quantize_tiles;
 mod own_cubin;
@@ -207,6 +213,8 @@ pub fn selection(
         if geometry.id == model_deepseek41_contract::geometry::FLASH.id {
             owners.push((hc_mixer_probe::cubin_name(geometry), geometry.id));
             owners.push((norm_quantize_tiles::cubin_name(geometry), geometry.id));
+            owners.push((norm_quantize_cached::cubin_name(geometry), geometry.id));
+            owners.push((hc_round_chain::cubin_name(geometry), geometry.id));
         }
         owners.push((replicated_embedding::cubin_name(geometry), geometry.id));
         owners.push((ceil_parallel::cubin_name(geometry), geometry.id));
@@ -320,6 +328,14 @@ pub fn selection(
         .iter()
         .filter(|g| g.id == model_deepseek41_contract::geometry::FLASH.id)
     {
+        specs.extend(
+            norm_quantize_cached::cubins(std::slice::from_ref(geometry))
+                .expect("qualified cached norm cubin"),
+        );
+        specs.extend(
+            hc_round_chain::cubins(std::slice::from_ref(geometry))
+                .expect("qualified rounded chain cubin"),
+        );
         specs.extend(
             norm_quantize_tiles::cubins(std::slice::from_ref(geometry))
                 .expect("qualified norm tiles"),

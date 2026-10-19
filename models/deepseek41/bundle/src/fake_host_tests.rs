@@ -890,7 +890,10 @@ fn journal_steps(host: &Rc<Host>) {
 /// eleven entries adds eleven resolves and twelve releases per rank;
 /// C1/C8 decode changes three mixer symbols and their null stamp args.
 /// The qualified input norm tiles add two resolves and three releases per
-/// rank; C1/C8 input norm grids become 20 by rows, with identical arguments.
+/// rank. Cached quantization replaces those C1/C8 norm tiles; rounded HC
+/// uses 160-CTA producers with the same finisher and scratch. The two
+/// additional modules add five resolves and seven releases per rank.
+/// Every launch retains its argument list and numerical contract.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",

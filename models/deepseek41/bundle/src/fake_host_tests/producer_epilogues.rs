@@ -25,16 +25,37 @@ fn decode_fuses_77_hc_boundaries() {
                 let lines = host.device.journal.borrow()[start..].to_vec();
                 let launches: Vec<_> = lines.iter().filter(|l| l.starts_with("launch ")).collect();
                 let count = |part: &str| launches.iter().filter(|l| l.contains(part)).count();
-                assert_eq!(count("hc_round_expand_mix_partials_v1"), 77 * nr);
+                assert_eq!(count("hc_round_expand_mix_partials_v1"), 0);
+                assert_eq!(
+                    count("hc_round_chain_w8_v1"),
+                    if rows == 1 { 77 * nr } else { 0 }
+                );
+                assert_eq!(
+                    count("hc_round_chain_w4_v1"),
+                    if rows == 8 { 77 * nr } else { 0 }
+                );
                 assert_eq!(count("hc_round_expand_mix_finish_v1"), 77 * nr);
                 assert_eq!(count("lagged_mix_collapse_split_v1"), 0);
                 assert_eq!(count("hc_mixer_probe_warp_v1"), 3 * nr);
                 assert_eq!(count("hc_chain_mix"), 0);
-                assert_eq!(count("input_tiles_v1"), 80 * nr);
+                assert_eq!(count("input_tiles_v1"), 0);
+                assert_eq!(count("input_cached32_v1"), 80 * nr);
                 assert_eq!(count("input_v1"), 0);
-                assert_eq!(count("input_cached"), 0);
-                assert_eq!(count("hc_round_chain"), 0);
+                assert_eq!(count("input_cached8_v1"), 0);
+                assert_eq!(count("input_cached16_v1"), 0);
+
                 assert_eq!(count("input_local_v1"), 0);
+                for line in launches.iter().filter(|l| l.contains("hc_round_chain_")) {
+                    assert!(line.contains(&format!("grid_x: 160, grid_y: {rows}, grid_z: 1")));
+                    assert!(line.contains(&format!(
+                        "block_x: {}, block_y: 1, block_z: 1",
+                        if rows == 1 { 256 } else { 128 }
+                    )));
+                }
+                for line in launches.iter().filter(|l| l.contains("input_cached32_v1")) {
+                    assert!(line.contains(&format!("grid_x: 1, grid_y: {rows}, grid_z: 1")));
+                    assert!(line.contains("block_x: 1024, block_y: 1, block_z: 1"));
+                }
                 for line in launches.iter().filter(|l| l.contains("hc_mixer_probe")) {
                     assert!(
                         line.contains("hc_mixer_probe_warp_v1"),
@@ -86,5 +107,31 @@ fn decode_fuses_77_hc_boundaries() {
                 assert_eq!(host.acquired.get(), host.released.get());
             }
         }
+    }
+}
+
+#[test]
+fn measured_producer_modules_retain_their_qualified_bytes() {
+    for (symbol, expected) in [
+        (
+            "chop_norm_quantize_deepseek41_input_cached32_v1",
+            "870dfd3bac6205cf9373943b2ee7a3146c8f101ad27ca9b7af82f277ceb736dc",
+        ),
+        (
+            "chop_deepseek41_hc_round_chain_w4_v1",
+            "91593a6603ebf2854a4e3256a9d4859101dc74d378964e573d0a37e060752e5a",
+        ),
+        (
+            "chop_deepseek41_hc_round_chain_w8_v1",
+            "91593a6603ebf2854a4e3256a9d4859101dc74d378964e573d0a37e060752e5a",
+        ),
+        (
+            "chop_deepseek41_hc_round_expand_mix_finish_v1",
+            "2f35e8c35d3b0acf5c11488f84afd4e0f8ebf73d452e183c5c64b24729a536a9",
+        ),
+    ] {
+        let (_, bytes) =
+            crate::sm120::fold_cubin_for_symbol(symbol).expect("qualified serving symbol");
+        assert_eq!(kernel_build::digest(bytes), expected, "{symbol}");
     }
 }

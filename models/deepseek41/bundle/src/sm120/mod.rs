@@ -347,11 +347,13 @@ impl crate::Kernels {
         } else {
             sm120
         };
+        let sm120 = norm_quantize_cached::register(sm120, shape.geometry);
         let sm120 = window_fused::register(sm120);
         let sm120 = reduce::register(sm120, shape.geometry);
         let sm120 = hc::register(sm120, shape.geometry);
         let sm120 = hc_expand_mix::register(sm120, shape.geometry);
         let sm120 = hc_round_expand_mix::register(sm120, shape.geometry);
+        let sm120 = hc_round_chain::register(sm120, shape.geometry);
         let sm120 = replicated_embedding::register(sm120, shape.geometry, shape.ranks());
         let sm120 = latent_scheduled::register_sources(sm120, shape.geometry, shape.ranks())?;
         let sm120 = indexer::register(sm120, shape.geometry);

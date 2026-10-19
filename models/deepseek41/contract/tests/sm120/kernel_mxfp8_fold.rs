@@ -307,6 +307,10 @@ fn all_declared_fold_shapes_prepare_at_every_rank_count() {
                 .unwrap()
                 .into_iter()
                 .fold(Sm120::new(), Sm120::with_mxfp8_fold);
+            let backend = registration::prefill_entries(g, ranks)
+                .unwrap()
+                .into_iter()
+                .fold(backend, Sm120::with_mxfp8_prefill);
             for rank in 0..ranks {
                 let entries = registration::registrations(g, ranks, rank).unwrap();
                 assert_eq!(entries.len(), expected_uses);

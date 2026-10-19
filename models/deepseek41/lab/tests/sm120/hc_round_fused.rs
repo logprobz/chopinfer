@@ -309,6 +309,7 @@ fn case_parameters_and_served_symbols_are_complete() {
     assert!(plans(33, 1).is_err());
 }
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_ROUND_ARTIFACTS"]
 fn bitwise_graph_live_rows_and_timing_on_gpu() {
     for rows in ROWS {
         for live in live_counts(rows) {
@@ -538,6 +539,7 @@ fn compare_on_gpu(s: &Session) -> LabResult<()> {
 }
 
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_ROUND_ARTIFACTS"]
 fn exclusive_profile_on_gpu() {
     if kernel_harness::selected_ordinals().unwrap().is_none() {
         kernel_harness::skip("HC profile needs an idle GPU").unwrap();

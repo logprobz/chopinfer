@@ -284,6 +284,7 @@ fn case_parameters_and_served_symbols_are_complete() {
     assert!(plans(33, 1).is_err());
 }
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_PRODUCER_ARTIFACTS"]
 fn bitwise_graph_live_rows_and_timing_on_gpu() {
     for rows in ROWS {
         for live in live_counts(rows) {

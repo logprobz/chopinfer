@@ -417,6 +417,7 @@ fn fixture_inventory_and_output_gate_detect_negative_controls() {
 }
 
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_NORM_ARTIFACTS"]
 fn bitwise_graph_live_rows_and_timing_on_gpu() {
     validate_cases().unwrap();
     if kernel_harness::selected_ordinals().unwrap().is_none() {

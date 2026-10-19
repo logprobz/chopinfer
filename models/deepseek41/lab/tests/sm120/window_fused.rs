@@ -403,6 +403,7 @@ fn window_fixture_inventory_and_negative_controls_are_complete() {
     }
 }
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_NORM_ARTIFACTS"]
 fn window_bitwise_graph_live_rows_and_timing_on_gpu() {
     validate_cases().unwrap();
     if kernel_harness::selected_ordinals().unwrap().is_none() {

@@ -298,6 +298,7 @@ fn parameters_symbols_and_old_launch_chain_are_complete() {
     assert_eq!(FLASH.shape.hc.streams, 4);
 }
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_ROUND_ARTIFACTS"]
 fn bitwise_peer_graphs_and_timing_on_gpu() {
     for rows in ROWS {
         for live in live_counts(rows) {
@@ -531,6 +532,7 @@ fn compare_on_gpu(sessions: &[Session], profile: bool) -> LabResult<()> {
 }
 
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_ROUND_ARTIFACTS"]
 fn exclusive_profile_on_gpu() {
     if kernel_harness::selected_ordinals().unwrap().is_none() {
         kernel_harness::skip("embedding profile needs two idle GPUs").unwrap();

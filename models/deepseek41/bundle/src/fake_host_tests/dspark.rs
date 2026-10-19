@@ -60,6 +60,79 @@ fn mixed_prefill_and_draft_replay_the_same_target_graph() {
     assert_eq!(host.acquired.get(), host.released.get());
 }
 
+#[test]
+fn drafter_graph_cache_tracks_exact_items_and_reordered_slots() {
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    let (host, mut instance) = create(shape);
+    for slot in 0..3 {
+        execute(
+            &mut instance,
+            &host,
+            &super::prompt(slot + 1, slot, 0, 3, true),
+        );
+        instance.commit().unwrap();
+    }
+    for (slots, fresh) in [
+        (vec![0], true),
+        (vec![2, 0, 1], true),
+        (vec![1], false),
+        (vec![1, 2, 0], false),
+    ] {
+        let batch = BatchRequestV1::new(
+            BatchWireVersionV1::V3,
+            slots
+                .iter()
+                .map(|&slot| BatchItemV1::verify(slot + 1, 6, true, vec![7]))
+                .collect(),
+            slots
+                .iter()
+                .map(|&slot| {
+                    let start = state(&instance, slot + 1).end;
+                    BatchAppendV1::new(start, 6, start + 6, vec![slot * 8], None)
+                })
+                .collect(),
+        )
+        .with_state_slots(slots.clone())
+        .encode()
+        .unwrap();
+        let start = host.journal.borrow().len();
+        execute(&mut instance, &host, &batch);
+        let journal = host.journal.borrow();
+        let draft: Vec<_> = journal[start..]
+            .iter()
+            .take_while(|line| !line.starts_with("mapped gather"))
+            .collect();
+        assert_eq!(
+            draft
+                .iter()
+                .filter(|line| line.starts_with("captured "))
+                .count(),
+            if fresh { 4 } else { 0 }
+        );
+        assert_eq!(
+            draft
+                .iter()
+                .filter(|line| line.starts_with("replay "))
+                .count(),
+            4
+        );
+        drop(journal);
+        instance
+            .commit_accepted(
+                &slots
+                    .iter()
+                    .map(|&slot| kept(slot + 1, 1))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+    }
+    for request in 1..=3 {
+        instance.retire_request(request).unwrap();
+    }
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
 pub(super) fn index(
     shape: &Shape,
     rank: u32,
@@ -479,11 +552,28 @@ fn instance_budget_prefixes_compute_the_same_full_drafter_program() {
         let draft = journal[start..]
             .iter()
             .take_while(|line| !line.starts_with("mapped gather"));
+        let mut capturing = false;
         let program = draft
-            .filter(|line| line.starts_with("launch "))
-            .cloned()
+            .filter_map(|line| {
+                if line.starts_with("capture ") {
+                    capturing = true;
+                } else if line.starts_with("captured ") {
+                    capturing = false;
+                } else if !capturing && (line.starts_with("launch ") || line.starts_with("replay "))
+                {
+                    return Some(line.clone());
+                }
+                None
+            })
             .collect::<Vec<_>>();
         assert!(!program.is_empty());
+        assert_eq!(
+            program
+                .iter()
+                .filter(|line| line.starts_with("replay "))
+                .count(),
+            4
+        );
         if let Some(full) = &full_program {
             assert_eq!(&program, full, "K={budget} changed a full-block launch");
             assert_eq!(tokens, &full_tokens[..budget as usize]);

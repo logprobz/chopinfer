@@ -104,6 +104,8 @@ pub struct Instance {
     graphs: GraphCache<DeepSeek>,
     shared_overlap: crate::shared_overlap::Settings,
     side_lanes: Vec<crate::shared_overlap::Lanes>,
+    /// A full draft program for each exact item count, sharing graph ownership.
+    draft_graphs: BTreeMap<u32, GraphCache<DeepSeek>>,
     /// Per-layer taps of prefills (`crate::taps`), when the environment
     /// asks for them.
     taps: crate::taps::StepTaps,
@@ -681,6 +683,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         graphs: GraphCache::with_items(config.create.ranks, items),
         shared_overlap: crate::shared_overlap::Settings::from_env(),
         side_lanes: Vec::new(),
+        draft_graphs: BTreeMap::new(),
         config,
         ranks: Vec::new(),
         symbols: Vec::new(),

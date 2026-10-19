@@ -9,7 +9,9 @@ use bundle_runtime::geometry::Items;
 use bundle_runtime::resources::{Held, allocate_span};
 use bundle_runtime::upload::{DeviceInputs, InputLayout, PhaseArena};
 use kernel_core::allocation::Allocation;
+use kernel_core::backend::{Need, Prepared as Op, View};
 use model_deepseek41_contract::moe::Experts;
+use model_deepseek41_contract::own_ops::ring_gather::{RingGather, RingGatherBuffers};
 use model_deepseek41_contract::own_ops::rope::MAX_POSITIONS;
 use model_deepseek41_contract::serving::{DECODE_BATCH, DeepSeek, MAX_VERIFY_ROWS, PREFILL_TOKENS};
 use model_deepseek41_contract::state::KvStorage;
@@ -43,6 +45,7 @@ pub(crate) struct Device {
     pub ops: Ops,
     pub prepared: Prepared,
     pub heads: Heads,
+    pub ring_gathers: Vec<Op<RingGatherBuffers<View>>>,
     pub runtime: Option<Runtime>,
     pub staging: Option<Staging>,
     pub ranks: Vec<Rank>,
@@ -55,6 +58,7 @@ pub(crate) struct Rank {
     pub inputs: DeviceInputs,
     pub window: Window,
     pub item_slots: Span,
+    pub source_slots: Span,
     pub first: Span,
     pub last: Span,
     pub keys: Span,
@@ -135,6 +139,22 @@ impl Device {
             DraftMode::Greedy,
         )
         .map_err(|e| format!("DSpark heads: {e:?}"))?;
+        let ring_gathers = [1, 32]
+            .into_iter()
+            .map(|divisor| {
+                let width = g.shape.attention.head_dim / divisor;
+                kernels.own.dspark_ring_gather(
+                    &RingGather {
+                        bytes: config.window * width,
+                        source_stride: config.window * width,
+                        destination_stride: (config.window + BLOCK_ROWS) * width,
+                        slots: config.slots,
+                    },
+                    Need::rows(DECODE_BATCH),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("DSpark ring gathering: {e:?}"))?;
         let runtime = Runtime::new(State::new(config)?, g.shape.vocab, config.window)?;
         let instance_id = NEXT_INSTANCE
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
@@ -146,6 +166,7 @@ impl Device {
             ops,
             prepared,
             heads,
+            ring_gathers,
             runtime: Some(runtime),
             staging: Some(Staging::new(g)?),
             ranks: Vec::new(),
@@ -170,6 +191,12 @@ impl Device {
         for (symbol, shared) in self.prepared.symbols().chain(self.heads.symbols()) {
             let most = bytes.entry(symbol.clone()).or_default();
             *most = (*most).max(*shared);
+        }
+        for op in &self.ring_gathers {
+            for (symbol, shared) in &op.info().symbols {
+                let most = bytes.entry(symbol.clone()).or_default();
+                *most = (*most).max(*shared);
+            }
         }
         bytes
     }
@@ -312,6 +339,7 @@ impl Device {
             inputs,
             window,
             item_slots: alloc(items * 4)?,
+            source_slots: alloc(items * 4)?,
             first: alloc(items * 4)?,
             last: alloc(items * 4)?,
             keys: alloc(rows * u64::from(cells) * 4)?,

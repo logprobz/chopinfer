@@ -1,4 +1,4 @@
-//! Drafter launches over instance-owned storage, outside target graphs.
+//! Catch-up launches and captured full drafts over instance-owned storage.
 
 use super::*;
 use crate::buffers::rows;
@@ -8,8 +8,10 @@ use crate::dspark::transfers::{self, ProjectionChunk};
 use crate::lower::Lowering;
 use crate::lower::dspark::heads::{HeadViews, Peer, PositionViews};
 use crate::lower::dspark::{self, BlockViews, CatchUpViews, DraftMode};
-use crate::ops::Lowered;
+use crate::ops::{Bind, Lowered};
 use crate::program::Phase;
+use kernel_core::backend::Counts;
+use model_deepseek41_contract::own_ops::ring_gather::RingGatherBuffers;
 use runtime_bundle_abi::{BundleStreamHandleV1, DeviceBufferSpanV1 as Span};
 
 fn upload(
@@ -40,8 +42,12 @@ impl Instance {
         let streams = self.ranks.iter().map(|rank| rank.2).collect::<Vec<_>>();
         self.launch_eager(&streams, &programs, &waits)
             .map_err(|e| format!("DSpark dispatch: {e:?}"))?;
+        self.drafter_status(live)
+    }
+
+    fn drafter_status(&self, live: u32) -> Result<(), String> {
         for (rank, buffers) in self.buffers.iter().enumerate() {
-            let stream = streams[rank];
+            let stream = self.ranks[rank].2;
             let mut status = vec![0; live as usize * 4];
             self.services
                 .synchronize_stream(stream)
@@ -200,7 +206,7 @@ impl Instance {
     }
 
     pub(super) fn dspark_draft(
-        &self,
+        &mut self,
         inputs: &[crate::dspark::execution::DraftInput],
     ) -> Result<(), String> {
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
@@ -208,11 +214,6 @@ impl Instance {
         let meta = dspark::metadata(g, inputs, DraftMode::Greedy)?;
         let items = inputs.len() as u32;
         let live = items * BLOCK_ROWS;
-        let phase = Phase::Verify { rows: live, items };
-        let slots = inputs
-            .iter()
-            .map(|input| input.block.slot)
-            .collect::<Vec<_>>();
         for (rank, stored) in device.ranks.iter().enumerate() {
             let stream = self.ranks[rank].2;
             let arrays = [
@@ -224,6 +225,10 @@ impl Instance {
                 (
                     stored.inputs.token_batch,
                     words(meta.row_items.iter().map(|&v| v as u32)),
+                ),
+                (
+                    stored.source_slots,
+                    words(meta.slots.iter().map(|&v| v as u32)),
                 ),
                 (stored.first, words(meta.first.iter().map(|&v| v as u32))),
                 (stored.last, words(meta.last.iter().map(|&v| v as u32))),
@@ -268,19 +273,37 @@ impl Instance {
                 )
                 .map_err(|e| format!("DSpark shared status clear: {e:?}"))?;
         }
+        self.replay_drafter(items)?;
+        self.drafter_status(live)
+    }
+
+    pub(super) fn drafter_programs(&self, items: u32) -> Result<Vec<Vec<Lowered>>, String> {
+        let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
+        let live = items * BLOCK_ROWS;
+        let phase = Phase::Verify { rows: live, items };
+        let mut all: Vec<Vec<Lowered>> = (0..self.ranks.len()).map(|_| Vec::new()).collect();
         for stage in 0..device.config.stages {
             let bound = &device.stages[stage as usize];
-            let mut programs = Vec::new();
             for (rank, buffers) in bound.iter().enumerate() {
                 let stored = &device.ranks[rank];
                 let main =
                     dspark::rings::committed(&device.shape, self.extent, &buffers.state, stage)?;
-                for copy in
-                    dspark::rings::stage(main, stored.window, &slots, g.shape.attention.head_dim)?
-                {
-                    self.services
-                        .copy_device_to_device(self.ranks[rank].2, copy.destination, copy.source)
-                        .map_err(|e| format!("DSpark ring staging: {e:?}"))?;
+                let mut program = Vec::new();
+                for (op, source, destination) in [
+                    (&device.ring_gathers[0], main.codes, stored.window.codes),
+                    (&device.ring_gathers[1], main.scales, stored.window.scales),
+                ] {
+                    let mut bind = Bind::default();
+                    let buffers = RingGatherBuffers {
+                        source: bind.view(source),
+                        source_slots: bind.view(stored.source_slots),
+                        live_items: bind.view(stored.live_items),
+                        destination: bind.view(destination),
+                    };
+                    program.extend(
+                        bind.launch(op, &buffers, Counts::rows(items))
+                            .map_err(|e| e.to_string())?,
+                    );
                 }
                 let base = Lowering {
                     shape: &device.shape,
@@ -292,11 +315,9 @@ impl Instance {
                     kv: self.kv_extent(),
                     head_rows: live,
                 };
-                let mut program = if stage == 0 {
-                    dspark::initialize(&base, phase)?
-                } else {
-                    Vec::new()
-                };
+                if stage == 0 {
+                    program.extend(dspark::initialize(&base, phase)?);
+                }
                 program.extend(dspark::block(
                     &device.prepared,
                     &base,
@@ -313,9 +334,8 @@ impl Instance {
                         keys: stored.keys,
                     },
                 )?);
-                programs.push(program);
+                all[rank].extend(program);
             }
-            self.drafter_launch(programs, live)?;
         }
         let stem = format!("mtp.{}", device.config.stages - 1);
         let programs = self
@@ -348,7 +368,9 @@ impl Instance {
                     .map_err(|e| e.to_string())
             })
             .collect::<Result<Vec<_>, String>>()?;
-        self.drafter_launch(programs, live)?;
+        for (rank, program) in all.iter_mut().zip(programs) {
+            rank.extend(program);
+        }
         let peers = device
             .ranks
             .iter()
@@ -396,8 +418,10 @@ impl Instance {
                     )
                 })
                 .collect::<Result<Vec<_>, String>>()?;
-            self.drafter_launch(programs, live)?;
+            for (rank, program) in all.iter_mut().zip(programs) {
+                rank.extend(program);
+            }
         }
-        Ok(())
+        Ok(all)
     }
 }

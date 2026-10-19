@@ -1,5 +1,5 @@
-//! Drafter-only lowering. The target program calls this outside graph
-//! capture after committed-feature catch-up and before Engram staging.
+//! Drafter-only lowering, captured after committed-feature catch-up and
+//! replayed before Engram staging.
 
 pub mod heads;
 mod ops;

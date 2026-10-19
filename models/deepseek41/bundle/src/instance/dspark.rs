@@ -1,6 +1,7 @@
 //! Connect the model-owned lifecycle to one synchronous bundle instance.
 
 mod features;
+mod graphs;
 mod launch;
 
 use std::collections::BTreeMap;

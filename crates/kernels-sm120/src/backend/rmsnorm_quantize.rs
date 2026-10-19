@@ -7,6 +7,7 @@ use kernel_core::rmsnorm_quantize::{RmsNormQuantizeBuffers, RmsNormQuantizeQuery
 
 pub(super) fn prepare(
     entries: &[Entry],
+    tiles: &[(crate::row::rmsnorm_quantize_tiles::Entry, Vec<u32>)],
     query: &RmsNormQuantizeQuery,
     need: Need,
 ) -> Result<Prepared<RmsNormQuantizeBuffers<View>>, Refused> {
@@ -35,6 +36,31 @@ pub(super) fn prepare(
         chosen.guarantees,
         vec![(entry.symbol.clone(), 0)],
     );
+    let mut tiled = None;
+    for (candidate, buckets) in tiles
+        .iter()
+        .filter(|(e, _)| resolved(e.reference.query) == resolved(*query))
+    {
+        candidate.validate()?;
+        if buckets.is_empty()
+            || buckets.windows(2).any(|p| p[0] >= p[1])
+            || buckets
+                .iter()
+                .any(|&r| r == 0 || r > candidate.reference.capacity)
+        {
+            return Err(Refusal("invalid qualified norm tile buckets").into());
+        }
+        if candidate.reference.symbol != entry.symbol
+            || candidate.reference.capacity < need.capacity
+        {
+            continue;
+        }
+        if tiled.is_some() {
+            return Err(Refusal("ambiguous norm tile entries").into());
+        }
+        info.symbols.push((candidate.symbols()[1].clone(), 0));
+        tiled = Some((candidate.clone(), buckets.clone()));
+    }
     let values = u64::from(need.capacity) * u64::from(query.norm.width);
     let bytes = if query.norm.input == DType::F32 { 4 } else { 2 };
     info.bytes = vec![
@@ -49,6 +75,7 @@ pub(super) fn prepare(
     need.check(&info)?;
     Ok(Box::new(Op {
         entry,
+        tiled,
         capacity: need.capacity,
         info,
     }))
@@ -56,6 +83,7 @@ pub(super) fn prepare(
 
 struct Op {
     entry: Entry,
+    tiled: Option<(crate::row::rmsnorm_quantize_tiles::Entry, Vec<u32>)>,
     capacity: u32,
     info: OpInfo,
 }
@@ -113,10 +141,22 @@ impl PreparedOp<RmsNormQuantizeBuffers<View>> for Op {
                 return Err(Refusal("fused norm buffers overlap incompatible roles"));
             }
         }
+        let selected = self
+            .tiled
+            .as_ref()
+            .filter(|(_, buckets)| buckets.contains(&rows));
+        let (symbol, plan) = if let Some((entry, _)) = selected {
+            (
+                entry.symbols()[1].clone(),
+                entry.plan(rows, counts.rows, true)?,
+            )
+        } else {
+            (self.entry.symbol.clone(), self.entry.plan(rows)?)
+        };
         Ok(vec![Launch {
-            symbol: self.entry.symbol.clone(),
+            symbol,
             rows: counts.rows,
-            plan: self.entry.plan(rows)?,
+            plan,
             arguments: self.entry.arguments(RmsNormQuantizeBuffers {
                 input: b.input.handle,
                 weight: b.weight.handle,

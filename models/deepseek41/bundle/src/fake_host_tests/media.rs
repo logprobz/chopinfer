@@ -320,6 +320,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// Prefill HC and ceil entries add module handles to this lifecycle.
 /// TP4 text decode uses the direct-load MoE buckets, and the paired shared
 /// gate/up keeps no single packed folds.
+/// Qualified warp and input norm tiles add only their module handles; all
+/// other launch arguments, allocations and stream ordering remain exact.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (20803, 0xd038f4dff171fa11)),
     (Ranks::TP4, (44875, 0xd61153d9bbf86c6e)),

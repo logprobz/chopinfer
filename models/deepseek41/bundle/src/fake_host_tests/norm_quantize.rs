@@ -104,7 +104,7 @@ fn decode_journal_fuses_norm_quantizers_and_widens() {
         let layers = FLASH.layers() as usize;
         assert_eq!(layers, 40);
         assert_eq!(
-            count("chop_norm_quantize_deepseek41_input_v1"),
+            count("chop_norm_quantize_deepseek41_input_tiles_v1"),
             2 * layers * ranks
         );
         assert_eq!(

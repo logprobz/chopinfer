@@ -336,6 +336,12 @@ impl crate::Kernels {
     pub(crate) fn new(shape: &crate::shape::Shape) -> Result<Self, String> {
         let sm120 = rows::register(Sm120::new(), shape.geometry, shape.ranks());
         let sm120 = norm_quantize::register(sm120, shape.geometry)?;
+        let sm120 = if shape.geometry.id == model_deepseek41_contract::geometry::FLASH.id {
+            sm120
+                .with_rmsnorm_quantize_tiles(norm_quantize_tiles::entry(shape.geometry), vec![1, 8])
+        } else {
+            sm120
+        };
         let sm120 = window_fused::register(sm120);
         let sm120 = reduce::register(sm120, shape.geometry);
         let sm120 = hc::register(sm120, shape.geometry);

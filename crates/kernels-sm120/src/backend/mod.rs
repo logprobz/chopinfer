@@ -228,6 +228,7 @@ pub struct Sm120 {
     row_rmsnorms: Vec<crate::row::RowInstantiation>,
     block_quantizers: Vec<crate::row::block_quantize::Entry>,
     norm_quantizers: Vec<crate::row::rmsnorm_quantize::Entry>,
+    norm_tiles: Vec<(crate::row::rmsnorm_quantize_tiles::Entry, Vec<u32>)>,
     expand_mix: Vec<crate::sinkhorn_hc::expand_mix::Entry>,
     round_expand_mix: Vec<crate::sinkhorn_hc::round_expand_mix::Entry>,
     replicated_embeddings: Vec<crate::row::replicated_embedding::Entry>,
@@ -325,6 +326,15 @@ impl Sm120 {
         self
     }
 
+    /// Register exact row buckets qualified against the original norm chain.
+    pub fn with_rmsnorm_quantize_tiles(
+        mut self,
+        entry: crate::row::rmsnorm_quantize_tiles::Entry,
+        buckets: Vec<u32>,
+    ) -> Self {
+        self.norm_tiles.push((entry, buckets));
+        self
+    }
     pub fn with_rmsnorm_quantize(mut self, entry: crate::row::rmsnorm_quantize::Entry) -> Self {
         self.norm_quantizers.push(entry);
         self
@@ -1285,7 +1295,7 @@ impl Backend for Sm120 {
         need: Need,
     ) -> Result<Prepared<kernel_core::rmsnorm_quantize::RmsNormQuantizeBuffers<View>>, Refused>
     {
-        rmsnorm_quantize::prepare(&self.norm_quantizers, op, need)
+        rmsnorm_quantize::prepare(&self.norm_quantizers, &self.norm_tiles, op, need)
     }
 
     fn silu_mul_quantize(

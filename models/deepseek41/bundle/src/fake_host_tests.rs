@@ -886,7 +886,9 @@ fn journal_steps(host: &Rc<Host>) {
 /// paired shared gate/up keeps no single packed folds.
 /// The qualified warp mixer retains its full cubin identity. Loading its
 /// eleven entries adds eleven resolves and twelve releases per rank;
-/// C1/C8 decode changes only three mixer symbols and their null stamp args.
+/// C1/C8 decode changes three mixer symbols and their null stamp args.
+/// The qualified input norm tiles add two resolves and three releases per
+/// rank; C1/C8 input norm grids become 20 by rows, with identical arguments.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",

@@ -46,6 +46,8 @@ mod latent;
 mod latent_scheduled;
 #[allow(dead_code)]
 mod norm_quantize;
+#[path = "norm_quantize_tiles.rs"]
+mod norm_quantize_tiles;
 mod own_cubin;
 #[allow(dead_code, reason = "the bundle prepares the paired schedule")]
 mod prefill_attention;
@@ -201,6 +203,7 @@ pub fn selection(
         owners.push((hc_round_expand_mix::cubin_name(geometry), geometry.id));
         if geometry.id == model_deepseek41_contract::geometry::FLASH.id {
             owners.push((hc_mixer_probe::cubin_name(geometry), geometry.id));
+            owners.push((norm_quantize_tiles::cubin_name(geometry), geometry.id));
         }
         owners.push((replicated_embedding::cubin_name(geometry), geometry.id));
         owners.push((ceil_parallel::cubin_name(geometry), geometry.id));
@@ -310,6 +313,10 @@ pub fn selection(
         .iter()
         .filter(|g| g.id == model_deepseek41_contract::geometry::FLASH.id)
     {
+        specs.extend(
+            norm_quantize_tiles::cubins(std::slice::from_ref(geometry))
+                .expect("qualified norm tiles"),
+        );
         specs.extend(
             hc_mixer_probe::cubins(std::slice::from_ref(geometry))
                 .expect("qualified warp mixer cubin"),

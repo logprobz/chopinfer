@@ -30,7 +30,10 @@ fn decode_fuses_77_hc_boundaries() {
                 assert_eq!(count("lagged_mix_collapse_split_v1"), 0);
                 assert_eq!(count("hc_mixer_probe_warp_v1"), 3 * nr);
                 assert_eq!(count("hc_chain_mix"), 0);
-                assert_eq!(count("input_tiles_v1"), 0);
+                assert_eq!(count("input_tiles_v1"), 80 * nr);
+                assert_eq!(count("input_v1"), 0);
+                assert_eq!(count("input_cached"), 0);
+                assert_eq!(count("hc_round_chain"), 0);
                 assert_eq!(count("input_local_v1"), 0);
                 for line in launches.iter().filter(|l| l.contains("hc_mixer_probe")) {
                     assert!(

@@ -172,3 +172,60 @@ fn fused_norm_compiles_without_spills_or_stack_and_keeps_legacy_sources() {
     );
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn qualified_norm_tiles_preserve_abi_and_only_select_measured_buckets() {
+    let q = query(DType::Bf16);
+    let entry = Entry::new(q, 32, "norm_reference").unwrap();
+    let tiles = kernels_sm120::row::rmsnorm_quantize_tiles::Entry {
+        reference: entry.clone(),
+        prefix: "norm_candidate".into(),
+    };
+    let backend = Sm120::new()
+        .with_rmsnorm_quantize(entry.clone())
+        .with_rmsnorm_quantize_tiles(tiles.clone(), vec![1, 8]);
+    let op = backend.rmsnorm_quantize(&q, Need::rows(32)).unwrap();
+    let reference = Sm120::new()
+        .with_rmsnorm_quantize(entry.clone())
+        .rmsnorm_quantize(&q, Need::rows(32))
+        .unwrap();
+    assert_eq!(op.info().implementation, reference.info().implementation);
+    for rows in [1, 2, 4, 8, 16, 32] {
+        let old = reference
+            .launches(&buffers(), View::EMPTY, Counts::rows(rows))
+            .unwrap();
+        let new = op
+            .launches(&buffers(), View::EMPTY, Counts::rows(rows))
+            .unwrap();
+        assert_eq!(old[0].arguments, new[0].arguments);
+        assert_eq!(new[0].plan.workspace_bytes, 0);
+        let selected = [1, 8].contains(&rows);
+        assert_eq!(
+            new[0].symbol,
+            if selected {
+                tiles.symbols()[1].clone()
+            } else {
+                entry.symbol.clone()
+            }
+        );
+        assert_eq!(
+            new[0].plan.grid,
+            if selected { [5, rows, 1] } else { [rows, 1, 1] }
+        );
+        let mut bad = buffers();
+        bad.normed.handle = bad.input.handle;
+        assert!(op.launches(&bad, View::EMPTY, Counts::rows(rows)).is_err());
+        bad = buffers();
+        bad.codes.bytes = 1;
+        assert!(op.launches(&bad, View::EMPTY, Counts::rows(rows)).is_err());
+    }
+    for buckets in [vec![], vec![0], vec![8, 1], vec![1, 1], vec![33]] {
+        assert!(
+            Sm120::new()
+                .with_rmsnorm_quantize(entry.clone())
+                .with_rmsnorm_quantize_tiles(tiles.clone(), buckets)
+                .rmsnorm_quantize(&q, Need::rows(32))
+                .is_err()
+        );
+    }
+}

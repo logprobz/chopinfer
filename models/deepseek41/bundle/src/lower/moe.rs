@@ -24,7 +24,7 @@ impl Lowering<'_> {
             codes: rows(scratch.normed_codes, phase.rows()),
             scales: rows(scratch.normed_scales, phase.rows()),
             live_rows: self.inputs.live_tokens,
-            status: rows(scratch.row_status, phase.rows()),
+            status: self.carried(phase, scratch.row_status)?,
         };
         ops.quantize(phase.rows(), &views)
             .map(Some)
@@ -112,7 +112,7 @@ impl Lowering<'_> {
             routes: self.route_spans(),
             live_tokens: self.inputs.live_tokens,
             workspace: self.buffers.workspace,
-            status: rows(scratch.row_status, phase.rows()),
+            status: self.carried(phase, scratch.row_status)?,
         };
         ops.experts(phase, gate_up, &views)
             .map(Some)
@@ -130,7 +130,11 @@ impl Lowering<'_> {
             routed: scratch.routed,
             ids: scratch.expert_ids,
             addend: Some(scratch.shared_partial),
-            output: scratch.partial,
+            output: if phase.prefill() && self.prefill_row_origin.is_some() {
+                self.carried(phase, scratch.partial)?
+            } else {
+                scratch.partial
+            },
             live_rows: self.inputs.live_tokens,
         };
         ops.routed_sum(phase, self.rank, &views)
@@ -211,7 +215,7 @@ impl Lowering<'_> {
             codes: rows_of(scratch.shared_codes),
             scales: rows_of(scratch.shared_scales),
             live_rows: self.inputs.live_tokens,
-            status: rows_of(scratch.row_status),
+            status: self.carried(phase, scratch.row_status)?,
         };
         ops.activate(phase.rows(), &views)
             .map(Some)

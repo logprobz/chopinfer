@@ -231,3 +231,66 @@ rerun timing remain unproven. Applying the measured attention ratio to
 round 3's exclusive mixed-attention time suggests about 0.86 seconds saved
 per 8192-row chunk, roughly 3.4 seconds per 32K prompt. This is a kernel-only
 projection, not an end-to-end serving measurement.
+
+## Decoding keys once
+
+On 2026-10-19, the decoded BF16 cache passed all 24 full-chunk comparisons:
+window, mixed32 and mixed64 at offsets 0, 8192, 16384 and 24576 on two GPUs
+at 250 W. The selected and window lists came from a served 32K prompt. Q/KV
+values and physical page placement were synthetic native fixtures. F32
+partials and BF16 output were bitwise equal to paired attention, including
+changed-input and live-count replay, missing and aliased pages, f64 checks,
+private allocation checks and canary controls.
+
+Combined cache construction, attention and merge took these milliseconds per
+mixed layer per 8192 rows (three interleaved samples):
+
+| Variant | Offset | GPU 0 paired | GPU 0 cached | GPU 1 paired | GPU 1 cached |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| mixed32 | 0 | 5.689 | 5.714 | 5.611 | 5.627 |
+| mixed32 | 8192 | 6.140 | 5.598 | 6.029 | 5.521 |
+| mixed32 | 16384 | 6.148 | 5.432 | 6.065 | 5.350 |
+| mixed32 | 24576 | 6.151 | 5.375 | 6.071 | 5.295 |
+| mixed64 | 0 | 5.898 | 6.152 | 5.820 | 6.054 |
+| mixed64 | 8192 | 6.143 | 6.065 | 6.056 | 5.962 |
+| mixed64 | 16384 | 6.158 | 5.931 | 6.057 | 5.833 |
+| mixed64 | 24576 | 6.172 | 5.813 | 6.075 | 5.729 |
+
+Window total time fell from 1.130-1.159 ms to 1.047-1.073 ms. The binding
+uses the cache for window layers at all four measured offsets and for mixed
+layers after offset zero. Applying those differences to two window, eighteen
+mixed32 and twenty mixed64 layers predicts about 11-21 ms saved per later
+8K chunk and 50 ms per 32K prompt. These are kernel projections; the serving
+binding and its table upload still require an integrated GPU measurement.
+
+The route requires native Flash TP4, a one-item instance, and an eager
+8192-row prefill with consecutive positions at one of the measured offsets.
+Other row counts, offsets, topologies, BF16 KV, multiple-item instances,
+decode, verify and draft attention keep their existing routes. Every decoded
+consumer uses the measured paired body and 85,504 dynamic shared bytes. Its
+64-key units, QK chains, softmax/PV order and original merge are unchanged.
+
+A dense decoded copy of the complete serving KV pool would be too large.
+The host instead bounds the active physical-page span at 1024 pages. It
+subtracts the same page origin from the table and advances the native pool
+view by that origin times the original page stride. This preserves every
+selected native byte address, including repeated page IDs and holes. A wider
+physical span keeps the paired mixed path. The window route is independent
+of that fallback.
+
+Each admitted rank owns a separate 75,632,640-byte data allocation and one
+full page-table row. Both are reserved before the host sizes its KV pool.
+The data allocation holds guarded, aligned window, compressed and mark
+regions. Each layer uses its own bounded layout inside that allocation;
+32-position pages fit inside the allocation sized for 64-position pages.
+The cache is disjoint from native KV, activations, F32 partials, output,
+collective buffers and side-stream workspace. A lowering-time check rejects
+aliasing with any live attention view.
+
+The rebased table is uploaded once before the eager chunk. Every layer
+clears marks, marks selected physical pages, decodes the window and marked
+pages, runs attention and merges on the same stream. Producers retain ordinary
+stream ordering. A model adapter admits only the six qualified producer
+symbols with that ordering and resolves the whole segment before submission;
+PDL-only lists and graph dispatch retain their original helper. No cache
+region is shared across a fork or used by another stream.

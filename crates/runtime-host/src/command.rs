@@ -3199,6 +3199,10 @@ struct ServedExecutorV1<E: BundleExecutionV1 = LoadedBundleInstanceV1> {
 }
 
 impl<E: BundleExecutionV1> ModelExecutor for ServedExecutorV1<E> {
+    fn device_results_v1(&self) -> bool {
+        self.executor.device_results_v1()
+    }
+
     fn rollback_preserves_state_v1(&self) -> bool {
         self.executor.rollback_preserves_state_v1()
     }
@@ -8023,9 +8027,9 @@ mod tests {
         }
     }
 
-    struct RetirementExecution {
-        trace: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
-        fail_retirement: bool,
+    pub(super) struct RetirementExecution {
+        pub(super) trace: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+        pub(super) fail_retirement: bool,
     }
 
     impl crate::BundleExecutionV1 for RetirementExecution {
@@ -9592,3 +9596,7 @@ mod model_option_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "command_device_results_tests.rs"]
+mod device_results_tests;

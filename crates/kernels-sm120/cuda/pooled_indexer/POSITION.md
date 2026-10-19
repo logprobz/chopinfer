@@ -124,3 +124,37 @@ all outputs and workspace, and rejects wrong causal counts and a gather
 that consumes poisoned scratch beyond visibility. Per-kernel event times
 sum full row blocks; a pair job joins the two 4096-row shards into complete
 8192-row measurements. CPU tests establish coverage and dispatch only.
+
+
+## Small-row query candidate and MMA experiment
+
+`position_query_parallel.cuh` is a separately locked candidate for 32 heads
+of 128 channels with 64 rotary channels, through 32 launch rows. Each warp
+quantizes one head. Rotation keeps the original separate F32 multiplies and
+adds, and the shared quantizer rounds to BF16 before its discrete decisions.
+All groups contribute their flags before one sticky row-status update;
+register-held pairs are published only after that admission. Invalid positions
+avoid input and table reads, failed rows write positive zero, and inactive rows
+write nothing. The opt-in planner uses the runtime row bucket even when the
+prepared capacity also covers prefill. It introduces no cross-stream scratch.
+The model's standalone candidate registration is separate from serving pending
+paired GPU conformance and the measured crossover.
+
+`position_mma_probe.cuh` is a lab-only experiment. It decodes keys exactly to
+BF16 and uses two m16n8k16 MMAs from zero for each 32-channel block, adds the
+four block results in order, then keeps the original ReLU, scaled F32 weights
+and ordered head FMAs. This is not generally the served reduction: SIMT first
+accumulates four strided channels per lane, then sums lanes at offsets
+16, 8, 4, 2 and 1.
+
+A quantizer-valid witness has one active head, unit keys, q[0] = 2^25,
+q[33] = 1 and q[64] = -2^25, with other query channels zero. SIMT and the
+compensated f64 reference return 1/64 after head weighting; block-first
+arithmetic returns zero. Exact products within each scale block therefore
+do not establish bitwise scores or a deviation no larger than the current
+build. No efficient general exact MMA replacement has been established.
+The candidate has no serving route. Its lab reports complete score-bit and
+selection differences, sampled errors against the compensated f64 oracle,
+contract-bound fractions and exclusive, gated, alternating kernel timings.
+The witness must reject the reordered arithmetic even when aggregate error
+on randomized inputs improves.

@@ -16,6 +16,70 @@ ROOT=Path(__file__).resolve().parent
 BINARY=ROOT/'snapshot/bin/prefill-attention'
 CUBINS=ROOT/'snapshot/cubins'
 
+def capture_file(root, relative):
+    path=Path(relative)
+    if path.is_absolute() or not path.parts or '..' in path.parts:
+        raise ValueError(f'capture path must be relative: {relative}')
+    current=root
+    for part in path.parts:
+        current=current/part
+        if current.is_symlink():
+            raise ValueError(f'capture symlink: {current}')
+    if not current.is_file():
+        raise ValueError(f'capture file missing: {current}')
+    return current
+
+def full_capture_manifest(root):
+    """Validate published capture data independently of mutable serving caches."""
+    root=root.resolve()
+    ready=json.loads(capture_file(root,'capture-ready.json').read_text())
+    manifest=capture_file(root,Path(ready['path']).relative_to(root))
+    if capture.digest(manifest)!=ready['sha256']:
+        raise ValueError('capture manifest digest mismatch')
+    data=json.loads(manifest.read_text())
+    if data['schema']!='chopinfer.prefill-cache-lists.v1' or data['samples'] is not False:
+        raise ValueError('capture must contain full selected lists')
+    checked={}
+    def reference(ref, size=None):
+        path=capture_file(manifest.parent,ref['path'])
+        if path not in checked:
+            checked[path]=capture.digest(path)
+        if checked[path]!=ref['sha256']:
+            raise ValueError(f'capture data digest mismatch: {path}')
+        if size is not None and path.stat().st_size!=size:
+            raise ValueError(f'capture data size mismatch: {path}')
+        return path
+    prompt=json.loads(reference(data['prompt']).read_text())
+    if len(prompt)!=capture.ROWS*len(capture.OFFSETS):
+        raise ValueError('capture prompt length mismatch')
+    expected={(off,layer) for off in capture.OFFSETS for layer in (0,*range(2,40))}
+    seen=set()
+    for record in data['records']:
+        offset=record['offset'];layer=record['layer'];key=(offset,layer)
+        if key not in expected or key in seen:
+            raise ValueError('capture coverage mismatch')
+        seen.add(key)
+        positions=list(range(offset,offset+capture.ROWS))
+        if record['rows']!=capture.ROWS or record['positions']!=positions:
+            raise ValueError('capture row extent mismatch')
+        reference(record['window'],capture.ROWS*128*4)
+        if layer==0:
+            if record['variant']!='window':
+                raise ValueError('capture window variant mismatch')
+            continue
+        if record['variant'] not in ('mixed32','mixed64'):
+            raise ValueError('capture mixed variant mismatch')
+        reference(record['selected'],capture.ROWS*512*4)
+        meta=json.loads(reference(record['metadata']).read_text())
+        required=dict(schema='chopinfer.prefill-selected.v1',layer=layer,offset=offset,
+            rows=capture.ROWS,top_k=512,positions=positions,token_ids=prompt[offset:offset+capture.ROWS],
+            rank=0,replicated=True,ratio=2 if record['variant']=='mixed32' else 1)
+        if any(meta.get(k)!=v for k,v in required.items()):
+            raise ValueError('capture selected metadata mismatch')
+    if seen!=expected:
+        raise ValueError('capture coverage mismatch')
+    return manifest
+
 def gate(text,variant,offset,rows,timing):
     logs.clean_gpu_output(text)
     if timing:
@@ -34,6 +98,10 @@ def gate(text,variant,offset,rows,timing):
     return records
 
 def main():
+    if sys.argv[1:]==['--validate-capture']:
+        manifest=full_capture_manifest(ROOT)
+        print(json.dumps(dict(path=str(manifest),sha256=capture.digest(manifest),records=156)))
+        return
     flags=set(sys.argv[1:]);assert flags<= {'--capture','--dry-run','--samples-only'}
     whole='--capture' in flags;dry='--dry-run' in flags;samples_only='--samples-only' in flags
     assert not (whole and samples_only)
@@ -51,7 +119,12 @@ def main():
         values=[l.split(',') for l in text.splitlines() if l.strip()]
         assert len(values)==(4 if whole else 2) and all(float(r[1])==250 for r in values)
     try:
-        step('hashes',['sha256sum','--check','--quiet',str(ROOT/'SHA256SUMS')],cwd=ROOT)
+        hashes=ROOT/('SHA256SUMS' if whole else 'PAIR_SHA256SUMS')
+        step('hashes',['sha256sum','--check','--quiet',str(hashes)],cwd=ROOT)
+        manifest=None
+        if not whole and not samples_only:
+            ready=json.loads(step('capture-inputs',[sys.executable,'-B',str(Path(__file__).resolve()),'--validate-capture'],60))
+            manifest=Path(ready['path'])
         capture.check_space(ROOT)
         assert len(json.loads((ROOT/'prompt.json').read_text()))==32768
         if dry:
@@ -59,6 +132,10 @@ def main():
             for variant in ['mixed32','mixed64']:
                 for offset in [0,24576]:
                     step(f'input-{variant}-{offset}',[str(BINARY),'cache-sample-check',str(CUBINS),str(ROOT/'samples/lists.json'),variant,str(offset)])
+            if manifest is not None:
+                for variant in ['window','mixed32','mixed64']:
+                    for offset in capture.OFFSETS:
+                        step(f'full-input-{variant}-{offset}',[str(BINARY),'cache-list-check',str(CUBINS),str(manifest),variant,str(offset)])
             verdict['exit_code']=0;print('PASS cache_job_dry_run no_gpu_access=true actual_sample_inputs=true');return
         assert len(visible.split(','))==(4 if whole else 2)
         power('before')
@@ -78,9 +155,7 @@ def main():
             for variant in ['mixed32','mixed64']:
                 for offset in [0,24576]:run('sample',variant,offset,ROOT/'samples/lists.json',32,20)
             if not samples_only:
-                ready=json.loads((ROOT/'capture-ready.json').read_text());manifest=Path(ready['path'])
-                assert manifest.is_file() and not manifest.is_symlink() and manifest.resolve().is_relative_to(ROOT) and capture.digest(manifest)==ready['sha256']
-                data=json.loads(manifest.read_text());assert data['samples'] is False and len(data['records'])==156
+                assert manifest is not None
                 for variant in ['window','mixed32','mixed64']:
                     for offset in capture.OFFSETS:run('check',variant,offset,manifest,8192,20)
                 for variant in ['window','mixed32','mixed64']:

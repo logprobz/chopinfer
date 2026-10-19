@@ -6,6 +6,7 @@
 use kernel_core::backend::{Backend, Counts, Prepared, Refused, View};
 use kernel_core::sinkhorn_expand_mix::{
     SinkhornExpandMixBuffers, SinkhornExpandMixQuery, SinkhornRoundExpandMixBuffers,
+    SinkhornRoundNormBuffers, SinkhornRoundNormQuery,
 };
 use kernel_core::sinkhorn_hyper_connection::{
     LaggedMixCollapseBuffers, MixScratch, MixerWeights, StreamExpandBuffers,
@@ -30,6 +31,7 @@ pub(crate) struct HcOps {
     head: Prepared<WeightedStreamHeadBuffers<View>>,
     fused: Option<Prepared<SinkhornExpandMixBuffers<View>>>,
     round_fused: Option<Prepared<SinkhornRoundExpandMixBuffers<View>>>,
+    finish_norm: Option<Prepared<SinkhornRoundNormBuffers<View>>>,
 }
 
 /// The mixer scratch the mix-collapse lists, in bytes: its partials,
@@ -86,6 +88,21 @@ impl HcOps {
         let need = exact::need(PREFILL_TOKENS, exact::every_phase(super::verify_rows()));
         let g = shape.geometry;
         Ok(HcOps {
+            finish_norm: {
+                let capacity = model_deepseek41_contract::serving::DECODE_BATCH;
+                let need = exact::need(capacity, exact::every_phase(capacity));
+                let query = SinkhornRoundNormQuery {
+                    mixer: SinkhornExpandMixQuery { mix: hc::mix(g) },
+                    norm: model_deepseek41_contract::rows::norm_quantizers(g)[0],
+                };
+                match asks.ask("hc.round_expand_mix_norm", need, |need| {
+                    backend.sinkhorn_round_expand_mix_norm(&query, need)
+                }) {
+                    Ok(op) => Some(op),
+                    Err(Refused::Unsupported) => None,
+                    Err(e) => return Err(e),
+                }
+            },
             mix: asks.ask("hc.mix_collapse", need, |need| {
                 backend.sinkhorn_lagged_mix_collapse(&hc::mix_collapse(g, need.capacity), need)
             })?,
@@ -195,6 +212,42 @@ impl HcOps {
             live_rows: bind.view(views.live_rows),
         };
         bind.launch_within(op, &b, workspace, Counts::rows(rows))
+    }
+
+    pub(crate) fn has_finish_norm(&self, phase: Phase) -> bool {
+        matches!(phase, Phase::Decode(1 | 8)) && self.finish_norm.is_some()
+    }
+
+    pub(crate) fn round_expand_mix_norm(
+        &self,
+        phase: Phase,
+        views: SinkhornRoundNormBuffers<DeviceBufferSpanV1>,
+        workspace: DeviceBufferSpanV1,
+    ) -> Result<Vec<Lowered>, kernel_core::contract::Refusal> {
+        use kernel_core::allocation::Traversal;
+        if !self.has_finish_norm(phase) {
+            return Err(kernel_core::contract::Refusal(
+                "unqualified HC finish norm phase",
+            ));
+        }
+        let mut bind = Bind::default();
+        // Shared collapsed/live roles and the allowed post/comb aliases
+        // must retain one logical view when composing the two validators.
+        let mut seen = Vec::new();
+        let b = views.map(|span| {
+            if let Some((_, view)) = seen.iter().find(|(old, _)| *old == span) {
+                return *view;
+            }
+            let view = bind.view(span);
+            seen.push((span, view));
+            view
+        });
+        bind.launch_within(
+            self.finish_norm.as_ref().unwrap(),
+            &b,
+            workspace,
+            Counts::rows(phase.rows()),
+        )
     }
 
     /// The mixer scratch every rank allocates for the mix-collapse.
@@ -312,6 +365,10 @@ mod tests {
                         .iter()
                         .any(|(s, _)| s.ends_with("hc_mixer_probe_warp_v1"));
                     assert_eq!(selected, matches!(phase, Phase::Decode(1 | 8)), "{phase:?}");
+                    assert_eq!(
+                        ops.has_finish_norm(phase),
+                        matches!(phase, Phase::Decode(1 | 8))
+                    );
                 }
             }
             assert_eq!(ops.scratch().partials, Some(32 * 15360));

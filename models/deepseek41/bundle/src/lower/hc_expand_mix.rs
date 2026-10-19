@@ -3,7 +3,9 @@ use crate::{
     ops::Lowered,
     program::{Phase, Sublayer},
 };
-use kernel_core::sinkhorn_expand_mix::{SinkhornExpandMixBuffers, SinkhornRoundExpandMixBuffers};
+use kernel_core::sinkhorn_expand_mix::{
+    SinkhornExpandMixBuffers, SinkhornRoundExpandMixBuffers, SinkhornRoundNormBuffers,
+};
 use model_deepseek41_contract::geometry::Geometry;
 
 /// Only adjacent sublayers whose intervening stages preserve the streams.
@@ -37,6 +39,32 @@ impl Lowering<'_> {
         previous
             .is_some_and(|(l, s)| successor(self.shape.geometry, l, s) == Some((layer, sublayer)))
     }
+    pub(super) fn finish_norm_was_fused(
+        &self,
+        phase: Phase,
+        layer: u32,
+        sublayer: Sublayer,
+    ) -> Result<bool, String> {
+        if !self
+            .ops
+            .hc
+            .as_ref()
+            .is_some_and(|hc| hc.has_finish_norm(phase))
+            || !self.mix_was_fused(phase, layer, sublayer)
+        {
+            return Ok(false);
+        }
+        let previous = match sublayer {
+            Sublayer::Mlp => (layer, Sublayer::Attention),
+            Sublayer::Attention => (layer - 1, Sublayer::Mlp),
+        };
+        // A non-deferred all-reduce still needs the standalone norm after
+        // expand/mix. Require the same admission as the preceding stage.
+        Ok(self
+            .round_expand_with_next_mix(phase, previous.0, previous.1)?
+            .is_some())
+    }
+
     pub(super) fn expand_with_next_mix(
         &self,
         phase: Phase,
@@ -145,10 +173,17 @@ impl Lowering<'_> {
             comb: row(s.comb),
             live_rows: self.inputs.live_tokens,
         };
-        launches.extend(
+        let next = if hc.has_finish_norm(phase) {
+            let norm = self.input_norm_views(phase, next_layer, next_sublayer)?;
+            hc.round_expand_mix_norm(
+                phase,
+                SinkhornRoundNormBuffers { hc: buffers, norm },
+                self.buffers.workspace,
+            )
+        } else {
             hc.round_expand_mix(phase.rows(), buffers, self.buffers.workspace)
-                .map_err(|e| format!("round, expand and next lagged mixer: {e}"))?,
-        );
+        };
+        launches.extend(next.map_err(|e| format!("round, expand and next lagged mixer: {e}"))?);
         Ok(Some(launches))
     }
 }

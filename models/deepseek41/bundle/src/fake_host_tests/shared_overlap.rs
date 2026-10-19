@@ -201,6 +201,9 @@ fn audit_scratch(lines: &[String]) -> (usize, usize) {
         }
         let (codes, scales, live) = if lines[at - 1].contains("moe_ceil_w5120_") {
             (1, 2, 3)
+        } else if lines[at - 1].contains("chop_deepseek41_hc_finish_norm_w32_v1") {
+            // MLP norms always widen; the fused ABI has ten HC arguments.
+            (13, 14, 9)
         } else if [
             "chop_norm_quantize_deepseek41_input_v1",
             "chop_norm_quantize_deepseek41_input_tiles_v1",
@@ -306,8 +309,13 @@ fn scratch_audit_recognizes_norm_tiles_and_rejects_overlapping_writes() {
         "chop_norm_quantize_deepseek41_input_v1",
         "chop_norm_quantize_deepseek41_input_tiles_v1",
         "chop_norm_quantize_deepseek41_input_cached32_v1",
+        "chop_deepseek41_hc_finish_norm_w32_v1",
     ] {
-        let arguments = (1..=8)
+        let arguments = (1..=if symbol.contains("hc_finish_norm") {
+            16
+        } else {
+            8
+        })
             .map(|handle| span(handle, 0, 5120))
             .collect::<Vec<_>>()
             .join(", ");
@@ -315,13 +323,13 @@ fn scratch_audit_recognizes_norm_tiles_and_rejects_overlapping_writes() {
             format!("launch 1 {symbol} [{arguments}]"),
             "record 1 7".into(),
             "wait 2 7".into(),
-            format!("launch 1 compute [{}]", span(9, 0, 64)),
-            format!("launch 2 shared [{}]", span(10, 0, 64)),
+            format!("launch 1 compute [{}]", span(19, 0, 64)),
+            format!("launch 2 shared [{}]", span(20, 0, 64)),
             "record 2 8".into(),
             "wait 1 8".into(),
         ];
         assert_eq!(audit_scratch(&lines), (1, 0));
-        lines[4] = format!("launch 2 shared [{}]", span(9, 32, 64));
+        lines[4] = format!("launch 2 shared [{}]", span(19, 32, 64));
         assert_eq!(audit_scratch(&lines), (1, 1));
     }
 }

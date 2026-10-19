@@ -35,6 +35,8 @@ mod engram_hash_entries;
 mod hc;
 #[allow(dead_code)]
 mod hc_expand_mix;
+#[allow(dead_code, reason = "the bundle selects measured fused tails")]
+mod hc_finish_norm;
 #[allow(dead_code)]
 mod hc_mixer_probe;
 #[path = "hc_round_chain.rs"]
@@ -238,6 +240,7 @@ pub fn selection(
             owners.push((norm_quantize_tiles::cubin_name(geometry), geometry.id));
             owners.push((norm_quantize_cached::cubin_name(geometry), geometry.id));
             owners.push((hc_round_chain::cubin_name(geometry), geometry.id));
+            owners.push((hc_finish_norm::cubin_name(geometry), geometry.id));
         }
         owners.push((replicated_embedding::cubin_name(geometry), geometry.id));
         owners.push((ceil_parallel::cubin_name(geometry), geometry.id));
@@ -354,6 +357,10 @@ pub fn selection(
         specs.extend(
             norm_quantize_cached::cubins(std::slice::from_ref(geometry))
                 .expect("qualified cached norm cubin"),
+        );
+        specs.extend(
+            hc_finish_norm::cubins(std::slice::from_ref(geometry))
+                .expect("qualified HC finish norm cubin"),
         );
         specs.extend(
             hc_round_chain::cubins(std::slice::from_ref(geometry))

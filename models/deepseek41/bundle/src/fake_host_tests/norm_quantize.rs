@@ -105,8 +105,9 @@ fn decode_journal_fuses_norm_quantizers_and_widens() {
         assert_eq!(layers, 40);
         assert_eq!(
             count("chop_norm_quantize_deepseek41_input_cached32_v1"),
-            2 * layers * ranks
+            3 * ranks
         );
+        assert_eq!(count("chop_deepseek41_hc_finish_norm_w32_v1"), 77 * ranks);
         assert_eq!(
             count("chop_norm_quantize_deepseek41_query_v1"),
             layers * ranks

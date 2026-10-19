@@ -34,12 +34,14 @@ fn decode_fuses_77_hc_boundaries() {
                     count("hc_round_chain_w4_v1"),
                     if rows == 8 { 77 * nr } else { 0 }
                 );
-                assert_eq!(count("hc_round_expand_mix_finish_v1"), 77 * nr);
+                assert_eq!(count("hc_round_expand_mix_finish_v1"), 0);
+                assert_eq!(count("hc_finish_norm_w32_v1"), 77 * nr);
+                assert_eq!(count("hc_finish_norm_w16_v1"), 0);
                 assert_eq!(count("lagged_mix_collapse_split_v1"), 0);
                 assert_eq!(count("hc_mixer_probe_warp_v1"), 3 * nr);
                 assert_eq!(count("hc_chain_mix"), 0);
                 assert_eq!(count("input_tiles_v1"), 0);
-                assert_eq!(count("input_cached32_v1"), 80 * nr);
+                assert_eq!(count("input_cached32_v1"), 3 * nr);
                 assert_eq!(count("input_v1"), 0);
                 assert_eq!(count("input_cached8_v1"), 0);
                 assert_eq!(count("input_cached16_v1"), 0);
@@ -52,7 +54,9 @@ fn decode_fuses_77_hc_boundaries() {
                         if rows == 1 { 256 } else { 128 }
                     )));
                 }
-                for line in launches.iter().filter(|l| l.contains("input_cached32_v1")) {
+                for line in launches.iter().filter(|l| {
+                    l.contains("input_cached32_v1") || l.contains("hc_finish_norm_w32_v1")
+                }) {
                     assert!(line.contains(&format!("grid_x: 1, grid_y: {rows}, grid_z: 1")));
                     assert!(line.contains("block_x: 1024, block_y: 1, block_z: 1"));
                 }
@@ -113,6 +117,10 @@ fn decode_fuses_77_hc_boundaries() {
 #[test]
 fn measured_producer_modules_retain_their_qualified_bytes() {
     for (symbol, expected) in [
+        (
+            "chop_deepseek41_hc_finish_norm_w32_v1",
+            "ee3c894ebf533a2acad15e277d4539840ce4cb862836689a940c4a1d8b20829f",
+        ),
         (
             "chop_norm_quantize_deepseek41_input_cached32_v1",
             "870dfd3bac6205cf9373943b2ee7a3146c8f101ad27ca9b7af82f277ceb736dc",

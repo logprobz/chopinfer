@@ -14,6 +14,7 @@ pub mod dspark_entries;
 #[allow(dead_code, reason = "the build compiles the drafter router")]
 mod dspark_router;
 pub mod hc_expand_mix;
+pub mod hc_finish_norm;
 pub mod hc_mixer_probe;
 pub mod hc_round_chain;
 pub mod hc_round_expand_mix;
@@ -404,6 +405,7 @@ impl crate::Kernels {
         let sm120 = hc_expand_mix::register(sm120, shape.geometry);
         let sm120 = hc_round_expand_mix::register(sm120, shape.geometry);
         let sm120 = hc_round_chain::register(sm120, shape.geometry);
+        let sm120 = hc_finish_norm::register(sm120, shape.geometry);
         let sm120 = replicated_embedding::register(sm120, shape.geometry, shape.ranks());
         let sm120 = latent_scheduled::register_sources(sm120, shape.geometry, shape.ranks())?;
         let sm120 = indexer::register(sm120, shape.geometry);

@@ -71,6 +71,66 @@ fn backend(entries: Vec<Entry>) -> Sm120 {
 }
 
 #[test]
+fn prefill_tiles_bound_expansion_and_configure_both_shared_tiles() {
+    for weight in [WeightFormat::Bf16, WeightFormat::F32] {
+        for features in [32, 64] {
+            let original = entry(weight);
+            let q = GemmQuery {
+                m_capacity: 8192,
+                ..original.query()
+            };
+            let usage = OperationUse {
+                capacity: 8192,
+                ..original.usage()
+            };
+            let e = Entry::new(q, usage, "prefill_test")
+                .unwrap()
+                .with_prefill_tiles(features)
+                .unwrap();
+            let prepared = backend(vec![e.clone()])
+                .projection(&operation(&e), usage, Need::rows(8192))
+                .unwrap()
+                .handle;
+            let mut b = buffers(&e);
+            b.scratch.weight_domain = Some(View {
+                handle: 10,
+                bytes: e.weight_domain_bytes(),
+            });
+            let workspace = View {
+                handle: 9,
+                bytes: prepared.info().workspace,
+            };
+            for rows in [
+                512, 1, 31, 32, 33, 63, 64, 65, 511, 513, 2047, 2048, 2049, 8191, 8192,
+            ] {
+                let launches = prepared
+                    .launches(&b, workspace, Counts::rows(rows))
+                    .unwrap();
+                assert_eq!(launches.len(), 2, "rows={rows}");
+                assert_eq!(launches[1].plan, e.prefill_plan(rows).unwrap());
+                assert_eq!(launches[1].plan.block[0], features * 8);
+                assert!(
+                    prepared
+                        .info()
+                        .symbols
+                        .contains(&(e.symbol().into(), launches[1].plan.dynamic_shared_bytes))
+                );
+                let short = View {
+                    bytes: e.prefill_workspace_bytes(rows) - 1,
+                    ..workspace
+                };
+                assert!(prepared.launches(&b, short, Counts::rows(rows)).is_err());
+            }
+            assert_eq!(workspace.bytes, 8192 * 4 + 8192 * u64::from(q.k) * 6);
+            assert_eq!(prepared.initialize(&b).unwrap().len(), 1);
+            assert!(e.prefill_plan(8193).is_err());
+            assert!(original.clone().with_prefill_tiles(16).is_err());
+            assert!(original.with_split_decode().with_prefill_tiles(32).is_err());
+        }
+    }
+}
+
+#[test]
 fn split_decode_selects_the_measured_path_for_every_row_through_256() {
     for weight in [WeightFormat::Bf16, WeightFormat::F32] {
         let original = entry(weight);

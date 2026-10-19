@@ -19,6 +19,12 @@ impl Entry {
     }
 
     pub fn baseline_symbol(&self) -> &str {
+        if self.uses_prefill_tiles() {
+            return self
+                .symbol
+                .strip_suffix(&format!("_tiles_n{}_v1", self.prefill_tile_n))
+                .expect("prefill suffix");
+        }
         if self.fused {
             self.symbol
                 .strip_suffix("_split_v2")
@@ -36,6 +42,9 @@ impl Entry {
     /// above the measured split-decode crossover. `symbols` instead lists
     /// the exports compiled by this entry's cubin specification.
     pub fn runtime_symbols(&self) -> Vec<String> {
+        if self.uses_prefill_tiles() {
+            return self.symbols();
+        }
         if self.fused {
             let mut symbols = self.symbols();
             let small = self.entry_for_rows(1);
@@ -55,6 +64,11 @@ impl Entry {
     }
 
     pub fn symbols(&self) -> Vec<String> {
+        if self.uses_prefill_tiles() {
+            return ["_weights", "_prepare", ""]
+                .map(|s| self.stage_symbol(s))
+                .to_vec();
+        }
         if self.fused {
             return ["_weights", "_prepare", ""]
                 .map(|s| self.stage_symbol(s))
@@ -81,6 +95,9 @@ impl Entry {
     }
 
     pub fn decode_workspace_bytes(&self, capacity: u32) -> u64 {
+        if self.uses_prefill_tiles() {
+            return self.prefill_workspace_bytes(capacity);
+        }
         if self.fused {
             let small = self
                 .entry_for_rows(1)
@@ -142,6 +159,9 @@ impl Entry {
     }
 
     pub fn entry_specs(&self) -> Vec<EntrySpec> {
+        if self.uses_prefill_tiles() {
+            return self.prefill_specs();
+        }
         if self.fused {
             return self.split_specs();
         }

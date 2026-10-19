@@ -71,27 +71,39 @@ pub(super) fn prepare(
     )?;
     let binding = bound.swap_remove(chosen.entry);
     let entry = offers.entries[binding.handle].clone();
+    let shared = if entry.uses_prefill_tiles() {
+        entry.prefill_plan(need.capacity)?.dynamic_shared_bytes
+    } else {
+        0
+    };
     let mut info = OpInfo::new(
         f32_projection::IMPLEMENTATION,
         chosen.guarantees,
         entry
             .runtime_symbols()
             .into_iter()
-            .map(|s| (s, 0))
+            .map(|s| {
+                let bytes = if s == entry.symbol() { shared } else { 0 };
+                (s, bytes)
+            })
             .collect(),
     );
     if entry.uses_cached_weights() {
-        entry.decode_plan(need.capacity.min(entry.decode_max_rows()))?;
-        if entry.uses_fused_split() {
-            entry.prepare_plan(need.capacity.min(entry.decode_max_rows()))?;
+        if entry.uses_prefill_tiles() {
+            entry.stage_plan([need.capacity, 1, 1])?;
+        } else {
+            entry.decode_plan(need.capacity.min(entry.decode_max_rows()))?;
+            if entry.uses_fused_split() {
+                entry.prepare_plan(need.capacity.min(entry.decode_max_rows()))?;
+            }
+            entry.stage_plan([entry.query().n.div_ceil(16), 1, 1])?;
+            let elements = need
+                .capacity
+                .min(entry.decode_max_rows())
+                .checked_mul(entry.query().n)
+                .ok_or(Refused::Rule("F32 reduction grid overflows".into()))?;
+            entry.stage_plan([elements.div_ceil(128), 1, 1])?;
         }
-        entry.stage_plan([entry.query().n.div_ceil(16), 1, 1])?;
-        let elements = need
-            .capacity
-            .min(entry.decode_max_rows())
-            .checked_mul(entry.query().n)
-            .ok_or(Refused::Rule("F32 reduction grid overflows".into()))?;
-        entry.stage_plan([elements.div_ceil(128), 1, 1])?;
         info.workspace = entry.decode_workspace_bytes(need.capacity);
         info.bytes
             .push(("scratch.weight_domain".into(), entry.weight_domain_bytes()));
@@ -167,6 +179,39 @@ impl PreparedOp<ProjectionBuffers<View>> for Projection {
         b.live_rows.covers(4)?;
         if entry.uses_cached_weights() {
             let ptr = |v: View| Argument::DeviceBuffer(v.handle);
+            if entry.uses_prefill_tiles() {
+                let flags = self.weight_domain(b)?;
+                workspace.covers(entry.prefill_workspace_bytes(rows))?;
+                return Ok(vec![
+                    Self::stage(
+                        &entry,
+                        "_prepare",
+                        rows,
+                        entry.stage_plan([rows, 1, 1])?,
+                        vec![
+                            ptr(b.activation),
+                            ptr(b.live_rows),
+                            Argument::U32(rows),
+                            ptr(workspace),
+                        ],
+                    ),
+                    Self::stage(
+                        &entry,
+                        "",
+                        rows,
+                        entry.prefill_plan(rows)?,
+                        vec![
+                            ptr(b.activation),
+                            ptr(b.weights.codes),
+                            ptr(workspace),
+                            ptr(b.output),
+                            ptr(b.live_rows),
+                            Argument::U32(rows),
+                            ptr(flags),
+                        ],
+                    ),
+                ]);
+            }
             if entry.uses_fused_split() && rows <= entry.decode_max_rows() {
                 let flags = self.weight_domain(b)?;
                 workspace.covers(entry.decode_workspace_bytes(rows))?;

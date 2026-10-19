@@ -95,6 +95,63 @@ fn ring_gather_preparation_checks_spans_and_aliases() {
     );
 }
 
+fn gpu_functions() -> [(&'static str, &'static [u8], &'static str); 2] {
+    let gather = crate::ring_gather_entries::SYMBOL;
+    let (name, bytes) = bundle_deepseek41::sm120::fold_cubin_for_symbol(gather).unwrap();
+    assert_eq!(name, crate::ring_gather_entries::CUBIN);
+    [
+        (name, bytes, gather),
+        (
+            kernels_sm120::probes::CUBIN,
+            bundle_deepseek41::sm120::dependency_probes().0,
+            kernels_sm120::probes::LIVE,
+        ),
+    ]
+}
+
+#[test]
+fn ring_gather_gpu_functions_resolve_in_embedded_cubins() {
+    let toolchain = kernel_build::Toolchain::detect().unwrap();
+    let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("dspark-ring-symbols-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    for (name, bytes, symbol) in gpu_functions() {
+        let path = root.join(format!("{name}.cubin"));
+        std::fs::write(&path, bytes).unwrap();
+        let output = std::process::Command::new(toolchain.home.join("bin/cuobjdump"))
+            .arg("--dump-elf-symbols")
+            .arg(&path)
+            .output()
+            .expect("inspect embedded cubin symbols without opening CUDA");
+        std::fs::remove_file(path).unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let text = String::from_utf8(output.stdout).unwrap();
+        let entries: std::collections::BTreeSet<_> = text
+            .lines()
+            .filter(|line| {
+                line.contains("STT_FUNC")
+                    && line.contains("STB_GLOBAL")
+                    && line.contains("STO_ENTRY")
+            })
+            .filter_map(|line| line.split_whitespace().last())
+            .collect();
+        assert!(
+            entries.contains(symbol),
+            "{name} has no GPU entry {symbol}; found {entries:?}"
+        );
+        println!(
+            "{}",
+            serde_json::json!({"cubin":name, "sha256":kernel_build::digest(bytes),
+            "function":symbol, "resolved":true})
+        );
+    }
+    std::fs::remove_dir(root).unwrap();
+}
+
 #[test]
 fn ring_gather_gpu_bytes_poison_and_graph_replay() {
     kernel_harness::gpu_test(64 << 20, |session| {
@@ -104,16 +161,13 @@ fn ring_gather_gpu_bytes_poison_and_graph_replay() {
         use model_deepseek41_contract::own_ops::ring_gather::oracle;
         use std::collections::BTreeMap;
         const ITEMS: u32 = 7;
-        let (name, cubin) =
-            bundle_deepseek41::sm120::fold_cubin_for_symbol(crate::ring_gather_entries::SYMBOL)
-                .unwrap();
-        assert_eq!(name, crate::ring_gather_entries::CUBIN);
+        let [(_, cubin, gather_symbol), (_, probes, producer_symbol)] = gpu_functions();
         let module = session.load_cubin(cubin)?;
-        let probes = session.load_cubin(bundle_deepseek41::sm120::dependency_probes().0)?;
+        let probes = session.load_cubin(probes)?;
         let producer = LiveProducer::with_function(
             session,
             probes
-                .function("chop_probe_pdl_prefetch_producer_v1")
+                .function(producer_symbol)
                 .map_err(|e| e.to_string())?,
         )?;
         let upload = |bytes: &[u8]| {
@@ -167,7 +221,8 @@ fn ring_gather_gpu_bytes_poison_and_graph_replay() {
                 .launches(&buffers, view(0, 0), Counts::rows(ITEMS))
                 .map_err(|e| e.to_string())?
                 .remove(0);
-            let function = module.function(&call.symbol).map_err(|e| e.to_string())?;
+            assert_eq!(call.symbol, gather_symbol);
+            let function = module.function(gather_symbol).map_err(|e| e.to_string())?;
             let bindings = Bindings {
                 buffers: BTreeMap::from([(1, &src), (2, &indices), (3, &live), (4, &destination)]),
             };

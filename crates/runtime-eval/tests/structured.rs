@@ -579,10 +579,10 @@ import json
 import common
 import structured
 spec = json.load(sys.stdin)
-structured.thinking_kwargs = lambda enabled: {'thinking': enabled}
+structured.thinking_control = lambda enabled: {'chat_template_kwargs': {'thinking': enabled}}
 allowed = json.loads(open(spec['frontend']).read())['reasoning'].get('allow_disabled', True) is not False
 structured.thinking_can_be_disabled = lambda: allowed
-structured.answer_kwargs = lambda: {'thinking': False} if allowed else {}
+structured.answer_control = lambda: {'chat_template_kwargs': {'thinking': False} if allowed else {}}
 structured.arguments = lambda description, model_facts=False: common.arguments(description)
 for name, entry in spec['constants'].get('structured', {}).items():
     setattr(structured, name, entry['value'])

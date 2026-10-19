@@ -483,7 +483,7 @@ const RECORD: &str = "
 import argparse
 import json
 import determinism
-determinism.answer_kwargs = lambda: {'thinking': False}
+determinism.answer_control = lambda: {'chat_template_kwargs': {'thinking': False}}
 determinism.record(argparse.Namespace(**json.load(sys.stdin)))
 ";
 

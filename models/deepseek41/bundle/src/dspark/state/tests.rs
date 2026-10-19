@@ -967,3 +967,12 @@ fn deferred_catch_up_drafts_from_the_eager_rings_and_keeps_wide_passes() {
         .count();
     assert!(projected < eager_projected, "{projected} {eager_projected}");
 }
+
+#[test]
+fn batched_catch_up_stays_within_the_one_row_exact_bounds() {
+    // The KV projection asks one-row bits up to the verify rows; the main
+    // projection routes each count up to the dense decode capacity to a
+    // one-row-exact entry.
+    assert!(BATCH_PROJECTION_ROWS <= crate::ops::verify_rows());
+    assert!(BATCH_PROJECTION_ROWS <= crate::Kernels::dense_decode_capacity());
+}

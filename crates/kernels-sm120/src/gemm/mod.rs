@@ -10,6 +10,7 @@ pub mod mxfp8_fold_direct;
 pub mod mxfp8_fold_stream;
 pub mod mxfp8_fold_ticket;
 pub mod mxfp8_prefill;
+pub mod mxfp8_prefill_compact;
 pub mod mxfp8_prefill_split;
 pub mod prefetch;
 pub mod stacked;

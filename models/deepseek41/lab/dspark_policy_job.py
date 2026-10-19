@@ -35,6 +35,7 @@ STAGGER_SECONDS = 0.4
 SETTLE_SECONDS = 0.5
 RECORD = "chopinfer.deepseek41.drafter-confidence.v1"
 STEP = "chopinfer.step.v1"
+PHASES = "chopinfer.deepseek41.step-shape.v1"
 
 
 def log_offset(server):
@@ -107,6 +108,22 @@ def step_costs(rows):
             for key, values in sorted(groups.items())]
 
 
+def phase_costs(rows):
+    """Median DSpark phase times by items and drafting items."""
+    groups = {}
+    for row in rows:
+        groups.setdefault((row["items"], row["drafting"]), []).append(row)
+    result = []
+    for (items, drafting), values in sorted(groups.items()):
+        micros = {name: statistics.median(row["micros"][name] for row in values)
+                  for name in values[0]["micros"]}
+        result.append({"items": items, "drafting_items": drafting, "steps": len(values),
+                       "median_catch_up_rows": statistics.median(
+                           row["catch_up_rows"] for row in values),
+                       "median_us": micros})
+    return result
+
+
 def identity(p, server, prompts, concurrency, tokens, name):
     """Greedy requests submitted one at a time, then run concurrently."""
     directory = server.directory / "responses" / name
@@ -165,7 +182,8 @@ def measure(p, server, concurrency):
                            "accepted_per_verify_item": accepted / verified if verified else None,
                            "accepted_fraction": accepted / drafted if drafted else None,
                            "per_position": delta.get("per_position", [])},
-            "step_costs": step_costs(log_lines(server, start, log_offset(server), STEP))}
+            "step_costs": step_costs(log_lines(server, start, log_offset(server), STEP)),
+            "phase_costs": phase_costs(log_lines(server, start, log_offset(server), PHASES))}
 
 
 def decision(passes):
@@ -380,6 +398,9 @@ def stub(args):
                 emit({"schema": "chopinfer.step.v1", "prefill_items": 0, "prefill_tokens": 0,
                       "decode_rows": 0, "verify_items": 1, "verify_rows": 6,
                       "execution_us": 20000 + main_rows % 7, "host": {}})
+                emit({"schema": PHASES, "items": 1, "drafting": 1, "catch_up_items": 1,
+                      "catch_up_rows": 4, "bulk_passes": 0,
+                      "micros": {"catch_up": 900, "draft": 4000, "target": 300}})
             if not body.get("stream"):
                 tokens = [(seed + i) % 1000 for i in range(budget)]
                 labels = [f"t{token}" for token in tokens]

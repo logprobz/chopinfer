@@ -56,6 +56,14 @@ class Parsers(unittest.TestCase):
             {"items": 8, "drafting_items": 0, "rows": 8, "steps": 1, "median_us": 23000},
             {"items": 8, "drafting_items": 5, "rows": 32, "steps": 3, "median_us": 70000}])
 
+    def test_phase_costs_take_medians_by_items_and_drafting(self):
+        def row(drafting, draft):
+            return {"schema": job.PHASES, "items": 8, "drafting": drafting, "catch_up_rows": 4,
+                    "micros": {"catch_up": 900, "draft": draft, "target": 50}}
+        costs = job.phase_costs([row(5, 3000), row(5, 5000), row(5, 4000), row(0, 0)])
+        self.assertEqual([(c["drafting_items"], c["steps"]) for c in costs], [(0, 1), (5, 3)])
+        self.assertEqual(costs[1]["median_us"], {"catch_up": 900, "draft": 4000, "target": 50})
+
     def test_log_lines_read_only_the_phase_bytes(self):
         with tempfile.TemporaryDirectory() as directory:
             server = Server(directory)

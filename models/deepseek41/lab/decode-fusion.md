@@ -9,8 +9,9 @@ initialization contributes nine and the head/logits suffix four.
 
 The profile predates the split FP8 projections, paired shared gate/up,
 cached exact-F32 projections, active expert schedule, split HC mixer and
-parallel ceil entries. The CPU journal of their combined decode binding
-has 2,382 launches at one row per GPU. Historical kernel durations cannot
+parallel ceil entries. The first combined decode binding
+had 2,382 launches at one row per GPU. The later ticket projections and
+streamed experts reduce its unfused total to 2,332. Historical kernel durations cannot
 predict fusion savings: PDL overlaps launches, and their arithmetic and
 scheduling have since changed. No GPU speedup is claimed here.
 
@@ -66,7 +67,7 @@ entries; prefill and verify keep their previous chains.
 | Window norm/RoPE, ceil, store | 120 | 40 | 80 |
 | Total | 408 | 160 | 248 |
 
-The one-row TP4 fake-host journal falls from 2,382 to 2,134 launches per
+The one-row TP4 fake-host journal falls from 2,332 to 2,084 launches per
 GPU in both KV layouts. The six complete topology/layout journals change
 only the declared fusion launch families, plus their module and symbol
 registration. The new launch-count regression fails on the previous binding.
@@ -151,3 +152,11 @@ case matrices before failing; driver errors still abort the affected suite.
 The pair worker attempts both suites even when the first fails. Timings are
 omitted for case/row combinations with a mismatch. The invalid first run
 provides no GPU correctness or performance qualification.
+
+The composed binding passes both workspace isolation audits: all 160 TP4
+router/shared-expert forks have disjoint scratch, and the complete branch
+span audit passes at TP2 and TP4. The tests recognize the paired ticket
+admission and the fused MLP input quantizer. Rebased text and media journals
+were audited by expanding only the norm/window fusions: every other launch
+retained its grid, scalar arguments and span extents under a consistent
+bijection of host-issued handles.

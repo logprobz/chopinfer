@@ -43,7 +43,10 @@ fn concurrent_router_and_shared_expert_workspace_ranges_are_disjoint() {
     // views bound every downstream partial/flag use in that branch.
     let side: Vec<_> = lines
         .iter()
-        .filter(|l| l.starts_with("launch ") && l.contains("_pair_v1_admit_v1"))
+        .filter(|l| {
+            l.starts_with("launch ")
+                && (l.contains("_pair_v1_admit_v1") || l.contains("_pair_f32_v2_initialize_v2"))
+        })
         .map(|l| spans(l)[2])
         .collect();
     let router_tag = format!(

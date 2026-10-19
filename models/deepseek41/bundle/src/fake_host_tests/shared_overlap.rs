@@ -195,17 +195,25 @@ fn audit_scratch(lines: &[String]) -> (usize, usize) {
         };
         let (main, fork) = record.split_once(' ').unwrap();
         let (side, event) = wait.split_once(' ').unwrap();
-        if fork != event || !lines[at - 1].contains("moe_ceil_w5120_") {
+        if fork != event {
             continue;
         }
+        let (codes, scales, live) = if lines[at - 1].contains("moe_ceil_w5120_") {
+            (1, 2, 3)
+        } else if lines[at - 1].contains("chop_norm_quantize_deepseek41_input_v1") {
+            // The MLP norm includes the widening output before codes/scales.
+            (4, 5, 6)
+        } else {
+            continue;
+        };
         let inputs = journal_spans(&lines[at - 1]);
         // Routed kernels bind the full input capacity even though the
         // quantizer binds only this bucket's rows of those same planes.
         let capacity = u64::from(crate::buffers::scratch_rows());
         let immutable = [
-            (inputs[1].0, inputs[1].1, capacity * 5120),
-            (inputs[2].0, inputs[2].1, capacity * 5120 / 32),
-            inputs[3],
+            (inputs[codes].0, inputs[codes].1, capacity * 5120),
+            (inputs[scales].0, inputs[scales].1, capacity * 5120 / 32),
+            inputs[live],
         ];
         let joined = (at + 2..lines.len())
             .find(|&i| lines[i].starts_with(&format!("record {side} ")))

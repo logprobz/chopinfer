@@ -85,6 +85,11 @@ pub(crate) mod moe;
 mod moe_direct;
 #[allow(dead_code, reason = "the build script compiles the locked entries")]
 mod moe_direct_kernels;
+pub mod moe_pipeline;
+#[allow(dead_code)]
+mod moe_pipeline_entries;
+#[allow(dead_code, reason = "the build compiles the frozen vector declaration")]
+mod moe_pipeline_vector;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod reduce;
 pub mod ring_gather;
@@ -290,6 +295,10 @@ impl crate::Kernels {
                 || moe::streamed_qualified(shape.geometry, shape.ranks()))
             && (!cubin.starts_with("floor_moe_")
                 || moe::streamed_qualified(shape.geometry, shape.ranks()))
+            && (cubin != moe_pipeline_entries::CUBIN
+                || moe::streamed_qualified(shape.geometry, shape.ranks()))
+            && (cubin != moe_pipeline_vector::CUBIN
+                || moe::streamed_qualified(shape.geometry, shape.ranks()))
             && (!cubin.starts_with("prefill_moe_")
                 || (cubin.ends_with("_compute_sm120")
                     && moe::streamed_qualified(shape.geometry, shape.ranks())))
@@ -313,6 +322,7 @@ impl crate::Kernels {
                 (Prefill, 512),
                 (Prefill, 2048),
                 (Prefill, 4096),
+                (Prefill, 8192),
             ]
         } else {
             &[(Decode, 1)]

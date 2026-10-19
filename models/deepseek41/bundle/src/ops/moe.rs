@@ -179,13 +179,18 @@ impl MoeOps {
         let quantize = RowBuckets::prepare(asks, "moe.quantize", every, |need| {
             backend.block_quantize(&moe::quantizer(g.shape.hidden), need)
         })?;
-        let kind = |usage: OperationUse| -> Result<Kind, Refused> {
+        let kind = |usage: OperationUse, exact_bucket: bool| -> Result<Kind, Refused> {
             let need = exact::need(usage.capacity, exact::of_phase(usage.phase, usage.capacity));
             let projection =
                 |kind: GatedMlpProjection| -> Result<Box<dyn PreparedExperts>, Refused> {
                     let query =
                         moe::projection(g, ranks, set, kind, usage.capacity).map_err(refused)?;
                     let op = backend.chained_mlp_projection(&query, usage, need)?;
+                    let op = if exact_bucket {
+                        crate::Kernels::prefill_moe_projection(shape, set, kind, usage, op)?
+                    } else {
+                        op
+                    };
                     asks.record(
                         format!("moe.experts {kind:?} {:?}", usage.phase),
                         need,
@@ -265,7 +270,11 @@ impl MoeOps {
             quantize,
             direct,
             floor,
-            kinds: [kind(prefill)?, kind(decode)?, kind(verify)?],
+            kinds: [
+                kind(prefill, false)?,
+                kind(decode, false)?,
+                kind(verify, false)?,
+            ],
             buckets: crate::Kernels::moe_buckets(shape)
                 .iter()
                 .map(|&(phase, capacity)| {
@@ -274,7 +283,7 @@ impl MoeOps {
                         capacity,
                         graph: phase != ExecutionPhase::Prefill,
                     };
-                    Ok((usage, kind(usage)?))
+                    Ok((usage, kind(usage, true)?))
                 })
                 .collect::<Result<_, Refused>>()?,
             sums,
@@ -411,6 +420,32 @@ impl MoeOps {
         let kind = self.kind(phase);
         let op = if gate_up { &kind.gate_up } else { &kind.down };
         let mut bind = Bind::default();
+        // This schedule uses the partial-work role for exact BF16 decoded
+        // operands. Its queue occupies the preceding, disjoint workspace bytes.
+        let decoded = op
+            .info()
+            .bytes_of("scratch.partial")
+            .map(|bytes| {
+                let offset = op
+                    .info()
+                    .workspace
+                    .checked_sub(bytes)
+                    .ok_or(Refusal("invalid prefill workspace layout"))?;
+                if views.workspace.length < op.info().workspace {
+                    return Err(Refusal("prefill workspace is too short"));
+                }
+                let offset = views
+                    .workspace
+                    .offset
+                    .checked_add(offset)
+                    .ok_or(Refusal("prefill scratch offset overflow"))?;
+                Ok(bind.view(DeviceBufferSpanV1::new(
+                    views.workspace.buffer,
+                    offset,
+                    bytes,
+                )))
+            })
+            .transpose()?;
         let buffers = GatedMlpBuffers {
             activation: bind.view(views.activation),
             activation_scales: Some(bind.view(views.activation_scales)),
@@ -430,7 +465,7 @@ impl MoeOps {
                 // Only the gate/up's output quantizer reports a status.
                 quantizer_status: views.output_quantized.map(|_| bind.view(views.status)),
                 quantizer_status_row_offset: 0,
-                partial: None,
+                partial: decoded,
                 output_codes: views.output_quantized.map(|(codes, _)| bind.view(codes)),
                 output_scales: views.output_quantized.map(|(_, scales)| bind.view(scales)),
                 unused: bind.view(views.output),
@@ -515,6 +550,7 @@ mod tests {
                     Phase::Prefill { rows: 513 },
                     Phase::Prefill { rows: 2048 },
                     Phase::Prefill { rows: 4096 },
+                    Phase::Prefill { rows: 8191 },
                     Phase::Prefill { rows: 8192 },
                 ] {
                     assert_eq!(
@@ -534,11 +570,16 @@ mod tests {
                         (&kind.gate_up, GatedMlpProjection::GateUp),
                         (&kind.down, GatedMlpProjection::Down),
                     ] {
+                        let vector_gate = shape.ranks() == 4
+                            && projection == GatedMlpProjection::GateUp
+                            && (phase == Phase::Prefill { rows: 8192 }
+                                || (set.count == 128 && phase == Phase::Prefill { rows: 4096 }));
                         assert_eq!(
                             op.info().symbols[0].0.ends_with("_prefill_pack_v1"),
                             phase.prefill()
                                 && shape.ranks() == 4
                                 && [512, 2048, 4096].contains(&phase.rows())
+                                && !vector_gate
                                 && !(set.count == 128
                                     && projection == GatedMlpProjection::Down
                                     && phase.rows() == 2048),
@@ -548,6 +589,10 @@ mod tests {
                             op.info().symbols[0].0.ends_with("_stream_pack_v1"),
                             streamed,
                             "{set:?} {phase:?} {ranks:?}"
+                        );
+                        assert_eq!(
+                            op.info().symbols[0].0.starts_with("chop_exact_prefill_"),
+                            vector_gate
                         );
                         assert!(op.info().workspace <= most);
                         if streamed {

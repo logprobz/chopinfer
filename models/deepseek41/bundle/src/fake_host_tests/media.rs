@@ -322,7 +322,7 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// gate/up keeps no single packed folds.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (20803, 0xd038f4dff171fa11)),
-    (Ranks::TP4, (41851, 0x3a24d94544043dce)),
+    (Ranks::TP4, (44875, 0xd61153d9bbf86c6e)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

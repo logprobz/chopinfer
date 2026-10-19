@@ -92,6 +92,10 @@ mod latent_window_stage;
 mod moe;
 #[allow(dead_code)]
 mod moe_direct_kernels;
+#[allow(dead_code)]
+mod moe_pipeline_entries;
+#[allow(dead_code)]
+mod moe_pipeline_vector;
 #[path = "mxfp8_fold.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod mxfp8_fold;
@@ -157,7 +161,26 @@ pub fn selection(
             model_deepseek41_contract::geometry::FLASH.id,
         ));
         specs.push((prefill_attention::FAMILY, spec));
+        specs.extend(
+            moe_pipeline_entries::cubins()
+                .into_iter()
+                .map(|s| (moe_pipeline_entries::FAMILY, s)),
+        );
+        owners.push((
+            moe_pipeline_entries::CUBIN.into(),
+            model_deepseek41_contract::geometry::FLASH.id,
+        ));
+        specs.extend(
+            moe_pipeline_vector::cubins(moe_pipeline_entries::cubins())
+                .into_iter()
+                .map(|s| (moe_pipeline_vector::FAMILY, s)),
+        );
+        owners.push((
+            moe_pipeline_vector::CUBIN.into(),
+            model_deepseek41_contract::geometry::FLASH.id,
+        ));
     }
+
     for geometry in geometries.iter().filter(|g| own_entries::has_gates(g)) {
         let spec = own_cubin::gate_cubin_spec(manifest, geometry);
         owners.push((spec.name.clone(), geometry.id));

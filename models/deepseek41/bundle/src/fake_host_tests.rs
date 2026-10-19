@@ -25,10 +25,12 @@ mod fold_stream;
 mod index_mma;
 mod index_query;
 mod media;
+mod moe_pipeline;
 mod norm_quantize;
 mod position_valid;
 mod prefill_attention;
 mod prefill_dma;
+mod prefill_gate_journal;
 mod prefill_micro;
 mod prefill_overlap;
 mod prefill_reduce;
@@ -906,12 +908,12 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
-        (66019, 0x531294d3234ec39b),
+        (69043, 0xc48f57793273726e),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (65763, 0x35ba745043b4ba72),
+        (68787, 0x559a7df150196135),
     ),
 ];
 

@@ -370,12 +370,14 @@ impl Instance {
             concat!(
                 "{{\"schema\":\"chopinfer.deepseek41.step-shape.v1\",",
                 "\"phase\":\"dspark-engram\",\"items\":{},\"rows\":{},",
-                "\"host_ns\":{},\"exposed_ns\":{}}}"
+                "\"host_ns\":{},\"exposed_ns\":{},\"device_results\":{},\"bundle_readbacks\":{},\"explicit_bundle_syncs\":0}}"
             ),
             pending.inputs.len(),
             pending.text.len(),
             stats.host_nanoseconds,
-            stats.exposed_nanoseconds
+            stats.exposed_nanoseconds,
+            device.results.metadata.is_some(),
+            self.ranks.len() + 2
         );
         let _ = self.services.log(message.as_bytes());
         let cycle = &mut self.dspark.as_mut().expect("drafter retained").cycle;

@@ -177,6 +177,17 @@ fn device_results_preserve_draft_order_wait_for_sampling_and_collect_once() {
                         .sum::<u32>(),
                     items * (k + 1)
                 );
+                let log = host.logs.borrow();
+                let timing = log
+                    .iter()
+                    .rev()
+                    .find(|line| line.contains("\"phase\":\"dspark-engram\""))
+                    .unwrap();
+                let timing: serde_json::Value = serde_json::from_str(timing).unwrap();
+                assert_eq!(timing["device_results"], true);
+                assert_eq!(timing["bundle_readbacks"], shape.ranks() + 2);
+                assert_eq!(timing["explicit_bundle_syncs"], 0);
+                drop(log);
                 let packet = sink.completion.unwrap();
                 assert_eq!(
                     (packet.cycle_epoch, packet.item_count, packet.sample_rows),

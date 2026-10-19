@@ -103,7 +103,9 @@ impl Inputs {
                 .copy_from_bytes(bytes, &s.stream)
                 .map_err(|e| e.to_string())
         };
-        write(&self.q, &query(1, seed))?;
+        // Row zero is deliberately all holes in adversarial cases. Change a
+        // live nonempty query too, so replay checks cannot reuse old Q bits.
+        write(&self.q, &query(2, seed))?;
         write(&self.live, &live.to_le_bytes())?;
         write(
             &self.item_slots,

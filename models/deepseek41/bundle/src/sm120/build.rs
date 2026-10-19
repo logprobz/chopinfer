@@ -113,14 +113,21 @@ pub fn selection(
     }
     for geometry in geometries {
         owners.extend(dspark_aux::geometry_cubins(geometry).map(|name| (name, geometry.id)));
-        owners.push((dspark_router::cubin_name(geometry), geometry.id));
-        owners.extend(dspark_router::sum_cubins(geometry).map(|name| (name, geometry.id)));
+        owners.extend(
+            dspark_router::cubins(std::slice::from_ref(geometry))
+                .expect("DSpark router cubins")
+                .into_iter()
+                .map(|(_, spec)| (spec.name, geometry.id)),
+        );
         owners.push((ceil_parallel::cubin_name(geometry), geometry.id));
         owners.push((rows::cubin_name(geometry), geometry.id));
         owners.push((rows::final_norm_cubin_name(geometry), geometry.id));
         owners.push((reduce::rounding_cubin(geometry), geometry.id));
-        owners.push((hc::cubin_name(geometry), geometry.id));
-        owners.push((hc::head_f32_cubin_name(geometry), geometry.id));
+        owners.extend(
+            hc::cubins(std::slice::from_ref(geometry))
+                .into_iter()
+                .map(|(_, spec)| (spec.name, geometry.id)),
+        );
         for cubin in ["sm120", "p32_sm120", "bf16_sm120"] {
             owners.push((
                 format!("latent_sources_{}_{cubin}", geometry.kernel_tag),

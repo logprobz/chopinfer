@@ -193,3 +193,62 @@ fn profile_capture_contains_chunk_state_snapshot_and_raw_logits() {
         std::fs::remove_dir_all(root).unwrap();
     }
 }
+
+#[test]
+fn packed_items_keep_original_row_origins_and_distinct_logits() {
+    use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
+    let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+    host.drafter.set(true);
+    host.speculation.set(Some((5, 32)));
+    let mut instance = create_profile(&host, 8192, true);
+    let batch = BatchRequestV1::new(
+        BatchWireVersionV1::V3,
+        vec![
+            BatchItemV1::new(1, false, 4096, true, vec![3; 4096]),
+            BatchItemV1::new(2, false, 17, true, vec![7; 17]),
+        ],
+        vec![
+            BatchAppendV1::new(0, 4096, 4096, (0..64).collect(), None),
+            BatchAppendV1::new(0, 17, 17, vec![64], None),
+        ],
+    )
+    .with_state_slots(vec![0, 1])
+    .encode()
+    .unwrap();
+    let request = encode(
+        &batch,
+        &[
+            Boundary {
+                request_id: 1,
+                prompt_tokens: 4096,
+                chunk_end: 4096,
+                chunk_tokens: 8192,
+            },
+            Boundary {
+                request_id: 2,
+                prompt_tokens: 17,
+                chunk_end: 17,
+                chunk_tokens: 8192,
+            },
+        ],
+    )
+    .unwrap();
+    let mut sink = Sink::default();
+    instance
+        .execute_prefill(&request, &mut sink)
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
+    instance.commit().unwrap();
+    assert_eq!(sink.views.iter().map(|v| v.raw().row_count).sum::<u32>(), 2);
+    assert_eq!(
+        crate::instance::ledger_state(instance.handle(), 0),
+        (Some((1, 4096)), false)
+    );
+    assert_eq!(
+        crate::instance::ledger_state(instance.handle(), 1),
+        (Some((2, 17)), false)
+    );
+    instance.retire_request(1).unwrap();
+    instance.retire_request(2).unwrap();
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}

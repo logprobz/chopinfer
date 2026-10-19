@@ -8,6 +8,7 @@ mod f32_blocked;
 mod f32_decode;
 mod f32_head;
 mod f32_prefill;
+mod f32_prefill_wide;
 mod fusion_checks;
 mod hc_fused;
 mod hc_round_fused;

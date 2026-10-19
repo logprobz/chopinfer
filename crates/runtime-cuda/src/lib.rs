@@ -1414,7 +1414,9 @@ impl DeviceBuffer {
     }
 
     /// Issues a byte-bounded peer copy between the allocations' actual CUDA
-    /// contexts. The caller establishes peer access before this call.
+    /// contexts. The caller establishes peer access and orders prior writes
+    /// before this call. Both allocation streams join the copy before later
+    /// reuse or stream-ordered frees; submission does not block the host.
     pub fn copy_peer_range_from_async(
         &self,
         destination_offset: usize,
@@ -1449,6 +1451,21 @@ impl DeviceBuffer {
             ),
         )?;
         transfer.done.record(stream)?;
+        // Allocation leases prevent early host release. Explicit joins also
+        // put reuse and cuMemFreeAsync on each owner stream after the peer DMA,
+        // including when a completion query retires the lease without a fence.
+        if !Rc::ptr_eq(&source.stream, &stream.inner) {
+            Stream {
+                inner: Rc::clone(&source.stream),
+            }
+            .wait_event(&transfer.done)?;
+        }
+        if !Rc::ptr_eq(&self.stream, &stream.inner) && !Rc::ptr_eq(&self.stream, &source.stream) {
+            Stream {
+                inner: Rc::clone(&self.stream),
+            }
+            .wait_event(&transfer.done)?;
+        }
         Ok(transfer)
     }
 
@@ -2532,6 +2549,55 @@ mod tests {
                 .is_err()
         );
         assert_eq!(ffi::fake_driver_call_count(18), 1);
+    }
+
+    #[cfg(feature = "fake-driver-tests")]
+    #[test]
+    fn peer_copy_orders_both_allocation_streams_without_a_host_fence() {
+        for retirement in 0..3 {
+            ffi::fake_driver_reset();
+            let driver = Driver::initialize().unwrap();
+            let destination_context = driver.retain_primary_context(0).unwrap();
+            let source_context = driver.retain_primary_context(1).unwrap();
+            let destination_stream = destination_context.stream().unwrap();
+            let source_stream = source_context.stream().unwrap();
+            let copy_stream = destination_context.stream().unwrap();
+            let destination = destination_context
+                .default_memory_pool()
+                .unwrap()
+                .allocate(&destination_stream, 16)
+                .unwrap();
+            let source = source_context
+                .default_memory_pool()
+                .unwrap()
+                .allocate(&source_stream, 16)
+                .unwrap();
+            destination_stream.synchronize().unwrap();
+            source_stream.synchronize().unwrap();
+            let fences = ffi::fake_driver_call_count(5);
+            let mut transfer = destination
+                .copy_peer_range_from_async(0, &source, 0, 16, &copy_stream)
+                .unwrap();
+            assert_eq!(ffi::fake_driver_call_count(5), fences);
+            assert_eq!(
+                ffi::fake_driver_call_count(35),
+                2,
+                "join the copy into both owner streams before later reuse or async free"
+            );
+            match retirement {
+                0 => {
+                    assert!(!transfer.poll().unwrap());
+                    assert!(transfer.poll().unwrap());
+                    drop(transfer);
+                    assert_eq!(ffi::fake_driver_call_count(5), fences);
+                }
+                1 => transfer.finish(),
+                _ => drop(transfer),
+            }
+            source.release().unwrap();
+            destination.release().unwrap();
+            assert_eq!(ffi::fake_driver_call_count(4), 2);
+        }
     }
 
     #[cfg(feature = "fake-driver-tests")]

@@ -99,6 +99,11 @@ fn peer_result_copy_fake_driver_runs_the_two_rank_service_path() {
     runtime_cuda::fake_driver::reset();
     exercise();
     assert_eq!(runtime_cuda::fake_driver::ordering_violations(), 0);
+    assert_eq!(
+        runtime_cuda::fake_driver::call_count(35),
+        7,
+        "three producer waits and four peer-copy joins into the source allocation stream"
+    );
 }
 
 #[cfg(not(feature = "cuda-fake-driver-tests"))]

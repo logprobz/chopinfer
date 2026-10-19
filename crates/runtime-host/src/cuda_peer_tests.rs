@@ -247,7 +247,7 @@ fn peer_copy_refuses_wrong_contexts_streams_and_bounds_before_submission() {
 
 #[test]
 fn peer_copy_submission_failures_fence_before_releasing_the_leases() {
-    for operation in [18, 30] {
+    for operation in [18, 30, 35] {
         let mut f = Fixture::new();
         let fences = fake_driver::call_count(5);
         fake_driver::fail_next(operation, 719);

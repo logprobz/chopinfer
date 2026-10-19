@@ -1,6 +1,6 @@
 //! Preserve the fold contract's validation and layouts, replacing only execution.
 use super::mxfp8_fold;
-use crate::gemm::{mxfp8_fold::Entry, mxfp8_prefill as tiled};
+use crate::gemm::{mxfp8_fold::Entry, mxfp8_prefill as tiled, mxfp8_prefill_split as split};
 use kernel_core::backend::{Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View};
 use kernel_core::contract::{Argument, ArgumentList, Refusal};
 use kernel_core::mxfp8_gemm::{Mxfp8FoldGemmBuffers, Mxfp8FoldGemmQuery};
@@ -9,6 +9,15 @@ pub(super) fn prepare(
     entries: &[Entry],
     query: &Mxfp8FoldGemmQuery,
     need: Need,
+) -> Result<Prepared<Mxfp8FoldGemmBuffers<View>>, Refused> {
+    prepare_with_tail(entries, query, need, false)
+}
+
+pub(super) fn prepare_with_tail(
+    entries: &[Entry],
+    query: &Mxfp8FoldGemmQuery,
+    need: Need,
+    split_tail: bool,
 ) -> Result<Prepared<Mxfp8FoldGemmBuffers<View>>, Refused> {
     let inner = mxfp8_fold::prepare(entries, query, need)?;
     let entry = entries
@@ -23,13 +32,27 @@ pub(super) fn prepare(
         (tiled::validation_symbol(&entry), 0),
         (tiled::symbol(&entry), tiled::SHARED),
     ];
+    if split_tail {
+        split::specs(&entry)?;
+        info.symbols.extend([
+            (split::validation_symbol(&entry), 0),
+            (split::symbol(&entry), tiled::SHARED),
+            (split::tail_symbol(&entry), 0),
+        ]);
+    }
     need.check(&info)?;
-    Ok(Box::new(Op { inner, entry, info }))
+    Ok(Box::new(Op {
+        inner,
+        entry,
+        info,
+        split_tail,
+    }))
 }
 struct Op {
     inner: Prepared<Mxfp8FoldGemmBuffers<View>>,
     entry: Entry,
     info: OpInfo,
+    split_tail: bool,
 }
 impl PreparedOp<Mxfp8FoldGemmBuffers<View>> for Op {
     fn info(&self) -> &OpInfo {
@@ -56,9 +79,16 @@ impl PreparedOp<Mxfp8FoldGemmBuffers<View>> for Op {
             status: b.status.handle,
             status_row_offset: b.status_row_offset,
         };
-        Ok(vec![
+        let split_tail =
+            self.split_tail && counts.rows >= tiled::TILE && counts.rows % tiled::TILE != 0;
+        let tail_handles = handles;
+        let mut launches = vec![
             Launch {
-                symbol: tiled::validation_symbol(&self.entry),
+                symbol: if split_tail {
+                    split::validation_symbol(&self.entry)
+                } else {
+                    tiled::validation_symbol(&self.entry)
+                },
                 rows: counts.rows,
                 plan: tiled::validation_plan(&self.entry, counts.rows)?,
                 arguments: ArgumentList(vec![
@@ -73,14 +103,33 @@ impl PreparedOp<Mxfp8FoldGemmBuffers<View>> for Op {
                 persistent: false,
             },
             Launch {
-                symbol: tiled::symbol(&self.entry),
+                symbol: if split_tail {
+                    split::symbol(&self.entry)
+                } else {
+                    tiled::symbol(&self.entry)
+                },
                 rows: counts.rows,
-                plan: tiled::plan(&self.entry, counts.rows)?,
+                plan: if split_tail {
+                    split::plan(&self.entry, counts.rows)?
+                } else {
+                    tiled::plan(&self.entry, counts.rows)?
+                },
                 arguments: tiled::arguments(&self.entry, handles, counts.rows)?,
                 collective: false,
                 persistent: false,
             },
-        ])
+        ];
+        if split_tail {
+            launches.push(Launch {
+                symbol: split::tail_symbol(&self.entry),
+                rows: counts.rows,
+                plan: split::tail_plan(&self.entry, counts.rows)?,
+                arguments: self.entry.arguments(tail_handles, counts.rows),
+                collective: false,
+                persistent: false,
+            });
+        }
+        Ok(launches)
     }
 }
 

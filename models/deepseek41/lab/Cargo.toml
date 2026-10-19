@@ -45,5 +45,9 @@ path = "examples/sm120/build_window_stage.rs"
 name = "build_staged_window_keys"
 path = "examples/sm120/build_staged_window_keys.rs"
 
+[[example]]
+name = "build_ceil_parallel"
+path = "examples/sm120/build_ceil_parallel.rs"
+
 [lints]
 workspace = true

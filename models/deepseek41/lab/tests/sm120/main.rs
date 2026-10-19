@@ -2,6 +2,7 @@
 //! and encoder, on `kernel_harness`. Each engine adds its test file and its
 //! module line here.
 
+mod ceil_parallel;
 mod f32_decode;
 mod f32_head;
 mod f32_prefill;

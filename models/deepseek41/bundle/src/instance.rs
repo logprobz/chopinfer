@@ -505,6 +505,7 @@ impl Instance {
             for cubin in crate::CUBINS
                 .iter()
                 .filter(|cubin| crate::serves(cubin.name, &shape))
+                .filter(|cubin| crate::Kernels::loads_indexer(cubin.name, self.config.kv.storage))
                 .filter(|cubin| {
                     crate::Kernels::loads_latent_attention(
                         cubin.name,

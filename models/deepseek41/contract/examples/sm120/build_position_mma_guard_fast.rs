@@ -4,6 +4,9 @@
 mod indexer;
 #[path = "../../../bundle/src/sm120/indexer_mma_guard.rs"]
 #[allow(dead_code)]
+mod indexer_mma_guard;
+#[path = "../../../bundle/src/sm120/indexer_mma_guard_fast.rs"]
+#[allow(dead_code)]
 mod registration;
 use kernel_build::{BuildOptions, LockDir, Toolchain};
 use model_deepseek41_contract::geometry::GEOMETRIES;
@@ -21,34 +24,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if out.starts_with(&repository) {
         return Err("build outputs must stay outside the repository".into());
     }
-    let families = registration::cubins(GEOMETRIES)?
-        .into_iter()
-        .map(|(_, spec)| {
-            use kernels_sm120::pooled_indexer::position_mma_guard_fast as fast;
-            let entries = spec
-                .entries
-                .into_iter()
-                .filter(|entry| entry.symbol.ends_with("_mma_fp4_guard_v1"))
-                .flat_map(|entry| {
-                    let score = fast::score(entry);
-                    [score.clone(), fast::diagnostic(score)]
-                })
-                .collect();
-            (
-                "position_mma_guard_fast",
-                fast::cubin_spec(
-                    spec.name
-                        .replace("position_mma_guard_", "position_mma_guard_fast_"),
-                    entries,
-                ),
-            )
-        })
-        .collect::<Vec<_>>();
+    let families = registration::cubins(GEOMETRIES)?;
     let specs = families
         .iter()
         .map(|(_, spec)| spec.clone())
         .collect::<Vec<_>>();
-    let dir = root.join("../lab/kernels.lock.d");
+    let serving = std::env::args().nth(2).as_deref() == Some("--serving");
+    let dir = root.join(if serving {
+        "../bundle/kernels.lock.d"
+    } else {
+        "../lab/kernels.lock.d"
+    });
     let mut options = BuildOptions::from_env();
     options.emit_cargo_directives = false;
     if options.profile_line_info {

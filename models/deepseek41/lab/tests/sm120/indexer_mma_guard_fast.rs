@@ -117,6 +117,69 @@ fn cpu_candidate_keeps_abi_grid_workspace_and_selection() {
 }
 
 #[test]
+fn cpu_serving_coarse_plans_match_qualified_launches() {
+    fn compare<B>(old: Prepared<B>, new: Prepared<B>, b: &B, rows: u32) {
+        assert_eq!(old.info().workspace, new.info().workspace);
+        let scratch = v(99, old.info().workspace);
+        let mut qualified = old.launches(b, scratch, Counts::rows(rows)).unwrap();
+        remap(&mut qualified);
+        assert_eq!(
+            qualified,
+            new.launches(b, scratch, Counts::rows(rows)).unwrap()
+        );
+    }
+    for rows in [1, 2, 4, 6, 8, 16, 32, 8192] {
+        for layer in [2, 20, 24] {
+            let width = 131136 / FLASH.compress_ratio(layer);
+            let b = cpu_buffers(rows, FLASH.compress_ratio(layer), width);
+            let old = guard::guarded(true);
+            let new = backend(false).with_coarse_guarded_position_scores();
+            if layer == 24 {
+                let query = indexer::block_selection(&FLASH, layer, rows).unwrap();
+                let n = u64::from(rows);
+                let b = PositionBlockSelectBuffers {
+                    q: b.q,
+                    head_weights: b.head_weights,
+                    keys: b.keys,
+                    positions: b.positions,
+                    row_batch: b.row_batch,
+                    live_rows: b.live_rows,
+                    row_tags: v(12, n * 8),
+                    candidates: CandidateBlockIds {
+                        ids: v(13, n * 2048 * 4),
+                        row_tags: v(14, n * 8),
+                        visible_positions: v(15, n * 4),
+                        status: v(16, n * 4),
+                        position_capacity: width,
+                    },
+                    scores: v(9, n * 16384 * 4),
+                    status: b.status,
+                    output: b.output,
+                };
+                compare(
+                    old.position_block_indexer(&query, 512, width, Need::rows(rows))
+                        .unwrap(),
+                    new.position_block_indexer(&query, 512, width, Need::rows(rows))
+                        .unwrap(),
+                    &b,
+                    rows,
+                );
+            } else {
+                let query = indexer::selection(&FLASH, layer, rows).unwrap();
+                compare(
+                    old.position_indexer(&query, 512, width, Need::rows(rows))
+                        .unwrap(),
+                    new.position_indexer(&query, 512, width, Need::rows(rows))
+                        .unwrap(),
+                    &b,
+                    rows,
+                );
+            }
+        }
+    }
+}
+
+#[test]
 #[ignore = "requires sealed captures and CHOPINFER_INDEX_GUARD_ARTIFACTS on idle GPUs"]
 fn gpu_capture_failures_match_simt() {
     captured_comparisons_with(guard::guarded, true);

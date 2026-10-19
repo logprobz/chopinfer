@@ -36,5 +36,10 @@ introduced.
 
 Separate diagnostic entries count admitted slots, SIMT repairs, slots
 passing the coarse certificate, and slots whose warp took the fine check.
-Diagnostic atomics are outside timings. The candidate remains lab-only
-until its paired bitwise and timing job passes.
+Diagnostic atomics are outside timings. On 2026-10-19, the SM120 pair passed 312 score/status/ordered-selection
+comparisons, 300 poisoned comparisons and three arithmetic negative controls.
+The coarse certificate accepted all examined slots in 30 sealed captures.
+Across captures, median time at one decode row fell by 6% at 32K and 8% at
+128K; at 32 rows it fell by 31% and 41%. At one row and 8K it was unchanged
+within measurement resolution. Serving uses the qualified cubin without
+changing its bytes.

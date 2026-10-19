@@ -36,7 +36,7 @@ fn prefill_indexer_blocks_use_live_and_valid_grids() {
             }
         );
         for line in dense {
-            assert_eq!(line.contains("_mma_fp4_guard_v1"), native);
+            assert_eq!(line.contains("_mma_fp4_guard_fast_v1"), native);
             assert!(line.contains("_scores_v3_live_v1"), "{line}");
             assert!(
                 line.contains(&format!(
@@ -55,7 +55,7 @@ fn prefill_indexer_blocks_use_live_and_valid_grids() {
         let compact = scores("chop_position_blocks_");
         assert_eq!(compact.len(), 4 * 4 * 2);
         for line in compact {
-            assert_eq!(line.contains("_mma_fp4_guard_v1"), native);
+            assert_eq!(line.contains("_mma_fp4_guard_fast_v1"), native);
             assert!(line.contains("_scores_v3_valid_v1"), "{line}");
             assert!(
                 line.contains("grid_x: 192, grid_y: 4096, grid_z: 1"),
@@ -80,7 +80,7 @@ fn prefill_indexer_blocks_use_live_and_valid_grids() {
                 .iter()
                 .position(|line| {
                     line.starts_with("launch ")
-                        && line.contains("_r2_all_scores_v3_live_v1_mma_fp4_guard_v1 ")
+                        && line.contains("_r2_all_scores_v3_live_v1_mma_fp4_guard_fast_v1 ")
                 })
                 .unwrap();
             let count = super::shared_overlap::journal_spans(&journal[at])[7];
@@ -129,7 +129,7 @@ pub(super) fn audit_batched(host: &Host, journal: &[String], skip: bool) -> Resu
     for (at, line) in journal.iter().enumerate().filter(|(_, line)| {
         line.starts_with("launch ")
             && line.contains("chop_position_indexer_")
-            && line.contains("_scores_v3_live_v1_mma_fp4_guard_v1 ")
+            && line.contains("_scores_v3_live_v1_mma_fp4_guard_fast_v1 ")
     }) {
         let b = spans(line);
         let n = b[0].2 / 8192;

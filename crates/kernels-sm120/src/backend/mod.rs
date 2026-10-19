@@ -206,6 +206,7 @@ pub struct Sm120 {
     tiled_position_scores: bool,
     native_position_scores: bool,
     guarded_position_scores: bool,
+    coarse_guarded_position_scores: bool,
     valid_position_candidates: bool,
     position_indexers: Vec<crate::pooled_indexer::position::Entry>,
     bf16_position_indexers: Vec<crate::pooled_indexer::position::Entry>,
@@ -787,6 +788,7 @@ impl Sm120 {
         self.tiled_position_scores = false;
         self.native_position_scores = true;
         self.guarded_position_scores = false;
+        self.coarse_guarded_position_scores = false;
         self
     }
 
@@ -795,6 +797,14 @@ impl Sm120 {
     pub fn with_guarded_position_scores(self) -> Self {
         let mut result = self.with_native_position_scores();
         result.guarded_position_scores = true;
+        result
+    }
+
+    /// Prove common query/key scales once per tile before the per-head guard.
+    /// Rejected scales retain the same exact certificate and SIMT repair.
+    pub fn with_coarse_guarded_position_scores(self) -> Self {
+        let mut result = self.with_guarded_position_scores();
+        result.coarse_guarded_position_scores = true;
         result
     }
 
@@ -1933,6 +1943,7 @@ impl Backend for Sm120 {
             ),
             self.native_position_scores,
             self.guarded_position_scores,
+            self.coarse_guarded_position_scores,
             op,
             need.capacity,
         )
@@ -2032,6 +2043,7 @@ impl Backend for Sm120 {
             ),
             self.native_position_scores && op.block_size == 8,
             self.guarded_position_scores,
+            self.coarse_guarded_position_scores,
             &op.indexer,
             need.capacity,
         )

@@ -33,7 +33,7 @@ fn native_indexer_default_and_simt_option_reach_prefill_and_decode() {
             assert!(
                 scores
                     .iter()
-                    .all(|line| line.contains("_mma_fp4_guard_v1") == native)
+                    .all(|line| line.contains("_mma_fp4_guard_fast_v1") == native)
             );
             assert!(scores.iter().any(|line| line.contains("grid_y: 64,")));
             assert!(scores.iter().any(|line| line.contains("grid_y: 1,")));
@@ -49,6 +49,19 @@ fn native_indexer_default_and_simt_option_reach_prefill_and_decode() {
                     .values()
                     .any(|c| c.starts_with("position_mma_")),
                 enabled
+            );
+            assert_eq!(
+                host.device
+                    .module_cubins
+                    .borrow()
+                    .values()
+                    .any(|name| name.starts_with("position_mma_guard_fast_")),
+                native
+            );
+            assert!(
+                !journal
+                    .iter()
+                    .any(|line| line.starts_with("launch ") && line.contains("_counts_v1"))
             );
             drop(journal);
             instance.retire_request(7).unwrap();

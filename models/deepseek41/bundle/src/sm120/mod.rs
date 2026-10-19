@@ -467,7 +467,7 @@ impl crate::Kernels {
         let sm120 = latent_scheduled::register_sources(sm120, shape.geometry, shape.ranks())?;
         let sm120 = indexer::register(sm120, shape.geometry);
         let sm120 = if shape.runtime.indexer_mma {
-            sm120.with_guarded_position_scores()
+            sm120.with_coarse_guarded_position_scores()
         } else {
             sm120
         };
@@ -506,7 +506,18 @@ impl crate::Kernels {
     pub(crate) fn prefill_indexer_backend(
         shape: &crate::shape::Shape,
     ) -> Box<dyn kernel_core::backend::Backend> {
-        Box::new(indexer::register(Sm120::new(), shape.geometry).with_guarded_position_scores())
+        Box::new(
+            indexer::register(Sm120::new(), shape.geometry).with_coarse_guarded_position_scores(),
+        )
+    }
+
+    /// BF16 keys do not use the native scorer or its coarse guard.
+    pub(crate) fn loads_indexer(
+        cubin: &str,
+        storage: model_deepseek41_contract::state::KvStorage,
+    ) -> bool {
+        !cubin.starts_with("position_mma_guard_fast_")
+            || storage == model_deepseek41_contract::state::KvStorage::Native
     }
 
     /// Only the target's optional prefill reduction registers this entry.

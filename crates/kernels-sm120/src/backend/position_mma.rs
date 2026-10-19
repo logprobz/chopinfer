@@ -1,6 +1,8 @@
 //! Add exact query repacking before native FP4 scores. Selection and candidate
 //! validation retain their current entries and disjoint workspace range.
-use crate::pooled_indexer::{position_mma as mma, position_mma_guard as guard};
+use crate::pooled_indexer::{
+    position_mma as mma, position_mma_guard as guard, position_mma_guard_fast as fast,
+};
 use kernel_core::{
     backend::{Counts, Launch, OpInfo, Prepared, PreparedOp, Refused, View},
     contract::{Argument, ArgumentList, Refusal},
@@ -11,6 +13,7 @@ pub(super) fn prepare<B: 'static>(
     original: Result<Prepared<B>, Refused>,
     enabled: bool,
     guarded: bool,
+    coarse: bool,
     query: &PositionIndexerQuery,
     rows: u32,
 ) -> Result<Prepared<B>, Refused> {
@@ -23,9 +26,17 @@ pub(super) fn prepare<B: 'static>(
     let score = info.symbols[0].0.clone();
     let (score_symbol, pack_symbol, implementation) = if guarded {
         (
-            guard::score_symbol(&score),
+            if coarse {
+                fast::score_symbol(&guard::score_symbol(&score))
+            } else {
+                guard::score_symbol(&score)
+            },
             guard::pack_symbol(&score),
-            "guarded-native-fp4",
+            if coarse {
+                "coarse-guarded-native-fp4"
+            } else {
+                "guarded-native-fp4"
+            },
         )
     } else {
         (

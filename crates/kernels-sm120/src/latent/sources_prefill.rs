@@ -1,6 +1,6 @@
 //! Experimental prefill staging with the native source engine's arithmetic.
-//! The 64-key softmax tile is unchanged; only 32 decoded keys reside in
-//! shared memory at a time. Call the reference merge on the resulting partials.
+//! Half-tile staging and paired-row reuse both preserve the 64-key softmax
+//! units and partial ABI. Call the reference merge on the resulting partials.
 use kernel_build::{CubinSpec, EntrySpec};
 use kernel_core::contract::{AttentionPhase, LaunchPlan, Refusal};
 use kernel_core::latent_attention::LatentAttentionQuery;
@@ -124,6 +124,62 @@ pub fn cubin_spec(profile: Profile, entries: &[sources::Entry]) -> Result<CubinS
     Ok(spec)
 }
 
+pub fn reuse_symbol(reference: &sources::Entry, rows_per_cta: u32) -> String {
+    format!(
+        "chop_latent_sources_{}_reuse{rows_per_cta}_v1",
+        reference.name
+    )
+}
+
+/// Plan packed gathers for one row or exact tile reuse across two rows.
+pub fn reuse_plan(
+    reference: &sources::Entry,
+    rows: u32,
+    rows_per_cta: u32,
+) -> Result<LaunchPlan, Refusal> {
+    let shape = validate(reference)?;
+    if !matches!(rows_per_cta, 1 | 2) {
+        return Err(Refusal("prefill reuse supports one or two rows per CTA"));
+    }
+    let mut plan = reference.plan(rows)?;
+    plan.grid[0] = rows.div_ceil(rows_per_cta);
+    plan.block[0] *= rows_per_cta;
+    plan.dynamic_shared_bytes = (sources::KEYS + rows_per_cta - 1) * shape.latent * 2
+        + rows_per_cta * ((shape.latent / 128) * sources::KEYS * 8 * 4 + sources::KEYS * 20);
+    Ok(plan)
+}
+
+pub fn reuse_cubin_spec(
+    profile: Profile,
+    entries: &[sources::Entry],
+    rows_per_cta: u32,
+) -> Result<CubinSpec, Refusal> {
+    let mut spec = sources::cubin_spec(profile, entries)?;
+    spec.name = format!(
+        "latent_sources_prefill_reuse{rows_per_cta}_{}_sm120",
+        profile.tag()
+    );
+    spec.headers = vec![format!("#include \"{HEADER}\"")];
+    spec.entries.clear();
+    for reference in entries {
+        let plan = reuse_plan(reference, 1, rows_per_cta)?;
+        let mut entry = reference.entry_specs()?.remove(0);
+        if !entry.body.starts_with("chop::latent::sources::attention<") {
+            return Err(Refusal("prefill reuse requires the grouped reference body"));
+        }
+        entry.symbol = reuse_symbol(reference, rows_per_cta);
+        entry.max_threads = plan.block[0];
+        entry.min_blocks = 1;
+        entry.body = entry.body.replacen(
+            "chop::latent::sources::attention<",
+            &format!("chop::latent::sources_prefill::reuse_attention<{rows_per_cta},"),
+            1,
+        );
+        spec.entries.push(entry);
+    }
+    Ok(spec)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,8 +253,25 @@ mod tests {
                         },
                         old
                     );
+                    for group in [1, 2] {
+                        let reused = reuse_plan(&reference, rows, group).unwrap();
+                        assert_eq!(reused.grid, [rows.div_ceil(group), old.grid[1], 1]);
+                        assert_eq!(reused.block, [128 * group, 1, 1]);
+                        assert_eq!(
+                            reused.dynamic_shared_bytes,
+                            if group == 1 { 75008 } else { 85504 }
+                        );
+                        let cubin =
+                            reuse_cubin_spec(profile, std::slice::from_ref(&reference), group)
+                                .unwrap();
+                        assert_eq!(cubin.entries.len(), 1);
+                        assert_eq!(cubin.entries[0].params, reference.params().unwrap());
+                        assert_eq!(cubin.entries[0].max_threads, 128 * group);
+                    }
                 }
                 assert!(plan(&reference, 8193).is_err());
+                assert!(reuse_plan(&reference, 8193, 2).is_err());
+                assert!(reuse_plan(&reference, 1, 3).is_err());
             }
         }
     }

@@ -318,8 +318,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// Image and text prefills below 128 rows use the qualified existing folds.
 /// Prefill HC and ceil entries add module handles to this lifecycle.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
-    (Ranks::TP2, (18179, 0x58f0bf4225cebd3e)),
-    (Ranks::TP4, (37251, 0xbb78104e026b79ef)),
+    (Ranks::TP2, (21923, 0xf79c043b9c179e31)),
+    (Ranks::TP4, (44219, 0x45b2690cdd33be6b)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

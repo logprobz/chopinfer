@@ -21,6 +21,7 @@ pub(crate) mod moe_floor;
 pub mod mxfp8_fold;
 pub mod mxfp8_fold_stream;
 pub mod norm_quantize;
+pub mod norm_quantize_tiles;
 #[allow(dead_code, reason = "the build script compiles the cubin spec")]
 mod prefill_attention;
 pub mod replicated_embedding;

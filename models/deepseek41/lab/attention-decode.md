@@ -43,8 +43,7 @@ Task bodies accept a virtual CTA index and caller-owned shared arena. Only
 entry wrappers contain grid dependency calls. Each CTA owns its partial;
 independent streams need disjoint partial/output/stamp buffers. These lab
 candidates introduce no serving state or cross-stream sharing. New artifacts
-belong to `latent_decode_staging`; existing locks and serving selections stay
-unchanged until GPU qualification identifies a winner.
+belong to `latent_decode_staging`; existing locks retain their bytes.
 
 Cold timings report sources alone and source plus merge. Merge timing follows
 a source preparation outside the event interval. Repeated timings capture
@@ -80,9 +79,17 @@ staging; its adaptive variant's corresponding ratios were 1.356, 1.250 and
 76-81 percent of sampled mixed-source CTA cycles, including synchronization.
 These are instrumented intervals, not hardware stall counters.
 
-The host was compiling during the run, and the job has no host-quiet
-acceptance gate. Its timings remain informational. Keep serving unchanged
-until a quiet repeat confirms the eight-row and 32-row candidates. The
-shared preparation adapter can declare exact row/entry pairs, preserving
-reference validation, unlisted rows, shared-memory opt-ins and the ordered
-merge. Adding that adapter does not select a serving route.
+The repeat passed the same complete bitwise matrix and all controls. Its
+combined ratios were 1.000, 0.9365 and 0.9438, with all 24 C8 and all 24
+verify32 cases winning again. Serving selects the full-tile ordinary-widening
+entry only for native Flash TP4 decode graphs with eight rows and target
+verify graphs with 32 rows. These are graph row counts, including masked
+padding. No 16-row timing was collected. Other rows, BF16 layouts, other
+topologies, draft-block attention and prefill retain their prior sources.
+The adapter preserves reference validation, shared-memory opt-ins, the
+workspace and the ordered merge. Selected functions require 75,008 shared
+bytes and append a null profiling pointer to the original source arguments.
+
+The host was compiling during the first run, and neither job has a host-quiet
+acceptance gate. Kernel event timings support the narrow selection above;
+the integrated served comparison must establish end-to-end performance.

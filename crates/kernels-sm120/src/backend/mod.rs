@@ -199,6 +199,7 @@ pub struct Sm120 {
     position_indexers: Vec<crate::pooled_indexer::position::Entry>,
     bf16_position_indexers: Vec<crate::pooled_indexer::position::Entry>,
     bf16_position_block_indexers: Vec<crate::pooled_indexer::position_blocks::Entry>,
+    parallel_position_queries: bool,
     position_queries: Vec<crate::pooled_indexer::position_query::Entry>,
     indexer_candidates: Vec<crate::pooled_indexer::position::CandidateEntry>,
     gated_sparse: Option<Box<GatedSparseEntries>>,
@@ -585,6 +586,12 @@ impl Sm120 {
         entries: impl IntoIterator<Item = crate::pooled_indexer::block_merge::Entry>,
     ) -> Self {
         self.indexer.block_merges.extend(entries);
+        self
+    }
+
+    /// Use the separately locked, whole-row parallel query through 32 rows.
+    pub fn with_parallel_position_queries(mut self) -> Self {
+        self.parallel_position_queries = true;
         self
     }
 
@@ -1658,7 +1665,13 @@ impl Backend for Sm120 {
         op: &PositionIndexerQuery,
         need: Need,
     ) -> Result<Prepared<PositionQueryBuffers<View>>, Refused> {
-        position_query::prepare(&self.position_queries, self, op, need)
+        position_query::prepare(
+            &self.position_queries,
+            self,
+            op,
+            need,
+            self.parallel_position_queries,
+        )
     }
 
     fn position_indexer(

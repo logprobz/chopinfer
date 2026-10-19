@@ -3,6 +3,7 @@
 use super::own::{buffer, launch};
 use super::select::{Candidate, choose};
 use crate::pooled_indexer::position_query::Entry;
+use crate::pooled_indexer::position_query_parallel as parallel;
 use kernel_core::backend::{
     Backend, Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View,
 };
@@ -15,6 +16,7 @@ pub(super) fn prepare(
     backend: &dyn Backend,
     query: &PositionIndexerQuery,
     need: Need,
+    parallel_queries: bool,
 ) -> Result<Prepared<PositionQueryBuffers<View>>, Refused> {
     query.validate()?;
     if need.capacity == 0 || need.capacity > query.capacity {
@@ -37,6 +39,7 @@ pub(super) fn prepare(
         need,
     )?;
     let entry = chosen.entry;
+    let parallel = parallel_queries && parallel::supports(&entry);
     super::check_plan(&entry.plan(need.capacity)?)?;
     let quantizer = backend.block_quantize(&query.query_quantization()?, need)?;
     if quantizer.info().workspace != 0 {
@@ -46,8 +49,19 @@ pub(super) fn prepare(
     }
     let mut symbols = vec![(entry.symbol(), 0)];
     symbols.extend(quantizer.info().symbols.iter().cloned());
-    let digest =
-        kernel_build::digest(format!("{:?} {}", entry, quantizer.info().implementation).as_bytes());
+    if parallel {
+        if need.capacity <= parallel::MAX_ROWS {
+            symbols.clear();
+        }
+        symbols.push((parallel::symbol(&entry), 0));
+    }
+    let identity = format!("{:?} {}", entry, quantizer.info().implementation);
+    let identity = if parallel {
+        format!("{identity} parallel-v1")
+    } else {
+        identity
+    };
+    let digest = kernel_build::digest(identity.as_bytes());
     let mut info = OpInfo::new(
         format!(
             "sm120.position-query.f32-tail-rope-mxfp4.v3#{}",
@@ -70,6 +84,7 @@ pub(super) fn prepare(
         quantizer,
         info,
         capacity: need.capacity,
+        parallel,
     }))
 }
 
@@ -78,6 +93,7 @@ struct Query {
     quantizer: Prepared<BlockQuantizeBuffers<View>>,
     info: OpInfo,
     capacity: u32,
+    parallel: bool,
 }
 
 impl PreparedOp<PositionQueryBuffers<View>> for Query {
@@ -138,6 +154,26 @@ impl PreparedOp<PositionQueryBuffers<View>> for Query {
             return Err(Refusal(
                 "position query inputs, output and workspace must not overlap",
             ));
+        }
+        if self.parallel && counts.rows <= parallel::MAX_ROWS {
+            let mut plan = self.entry.plan(counts.rows)?;
+            plan.grid = [counts.rows, 1, 1];
+            plan.block = [parallel::THREADS, 1, 1];
+            return Ok(vec![launch(
+                &parallel::symbol(&self.entry),
+                counts.rows,
+                plan,
+                vec![
+                    buffer(b.q),
+                    buffer(b.cos_sin),
+                    buffer(b.positions),
+                    buffer(b.live_rows),
+                    buffer(b.output),
+                    buffer(b.quantizer_status),
+                    Argument::U64(b.quantizer_status_row_offset),
+                    Argument::U32(counts.positions),
+                ],
+            )]);
         }
         let mut launches = vec![launch(
             &self.entry.symbol(),

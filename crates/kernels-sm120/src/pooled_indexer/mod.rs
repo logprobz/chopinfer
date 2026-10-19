@@ -45,6 +45,7 @@ pub mod position_bf16;
 pub mod position_blocks;
 pub mod position_candidates_runtime;
 pub mod position_query;
+pub mod position_query_parallel;
 pub mod rows;
 
 use std::path::PathBuf;

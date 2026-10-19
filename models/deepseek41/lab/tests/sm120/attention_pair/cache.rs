@@ -301,10 +301,7 @@ fn compare(
                 device.run(session, modules, &old[1..], &session.stream)?;
             }
             check()?;
-            println!(
-                "CACHE_GRAPH_OK {}",
-                json!({"case":shape(case),"mode":mode})
-            );
+            println!("CACHE_GRAPH_OK {}", json!({"case":shape(case),"mode":mode}));
             println!(
                 "CACHE_TIMING {}",
                 json!({"case":shape(case),"mode":mode,"old_symbol":old[0].symbol,

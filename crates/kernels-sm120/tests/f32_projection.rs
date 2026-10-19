@@ -71,6 +71,100 @@ fn backend(entries: Vec<Entry>) -> Sm120 {
 }
 
 #[test]
+fn routed_prefill_preserves_decode_and_bounds_every_measured_bucket() {
+    let seed = entry(WeightFormat::Bf16);
+    let q = GemmQuery {
+        m_capacity: 8192,
+        ..seed.query()
+    };
+    let usage = OperationUse {
+        capacity: 8192,
+        ..seed.usage()
+    };
+    let old = Entry::new(q, usage, "routed_test").unwrap();
+    let split = old.clone().with_split_decode();
+    let routed = split
+        .clone()
+        .with_prefill_buckets(vec![(512, 32), (2048, 64), (8192, 64)])
+        .unwrap();
+    let old_spec = f32_projection::cubin_spec("unchanged", std::slice::from_ref(&split)).unwrap();
+    let new_spec = f32_projection::cubin_spec("unchanged", std::slice::from_ref(&routed)).unwrap();
+    assert_eq!(
+        kernel_build::generate(&old_spec).unwrap().translation_unit,
+        kernel_build::generate(&new_spec).unwrap().translation_unit
+    );
+    let prepared = backend(vec![routed.clone()])
+        .projection(&operation(&routed), usage, Need::rows(8192))
+        .unwrap()
+        .handle;
+    let mut b = buffers(&routed);
+    b.scratch.weight_domain = Some(View {
+        handle: 10,
+        bytes: routed.weight_domain_bytes(),
+    });
+    let work = View {
+        handle: 9,
+        bytes: prepared.info().workspace,
+    };
+    assert!(
+        work.bytes >= routed.prefill_workspace_bytes(8192),
+        "prefill must fit the prepared scratch"
+    );
+    assert_eq!(prepared.initialize(&b).unwrap().len(), 1);
+    assert_eq!(
+        prepared.initialize(&b).unwrap()[0].symbol,
+        split.stage_symbol("_weights")
+    );
+    for rows in [1, 32, 33, 256, 257, 511, 512, 513, 2048, 4096, 8192] {
+        let launches = prepared.launches(&b, work, Counts::rows(rows)).unwrap();
+        if let Some(&(_, tile)) = routed.prefill_buckets().iter().find(|&&(r, _)| r == rows) {
+            let tiled = old.clone().with_prefill_tiles(tile).unwrap();
+            assert_eq!(launches.len(), 2);
+            assert_eq!(launches[1].symbol, tiled.symbol());
+            assert!(prepared.info().symbols.contains(&(
+                tiled.symbol().into(),
+                tiled.prefill_plan(rows).unwrap().dynamic_shared_bytes
+            )));
+            assert!(
+                prepared
+                    .launches(
+                        &b,
+                        View {
+                            bytes: tiled.prefill_workspace_bytes(rows) - 1,
+                            ..work
+                        },
+                        Counts::rows(rows)
+                    )
+                    .is_err()
+            );
+        } else if rows > 256 {
+            assert_eq!(launches.len(), 1);
+            assert_eq!(launches[0].symbol, old.symbol());
+        } else {
+            assert_eq!(launches.len(), if rows <= 32 { 3 } else { 2 });
+        }
+    }
+    for bad in [
+        vec![(256, 32)],
+        vec![(8193, 32)],
+        vec![(512, 16)],
+        vec![(512, 32), (512, 64)],
+    ] {
+        assert!(split.clone().with_prefill_buckets(bad).is_err());
+    }
+    let mut missing: std::collections::BTreeSet<_> = routed.runtime_symbols().into_iter().collect();
+    missing.remove(old.clone().with_prefill_tiles(64).unwrap().symbol());
+    let incomplete = Sm120::new().with_f32_projections(
+        F32ProjectionOffers::new(vec![routed.clone()], missing, "0".repeat(64)).unwrap(),
+    );
+    assert!(
+        incomplete
+            .projection(&operation(&routed), usage, Need::rows(8192))
+            .is_err()
+    );
+}
+
+#[test]
 fn prefill_tiles_bound_expansion_and_configure_both_shared_tiles() {
     for weight in [WeightFormat::Bf16, WeightFormat::F32] {
         for features in [32, 64] {

@@ -50,6 +50,16 @@ impl Entry {
             let small = self.entry_for_rows(1);
             symbols.extend(["_rows", "_decode", "_reduce"].map(|s| small.stage_symbol(s)));
             symbols.push(self.baseline_symbol().to_owned());
+            for features in [32, 64] {
+                if self
+                    .prefill_buckets
+                    .iter()
+                    .any(|&(_, tile)| tile == features)
+                {
+                    let tiled = self.prefill_variant(features);
+                    symbols.extend([tiled.stage_symbol("_prepare"), tiled.symbol().to_owned()]);
+                }
+            }
             return symbols;
         }
         if self.cached {
@@ -102,11 +112,19 @@ impl Entry {
             let small = self
                 .entry_for_rows(1)
                 .decode_workspace_bytes(capacity.min(MAX_ROWS));
-            return if capacity <= MAX_ROWS {
+            let decode = if capacity <= MAX_ROWS {
                 small
             } else {
                 self.split_workspace_bytes(capacity).max(small)
             };
+            let prefill = self
+                .prefill_buckets
+                .iter()
+                .filter(|&&(rows, _)| rows <= capacity)
+                .map(|&(rows, _)| self.prefill_workspace_bytes(rows))
+                .max()
+                .unwrap_or(0);
+            return decode.max(prefill);
         }
         128 + u64::from(capacity.min(MAX_ROWS))
             * u64::from(self.query.n)

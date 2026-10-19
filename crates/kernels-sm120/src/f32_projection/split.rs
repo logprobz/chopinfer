@@ -10,11 +10,19 @@ impl Entry {
     /// fused path measured 51/145 us versus 1194/1210 us for the baseline.
     /// Keep the measured crossover at 32 rows.
     pub fn entry_for_rows(&self, rows: u32) -> Self {
+        if let Some(&(_, features)) = self
+            .prefill_buckets
+            .iter()
+            .find(|&&(bucket, _)| bucket == rows)
+        {
+            return self.prefill_variant(features);
+        }
         if self.fused && rows <= super::decode::MAX_ROWS {
             let mut entry = self.clone();
             entry.symbol = self.baseline_symbol().to_owned();
             entry.cached = false;
             entry.fused = false;
+            entry.prefill_buckets.clear();
             entry.with_decode()
         } else {
             self.clone()

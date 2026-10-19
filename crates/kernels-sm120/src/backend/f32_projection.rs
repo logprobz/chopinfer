@@ -71,11 +71,11 @@ pub(super) fn prepare(
     )?;
     let binding = bound.swap_remove(chosen.entry);
     let entry = offers.entries[binding.handle].clone();
-    let shared = if entry.uses_prefill_tiles() {
-        entry.prefill_plan(need.capacity)?.dynamic_shared_bytes
-    } else {
-        0
-    };
+    for &(rows, _) in entry.prefill_buckets() {
+        if rows <= need.capacity {
+            entry.entry_for_rows(rows).prefill_plan(rows)?;
+        }
+    }
     let mut info = OpInfo::new(
         f32_projection::IMPLEMENTATION,
         chosen.guarantees,
@@ -83,7 +83,7 @@ pub(super) fn prepare(
             .runtime_symbols()
             .into_iter()
             .map(|s| {
-                let bytes = if s == entry.symbol() { shared } else { 0 };
+                let bytes = entry.runtime_shared_bytes(&s);
                 (s, bytes)
             })
             .collect(),

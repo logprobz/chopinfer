@@ -4,6 +4,71 @@ use kernel_build::{EntryParam, EntrySpec};
 use kernel_core::contract::{LaunchPlan, Refusal, WeightFormat};
 
 impl Entry {
+    /// Admit exact row counts chosen by the caller's measured selector.
+    /// This changes runtime dispatch, never the locked cubin specification.
+    pub fn with_prefill_buckets(mut self, mut buckets: Vec<(u32, u32)>) -> Result<Self, Refusal> {
+        buckets.sort_unstable();
+        if !self.fused
+            || self.uses_prefill_tiles()
+            || buckets.iter().any(|&(rows, tile)| {
+                rows <= self.decode_max_rows()
+                    || rows > self.query.m_capacity
+                    || !matches!(tile, 32 | 64)
+            })
+            || buckets.windows(2).any(|pair| pair[0].0 == pair[1].0)
+        {
+            return Err(Refusal(
+                "prefill buckets require distinct bounded rows above split decode",
+            ));
+        }
+        self.prefill_buckets = buckets;
+        Ok(self)
+    }
+
+    pub fn prefill_buckets(&self) -> &[(u32, u32)] {
+        &self.prefill_buckets
+    }
+
+    pub fn prefill_features(&self) -> u32 {
+        self.prefill_tile_n
+    }
+
+    pub(crate) fn prefill_variant(&self, features: u32) -> Self {
+        Entry::new(
+            self.query,
+            self.usage,
+            self.baseline_symbol().trim_end_matches("_v1"),
+        )
+        .expect("same validated entry")
+        .with_prefill_tiles(features)
+        .expect("validated tile size")
+    }
+
+    pub(crate) fn runtime_shared_bytes(&self, symbol: &str) -> u32 {
+        if self.uses_prefill_tiles() && self.symbol() == symbol {
+            return self
+                .prefill_plan(1)
+                .expect("validated tile")
+                .dynamic_shared_bytes;
+        }
+        for features in [32, 64] {
+            if self
+                .prefill_buckets
+                .iter()
+                .any(|&(_, tile)| tile == features)
+            {
+                let entry = self.prefill_variant(features);
+                if entry.symbol() == symbol {
+                    return entry
+                        .prefill_plan(1)
+                        .expect("validated tile")
+                        .dynamic_shared_bytes;
+                }
+            }
+        }
+        0
+    }
+
     pub fn with_prefill_tiles(mut self, features: u32) -> Result<Self, Refusal> {
         if !matches!(features, 32 | 64) || self.cached {
             return Err(Refusal(

@@ -29,6 +29,7 @@ pub struct Entry {
     cached: bool,
     fused: bool,
     prefill_tile_n: u32,
+    prefill_buckets: Vec<(u32, u32)>,
 }
 
 impl Entry {
@@ -62,6 +63,7 @@ impl Entry {
             cached: false,
             fused: false,
             prefill_tile_n: 0,
+            prefill_buckets: Vec::new(),
         })
     }
     pub fn query(&self) -> GemmQuery {

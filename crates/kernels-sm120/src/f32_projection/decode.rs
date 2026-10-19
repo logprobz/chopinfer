@@ -38,6 +38,8 @@ impl Entry {
     pub fn runtime_symbols(&self) -> Vec<String> {
         if self.fused {
             let mut symbols = self.symbols();
+            let small = self.entry_for_rows(1);
+            symbols.extend(["_rows", "_decode", "_reduce"].map(|s| small.stage_symbol(s)));
             symbols.push(self.baseline_symbol().to_owned());
             return symbols;
         }
@@ -80,7 +82,14 @@ impl Entry {
 
     pub fn decode_workspace_bytes(&self, capacity: u32) -> u64 {
         if self.fused {
-            return self.split_workspace_bytes(capacity);
+            let small = self
+                .entry_for_rows(1)
+                .decode_workspace_bytes(capacity.min(MAX_ROWS));
+            return if capacity <= MAX_ROWS {
+                small
+            } else {
+                self.split_workspace_bytes(capacity).max(small)
+            };
         }
         128 + u64::from(capacity.min(MAX_ROWS))
             * u64::from(self.query.n)

@@ -56,21 +56,29 @@ fn exact_f32_classifies_the_head_once_and_splits_decode_without_rescanning_weigh
             .count(),
         shape.ranks() as usize
     );
-    assert!(head.iter().any(|line| line.contains("_split_v2")));
-    assert!(head.iter().any(|line| line.contains("_split_prepare_v2")));
+    assert!(head.iter().any(|line| line.contains("_cached_decode_v1")));
+    assert!(head.iter().any(|line| line.contains("_cached_reduce_v1")));
+    // This lifecycle gathers only a few head rows; its longer prompt
+    // projections exercise the fused path before gathering the head.
+    assert!(launches.iter().any(|line| line.contains("_split_prepare_v2")));
     for line in &head {
         if line.contains("_split_weights_v2") {
             continue;
         }
         let (_, rows) = line.rsplit_once("U32(").expect("head row argument");
         let rows: u32 = rows.split_once(')').unwrap().0.parse().unwrap();
-        assert_eq!(line.contains("_split"), rows <= 256, "{line}");
+        assert_eq!(line.contains("_cached"), rows <= 32, "{line}");
+        assert_eq!(
+            line.contains("_split"),
+            (33..=256).contains(&rows),
+            "{line}"
+        );
     }
     // The create scans precede the first decode projection, and none can
     // be captured or repeated by a graph replay.
     let first_decode = launches
         .iter()
-        .position(|line| line.contains("_split_v2"))
+        .position(|line| line.contains("_cached_decode_v1") || line.contains("_split_v2"))
         .unwrap();
     assert!(
         launches[first_decode..]

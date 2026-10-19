@@ -126,18 +126,17 @@ impl PreparedOp<ProjectionBuffers<View>> for Projection {
         }
         b.weights.codes.covers(self.entry.weight_bytes())?;
         let flags = self.weight_domain(b)?;
-        Ok(vec![
-            self.stage(
-                "_weights",
-                0,
-                self.entry
-                    .stage_plan([self.entry.query().n.div_ceil(16), 1, 1])?,
-                vec![
-                    Argument::DeviceBuffer(b.weights.codes.handle),
-                    Argument::DeviceBuffer(flags.handle),
-                ],
-            ),
-        ])
+        Ok(vec![Self::stage(
+            &self.entry,
+            "_weights",
+            0,
+            self.entry
+                .stage_plan([self.entry.query().n.div_ceil(16), 1, 1])?,
+            vec![
+                Argument::DeviceBuffer(b.weights.codes.handle),
+                Argument::DeviceBuffer(flags.handle),
+            ],
+        )])
     }
     fn launches(
         &self,
@@ -146,6 +145,7 @@ impl PreparedOp<ProjectionBuffers<View>> for Projection {
         counts: Counts,
     ) -> Result<Vec<Launch>, Refusal> {
         let rows = counts.rows;
+        let entry = self.entry.entry_for_rows(rows);
         if rows == 0
             || rows > self.capacity
             || b.residual.is_some()
@@ -160,21 +160,22 @@ impl PreparedOp<ProjectionBuffers<View>> for Projection {
                 "F32 projection requires bounded dense rows and unscaled operands",
             ));
         }
-        let q = self.entry.query();
+        let q = entry.query();
         b.activation.covers(u64::from(rows) * u64::from(q.k) * 4)?;
         b.output.covers(u64::from(rows) * u64::from(q.n) * 4)?;
-        b.weights.codes.covers(self.entry.weight_bytes())?;
+        b.weights.codes.covers(entry.weight_bytes())?;
         b.live_rows.covers(4)?;
-        if self.entry.uses_cached_weights() {
+        if entry.uses_cached_weights() {
             let ptr = |v: View| Argument::DeviceBuffer(v.handle);
-            if self.entry.uses_fused_split() && rows <= self.entry.decode_max_rows() {
+            if entry.uses_fused_split() && rows <= entry.decode_max_rows() {
                 let flags = self.weight_domain(b)?;
-                workspace.covers(self.entry.decode_workspace_bytes(rows))?;
+                workspace.covers(entry.decode_workspace_bytes(rows))?;
                 return Ok(vec![
-                    self.stage(
+                    Self::stage(
+                        &entry,
                         "_prepare",
                         rows,
-                        self.entry.prepare_plan(rows)?,
+                        entry.prepare_plan(rows)?,
                         vec![
                             ptr(b.activation),
                             ptr(b.live_rows),
@@ -182,10 +183,11 @@ impl PreparedOp<ProjectionBuffers<View>> for Projection {
                             ptr(workspace),
                         ],
                     ),
-                    self.stage(
+                    Self::stage(
+                        &entry,
                         "",
                         rows,
-                        self.entry.decode_plan(rows)?,
+                        entry.decode_plan(rows)?,
                         vec![
                             ptr(b.activation),
                             ptr(b.weights.codes),
@@ -203,14 +205,15 @@ impl PreparedOp<ProjectionBuffers<View>> for Projection {
             // slower for small-N projections. Keep 32 as the last measured
             // winning split bucket; all larger rows use the original
             // symbol, plan and arguments.
-            if !self.entry.uses_fused_split() && rows <= 32 {
+            if !entry.uses_fused_split() && rows <= 32 {
                 let flags = self.weight_domain(b)?;
-                workspace.covers(self.entry.decode_workspace_bytes(rows))?;
+                workspace.covers(entry.decode_workspace_bytes(rows))?;
                 return Ok(vec![
-                    self.stage(
+                    Self::stage(
+                        &entry,
                         "_rows",
                         rows,
-                        self.entry.stage_plan([rows, 1, 1])?,
+                        entry.stage_plan([rows, 1, 1])?,
                         vec![
                             ptr(b.activation),
                             ptr(b.live_rows),
@@ -218,10 +221,11 @@ impl PreparedOp<ProjectionBuffers<View>> for Projection {
                             ptr(workspace),
                         ],
                     ),
-                    self.stage(
+                    Self::stage(
+                        &entry,
                         "_decode",
                         rows,
-                        self.entry.decode_plan(rows)?,
+                        entry.decode_plan(rows)?,
                         vec![
                             ptr(b.activation),
                             ptr(b.weights.codes),
@@ -231,10 +235,11 @@ impl PreparedOp<ProjectionBuffers<View>> for Projection {
                             ptr(flags),
                         ],
                     ),
-                    self.stage(
+                    Self::stage(
+                        &entry,
                         "_reduce",
                         rows,
-                        self.entry.stage_plan([
+                        entry.stage_plan([
                             rows.checked_mul(q.n)
                                 .ok_or(Refusal("F32 reduction grid overflows"))?
                                 .div_ceil(128),
@@ -252,9 +257,9 @@ impl PreparedOp<ProjectionBuffers<View>> for Projection {
             }
         }
         Ok(vec![Launch {
-            symbol: self.entry.baseline_symbol().into(),
+            symbol: entry.baseline_symbol().into(),
             rows,
-            plan: self.entry.plan(rows)?,
+            plan: entry.plan(rows)?,
             arguments: ArgumentList(vec![
                 Argument::DeviceBuffer(b.activation.handle),
                 Argument::DeviceBuffer(b.weights.codes.handle),
@@ -278,14 +283,14 @@ impl Projection {
     }
 
     fn stage(
-        &self,
+        entry: &Entry,
         suffix: &str,
         rows: u32,
         plan: kernel_core::contract::LaunchPlan,
         arguments: Vec<Argument>,
     ) -> Launch {
         Launch {
-            symbol: self.entry.stage_symbol(suffix),
+            symbol: entry.stage_symbol(suffix),
             rows,
             plan,
             arguments: ArgumentList(arguments),

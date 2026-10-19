@@ -109,6 +109,7 @@ pub fn register_f32_projections(
     let entries = f32_split::entries(geometry, ranks)?;
     let cubins = [
         f32_split::cubin_name(geometry),
+        f32_decode::cubin_name(geometry),
         f32_dense::cubin_name(geometry),
         f32_head::cubin_name(geometry),
         dspark_router::cubin_name(geometry),

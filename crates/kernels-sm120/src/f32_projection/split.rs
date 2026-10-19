@@ -4,6 +4,23 @@ use kernel_build::{EntryParam, EntrySpec};
 use kernel_core::contract::{LaunchPlan, Refusal, WeightFormat};
 
 impl Entry {
+    /// Select only between existing locked entries. At SM120, 250 W on
+    /// 2026-10-19, 384x5120 measured 24.5/30.7 us at 1/32 rows with the
+    /// three-launch path, versus 32.7/43.0 us fused. At 33/256 rows the
+    /// fused path measured 51/145 us versus 1194/1210 us for the baseline.
+    /// Keep the measured crossover at 32 rows.
+    pub fn entry_for_rows(&self, rows: u32) -> Self {
+        if self.fused && rows <= super::decode::MAX_ROWS {
+            let mut entry = self.clone();
+            entry.symbol = self.baseline_symbol().to_owned();
+            entry.cached = false;
+            entry.fused = false;
+            entry.with_decode()
+        } else {
+            self.clone()
+        }
+    }
+
     pub fn with_split_decode(mut self) -> Self {
         self.cached = true;
         self.fused = true;

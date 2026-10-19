@@ -71,7 +71,7 @@ fn backend(entries: Vec<Entry>) -> Sm120 {
 }
 
 #[test]
-fn split_decode_uses_two_launches_for_every_row_through_256() {
+fn split_decode_selects_the_measured_path_for_every_row_through_256() {
     for weight in [WeightFormat::Bf16, WeightFormat::F32] {
         let original = entry(weight);
         let q = GemmQuery {
@@ -89,6 +89,11 @@ fn split_decode_uses_two_launches_for_every_row_through_256() {
             .projection(&operation(&e), usage, Need::rows(8192))
             .unwrap()
             .handle;
+        let legacy = Entry::new(q, usage, "split_test").unwrap().with_decode();
+        let legacy_op = backend(vec![legacy.clone()])
+            .projection(&operation(&legacy), usage, Need::rows(8192))
+            .unwrap()
+            .handle;
         let mut b = buffers(&e);
         b.scratch.weight_domain = Some(View {
             handle: 10,
@@ -103,7 +108,19 @@ fn split_decode_uses_two_launches_for_every_row_through_256() {
             let launches = prepared
                 .launches(&b, workspace, Counts::rows(rows))
                 .unwrap();
-            assert_eq!(launches.len(), 2, "rows={rows}");
+            assert_eq!(
+                launches.len(),
+                if rows <= 32 { 3 } else { 2 },
+                "rows={rows}"
+            );
+            if rows <= 32 {
+                assert_eq!(
+                    launches,
+                    legacy_op
+                        .launches(&b, workspace, Counts::rows(rows))
+                        .unwrap()
+                );
+            }
             assert_eq!(launches[1].plan.grid, [2, rows.div_ceil(8), 1]);
             let short = View {
                 bytes: e.decode_workspace_bytes(rows) - 1,

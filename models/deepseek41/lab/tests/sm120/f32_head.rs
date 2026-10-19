@@ -269,7 +269,7 @@ fn registered_heads_prepare_every_row_count() {
             let view = |handle, bytes| View { handle, bytes };
             let domain_bytes = op.info().bytes_of("scratch.weight_domain");
             let selected = if domain_bytes.is_some() {
-                entry.clone().with_split_decode()
+                entry.clone().with_split_decode().entry_for_rows(rows)
             } else {
                 entry.clone()
             };
@@ -296,9 +296,16 @@ fn registered_heads_prepare_every_row_count() {
                 .launches(&roles, view(7, op.info().workspace), Counts::rows(rows))
                 .unwrap();
             if domain_bytes.is_some() && rows <= 256 {
-                assert_eq!(launches.len(), 2);
-                assert_eq!(launches[0].symbol, selected.stage_symbol("_prepare"));
-                assert_eq!(launches[1].symbol, selected.stage_symbol(""));
+                if rows <= 32 {
+                    assert_eq!(launches.len(), 3);
+                    assert_eq!(launches[0].symbol, selected.stage_symbol("_rows"));
+                    assert_eq!(launches[1].symbol, selected.stage_symbol("_decode"));
+                    assert_eq!(launches[2].symbol, selected.stage_symbol("_reduce"));
+                } else {
+                    assert_eq!(launches.len(), 2);
+                    assert_eq!(launches[0].symbol, selected.stage_symbol("_prepare"));
+                    assert_eq!(launches[1].symbol, selected.stage_symbol(""));
+                }
                 assert_eq!(launches[1].plan, selected.decode_plan(rows).unwrap());
             } else {
                 assert_eq!(launches.len(), 1);

@@ -1,0 +1,3549 @@
+[
+  {
+    "name": "f32_decode_edges",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_f32_edge_n17_k1_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k1_bf16_v1_cached_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k1_bf16_v1_cached_weights_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k1_bf16_v1_cached_rows_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k1_bf16_v1_cached_decode_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k1_bf16_v1_cached_reduce_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k63_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k63_bf16_v1_cached_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k63_bf16_v1_cached_weights_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k63_bf16_v1_cached_rows_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k63_bf16_v1_cached_decode_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k63_bf16_v1_cached_reduce_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k64_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k64_bf16_v1_cached_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k64_bf16_v1_cached_weights_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k64_bf16_v1_cached_rows_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k64_bf16_v1_cached_decode_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k64_bf16_v1_cached_reduce_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k65_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k65_bf16_v1_cached_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k65_bf16_v1_cached_weights_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k65_bf16_v1_cached_rows_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k65_bf16_v1_cached_decode_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k65_bf16_v1_cached_reduce_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k127_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k127_bf16_v1_cached_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k127_bf16_v1_cached_weights_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k127_bf16_v1_cached_rows_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k127_bf16_v1_cached_decode_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k127_bf16_v1_cached_reduce_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k128_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k128_bf16_v1_cached_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k128_bf16_v1_cached_weights_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k128_bf16_v1_cached_rows_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k128_bf16_v1_cached_decode_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k128_bf16_v1_cached_reduce_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k129_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k129_bf16_v1_cached_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k129_bf16_v1_cached_weights_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k129_bf16_v1_cached_rows_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k129_bf16_v1_cached_decode_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k129_bf16_v1_cached_reduce_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k255_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k255_bf16_v1_cached_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k255_bf16_v1_cached_weights_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k255_bf16_v1_cached_rows_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k255_bf16_v1_cached_decode_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k255_bf16_v1_cached_reduce_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k256_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k256_bf16_v1_cached_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k256_bf16_v1_cached_weights_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k256_bf16_v1_cached_rows_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k256_bf16_v1_cached_decode_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k256_bf16_v1_cached_reduce_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k257_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k257_bf16_v1_cached_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k257_bf16_v1_cached_weights_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k257_bf16_v1_cached_rows_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k257_bf16_v1_cached_decode_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k257_bf16_v1_cached_reduce_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k511_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k511_bf16_v1_cached_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k511_bf16_v1_cached_weights_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k511_bf16_v1_cached_rows_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k511_bf16_v1_cached_decode_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k511_bf16_v1_cached_reduce_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k512_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k512_bf16_v1_cached_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k512_bf16_v1_cached_weights_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k512_bf16_v1_cached_rows_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k512_bf16_v1_cached_decode_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k512_bf16_v1_cached_reduce_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k513_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k513_bf16_v1_cached_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k513_bf16_v1_cached_weights_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k513_bf16_v1_cached_rows_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k513_bf16_v1_cached_decode_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k513_bf16_v1_cached_reduce_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n65536_k1_bf16_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n65536_k1_bf16_v1_cached_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n65536_k1_bf16_v1_cached_weights_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n65536_k1_bf16_v1_cached_rows_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n65536_k1_bf16_v1_cached_decode_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n65536_k1_bf16_v1_cached_reduce_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k257_raw_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k257_raw_v1_cached_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k257_raw_v1_cached_weights_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k257_raw_v1_cached_rows_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k257_raw_v1_cached_decode_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k257_raw_v1_cached_reduce_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_probe_gate_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "flag",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_probe_flush_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "buffer",
+            "cxx_type": "uint32_t"
+          },
+          {
+            "kind": "U64",
+            "name": "words"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "522bf624d326a4aba03a6735fcb92d7a783d1e92470525de26f02da98910697b",
+    "resources": [
+      {
+        "symbol": "chop_f32_edge_n17_k1_bf16_v1",
+        "registers": 64,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k1_bf16_v1_cached_v1",
+        "registers": 64,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k1_bf16_v1_cached_weights_v1",
+        "registers": 12,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k1_bf16_v1_cached_rows_v1",
+        "registers": 10,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k1_bf16_v1_cached_decode_v1",
+        "registers": 60,
+        "shared_static_bytes": 33792,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k1_bf16_v1_cached_reduce_v1",
+        "registers": 10,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k63_bf16_v1",
+        "registers": 63,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k63_bf16_v1_cached_v1",
+        "registers": 63,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k63_bf16_v1_cached_weights_v1",
+        "registers": 24,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k63_bf16_v1_cached_rows_v1",
+        "registers": 12,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k63_bf16_v1_cached_decode_v1",
+        "registers": 64,
+        "shared_static_bytes": 33792,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k63_bf16_v1_cached_reduce_v1",
+        "registers": 10,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k64_bf16_v1",
+        "registers": 63,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k64_bf16_v1_cached_v1",
+        "registers": 63,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k64_bf16_v1_cached_weights_v1",
+        "registers": 24,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k64_bf16_v1_cached_rows_v1",
+        "registers": 12,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k64_bf16_v1_cached_decode_v1",
+        "registers": 64,
+        "shared_static_bytes": 33792,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k64_bf16_v1_cached_reduce_v1",
+        "registers": 10,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k65_bf16_v1",
+        "registers": 63,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k65_bf16_v1_cached_v1",
+        "registers": 62,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k65_bf16_v1_cached_weights_v1",
+        "registers": 22,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k65_bf16_v1_cached_rows_v1",
+        "registers": 12,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k65_bf16_v1_cached_decode_v1",
+        "registers": 64,
+        "shared_static_bytes": 33792,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k65_bf16_v1_cached_reduce_v1",
+        "registers": 10,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k127_bf16_v1",
+        "registers": 65,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k127_bf16_v1_cached_v1",
+        "registers": 62,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k127_bf16_v1_cached_weights_v1",
+        "registers": 24,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k127_bf16_v1_cached_rows_v1",
+        "registers": 12,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k127_bf16_v1_cached_decode_v1",
+        "registers": 64,
+        "shared_static_bytes": 33792,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k127_bf16_v1_cached_reduce_v1",
+        "registers": 10,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k128_bf16_v1",
+        "registers": 64,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k128_bf16_v1_cached_v1",
+        "registers": 60,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k128_bf16_v1_cached_weights_v1",
+        "registers": 24,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k128_bf16_v1_cached_rows_v1",
+        "registers": 12,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k128_bf16_v1_cached_decode_v1",
+        "registers": 64,
+        "shared_static_bytes": 33792,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k128_bf16_v1_cached_reduce_v1",
+        "registers": 10,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k129_bf16_v1",
+        "registers": 69,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k129_bf16_v1_cached_v1",
+        "registers": 69,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k129_bf16_v1_cached_weights_v1",
+        "registers": 22,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k129_bf16_v1_cached_rows_v1",
+        "registers": 12,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k129_bf16_v1_cached_decode_v1",
+        "registers": 63,
+        "shared_static_bytes": 33792,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k129_bf16_v1_cached_reduce_v1",
+        "registers": 12,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k255_bf16_v1",
+        "registers": 69,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k255_bf16_v1_cached_v1",
+        "registers": 69,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k255_bf16_v1_cached_weights_v1",
+        "registers": 36,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k255_bf16_v1_cached_rows_v1",
+        "registers": 11,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k255_bf16_v1_cached_decode_v1",
+        "registers": 63,
+        "shared_static_bytes": 33792,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k255_bf16_v1_cached_reduce_v1",
+        "registers": 12,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k256_bf16_v1",
+        "registers": 69,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k256_bf16_v1_cached_v1",
+        "registers": 69,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k256_bf16_v1_cached_weights_v1",
+        "registers": 44,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k256_bf16_v1_cached_rows_v1",
+        "registers": 11,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k256_bf16_v1_cached_decode_v1",
+        "registers": 63,
+        "shared_static_bytes": 33792,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k256_bf16_v1_cached_reduce_v1",
+        "registers": 12,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k257_bf16_v1",
+        "registers": 69,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k257_bf16_v1_cached_v1",
+        "registers": 69,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k257_bf16_v1_cached_weights_v1",
+        "registers": 36,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k257_bf16_v1_cached_rows_v1",
+        "registers": 11,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k257_bf16_v1_cached_decode_v1",
+        "registers": 63,
+        "shared_static_bytes": 33792,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k257_bf16_v1_cached_reduce_v1",
+        "registers": 16,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k511_bf16_v1",
+        "registers": 69,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k511_bf16_v1_cached_v1",
+        "registers": 69,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k511_bf16_v1_cached_weights_v1",
+        "registers": 38,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k511_bf16_v1_cached_rows_v1",
+        "registers": 11,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k511_bf16_v1_cached_decode_v1",
+        "registers": 63,
+        "shared_static_bytes": 33792,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k511_bf16_v1_cached_reduce_v1",
+        "registers": 16,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k512_bf16_v1",
+        "registers": 69,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k512_bf16_v1_cached_v1",
+        "registers": 69,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k512_bf16_v1_cached_weights_v1",
+        "registers": 48,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k512_bf16_v1_cached_rows_v1",
+        "registers": 11,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k512_bf16_v1_cached_decode_v1",
+        "registers": 63,
+        "shared_static_bytes": 33792,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k512_bf16_v1_cached_reduce_v1",
+        "registers": 16,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k513_bf16_v1",
+        "registers": 69,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k513_bf16_v1_cached_v1",
+        "registers": 69,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k513_bf16_v1_cached_weights_v1",
+        "registers": 36,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k513_bf16_v1_cached_rows_v1",
+        "registers": 11,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k513_bf16_v1_cached_decode_v1",
+        "registers": 63,
+        "shared_static_bytes": 33792,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k513_bf16_v1_cached_reduce_v1",
+        "registers": 16,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n65536_k1_bf16_v1",
+        "registers": 64,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n65536_k1_bf16_v1_cached_v1",
+        "registers": 64,
+        "shared_static_bytes": 5156,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n65536_k1_bf16_v1_cached_weights_v1",
+        "registers": 12,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n65536_k1_bf16_v1_cached_rows_v1",
+        "registers": 10,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n65536_k1_bf16_v1_cached_decode_v1",
+        "registers": 57,
+        "shared_static_bytes": 33792,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n65536_k1_bf16_v1_cached_reduce_v1",
+        "registers": 10,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k257_raw_v1",
+        "registers": 24,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k257_raw_v1_cached_v1",
+        "registers": 24,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k257_raw_v1_cached_weights_v1",
+        "registers": 10,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k257_raw_v1_cached_rows_v1",
+        "registers": 11,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k257_raw_v1_cached_decode_v1",
+        "registers": 28,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_f32_edge_n17_k257_raw_v1_cached_reduce_v1",
+        "registers": 16,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_probe_gate_v1",
+        "registers": 6,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_probe_flush_v1",
+        "registers": 10,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

@@ -19,6 +19,7 @@ mod moe;
 mod moe_direct;
 mod moe_floor;
 mod norm_quantize;
+mod overlap;
 
 pub use compressor::{TailUpload, tail_upload};
 

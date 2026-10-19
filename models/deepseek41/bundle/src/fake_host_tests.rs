@@ -27,6 +27,7 @@ mod media;
 mod norm_quantize;
 mod position_valid;
 mod prefill_attention;
+mod prefill_overlap;
 mod prefill_tma;
 mod producer_epilogues;
 mod shared_overlap;

@@ -18,7 +18,7 @@
 
 mod dspark;
 mod engram;
-mod execute;
+pub(crate) mod execute;
 mod fold_stream;
 mod media;
 mod prefix;
@@ -99,6 +99,7 @@ pub struct Instance {
     extent: Extent,
     /// Steps planned so far: each row's index tag holds its step's.
     steps: std::cell::Cell<u64>,
+    overlap: Vec<execute::overlap::Rank>,
     /// Run the lowered stages alone (`PARTIAL`).
     partial: bool,
     /// Each rank's decode and verify graphs by bucket.
@@ -603,6 +604,9 @@ impl Instance {
                 });
             }
         }
+        if execute::overlap::enabled() && self.ops.reduce.is_some() {
+            self.overlap = execute::overlap::acquire(services, &ranks, held)?;
+        }
         acquire::synchronize(log, &ranks)?;
         self.ranks = ranks;
         Ok(())
@@ -731,6 +735,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
             verify_rows,
         },
         steps: std::cell::Cell::new(0),
+        overlap: Vec::new(),
         partial,
         taps,
         engram,

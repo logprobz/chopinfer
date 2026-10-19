@@ -591,12 +591,52 @@ pub fn rows(span: DeviceBufferSpanV1, rows: u32) -> DeviceBufferSpanV1 {
     DeviceBufferSpanV1::new(span.buffer, span.offset, row * u64::from(rows))
 }
 
+/// A checked row range of a scratch allocation, retaining its row stride.
+pub(crate) fn row_range(
+    span: DeviceBufferSpanV1,
+    first: u32,
+    count: u32,
+) -> Result<DeviceBufferSpanV1, String> {
+    let capacity = scratch_rows();
+    let end = first
+        .checked_add(count)
+        .ok_or("scratch row range overflows")?;
+    if count == 0 || end > capacity || !span.length.is_multiple_of(u64::from(capacity)) {
+        return Err("scratch row range exceeds its allocation".into());
+    }
+    let stride = span.length / u64::from(capacity);
+    let offset = span
+        .offset
+        .checked_add(u64::from(first) * stride)
+        .ok_or("scratch offset overflows")?;
+    let length = u64::from(count) * stride;
+    offset.checked_add(length).ok_or("scratch end overflows")?;
+    Ok(DeviceBufferSpanV1::new(span.buffer, offset, length))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use bundle_runtime::geometry::Ranks;
     use kernel_core::allocation::Traversal;
     use model_deepseek41_contract::geometry::FLASH;
+
+    #[test]
+    fn scratch_ranges_preserve_data_scale_and_status_offsets() {
+        let handle = runtime_bundle_abi::BundleDeviceBufferHandleV1::from_parts(1, 1);
+        for stride in [4, 64, 2048, 10240, 20480] {
+            let full = DeviceBufferSpanV1::new(handle, 256, u64::from(scratch_rows()) * stride);
+            let a = row_range(full, 0, 528).unwrap();
+            let b = row_range(full, 528, 529).unwrap();
+            assert_eq!(a.offset + a.length, b.offset);
+            assert_eq!(b.offset + b.length, full.offset + 1057 * stride);
+            assert!(row_range(full, scratch_rows(), 1).is_err());
+            assert!(row_range(full, u32::MAX, 2).is_err());
+            assert!(row_range(full, 0, 0).is_err());
+            let invalid = DeviceBufferSpanV1::new(handle, u64::MAX - 1, full.length);
+            assert!(row_range(invalid, 0, 1).is_err());
+        }
+    }
 
     #[test]
     fn flash_scratch_fits_beside_the_weights() {

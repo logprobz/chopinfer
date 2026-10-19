@@ -474,7 +474,42 @@ pub struct Lowered {
 #[derive(Default)]
 pub(crate) struct Bind(BufferBindings);
 
+#[cfg(test)]
+mod independent_tests;
+
 impl Bind {
+    /// Bounded row-local launches with no workspace or persistent grid.
+    pub(crate) fn launch_independent<B>(
+        self,
+        op: &Prepared<B>,
+        buffers: &B,
+        counts: Counts,
+    ) -> Result<Vec<Lowered>, Refusal> {
+        if op.info().workspace != 0
+            || !op
+                .info()
+                .guarantees
+                .provides(Invariance::any_rows(counts.rows))
+        {
+            return Err(Refusal("overlap needs independent rows without workspace"));
+        }
+        let launches = op.launches(buffers, View::EMPTY, counts)?;
+        if launches.is_empty()
+            || launches.iter().any(|launch| {
+                launch.persistent
+                    || launch.collective
+                    || launch.plan.workspace_bytes != 0
+                    || launch.plan.cluster != [1, 1, 1]
+            })
+        {
+            return Err(Refusal("overlap needs bounded local producers"));
+        }
+        Ok(launches
+            .into_iter()
+            .map(|launch| self.lowered(launch))
+            .collect())
+    }
+
     pub(crate) fn initialize<B>(
         self,
         op: &Prepared<B>,

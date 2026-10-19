@@ -32,6 +32,8 @@ use crate::engram_rows::Hashed;
 use crate::lower::{KvExtent, Lowering, TailUpload, tail_upload};
 use crate::program::{Phase, Stage};
 
+pub(crate) mod overlap;
+
 /// Phase-arena indexes (`Instance::arenas`).
 const PREFILL: usize = 0;
 const DECODE: usize = 1;
@@ -39,6 +41,7 @@ const VERIFY: usize = 2;
 
 /// One phase of a step, planned before the step opens.
 struct Run {
+    overlap: Option<overlap::Plan>,
     inputs: PhaseInputs,
     arena: usize,
     layout: InputLayout,
@@ -422,7 +425,8 @@ impl Instance {
         };
         let index = index_upload(self.config.shape.geometry, self.steps.get(), &inputs);
         self.steps.set(self.steps.get() + 1);
-        Ok(Run {
+        let mut run = Run {
+            overlap: None,
             index,
             engram,
             media,
@@ -437,7 +441,12 @@ impl Instance {
             stages,
             tails,
             phase,
-        })
+        };
+        run.overlap = overlap::Plan::prepare(self, &run).map_err(|error| {
+            self.log(&error);
+            BundleStatusV1::InternalError
+        })?;
+        Ok(run)
     }
 
     /// The serving pages and request state the stages address.
@@ -592,6 +601,11 @@ impl Instance {
     /// the instance: its peers would wait forever at the collectives that
     /// rank queued.
     fn launch(&mut self, run: &mut Run) -> Result<(), BundleAbiError> {
+        if let Some(plan) = &run.overlap {
+            return plan
+                .execute(self, run)
+                .map_err(|error| self.dispatch_failed(error));
+        }
         let streams = self
             .ranks
             .iter()
@@ -722,8 +736,8 @@ impl Instance {
     pub(super) fn launch_eager(
         &self,
         streams: &[BundleStreamHandleV1],
-        programs: &[Vec<PreparedLaunch>],
-        collectives: &[Vec<bool>],
+        programs: &[impl AsRef<[PreparedLaunch]>],
+        collectives: &[impl AsRef<[bool]>],
     ) -> Result<(), DispatchError> {
         if self.collectives.is_poisoned() {
             return Err(BundleAbiError::Status(BundleStatusV1::InvalidState).into());
@@ -738,7 +752,7 @@ impl Instance {
         let segments = programs
             .iter()
             .zip(collectives)
-            .map(|(program, waits)| collective_segments(program, waits))
+            .map(|(program, waits)| collective_segments(program.as_ref(), waits.as_ref()))
             .collect::<Vec<_>>();
         let _unwinding = PoisonOnUnwind(&self.collectives);
         let mut started = vec![false; streams.len()];

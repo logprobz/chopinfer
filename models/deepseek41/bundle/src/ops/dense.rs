@@ -382,12 +382,31 @@ impl DenseOps {
     }
 
     /// Projection `id` of `rows` rows.
+    pub(crate) fn project_independent(
+        &self,
+        id: &str,
+        rows: u32,
+        views: &GemmViews,
+    ) -> Result<Vec<Lowered>, Refusal> {
+        self.project_with(id, Phase::Prefill { rows }, views, None)
+    }
+
     pub(crate) fn project(
         &self,
         id: &str,
         phase: Phase,
         views: &GemmViews,
         workspace: DeviceBufferSpanV1,
+    ) -> Result<Vec<Lowered>, Refusal> {
+        self.project_with(id, phase, views, Some(workspace))
+    }
+
+    fn project_with(
+        &self,
+        id: &str,
+        phase: Phase,
+        views: &GemmViews,
+        workspace: Option<DeviceBufferSpanV1>,
     ) -> Result<Vec<Lowered>, Refusal> {
         let rows = phase.rows();
         let op = if phase.prefill() && rows >= 128 {
@@ -433,7 +452,10 @@ impl DenseOps {
         {
             return fold_stream::launch(op, bind, buffers, None, views.stream, rows);
         }
-        bind.launch_within(op, &buffers, workspace, Counts::rows(rows))
+        match workspace {
+            Some(workspace) => bind.launch_within(op, &buffers, workspace, Counts::rows(rows)),
+            None => bind.launch_independent(op, &buffers, Counts::rows(rows)),
+        }
     }
 
     pub(crate) fn project_pair(

@@ -210,6 +210,30 @@ fn spans(launch: &PreparedLaunch) -> Result<Vec<(DeviceBufferSpanV1, bool)>, Str
     Ok(spans)
 }
 
+/// Reject every shared byte between two concurrent branches. This includes
+/// tensor-map bases and peer pointer arrays, as in the graph scratch audit.
+pub(crate) fn disjoint_branches(
+    side: &[PreparedLaunch],
+    main: &[PreparedLaunch],
+) -> Result<(), String> {
+    for side in side {
+        let side_spans = spans(side)?;
+        for main in main {
+            for &(a, _) in &side_spans {
+                for (b, _) in spans(main)? {
+                    if intersects(a, b)? {
+                        return Err(format!(
+                            "unordered scratch alias: {} {a:?} and {} {b:?}",
+                            side.symbol, main.symbol,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Check actual pointer arguments before capture. Only the input codes,
 /// input scales and live-row count may be shared across the two branches;
 /// their producers finish before the fork, and both entry arguments must

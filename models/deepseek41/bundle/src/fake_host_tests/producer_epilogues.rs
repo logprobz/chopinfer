@@ -49,7 +49,11 @@ fn decode_fuses_77_hc_boundaries() {
                         (80 + embedding_round) * nr
                     );
                 }
-                assert_eq!(count("hc_wide"), 0, "unmeasured candidate entered serving");
+                assert_eq!(
+                    count("hc_wide"),
+                    0,
+                    "measured wide mixer regression entered serving"
+                );
                 eprintln!(
                     "PRODUCER_LAUNCHES {:?} ranks={nr} rows={rows} after={} norm_window_removed=248 hc_pairs=77 round_removed=77 embedding_removed={}",
                     kv.storage,

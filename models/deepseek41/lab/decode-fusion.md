@@ -235,3 +235,7 @@ admission and the fused MLP input quantizer. Rebased text and media journals
 were audited by expanding the norm/window and HC fusions: every other
 launch retained its grid, scalar arguments and span extents under a
 consistent bijection of host-issued handles.
+
+The subsequent [wide mixer measurements](wide-mixer-results.md) pass bitwise
+checks but regress at every tested bucket. They supersede the experimental
+wide mixer's pending status above; its entries remain excluded from serving.

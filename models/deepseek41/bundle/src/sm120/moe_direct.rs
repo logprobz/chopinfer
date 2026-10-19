@@ -50,20 +50,51 @@ pub(super) fn prepare_set(
         .to_bits();
     buckets(set)
         .into_iter()
-        .map(|(phase, rows)| Ok((phase, rows, prepare(&entry, rows, scaling)?)))
+        .map(|(phase, rows)| {
+            Ok((
+                phase,
+                rows,
+                prepare(
+                    &entry,
+                    rows,
+                    scaling,
+                    super::moe_router_finish::qualified(set, phase, rows),
+                )?,
+            ))
+        })
         .collect()
 }
 
-fn prepare(entry: &Entry, rows: u32, scaling: u32) -> Result<Prepared, Refused> {
+fn prepare(
+    entry: &Entry,
+    rows: u32,
+    scaling: u32,
+    fused_router: bool,
+) -> Result<Prepared, Refused> {
     let scratch = entry.workspace_bytes(rows)?;
-    let ticket_offset = scratch.next_multiple_of(256);
+    let routed_offset = if fused_router {
+        super::moe_router_finish::layout(entry, rows).routed
+    } else {
+        0
+    };
+    let ticket_offset = routed_offset + scratch.next_multiple_of(256);
     let mut info = OpInfo::new(
         "sm120.moe.direct.v1",
         kernel_core::properties::Invariance::any_rows(rows),
         Vec::new(),
     );
     info.workspace = ticket_offset + 256;
-    let mut calls = Vec::new();
+    let mut calls = if fused_router {
+        super::moe_router_finish::calls(entry, rows, scaling)?
+    } else {
+        Vec::new()
+    };
+    info.symbols.extend(calls.iter().map(|call| {
+        (
+            call.launch.symbol.clone(),
+            call.launch.plan.dynamic_shared_bytes,
+        )
+    }));
     let router = bandwidth::router(entry);
     let mut stages = vec![(None, router.entry()?, router.plan(rows)?)];
     for s in [
@@ -101,6 +132,9 @@ fn prepare(entry: &Entry, rows: u32, scaling: u32) -> Result<Prepared, Refused> 
         ));
     }
     for (stage, spec, plan) in stages {
+        if fused_router && matches!(stage, None | Some(Stage::Metadata)) {
+            continue;
+        }
         let pointers = spec
             .params
             .iter()
@@ -109,7 +143,7 @@ fn prepare(entry: &Entry, rows: u32, scaling: u32) -> Result<Prepared, Refused> 
                 kernel_build::EntryParam::DevicePointer { name, .. } => Some(Pointer {
                     index,
                     source: match name.as_str() {
-                        "scratch" => Source::Workspace,
+                        "scratch" => Source::WorkspaceAt(routed_offset),
                         "tickets" => Source::Tickets,
                         _ => Source::View(role(stage, name).into()),
                     },
@@ -281,7 +315,16 @@ mod tests {
                     256,
                     op.info.workspace,
                 );
-                for point in [Point::Route, Point::Gate, Point::Down, Point::Sum] {
+                for point in [
+                    Point::RouterPrepare,
+                    Point::Route,
+                    Point::Gate,
+                    Point::Down,
+                    Point::Sum,
+                ]
+                .into_iter()
+                .filter(|point| *point != Point::RouterPrepare || op.fuses_router())
+                {
                     let views = |_: &str| {
                         Ok(DeviceBufferSpanV1::new(
                             BundleDeviceBufferHandleV1 { raw: 2 },

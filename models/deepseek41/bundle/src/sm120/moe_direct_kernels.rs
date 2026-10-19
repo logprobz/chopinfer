@@ -41,6 +41,13 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
         .filter(|g| super::moe::streamed_qualified(g, 4))
     {
         let entries = entries(g)?;
+        specs.push((
+            "routed_moe_router_finish",
+            kernels_sm120::moe::chained::router_finish::cubin_spec(
+                &format!("router_finish_moe_{}_sm120", g.kernel_tag),
+                &entries,
+            ),
+        ));
         specs.extend(
             floor::cubins(&format!("floor_moe_{}", g.kernel_tag), &entries)
                 .into_iter()

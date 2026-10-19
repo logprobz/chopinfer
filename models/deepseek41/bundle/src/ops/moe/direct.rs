@@ -5,6 +5,7 @@ use kernel_core::contract::Argument;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Point {
+    RouterPrepare,
     Route,
     Gate,
     Down,
@@ -12,7 +13,7 @@ pub(crate) enum Point {
 }
 
 pub(crate) enum Source {
-    Workspace,
+    WorkspaceAt(u64),
     Tickets,
     View(String),
 }
@@ -33,6 +34,9 @@ pub(crate) struct Prepared {
     ticket_offset: u64,
 }
 impl Prepared {
+    pub(crate) fn fuses_router(&self) -> bool {
+        self.calls.iter().any(|c| c.point == Point::RouterPrepare)
+    }
     pub(crate) fn new(info: OpInfo, calls: Vec<Call>, ticket_offset: u64) -> Self {
         Self {
             info,
@@ -63,7 +67,17 @@ impl Prepared {
             for pointer in &call.pointers {
                 let needed = pointer.bytes;
                 let mut span = match &pointer.source {
-                    Source::Workspace => workspace,
+                    Source::WorkspaceAt(offset) => DeviceBufferSpanV1::new(
+                        workspace.buffer,
+                        workspace
+                            .offset
+                            .checked_add(*offset)
+                            .ok_or("MoE workspace offset overflows")?,
+                        workspace
+                            .length
+                            .checked_sub(*offset)
+                            .ok_or("MoE workspace offset exceeds allocation")?,
+                    ),
                     Source::Tickets => DeviceBufferSpanV1::new(
                         workspace.buffer,
                         workspace

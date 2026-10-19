@@ -105,12 +105,13 @@ mod latent_window_stage;
 pub(crate) mod moe;
 mod moe_direct;
 #[allow(dead_code, reason = "the build script compiles the locked entries")]
-mod moe_direct_kernels;
+pub(crate) mod moe_direct_kernels;
 pub mod moe_pipeline;
 #[allow(dead_code)]
 mod moe_pipeline_entries;
 #[allow(dead_code, reason = "the build compiles the frozen vector declaration")]
 mod moe_pipeline_vector;
+pub(crate) mod moe_router_finish;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod reduce;
 pub mod ring_gather;
@@ -407,6 +408,8 @@ impl crate::Kernels {
                 || latent_scheduled::qualified(shape.geometry, shape.ranks()))
             && !encoder::is_cubin(cubin)
             && (!cubin.starts_with("bandwidth_moe_")
+                || moe::streamed_qualified(shape.geometry, shape.ranks()))
+            && (!cubin.starts_with("router_finish_moe_")
                 || moe::streamed_qualified(shape.geometry, shape.ranks()))
             && (!cubin.starts_with("floor_moe_")
                 || moe::streamed_qualified(shape.geometry, shape.ranks()))

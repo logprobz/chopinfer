@@ -188,5 +188,46 @@ adds identical/shifted selected-list cases, and times all 40 main layers.
 Compilation reports 218-222 registers per paired-row thread and 184-188 for
 the one-row control, with no local memory or stack in either. The reference
 cubin remains identical to the measured baseline. These resource audits
-are CPU evidence; candidate GPU bitwise checks and timings are pending.
-Serving routing remains contingent on bitwise and timing evidence.
+are CPU evidence.
+
+The paired-row measurement on 2026-10-19 passed all workspace, output,
+f64, reuse and graph-replay gates on both devices before timing. It reached
+157 of 160 layer/candidate/device records before the job timeout. Every
+variant was timed on both devices; the missing records are the final three
+mixed32 layers for the paired candidate on the second device. Medians of
+the available per-layer records at 250 W are:
+
+| Variant | Reference attention | Packed one-row attention | Paired attention | Reference total | Paired total |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Window | 6.11-6.12 ms | 2.09 ms | 0.87-0.89 ms | 6.37 ms | 1.13-1.14 ms |
+| Mixed64 | 28.89-28.93 ms | 9.71-9.72 ms | 5.88-5.89 ms | 29.14-29.18 ms | 6.14 ms |
+| Mixed32 | 28.88-28.92 ms | 9.71 ms | 5.89 ms | 29.13-29.18 ms | 6.14 ms |
+
+These are partial timing results, not a completed job verdict. The
+restaged job retains every bitwise gate and all 160 timing records, with
+one warmup and three alternating A/B samples for each of attention, merge
+and combined execution. Merge uses an untimed attention producer for each
+arm. Its prior 15 rounds per arm were a substantial part of the timeout.
+The job allows 700 seconds for GPU work and 890 seconds including setup
+and diagnostics; a complete GPU rerun remains required.
+
+Serving selects the paired schedule for native Flash TP4 prefill launches
+with an 8192-row host grid, including graph replays with fewer live rows.
+Window, mixed64 and mixed32 all use the measured schedule. Other host row
+counts, BF16 KV, other topologies, decode, verify and draft attention retain
+their existing route. The model adapter validates through the original
+prepared operation and changes only the attention symbol and launch plan.
+Its metadata retains reference symbols for fallback and adds the paired
+entry's 85,504-byte dynamic shared-memory limit, which the serving loader
+sets before launch. The original merge, arguments, workspace and numerical
+contract remain intact. The new lock family embeds the same paired cubin
+bytes qualified by the lab; existing locks are unchanged.
+
+CPU fake-host checks cover all 40 layers, shared-memory configuration,
+8191-row fallback, BF16 and TP2 fallback, subsequent decode and resource
+release. Journal comparisons check unchanged argument spans, scalar
+values and merge order. GPU serving integration and completed all-layer
+rerun timing remain unproven. Applying the measured attention ratio to
+round 3's exclusive mixed-attention time suggests about 0.86 seconds saved
+per 8192-row chunk, roughly 3.4 seconds per 32K prompt. This is a kernel-only
+projection, not an end-to-end serving measurement.

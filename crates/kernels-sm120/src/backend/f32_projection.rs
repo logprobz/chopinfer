@@ -248,8 +248,9 @@ impl PreparedOp<ProjectionBuffers<View>> for Projection {
             // SM120 at 250 W, 2026-10-19: split decode won through 32
             // measured rows, but cached prefill at 64 rows was 1.15-1.17x
             // slower for small-N projections. Keep 32 as the last measured
-            // winning split bucket; all larger rows use the original
-            // symbol, plan and arguments.
+            // winning split bucket for unfused entries; their larger rows,
+            // and fused entries above their decode maximum, use the
+            // original symbol, plan and arguments.
             if !entry.uses_fused_split() && rows <= 32 {
                 let flags = self.weight_domain(b)?;
                 workspace.covers(entry.decode_workspace_bytes(rows))?;

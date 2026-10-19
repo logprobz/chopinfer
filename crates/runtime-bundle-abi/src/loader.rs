@@ -598,6 +598,11 @@ impl LoadedBundleInstanceV1 {
         self.instance.destroy()
     }
 
+    /// Prevents finalizers from rewriting storage still borrowed by host work.
+    pub fn poison_pending_execution(&mut self) {
+        self.instance.poison_pending_execution();
+    }
+
     #[must_use]
     pub fn is_poisoned(&self) -> bool {
         self.instance.is_poisoned()

@@ -3469,6 +3469,14 @@ impl BundleInstanceV1 {
         self.state == BundleInstanceStateV1::Poisoned
     }
 
+    /// Stops lifecycle callbacks after the host cannot fence a result consumer.
+    /// Native code and services remain retained by poisoned-instance teardown.
+    pub fn poison_pending_execution(&mut self) {
+        if self.state != BundleInstanceStateV1::Destroyed {
+            self.state = BundleInstanceStateV1::Poisoned;
+        }
+    }
+
     /// Runs one execution, leaving the instance pending only if it succeeded.
     ///
     /// The wrapper stays ready after a refusal and issues no finalizer, so a

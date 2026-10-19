@@ -2290,6 +2290,24 @@ fn an_execute_refusal_leaves_the_wrapper_ready_and_an_empty_success_cancellable(
 }
 
 #[test]
+fn host_result_fence_failure_prevents_all_native_finalizers() {
+    let _guard = TEST_LOCK.lock().expect("ABI test lock is available");
+    reset_calls();
+    let mut instance = fixture_api().create(fixture_table(), &[1]).unwrap();
+    instance.execute(&[1], &mut fixture_sink()).unwrap();
+    instance.poison_pending_execution();
+    assert!(instance.is_poisoned());
+    assert!(matches!(instance.commit(), Err(BundleAbiError::Poisoned)));
+    assert!(matches!(instance.cancel(), Err(BundleAbiError::Poisoned)));
+    assert!(matches!(instance.destroy(), Err(BundleAbiError::Poisoned)));
+    drop(instance);
+    let calls = calls();
+    assert_eq!(calls.commit, 0);
+    assert_eq!(calls.cancel, 0);
+    assert_eq!(calls.destroy, 0);
+}
+
+#[test]
 fn terminal_callback_errors_poison_without_retrying_lifecycle_callbacks() {
     let _guard = TEST_LOCK.lock().expect("ABI test lock is available");
     let bytes = [1_u8];

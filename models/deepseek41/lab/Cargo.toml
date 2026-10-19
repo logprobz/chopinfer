@@ -55,3 +55,11 @@ path = "examples/sm120/build_dspark_ring_gather.rs"
 
 [lints]
 workspace = true
+
+[[example]]
+name = "build_attention_pair"
+path = "examples/sm120/build_attention_pair.rs"
+
+[[test]]
+name = "attention_pair"
+path = "tests/attention_pair.rs"

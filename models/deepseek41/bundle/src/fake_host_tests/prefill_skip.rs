@@ -19,7 +19,7 @@ fn create_profile(host: &Rc<Host>, chunk: u32, skip: bool) -> BundleInstanceV1 {
     record.truncate(at + MODEL_OPTIONS_TAG_V1.len());
     record.extend_from_slice(&(options.len() as u32).to_le_bytes());
     record.extend_from_slice(&options);
-    let services = HostServicesTableV1::new(Rc::new(dspark::MappedHost(Rc::clone(host))));
+    let services = HostServicesTableV1::new(Rc::new(dspark::MappedHost::new(Rc::clone(host))));
     api()
         .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
         .unwrap()

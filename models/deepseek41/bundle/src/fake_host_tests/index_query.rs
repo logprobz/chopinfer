@@ -1,5 +1,4 @@
 //! The numerically qualified small-row query must reach serving through its owned cubin.
-use super::*;
 use kernel_core::{
     backend::{Counts, Need, View},
     pooled_indexer::PositionQueryBuffers,

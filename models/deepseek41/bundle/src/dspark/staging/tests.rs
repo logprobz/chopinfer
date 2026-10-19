@@ -271,6 +271,7 @@ fn run(shape: Shape, budget: u32, kept: Option<u32>) -> ResultCase {
             instance_id: 1,
             step_id: 1,
         },
+        times: None,
     };
     let prompt = Input {
         rows: Rows {
@@ -293,7 +294,19 @@ fn run(shape: Shape, budget: u32, kept: Option<u32>) -> ResultCase {
         },
         tokens: vec![4],
     };
+    adapter.times = Some(PhaseTimes::default());
     let proposed = runtime.execute(&mut adapter, &[input]).unwrap();
+    // The three prefill rows defer until the item drafts.
+    let times = adapter.times.take().unwrap();
+    let drafting = usize::from(budget > 0);
+    assert_eq!(times.catch_up_items, drafting as u32);
+    assert_eq!(times.catch_up_rows, 3 * drafting as u32);
+    assert_eq!(times.bulk_passes, 0);
+    let record: serde_json::Value =
+        serde_json::from_str(&times.record(adapter.diagnostic, 1, drafting)).unwrap();
+    assert_eq!(record["schema"], "chopinfer.deepseek41.step-shape.v1");
+    assert_eq!(record["drafting"], drafting);
+    assert!(record["micros"]["target"].is_u64());
     let diagnostic = match kept {
         Some(kept) => {
             let accepted = [(7, kept)];

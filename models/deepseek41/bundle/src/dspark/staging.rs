@@ -294,6 +294,67 @@ impl Staging {
     }
 }
 
+/// Host wall time of each synchronous phase of one execute, in microseconds.
+/// Catch-up, drafting and readback end in device synchronizations, so they
+/// include their device time; target launch returns before its device work.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PhaseTimes {
+    pub catch_up_us: u64,
+    pub catch_up_items: u32,
+    pub catch_up_rows: u32,
+    pub bulk_us: u64,
+    pub bulk_passes: u32,
+    pub draft_us: u64,
+    pub read_ids_us: u64,
+    pub read_confidence_us: u64,
+    pub gather_us: u64,
+    pub upload_us: u64,
+    pub target_us: u64,
+}
+
+impl PhaseTimes {
+    pub fn record(&self, context: Context, items: usize, drafting: usize) -> String {
+        format!(
+            concat!(
+                "{{\"schema\":\"chopinfer.deepseek41.step-shape.v1\",",
+                "\"instance_id\":\"{}\",\"step_id\":\"{}\",\"items\":{},\"drafting\":{},",
+                "\"catch_up_items\":{},\"catch_up_rows\":{},\"bulk_passes\":{},",
+                "\"micros\":{{\"catch_up\":{},\"bulk\":{},\"draft\":{},\"read_ids\":{},",
+                "\"read_confidence\":{},\"gather\":{},\"upload\":{},\"target\":{}}}}}"
+            ),
+            context.instance_id,
+            context.step_id,
+            items,
+            drafting,
+            self.catch_up_items,
+            self.catch_up_rows,
+            self.bulk_passes,
+            self.catch_up_us,
+            self.bulk_us,
+            self.draft_us,
+            self.read_ids_us,
+            self.read_confidence_us,
+            self.gather_us,
+            self.upload_us,
+            self.target_us,
+        )
+    }
+}
+
+/// Times `work` into the field `phase` selects when timing is enabled.
+fn timed<T>(
+    times: &mut Option<PhaseTimes>,
+    phase: fn(&mut PhaseTimes) -> &mut u64,
+    work: impl FnOnce() -> T,
+) -> T {
+    let started = times.is_some().then(std::time::Instant::now);
+    let result = work();
+    if let (Some(times), Some(started)) = (times.as_mut(), started) {
+        *phase(times) += started.elapsed().as_micros() as u64;
+    }
+    result
+}
+
 /// Construct this borrow for each execute, commit or cancel callback, over
 /// persistent `Staging` and the lifecycle's persistent `Runtime`.
 pub struct Adapter<'a, P> {
@@ -305,6 +366,32 @@ pub struct Adapter<'a, P> {
     /// Supplied target-token masks only; emitted drafts are always text.
     pub text: &'a BTreeMap<u64, Vec<bool>>,
     pub diagnostic: Context,
+    /// Phase times of this callback, when step tracing is enabled.
+    pub times: Option<PhaseTimes>,
+}
+
+impl<P> Adapter<'_, P> {
+    fn upload(&mut self, gathered: Gathered) -> Result<(), String> {
+        for phase in gathered.phases {
+            for (rank, destinations) in self.ranks.iter().zip(&phase.destinations) {
+                self.staging
+                    .rows
+                    .gather(
+                        self.services,
+                        rank.stream,
+                        Mapped {
+                            image: rank.image,
+                            rank: rank.rank,
+                            tables: &rank.tables,
+                        },
+                        destinations,
+                        &phase.hashed,
+                    )
+                    .map_err(|e| format!("Engram gather/upload: {e:?}"))?;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl<P: Program> Host for Adapter<'_, P> {
@@ -312,21 +399,50 @@ impl<P: Program> Host for Adapter<'_, P> {
     type Gathered = Gathered;
 
     fn project_committed(&mut self, pass: Projection) -> Result<(), String> {
-        self.program.project_committed(pass)
+        if let Some(times) = &mut self.times {
+            times.bulk_passes += 1;
+        }
+        let program = &mut *self.program;
+        timed(
+            &mut self.times,
+            |t| &mut t.bulk_us,
+            || program.project_committed(pass),
+        )
     }
     fn project_rows(&mut self, passes: &[RowProjection]) -> Result<(), String> {
-        self.program.project_rows(passes)
+        if let Some(times) = &mut self.times {
+            times.catch_up_items += passes.len() as u32;
+            times.catch_up_rows += passes.iter().map(|pass| pass.count).sum::<u32>();
+        }
+        let program = &mut *self.program;
+        timed(
+            &mut self.times,
+            |t| &mut t.catch_up_us,
+            || program.project_rows(passes),
+        )
     }
     fn draft(&mut self, inputs: &[DraftInput]) -> Result<(), String> {
-        self.program.draft(inputs)
+        let program = &mut *self.program;
+        timed(
+            &mut self.times,
+            |t| &mut t.draft_us,
+            || program.draft(inputs),
+        )
     }
     fn read_draft_ids(&mut self, ids: &mut [[u32; BLOCK_ROWS as usize]]) -> Result<(), String> {
         let source = prefix(
             self.readback.draft_ids,
             (ids.len() * BLOCK_ROWS as usize * 4) as u64,
         )?;
-        engram_rows::read_draft_ids(self.services, self.readback.stream, source, ids)
-            .map_err(|e| format!("DSpark draft readback: {e:?}"))
+        let (services, stream) = (self.services, self.readback.stream);
+        timed(
+            &mut self.times,
+            |t| &mut t.read_ids_us,
+            || {
+                engram_rows::read_draft_ids(services, stream, source, ids)
+                    .map_err(|e| format!("DSpark draft readback: {e:?}"))
+            },
+        )
     }
     fn read_confidence(&mut self, scores: &mut [[f32; BLOCK_ROWS as usize]]) -> Result<(), String> {
         if let Some(words) = self.staging.confidence.take() {
@@ -340,9 +456,13 @@ impl<P: Program> Host for Adapter<'_, P> {
         }
         let mut bytes = vec![0; scores.len() * BLOCK_ROWS as usize * 4];
         let source = prefix(self.readback.confidence, bytes.len() as u64)?;
-        self.services
-            .copy_device_to_host(self.readback.stream, &mut bytes, source)
-            .map_err(|e| e.to_string())?;
+        let (services, stream) = (self.services, self.readback.stream);
+        timed(
+            &mut self.times,
+            |t| &mut t.read_confidence_us,
+            || services.copy_device_to_host(stream, &mut bytes, source),
+        )
+        .map_err(|e| e.to_string())?;
         for (score, bytes) in scores.iter_mut().flatten().zip(bytes.chunks_exact(4)) {
             *score = f32::from_bits(u32::from_le_bytes(bytes.try_into().expect("one F32 word")));
         }
@@ -398,31 +518,28 @@ impl<P: Program> Host for Adapter<'_, P> {
         Ok(())
     }
     fn hash_and_gather(&mut self, rows: &[TargetRows]) -> Result<Gathered, String> {
-        self.staging.hash(rows, self.text, self.ranks)
+        let (staging, text, ranks) = (&mut *self.staging, self.text, self.ranks);
+        timed(
+            &mut self.times,
+            |t| &mut t.gather_us,
+            || staging.hash(rows, text, ranks),
+        )
     }
     fn upload_engram(&mut self, gathered: Gathered) -> Result<(), String> {
-        for phase in gathered.phases {
-            for (rank, destinations) in self.ranks.iter().zip(&phase.destinations) {
-                self.staging
-                    .rows
-                    .gather(
-                        self.services,
-                        rank.stream,
-                        Mapped {
-                            image: rank.image,
-                            rank: rank.rank,
-                            tables: &rank.tables,
-                        },
-                        destinations,
-                        &phase.hashed,
-                    )
-                    .map_err(|e| format!("Engram gather/upload: {e:?}"))?;
-            }
+        let started = self.times.is_some().then(std::time::Instant::now);
+        let result = self.upload(gathered);
+        if let (Some(times), Some(started)) = (self.times.as_mut(), started) {
+            times.upload_us += started.elapsed().as_micros() as u64;
         }
-        Ok(())
+        result
     }
     fn target(&mut self, rows: &[TargetRows]) -> Result<(), String> {
-        self.program.target(rows)
+        let program = &mut *self.program;
+        timed(
+            &mut self.times,
+            |t| &mut t.target_us,
+            || program.target(rows),
+        )
     }
     fn commit_features(&mut self, plan: &CommitPlan) -> Result<(), String> {
         self.staging.validate_commit(plan)?;

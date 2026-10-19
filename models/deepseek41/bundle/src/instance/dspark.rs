@@ -12,7 +12,7 @@ mod state_capture;
 use std::collections::BTreeMap;
 
 use crate::dspark::execution::{Input, TargetRows};
-use crate::dspark::staging::{Adapter, Program, Rank, Readback};
+use crate::dspark::staging::{Adapter, PhaseTimes, Program, Rank, Readback};
 use crate::dspark::state::{
     BLOCK_ROWS, CommitPlan, Kind, Projection, RowProjection, Rows, Snapshot,
 };
@@ -194,6 +194,7 @@ impl Instance {
         step: Option<PackedStep>,
         sink: Option<&mut ExecuteResultSinkV1>,
         text: TextMasks,
+        times: &mut Option<PhaseTimes>,
     ) -> Result<T, String> {
         let (ranks, readback) = self.dspark_adapter_parts()?;
         let services = std::rc::Rc::clone(&self.services);
@@ -218,8 +219,10 @@ impl Instance {
             readback: &readback,
             text: &text,
             diagnostic,
+            times: times.take(),
         };
         let result = work(&mut runtime, &mut host);
+        *times = host.times.take();
         let device = self
             .dspark
             .as_mut()
@@ -289,6 +292,12 @@ impl Instance {
             .filter(|input| input.rows.kind.is_verify())
             .map(|input| input.rows.request)
             .collect();
+        let mut times = device.step_trace.then(PhaseTimes::default);
+        let items = inputs.len();
+        let drafting = inputs
+            .iter()
+            .filter(|input| input.rows.kind.drafts() > 0)
+            .count();
         let result = self.dspark_with(
             |runtime, host| {
                 runtime
@@ -300,12 +309,19 @@ impl Instance {
             Some(step),
             Some(sink),
             text,
+            &mut times,
         );
         self.dspark
             .as_mut()
             .expect("drafter retained")
             .results
             .metadata = None;
+        if let (Ok(()), Some(times)) = (&result, times) {
+            let context = self.dspark.as_ref().expect("enabled drafter").diagnostic;
+            let _ = self
+                .services
+                .log(times.record(context, items, drafting).as_bytes());
+        }
         match result {
             Ok(()) => BundleStatusV1::Success,
             Err(error) => {
@@ -341,6 +357,7 @@ impl Instance {
             None,
             None,
             BTreeMap::new(),
+            &mut None,
         )
         .map_err(|error| {
             self.log(&error);
@@ -363,6 +380,7 @@ impl Instance {
             None,
             None,
             BTreeMap::new(),
+            &mut None,
         )
         .map_err(|error| {
             self.log(&error);
@@ -393,6 +411,7 @@ impl Instance {
                 None,
                 None,
                 BTreeMap::new(),
+                &mut None,
             )
             .and_then(|()| self.check_dspark_status());
         if result.is_err() {

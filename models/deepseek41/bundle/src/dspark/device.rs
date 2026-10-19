@@ -54,6 +54,8 @@ pub(crate) struct Device {
     pub stages: Vec<Vec<RankBuffers>>,
     pub diagnostic: Context,
     pub verified: Vec<u64>,
+    /// `CHOPINFER_STEP_TRACE=1` at create: each execute logs its phase times.
+    pub step_trace: bool,
 }
 
 pub(crate) struct Rank {
@@ -187,6 +189,7 @@ impl Device {
                 step_id: 0,
             },
             verified: Vec::new(),
+            step_trace: std::env::var("CHOPINFER_STEP_TRACE").as_deref() == Ok("1"),
         })
     }
 

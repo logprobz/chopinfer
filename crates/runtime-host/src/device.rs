@@ -5,6 +5,8 @@
 //! between a real driver and a host-memory stand-in, and it never sees an ABI
 //! handle.
 
+pub mod mapped_gather;
+
 use std::collections::BTreeMap;
 
 use runtime_bundle_abi::{
@@ -219,6 +221,36 @@ pub struct PinnedFileUploadV1<'a> {
 /// Every method takes `&mut self`: the services layer holds the backend in one
 /// instance-scoped cell and never lends it across a call.
 pub trait HostDeviceBackendV1 {
+    fn create_mapped_gather(
+        &mut self,
+        _plan: mapped_gather::MappedGatherPlanV1,
+    ) -> HostDeviceResultV1<DeviceObjectV1> {
+        Err(BundleStatusV1::Unsupported)
+    }
+    fn enqueue_mapped_gather(
+        &mut self,
+        _gather: DeviceObjectV1,
+        _rows: u64,
+    ) -> HostDeviceResultV1<()> {
+        Err(BundleStatusV1::Unsupported)
+    }
+    fn wait_mapped_gather(
+        &mut self,
+        _gather: DeviceObjectV1,
+        _consumer: DeviceObjectV1,
+    ) -> HostDeviceResultV1<()> {
+        Err(BundleStatusV1::Unsupported)
+    }
+    fn complete_mapped_gather(
+        &mut self,
+        _gather: DeviceObjectV1,
+    ) -> HostDeviceResultV1<Option<runtime_bundle_abi::MappedGatherStatsV1>> {
+        Err(BundleStatusV1::Unsupported)
+    }
+    fn release_mapped_gather(&mut self, _gather: DeviceObjectV1) -> HostDeviceResultV1<()> {
+        Err(BundleStatusV1::Unsupported)
+    }
+
     /// Host-private KV arenas do not cross the bundle ABI. Each owns a copy
     /// stream and pinned buffers until release has fenced every submission.
     fn create_offload_arena(

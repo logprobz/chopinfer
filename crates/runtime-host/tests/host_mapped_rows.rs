@@ -573,3 +573,6 @@ fn mapping_refuses_replaced_files_and_links() {
     let error = DirectCheckpointV1::open(&linked.0).unwrap_err();
     assert!(error.contains("link"), "{error}");
 }
+
+#[path = "host_mapped_rows/async_gather.rs"]
+mod async_gather;

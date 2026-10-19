@@ -1455,6 +1455,12 @@ struct KvPageCopyV1 {
     initialized_tokens: usize,
 }
 
+struct MappedGatherRecordV1 {
+    object: DeviceObjectV1,
+    streams: Vec<SlotKeyV1>,
+    order: u64,
+}
+
 struct StateRecordV1 {
     buffers: Vec<SlotKeyV1>,
     order: u64,
@@ -1570,6 +1576,7 @@ struct HostStateV1<D> {
     kv_requests: SlotTableV1<KvRequestRecordV1>,
     kv_transactions: SlotTableV1<KvTransactionRecordV1>,
     states: SlotTableV1<StateRecordV1>,
+    mapped_gathers: SlotTableV1<MappedGatherRecordV1>,
     collectives: SlotTableV1<CollectiveRecordV1>,
     #[cfg(test)]
     probe_fault: Option<HostDeviceProbeServiceFaultV1>,
@@ -1746,6 +1753,7 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
                 kv_requests: SlotTableV1::new(),
                 kv_transactions: SlotTableV1::new(),
                 states: SlotTableV1::new(),
+                mapped_gathers: SlotTableV1::new(),
                 collectives: SlotTableV1::new(),
                 #[cfg(test)]
                 probe_fault: None,
@@ -3724,6 +3732,158 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
     ) -> HostServiceResultV1<()> {
         let mut state = self.state.borrow_mut();
         release_tracked_resource_v1!(state, images, key_of_v1!(image))
+    }
+
+    fn create_mapped_gather(
+        &self,
+        producer: BundleStreamHandleV1,
+        indices: DeviceBufferSpanV1,
+        planes: &[runtime_bundle_abi::MappedGatherPlaneV1],
+    ) -> HostServiceResultV1<runtime_bundle_abi::BundleMappedGatherHandleV1> {
+        use crate::device::mapped_gather::{MappedGatherPlanV1, MappedGatherPlaneV1};
+        let mut state = self.state.borrow_mut();
+        let producer_key = key_of_v1!(producer);
+        let context = state.streams.get(producer_key)?.context;
+        state.refuse_during_capture(context)?;
+        if state
+            .buffers
+            .get(key_of_v1!(indices.buffer))?
+            .origin
+            .map(|origin| origin.context)
+            != Some(context)
+        {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let mut streams = vec![producer_key];
+        let resolved = planes
+            .iter()
+            .map(|plane| {
+                let stream = key_of_v1!(plane.stream);
+                let context = state.streams.get(stream)?.context;
+                state.refuse_during_capture(context)?;
+                if state
+                    .buffers
+                    .get(key_of_v1!(plane.destination.buffer))?
+                    .origin
+                    .map(|origin| origin.context)
+                    != Some(context)
+                    || plane.rank >= state.config.topology.rank_count()
+                {
+                    return Err(BundleStatusV1::InvalidArgument);
+                }
+                let ComponentStorageV1::Planned(planned) =
+                    &state.images.get(key_of_v1!(plane.image))?.storage
+                else {
+                    return Err(BundleStatusV1::NotFound);
+                };
+                let mapping = Arc::clone(
+                    planned
+                        .mapped_view(plane.rank, &plane.view_id)
+                        .ok_or(BundleStatusV1::NotFound)?,
+                );
+                streams.push(stream);
+                Ok(MappedGatherPlaneV1 {
+                    mapping,
+                    row_bytes: usize::try_from(plane.row_bytes)
+                        .map_err(|_| BundleStatusV1::InvalidArgument)?,
+                    index_offset: usize::try_from(plane.index_offset)
+                        .map_err(|_| BundleStatusV1::InvalidArgument)?,
+                    stream: state.stream_object(plane.stream)?,
+                    destination: state.resolve_range(plane.destination)?,
+                })
+            })
+            .collect::<HostServiceResultV1<Vec<_>>>()?;
+        let plan = MappedGatherPlanV1 {
+            producer: state.stream_object(producer)?,
+            indices: state.resolve_range(indices)?,
+            planes: resolved,
+        };
+        plan.validate()?;
+        let object = state.device.create_mapped_gather(plan)?;
+        let order = match state.order.acquire() {
+            Ok(order) => order,
+            Err(status) => {
+                let _ = state.device.release_mapped_gather(object);
+                return Err(status);
+            }
+        };
+        match state.mapped_gathers.insert(MappedGatherRecordV1 {
+            object,
+            streams,
+            order,
+        }) {
+            Ok(key) => Ok(runtime_bundle_abi::BundleMappedGatherHandleV1::from_parts(
+                key.generation,
+                key.slot,
+            )),
+            Err(status) => {
+                let _ = state.order.release(order);
+                let _ = state.device.release_mapped_gather(object);
+                Err(status)
+            }
+        }
+    }
+
+    fn enqueue_mapped_gather(
+        &self,
+        gather: runtime_bundle_abi::BundleMappedGatherHandleV1,
+        rows: u64,
+    ) -> HostServiceResultV1<()> {
+        let mut state = self.state.borrow_mut();
+        let record = state.mapped_gathers.get(key_of_v1!(gather))?;
+        for &stream in &record.streams {
+            state.refuse_during_capture(state.streams.get(stream)?.context)?;
+        }
+        let object = record.object;
+        state.device.enqueue_mapped_gather(object, rows)
+    }
+
+    fn wait_mapped_gather(
+        &self,
+        gather: runtime_bundle_abi::BundleMappedGatherHandleV1,
+        consumer: BundleStreamHandleV1,
+    ) -> HostServiceResultV1<()> {
+        let mut state = self.state.borrow_mut();
+        let record = state.mapped_gathers.get(key_of_v1!(gather))?;
+        let key = key_of_v1!(consumer);
+        if !record.streams.contains(&key) {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        // Wait placement is outside capture, so every replay observes this cycle's event.
+        state.refuse_during_capture(state.streams.get(key)?.context)?;
+        let object = record.object;
+        let consumer = state.stream_object(consumer)?;
+        state.device.wait_mapped_gather(object, consumer)
+    }
+
+    fn complete_mapped_gather(
+        &self,
+        gather: runtime_bundle_abi::BundleMappedGatherHandleV1,
+    ) -> HostServiceResultV1<Option<runtime_bundle_abi::MappedGatherStatsV1>> {
+        let mut state = self.state.borrow_mut();
+        let record = state.mapped_gathers.get(key_of_v1!(gather))?;
+        for &stream in &record.streams {
+            state.refuse_during_capture(state.streams.get(stream)?.context)?;
+        }
+        let object = record.object;
+        state.device.complete_mapped_gather(object)
+    }
+
+    fn release_mapped_gather(
+        &self,
+        gather: runtime_bundle_abi::BundleMappedGatherHandleV1,
+    ) -> HostServiceResultV1<()> {
+        let mut state = self.state.borrow_mut();
+        let record = state.mapped_gathers.get(key_of_v1!(gather))?;
+        for &stream in &record.streams {
+            state.refuse_during_capture(state.streams.get(stream)?.context)?;
+        }
+        release_driver_resource_v1!(
+            state,
+            mapped_gathers,
+            key_of_v1!(gather),
+            release_mapped_gather
+        )
     }
 
     fn gather_mapped_rows(

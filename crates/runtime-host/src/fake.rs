@@ -5,6 +5,8 @@
 //! behaviour is exercised without a device. It launches nothing: a kernel
 //! launch is reported unsupported rather than silently succeeding.
 
+mod mapped_gather;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use runtime_bundle_abi::{
@@ -92,6 +94,7 @@ pub enum FakeRefusalV1 {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FakeObjectKindV1 {
+    MappedGather,
     Context,
     MemoryPool,
     Buffer,
@@ -127,6 +130,7 @@ struct FakeOffloadArena {
 
 /// A complete device backend backed by host memory.
 pub struct FakeHostDeviceV1 {
+    mapped_gathers: BTreeMap<u64, mapped_gather::Gather>,
     offload: BTreeMap<u64, FakeOffloadArena>,
     objects: BTreeMap<u64, FakeObjectV1>,
     next_identity: u64,
@@ -222,6 +226,7 @@ impl FakeHostDeviceV1 {
 
     pub const fn new() -> Self {
         Self {
+            mapped_gathers: BTreeMap::new(),
             offload: BTreeMap::new(),
             objects: BTreeMap::new(),
             next_identity: 1,
@@ -740,6 +745,36 @@ impl FakeHostDeviceV1 {
 }
 
 impl HostDeviceBackendV1 for FakeHostDeviceV1 {
+    fn create_mapped_gather(
+        &mut self,
+        plan: crate::device::mapped_gather::MappedGatherPlanV1,
+    ) -> HostDeviceResultV1<DeviceObjectV1> {
+        self.prepare_gather(plan)
+    }
+    fn enqueue_mapped_gather(
+        &mut self,
+        gather: DeviceObjectV1,
+        rows: u64,
+    ) -> HostDeviceResultV1<()> {
+        self.enqueue_gather(gather, rows)
+    }
+    fn wait_mapped_gather(
+        &mut self,
+        gather: DeviceObjectV1,
+        consumer: DeviceObjectV1,
+    ) -> HostDeviceResultV1<()> {
+        self.wait_gather(gather, consumer)
+    }
+    fn complete_mapped_gather(
+        &mut self,
+        gather: DeviceObjectV1,
+    ) -> HostDeviceResultV1<Option<runtime_bundle_abi::MappedGatherStatsV1>> {
+        self.complete_gather(gather)
+    }
+    fn release_mapped_gather(&mut self, gather: DeviceObjectV1) -> HostDeviceResultV1<()> {
+        self.release_gather(gather)
+    }
+
     fn create_offload_arena(
         &mut self,
         buffer: DeviceObjectV1,
@@ -1278,6 +1313,11 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
 
     fn fill_staging_bytes(&self) -> u64 {
         (self.fill_streams.len() * self.fill_chunk_bytes) as u64
+            + self
+                .mapped_gathers
+                .values()
+                .map(mapped_gather::Gather::pinned_bytes)
+                .sum::<u64>()
     }
 
     fn copy_host_to_device(

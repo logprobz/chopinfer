@@ -149,3 +149,5 @@ pub use services::{
 };
 
 pub mod recurrent;
+
+pub use device::mapped_gather::{MappedGatherPlanV1, MappedGatherPlaneV1};

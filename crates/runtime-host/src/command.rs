@@ -5265,6 +5265,9 @@ impl ArgumentsV1 {
                 runtime_bundle_abi::HOST_MAPPED_GATHER_CAPABILITY_V1,
             ))
             .chain(std::iter::once(
+                runtime_bundle_abi::ASYNC_MAPPED_GATHER_CAPABILITY_V1,
+            ))
+            .chain(std::iter::once(
                 runtime_bundle_abi::SERVED_ITEMS_CAPABILITY_V1,
             ))
             .chain(std::iter::once(
@@ -7903,6 +7906,7 @@ mod tests {
                 .map(BundleOpaqueId::as_str)
                 .collect::<Vec<_>>(),
             vec![
+                runtime_bundle_abi::ASYNC_MAPPED_GATHER_CAPABILITY_V1,
                 runtime_bundle_abi::device_results::DEVICE_RESULTS_CAPABILITY_V1,
                 runtime_bundle_abi::frontend::FRONTEND_CAPABILITY_V1,
                 runtime_bundle_abi::HOST_MAPPED_GATHER_CAPABILITY_V1,
@@ -7941,6 +7945,8 @@ mod tests {
         assert_eq!(
             stated.capabilities().collect::<Vec<_>>(),
             vec![
+                &BundleOpaqueId::new(runtime_bundle_abi::ASYNC_MAPPED_GATHER_CAPABILITY_V1)
+                    .unwrap(),
                 &BundleOpaqueId::new(
                     runtime_bundle_abi::device_results::DEVICE_RESULTS_CAPABILITY_V1
                 )

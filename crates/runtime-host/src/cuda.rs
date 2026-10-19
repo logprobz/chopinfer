@@ -9,6 +9,8 @@
 //! model: handle checking, range checking, and release ordering all happened
 //! before a call arrives, and this only performs the driver work.
 
+mod mapped_gather;
+
 use std::collections::{BTreeMap, VecDeque};
 use std::rc::Rc;
 
@@ -47,6 +49,7 @@ const _: () = assert!(
 
 /// One driver-owned object this backend holds on the host's behalf.
 enum CudaObjectV1 {
+    MappedGather(Box<mapped_gather::Gather>),
     Offload(runtime_cuda::PageCopyArena),
     Context(Context),
     MemoryPool(MemoryPool),
@@ -940,6 +943,49 @@ fn launch_config(
 }
 
 impl HostDeviceBackendV1 for CudaHostDeviceV1 {
+    fn create_mapped_gather(
+        &mut self,
+        plan: crate::device::mapped_gather::MappedGatherPlanV1,
+    ) -> HostDeviceResultV1<DeviceObjectV1> {
+        let gather = mapped_gather::Gather::new(self, plan)?;
+        self.insert(CudaObjectV1::MappedGather(Box::new(gather)))
+    }
+    fn enqueue_mapped_gather(
+        &mut self,
+        object: DeviceObjectV1,
+        rows: u64,
+    ) -> HostDeviceResultV1<()> {
+        match self.objects.get_mut(&object.get()) {
+            Some(CudaObjectV1::MappedGather(gather)) => gather.enqueue(rows),
+            _ => Err(BundleStatusV1::InvalidArgument),
+        }
+    }
+    fn wait_mapped_gather(
+        &mut self,
+        object: DeviceObjectV1,
+        consumer: DeviceObjectV1,
+    ) -> HostDeviceResultV1<()> {
+        match self.objects.get_mut(&object.get()) {
+            Some(CudaObjectV1::MappedGather(gather)) => gather.wait(consumer),
+            _ => Err(BundleStatusV1::InvalidArgument),
+        }
+    }
+    fn complete_mapped_gather(
+        &mut self,
+        object: DeviceObjectV1,
+    ) -> HostDeviceResultV1<Option<runtime_bundle_abi::MappedGatherStatsV1>> {
+        match self.objects.get_mut(&object.get()) {
+            Some(CudaObjectV1::MappedGather(gather)) => gather.complete(),
+            _ => Err(BundleStatusV1::InvalidArgument),
+        }
+    }
+    fn release_mapped_gather(&mut self, object: DeviceObjectV1) -> HostDeviceResultV1<()> {
+        self.release(object, |object| match object {
+            CudaObjectV1::MappedGather(_) => Ok(()),
+            _ => Err(BundleStatusV1::InvalidArgument),
+        })
+    }
+
     fn create_offload_arena(
         &mut self,
         buffer: DeviceObjectV1,
@@ -1518,7 +1564,15 @@ impl HostDeviceBackendV1 for CudaHostDeviceV1 {
         self.fill_rings
             .values()
             .map(|ring| ring.capacity() as u64)
-            .sum()
+            .sum::<u64>()
+            + self
+                .objects
+                .values()
+                .filter_map(|object| match object {
+                    CudaObjectV1::MappedGather(gather) => Some(gather.pinned_bytes()),
+                    _ => None,
+                })
+                .sum::<u64>()
     }
 
     fn copy_device_to_host(

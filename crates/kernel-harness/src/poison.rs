@@ -17,8 +17,8 @@
 //!   initial image, and poison only the bytes it writes without reading.
 //! - Never poison self-resetting semaphores or counters, or comm inboxes,
 //!   flags, epochs and generations.
-//! - Poison only outside stream capture: a fill is a host copy followed by a
-//!   stream synchronization. Poison before a PDL producer, never between the
+//! - Poison only outside stream capture: a fill orders host and device copies,
+//!   then synchronizes the stream. Poison before a PDL producer, never between the
 //!   producer and its dependent. Across ranks, poison only after every rank's
 //!   stream is idle ([`synchronize`]).
 //! - Leave timing-only launches that compare nothing unpoisoned.
@@ -89,6 +89,20 @@ pub fn write(
         .map_err(|e| e.to_string())
 }
 
+// Expand an initialized prefix with disjoint device copies. Every source
+// ends before its destination, and the stream orders each copy before reuse.
+fn repeat_copies(range: Range<usize>, seeded: usize) -> Vec<(usize, usize)> {
+    assert!(seeded > 0 && seeded <= range.len());
+    let mut initialized = seeded;
+    let mut copies = Vec::new();
+    while initialized < range.len() {
+        let bytes = initialized.min(range.len() - initialized);
+        copies.push((range.start + initialized, bytes));
+        initialized += bytes;
+    }
+    copies
+}
+
 /// Fills byte `ranges` of `buffer` with `pattern`, repeated from the buffer's
 /// first byte, and waits for the copies. Never call it during stream capture.
 pub fn fill(
@@ -118,6 +132,23 @@ pub fn fill(
     let mut staging = PinnedHostBuffer::new(&session.context, largest.min(CHUNK_BYTES))
         .map_err(|e| e.to_string())?;
     for range in ranges {
+        if pattern.len() == 1 && !range.is_empty() {
+            let seeded = range.len().min(staging.len());
+            write_pattern(range.start, &mut staging.as_mut_slice()[..seeded], pattern);
+            buffer
+                .copy_from_pinned_at_async(range.start, &staging, 0, seeded, &session.stream)
+                .map_err(|e| e.to_string())?
+                .finish();
+            // Large split workspaces need one host upload, then logarithmic
+            // device copies. Preserve every poison byte and the final fence.
+            for (destination, bytes) in repeat_copies(range.clone(), seeded) {
+                buffer
+                    .copy_within_async(range.start, destination, bytes, &session.stream)
+                    .map_err(|e| e.to_string())?;
+            }
+            session.stream.synchronize().map_err(|e| e.to_string())?;
+            continue;
+        }
         let mut offset = range.start;
         while offset < range.end {
             let end = range.end.min(offset + staging.len());
@@ -1625,6 +1656,46 @@ mod tests {
 
     fn map(element_bytes: usize, ranges: &[Range<usize>]) -> WriteMap {
         WriteMap::new(element_bytes, ranges.iter().cloned()).expect("valid map")
+    }
+
+    #[test]
+    fn device_fill_copies_only_initialized_bytes_and_preserves_guards() {
+        for len in 1..=1025 {
+            for seed in [1, 3, 16, 127, 256].map(|n| n.min(len)) {
+                let range = 7..7 + len;
+                let mut bytes = vec![0x36; len + 14];
+                bytes[range.start..range.start + seed].fill(POISON);
+                let mut initialized = seed;
+                for (destination, size) in repeat_copies(range.clone(), seed) {
+                    assert_eq!(destination, range.start + initialized);
+                    assert!(size <= initialized);
+                    assert!(destination + size <= range.end);
+                    assert!(
+                        bytes[range.start..range.start + size]
+                            .iter()
+                            .all(|&b| b == POISON)
+                    );
+                    bytes.copy_within(range.start..range.start + size, destination);
+                    initialized += size;
+                }
+                assert_eq!(initialized, len);
+                assert!(bytes[..range.start].iter().all(|&b| b == 0x36));
+                assert!(bytes[range.clone()].iter().all(|&b| b == POISON));
+                assert!(bytes[range.end..].iter().all(|&b| b == 0x36));
+            }
+        }
+    }
+
+    #[test]
+    fn device_fill_plan_bounds_large_workspaces_without_overflow() {
+        for len in [CHUNK_BYTES, 5usize << 30, usize::MAX - 7] {
+            let copies = repeat_copies(7..7 + len, CHUNK_BYTES);
+            assert!(copies.len() <= usize::BITS as usize);
+            assert_eq!(
+                copies.iter().map(|(_, size)| size).sum::<usize>() + CHUNK_BYTES,
+                len
+            );
+        }
     }
 
     #[test]

@@ -343,18 +343,39 @@ fn confidence(
     )
 }
 
+fn oracle_geometry() -> LabResult<&'static Geometry> {
+    let id = std::env::var("CHOPINFER_DEEPSEEK41_HEAD_GEOMETRY")
+        .unwrap_or_else(|_| "synthetic_small".into());
+    let geometry = GEOMETRIES
+        .iter()
+        .find(|g| g.id == id)
+        .ok_or_else(|| format!("head test geometry {id} was not compiled"))?;
+    if id == "synthetic_small" && geometry.layers() != 12 {
+        return Err("DSpark synthetic head checks require the 12-layer fixture".into());
+    }
+    Ok(geometry)
+}
+
+#[test]
+#[ignore = "requires CHOPINFER_DEEPSEEK41_HEAD_GEOMETRY selected by the staged job"]
+fn head_cpu_oracle_geometry_is_compiled() {
+    let geometry = oracle_geometry().unwrap();
+    eprintln!(
+        "DSPARK_HEAD_GEOMETRY {}",
+        json!({
+            "id": geometry.id,
+            "layers": geometry.layers(),
+            "hidden": geometry.shape.hidden,
+            "markov_rank": geometry.shape.dspark.markov_rank,
+            "vocab_rows_tp4": geometry.shape.vocab / 4,
+        })
+    );
+}
+
 #[test]
 fn head_gpu_markov_and_confidence_match_oracles_and_replay() {
     kernel_harness::gpu_test(512 << 20, |session| {
-        let id = std::env::var("CHOPINFER_DEEPSEEK41_HEAD_GEOMETRY")
-            .unwrap_or_else(|_| "synthetic_small".into());
-        let geometry = GEOMETRIES
-            .iter()
-            .find(|g| g.id == id)
-            .ok_or_else(|| format!("head test geometry {id} was not compiled"))?;
-        if id == "synthetic_small" && geometry.layers() != 12 {
-            return Err("DSpark synthetic head checks require the 12-layer fixture".into());
-        }
+        let geometry = oracle_geometry()?;
         for alias in [false, true] {
             markov(session, geometry, 131, alias, false)?;
             markov(session, geometry, 1, alias, true)?;

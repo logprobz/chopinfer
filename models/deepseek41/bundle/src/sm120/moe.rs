@@ -14,8 +14,7 @@ pub const FAMILY: &str = "routed_moe";
 pub const ACTIVE_FAMILY: &str = "routed_moe_active";
 pub const STREAMED_FAMILY: &str = "routed_moe_streamed";
 
-/// Unqualified TP4 candidates. Keep the serving crossover below unchanged
-/// until complete graph parity and paired timings qualify these buckets.
+/// TP4 streamed entries, with serving admission kept model-owned below.
 pub fn streamed_projections(g: &Geometry) -> Result<Vec<quantized::Projection>, String> {
     let mut entries = Vec::new();
     for set in moe::expert_sets(g) {
@@ -34,6 +33,30 @@ pub fn streamed_projections(g: &Geometry) -> Result<Vec<quantized::Projection>, 
         }
     }
     Ok(entries)
+}
+
+/// SM120 TP4, 250 W, 2026-10-19: all 40 eligible cases pass complete
+/// graph bit parity. Combined gate/up and down beat the previous selection
+/// in both banks through 64 rows. Backbone decode 1/8: 121/245 -> 36/121 us;
+/// verify 6/48: 300/2166 -> 101/946 us. DSpark decode 1/32:
+/// 176/505 -> 26/290 us. Whole-graph differences at the small DSpark
+/// buckets stay within 3% noise (worst 2.72%); larger buckets win clearly.
+/// The shared ceil quantizers still dominate those small whole graphs.
+/// Rows above 64, prefill, other geometries and other ranks keep the old
+/// entries. The backend excludes streamed entries from prefill selection.
+pub fn streamed_qualified(g: &Geometry, ranks: u32) -> bool {
+    g.id == model_deepseek41_contract::geometry::FLASH.id && ranks == 4
+}
+
+pub fn serving_streamed_projections(
+    g: &Geometry,
+    ranks: u32,
+) -> Result<Vec<quantized::Projection>, String> {
+    if streamed_qualified(g, ranks) {
+        streamed_projections(g)
+    } else {
+        Ok(Vec::new())
+    }
 }
 
 pub fn streamed_routes(g: &Geometry) -> Vec<row_bias::Route> {
@@ -80,7 +103,8 @@ pub fn streamed_cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, Cub
 /// measured one-row bucket (0.162 -> 0.079 ms). At 8/32 rows it takes
 /// 0.306/1.075 ms versus 0.195/0.812 ms. Active down loses even at one
 /// row (0.068 versus 0.046 ms), and by 5.8x/6.3x at 8/32 rows.
-/// Keep only that gate/up win. Larger or unmeasured buckets, other ranks,
+/// This remains the comparison baseline, superseded by qualified streamed
+/// entries in serving. Larger or unmeasured buckets, other ranks,
 /// the drafter and every down projection retain the old column schedule.
 /// At K=576 the four-warp schedule executes eight chains for five useful
 /// ones. Its 16-column tiles gather each input four times as often as the
@@ -266,10 +290,24 @@ pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, S
         backend = backend.with_block_quantize(entry);
     }
     for entry in projections(g, ranks)? {
+        // Capacity is the backend's first selection key. Do not let the
+        // old 32-row entries shadow a qualified 64-row streamed entry.
+        if !streamed_qualified(g, ranks) || entry.row_tile != 16 {
+            backend = backend.with_quantized_chained_projection(entry);
+        }
+    }
+    if !streamed_qualified(g, ranks) {
+        for entry in serving_active_projections(g, ranks)? {
+            backend = backend.with_quantized_chained_projection(entry);
+        }
+    }
+    for entry in serving_streamed_projections(g, ranks)? {
         backend = backend.with_quantized_chained_projection(entry);
     }
-    for entry in serving_active_projections(g, ranks)? {
-        backend = backend.with_quantized_chained_projection(entry);
+    if streamed_qualified(g, ranks) {
+        for entry in streamed_routes(g) {
+            backend = backend.with_row_bias_route(entry);
+        }
     }
     for entry in routers(g) {
         backend = backend.with_row_bias_router(entry);

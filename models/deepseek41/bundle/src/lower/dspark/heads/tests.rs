@@ -52,7 +52,7 @@ fn every_topology_dispatches_all_five_head_positions_on_the_fake_host() {
             let mut names = BTreeMap::new();
             for cubin in crate::CUBINS
                 .iter()
-                .filter(|c| crate::serves(c.name, shape.geometry.id))
+                .filter(|c| crate::serves(c.name, &shape))
             {
                 let module = services.load_cuda_module(context, cubin.bytes).unwrap();
                 for symbol in cubin.symbols {

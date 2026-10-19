@@ -733,17 +733,14 @@ fn every_geometry_topology_runs_the_fake_host_journal_and_lifecycle() {
             // Each loaded cubin serves the topology's geometry.
             for cubin in host.device.module_cubins.borrow().values() {
                 assert!(
-                    !cubin.starts_with("streamed_moe_"),
-                    "unqualified candidate loaded {cubin}"
+                    !cubin.starts_with("streamed_moe_") || shape.ranks() == 4,
+                    "streamed candidate loaded outside TP4: {cubin}"
                 );
                 assert!(
                     !cubin.starts_with("position_candidates_runtime_"),
                     "default loaded {cubin}"
                 );
-                assert!(
-                    crate::serves(cubin, shape.geometry.id),
-                    "{topology}: {cubin}"
-                );
+                assert!(crate::serves(cubin, &shape), "{topology}: {cubin}");
             }
             let lines = host.device.journal.borrow().clone();
             assert_launches_fit_configured_shared(&lines, &topology);

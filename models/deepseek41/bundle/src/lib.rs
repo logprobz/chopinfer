@@ -28,15 +28,15 @@ pub use model_deepseek41_contract::BUNDLE_ID;
 include!(concat!(env!("OUT_DIR"), "/embedded.rs"));
 include!(concat!(env!("OUT_DIR"), "/geometry_cubins.rs"));
 
-/// Whether `cubin` serves geometry `id`: a cubin of one geometry serves it
+/// Whether `cubin` serves this topology: a cubin of one geometry serves it
 /// alone (`GEOMETRY_CUBINS`), every other cubin serves every geometry,
 /// except the cubins no instance loads (`Kernels::loads`).
-pub(crate) fn serves(cubin: &str, id: &str) -> bool {
-    Kernels::loads(cubin)
+pub(crate) fn serves(cubin: &str, shape: &shape::Shape) -> bool {
+    Kernels::loads(cubin, shape)
         && GEOMETRY_CUBINS
             .iter()
             .find(|(name, _)| *name == cubin)
-            .is_none_or(|(_, geometry)| *geometry == id)
+            .is_none_or(|(_, geometry)| *geometry == shape.geometry.id)
 }
 
 // Direct checkpoint loading: each rank's text image and the replicated

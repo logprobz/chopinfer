@@ -1,8 +1,8 @@
 use super::*;
 use crate::shared_overlap::{Settings, with_settings_in_tests};
 
-fn captured(settings: Settings) -> Vec<String> {
-    let shape = Shape::new(&FLASH, Ranks::TP2).unwrap();
+fn captured(settings: Settings, ranks: Ranks) -> Vec<String> {
+    let shape = Shape::new(&FLASH, ranks).unwrap();
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
     let mut instance = with_settings_in_tests(settings, || create(&host, 4));
     step(
@@ -40,29 +40,38 @@ fn captured(settings: Settings) -> Vec<String> {
 
 #[test]
 fn shared_overlap_captures_identical_launches_and_reuses_the_graph() {
-    let serial = captured(Settings::OFF);
-    let parallel = captured(Settings::ALL);
-    let launches = |lines: &[String]| {
-        let mut values = lines
-            .iter()
-            .filter_map(|s| s.strip_prefix("launch "))
-            .map(|s| s.split_once(' ').unwrap().1.to_owned())
-            .collect::<Vec<_>>();
-        values.sort();
-        values
-    };
-    assert_eq!(launches(&serial), launches(&parallel));
-    let waits = |lines: &[String]| lines.iter().filter(|s| s.starts_with("wait ")).count();
-    assert!(waits(&parallel) > waits(&serial));
-    let streams = |lines: &[String]| {
-        lines
-            .iter()
-            .filter_map(|s| s.strip_prefix("launch "))
-            .map(|s| s.split_once(' ').unwrap().0.to_owned())
-            .collect::<std::collections::BTreeSet<_>>()
-    };
-    assert_eq!(streams(&serial).len(), 2);
-    assert_eq!(streams(&parallel).len(), 4);
+    for ranks in [Ranks::TP2, Ranks::TP4] {
+        let serial = captured(Settings::OFF, ranks);
+        let parallel = captured(Settings::ALL, ranks);
+        let launches = |lines: &[String]| {
+            let mut values = lines
+                .iter()
+                .filter_map(|s| s.strip_prefix("launch "))
+                .map(|s| s.split_once(' ').unwrap().1.to_owned())
+                .collect::<Vec<_>>();
+            values.sort();
+            values
+        };
+        assert_eq!(launches(&serial), launches(&parallel));
+        let waits = |lines: &[String]| lines.iter().filter(|s| s.starts_with("wait ")).count();
+        assert!(waits(&parallel) > waits(&serial));
+        let streams = |lines: &[String]| {
+            lines
+                .iter()
+                .filter_map(|s| s.strip_prefix("launch "))
+                .map(|s| s.split_once(' ').unwrap().0.to_owned())
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        let count = if ranks == Ranks::TP2 { 2 } else { 4 };
+        assert_eq!(streams(&serial).len(), count);
+        assert_eq!(streams(&parallel).len(), count * 2);
+        assert_eq!(
+            serial
+                .iter()
+                .any(|s| s.starts_with("launch ") && s.contains("_stream_merge_v1")),
+            ranks == Ranks::TP4
+        );
+    }
 }
 
 #[test]

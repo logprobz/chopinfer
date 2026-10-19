@@ -51,12 +51,15 @@ fn kernel_moe_prepares_all_geometries_rank_counts_and_phases() {
                             tile = op.route_tile();
                         }
                         assert_eq!(op.route_tile(), tile);
+                        let streamed = phase != ExecutionPhase::Prefill
+                            && tokens <= 64
+                            && registration::streamed_qualified(g, ranks);
                         assert_eq!(
                             op.info().symbols.len(),
                             if kind == GatedMlpProjection::GateUp {
-                                2
+                                if streamed { 5 } else { 2 }
                             } else {
-                                1
+                                if streamed { 4 } else { 1 }
                             }
                         );
                         assert_eq!(
@@ -124,6 +127,8 @@ fn measured_active_crossover_keeps_unmeasured_buckets_on_the_original_entries() 
                     8,
                     32,
                     48,
+                    64,
+                    65,
                     serving::DECODE_BATCH * serving::MAX_VERIFY_ROWS,
                 ] {
                     for set in moe::expert_sets(g) {
@@ -137,7 +142,11 @@ fn measured_active_crossover_keeps_unmeasured_buckets_on_the_original_entries() 
                             let op = backend
                                 .chained_mlp_projection(&q, usage, Need::rows(tokens))
                                 .unwrap();
-                            let active = phase != ExecutionPhase::Prefill
+                            let streamed = phase != ExecutionPhase::Prefill
+                                && tokens <= 64
+                                && registration::streamed_qualified(g, ranks);
+                            let active = !streamed
+                                && phase != ExecutionPhase::Prefill
                                 && tokens == 1
                                 && ranks == 4
                                 && g.id == model_deepseek41_contract::geometry::FLASH.id
@@ -146,9 +155,15 @@ fn measured_active_crossover_keeps_unmeasured_buckets_on_the_original_entries() 
                             assert_eq!(op.info().symbols[0].0.ends_with("_active_bw4_v1"), active);
                             assert_eq!(
                                 op.info().bytes_of("routing.routes.active_experts"),
-                                active.then_some(u64::from(set.count + 1) * 4)
+                                (active || streamed).then_some(u64::from(set.count + 1) * 4)
                             );
-                            if active {
+                            assert_eq!(
+                                op.info().symbols[0].0.ends_with("_stream_pack_v1"),
+                                streamed
+                            );
+                            if streamed {
+                                assert_eq!(op.route_tile(), 64);
+                            } else if active {
                                 assert_eq!(op.route_tile(), 16);
                             }
                             let routes = MoeQuery::LocalRoutes {

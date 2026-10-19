@@ -396,10 +396,9 @@ impl Instance {
         for (rank, &(context, _, stream)) in ranks.iter().enumerate() {
             let mut resolved = BTreeMap::new();
             // The cubins of this geometry and the shared ones.
-            let geometry = shape.geometry.id;
             for cubin in crate::CUBINS
                 .iter()
-                .filter(|cubin| crate::serves(cubin.name, geometry))
+                .filter(|cubin| crate::serves(cubin.name, &shape))
                 .filter(|cubin| {
                     self.dspark.is_some()
                         || !crate::Kernels::drafter_only(cubin.name, shape.geometry)

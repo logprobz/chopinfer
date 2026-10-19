@@ -134,12 +134,26 @@ impl crate::Kernels {
 
     /// Whether an instance loads `cubin` with the program's cubins: every
     /// cubin but the dependency probes, which only the kernel lab launches,
-    /// the unqualified streamed MoE candidates, and the vision encoder's,
-    /// which only an instance serving the encoder loads.
-    pub fn loads(cubin: &str) -> bool {
+    /// and the vision encoder's, which only an encoder instance loads.
+    /// Streamed MoE modules load only for the qualified topology.
+    pub fn loads(cubin: &str, shape: &crate::shape::Shape) -> bool {
         cubin != kernels_sm120::probes::CUBIN
             && !encoder::is_cubin(cubin)
-            && !cubin.starts_with("streamed_moe_")
+            && (!cubin.starts_with("streamed_moe_")
+                || moe::streamed_qualified(shape.geometry, shape.ranks()))
+    }
+
+    /// Model-qualified preparation ranges, in increasing capacity within
+    /// each phase. Unchanged topologies retain their original C1 override.
+    pub(crate) fn moe_buckets(
+        shape: &crate::shape::Shape,
+    ) -> &'static [(kernel_core::precision::ExecutionPhase, u32)] {
+        use kernel_core::precision::ExecutionPhase::{Decode, Verify};
+        if moe::streamed_qualified(shape.geometry, shape.ranks()) {
+            &[(Decode, 8), (Verify, 8), (Verify, 64)]
+        } else {
+            &[(Decode, 1)]
+        }
     }
 
     /// The SM120 backend over the entries the build compiles for `shape`,

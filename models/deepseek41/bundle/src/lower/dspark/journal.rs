@@ -150,7 +150,10 @@ fn dspark_full_block_journal_at_each_topology() {
             // the drafter's ops' as well as the instance's, as create loads
             // the program's.
             let mut names = BTreeMap::new();
-            for cubin in crate::CUBINS.iter().filter(|c| crate::serves(c.name, g.id)) {
+            for cubin in crate::CUBINS
+                .iter()
+                .filter(|c| crate::serves(c.name, &shape))
+            {
                 bundle_runtime::acquire::load_module(
                     bundle_runtime::acquire::Log {
                         services,

@@ -74,9 +74,9 @@ pub(crate) struct MoeOps {
     /// The layer input's quantizer, the gate/up's activation.
     quantize: Prepared<BlockQuantizeBuffers<View>>,
     kinds: [Kind; 3],
-    /// Prepare C1 separately: a phase-wide decode capacity of 32 must not
-    /// hide the measured one-row gate/up selection.
-    decode_one: Kind,
+    /// Prepare measured decode/verify ranges separately so phase-wide
+    /// capacities cannot hide the 8/64-row streamed entries.
+    buckets: Vec<(OperationUse, Kind)>,
     /// Each rank's routed sum of F32 rows.
     sums: Vec<Prepared<RoutedSumBuffers<View>>>,
 }
@@ -250,20 +250,27 @@ impl MoeOps {
         Ok(MoeOps {
             quantize,
             kinds: [kind(prefill)?, kind(decode)?, kind(verify)?],
-            decode_one: kind(OperationUse {
-                capacity: 1,
-                ..decode
-            })?,
+            buckets: crate::Kernels::moe_buckets(shape)
+                .iter()
+                .map(|&(phase, capacity)| {
+                    let usage = OperationUse {
+                        phase,
+                        capacity,
+                        graph: true,
+                    };
+                    Ok((usage, kind(usage)?))
+                })
+                .collect::<Result<_, Refused>>()?,
             sums,
         })
     }
 
     fn kind(&self, phase: Phase) -> &Kind {
-        if phase == Phase::Decode(1) {
-            &self.decode_one
-        } else {
-            &self.kinds[kind_of(phase)]
-        }
+        let index = kind_of(phase);
+        self.buckets
+            .iter()
+            .find(|(usage, _)| usage.phase == USES[index].phase && phase.rows() <= usage.capacity)
+            .map_or(&self.kinds[index], |(_, kind)| kind)
     }
 
     /// The sorted routed rows' bytes: the most any kind's routes write or
@@ -273,7 +280,7 @@ impl MoeOps {
         let experts = self
             .kinds
             .iter()
-            .chain([&self.decode_one])
+            .chain(self.buckets.iter().map(|(_, kind)| kind))
             .flat_map(|kind| [kind.gate_up.info(), kind.down.info()])
             .flat_map(|info| info.bytes.iter())
             .filter(|(path, _)| path == "routing.routes.sorted_rows")
@@ -288,7 +295,7 @@ impl MoeOps {
     fn route_bytes(&self, role: &str) -> u64 {
         self.kinds
             .iter()
-            .chain([&self.decode_one])
+            .chain(self.buckets.iter().map(|(_, kind)| kind))
             .flat_map(|kind| &kind.routes)
             .flat_map(|op| op.info().bytes.iter())
             .filter(|(path, _)| path == role)
@@ -419,51 +426,83 @@ mod tests {
 
     #[test]
     fn measured_crossover_survives_phase_wide_preparation() {
-        for ranks in [Ranks::TP2, Ranks::TP4] {
+        for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
             let shape = Shape::new(&FLASH, ranks).unwrap();
             let kernels = crate::Kernels::new(&shape).unwrap();
-            let ops = MoeOps::prepare(
-                kernels.backend.as_ref(),
-                &shape,
-                &Asks::default(),
-                moe::expert_sets(&FLASH)[0],
-            )
-            .unwrap();
-            for phase in [
-                Phase::Decode(1),
-                Phase::Decode(8),
-                Phase::Decode(32),
-                Phase::Verify { rows: 5, items: 1 },
-                Phase::Verify { rows: 6, items: 1 },
-                Phase::Verify { rows: 32, items: 8 },
-                Phase::Verify {
-                    rows: 192,
-                    items: 32,
-                },
-                Phase::Prefill { rows: 128 },
-            ] {
-                let kind = ops.kind(phase);
-                let active = phase == Phase::Decode(1) && shape.ranks() == 4;
-                assert_eq!(
-                    kind.gate_up.info().symbols[0].0.ends_with("_active_bw4_v1"),
-                    active
-                );
-                assert!(!kind.down.info().symbols[0].0.ends_with("_active_bw4_v1"));
-                for op in [&kind.gate_up, &kind.down] {
-                    assert!(
-                        op.info()
-                            .symbols
-                            .iter()
-                            .all(|(name, _)| !name.contains("_stream_"))
-                    );
+            for set in moe::expert_sets(&FLASH) {
+                let asks = Asks::default();
+                let ops = MoeOps::prepare(kernels.backend.as_ref(), &shape, &asks, set).unwrap();
+                let most = asks.asked().iter().map(|a| a.workspace).max().unwrap();
+                for phase in [
+                    Phase::Decode(1),
+                    Phase::Decode(2),
+                    Phase::Decode(6),
+                    Phase::Decode(8),
+                    Phase::Decode(9),
+                    Phase::Decode(16),
+                    Phase::Decode(32),
+                    Phase::Verify { rows: 1, items: 1 },
+                    Phase::Verify { rows: 5, items: 1 },
+                    Phase::Verify { rows: 6, items: 1 },
+                    Phase::Verify { rows: 8, items: 2 },
+                    Phase::Verify { rows: 9, items: 2 },
+                    Phase::Verify { rows: 32, items: 8 },
+                    Phase::Verify { rows: 48, items: 8 },
+                    Phase::Verify {
+                        rows: 64,
+                        items: 16,
+                    },
+                    Phase::Verify {
+                        rows: 65,
+                        items: 16,
+                    },
+                    Phase::Verify {
+                        rows: 192,
+                        items: 32,
+                    },
+                    Phase::Prefill { rows: 1 },
+                    Phase::Prefill { rows: 128 },
+                ] {
+                    let kind = ops.kind(phase);
+                    let streamed = shape.ranks() == 4
+                        && phase.rows() <= 64
+                        && !matches!(phase, Phase::Prefill { .. });
+                    for op in [&kind.gate_up, &kind.down] {
+                        assert_eq!(
+                            op.info().symbols[0].0.ends_with("_stream_pack_v1"),
+                            streamed,
+                            "{set:?} {phase:?} {ranks:?}"
+                        );
+                        assert!(op.info().workspace <= most);
+                        if streamed {
+                            let capacity = if phase.rows() <= 8 { 8 } else { 64 };
+                            assert!(
+                                op.info().symbols[0]
+                                    .0
+                                    .contains(&format!("_r64_t{capacity}_"))
+                            );
+                            assert!(op.info().workspace > 0);
+                            assert!(
+                                op.info()
+                                    .symbols
+                                    .iter()
+                                    .any(|(s, _)| s.ends_with("_stream_merge_v1"))
+                            );
+                        }
+                        let tile = if streamed || !matches!(phase, Phase::Decode(_)) {
+                            64
+                        } else {
+                            16
+                        };
+                        assert_eq!(op.route_tile(), tile);
+                    }
+                    if streamed {
+                        assert_eq!(
+                            kind.routes[0].info().symbols.len(),
+                            if phase.rows() <= 8 { 1 } else { 3 }
+                        );
+                    }
                 }
-                let tile = if matches!(phase, Phase::Decode(_)) {
-                    16
-                } else {
-                    64
-                };
-                assert_eq!(kind.gate_up.route_tile(), tile);
-                assert_eq!(kind.down.route_tile(), tile);
             }
         }
     }

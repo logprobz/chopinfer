@@ -72,7 +72,12 @@ fn exercise<B>(
     modules: &mut BTreeMap<String, runtime_cuda::Module>,
     probe: &runtime_cuda::Module,
     fast: bool,
+    hierarchical: bool,
 ) -> LabResult<()> {
+    if hierarchical {
+        let [_, _, op] = ops;
+        return super::hierarchical::exercise(session, arena, b, planes, op, rows, label, modules);
+    }
     let workspace =
         arena.output(ops.iter().map(|op| op.info().workspace).max().unwrap() as usize)?;
     let mut calls: Vec<_> = ops
@@ -281,6 +286,9 @@ fn gpu_real_guard_frequency_and_cost() {
     real(false);
 }
 pub(super) fn real(fast: bool) {
+    real_variant(fast, false);
+}
+pub(super) fn real_variant(fast: bool, hierarchical: bool) {
     let ran=kernel_harness::gpu_test_with(test_cubins(),3<<30,|session| {
         let manifest=PathBuf::from(std::env::var_os("CHOPINFER_INDEX_CAPTURE_MANIFEST").ok_or("capture manifest required")?);
         let data=read_json(&manifest)?;
@@ -313,11 +321,11 @@ pub(super) fn real(fast: bool) {
                     scores:b.scores,status:b.status,output:b.output};
                 let query=indexer::block_selection(&FLASH,layer,rows).unwrap();
                 let ops=backends().map(|backend|backend.position_block_indexer(&query,512,width,Need::rows(rows)).unwrap());
-                exercise(session,&mut arena,&b,planes,ops,rows,label,true,false,&mut modules,&probe,fast)?;
+                exercise(session,&mut arena,&b,planes,ops,rows,label,true,false,&mut modules,&probe,fast,hierarchical)?;
             } else {
                 let query=indexer::selection(&FLASH,layer,rows).unwrap();
                 let ops=backends().map(|backend|backend.position_indexer(&query,512,width,Need::rows(rows)).unwrap());
-                exercise(session,&mut arena,&b,planes,ops,rows,label,true,false,&mut modules,&probe,fast)?;
+                exercise(session,&mut arena,&b,planes,ops,rows,label,true,false,&mut modules,&probe,fast,hierarchical)?;
             }
         }
         }
@@ -456,9 +464,18 @@ fn gpu_decode_prefill_and_exponent_edges() {
     matrix(false);
 }
 pub(super) fn matrix(fast: bool) {
+    matrix_variant(fast, false);
+}
+pub(super) fn matrix_variant(fast: bool, hierarchical: bool) {
     let ran=kernel_harness::gpu_test_with(test_cubins(),12<<30,|session| {
         let shard:usize=std::env::var("CHOPINFER_L4_SHARD").unwrap().parse().unwrap();assert!(shard<2);
-        let shapes=suite_shapes(fast);
+        let mut shapes=suite_shapes(fast);
+        if hierarchical {
+            for layer in [2,20,24] {
+                for rows in [1,32] { shapes.push((layer,rows,1024,0)); }
+                for case in 20..=32 { shapes.push((layer,6,131072,case)); }
+            }
+        }
         let total=shapes.len();let mut completed=0;
         let mut modules=BTreeMap::new();let probe=probe(session)?;
         for (shape,(layer,rows,offset,case)) in shapes.into_iter().enumerate().filter(|(i,_)|i%2==shard) {
@@ -491,27 +508,28 @@ pub(super) fn matrix(fast: bool) {
             if case==10 {for row in 0..rows as usize {for g in 0..4 {for lane in 0..32 {
                 q[row*4096+31*128+g*32+lane]=6.0*2_f32.powi([0,24,0,-24][g]);
             }}}}
-            let positions:Vec<i32>=(0..rows).map(|i|(offset+i) as i32).collect();
+            let positions:Vec<i32>=(0..rows).map(|i|if hierarchical && case==30 {-1} else if hierarchical && case==31 {0} else {(offset+i) as i32}).collect();
+            let top_k=if hierarchical {super::hierarchical::top_k(case)}else{512};
             let b=PositionSelectBuffers {
                 q:arena.input(&bf16_bytes(q))?,head_weights:arena.input(&w.into_iter().flat_map(f32::to_le_bytes).collect::<Vec<_>>())?,
                 keys:PositionKeyPages {codes:arena.input(&codes)?,scales:arena.input(&scales)?,pages:width/page,
                     code_page_stride:u64::from(page)*64,scale_page_stride:u64::from(page)*4,
-                    page_tables:BlockTables {tables:arena.input(&ints((0..width/page).map(|i|i as i32)))?,sequences:1,max_pages:width/page}},
+                    page_tables:BlockTables {tables:arena.input(&ints((0..width/page).map(|i|if hierarchical && case==29 && i%7==0 {-1}else{i as i32})))?,sequences:1,max_pages:width/page}},
                 positions:arena.input(&ints(positions.clone()))?,row_batch:arena.input(&ints(vec![0;rows as usize]))?,live_rows:arena.input(&rows.to_le_bytes())?,
                 candidate_mask:None,position_capacity:width,scores:arena.output(rows as usize*extent as usize*4)?,status:arena.output(rows as usize*4)?,output:arena.output(rows as usize*512*4)?,
             };
             let planes=[b.scores,b.status,b.output];
-            let label=serde_json::json!({"matrix":shape,"rows":rows,"offset":offset,"layer":layer,"ratio":ratio,"case":case,"width":width});
+            let label=serde_json::json!({"matrix":shape,"rows":rows,"offset":offset,"layer":layer,"ratio":ratio,"case":case,"width":width,"top_k":top_k});
             if compact {
                 let visible:Vec<_>=positions.iter().map(|p|(p+1)/ratio as i32).collect();
                 let b=compact_matrix_buffers(&b,visible,|bytes|arena.input(bytes))?;
                 let query=indexer::block_selection(&FLASH,layer,rows).unwrap();
-                let ops=backends().map(|backend|backend.position_block_indexer(&query,512,width,Need::rows(rows)).unwrap());
-                exercise(session,&mut arena,&b,planes,ops,rows,label,case==0,case==1,&mut modules,&probe,fast)?;
+                let ops=backends().map(|backend|backend.position_block_indexer(&query,top_k,width,Need::rows(rows)).unwrap());
+                exercise(session,&mut arena,&b,planes,ops,rows,label,case==0,case==1,&mut modules,&probe,fast,hierarchical)?;
             } else {
                 let query=indexer::selection(&FLASH,layer,rows).unwrap();
-                let ops=backends().map(|backend|backend.position_indexer(&query,512,width,Need::rows(rows)).unwrap());
-                exercise(session,&mut arena,&b,planes,ops,rows,label,case==0,case==1,&mut modules,&probe,fast)?;
+                let ops=backends().map(|backend|backend.position_indexer(&query,top_k,width,Need::rows(rows)).unwrap());
+                exercise(session,&mut arena,&b,planes,ops,rows,label,case==0,case==1,&mut modules,&probe,fast,hierarchical)?;
             }
             completed+=1;
         }

@@ -2,6 +2,8 @@
 mod guard;
 #[path = "indexer_mma_guard_fast.rs"]
 mod guard_fast;
+#[path = "indexer_hierarchical.rs"]
+mod hierarchical;
 #[path = "indexer_prefill.rs"]
 mod prefill;
 // Serving bindings and compact mapping against the sealed real operands.
@@ -235,6 +237,7 @@ fn compare<B>(
     rows: u32,
     active: u32,
     fast: bool,
+    hierarchical: bool,
     modules: &mut BTreeMap<String, runtime_cuda::Module>,
 ) -> LabResult<[Vec<u8>; 3]> {
     let mut result = Vec::new();
@@ -246,6 +249,11 @@ fn compare<B>(
         if fast && arm == 1 {
             guard_fast::remap(&mut calls);
         }
+        let extra = if hierarchical && arm == 1 {
+            Some(self::hierarchical::adapt(arena, &mut calls, rows)?)
+        } else {
+            None
+        };
         for call in &calls {
             guard_fast::load(session, modules, &call.symbol)?;
         }
@@ -253,6 +261,9 @@ fn compare<B>(
         let mut previous = None;
         for _ in 0..2 {
             arena.poison(&[planes[0], planes[1], planes[2], scratch])?;
+            if let Some(extra) = extra {
+                arena.poison(&[extra])?;
+            }
             graph.launch(&session.stream).map_err(|e| e.to_string())?;
             session.stream.synchronize().map_err(|e| e.to_string())?;
             let output = [
@@ -290,6 +301,9 @@ fn captured_comparisons(backend: fn(bool) -> Sm120) {
     captured_comparisons_with(backend, false);
 }
 fn captured_comparisons_with(backend: fn(bool) -> Sm120, fast: bool) {
+    captured_comparisons_variant(backend, fast, false);
+}
+fn captured_comparisons_variant(backend: fn(bool) -> Sm120, fast: bool, hierarchical: bool) {
     let ran = kernel_harness::gpu_test(2 << 30, |session| {
         let manifest = PathBuf::from(
             std::env::var_os("CHOPINFER_INDEX_CAPTURE_MANIFEST")
@@ -426,6 +440,7 @@ fn captured_comparisons_with(backend: fn(bool) -> Sm120, fast: bool) {
                         rows,
                         live,
                         fast,
+                        hierarchical,
                         &mut modules,
                     )?
                 } else {
@@ -444,6 +459,7 @@ fn captured_comparisons_with(backend: fn(bool) -> Sm120, fast: bool) {
                         rows,
                         live,
                         fast,
+                        hierarchical,
                         &mut modules,
                     )?
                 };

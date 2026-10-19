@@ -21,6 +21,8 @@ pub(super) fn module_name(symbol: &str) -> LabResult<&'static str> {
         || symbol.ends_with("_mma_fp4_guard_fast_v1_counts_v1")
     {
         Ok(MODULE)
+    } else if symbol.contains("_hier_group_v1") || symbol.ends_with("_hier_final_v1") {
+        Ok(super::hierarchical::MODULE)
     } else {
         Ok(bundle_deepseek41::sm120::fold_cubin_for_symbol(symbol)
             .ok_or("missing served cubin")?
@@ -36,12 +38,12 @@ pub(super) fn load(
     if modules.contains_key(name) {
         return Ok(());
     }
-    let data = if name == MODULE {
+    let data = if name == MODULE || name == super::hierarchical::MODULE {
         let root = PathBuf::from(
             std::env::var_os("CHOPINFER_INDEX_GUARD_ARTIFACTS")
                 .ok_or("staged candidate required")?,
         );
-        bytes(&root.join(format!("{MODULE}.cubin")))?
+        bytes(&root.join(format!("{name}.cubin")))?
     } else {
         bundle_deepseek41::sm120::fold_cubin_for_symbol(symbol)
             .ok_or("missing served cubin")?

@@ -57,6 +57,7 @@ use kernel_core::properties::{Invariance, Ties};
 use std::path::PathBuf;
 
 pub mod formats;
+pub mod prefill;
 pub mod quantized;
 pub mod row_bias;
 pub mod split;

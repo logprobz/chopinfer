@@ -18,7 +18,7 @@ use kernel_core::router::{RowBiasRouteBuffers, RowBiasRouterBuffers, RowBiasRout
 
 use super::select::{Candidate, choose};
 use super::{MAX_CAPACITY, check_plan};
-use crate::moe::chained::{RouteKernel, quantized, row_bias, streamed};
+use crate::moe::chained::{RouteKernel, prefill, quantized, row_bias, streamed};
 
 #[derive(Default)]
 pub(super) struct Selection {
@@ -97,6 +97,9 @@ pub(super) fn projection(
     if entry.streamed {
         entry.clone().with_streamed_chains()?;
     }
+    if entry.prefill {
+        entry.clone().with_prefill_tiles()?;
+    }
     check_plan(&entry.plan(need.capacity)?)?;
     let g = op.projection.gemm;
     let k = u64::from(g.k);
@@ -118,7 +121,12 @@ pub(super) fn projection(
     let mut info = OpInfo::new(
         format!("sm120.{}[{}]", op.numerical_contract_id()?, entry.symbol),
         chosen.guarantees,
-        if entry.streamed {
+        if entry.prefill {
+            prefill::STAGES
+                .into_iter()
+                .map(|stage| (prefill::symbol(&entry, stage), 0))
+                .collect()
+        } else if entry.streamed {
             streamed::stages(&entry)
                 .into_iter()
                 .map(|s| (streamed::symbol(&entry, s), 0))
@@ -223,15 +231,17 @@ pub(super) fn projection(
         None
     };
     info.weight_layouts = vec![("weights".into(), WeightLayout::row_major())];
-    if entry.active || entry.streamed {
+    if entry.active || entry.streamed || entry.prefill {
         info.bytes
             .push(("routing.routes.active_experts".into(), (e + 1) * 4));
     }
-    if entry.streamed {
+    if entry.streamed || entry.prefill {
         info.bytes.push(("routing.routes.counts".into(), e * 4));
-        info.workspace = info
-            .workspace
-            .max(streamed::workspace_bytes(&entry, need.capacity)?);
+        info.workspace = info.workspace.max(if entry.prefill {
+            prefill::workspace_bytes(&entry)
+        } else {
+            streamed::workspace_bytes(&entry, need.capacity)?
+        });
     }
     need.check(&info)?;
     Ok(Box::new(ProjectionOp {
@@ -352,7 +362,7 @@ impl PreparedOp<GatedMlpBuffers<View>> for ProjectionOp {
             },
             views[8].handle,
         ];
-        let mut launches = if self.entry.streamed {
+        let mut launches = if self.entry.streamed || self.entry.prefill {
             let active = required(routing.routes.active_experts)?;
             let route_counts = required(routing.routes.counts)?;
             active.covers(
@@ -380,51 +390,62 @@ impl PreparedOp<GatedMlpBuffers<View>> for ProjectionOp {
             if operands.iter().any(|v| v.handle == workspace.handle) {
                 return Err(Refusal("streamed workspace overlaps an operand"));
             }
-            streamed::stages(&self.entry)
-                .into_iter()
-                .map(|stage| {
-                    use streamed::Stage;
-                    let args: Vec<u64> = match stage {
-                        Stage::Pack => vec![
-                            route_counts.handle,
-                            active.handle,
-                            b.live_tokens.handle,
-                            workspace.handle,
-                        ],
-                        Stage::Small | Stage::Wide => handles[..8]
-                            .iter()
-                            .copied()
-                            .chain([workspace.handle])
-                            .collect(),
-                        Stage::Merge => vec![
-                            workspace.handle,
-                            b.live_tokens.handle,
-                            handles[8],
-                            b.output.handle,
-                        ],
-                    };
-                    let arguments = ArgumentList(
-                        args.into_iter()
-                            .map(|h| {
-                                if h == 0 {
-                                    Argument::NullDevicePointer
-                                } else {
-                                    Argument::DeviceBuffer(h)
-                                }
-                            })
-                            .collect(),
-                    );
-                    arguments.validate()?;
-                    Ok(Launch {
-                        symbol: streamed::symbol(&self.entry, stage),
-                        rows,
-                        plan: streamed::plan(&self.entry, stage, rows)?,
-                        arguments,
-                        collective: false,
-                        persistent: false,
+            if self.entry.prefill {
+                prefill::launches(
+                    &self.entry,
+                    rows,
+                    handles,
+                    route_counts.handle,
+                    active.handle,
+                    workspace.handle,
+                )?
+            } else {
+                streamed::stages(&self.entry)
+                    .into_iter()
+                    .map(|stage| {
+                        use streamed::Stage;
+                        let args: Vec<u64> = match stage {
+                            Stage::Pack => vec![
+                                route_counts.handle,
+                                active.handle,
+                                b.live_tokens.handle,
+                                workspace.handle,
+                            ],
+                            Stage::Small | Stage::Wide => handles[..8]
+                                .iter()
+                                .copied()
+                                .chain([workspace.handle])
+                                .collect(),
+                            Stage::Merge => vec![
+                                workspace.handle,
+                                b.live_tokens.handle,
+                                handles[8],
+                                b.output.handle,
+                            ],
+                        };
+                        let arguments = ArgumentList(
+                            args.into_iter()
+                                .map(|h| {
+                                    if h == 0 {
+                                        Argument::NullDevicePointer
+                                    } else {
+                                        Argument::DeviceBuffer(h)
+                                    }
+                                })
+                                .collect(),
+                        );
+                        arguments.validate()?;
+                        Ok(Launch {
+                            symbol: streamed::symbol(&self.entry, stage),
+                            rows,
+                            plan: streamed::plan(&self.entry, stage, rows)?,
+                            arguments,
+                            collective: false,
+                            persistent: false,
+                        })
                     })
-                })
-                .collect::<Result<Vec<_>, Refusal>>()?
+                    .collect::<Result<Vec<_>, Refusal>>()?
+            }
         } else {
             let arguments = if self.entry.active {
                 let active = required(routing.routes.active_experts)?;

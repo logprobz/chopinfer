@@ -27,6 +27,8 @@ pub struct Projection {
     pub compact_columns: bool,
     /// Independent 128-K chains with one weight pass and an ordered merge.
     pub streamed: bool,
+    /// Expert-grouped prefill tiles with local ordered folds.
+    pub prefill: bool,
     /// Model-owned selection limit, independent of the compiled capacity.
     pub max_rows: u32,
     /// Optional model-owned phase restriction; entry code and ABI stay unchanged.
@@ -89,6 +91,7 @@ impl Projection {
             active: false,
             compact_columns: false,
             streamed: false,
+            prefill: false,
             max_rows: tokens_capacity,
             selection_phase: None,
         };
@@ -118,7 +121,7 @@ impl Projection {
     /// This retains 64 columns per CTA and lets CUDA schedule all work,
     /// without a persistent cap, warp-chain handovers or extra K padding.
     pub fn with_compact_columns(mut self) -> Result<Self, Refusal> {
-        if self.active || self.streamed {
+        if self.active || self.streamed || self.prefill {
             return Err(Refusal("compact columns require the column entry"));
         }
         self.compact_columns = true;
@@ -126,7 +129,7 @@ impl Projection {
     }
 
     pub fn with_active_experts(mut self) -> Result<Self, Refusal> {
-        if self.compact_columns || self.streamed {
+        if self.compact_columns || self.streamed || self.prefill {
             return Err(Refusal("active block warps cannot use the column grid"));
         }
         let grouped = self.query.projection.gemm.grouped.expect("routed contract");
@@ -152,7 +155,12 @@ impl Projection {
     }
 
     pub fn with_streamed_chains(mut self) -> Result<Self, Refusal> {
-        if self.active || self.compact_columns || self.row_tile != 64 || self.tokens_capacity > 64 {
+        if self.active
+            || self.prefill
+            || self.compact_columns
+            || self.row_tile != 64
+            || self.tokens_capacity > 64
+        {
             return Err(Refusal(
                 "streamed chains require plain 64-row entries up to 64 tokens",
             ));
@@ -169,6 +177,28 @@ impl Projection {
             self.streamed = true;
         }
         super::streamed::workspace_bytes(&self, self.tokens_capacity)?;
+        Ok(self)
+    }
+
+    pub fn with_prefill_tiles(mut self) -> Result<Self, Refusal> {
+        if self.active
+            || self.streamed
+            || self.compact_columns
+            || self.row_tile != 64
+            || self.tokens_capacity > 8192
+        {
+            return Err(Refusal(
+                "grouped prefill requires plain 64-row entries up to 8192 tokens",
+            ));
+        }
+        if super::prefill::slots(&self) * u64::from(self.columns() / 64) > i32::MAX as u64 {
+            return Err(Refusal("grouped prefill work count overflows"));
+        }
+        if !self.prefill {
+            self.symbol = format!("{}_prefill_v1", self.symbol.trim_end_matches("_v1"));
+            self.prefill = true;
+        }
+        self.selection_phase = Some(ExecutionPhase::Prefill);
         Ok(self)
     }
 
@@ -199,6 +229,9 @@ impl Projection {
     }
 
     pub fn plan(&self, tokens: u32) -> Result<LaunchPlan, Refusal> {
+        if self.prefill {
+            return super::prefill::plan(self, super::prefill::Stage::Rows8, tokens);
+        }
         if self.streamed {
             return super::streamed::plan(self, super::streamed::Stage::Small, tokens);
         }
@@ -244,7 +277,7 @@ impl Projection {
     /// output. Only down's unused route-weight pointer may be null. The
     /// active schedule also requires its compact list (`active_arguments`).
     pub fn arguments(&self, handles: [u64; 10]) -> Result<ArgumentList, Refusal> {
-        if self.active || self.streamed {
+        if self.active || self.streamed || self.prefill {
             return Err(Refusal(
                 "active chained arguments require the compact expert list",
             ));
@@ -296,7 +329,10 @@ impl Projection {
     }
 
     pub fn entry(&self) -> EntrySpec {
-        assert!(!self.streamed, "streamed chains have multiple entries");
+        assert!(
+            !self.streamed && !self.prefill,
+            "grouped chains have multiple entries"
+        );
         let p = self.query.projection;
         let g = p.gemm;
         let grouped = g.grouped.expect("routed contract");
@@ -357,7 +393,11 @@ impl Projection {
 }
 
 pub fn cubin_spec(name: &str, projections: &[Projection]) -> CubinSpec {
-    assert!(projections.iter().all(|p| !p.active && !p.streamed));
+    assert!(
+        projections
+            .iter()
+            .all(|p| !p.active && !p.streamed && !p.prefill)
+    );
     super::spec(
         name.into(),
         "chained_quantized.cuh",

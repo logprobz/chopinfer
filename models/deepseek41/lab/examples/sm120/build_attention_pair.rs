@@ -4,6 +4,8 @@
 #[allow(dead_code)]
 mod candidate;
 use candidate as latent_scheduled;
+#[path = "../../tests/sm120/attention_pair/cache_catalog.rs"]
+mod cache_catalog;
 #[path = "../../../bundle/src/sm120/latent_decode.rs"]
 #[allow(dead_code)]
 mod decode_candidate;
@@ -166,6 +168,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         initialize
             && !locks
                 .join(format!("{}.lock", decode_candidate::FAMILY))
+                .exists(),
+    )?);
+    modules.extend(build_family(
+        &toolchain,
+        &directory,
+        &probe_locks,
+        cache_catalog::FAMILY,
+        &[cache_catalog::cubin(g)?],
+        initialize
+            && !probe_locks
+                .join(format!("{}.lock", cache_catalog::FAMILY))
                 .exists(),
     )?);
     modules.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));

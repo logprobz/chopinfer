@@ -4,6 +4,10 @@
 #[allow(dead_code)]
 mod candidate;
 use candidate as latent_scheduled;
+#[path = "attention_pair/cache.rs"]
+mod cache;
+#[path = "attention_pair/cache_catalog.rs"]
+mod cache_catalog;
 #[path = "attention_pair/decode.rs"]
 mod decode;
 #[path = "../../../bundle/src/sm120/latent_decode.rs"]
@@ -330,6 +334,7 @@ fn frozen_modules() {
     specs.push(candidate::query_cubin());
     specs.push(state_probe::cubin().unwrap());
     specs.push(decode_candidate::cubin(geometry()).unwrap());
+    specs.push(cache_catalog::cubin(geometry()).unwrap());
     specs.push(kernels_sm120::probes::cubin_spec());
     let records = manifest().unwrap();
     assert_eq!(records.len(), specs.len() + 1);
@@ -342,6 +347,9 @@ fn frozen_modules() {
     for record in &records {
         image(record).unwrap();
         let name = record["name"].as_str().unwrap();
+        if name == cache_catalog::CUBIN {
+            assert_eq!(record["family"].as_str(), Some(cache_catalog::FAMILY));
+        }
         let expected = record["symbols"]
             .as_array()
             .unwrap()

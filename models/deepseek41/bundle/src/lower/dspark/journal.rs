@@ -208,6 +208,7 @@ fn dspark_full_block_journal_at_each_topology() {
                 sorted_rows: alloc(ops.moe.as_ref().unwrap().sorted_rows_bytes()),
                 workspace: alloc(ops.workspace().max(draft.workspace()).max(4)),
                 shared_workspace: alloc(ops.shared_workspace().max(4)),
+                prefill_cache: None,
                 mix_partials: mix.partials.map(alloc),
                 mix_tickets: mix.tickets.map(alloc),
                 rope_compressed: alloc(

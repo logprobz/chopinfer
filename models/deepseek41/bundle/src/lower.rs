@@ -132,7 +132,21 @@ impl Lowering<'_> {
 
     /// `stage`'s launches in `phase`, or `None` while it is not lowered.
     pub fn stage(&self, phase: Phase, stage: Stage) -> Result<Option<Vec<Lowered>>, String> {
-        let mut lowered = self.stage_inner(phase, stage)?;
+        self.stage_with_prefill_cache(phase, stage, None)
+    }
+
+    pub(crate) fn stage_with_prefill_cache(
+        &self,
+        phase: Phase,
+        stage: Stage,
+        offset: Option<crate::ops::latent::CacheRange>,
+    ) -> Result<Option<Vec<Lowered>>, String> {
+        let mut lowered = match stage {
+            Stage::LatentAttention(layer) if offset.is_some() => {
+                self.latent_attention_cached(phase, layer, offset)?
+            }
+            _ => self.stage_inner(phase, stage)?,
+        };
         if matches!(
             stage,
             Stage::SharedGateUp(_) | Stage::SharedActivation(_) | Stage::SharedDown(_)
@@ -606,6 +620,7 @@ mod tests {
             sorted_rows: span(64),
             workspace: span(64),
             shared_workspace: span(64),
+            prefill_cache: None,
             mix_partials: None,
             mix_tickets: None,
             rope_compressed: span(64),

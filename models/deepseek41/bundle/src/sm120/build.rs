@@ -57,6 +57,8 @@ mod norm_quantize_tiles;
 mod own_cubin;
 #[allow(dead_code, reason = "the bundle prepares the paired schedule")]
 mod prefill_attention;
+#[allow(dead_code, reason = "the bundle prepares the decoded schedule")]
+mod prefill_cache;
 #[allow(dead_code)]
 mod replicated_embedding;
 mod ring_gather_cubin;
@@ -192,6 +194,12 @@ pub fn selection(
             moe_pipeline_vector::CUBIN.into(),
             model_deepseek41_contract::geometry::FLASH.id,
         ));
+        let spec = prefill_cache::cubin().expect("decoded prefill cubin");
+        owners.push((
+            spec.name.clone(),
+            model_deepseek41_contract::geometry::FLASH.id,
+        ));
+        specs.push((prefill_cache::FAMILY, spec));
     }
 
     for geometry in geometries.iter().filter(|g| own_entries::has_gates(g)) {

@@ -49,6 +49,7 @@ struct Run {
     overlap: Option<overlap::Plan>,
     micro: Option<micro::Plan>,
     inputs: PhaseInputs,
+    cache: Option<crate::ops::latent::CacheRange>,
     arena: usize,
     layout: InputLayout,
     /// Rows the head scores.
@@ -199,6 +200,41 @@ fn items(phase: &PhaseInputs) -> Vec<Item> {
         .collect()
 }
 
+/// Prefill is eager. Decode/verify graph keys never depend on an offset.
+fn prefill_cache_range(inputs: &PhaseInputs) -> Option<crate::ops::latent::CacheRange> {
+    let offset = *inputs.prefix_len.first()?;
+    if inputs.decode
+        || inputs.verify
+        || inputs.live_batch() != 1
+        || inputs.live_tokens() != 8192
+        || inputs.prefix_len.len() != 1
+        || !matches!(offset, 0 | 8192 | 16384 | 24576)
+        || inputs.positions.len() != 8192
+        || inputs.token_batch.len() != 8192
+        || !inputs.token_batch.iter().all(|&item| item == 0)
+        || !inputs
+            .positions
+            .iter()
+            .enumerate()
+            .all(|(row, &position)| position == offset + row as i32)
+    {
+        return None;
+    }
+    let table = inputs.block_tables.first()?;
+    let first = table.iter().copied().filter(|&p| p >= 0).min().unwrap_or(0) as u32;
+    let last = table.iter().copied().filter(|&p| p >= 0).max();
+    let pages = last.map_or(0, |p| p as u32 - first + 1);
+    Some(crate::ops::latent::CacheRange {
+        offset: offset as u32,
+        first_page: first,
+        pages: if pages <= crate::sm120::prefill_cache::PAGE_LIMIT {
+            pages
+        } else {
+            0
+        },
+    })
+}
+
 impl Instance {
     /// Packs a step's prefill and decode or verify items on the host's
     /// state slots. Media waits for an instance serving the encoder, bundle
@@ -265,6 +301,7 @@ impl Instance {
     /// refuses the step unless the instance runs the lowered stages alone.
     /// Only the ranks `lower` marks are lowered; the others get empty
     /// programs. The head scores `head_rows` rows.
+    #[allow(clippy::too_many_arguments)]
     fn program(
         &self,
         phase: Phase,
@@ -273,6 +310,7 @@ impl Instance {
         lower: &[bool],
         head_rows: u32,
         images: bool,
+        cache_offset: Option<crate::ops::latent::CacheRange>,
     ) -> Result<Programs, BundleStatusV1> {
         let stages = crate::program::stages(self.config.shape.geometry, phase);
         let mut programs = Vec::new();
@@ -322,7 +360,7 @@ impl Instance {
                     (_, true, Stage::EngramGate(layer)) => self
                         .text_flags(rank)
                         .and_then(|text| lowering.engram_gate_masked(phase, layer, text)),
-                    _ => lowering.stage(phase, stage),
+                    _ => lowering.stage_with_prefill_cache(phase, stage, cache_offset),
                 };
                 let lowered = match lowered {
                     Ok(Some(lowered)) => lowered,
@@ -389,11 +427,12 @@ impl Instance {
         if media.is_some() && arena != PREFILL {
             return Err(BundleStatusV1::InvalidArgument);
         }
+        let cache = prefill_cache_range(&inputs);
         let skipping = self.skip_prefill && arena == PREFILL;
         let (programs, collectives, stages) = if skipping {
             (Vec::new(), Vec::new(), Vec::new())
         } else {
-            self.program(phase, arena, &layout, &lower, head_rows, media.is_some())?
+            self.program(phase, arena, &layout, &lower, head_rows, media.is_some(), cache)?
         };
         let mut tails = Vec::new();
         for buffers in &self.buffers {
@@ -434,6 +473,7 @@ impl Instance {
             media,
             window,
             inputs,
+            cache,
             arena,
             layout,
             head_rows,
@@ -533,6 +573,20 @@ impl Instance {
                 let phase = self.arenas[run.arena][rank];
                 upload_bytes(&self.services, stream, phase.arena, &bytes)?;
                 mirror.upload(&self.services, stream, phase.block_tables, &writes)?;
+                if let (Some(cache), Some(range)) = (self.buffers[rank].prefill_cache, run.cache)
+                    && range.offset > 0
+                    && range.pages > 0
+                {
+                    let mut table = vec![-1; self.kv_extent().max_pages as usize];
+                    for (to, &page) in table.iter_mut().zip(&run.inputs.block_tables[0]) {
+                        *to = if page < 0 {
+                            -1
+                        } else {
+                            page - range.first_page as i32
+                        };
+                    }
+                    upload_bytes(&self.services, stream, cache.tables, &i32_bytes(&table))?;
+                }
                 let scratch = &self.buffers[rank].scratch;
                 // The quantizers and folds OR flags into each row's status
                 // and keep a flagged row zero: clear every planned row once
@@ -866,7 +920,12 @@ impl Instance {
             &mut started,
             &segments,
             |rank, launches| {
-                pipeline::launch_all(&self.services, streams[rank], &self.symbols[rank], launches)
+                super::prefill_cache::launch(
+                    &self.services,
+                    streams[rank],
+                    &self.symbols[rank],
+                    launches,
+                )
             },
             |_| {},
             |_| Ok(()),
@@ -1315,7 +1374,7 @@ impl Instance {
                 &mut started,
                 &segments,
                 |rank, launches| {
-                    pipeline::launch_all(
+                    super::prefill_cache::launch(
                         &self.services,
                         streams[rank],
                         &self.symbols[rank],
@@ -1411,5 +1470,47 @@ mod tests {
         let dense = crate::buffers::blocks(crate::ops::indexer::FULL_BLOCK) as usize;
         assert_eq!(first.live[..4], [64, 64, 2, 0]);
         assert_eq!(first.live[dense..], [130, 0]);
+    }
+
+    #[test]
+    fn prefill_cache_bounds_physical_span_and_rejects_unqualified_steps() {
+        let mut input = PhaseInputs {
+            item_order: vec![0],
+            token_ids: vec![1; 8192],
+            token_batch: vec![0; 8192],
+            block_tables: vec![vec![65536, -1, 65538, 65536]],
+            ..PhaseInputs::default()
+        };
+        for offset in [0, 8192, 16384, 24576] {
+            input.prefix_len = vec![offset];
+            input.positions = (offset..offset + 8192).collect();
+            let range = prefill_cache_range(&input).unwrap();
+            assert_eq!(
+                (range.offset, range.first_page, range.pages),
+                (offset as u32, 65536, 3)
+            );
+            for page in input.block_tables[0].iter().copied().filter(|&p| p >= 0) {
+                for stride in [18432_u64, 36864, 263168] {
+                    let native = 256 + page as u64 * stride;
+                    let sliced = 256
+                        + u64::from(range.first_page) * stride
+                        + u64::from(page as u32 - range.first_page) * stride;
+                    assert_eq!(native, sliced);
+                }
+            }
+        }
+        input.block_tables[0] = vec![0, 1024];
+        assert_eq!(prefill_cache_range(&input).unwrap().pages, 0);
+        input.decode = true;
+        assert!(prefill_cache_range(&input).is_none());
+        input.decode = false;
+        input.verify = true;
+        assert!(prefill_cache_range(&input).is_none());
+        input.verify = false;
+        input.item_order.push(1);
+        assert!(prefill_cache_range(&input).is_none());
+        input.item_order.pop();
+        input.positions[17] = 0;
+        assert!(prefill_cache_range(&input).is_none());
     }
 }

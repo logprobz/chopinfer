@@ -347,6 +347,15 @@ impl Lowering<'_> {
         phase: Phase,
         layer: u32,
     ) -> Result<Option<Vec<Lowered>>, String> {
+        self.latent_attention_cached(phase, layer, None)
+    }
+
+    pub(super) fn latent_attention_cached(
+        &self,
+        phase: Phase,
+        layer: u32,
+        offset: Option<crate::ops::latent::CacheRange>,
+    ) -> Result<Option<Vec<Lowered>>, String> {
         let g = self.shape.geometry;
         // A window-only layer has no sources; a compressing layer reads its
         // KV source at that source's ratio.
@@ -355,7 +364,7 @@ impl Lowering<'_> {
         let Some(ops) = self.ops.attention.iter().find(|ops| ops.ratio == ratio) else {
             return Ok(None);
         };
-        let compressed = match sources {
+        let mut compressed = match sources {
             None => None,
             Some(sources) => {
                 let source = self.source(layer)?;
@@ -398,10 +407,43 @@ impl Lowering<'_> {
         };
         let scratch = &self.buffers.scratch;
         // A prefill's items read their own staged blocks.
-        let (ring, item_slots) = match phase {
+        let (mut ring, item_slots) = match phase {
             Phase::Prefill { .. } => (self.staged(), scratch.stage_items),
             Phase::Decode(_) | Phase::Verify { .. } => (self.ring(layer)?, self.inputs.slot_ids),
         };
+        let decoded_cache = self.buffers.prefill_cache.filter(|_| {
+            phase.prefill()
+                && phase.rows() == 8192
+                && offset.is_some_and(|r| {
+                    matches!(r.offset, 0 | 8192 | 16384 | 24576)
+                        && (ratio == 0 || (r.offset > 0 && r.pages > 0))
+                })
+        });
+        if let Some(cache) = decoded_cache {
+            // One live item uses staged block zero. Compressed page numbers
+            // are rebased together with the native pool pointer, preserving
+            // every selected address without decoding the entire serving pool.
+            ring.slots = 1;
+            if let Some(c) = &mut compressed {
+                let range = offset.ok_or("missing decoded page range")?;
+                if range.pages == 0
+                    || range
+                        .first_page
+                        .checked_add(range.pages)
+                        .is_none_or(|end| end > c.pages)
+                {
+                    return Err("decoded page range exceeds the serving pool".into());
+                }
+                let tail = c.pool.length - u64::from(c.pages - 1) * c.page_stride;
+                c.pool = DeviceBufferSpanV1::new(
+                    c.pool.buffer,
+                    c.pool.offset + u64::from(range.first_page) * c.page_stride,
+                    u64::from(range.pages - 1) * c.page_stride + tail,
+                );
+                c.pages = range.pages;
+                c.tables = cache.tables;
+            }
+        }
         let views = AttentionViews {
             q: rows(scratch.native_q, phase.rows()),
             row_batch: self.inputs.token_batch,
@@ -414,6 +456,7 @@ impl Lowering<'_> {
             cos_sin: self.layer_rope(phase, layer)?,
             output: rows(scratch.attention, phase.rows()),
             workspace: self.buffers.workspace,
+            decoded_cache: decoded_cache.map(|cache| cache.data),
             live_rows: self.inputs.live_tokens,
         };
         ops.attend(Kind::from(phase), phase.rows(), &views)

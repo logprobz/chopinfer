@@ -26,6 +26,8 @@ pub mod norm_quantize_cached;
 pub mod norm_quantize_tiles;
 #[allow(dead_code, reason = "the build script compiles the cubin spec")]
 mod prefill_attention;
+#[allow(dead_code, reason = "the build script compiles the cubin spec")]
+pub(crate) mod prefill_cache;
 pub mod replicated_embedding;
 pub mod window_fused;
 use kernels_sm120::backend::{F32ProjectionOffers, Sm120};
@@ -255,6 +257,17 @@ impl crate::Kernels {
         storage: model_deepseek41_contract::state::KvStorage,
     ) -> bool {
         prefill_attention::loads(cubin, shape.geometry, shape.ranks(), storage)
+            && (cubin != prefill_cache::CUBIN
+                || prefill_cache::eligible(shape.geometry, shape.ranks(), storage))
+    }
+
+    pub(crate) fn prepare_prefill_cache(
+        &self,
+        query: &kernel_core::latent_attention::LatentAttentionQuery,
+        need: kernel_core::backend::Need,
+    ) -> Result<kernel_core::backend::Prepared<prefill_cache::Buffers>, kernel_core::backend::Refused>
+    {
+        prefill_cache::prepare(self.backend.as_ref(), query, need)
     }
 
     /// The largest separately prepared dense decode bucket.

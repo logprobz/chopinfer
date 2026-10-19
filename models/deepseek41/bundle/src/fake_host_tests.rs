@@ -35,6 +35,7 @@ mod prefill_micro;
 mod prefill_overlap;
 mod prefill_reduce;
 mod prefill_skip;
+mod prefill_cache;
 #[cfg(feature = "diagnostic-taps")]
 mod prefill_selected;
 mod prefill_tma;
@@ -517,10 +518,13 @@ impl FakePackage for FakeHost {
         &self.device
     }
     fn check_launch(&self, symbol: &str, config: LaunchConfigV1) {
-        if symbol.starts_with("chop_deepseek41_mxfp8_stream_") && symbol.ends_with("_prepare_v1") {
+        if symbol.starts_with("chop_latent_prefill_")
+            || (symbol.starts_with("chop_deepseek41_mxfp8_stream_")
+                && symbol.ends_with("_prepare_v1"))
+        {
             assert_eq!(
                 config.flags, 0,
-                "packed fold preparation must serialize normally"
+                "operand preparation must serialize normally"
             );
         } else {
             self.device.check_launch_for(symbol, config);

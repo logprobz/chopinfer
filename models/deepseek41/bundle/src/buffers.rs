@@ -499,6 +499,13 @@ pub struct LogitsComm {
     pub gather_epoch: DeviceBufferSpanV1,
 }
 
+/// Separately owned prefill operands and the request's rebased page table.
+#[derive(Clone, Copy, Debug)]
+pub struct PrefillCache {
+    pub data: DeviceBufferSpanV1,
+    pub tables: DeviceBufferSpanV1,
+}
+
 /// One rank's buffers.
 #[derive(Clone, Debug)]
 pub struct RankBuffers {
@@ -520,6 +527,8 @@ pub struct RankBuffers {
     pub workspace: DeviceBufferSpanV1,
     /// Backend scratch reserved for the shared expert on the side stream.
     pub shared_workspace: DeviceBufferSpanV1,
+    /// Native single-item prefill operands, separately owned from all live scratch.
+    pub prefill_cache: Option<PrefillCache>,
     /// The mixer scratch the mix-collapse lists (`ops::MixScratchBytes`):
     /// its partials and its tickets, zeroed at create.
     pub mix_partials: Option<DeviceBufferSpanV1>,

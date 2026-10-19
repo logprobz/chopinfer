@@ -23,6 +23,7 @@ mod fold_stream;
 mod media;
 pub(crate) mod prefill;
 mod prefill_reduce;
+mod prefill_cache;
 mod prefix;
 
 use std::cell::RefCell;
@@ -391,7 +392,34 @@ impl Instance {
                 .as_ref()
                 .map_or(4, |ops| ops.table_bytes());
             let table = allocate_span(services, pool, stream, table, held)?;
-            op_spans.push((sorted, workspace, table, shared_workspace));
+            // Reserve the bounded cache before the host sizes its KV pool.
+            let prefill_cache = if items.get() == 1
+                && crate::sm120::prefill_cache::eligible(
+                    shape.geometry,
+                    shape.ranks(),
+                    self.config.kv.storage,
+                ) {
+                let bytes = crate::sm120::prefill_cache::layout(
+                    crate::buffers::staged_slots(&shape),
+                    64,
+                    crate::sm120::prefill_cache::PAGE_LIMIT,
+                )
+                .map_err(|_| BundleAbiError::InvalidRange("prefill cache extent"))?
+                .bytes;
+                Some(crate::buffers::PrefillCache {
+                    data: allocate_span(services, pool, stream, bytes, held)?,
+                    tables: allocate_span(
+                        services,
+                        pool,
+                        stream,
+                        u64::from(limits.max_pages()) * 4,
+                        held,
+                    )?,
+                })
+            } else {
+                None
+            };
+            op_spans.push((sorted, workspace, table, shared_workspace, prefill_cache));
             // The all-reduce's comm state, which the peers write: zeroed
             // before any step, after peer access.
             let regions = self.ops.reduce.as_ref().map_or(&[][..], |ops| ops.state());
@@ -617,7 +645,7 @@ impl Instance {
         self.kv_pages = pages;
         for (
             ((((scratch, views), (kv_pool, state)), (comm, logits)), (mix_partials, mix_tickets)),
-            (sorted_rows, workspace, rope_compressed, shared_workspace),
+            (sorted_rows, workspace, rope_compressed, shared_workspace, prefill_cache),
         ) in scratch
             .into_iter()
             .zip(views)
@@ -636,6 +664,7 @@ impl Instance {
                 sorted_rows,
                 workspace,
                 shared_workspace,
+                prefill_cache,
                 mix_partials,
                 mix_tickets,
                 rope_compressed,

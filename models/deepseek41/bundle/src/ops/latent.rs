@@ -477,6 +477,15 @@ pub(crate) struct CompressedViews {
     pub top_k: u32,
 }
 
+/// One eager prefill's bounded physical-page span.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CacheRange {
+    pub offset: u32,
+    pub first_page: u32,
+    /// Zero retains the paired mixed path when physical pages are too scattered.
+    pub pages: u32,
+}
+
 /// A step's spans of one layer's attention.
 pub(crate) struct AttentionViews {
     pub q: DeviceBufferSpanV1,
@@ -490,6 +499,7 @@ pub(crate) struct AttentionViews {
     pub cos_sin: DeviceBufferSpanV1,
     pub output: DeviceBufferSpanV1,
     pub workspace: DeviceBufferSpanV1,
+    pub decoded_cache: Option<DeviceBufferSpanV1>,
     pub live_rows: DeviceBufferSpanV1,
 }
 
@@ -498,6 +508,7 @@ pub(crate) struct AttentionViews {
 pub(crate) struct AttentionOps {
     pub ratio: u32,
     ops: Vec<(Kind, Prepared<LatentSourcesBuffers<View>>)>,
+    cached: Option<Prepared<crate::sm120::prefill_cache::Buffers>>,
 }
 
 /// The attention query of the layers of compress ratio `ratio` in `phase`:
@@ -544,7 +555,20 @@ impl AttentionOps {
             Ok((kind, op))
         })
         .collect::<Result<_, Refused>>()?;
-        Ok(AttentionOps { ratio, ops })
+        let cached =
+            if crate::sm120::prefill_cache::eligible(shape.geometry, shape.ranks(), storage) {
+                let query = attention_query(shape, ratio, AttentionPhase::Prefill)
+                    .map_err(Refused::Rule)?;
+                let need = exact::need(PREFILL_TOKENS, exact::PREFILL);
+                Some(
+                    asks.ask(format!("attention.cached r{ratio}"), need, |need| {
+                        kernels.prepare_prefill_cache(&query, need)
+                    })?,
+                )
+            } else {
+                None
+            };
+        Ok(AttentionOps { ratio, ops, cached })
     }
 
     /// The partial results of the widest prepared phase. Attention names
@@ -604,8 +628,60 @@ impl AttentionOps {
             workspace: bind.view(views.workspace),
             live_rows: bind.view(views.live_rows),
         };
-        bind.launch_within(op, &buffers, views.workspace, Counts::rows(rows))
+        if let (Some(op), Some(arena)) = (&self.cached, views.decoded_cache) {
+            let page = 64 / self.ratio.max(1);
+            let pages = views.compressed.as_ref().map_or(1, |c| c.pages);
+            let layout = crate::sm120::prefill_cache::layout(views.ring.cells, page, pages)?;
+            if layout.bytes > arena.length {
+                return Err(Refusal(
+                    "decoded prefill cache exceeds its owning allocation",
+                ));
+            }
+            let mut live = vec![
+                views.q,
+                views.row_batch,
+                views.ring.codes,
+                views.item_slots,
+                views.window_keys,
+                views.sinks,
+                views.cos_sin,
+                views.output,
+                views.workspace,
+                views.live_rows,
+            ];
+            live.extend(views.ring.scales);
+            if let Some(c) = &views.compressed {
+                live.extend([c.pool, c.tables, c.selected]);
+            }
+            if live.iter().any(|v| overlaps(arena, *v)) {
+                return Err(Refusal(
+                    "decoded prefill cache overlaps a live attention region",
+                ));
+            }
+            let mut region = |r: std::ops::Range<u64>| {
+                bind.view(DeviceBufferSpanV1::new(
+                    arena.buffer,
+                    arena.offset + r.start,
+                    r.end - r.start,
+                ))
+            };
+            let cached = crate::sm120::prefill_cache::Buffers {
+                native: buffers,
+                window: region(layout.window),
+                compressed: region(layout.compressed),
+                marks: region(layout.marks),
+            };
+            bind.launch(op, &cached, Counts::rows(rows))
+        } else {
+            bind.launch_within(op, &buffers, views.workspace, Counts::rows(rows))
+        }
     }
+}
+
+fn overlaps(a: DeviceBufferSpanV1, b: DeviceBufferSpanV1) -> bool {
+    a.buffer == b.buffer
+        && a.offset < b.offset.saturating_add(b.length)
+        && b.offset < a.offset.saturating_add(a.length)
 }
 
 #[cfg(test)]

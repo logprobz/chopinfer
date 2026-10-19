@@ -1226,6 +1226,39 @@ typedef chop_bundle_status_v1 (*chop_bundle_emit_logits_view_fn_v1)(
     void *user_data,
     chop_bundle_logits_view_v1 view);
 
+/* Device acceptance records are little-endian. They do not enable async
+ * execution by themselves. Request/slot membership, completion dependencies,
+ * model status and every sampled-row record must be checked before commit. */
+#define CHOP_BUNDLE_ACCEPTANCE_INPUT_BYTES_V1 UINT32_C(40)
+#define CHOP_BUNDLE_ACCEPTANCE_RESULT_BYTES_V1 UINT32_C(32)
+#define CHOP_BUNDLE_ACCEPTANCE_NO_DRAFT_V1 UINT32_MAX
+#define CHOP_BUNDLE_ACCEPTANCE_NO_FAILURE_V1 UINT32_MAX
+#define CHOP_BUNDLE_ACCEPTANCE_TERMINAL_V1 UINT32_C(1)
+#define CHOP_BUNDLE_ACCEPTANCE_REJECTED_V1 UINT32_C(2)
+typedef struct chop_bundle_acceptance_input_v1 {
+  uint64_t cycle_epoch;
+  uint64_t remaining_tokens;
+  uint32_t first_sample_row;
+  uint32_t draft_item_index;
+  uint32_t draft_tokens;
+  uint32_t stop_offset;
+  uint32_t stop_count;
+  uint32_t reserved;
+} chop_bundle_acceptance_input_v1;
+/* status 0 is success and requires failure_row=UINT32_MAX. Status 2 is
+ * an empty distribution at failure_row; its counts cannot authorize commit.
+ * Every other nonzero status is fatal. Stop IDs are termination IDs, not
+ * the sampler mask list. Accepted drafts exclude the bonus sample. */
+typedef struct chop_bundle_acceptance_result_v1 {
+  uint64_t cycle_epoch;
+  uint32_t accepted_drafts;
+  uint32_t emitted_rows;
+  uint32_t flags;
+  uint32_t status;
+  uint32_t failure_row;
+  uint32_t reserved;
+} chop_bundle_acceptance_result_v1;
+
 /* Draft tokens are little-endian u32 values. Emit before logits for this item. */
 typedef struct chop_bundle_draft_tokens_v1 {
   uint32_t struct_size;

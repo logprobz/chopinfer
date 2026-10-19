@@ -5,6 +5,7 @@
 
 #![deny(unsafe_code)]
 
+pub mod device_results;
 pub mod frontend;
 pub mod frontend_document;
 mod host_services;

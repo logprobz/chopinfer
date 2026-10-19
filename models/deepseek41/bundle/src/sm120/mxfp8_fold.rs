@@ -160,7 +160,7 @@ pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, Strin
         .zip(prefetch_entries(g, ranks)?)
     {
         for rows in 1..=SMALL_CAPACITY {
-            match decode_path(ticket.query, rows, ticket.paired) {
+            match decode_path(g, ticket.query, rows, ticket.paired) {
                 DecodePath::Split => {
                     let mut entry = split.clone();
                     entry.query = routed_query(entry.query, rows);
@@ -207,13 +207,14 @@ const SPLIT_FOLD_TIES: &[(u32, u32, &[RangeInclusive<u32>])] = &[
 
 /// The accepted ticket baseline: split folds for measured ties and the
 /// TP2 one/two-row regression. The lab also uses this to compare candidates.
-pub fn small_query(query: Mxfp8FoldGemmQuery, rows: u32) -> Mxfp8FoldGemmQuery {
+pub fn small_query(g: &Geometry, query: Mxfp8FoldGemmQuery, rows: u32) -> Mxfp8FoldGemmQuery {
     let tied = query.groups == 1
         && SPLIT_FOLD_TIES.iter().any(|(n, k, ranges)| {
             (query.n, query.k) == (*n, *k) && ranges.iter().any(|range| range.contains(&rows))
         });
-    let split =
-        tied || ((1..=2).contains(&rows) && (query.n, query.k, query.groups) == (16384, 1280, 1));
+    let split = g.id == model_deepseek41_contract::geometry::FLASH.id
+        && (tied
+            || ((1..=2).contains(&rows) && (query.n, query.k, query.groups) == (16384, 1280, 1)));
     Mxfp8FoldGemmQuery {
         m_capacity: if split { 32 } else { SMALL_CAPACITY },
         ..query

@@ -1,6 +1,7 @@
 //! Measured decode selection; all entries retain the same fold arithmetic.
 use super::small_query;
 use kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery;
+use model_deepseek41_contract::geometry::{FLASH, Geometry};
 use std::ops::RangeInclusive;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,8 +47,12 @@ const PREFETCH_WINS: &[MeasuredRows] = &[
     (32768, 1280, 1, false, &[]),
 ];
 
-pub fn decode_path(q: Mxfp8FoldGemmQuery, rows: u32, paired: bool) -> DecodePath {
-    if small_query(q, rows).m_capacity == 32 {
+pub fn decode_path(g: &Geometry, q: Mxfp8FoldGemmQuery, rows: u32, paired: bool) -> DecodePath {
+    // Shape matches do not qualify a different checkpoint geometry.
+    if g.id != FLASH.id {
+        return DecodePath::Ticket;
+    }
+    if small_query(g, q, rows).m_capacity == 32 {
         return DecodePath::Split;
     }
     if PREFETCH_WINS.iter().any(|(n, k, groups, pair, ranges)| {

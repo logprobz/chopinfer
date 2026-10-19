@@ -70,7 +70,7 @@ fn prefetch_fold_dry_run() {
             .with_mxfp8_fold_ticket(entry.clone())
             .with_mxfp8_fold_decode(baseline.clone());
         for rows in 1..=64 {
-            let query = registration::small_query(entry.query, rows);
+            let query = registration::small_query(&FLASH, entry.query, rows);
             let info = if entry.paired {
                 backend
                     .mxfp8_fold_gemm_pair(&query, Need::rows(rows))

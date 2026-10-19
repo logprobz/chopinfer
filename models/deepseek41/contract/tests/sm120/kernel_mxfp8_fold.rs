@@ -111,7 +111,7 @@ fn measured_entries_bind_all_topologies_and_exact_row_buckets() {
             for entry in registration::prefetch_entries(g, ranks).unwrap() {
                 for rows in 1..=64 {
                     let q = registration::routed_query(entry.query, rows);
-                    let path = registration::decode_path(q, rows, entry.paired);
+                    let path = registration::decode_path(g, q, rows, entry.paired);
                     let (symbols, workspace, plans) = match path {
                         DecodePath::Split => {
                             let old = split
@@ -450,6 +450,45 @@ fn shared_operands_and_grouped_records_match_the_declared_selections() {
                         "mxfp8_ue8m0_scale_rows_v1"
                     );
                 }
+            }
+        }
+    }
+}
+
+#[test]
+fn flash_timing_choices_do_not_bind_another_geometry() {
+    let mut other = geometry::FLASH;
+    other.id = "unmeasured";
+    for &ranks in admission::SUPPORTED_RANKS {
+        let backend = registration::register(Sm120::new(), &other, ranks).unwrap();
+        for entry in registration::ticket_entries(&other, ranks).unwrap() {
+            for rows in 1..=64 {
+                let query = registration::routed_query(entry.query, rows);
+                let info = if entry.paired {
+                    backend
+                        .mxfp8_fold_gemm_pair(&query, Need::rows(rows))
+                        .unwrap()
+                        .info()
+                        .clone()
+                } else {
+                    backend
+                        .mxfp8_fold_gemm(&query, Need::rows(rows))
+                        .unwrap()
+                        .info()
+                        .clone()
+                };
+                assert_eq!(
+                    info.symbols
+                        .iter()
+                        .map(|(s, _)| s.clone())
+                        .collect::<Vec<_>>(),
+                    entry.symbols(),
+                    "TP{ranks} N={} K={} G={} paired={} rows={rows}",
+                    query.n,
+                    query.k,
+                    query.groups,
+                    entry.paired
+                );
             }
         }
     }

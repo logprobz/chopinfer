@@ -308,7 +308,7 @@ pub(super) fn compare_with(
             .into_iter()
             .find(|old| old.paired == entry.paired && old.query == ticket.unwrap().query)
             .ok_or("missing accepted ticket baseline")?;
-        let query = registration::small_query(previous.query, rows);
+        let query = registration::small_query(&FLASH, previous.query, rows);
         baseline_backend = baseline_backend.with_mxfp8_fold_ticket(previous);
         query
     } else {
@@ -339,7 +339,7 @@ pub(super) fn compare_with(
         .or_else(|| baseline_pair.as_ref().map(|op| op.info().workspace))
         .unwrap_or(0);
     let new_query = if let Some(ticket) = ticket {
-        registration::small_query(ticket.query, rows)
+        registration::small_query(&FLASH, ticket.query, rows)
     } else if rows <= 32 {
         q
     } else {

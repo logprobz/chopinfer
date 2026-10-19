@@ -431,7 +431,7 @@ mod tests {
 
     fn expected_family(query: Mxfp8FoldGemmQuery, rows: u32, paired: bool) -> &'static str {
         use crate::sm120::mxfp8_fold::{DecodePath, decode_path};
-        match decode_path(query, rows, paired) {
+        match decode_path(&FLASH, query, rows, paired) {
             DecodePath::Split => "mxfp8_decode_",
             DecodePath::Ticket => "mxfp8_ticket_",
             DecodePath::Prefetch => "mxfp8_prefetch_",

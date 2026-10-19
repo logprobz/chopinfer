@@ -21,6 +21,7 @@ mod batch_limits;
 mod conformance;
 mod dspark;
 mod media;
+mod position_valid;
 mod shared_overlap;
 use crate::shape::Shape;
 use model_deepseek41_contract::state::KvStorage;
@@ -123,7 +124,7 @@ fn runtime_candidate_pool_reaches_its_separate_producer() {
             })
             .collect();
         assert_eq!(producers.len(), 16);
-        for suffix in ["_live_v1", "_live_merge_v1"] {
+        for suffix in ["_valid_v1", "_valid_merge_v1"] {
             assert_eq!(
                 producers
                     .iter()

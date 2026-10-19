@@ -1,5 +1,7 @@
 #[path = "indexer_mma_guard.rs"]
 mod guard;
+#[path = "indexer_mma_guard_fast.rs"]
+mod guard_fast;
 #[path = "indexer_prefill.rs"]
 mod prefill;
 // Serving bindings and compact mapping against the sealed real operands.
@@ -208,8 +210,7 @@ fn fire(
             .collect(),
     };
     for call in calls {
-        let (name, _) = bundle_deepseek41::sm120::fold_cubin_for_symbol(&call.symbol)
-            .ok_or("missing served cubin")?;
+        let name = guard_fast::module_name(&call.symbol)?;
         let function = modules[name]
             .function(&call.symbol)
             .map_err(|e| e.to_string())?;
@@ -233,20 +234,20 @@ fn compare<B>(
     ops: [Prepared<B>; 2],
     rows: u32,
     active: u32,
+    fast: bool,
     modules: &mut BTreeMap<String, runtime_cuda::Module>,
 ) -> LabResult<[Vec<u8>; 3]> {
     let mut result = Vec::new();
-    for op in ops {
+    for (arm, op) in ops.into_iter().enumerate() {
         let scratch = arena.output(op.info().workspace as usize)?;
-        let calls = op
+        let mut calls = op
             .launches(buffers, scratch, Counts::rows(rows))
             .map_err(|e| e.to_string())?;
+        if fast && arm == 1 {
+            guard_fast::remap(&mut calls);
+        }
         for call in &calls {
-            let (name, data) = bundle_deepseek41::sm120::fold_cubin_for_symbol(&call.symbol)
-                .ok_or("missing served entry")?;
-            if !modules.contains_key(name) {
-                modules.insert(name.to_owned(), session.load_cubin(data)?);
-            }
+            guard_fast::load(session, modules, &call.symbol)?;
         }
         let graph = session.capture(|_| fire(session, arena, modules, &calls))?;
         let mut previous = None;
@@ -286,6 +287,9 @@ fn gpu_serving_scores_and_failure_paths_match_simt() {
     captured_comparisons(backend);
 }
 fn captured_comparisons(backend: fn(bool) -> Sm120) {
+    captured_comparisons_with(backend, false);
+}
+fn captured_comparisons_with(backend: fn(bool) -> Sm120, fast: bool) {
     let ran = kernel_harness::gpu_test(2 << 30, |session| {
         let manifest = PathBuf::from(
             std::env::var_os("CHOPINFER_INDEX_CAPTURE_MANIFEST")
@@ -421,6 +425,7 @@ fn captured_comparisons(backend: fn(bool) -> Sm120) {
                         ops,
                         rows,
                         live,
+                        fast,
                         &mut modules,
                     )?
                 } else {
@@ -438,6 +443,7 @@ fn captured_comparisons(backend: fn(bool) -> Sm120) {
                         ops,
                         rows,
                         live,
+                        fast,
                         &mut modules,
                     )?
                 };

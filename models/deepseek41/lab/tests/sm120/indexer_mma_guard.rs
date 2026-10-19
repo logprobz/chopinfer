@@ -2,7 +2,7 @@
 use super::*;
 use kernel_harness::{Cubins, eviction::EvictionMode};
 
-fn guarded(native: bool) -> Sm120 {
+pub(super) fn guarded(native: bool) -> Sm120 {
     let backend = super::backend(false);
     if native {
         backend.with_guarded_position_scores()
@@ -47,11 +47,7 @@ fn load_calls(
     calls: &[Launch],
 ) -> LabResult<()> {
     for call in calls {
-        let (name, data) = bundle_deepseek41::sm120::fold_cubin_for_symbol(&call.symbol)
-            .ok_or("missing served cubin")?;
-        if !modules.contains_key(name) {
-            modules.insert(name.to_owned(), session.load_cubin(data)?);
-        }
+        super::guard_fast::load(session, modules, &call.symbol)?;
     }
     Ok(())
 }
@@ -75,16 +71,22 @@ fn exercise<B>(
     negative: bool,
     modules: &mut BTreeMap<String, runtime_cuda::Module>,
     probe: &runtime_cuda::Module,
+    fast: bool,
 ) -> LabResult<()> {
     let workspace =
         arena.output(ops.iter().map(|op| op.info().workspace).max().unwrap() as usize)?;
-    let calls: Vec<_> = ops
+    let mut calls: Vec<_> = ops
         .iter()
         .map(|op| {
             op.launches(b, workspace, Counts::rows(rows))
                 .map_err(|e| e.to_string())
         })
         .collect::<Result<_, _>>()?;
+    if fast {
+        let mut candidate = calls[2].clone();
+        super::guard_fast::remap(&mut candidate);
+        calls.push(candidate);
+    }
     for arm in &calls {
         load_calls(session, modules, arm)?;
     }
@@ -104,7 +106,7 @@ fn exercise<B>(
         } else {
             let old = reference.as_ref().unwrap();
             let differences: Vec<_> = old.iter().zip(&out).map(|(a, b)| mismatch(a, b)).collect();
-            if arm == 2 {
+            if arm >= 2 {
                 assert_eq!(differences, vec![0, 0, 0], "guard versus SIMT {label}");
             } else {
                 old_mismatch = differences[0];
@@ -122,6 +124,8 @@ fn exercise<B>(
     // Pack first, then score without selection; counters are outside timing.
     let mut admitted = 0;
     let mut fallback = 0;
+    let mut coarse = 0;
+    let mut fine = 0;
     if rows <= 32 {
         fire(session, arena, modules, &calls[2][..1])?;
         let counts = arena.input(&[0; 8])?;
@@ -149,6 +153,29 @@ fn exercise<B>(
         admitted = u32::from_le_bytes(stats[..4].try_into().unwrap());
         fallback = u32::from_le_bytes(stats[4..].try_into().unwrap());
         assert!(fallback <= admitted);
+        if fast {
+            let stats = super::guard_fast::diagnose(session, arena, modules, &calls[3])?;
+            assert_eq!(
+                stats[..2],
+                [admitted, fallback],
+                "repair counts must match the original guard"
+            );
+            coarse = stats[2];
+            fine = stats[3];
+            assert!(coarse <= admitted && fine <= admitted);
+            match label["case"].as_u64() {
+                Some(8) => {
+                    assert_eq!((coarse, fine, fallback), (0, admitted, 0));
+                }
+                Some(9) => {
+                    assert!(coarse > 0 && coarse < admitted && fallback > 0 && fine > fallback);
+                }
+                Some(10) => {
+                    assert_eq!((coarse, fine, fallback), (0, admitted, admitted));
+                }
+                _ => (),
+            }
+        }
         if negative {
             assert!(fallback > 0);
         }
@@ -168,7 +195,7 @@ fn exercise<B>(
         "GUARD_CASE {}",
         serde_json::json!({"shape":label,"admitted":admitted,"fallback_slots":fallback,
         "fallback_rows":row_fallback,"counts_measured":rows<=32,"guard_mismatches":0,"unguarded_score_mismatches":old_mismatch,
-        "negative_control_rejected":negative})
+        "negative_control_rejected":negative,"fast":fast,"coarse_slots":coarse,"fine_slots":fine})
     );
     if timing {
         let score_calls: Vec<_> = calls
@@ -182,18 +209,37 @@ fn exercise<B>(
             .collect::<LabResult<Vec<_>>>()?;
         // One stream, only the pack and score sequence enclosed by events.
         // This measures exclusive wall time, including any PDL overlap once.
-        for pair in [[0, 2], [1, 2]] {
+        let pairs: &[[usize; 2]] = if fast {
+            &[[2, 3], [1, 3], [0, 3]]
+        } else {
+            &[[0, 2], [1, 2]]
+        };
+        for &pair in pairs {
             let measured =
-                kernel_harness::time_ab(session, 1, 3, [EvictionMode::Write; 2], |arm, stream| {
-                    graphs[pair[arm]].launch(stream).map_err(|e| e.to_string())
+                kernel_harness::with_timing_label(&format!("guard-{label}-{pair:?}"), || {
+                    kernel_harness::time_ab(
+                        session,
+                        2,
+                        5,
+                        [EvictionMode::Write; 2],
+                        |arm, stream| graphs[pair[arm]].launch(stream).map_err(|e| e.to_string()),
+                    )
                 })?;
             println!(
                 "GUARD_TIMING {}",
                 serde_json::json!({"shape":label,"arms":pair,
-                "median_ms":measured.arms.map(|a|a.median_ms),"exclusive":true})
+                "median_ms":measured.arms.map(|a|a.median_ms),"paired_ratio":measured.paired_ratio,"exclusive":true})
             );
         }
     }
+    session.receipt(
+        "indexer-guard-cost",
+        BTreeMap::from([
+            ("shape".into(), label),
+            ("fast".into(), serde_json::json!(fast)),
+            ("mismatches".into(), serde_json::json!(0)),
+        ]),
+    )?;
     Ok(())
 }
 fn test_cubins() -> Cubins {
@@ -232,6 +278,9 @@ fn backends() -> [Sm120; 3] {
 #[test]
 #[ignore = "requires sealed captures and CHOPINFER_INDEX_GUARD_ARTIFACTS on idle GPUs"]
 fn gpu_real_guard_frequency_and_cost() {
+    real(false);
+}
+pub(super) fn real(fast: bool) {
     let ran=kernel_harness::gpu_test_with(test_cubins(),3<<30,|session| {
         let manifest=PathBuf::from(std::env::var_os("CHOPINFER_INDEX_CAPTURE_MANIFEST").ok_or("capture manifest required")?);
         let data=read_json(&manifest)?;
@@ -242,7 +291,9 @@ fn gpu_real_guard_frequency_and_cost() {
             let width=meta["width"].as_u64().unwrap() as u32;
             let page=meta["page_size"].as_u64().unwrap() as u32;
             let layer=meta["layer"].as_u64().unwrap() as u32;
-            let compact=meta["reindex"].as_bool().unwrap();let rows=32_u32;
+            let compact=meta["reindex"].as_bool().unwrap();
+            let row_counts: &[u32]=if fast { &[1,2,4,6,8,16,32] } else { &[32] };
+            for &rows in row_counts {
             let mut arena=Arena {session,buffers:vec![]};
             let b=PositionSelectBuffers {
                 q:arena.input(&bytes(&dir.join("query.bf16"))?)?,head_weights:arena.input(&bytes(&dir.join("weights.f32"))?)?,
@@ -262,14 +313,15 @@ fn gpu_real_guard_frequency_and_cost() {
                     scores:b.scores,status:b.status,output:b.output};
                 let query=indexer::block_selection(&FLASH,layer,rows).unwrap();
                 let ops=backends().map(|backend|backend.position_block_indexer(&query,512,width,Need::rows(rows)).unwrap());
-                exercise(session,&mut arena,&b,planes,ops,rows,label,true,false,&mut modules,&probe)?;
+                exercise(session,&mut arena,&b,planes,ops,rows,label,true,false,&mut modules,&probe,fast)?;
             } else {
                 let query=indexer::selection(&FLASH,layer,rows).unwrap();
                 let ops=backends().map(|backend|backend.position_indexer(&query,512,width,Need::rows(rows)).unwrap());
-                exercise(session,&mut arena,&b,planes,ops,rows,label,true,false,&mut modules,&probe)?;
+                exercise(session,&mut arena,&b,planes,ops,rows,label,true,false,&mut modules,&probe,fast)?;
             }
         }
-        println!("GUARD_REAL_COMPLETE shard={shard} captures=15");Ok(())
+        }
+        println!("GUARD_REAL_COMPLETE shard={shard} captures={}",if fast {105}else{15});Ok(())
     }).unwrap();
     assert!(ran.is_some());
 }
@@ -287,6 +339,18 @@ fn matrix_shapes() -> Vec<(u32, u32, u32, u32)> {
         }
         for case in 1..8 {
             shapes.push((layer, 6, 1024, case));
+        }
+    }
+    shapes
+}
+
+fn suite_shapes(fast: bool) -> Vec<(u32, u32, u32, u32)> {
+    let mut shapes = matrix_shapes();
+    if fast {
+        for layer in [2, 20, 24] {
+            for case in 8..=10 {
+                shapes.push((layer, 6, 1024, case));
+            }
         }
     }
     shapes
@@ -336,8 +400,11 @@ fn compact_matrix_buffers(
 
 #[test]
 fn cpu_compact_matrix_uses_distinct_tags() {
+    compact_matrix_cpu(false);
+}
+pub(super) fn compact_matrix_cpu(fast: bool) {
     let mut cases = 0;
-    for (layer, rows, offset, case) in matrix_shapes().into_iter().filter(|s| s.0 == 24) {
+    for (layer, rows, offset, case) in suite_shapes(fast).into_iter().filter(|s| s.0 == 24) {
         let ratio = FLASH.compress_ratio(layer);
         let page = 64 / ratio;
         let width = ((offset + rows).div_ceil(64) * 64 / ratio).max(page);
@@ -374,7 +441,7 @@ fn cpu_compact_matrix_uses_distinct_tags() {
         assert_ne!(b.row_tags.handle, b.candidates.row_tags.handle);
         cases += 1;
     }
-    assert_eq!(cases, 31);
+    assert_eq!(cases, if fast { 34 } else { 31 });
 }
 
 fn bf16_bytes(values: impl IntoIterator<Item = f32>) -> Vec<u8> {
@@ -386,9 +453,12 @@ fn bf16_bytes(values: impl IntoIterator<Item = f32>) -> Vec<u8> {
 #[test]
 #[ignore = "requires CHOPINFER_INDEX_GUARD_ARTIFACTS and idle GPUs"]
 fn gpu_decode_prefill_and_exponent_edges() {
+    matrix(false);
+}
+pub(super) fn matrix(fast: bool) {
     let ran=kernel_harness::gpu_test_with(test_cubins(),12<<30,|session| {
         let shard:usize=std::env::var("CHOPINFER_L4_SHARD").unwrap().parse().unwrap();assert!(shard<2);
-        let shapes=matrix_shapes();
+        let shapes=suite_shapes(fast);
         let total=shapes.len();let mut completed=0;
         let mut modules=BTreeMap::new();let probe=probe(session)?;
         for (shape,(layer,rows,offset,case)) in shapes.into_iter().enumerate().filter(|(i,_)|i%2==shard) {
@@ -402,7 +472,7 @@ fn gpu_decode_prefill_and_exponent_edges() {
             for _ in 0..rows {for _ in 0..32 {for group in 0..4 {for lane in 0..32 {
                 let r=rng();let mut x=magnitude[(r&7) as usize]*if r&8==0 {1.}else{-1.};
                 if lane==31 {x=6.;} // Make every group's fake quantization scale exact.
-                let exponent=match case {2=>[0,24,0,-24][group],4=>-126,5=>120,_=>group as i32-2};
+                let exponent=match case {2=>[0,24,0,-24][group],4=>-126,5=>120,8=>[0,12,0,12][group],_=>group as i32-2};
                 q.push(x*2_f32.powi(exponent));
             }}}}
             let mut w=vec![0.03125_f32;rows as usize*32];
@@ -416,6 +486,11 @@ fn gpu_decode_prefill_and_exponent_edges() {
             if case==5 {scales.fill(247);}
             if case==6 {q[0]=f32::from_bits(0x3f810000);}
             if case==7 {w[0]=f32::INFINITY;w[32]=f32::NAN;}
+            if case==8 {for (i,s) in scales.iter_mut().enumerate(){*s=[139,127,139,127][i%4];}}
+            if case==9 {for slot in (0..width as usize).step_by(32) {scales[slot*4]=151;}}
+            if case==10 {for row in 0..rows as usize {for g in 0..4 {for lane in 0..32 {
+                q[row*4096+31*128+g*32+lane]=6.0*2_f32.powi([0,24,0,-24][g]);
+            }}}}
             let positions:Vec<i32>=(0..rows).map(|i|(offset+i) as i32).collect();
             let b=PositionSelectBuffers {
                 q:arena.input(&bf16_bytes(q))?,head_weights:arena.input(&w.into_iter().flat_map(f32::to_le_bytes).collect::<Vec<_>>())?,
@@ -432,11 +507,11 @@ fn gpu_decode_prefill_and_exponent_edges() {
                 let b=compact_matrix_buffers(&b,visible,|bytes|arena.input(bytes))?;
                 let query=indexer::block_selection(&FLASH,layer,rows).unwrap();
                 let ops=backends().map(|backend|backend.position_block_indexer(&query,512,width,Need::rows(rows)).unwrap());
-                exercise(session,&mut arena,&b,planes,ops,rows,label,case==0,case==1,&mut modules,&probe)?;
+                exercise(session,&mut arena,&b,planes,ops,rows,label,case==0,case==1,&mut modules,&probe,fast)?;
             } else {
                 let query=indexer::selection(&FLASH,layer,rows).unwrap();
                 let ops=backends().map(|backend|backend.position_indexer(&query,512,width,Need::rows(rows)).unwrap());
-                exercise(session,&mut arena,&b,planes,ops,rows,label,case==0,case==1,&mut modules,&probe)?;
+                exercise(session,&mut arena,&b,planes,ops,rows,label,case==0,case==1,&mut modules,&probe,fast)?;
             }
             completed+=1;
         }

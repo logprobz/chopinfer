@@ -181,24 +181,27 @@ pub(crate) fn bind_shared(
     Ok(())
 }
 
-fn spans(launch: &PreparedLaunch) -> Result<Vec<DeviceBufferSpanV1>, String> {
+fn spans(launch: &PreparedLaunch) -> Result<Vec<(DeviceBufferSpanV1, bool)>, String> {
     let mut spans = Vec::new();
-    let mut add = |id| -> Result<(), String> {
+    let mut add = |id, index| -> Result<(), String> {
         let span = launch
             .bindings
             .get(id)
             .map_err(|e| format!("overlap binding: {e:?}"))?;
         end(span)?;
-        spans.push(span);
+        spans.push((
+            span,
+            crate::Kernels::const_input_argument(&launch.symbol, index),
+        ));
         Ok(())
     };
-    for argument in &launch.arguments.0 {
+    for (index, argument) in launch.arguments.0.iter().enumerate() {
         match argument {
-            Argument::DeviceBuffer(id) => add(*id)?,
-            Argument::TensorMap(map) => add(map.base_buffer)?,
+            Argument::DeviceBuffer(id) => add(*id, index)?,
+            Argument::TensorMap(map) => add(map.base_buffer, index)?,
             Argument::DevicePointerArray(ids) => {
                 for id in ids {
-                    add(*id)?;
+                    add(*id, index)?;
                 }
             }
             _ => {}
@@ -209,7 +212,8 @@ fn spans(launch: &PreparedLaunch) -> Result<Vec<DeviceBufferSpanV1>, String> {
 
 /// Check actual pointer arguments before capture. Only the input codes,
 /// input scales and live-row count may be shared across the two branches;
-/// their producers finish before the fork. Every other intersecting range
+/// their producers finish before the fork, and both entry arguments must
+/// declare const input pointers. Every other intersecting range
 /// is rejected, including scratch introduced by a newly selected backend.
 pub fn checked_units(
     stages: &[Stage],
@@ -230,14 +234,15 @@ pub fn checked_units(
         let main = bound(main.clone())?;
         for (side_index, side_spans) in bound(side.clone())? {
             for (main_index, main_spans) in &main {
-                for &a in &side_spans {
-                    for &b in main_spans {
+                for &(a, a_const) in &side_spans {
+                    for &(b, b_const) in main_spans {
                         if !intersects(a, b)? {
                             continue;
                         }
                         let mut read_only = false;
                         for &input in immutable {
-                            read_only |= contains(input, a)? && contains(input, b)?;
+                            read_only |=
+                                a_const && b_const && contains(input, a)? && contains(input, b)?;
                         }
                         if !read_only {
                             return Err(format!(
@@ -410,9 +415,22 @@ mod tests {
         bind(&mut program[shared], span(7, 61_567, 4));
         assert!(checked_units(&stages, &program, &[]).is_err());
         let input = span(9, 512, 1024);
-        bind(&mut program[0], input);
-        bind(&mut program[shared], span(9, 640, 128));
+        let bind_at = |launch: &mut PreparedLaunch, index, view| {
+            launch.symbol = "chop_deepseek41_mxfp8_prefetch_n576_k5120_g1_pair_f32_v3".into();
+            let id = launch.bindings.bind(view);
+            launch.arguments = ArgumentList(vec![Argument::U32(0); 12]);
+            launch.arguments.0[index] = Argument::DeviceBuffer(id);
+        };
+        // Argument zero is const input; argument six is a mutable output.
+        bind_at(&mut program[0], 0, input);
+        bind_at(&mut program[shared], 0, span(9, 640, 128));
         assert!(checked_units(&stages, &program, &[input]).is_ok());
+        bind_at(&mut program[shared], 6, span(9, 640, 128));
+        assert!(checked_units(&stages, &program, &[input]).is_err());
+        bind_at(&mut program[shared], 0, span(9, 640, 128));
+        bind_at(&mut program[0], 6, input);
+        assert!(checked_units(&stages, &program, &[input]).is_err());
+        bind_at(&mut program[0], 0, input);
         assert!(checked_units(&stages, &program, &[span(9, 640, 128)]).is_err());
         bind(&mut program[shared], span(9, u64::MAX, 4));
         assert!(checked_units(&stages, &program, &[input]).is_err());

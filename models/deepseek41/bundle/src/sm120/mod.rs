@@ -133,7 +133,19 @@ pub fn register_f32_projections(
     Ok(backend.with_f32_projections(offers))
 }
 
+include!(concat!(env!("OUT_DIR"), "/argument_access.rs"));
+
 impl crate::Kernels {
+    /// Whether the locked entry declares this pointer argument as const input.
+    pub(crate) fn const_input_argument(symbol: &str, index: usize) -> bool {
+        CONST_INPUT_ARGUMENTS
+            .binary_search_by_key(&symbol, |&(name, _)| name)
+            .ok()
+            .and_then(|found| CONST_INPUT_ARGUMENTS[found].1.get(index))
+            .copied()
+            .unwrap_or(false)
+    }
+
     /// The largest separately prepared dense decode bucket.
     pub(crate) fn dense_decode_capacity() -> u32 {
         mxfp8_fold::SMALL_CAPACITY

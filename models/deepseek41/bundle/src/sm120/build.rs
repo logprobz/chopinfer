@@ -263,6 +263,35 @@ fn main() {
         None,
     )
     .expect("locked deepseek41 cubin build and audit");
+    // Keep argument access tied to the exact locked entry declarations.
+    // Tensor maps have no pointee qualifier, so they cannot grant a shared
+    // input exemption. Unknown symbols and argument positions also refuse it.
+    let mut access = std::collections::BTreeMap::new();
+    for entry in specs.iter().flat_map(|spec| &spec.entries) {
+        let inputs: Vec<_> = entry
+            .params
+            .iter()
+            .map(|param| match param {
+                kernel_build::EntryParam::DevicePointer { cxx_type, .. }
+                | kernel_build::EntryParam::PointerArray { cxx_type, .. } => {
+                    cxx_type.trim_start().starts_with("const ")
+                }
+                _ => false,
+            })
+            .collect();
+        if let Some(previous) = access.insert(entry.symbol.as_str(), inputs.clone()) {
+            assert_eq!(previous, inputs, "conflicting argument access declarations");
+        }
+    }
+    let rows: String = access
+        .iter()
+        .map(|(symbol, inputs)| format!("({symbol:?}, &{inputs:?}),"))
+        .collect();
+    std::fs::write(
+        out.join("argument_access.rs"),
+        format!("const CONST_INPUT_ARGUMENTS: &[(&str, &[bool])] = &[{rows}];\n"),
+    )
+    .expect("write declared argument access");
     // Every cubin serves each rank count it holds entries for.
     kernel_build::write_embedded(&out, &built, |_| 0).expect("write embedded cubin list");
     // The exact F32 projection cubins' identity, which authenticates their

@@ -9,6 +9,7 @@ use kernel_core::latent_attention::{
 };
 use kernels_sm120::latent::{sources, sources_prefill, sources_prefill_cache as cache};
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
+use model_deepseek41_contract::own_ops::prefill_cache::Buffers;
 use model_deepseek41_contract::state::KvStorage;
 
 pub const FAMILY: &str = "latent_prefill_cache";
@@ -31,13 +32,6 @@ pub fn cubin() -> Result<CubinSpec, String> {
 /// A dedicated arena is shared only by successive attention layers on one stream.
 pub fn layout(slots: u32, page: u32, pages: u32) -> Result<cache::Layout, Refusal> {
     cache::Layout::new(512, slots, 1, page, pages)
-}
-
-pub struct Buffers {
-    pub native: LatentSourcesBuffers<View>,
-    pub window: View,
-    pub compressed: View,
-    pub marks: View,
 }
 
 pub fn prepare(

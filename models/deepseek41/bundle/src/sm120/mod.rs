@@ -265,9 +265,38 @@ impl crate::Kernels {
         &self,
         query: &kernel_core::latent_attention::LatentAttentionQuery,
         need: kernel_core::backend::Need,
-    ) -> Result<kernel_core::backend::Prepared<prefill_cache::Buffers>, kernel_core::backend::Refused>
-    {
+    ) -> Result<
+        kernel_core::backend::Prepared<model_deepseek41_contract::own_ops::prefill_cache::Buffers>,
+        kernel_core::backend::Refused,
+    > {
         prefill_cache::prepare(self.backend.as_ref(), query, need)
+    }
+
+    pub(crate) const PREFILL_CACHE_PAGES: u32 = prefill_cache::PAGE_LIMIT;
+
+    pub(crate) fn prefill_cache_eligible(
+        geometry: &model_deepseek41_contract::geometry::Geometry,
+        ranks: u32,
+        storage: model_deepseek41_contract::state::KvStorage,
+    ) -> bool {
+        prefill_cache::eligible(geometry, ranks, storage)
+    }
+
+    pub(crate) fn prefill_cache_layout(
+        slots: u32,
+        page: u32,
+        pages: u32,
+    ) -> Result<
+        model_deepseek41_contract::own_ops::prefill_cache::Layout,
+        kernel_core::contract::Refusal,
+    > {
+        let layout = prefill_cache::layout(slots, page, pages)?;
+        Ok(model_deepseek41_contract::own_ops::prefill_cache::Layout {
+            window: layout.window,
+            compressed: layout.compressed,
+            marks: layout.marks,
+            bytes: layout.bytes,
+        })
     }
 
     /// The largest separately prepared dense decode bucket.

@@ -10,10 +10,9 @@ fn decoded_prefill_cache_allocation_failures_release_prior_resources() {
     let mut instance = api()
         .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
         .unwrap();
-    let bytes =
-        crate::sm120::prefill_cache::layout(8319, 64, crate::sm120::prefill_cache::PAGE_LIMIT)
-            .unwrap()
-            .bytes;
+    let bytes = crate::Kernels::prefill_cache_layout(8319, 64, crate::Kernels::PREFILL_CACHE_PAGES)
+        .unwrap()
+        .bytes;
     let calls = host.device.journal.borrow();
     let first = calls
         .iter()

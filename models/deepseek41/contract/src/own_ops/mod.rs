@@ -15,6 +15,7 @@ pub mod acceptance;
 pub mod dspark;
 pub mod engram;
 pub mod engram_hash;
+pub mod prefill_cache;
 pub mod ring_gather;
 pub mod rope;
 pub mod widen;

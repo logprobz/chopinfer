@@ -508,7 +508,7 @@ pub(crate) struct AttentionViews {
 pub(crate) struct AttentionOps {
     pub ratio: u32,
     ops: Vec<(Kind, Prepared<LatentSourcesBuffers<View>>)>,
-    cached: Option<Prepared<crate::sm120::prefill_cache::Buffers>>,
+    cached: Option<Prepared<model_deepseek41_contract::own_ops::prefill_cache::Buffers>>,
 }
 
 /// The attention query of the layers of compress ratio `ratio` in `phase`:
@@ -556,7 +556,7 @@ impl AttentionOps {
         })
         .collect::<Result<_, Refused>>()?;
         let cached =
-            if crate::sm120::prefill_cache::eligible(shape.geometry, shape.ranks(), storage) {
+            if crate::Kernels::prefill_cache_eligible(shape.geometry, shape.ranks(), storage) {
                 let query = attention_query(shape, ratio, AttentionPhase::Prefill)
                     .map_err(Refused::Rule)?;
                 let need = exact::need(PREFILL_TOKENS, exact::PREFILL);
@@ -631,7 +631,7 @@ impl AttentionOps {
         if let (Some(op), Some(arena)) = (&self.cached, views.decoded_cache) {
             let page = 64 / self.ratio.max(1);
             let pages = views.compressed.as_ref().map_or(1, |c| c.pages);
-            let layout = crate::sm120::prefill_cache::layout(views.ring.cells, page, pages)?;
+            let layout = crate::Kernels::prefill_cache_layout(views.ring.cells, page, pages)?;
             if layout.bytes > arena.length {
                 return Err(Refusal(
                     "decoded prefill cache exceeds its owning allocation",
@@ -665,7 +665,7 @@ impl AttentionOps {
                     r.end - r.start,
                 ))
             };
-            let cached = crate::sm120::prefill_cache::Buffers {
+            let cached = model_deepseek41_contract::own_ops::prefill_cache::Buffers {
                 native: buffers,
                 window: region(layout.window),
                 compressed: region(layout.compressed),

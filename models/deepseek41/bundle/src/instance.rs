@@ -394,15 +394,15 @@ impl Instance {
             let table = allocate_span(services, pool, stream, table, held)?;
             // Reserve the bounded cache before the host sizes its KV pool.
             let prefill_cache = if items.get() == 1
-                && crate::sm120::prefill_cache::eligible(
+                && crate::Kernels::prefill_cache_eligible(
                     shape.geometry,
                     shape.ranks(),
                     self.config.kv.storage,
                 ) {
-                let bytes = crate::sm120::prefill_cache::layout(
+                let bytes = crate::Kernels::prefill_cache_layout(
                     crate::buffers::staged_slots(&shape),
                     64,
-                    crate::sm120::prefill_cache::PAGE_LIMIT,
+                    crate::Kernels::PREFILL_CACHE_PAGES,
                 )
                 .map_err(|_| BundleAbiError::InvalidRange("prefill cache extent"))?
                 .bytes;

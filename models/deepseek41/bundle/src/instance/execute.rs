@@ -227,7 +227,7 @@ fn prefill_cache_range(inputs: &PhaseInputs) -> Option<crate::ops::latent::Cache
     Some(crate::ops::latent::CacheRange {
         offset: offset as u32,
         first_page: first,
-        pages: if pages <= crate::sm120::prefill_cache::PAGE_LIMIT {
+        pages: if pages <= crate::Kernels::PREFILL_CACHE_PAGES {
             pages
         } else {
             0

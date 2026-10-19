@@ -43,18 +43,19 @@ def capture_stats(captured):
                              sampled=any(case["request"].get("temperature", 0) > 0 for case in cases))
 
 
-def canonical(response, *, sampled=False):
+def canonical(response, *, sampled=False, tokens=None):
+    tokens = OUTPUT_TOKENS if tokens is None else tokens
     if len(response["choices"]) != 1:
         raise ValueError("one completion is required")
     choice = response["choices"][0]
     scores = choice["logprobs"]
     ids = choice["token_ids"]
     if (choice["finish_reason"] != "length"
-            or response["usage"]["completion_tokens"] != OUTPUT_TOKENS
-            or len(ids) != OUTPUT_TOKENS or any(type(i) is not int for i in ids)):
+            or response["usage"]["completion_tokens"] != tokens
+            or len(ids) != tokens or any(type(i) is not int for i in ids)):
         raise ValueError("incomplete completion")
     for name in ("tokens", "token_logprobs", "top_logprobs"):
-        if not isinstance(scores[name], list) or len(scores[name]) != OUTPUT_TOKENS:
+        if not isinstance(scores[name], list) or len(scores[name]) != tokens:
             raise ValueError("incomplete logprobs")
     if any(not isinstance(token, str) for token in scores["tokens"]):
         raise ValueError("invalid token labels")

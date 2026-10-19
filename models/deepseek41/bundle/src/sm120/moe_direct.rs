@@ -229,6 +229,13 @@ mod tests {
     fn direct_admission_keeps_unmeasured_phases_and_weak_buckets_out() {
         for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
             let shape = crate::shape::Shape::new(&FLASH, ranks).unwrap();
+            for (_, cubin) in super::super::moe_direct_kernels::cubins(&[FLASH]).unwrap() {
+                assert_eq!(
+                    crate::Kernels::loads(&cubin.name, &shape),
+                    ranks == Ranks::TP4
+                );
+                assert!(!crate::Kernels::drafter_only(&cubin.name, &FLASH));
+            }
             for set in model_deepseek41_contract::moe::expert_sets(&FLASH) {
                 let ops = prepare_set(&shape, set).unwrap();
                 for rows in 1..=192 {

@@ -12,6 +12,11 @@ impl Lowering<'_> {
         let Some(op) = self.ops.moe.as_ref().and_then(|m| m.direct(phase)) else {
             return Ok(None);
         };
+        // Supersede an older fused drafter router with the exact-F32
+        // projection used by the qualified direct-load comparison.
+        if let Stage::Project(layer, "moe.router") = stage {
+            return self.exact_f32(phase, layer, "moe.router");
+        }
         let (layer, point) = match stage {
             Stage::Route(l) => (l, Point::Route),
             Stage::ExpertsGateUp(l) => (l, Point::Gate),
@@ -183,7 +188,16 @@ mod tests {
                         };
                         crate::program::moe(0)
                             .into_iter()
-                            .map(|stage| (stage, lowering.stage(phase, stage).unwrap().unwrap()))
+                            .map(|stage| {
+                                let calls = if std::ptr::eq(op, &reference)
+                                    && matches!(stage, Stage::Project(_, "moe.router"))
+                                {
+                                    lowering.exact_f32(phase, 0, "moe.router")
+                                } else {
+                                    lowering.stage(phase, stage)
+                                };
+                                (stage, calls.unwrap().unwrap())
+                            })
                             .collect::<Vec<_>>()
                     };
                     let actual = lower(&ops, &b);

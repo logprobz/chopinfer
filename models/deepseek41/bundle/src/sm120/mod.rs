@@ -257,8 +257,11 @@ impl crate::Kernels {
     /// Entries used only by the drafter's smaller expert bank. An AR-only
     /// instance has no consumer for these modules.
     pub fn drafter_only(cubin: &str, g: &model_deepseek41_contract::geometry::Geometry) -> bool {
-        cubin.starts_with("floor_moe_")
-            || cubin == ring_gather_entries::CUBIN
+        // Direct routed MoE needs both expert banks in these shared modules.
+        if cubin.starts_with("floor_moe_") || cubin.starts_with("bandwidth_moe_") {
+            return false;
+        }
+        cubin == ring_gather_entries::CUBIN
             || cubin == dspark_router::cubin_name(g)
             || dspark_router::sum_cubins(g)
                 .iter()

@@ -146,12 +146,6 @@ pub fn selection(
         specs.push((own_entries::FAMILY, spec));
     }
     for geometry in geometries {
-        owners.extend(
-            moe_direct_kernels::cubins(std::slice::from_ref(geometry))
-                .expect("locked direct MoE cubins")
-                .into_iter()
-                .map(|(_, s)| (s.name, geometry.id)),
-        );
         owners.extend(dspark_aux::geometry_cubins(geometry).map(|name| (name, geometry.id)));
         owners.extend(
             dspark_router::cubins(std::slice::from_ref(geometry))
@@ -286,7 +280,6 @@ pub fn selection(
     specs.extend(compressor::cubins(geometries).expect("deepseek41 compressor cubins"));
     specs.extend(compressor_bf16::cubins(geometries).expect("deepseek41 BF16 index-key cubins"));
     specs.extend(moe::cubins(geometries).expect("deepseek41 routed MoE cubins"));
-    specs.extend(moe_direct_kernels::cubins(geometries).expect("locked direct MoE cubins"));
     specs.extend(moe::active_cubins(geometries).expect("active routed MoE cubins"));
     specs.extend(moe::streamed_cubins(geometries).expect("streamed routed MoE cubins"));
     specs.extend(moe::prefill_cubins(geometries).expect("grouped prefill MoE cubins"));
@@ -332,6 +325,46 @@ pub fn selection(
         .extend(mxfp8_fold::prefetch_cubins(geometries).expect("deepseek41 MXFP8 prefetch cubins"));
     specs.extend(mxfp8_fold_stream::cubins(geometries).expect("MXFP8 packed fold cubins"));
     specs.extend(encoder::cubins().expect("deepseek41 encoder cubins"));
+    // A composition may already carry the floor family for a drafter route.
+    // Reuse that identical locked module; add only absent direct dependencies.
+    for geometry in geometries {
+        for (family, spec) in moe_direct_kernels::cubins(std::slice::from_ref(geometry))
+            .expect("locked direct MoE cubins")
+        {
+            if let Some((_, owner)) = owners.iter().find(|(name, _)| name == &spec.name) {
+                assert_eq!(*owner, geometry.id, "MoE module has a different owner");
+            } else {
+                owners.push((spec.name.clone(), geometry.id));
+            }
+            if let Some((prior_family, existing)) = specs
+                .iter()
+                .find(|(_, existing)| existing.name == spec.name)
+            {
+                assert_eq!(*prior_family, family);
+                assert_eq!(existing.sources_root, spec.sources_root);
+                assert_eq!(existing.include_dirs, spec.include_dirs);
+                assert_eq!(existing.defines, spec.defines);
+                assert_eq!(
+                    kernel_build::generate(existing).unwrap().translation_unit,
+                    kernel_build::generate(&spec).unwrap().translation_unit,
+                    "conflicting locked MoE declarations"
+                );
+                assert_eq!(
+                    existing
+                        .entries
+                        .iter()
+                        .map(|e| e.allowed_local_bytes)
+                        .collect::<Vec<_>>(),
+                    spec.entries
+                        .iter()
+                        .map(|e| e.allowed_local_bytes)
+                        .collect::<Vec<_>>()
+                );
+            } else {
+                specs.push((family, spec));
+            }
+        }
+    }
     Selection { specs, owners }
 }
 

@@ -99,9 +99,3 @@ workspace holds block maxima followed by the local key lists; dense and
 compact selection need only the local key lists. All workspace is written
 before use on each replay. Previous entries and lock families remain
 available as the bitwise comparison controls.
-
-DeepSeek registers these variants for its four Full sources and four
-Reindex sources. Its index metadata already comes from one `index_upload`
-per step and one upload per rank. Reuse layers perform no new index query
-or selection. This scheduling change adds no rounding at the dot, weighted
-product or head sum and does not introduce FP4 MMA.

@@ -1044,6 +1044,11 @@ impl Instance {
                 .ok_or(BundleAbiError::InvalidRange("deepseek41 logits owner"))?;
             self.services.synchronize_stream(stream)?;
         }
+        #[cfg(feature = "diagnostic-taps")]
+        self.capture_profile_logits(&views).map_err(|error| {
+            self.log(&error);
+            BundleAbiError::Status(BundleStatusV1::HostError)
+        })?;
         for view in views {
             sink.emit_device_view(view)?;
         }
@@ -1073,6 +1078,17 @@ impl Instance {
         {
             self.log(&format!("prefill reduction reset: {error}"));
             return status(error);
+        }
+        #[cfg(feature = "diagnostic-taps")]
+        if self.config.prefill.chunk > 0
+            && self.dspark.is_none()
+            && self.active_dspark_state_capture().is_some()
+        {
+            for phase in [&step.prefill, &step.decode] {
+                for (&request, pages) in phase.request_ids.iter().zip(&phase.block_tables) {
+                    self.state_capture_pages.insert(request, pages.clone());
+                }
+            }
         }
         if self.dspark.is_some() {
             let mut rows = items(&step.prefill);

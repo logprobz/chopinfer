@@ -923,6 +923,13 @@ impl Steps for Instance {
     /// The Engram history takes the rows a commit kept, and forgets a
     /// request whose slot a cancel freed.
     fn ended(&mut self, ended: Ended<'_>) -> Result<(), BundleStatusV1> {
+        #[cfg(feature = "diagnostic-taps")]
+        if matches!(ended, Ended::Committed(_)) {
+            self.capture_profile_chunks().map_err(|error| {
+                self.log(&error);
+                BundleStatusV1::HostError
+            })?;
+        }
         if self.dspark.is_some() {
             if let Ended::Cancelled(step) = ended {
                 for item in &step.items {

@@ -141,8 +141,14 @@ impl PrefixInstance for Instance {
         }
         .encode(&HEADER, self.stamp())
         .map_err(|_| BundleStatusV1::InternalError)?;
-        self.copy_snapshot(slot, &request.pages, Some(header))
-            .map(|_| ())
+        self.copy_snapshot(slot, &request.pages, Some(header))?;
+        #[cfg(feature = "diagnostic-taps")]
+        self.capture_profile_boundary(request.request_id, request.tokens, "snapshot")
+            .map_err(|error| {
+                self.log(&error);
+                BundleStatusV1::HostError
+            })?;
+        Ok(())
     }
 
     /// Gives an unseen request the host's state slot, filled from a

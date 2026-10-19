@@ -17,7 +17,7 @@ impl Instance {
         result
     }
 
-    pub(super) fn active_dspark_state_capture(&self) -> Option<&Path> {
+    pub(crate) fn active_dspark_state_capture(&self) -> Option<&Path> {
         self.state_capture_root
             .as_deref()
             .filter(|root| root.join("enabled").is_file())
@@ -32,7 +32,30 @@ impl Instance {
         else {
             return Ok(());
         };
-        let mut table = Table::new(&self.state, self.extent, Holder::Slot(context.slot))
+        self.capture_complete_state_to(request, context.end, root)
+    }
+
+    pub(crate) fn capture_complete_state_to(
+        &self,
+        request: u64,
+        end: u64,
+        root: &Path,
+    ) -> Result<(), String> {
+        let slot = self
+            .ledger
+            .committed(request, end)
+            .map_err(|e| format!("state capture ledger: {e:?}"))?;
+        let context = self
+            .dspark
+            .as_ref()
+            .and_then(|d| d.runtime.as_ref())
+            .and_then(|r| r.state().context(request));
+        let retained_start = context.map_or(
+            end.saturating_sub(u64::from(self.config.shape.geometry.shape.attention.window)),
+            |c| c.retained_start,
+        );
+        let projected = context.map_or_else(Vec::new, |c| c.projected().to_vec());
+        let mut table = Table::new(&self.state, self.extent, Holder::Slot(slot))
             .map_err(|e| format!("DSpark state capture table: {e:?}"))?;
         // Prefix restore rebuilds the drafter rings from retained features.
         // Parity captures include those rings as well as the prefix payload.
@@ -51,7 +74,7 @@ impl Instance {
                     table.descriptors.push(Descriptor {
                         buffer: index,
                         spare: false,
-                        offset: plane_start + u64::from(context.slot) * length,
+                        offset: plane_start + u64::from(slot) * length,
                         length,
                         at,
                     });
@@ -97,7 +120,7 @@ impl Instance {
                     buffers.kv_pool,
                     u32::try_from(self.kv_pages)
                         .map_err(|_| "DSpark capture page count exceeds U32")?,
-                    context.end,
+                    end,
                 )
                 .map_err(|e| e.to_string())?
                 .ok_or("DSpark state capture KV source is absent")?;
@@ -136,8 +159,8 @@ impl Instance {
         }).collect();
         let metadata = serde_json::json!({
             "schema":"chopinfer.deepseek41.dspark-state-capture.v1",
-            "end":context.end, "retained_start":context.retained_start,
-            "projected":context.projected(), "ranks":self.ranks.len(), "pieces":pieces, "paged_pieces":paged_pieces,
+            "end":end, "retained_start":retained_start,
+            "projected":projected, "ranks":self.ranks.len(), "pieces":pieces, "paged_pieces":paged_pieces,
         });
         std::fs::write(
             directory.join("state.json"),
@@ -146,6 +169,62 @@ impl Instance {
         .map_err(|e| format!("DSpark state capture metadata: {e}"))?;
         Ok(())
     }
+    pub(crate) fn capture_profile_boundary(
+        &self,
+        request: u64,
+        end: u64,
+        kind: &str,
+    ) -> Result<(), String> {
+        if self.config.prefill.chunk == 0 {
+            return Ok(());
+        }
+        let Some(root) = self.active_dspark_state_capture() else {
+            return Ok(());
+        };
+        let directory = root.join(format!("{kind}-{end}"));
+        std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+        self.capture_complete_state_to(request, end, &directory)
+    }
+
+    pub(crate) fn capture_profile_chunks(&self) -> Result<(), String> {
+        for boundary in &self.prefill_boundaries {
+            self.capture_profile_boundary(boundary.request_id, boundary.chunk_end, "chunk")?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn capture_profile_logits(
+        &self,
+        views: &[runtime_bundle_abi::BundleLogitsViewV1],
+    ) -> Result<(), String> {
+        if self.config.prefill.chunk == 0 {
+            return Ok(());
+        }
+        let Some(root) = self.active_dspark_state_capture() else {
+            return Ok(());
+        };
+        let directory = root.join("logits");
+        std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+        for (index, view) in views.iter().enumerate() {
+            let spans: Vec<_> = (0..view.row_count)
+                .map(|row| {
+                    Span::new(
+                        view.buffer.buffer,
+                        view.buffer.offset + u64::from(row) * view.row_stride_elements * 4,
+                        u64::from(view.live_width) * 4,
+                    )
+                })
+                .collect();
+            let bytes = self.read_capture_spans(view.rank as usize, &spans)?;
+            std::fs::write(
+                directory.join(format!("step-{}-view-{index}.f32", self.steps.get())),
+                bytes,
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
     fn read_capture_spans(&self, rank: usize, spans: &[Span]) -> Result<Vec<u8>, String> {
         let stream = self.ranks[rank].2;
         self.services

@@ -155,6 +155,7 @@ impl Plan {
                 }
                 let inputs = DeviceInputs::within(instance.arenas[run.arena][rank], &run.layout);
                 let lowering = Lowering {
+                    prefill_row_origin: None,
                     shape: &instance.config.shape,
                     ops: &instance.ops,
                     buffers,

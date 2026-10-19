@@ -230,6 +230,7 @@ pub fn block(
                 let mut buffers = base.buffers.clone();
                 buffers.scratch.pre_odd = buffers.scratch.first_pre;
                 let first = Lowering {
+                    prefill_row_origin: None,
                     buffers: &buffers,
                     ..*base
                 };

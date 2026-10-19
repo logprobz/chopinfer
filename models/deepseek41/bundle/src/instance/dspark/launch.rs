@@ -109,6 +109,7 @@ impl Instance {
                 stored.packed,
             )?;
             let base = Lowering {
+                prefill_row_origin: None,
                 shape: &device.shape,
                 ops: &device.ops,
                 buffers,
@@ -306,6 +307,7 @@ impl Instance {
                     );
                 }
                 let base = Lowering {
+                    prefill_row_origin: None,
                     shape: &device.shape,
                     ops: &device.ops,
                     buffers,

@@ -288,6 +288,7 @@ fn dspark_full_block_journal_at_each_topology() {
                         .collect::<Vec<_>>(),
                 );
                 let base = Lowering {
+                    prefill_row_origin: None,
                     shape: &shape,
                     ops: &ops,
                     buffers: &bound[rank],
@@ -386,6 +387,7 @@ fn dspark_full_block_journal_at_each_topology() {
                 }
                 let phase = Phase::Verify { rows: 5, items: 1 };
                 let base = Lowering {
+                    prefill_row_origin: None,
                     shape: &shape,
                     ops: &ops,
                     buffers: &bound[rank],

@@ -112,7 +112,7 @@ impl Lowering<'_> {
         let Some(reduce) = self.ops.reduce.as_ref() else {
             return Ok(None);
         };
-        let views = self.reduce_views(phase, |s| s.reduced);
+        let views = self.reduce_views(phase, |s| s.reduced)?;
         let Some((mut launches, sum)) = reduce
             .defer_round(self.rank, phase.rows(), &views)
             .map_err(|e| format!("deferred all-reduce round: {e}"))?

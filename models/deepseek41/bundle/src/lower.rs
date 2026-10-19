@@ -38,6 +38,9 @@ use crate::shape::Shape;
 
 /// What one rank lowers a phase with.
 pub struct Lowering<'a> {
+    /// Global row of a prefill part's carried planes. Other phases ignore it.
+    /// Transient compute scratch keeps its prepared capacity and local origin.
+    pub prefill_row_origin: Option<u32>,
     pub shape: &'a Shape,
     pub ops: &'a Ops,
     pub buffers: &'a RankBuffers,
@@ -113,6 +116,20 @@ const fn mixer(sublayer: Sublayer) -> &'static str {
 }
 
 impl Lowering<'_> {
+    /// Rows that must survive another part's compute: residuals, mixer
+    /// coefficients, reduction partials and outputs, and retained metadata.
+    fn carried(
+        &self,
+        phase: Phase,
+        span: DeviceBufferSpanV1,
+    ) -> Result<DeviceBufferSpanV1, String> {
+        if let Some(first) = self.prefill_row_origin.filter(|_| phase.prefill()) {
+            crate::buffers::row_range(span, first, phase.rows())
+        } else {
+            Ok(rows(span, phase.rows()))
+        }
+    }
+
     /// `stage`'s launches in `phase`, or `None` while it is not lowered.
     pub fn stage(&self, phase: Phase, stage: Stage) -> Result<Option<Vec<Lowered>>, String> {
         let mut lowered = self.stage_inner(phase, stage)?;
@@ -271,8 +288,8 @@ impl Lowering<'_> {
             }
             Stage::ExpandStreams => {
                 let views = StreamViews {
-                    source: rows_of(scratch.embedded),
-                    destination: rows_of(scratch.streams),
+                    source: self.carried(phase, scratch.embedded)?,
+                    destination: self.carried(phase, scratch.streams)?,
                     live_rows,
                 };
                 row_ops
@@ -329,13 +346,13 @@ impl Lowering<'_> {
                 .view(&layer_view(layer, &format!("{}_{name}", mixer(sublayer))))
         };
         let views = MixViews {
-            x: rows_of(streams(scratch, index)),
+            x: self.carried(phase, streams(scratch, index))?,
             mixer: [weight("fn")?, weight("base")?, weight("scale")?],
-            pre_in: rows_of(pre_in(scratch, index)),
+            pre_in: self.carried(phase, pre_in(scratch, index))?,
             collapsed: rows_of(scratch.collapsed),
-            pre: rows_of(pre(scratch, index)),
-            post: rows_of(scratch.post),
-            comb: rows_of(scratch.comb),
+            pre: self.carried(phase, pre(scratch, index))?,
+            post: self.carried(phase, scratch.post)?,
+            comb: self.carried(phase, scratch.comb)?,
             partials: self.buffers.mix_partials,
             tickets: self.buffers.mix_tickets,
             live_rows: self.inputs.live_tokens,
@@ -360,14 +377,13 @@ impl Lowering<'_> {
             return Ok(None);
         };
         let scratch = &self.buffers.scratch;
-        let rows_of = |span| rows(span, phase.rows());
         let index = sublayer_index(layer, sublayer);
         let views = ExpandViews {
-            x: rows_of(streams(scratch, index)),
-            y: rows_of(scratch.reduced),
-            post: rows_of(scratch.post),
-            comb: rows_of(scratch.comb),
-            output: rows_of(streams(scratch, index + 1)),
+            x: self.carried(phase, streams(scratch, index))?,
+            y: self.carried(phase, scratch.reduced)?,
+            post: self.carried(phase, scratch.post)?,
+            comb: self.carried(phase, scratch.comb)?,
+            output: self.carried(phase, streams(scratch, index + 1))?,
             live_rows: self.inputs.live_tokens,
         };
         ops.expand(phase.rows(), &views)
@@ -406,8 +422,8 @@ impl Lowering<'_> {
         };
         let scratch = &self.buffers.scratch;
         let views = WidenViews {
-            input: rows(scratch.embedding, phase.rows()),
-            output: rows(scratch.partial, phase.rows()),
+            input: self.carried(phase, scratch.embedding)?,
+            output: self.carried(phase, scratch.partial)?,
             live_rows: self.inputs.live_tokens,
         };
         let mut launches = ops
@@ -430,7 +446,7 @@ impl Lowering<'_> {
         let Some(ops) = &self.ops.reduce else {
             return Ok(None);
         };
-        let views = self.reduce_views(phase, output);
+        let views = self.reduce_views(phase, output)?;
         ops.reduce(self.rank, phase.rows(), &views)
             .map(Some)
             .map_err(|refusal| format!("all-reduce: {refusal}"))
@@ -440,21 +456,22 @@ impl Lowering<'_> {
         &self,
         phase: Phase,
         output: impl Fn(&Scratch<DeviceBufferSpanV1>) -> DeviceBufferSpanV1,
-    ) -> ReduceViews {
-        let rows_of = |span| rows(span, phase.rows());
-        ReduceViews {
-            input: rows_of(self.buffers.scratch.partial),
-            output: rows_of(output(&self.buffers.scratch)),
+    ) -> Result<ReduceViews, String> {
+        Ok(ReduceViews {
+            input: self.carried(phase, self.buffers.scratch.partial)?,
+            output: self.carried(phase, output(&self.buffers.scratch))?,
             live_rows: self.inputs.live_tokens,
             peers: self
                 .peers
                 .iter()
-                .map(|peer| PeerViews {
-                    output: rows_of(output(&peer.scratch)),
-                    state: peer.comm.clone(),
+                .map(|peer| {
+                    Ok(PeerViews {
+                        output: self.carried(phase, output(&peer.scratch))?,
+                        state: peer.comm.clone(),
+                    })
                 })
-                .collect(),
-        }
+                .collect::<Result<_, String>>()?,
+        })
     }
 }
 
@@ -624,6 +641,7 @@ mod tests {
         };
         let peers = [buffers.clone()];
         let lowering = Lowering {
+            prefill_row_origin: None,
             shape: &shape,
             ops: &ops,
             buffers: &buffers,
@@ -705,5 +723,52 @@ mod tests {
         let head = launches.last().unwrap();
         assert_eq!(head.0, "head");
         assert_eq!(head.1[..3], [even, pre_odd, one(scratch.head_collapsed)]);
+
+        let part = Lowering {
+            prefill_row_origin: Some(4096),
+            ..lowering
+        };
+        let phase = Phase::Prefill { rows: 4095 };
+        let calls = part.mix(phase, 0, Sublayer::Attention).unwrap().unwrap();
+        let spans = calls[0]
+            .launch
+            .arguments
+            .0
+            .iter()
+            .map(|arg| {
+                let Argument::DeviceBuffer(id) = arg else {
+                    panic!("expected buffer")
+                };
+                calls[0].launch.bindings.get(*id).unwrap()
+            })
+            .collect::<Vec<_>>();
+        // Carry A's streams and mixer coefficients across B's compute,
+        // while the collapsed activation keeps local scratch coordinates.
+        for (at, plane) in [
+            (0, scratch.streams),
+            (4, scratch.first_pre),
+            (6, scratch.pre),
+            (7, scratch.post),
+            (8, scratch.comb),
+        ] {
+            assert_eq!(
+                spans[at],
+                crate::buffers::row_range(plane, 4096, 4095).unwrap()
+            );
+        }
+        assert_eq!(spans[5], rows(scratch.collapsed, 4095));
+        assert_eq!(
+            part.carried(Phase::Decode(1), scratch.streams).unwrap(),
+            even
+        );
+        assert_eq!(
+            part.carried(Phase::Verify { rows: 1, items: 1 }, scratch.streams)
+                .unwrap(),
+            even
+        );
+        assert!(
+            part.carried(Phase::Prefill { rows: 4097 }, scratch.streams)
+                .is_err()
+        );
     }
 }

@@ -193,6 +193,7 @@ mod tests {
 
         fn lowering(&self, rank: u32, head_rows: u32) -> Lowering<'_> {
             Lowering {
+                prefill_row_origin: None,
                 shape: &self.shape,
                 ops: &self.ops,
                 buffers: &self.peers[rank as usize],

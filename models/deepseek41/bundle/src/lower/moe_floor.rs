@@ -171,6 +171,7 @@ mod tests {
             let lower = |b: &crate::buffers::RankBuffers| {
                 let peers = [b.clone()];
                 let lowering = Lowering {
+                    prefill_row_origin: None,
                     shape: &shape,
                     ops: &ops,
                     buffers: b,

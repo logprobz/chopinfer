@@ -188,6 +188,7 @@ mod tests {
                     let lower = |op: &Ops, buffers: &crate::buffers::RankBuffers| {
                         let peers = [buffers.clone()];
                         let lowering = Lowering {
+                            prefill_row_origin: None,
                             shape: &shape,
                             ops: op,
                             buffers,

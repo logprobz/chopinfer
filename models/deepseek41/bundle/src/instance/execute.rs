@@ -293,6 +293,7 @@ impl Instance {
             }
             let inputs = DeviceInputs::within(self.arenas[arena][rank], layout);
             let lowering = Lowering {
+                prefill_row_origin: None,
                 shape: &self.config.shape,
                 ops: &self.ops,
                 buffers,

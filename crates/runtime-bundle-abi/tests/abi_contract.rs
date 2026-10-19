@@ -74,6 +74,29 @@ fn c_header_and_rust_layouts_match() {
 
     assert_layout(
         &c_layouts,
+        "prefill-policy",
+        size_of::<abi::prefill::BundlePrefillPolicyV1>(),
+        &[
+            offset_of!(abi::prefill::BundlePrefillPolicyV1, struct_size),
+            offset_of!(abi::prefill::BundlePrefillPolicyV1, status),
+            offset_of!(abi::prefill::BundlePrefillPolicyV1, chunk_tokens),
+            offset_of!(abi::prefill::BundlePrefillPolicyV1, reserved),
+        ],
+    );
+    assert_layout(
+        &c_layouts,
+        "prefill-api",
+        size_of::<abi::prefill::BundlePrefillApiV1>(),
+        &[
+            offset_of!(abi::prefill::BundlePrefillApiV1, struct_size),
+            offset_of!(abi::prefill::BundlePrefillApiV1, abi_version),
+            offset_of!(abi::prefill::BundlePrefillApiV1, describe_prefill_v1),
+            offset_of!(abi::prefill::BundlePrefillApiV1, execute_prefill_v1),
+        ],
+    );
+
+    assert_layout(
+        &c_layouts,
         "byte-view",
         size_of::<abi::BundleByteViewV1>(),
         &[
@@ -2580,6 +2603,59 @@ abi::export_bundle_api_v1!(
     fixture_destroy,
 );
 
+abi::export_prefill_api_v1!(
+    FIXTURE_PREFILL_API,
+    |handle| if handle == HANDLE {
+        abi::prefill::BundlePrefillPolicyV1::guaranteed(2048)
+    } else {
+        abi::prefill::BundlePrefillPolicyV1::failure(abi::BundleStatusV1::StaleHandle)
+    },
+    |handle, request: &[u8], sink: &mut ExecuteResultSinkV1| {
+        match request.strip_prefix(b"negotiated:") {
+            Some(original) => fixture_execute(handle, original, sink),
+            None => abi::BundleStatusV1::InvalidArgument,
+        }
+    },
+);
+
+#[test]
+fn optional_prefill_keeps_legacy_execute_and_transaction_guards() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    reset_calls();
+    let mut old = fixture_api().create(fixture_table(), &[]).unwrap();
+    assert_eq!(old.prefill_policy().unwrap().chunk_tokens, 0);
+    assert!(
+        old.execute_prefill(b"negotiated:a", &mut fixture_sink())
+            .is_err()
+    );
+    old.execute(b"a", &mut fixture_sink()).unwrap();
+    old.commit().unwrap();
+    old.destroy().unwrap();
+
+    reset_calls();
+    let api = fixture_api().with_prefill_api(FIXTURE_PREFILL_API).unwrap();
+    assert_eq!(api.raw().struct_size, fixture_raw_api().struct_size);
+    let mut instance = api.create(fixture_table(), &[]).unwrap();
+    assert_eq!(instance.prefill_policy().unwrap().chunk_tokens, 2048);
+    assert_eq!(
+        instance.execute_prefill(b"a", &mut fixture_sink()),
+        Err(BundleAbiError::Status(abi::BundleStatusV1::InvalidArgument))
+    );
+    let mut sink = fixture_sink();
+    instance
+        .execute_prefill(b"negotiated:a", &mut sink)
+        .unwrap();
+    assert_eq!(sink.rows[0].logit_bits(), FIXTURE_LOGIT_BITS);
+    assert_eq!(
+        instance.execute(b"a", &mut fixture_sink()),
+        Err(BundleAbiError::Lifecycle("execute"))
+    );
+    instance.commit().unwrap();
+    instance.execute(b"a", &mut fixture_sink()).unwrap();
+    instance.cancel().unwrap();
+    instance.destroy().unwrap();
+}
+
 fn fixture_create(
     host_services: HostServicesV1,
     configuration: &[u8],
@@ -3796,6 +3872,8 @@ int main(void) {
   printf("prefix-state %zu %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_prefix_state_v1), P(chop_bundle_prefix_state_v1, struct_size), P(chop_bundle_prefix_state_v1, reserved), P(chop_bundle_prefix_state_v1, request_id), P(chop_bundle_prefix_state_v1, tokens), P(chop_bundle_prefix_state_v1, token_ids), P(chop_bundle_prefix_state_v1, pages));
   printf("api-prefix-cache %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_api_with_prefix_cache_v1), P(chop_bundle_api_with_prefix_cache_v1, base), P(chop_bundle_api_with_prefix_cache_v1, describe_prefix_state_v1), P(chop_bundle_api_with_prefix_cache_v1, capture_prefix_state_v1), P(chop_bundle_api_with_prefix_cache_v1, restore_prefix_state_v1));
   printf("api-prefix-state-slot %zu %zu %zu\n", sizeof(chop_bundle_api_with_prefix_state_slot_v1), P(chop_bundle_api_with_prefix_state_slot_v1, base), P(chop_bundle_api_with_prefix_state_slot_v1, restore_prefix_state_in_slot_v1));
+  printf("prefill-policy %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_prefill_policy_v1), P(chop_bundle_prefill_policy_v1, struct_size), P(chop_bundle_prefill_policy_v1, status), P(chop_bundle_prefill_policy_v1, chunk_tokens), P(chop_bundle_prefill_policy_v1, reserved));
+  printf("prefill-api %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_prefill_table_v1), P(chop_bundle_prefill_table_v1, struct_size), P(chop_bundle_prefill_table_v1, abi_version), P(chop_bundle_prefill_table_v1, describe_prefill_v1), P(chop_bundle_prefill_table_v1, execute_prefill_v1));
   printf("weight-plan-sink %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_weight_plan_sink_v1), P(chop_bundle_weight_plan_sink_v1, struct_size), P(chop_bundle_weight_plan_sink_v1, layout), P(chop_bundle_weight_plan_sink_v1, context), P(chop_bundle_weight_plan_sink_v1, emit), P(chop_bundle_weight_plan_sink_v1, emit_error));
   printf("weight-transform-call %zu %zu %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_weight_transform_call_v1), P(chop_bundle_weight_transform_call_v1, struct_size), P(chop_bundle_weight_transform_call_v1, transform), P(chop_bundle_weight_transform_call_v1, params), P(chop_bundle_weight_transform_call_v1, sources), P(chop_bundle_weight_transform_call_v1, source_count), P(chop_bundle_weight_transform_call_v1, output_offset), P(chop_bundle_weight_transform_call_v1, output));
   printf("frontend-sink %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_frontend_sink_v1), P(chop_bundle_frontend_sink_v1, struct_size), P(chop_bundle_frontend_sink_v1, layout), P(chop_bundle_frontend_sink_v1, context), P(chop_bundle_frontend_sink_v1, emit), P(chop_bundle_frontend_sink_v1, emit_error));

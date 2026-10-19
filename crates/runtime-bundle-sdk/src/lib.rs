@@ -11,6 +11,7 @@ pub mod diagnostic;
 mod host;
 pub mod modalities;
 pub mod native_note;
+pub mod prefill;
 pub mod rank_index;
 pub mod taps;
 mod transaction;

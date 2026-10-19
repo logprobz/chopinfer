@@ -10,6 +10,7 @@ pub mod frontend;
 pub mod frontend_document;
 mod host_services;
 mod loader;
+pub mod prefill;
 mod trampoline;
 pub mod weight_plan;
 
@@ -3179,6 +3180,7 @@ fn validate_host_services(raw: &BundleHostServicesV1) -> Result<(), BundleAbiErr
 #[derive(Clone, Copy)]
 pub struct BundleApiV1 {
     raw: BundleRawApiV1,
+    prefill: Option<prefill::BundlePrefillApiV1>,
     device_results: Option<device_results::BundleExecuteDeviceResultsFnV1>,
     retire_request_v1: Option<BundleRetireRequestFnV1>,
     commit_accepted_v1: Option<BundleCommitAcceptedFnV1>,
@@ -3187,6 +3189,14 @@ pub struct BundleApiV1 {
 }
 
 impl BundleApiV1 {
+    pub fn with_prefill_api(
+        mut self,
+        api: prefill::BundlePrefillApiV1,
+    ) -> Result<Self, BundleAbiError> {
+        api.validate()?;
+        self.prefill = Some(api);
+        Ok(self)
+    }
     pub fn with_device_results_api(
         mut self,
         api: device_results::BundleDeviceResultsApiV1,
@@ -3216,6 +3226,7 @@ impl BundleApiV1 {
         }
         Ok(Self {
             raw,
+            prefill: None,
             device_results: None,
             retire_request_v1: None,
             commit_accepted_v1: None,
@@ -3502,6 +3513,36 @@ impl<S: LogitsRowSinkV1> LogitsRowSinkV1 for ObservedExecuteSinkV1<'_, S> {
 }
 
 impl BundleInstanceV1 {
+    /// A bundle's optional instance-specific scheduling declaration. Older
+    /// bundles return the disabled policy without another native call.
+    pub fn prefill_policy(&self) -> Result<prefill::BundlePrefillPolicyV1, BundleAbiError> {
+        if self.is_poisoned() {
+            return Err(BundleAbiError::Poisoned);
+        }
+        let Some(api) = self.api.prefill else {
+            return Ok(prefill::BundlePrefillPolicyV1::disabled());
+        };
+        let policy = api.describe_prefill_v1.expect("validated callback")(self.handle);
+        policy.validate()?;
+        Ok(policy)
+    }
+
+    /// Execute the separate guaranteed-prefill wire envelope through the
+    /// same lifecycle and refusal tracking as ordinary execution.
+    pub fn execute_prefill<S: LogitsRowSinkV1>(
+        &mut self,
+        request: &[u8],
+        sink: &mut S,
+    ) -> Result<(), BundleAbiError> {
+        let extension = self
+            .api
+            .prefill
+            .ok_or(BundleAbiError::MissingApiCallback("execute_prefill_v1"))?;
+        let mut api = self.api;
+        api.raw.execute = extension.execute_prefill_v1;
+        api.device_results = None;
+        self.execute_with_api(api, request, sink)
+    }
     #[must_use]
     pub const fn supports_device_results(&self) -> bool {
         self.api.supports_device_results()
@@ -3553,6 +3594,15 @@ impl BundleInstanceV1 {
         request: &[u8],
         result_sink: &mut S,
     ) -> Result<(), BundleAbiError> {
+        self.execute_with_api(self.api, request, result_sink)
+    }
+
+    fn execute_with_api<S: LogitsRowSinkV1>(
+        &mut self,
+        api: BundleApiV1,
+        request: &[u8],
+        result_sink: &mut S,
+    ) -> Result<(), BundleAbiError> {
         self.last_execute_refusal = None;
         if self.is_poisoned() {
             return Err(BundleAbiError::Poisoned);
@@ -3565,7 +3615,7 @@ impl BundleInstanceV1 {
             sink: result_sink,
             emitted: false,
         };
-        let result = self.api.execute_handle(self.handle, request, &mut sink);
+        let result = api.execute_handle(self.handle, request, &mut sink);
         let (service_called, diagnostic) = self.host_services().end_execute();
         if result == Err(BundleAbiError::Status(BundleStatusV1::InvalidArgument))
             && !service_called

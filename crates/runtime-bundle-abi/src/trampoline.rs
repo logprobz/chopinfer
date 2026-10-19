@@ -3384,6 +3384,51 @@ pub unsafe fn dispatch_bundle_execute_v1(
     })
 }
 
+/// Export an optional scheduling declaration without changing the legacy
+/// bundle entry table or execute signature.
+#[macro_export]
+macro_rules! export_prefill_api_v1 {
+    ($table:ident, $describe:expr, $execute:expr $(,)?) => {
+        extern "C" fn __bundle_describe_prefill_v1(
+            handle: $crate::BundleHandleV1,
+        ) -> $crate::prefill::BundlePrefillPolicyV1 {
+            ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| ($describe)(handle)))
+                .unwrap_or_else(|_| {
+                    $crate::prefill::BundlePrefillPolicyV1::failure(
+                        $crate::BundleStatusV1::InternalError,
+                    )
+                })
+        }
+
+        // SAFETY-REVIEWED: the reviewed execute decoder bounds both borrowed records.
+        #[allow(unsafe_code)]
+        unsafe extern "C" fn __bundle_execute_prefill_v1(
+            handle: $crate::BundleHandleV1,
+            request: $crate::BundleByteViewV1,
+            sink: $crate::BundleExecuteResultSinkV1,
+        ) -> $crate::BundleStatusV1 {
+            // SAFETY-REVIEWED: the native caller lends these exact execute records.
+            unsafe { $crate::dispatch_bundle_execute_v1(handle, request, sink, $execute) }
+        }
+
+        pub static $table: $crate::prefill::BundlePrefillApiV1 =
+            $crate::prefill::BundlePrefillApiV1 {
+                struct_size: ::core::mem::size_of::<$crate::prefill::BundlePrefillApiV1>() as u32,
+                abi_version: $crate::BUNDLE_ABI_VERSION_V1,
+                describe_prefill_v1: Some(__bundle_describe_prefill_v1),
+                execute_prefill_v1: Some(__bundle_execute_prefill_v1),
+            };
+
+        // SAFETY-REVIEWED: this optional C export returns a static immutable table.
+        #[allow(unsafe_code)]
+        #[unsafe(no_mangle)]
+        pub extern "C" fn chop_bundle_prefill_api_v1() -> *const $crate::prefill::BundlePrefillApiV1
+        {
+            &$table
+        }
+    };
+}
+
 /// Decodes the lent values one native custom-operation entry received.
 ///
 /// This is the callback half of the custom-operation boundary, for an operation

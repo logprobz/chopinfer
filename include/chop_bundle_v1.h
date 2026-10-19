@@ -1871,6 +1871,41 @@ typedef const chop_bundle_frontend_table_v1 *(*chop_bundle_frontend_api_fn_v1)(v
 
 const chop_bundle_frontend_table_v1 *chop_bundle_frontend_api_v1(void);
 
+/* Optional prefill contract. Existing entry tables and batch records keep
+ * their bytes. An older host ignores this export and calls legacy execute,
+ * which must retain full-row behavior. Zero chunk_tokens disables the policy.
+ * An enabled host schedules eligible unscored text prefills to the next
+ * absolute chunk multiple or prompt end and permits prefill captures there.
+ * Each such end retains complete state; decode/verify boundaries stay complete.
+ * Scored and media requests may use legacy complete-row execution.
+ *
+ * execute_prefill_v1 receives a separate little-endian envelope:
+ * 16 bytes "chop-prefill-v1\0", U32 original batch byte count, U32 boundary
+ * count, the unchanged V1-V5 batch bytes, then 32 bytes per boundary:
+ * U64 request_id, U64 prompt_tokens, U64 chunk_end, U32 chunk_tokens,
+ * U32 reserved (zero). Boundary IDs are unique prefill items; chunk_end must
+ * equal the append end and min(next absolute chunk multiple, prompt_tokens).
+ * Missing boundaries select full-row execution. Both callbacks use the
+ * ordinary instance lifecycle; policy queries leave request state unchanged. */
+typedef struct chop_bundle_prefill_policy_v1 {
+  uint32_t struct_size;
+  chop_bundle_status_v1 status;
+  uint32_t chunk_tokens;
+  uint32_t reserved;
+} chop_bundle_prefill_policy_v1;
+
+typedef chop_bundle_prefill_policy_v1 (*chop_bundle_describe_prefill_fn_v1)(
+    chop_bundle_handle_v1 handle);
+
+typedef struct chop_bundle_prefill_table_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  chop_bundle_describe_prefill_fn_v1 describe_prefill_v1;
+  chop_bundle_execute_fn_v1 execute_prefill_v1;
+} chop_bundle_prefill_table_v1;
+
+const chop_bundle_prefill_table_v1 *chop_bundle_prefill_api_v1(void);
+
 #ifdef __cplusplus
 }
 #endif

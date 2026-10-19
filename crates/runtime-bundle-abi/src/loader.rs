@@ -249,6 +249,7 @@ pub struct BundleLibraryV1 {
     /// The optional chat frontend export.
     frontend: Option<crate::BundleFrontendApiFnV1>,
     device_results: Option<crate::device_results::BundleGetDeviceResultsApiFnV1>,
+    prefill: Option<crate::prefill::BundleGetPrefillApiFnV1>,
 }
 
 impl BundleLibraryV1 {
@@ -351,6 +352,10 @@ impl BundleLibraryV1 {
                     crate::device_results::BundleGetDeviceResultsApiFnV1,
                 >(symbol)
             });
+        // SAFETY-REVIEWED: this exact optional export has the V1 C getter signature.
+        let prefill = optional(crate::prefill::PREFILL_API_SYMBOL_V1).map(|symbol| unsafe {
+            std::mem::transmute::<*mut c_void, crate::prefill::BundleGetPrefillApiFnV1>(symbol)
+        });
         Ok(Self {
             api,
             library,
@@ -358,6 +363,7 @@ impl BundleLibraryV1 {
             weight_transform,
             frontend,
             device_results,
+            prefill,
         })
     }
 
@@ -468,7 +474,7 @@ impl BundleLibraryV1 {
         configuration: &[u8],
     ) -> Result<LoadedBundleInstanceV1, BundleAbiError> {
         let api = self
-            .api
+            .api_with_prefill()?
             .with_device_results_api(self.validate_device_results_api_v1()?)?;
         Ok(LoadedBundleInstanceV1 {
             instance: api.create(host_services, configuration)?,
@@ -481,11 +487,34 @@ impl BundleLibraryV1 {
         host_services: HostServicesTableV1,
         configuration: &[u8],
     ) -> Result<LoadedBundleInstanceV1, BundleAbiError> {
-        let instance = self.api.create(host_services, configuration)?;
+        let instance = self
+            .api_with_prefill()?
+            .create(host_services, configuration)?;
         Ok(LoadedBundleInstanceV1 {
             instance,
             library: Arc::clone(&self.library),
         })
+    }
+
+    fn api_with_prefill(&self) -> Result<BundleApiV1, BundleAbiError> {
+        let Some(getter) = self.prefill else {
+            return Ok(self.api);
+        };
+        // SAFETY-REVIEWED: the loaded native module owns the returned immutable table.
+        let pointer = unsafe { getter() };
+        if pointer.is_null() {
+            return Err(BundleAbiError::InvalidHandle);
+        }
+        // SAFETY-REVIEWED: only the fixed table header is read before its size is checked.
+        let header = unsafe { pointer.cast::<BundleApiHeaderV1>().read() };
+        crate::validate_table_header(
+            "prefill API",
+            header.struct_size,
+            std::mem::size_of::<crate::prefill::BundlePrefillApiV1>() as u32,
+            header.abi_version,
+        )?;
+        // SAFETY-REVIEWED: the header covers the complete known table prefix.
+        self.api.with_prefill_api(unsafe { pointer.read() })
     }
 }
 
@@ -501,6 +530,17 @@ pub struct LoadedBundleInstanceV1 {
 }
 
 impl LoadedBundleInstanceV1 {
+    pub fn prefill_policy(&self) -> Result<crate::prefill::BundlePrefillPolicyV1, BundleAbiError> {
+        self.instance.prefill_policy()
+    }
+
+    pub fn execute_prefill<S: LogitsRowSinkV1>(
+        &mut self,
+        request: &[u8],
+        sink: &mut S,
+    ) -> Result<(), BundleAbiError> {
+        self.instance.execute_prefill(request, sink)
+    }
     #[must_use]
     pub const fn supports_device_results(&self) -> bool {
         self.instance.supports_device_results()

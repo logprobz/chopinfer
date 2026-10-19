@@ -896,6 +896,7 @@ fn journal_steps(host: &Rc<Host>) {
 /// repacking, measured weight prefetch and parallel ceil operations.
 /// Prefill uses valid candidate work, existing folds below 128 rows,
 /// staged MXFP8 tiles for full rows and measured exact F32 row buckets.
+/// Qualified retained mixed64 rows use paired native-key attention.
 /// Large-row dense ceil uses the qualified prefill warp counts. Prefill HC
 /// row tiles add a separate entry while small-row mixer paths stay unchanged.
 /// Measured F32 prefill adds eight compute handles and two modules per rank,
@@ -937,7 +938,7 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
-        (70247, 0x9f9e8078b4ae57ab),
+        (70247, 0xa3ce18af30a1b9d5),
     ),
     (
         "deepseek41-flash-tp4",

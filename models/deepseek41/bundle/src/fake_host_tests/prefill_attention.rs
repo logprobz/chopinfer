@@ -2,12 +2,57 @@
 use super::*;
 
 #[test]
+fn retained_prefill_uses_measured_pairs_and_the_original_merge() {
+    let trace = super::prefill_cache::composed_trace(0, false, true, false);
+    let attention = trace
+        .iter()
+        .filter(|line| {
+            line.starts_with("launch ")
+                && line.contains("h16_d512_mixed_normalized_s1_r64_prefill_reuse2_v1")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(attention.len(), 2 * 4 * 20);
+    for rows in (64..=2496).step_by(128) {
+        let grid = format!("grid_x: {}, grid_y: 2,", rows / 2);
+        let launches = attention
+            .iter()
+            .filter(|s| s.contains(&grid))
+            .collect::<Vec<_>>();
+        assert_eq!(launches.len(), 8, "retained rows={rows}");
+        assert!(
+            launches
+                .iter()
+                .all(|s| s.contains("block_x: 256,") && s.contains("shared_memory_bytes: 85504,"))
+        );
+        let merge_grid = format!("grid_x: {rows}, grid_y: 16,");
+        assert_eq!(
+            trace
+                .iter()
+                .filter(|s| s.starts_with("launch ")
+                    && s.contains("h16_d512_mixed_normalized_s1_r64_prefill_merge_v1")
+                    && s.contains(&merge_grid))
+                .count(),
+            8
+        );
+    }
+}
+
+#[test]
 fn paired_prefill_configures_shared_memory_and_keeps_unqualified_routes() {
-    for (ranks, layout, rows, paired) in [
-        (Ranks::TP4, KV_LAYOUTS[0], 8192, true),
-        (Ranks::TP4, KV_LAYOUTS[0], 8191, false),
-        (Ranks::TP4, KV_LAYOUTS[1], 8192, false),
-        (Ranks::TP2, KV_LAYOUTS[0], 8192, false),
+    for (ranks, layout, rows, route) in [
+        (Ranks::TP4, KV_LAYOUTS[0], 8192, 1),
+        (Ranks::TP4, KV_LAYOUTS[0], 8191, 0),
+        (Ranks::TP4, KV_LAYOUTS[1], 8192, 0),
+        (Ranks::TP2, KV_LAYOUTS[0], 8192, 0),
+        (Ranks::TP4, KV_LAYOUTS[0], 64, 2),
+        (Ranks::TP4, KV_LAYOUTS[0], 192, 2),
+        (Ranks::TP4, KV_LAYOUTS[0], 2496, 2),
+        (Ranks::TP4, KV_LAYOUTS[0], 65, 0),
+        (Ranks::TP4, KV_LAYOUTS[0], 128, 0),
+        (Ranks::TP4, KV_LAYOUTS[0], 2560, 0),
+        (Ranks::TP4, KV_LAYOUTS[0], 4096, 0),
+        (Ranks::TP4, KV_LAYOUTS[1], 64, 0),
+        (Ranks::TP2, KV_LAYOUTS[0], 64, 0),
     ] {
         let shape = Shape::new(&FLASH, ranks).unwrap();
         let host = FakeHost::new(shape, layout);
@@ -31,10 +76,12 @@ fn paired_prefill_configures_shared_memory_and_keeps_unqualified_routes() {
             .collect();
         assert_eq!(attention.len(), shape.ranks() as usize * 40);
         for line in &attention {
+            let paired =
+                route == 1 || (route == 2 && line.contains("_mixed_") && !line.contains("_p32_"));
             assert_eq!(line.contains("_reuse2_v1"), paired, "{line}");
             if paired {
                 assert!(
-                    line.contains("grid_x: 4096, grid_y: 2, grid_z: 1,"),
+                    line.contains(&format!("grid_x: {}, grid_y: 2, grid_z: 1,", rows / 2)),
                     "{line}"
                 );
                 assert!(line.contains("block_x: 256,"), "{line}");

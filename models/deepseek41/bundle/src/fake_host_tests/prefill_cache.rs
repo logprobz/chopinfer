@@ -240,7 +240,7 @@ fn decoded_prefill_routes_winning_offsets_and_preserves_merge() {
     );
 }
 
-fn composed_trace(mode: u8, dma: bool, skip: bool, cached: bool) -> Vec<String> {
+pub(super) fn composed_trace(mode: u8, dma: bool, skip: bool, cached: bool) -> Vec<String> {
     use crate::instance::execute::overlap::with_mode;
     use crate::ops::{with_bf16_gather, with_dma};
     use runtime_bundle_sdk::prefill::{Boundary, encode};
@@ -313,6 +313,7 @@ fn composed_trace(mode: u8, dma: bool, skip: bool, cached: bool) -> Vec<String> 
         }
         instance.commit().unwrap();
         let journal = host.device.journal.borrow();
+        assert_launches_fit_configured_shared(&journal, &shape.topology());
         let lines = &journal[from..];
         let attention = lines
             .iter()
@@ -339,12 +340,19 @@ fn composed_trace(mode: u8, dma: bool, skip: bool, cached: bool) -> Vec<String> 
             },
             "mode={mode} dma={dma} skip={skip} offset={offset}"
         );
-        if skip || mode == 2 {
+        if mode == 2 && !skip {
             assert!(
                 attention
                     .iter()
                     .any(|s| !s.contains("_decoded_") && !s.contains("_reuse2_"))
             );
+        }
+        if skip {
+            let retained = attention
+                .iter()
+                .filter(|s| s.contains("h16_d512_mixed_normalized_s1_r64_prefill_reuse2_v1"))
+                .count();
+            assert_eq!(retained, 4 * 20, "retained native-key attention");
         }
         assert!(lines.iter().any(|s| s.starts_with("launch ")
             && s.contains(if dma && !skip {

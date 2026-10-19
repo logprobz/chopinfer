@@ -61,7 +61,7 @@ pub fn prepare(
         return Ok(reference);
     };
     let mut info = reference.info().clone();
-    // Retain the reference symbols for smaller host grids. The merge and
+    // Retain the reference symbols for unqualified host grids. The merge and
     // numerical contract are unchanged; only input staging is different.
     info.symbols.push((
         sources_prefill::reuse_symbol(&entry, 2),
@@ -82,6 +82,21 @@ struct PairedPrefill {
     info: OpInfo,
     entry: sources::Entry,
 }
+
+fn qualified_rows(entry: &sources::Entry, rows: u32) -> bool {
+    rows == ROWS
+        || ((64..=2496).contains(&rows)
+            && rows % 128 == 64
+            && matches!(
+                entry.query,
+                LatentAttentionQuery::Attention {
+                    second_fp4_keys: true,
+                    page_size: 64,
+                    ..
+                }
+            ))
+}
+
 impl PreparedOp<LatentSourcesBuffers<View>> for PairedPrefill {
     fn info(&self) -> &OpInfo {
         &self.info
@@ -96,7 +111,7 @@ impl PreparedOp<LatentSourcesBuffers<View>> for PairedPrefill {
         // Validate through the reference before changing the attention plan.
         // Device live counts still mask graph replays, including empty tails.
         let mut launches = self.reference.launches(buffers, workspace, counts)?;
-        if counts.rows == ROWS {
+        if qualified_rows(&self.entry, counts.rows) {
             for launch in &mut launches {
                 if launch.symbol == self.entry.symbol() {
                     launch.symbol = sources_prefill::reuse_symbol(&self.entry, 2);

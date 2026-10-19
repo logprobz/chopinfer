@@ -52,3 +52,7 @@ path = "examples/sm120/build_lagged_split.rs"
 [[test]]
 name = "kernel_hc_split"
 path = "tests/sm120/kernel_hc_split.rs"
+
+[[example]]
+name = "build_fold_decode"
+path = "examples/sm120/build_fold_decode.rs"

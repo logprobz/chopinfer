@@ -129,9 +129,123 @@ pub fn catalog(g: &Geometry) -> Result<Vec<Entry>, String> {
 }
 
 pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
-    Ok(entries(g, ranks)?
+    let backend = entries(g, ranks)?
         .into_iter()
-        .fold(backend, Sm120::with_mxfp8_fold))
+        .fold(backend, Sm120::with_mxfp8_fold);
+    Ok(decode_entries(g, ranks)?
+        .into_iter()
+        .fold(backend, Sm120::with_mxfp8_fold_decode))
+}
+
+pub const DECODE_BUCKETS: [u32; 6] = [1, 2, 4, 8, 16, 32];
+pub const DECODE_FAMILY: &str = "mxfp8_fold_decode";
+
+#[derive(Clone, Debug)]
+pub struct DecodeRegistered {
+    pub projection: String,
+    pub operand: u32,
+    pub usage: OperationUse,
+    pub entry: kernels_sm120::gemm::mxfp8_fold_decode::Entry,
+}
+
+/// Bind every exact decode bucket to its declared projection. The same
+/// compiled entry supports all six buckets, with a separately prepared
+/// grid and workspace at each capacity. Prefill and verify keep v2.
+pub fn decode_registrations(
+    g: &Geometry,
+    ranks: u32,
+    rank: u32,
+) -> Result<Vec<DecodeRegistered>, String> {
+    use kernel_core::precision::ExecutionPhase;
+    use kernels_sm120::gemm::mxfp8_fold_decode::Entry as DecodeEntry;
+    let mut result = Vec::new();
+    for r in registrations(g, ranks, rank)?
+        .into_iter()
+        .filter(|r| r.usage.phase == ExecutionPhase::Decode)
+    {
+        let query = Mxfp8FoldGemmQuery {
+            m_capacity: 32,
+            ..r.entry.query
+        };
+        let q = query;
+        let symbol = format!(
+            "chop_deepseek41_mxfp8_decode_n{}_k{}_g{}_f32_v1",
+            q.n, q.k, q.groups
+        );
+        let entry = DecodeEntry::new(query, symbol, false).map_err(|e| e.to_string())?;
+        for capacity in DECODE_BUCKETS {
+            result.push(DecodeRegistered {
+                projection: r.projection.clone(),
+                operand: r.operand,
+                usage: OperationUse {
+                    capacity,
+                    ..r.usage
+                },
+                entry: entry.clone(),
+            });
+            if r.projection == "layer.shared.gate-up" && r.operand == 0 {
+                let paired = DecodeEntry::new(query, format!("{}_pair_v1", entry.symbol), true)
+                    .map_err(|e| e.to_string())?;
+                result.push(DecodeRegistered {
+                    projection: r.projection.clone(),
+                    operand: r.operand,
+                    usage: OperationUse {
+                        capacity,
+                        ..r.usage
+                    },
+                    entry: paired,
+                });
+            }
+        }
+    }
+    Ok(result)
+}
+
+pub fn decode_entries(
+    g: &Geometry,
+    ranks: u32,
+) -> Result<Vec<kernels_sm120::gemm::mxfp8_fold_decode::Entry>, String> {
+    let mut entries = BTreeMap::new();
+    for rank in 0..ranks {
+        for r in decode_registrations(g, ranks, rank)? {
+            if let Some(old) = entries.insert(r.entry.symbol.clone(), r.entry.clone())
+                && (old.query != r.entry.query || old.paired != r.entry.paired)
+            {
+                return Err("decode fold symbol collides across queries".into());
+            }
+        }
+    }
+    Ok(entries.into_values().collect())
+}
+
+pub fn decode_catalog(
+    g: &Geometry,
+) -> Result<Vec<kernels_sm120::gemm::mxfp8_fold_decode::Entry>, String> {
+    let mut all = BTreeMap::new();
+    for &ranks in admission::SUPPORTED_RANKS {
+        for entry in decode_entries(g, ranks)? {
+            all.insert(entry.symbol.clone(), entry);
+        }
+    }
+    Ok(all.into_values().collect())
+}
+
+pub fn decode_cubin_name(g: &Geometry) -> String {
+    format!("mxfp8_fold_decode_{}_sm120_v1", g.kernel_tag)
+}
+
+pub fn decode_cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {
+    geometries
+        .iter()
+        .map(|g| {
+            let spec = kernels_sm120::gemm::mxfp8_fold_decode::cubin_spec(
+                &decode_cubin_name(g),
+                &decode_catalog(g)?,
+            )
+            .map_err(|e| e.to_string())?;
+            Ok((DECODE_FAMILY, spec))
+        })
+        .collect()
 }
 
 /// The lock family of every geometry's fold cubin.

@@ -9,6 +9,60 @@ use model_deepseek41_contract::{admission, geometry, projections};
 use std::collections::BTreeSet;
 
 #[test]
+fn decode_uses_bind_every_bucket_and_pair_only_the_shared_operands() {
+    use kernel_core::precision::ExecutionPhase;
+    let specs = registration::decode_cubins(geometry::GEOMETRIES).unwrap();
+    assert!(
+        specs
+            .iter()
+            .all(|(family, _)| *family == registration::DECODE_FAMILY)
+    );
+    for g in geometry::GEOMETRIES {
+        let spec = &specs
+            .iter()
+            .find(|(_, s)| s.name == registration::decode_cubin_name(g))
+            .unwrap()
+            .1;
+        let catalog = registration::decode_catalog(g).unwrap();
+        assert_eq!(spec.entries.len(), catalog.len() * 3);
+        for &ranks in admission::SUPPORTED_RANKS {
+            let backend = registration::register(Sm120::new(), g, ranks).unwrap();
+            for r in registration::decode_registrations(g, ranks, 0).unwrap() {
+                assert_eq!(r.usage.phase, ExecutionPhase::Decode);
+                assert!(registration::DECODE_BUCKETS.contains(&r.usage.capacity));
+                let q = r.entry.query;
+                let op = if r.entry.paired {
+                    assert_eq!(r.projection, "layer.shared.gate-up");
+                    assert_eq!(r.operand, 0);
+                    backend
+                        .mxfp8_fold_gemm_pair(&q, Need::rows(r.usage.capacity))
+                        .unwrap()
+                        .info()
+                        .clone()
+                } else {
+                    backend
+                        .mxfp8_fold_gemm(&q, Need::rows(r.usage.capacity))
+                        .unwrap()
+                        .info()
+                        .clone()
+                };
+                assert_eq!(op.workspace, r.entry.workspace(r.usage.capacity).unwrap());
+                assert_eq!(op.symbols.len(), 3);
+                assert!(
+                    op.symbols
+                        .iter()
+                        .all(|(symbol, _)| spec.entries.iter().any(|e| e.symbol == *symbol))
+                );
+                if g.id == "flash" && ranks == 4 && r.projection == "layer.wkv" {
+                    let grid = r.entry.plans(r.usage.capacity).unwrap()[1].grid;
+                    assert!(grid.into_iter().product::<u32>() >= kernels_sm120::gemm::SM_COUNT);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn all_declared_fold_shapes_prepare_at_every_rank_count() {
     let mut prepared = 0;
     let mut geometries = BTreeSet::new();

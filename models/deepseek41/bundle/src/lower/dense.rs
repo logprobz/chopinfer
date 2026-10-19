@@ -107,7 +107,10 @@ impl Lowering<'_> {
             live_rows: self.inputs.live_tokens,
             status: rows_of(scratch.row_status),
         };
-        launches.extend(ops.project(id, phase.rows(), &views).map_err(error)?);
+        launches.extend(
+            ops.project(id, phase, &views, self.buffers.workspace)
+                .map_err(error)?,
+        );
         Ok(Some(launches))
     }
 }

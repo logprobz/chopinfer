@@ -23,6 +23,7 @@ use runtime_bundle_abi::DeviceBufferSpanV1;
 
 use super::moe::QuantizeViews;
 use super::{Asks, Bind, Lowered, exact};
+use crate::program::Phase;
 use crate::shape::Shape;
 
 /// The instruction path the dense projections declare: native block-scaled
@@ -205,6 +206,8 @@ pub(crate) struct DenseOps {
     quantizers: Vec<(QuantizedInput, Prepared<BlockQuantizeBuffers<View>>)>,
     /// Each projection's GEMM, by stage ID.
     gemms: Vec<(&'static str, Prepared<Mxfp8FoldGemmBuffers<View>>)>,
+    decode: Vec<(&'static str, u32, Prepared<Mxfp8FoldGemmBuffers<View>>)>,
+    paired: Vec<(u32, Prepared<[Mxfp8FoldGemmBuffers<View>; 2]>)>,
 }
 
 /// A step's spans of a dense projection: the activation codes and scales,
@@ -248,7 +251,38 @@ impl DenseOps {
                 Ok(((width, input), op))
             })
             .collect::<Result<_, Refused>>()?;
-        Ok(DenseOps { quantizers, gemms })
+        let mut decode = Vec::new();
+        let mut paired = Vec::new();
+        for dense in projections(shape) {
+            let query = Mxfp8FoldGemmQuery {
+                m_capacity: 32,
+                ..dense.query
+            };
+            for capacity in crate::sm120::mxfp8_fold::DECODE_BUCKETS {
+                let need =
+                    exact::need(capacity, exact::of_phase(Phase::Decode(capacity), capacity));
+                let op = asks.ask(
+                    format!("dense.{} decode {capacity}", dense.id),
+                    need,
+                    |need| backend.mxfp8_fold_gemm(&query, need),
+                )?;
+                decode.push((dense.id, capacity, op));
+                if dense.id == "moe.shared-gate" {
+                    let op = asks.ask(
+                        format!("dense.shared-pair decode {capacity}"),
+                        need,
+                        |need| backend.mxfp8_fold_gemm_pair(&query, need),
+                    )?;
+                    paired.push((capacity, op));
+                }
+            }
+        }
+        Ok(DenseOps {
+            quantizers,
+            gemms,
+            decode,
+            paired,
+        })
     }
 
     /// The quantization of `rows` rows of `width` columns of `input`.
@@ -282,14 +316,26 @@ impl DenseOps {
     pub(crate) fn project(
         &self,
         id: &str,
-        rows: u32,
+        phase: Phase,
         views: &GemmViews,
+        workspace: DeviceBufferSpanV1,
     ) -> Result<Vec<Lowered>, Refusal> {
-        let (_, op) = self
-            .gemms
-            .iter()
-            .find(|(of, _)| *of == id)
-            .ok_or(Refusal("DeepSeek V4.1 has no dense projection of this ID"))?;
+        let rows = phase.rows();
+        let op = if matches!(phase, Phase::Decode(_)) {
+            &self
+                .decode
+                .iter()
+                .find(|(of, capacity, _)| *of == id && *capacity == rows)
+                .ok_or(Refusal("DeepSeek V4.1 has no dense decode bucket"))?
+                .2
+        } else {
+            &self
+                .gemms
+                .iter()
+                .find(|(of, _)| *of == id)
+                .ok_or(Refusal("DeepSeek V4.1 has no dense projection of this ID"))?
+                .1
+        };
         let mut bind = Bind::default();
         let buffers = Mxfp8FoldGemmBuffers {
             activations: bind.view(views.activations),
@@ -301,7 +347,49 @@ impl DenseOps {
             status: bind.view(views.status),
             status_row_offset: 0,
         };
-        bind.launch(op, &buffers, Counts::rows(rows))
+        bind.launch_within(op, &buffers, workspace, Counts::rows(rows))
+    }
+
+    pub(crate) fn project_pair(
+        &self,
+        rows: u32,
+        views: &[GemmViews; 2],
+        workspace: DeviceBufferSpanV1,
+    ) -> Result<Vec<Lowered>, Refusal> {
+        let op = &self
+            .paired
+            .iter()
+            .find(|(capacity, _)| *capacity == rows)
+            .ok_or(Refusal("DeepSeek V4.1 has no paired dense decode bucket"))?
+            .1;
+        let [first, second] = views;
+        if first.activations != second.activations
+            || first.activation_scales != second.activation_scales
+            || first.live_rows != second.live_rows
+            || first.status != second.status
+        {
+            return Err(Refusal(
+                "paired dense projections require shared input spans",
+            ));
+        }
+        let mut bind = Bind::default();
+        let first = Mxfp8FoldGemmBuffers {
+            activations: bind.view(first.activations),
+            activation_scales: bind.view(first.activation_scales),
+            weights: bind.view(first.weights),
+            weight_scales: bind.view(first.weight_scales),
+            output: bind.view(first.output),
+            live_rows: bind.view(first.live_rows),
+            status: bind.view(first.status),
+            status_row_offset: 0,
+        };
+        let second = Mxfp8FoldGemmBuffers {
+            weights: bind.view(second.weights),
+            weight_scales: bind.view(second.weight_scales),
+            output: bind.view(second.output),
+            ..first
+        };
+        bind.launch_within(op, &[first, second], workspace, Counts::rows(rows))
     }
 }
 
@@ -311,6 +399,71 @@ mod tests {
     use bundle_runtime::geometry::Ranks;
     use kernel_core::contract::Validate;
     use model_deepseek41_contract::geometry::FLASH;
+
+    #[test]
+    fn decode_buckets_use_split_folds_and_prefill_keeps_the_original_entry() {
+        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+        let kernels = crate::Kernels::new(&shape).unwrap();
+        let ops = DenseOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default()).unwrap();
+        let span = |index, length| {
+            DeviceBufferSpanV1::new(
+                runtime_bundle_abi::BundleDeviceBufferHandleV1::from_parts(index, 1),
+                0,
+                length,
+            )
+        };
+        let workspace = span(99, 1 << 30);
+        for dense in projections(&shape) {
+            let q = dense.query;
+            for phase in [
+                Phase::Decode(1),
+                Phase::Decode(2),
+                Phase::Decode(4),
+                Phase::Decode(8),
+                Phase::Decode(16),
+                Phase::Decode(32),
+                Phase::Prefill { rows: 1 },
+                Phase::Prefill { rows: 64 },
+                Phase::Verify { rows: 6, items: 1 },
+            ] {
+                let rows = u64::from(phase.rows());
+                let views = GemmViews {
+                    activations: span(1, rows * u64::from(q.activation_row_stride)),
+                    activation_scales: span(2, rows * u64::from(q.activation_row_stride) / 32),
+                    weights: span(3, u64::from(q.groups) * u64::from(q.n) * u64::from(q.k)),
+                    weight_scales: span(
+                        4,
+                        u64::from(q.groups) * u64::from(q.n) * u64::from(q.k) / 32,
+                    ),
+                    output: span(5, rows * u64::from(q.groups) * u64::from(q.n) * 4),
+                    live_rows: span(6, 4),
+                    status: span(7, rows * 4),
+                };
+                let calls = ops.project(dense.id, phase, &views, workspace).unwrap();
+                if matches!(phase, Phase::Decode(_)) {
+                    assert_eq!(calls.len(), 3);
+                    assert!(calls[1].launch.symbol.contains("_partials_v1"));
+                } else {
+                    assert_eq!(calls.len(), 1);
+                    assert!(calls[0].launch.symbol.contains("mxfp8_fold_m8192"));
+                    assert_eq!(calls[0].launch.plan.grid[0], q.n.div_ceil(32));
+                }
+                if dense.id == "moe.shared-gate" && matches!(phase, Phase::Decode(_)) {
+                    let second = GemmViews {
+                        weights: span(8, views.weights.length),
+                        weight_scales: span(9, views.weight_scales.length),
+                        output: span(10, views.output.length),
+                        ..views
+                    };
+                    let calls = ops
+                        .project_pair(phase.rows(), &[views, second], workspace)
+                        .unwrap();
+                    assert_eq!(calls.len(), 3);
+                    assert!(calls.iter().all(|c| c.launch.symbol.contains("_pair_v1")));
+                }
+            }
+        }
+    }
 
     /// At four ranks each rank projects its 16 heads' queries, its two
     /// `wo_a` groups of 4096 K to 1024, and `wo_b` from their 2048 outputs

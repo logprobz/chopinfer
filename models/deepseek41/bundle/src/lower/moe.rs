@@ -144,6 +144,40 @@ impl Lowering<'_> {
         phase: Phase,
         layer: u32,
     ) -> Result<Option<Vec<Lowered>>, String> {
+        if let Phase::Decode(count) = phase {
+            let Some(ops) = &self.ops.dense else {
+                return Ok(None);
+            };
+            let scratch = &self.buffers.scratch;
+            let views = |tensor: &str, output| -> Result<crate::ops::GemmViews, String> {
+                Ok(crate::ops::GemmViews {
+                    activations: rows(scratch.normed_codes, count),
+                    activation_scales: rows(scratch.normed_scales, count),
+                    weights: self.buffers.view(&layer_view(
+                        layer,
+                        &format!("ffn.shared_experts.{tensor}.weight"),
+                    ))?,
+                    weight_scales: self.buffers.view(&layer_view(
+                        layer,
+                        &format!("ffn.shared_experts.{tensor}.scale"),
+                    ))?,
+                    output: rows(output, count),
+                    live_rows: self.inputs.live_tokens,
+                    status: rows(scratch.row_status, count),
+                })
+            };
+            return ops
+                .project_pair(
+                    count,
+                    &[
+                        views("w1", scratch.shared_gate)?,
+                        views("w3", scratch.shared_up)?,
+                    ],
+                    self.buffers.workspace,
+                )
+                .map(Some)
+                .map_err(|e| format!("shared gate/up of layer {layer}: {e}"));
+        }
         let mut launches = Vec::new();
         for id in ["moe.shared-gate", "moe.shared-up"] {
             let Some(lowered) = self.dense(phase, layer, id)? else {

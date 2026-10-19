@@ -1,5 +1,8 @@
 //! Candidate-only prefill tiles and their sharded bitwise gate.
-use super::f32_decode::{ComparisonWeights, Shard, compare, edges, prepared, random_operands};
+use super::f32_decode::{
+    ComparisonWeights, HostCase, Shard, check_poison_expansion, compare, edges, prepared,
+    random_operands,
+};
 use bundle_deepseek41::sm120::{
     f32_prefill as registration, fold_cubin_for_symbol, register_f32_projections,
 };
@@ -18,6 +21,7 @@ use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
     sync::OnceLock,
+    time::Instant,
 };
 
 const EDGE_CUBIN: &str = "f32_prefill_edges";
@@ -153,7 +157,7 @@ fn coverage() -> serde_json::Value {
         .sum();
     let production_cases = production.len() * ROWS.len();
     serde_json::json!({"production":production,"production_cases":production_cases,"edge_cases":edge_cases,
-        "bitwise_cases":production_cases+edge_cases,"timing_cases":production_cases,"launch_timings":production_cases*3,
+        "bitwise_cases":production_cases+edge_cases,"host_cases":production_cases+edge_cases,"poison_checks":2,"timing_cases":production_cases,"launch_timings":production_cases*3,
         "shards":2,"bytes_per_us":1600000,"winning_ratio":0.97,"serving_promotion":false})
 }
 
@@ -237,6 +241,7 @@ fn gpu_prefill_bitwise_and_timings() {
     println!();
     let mut shard = Shard::from_env().unwrap();
     kernel_harness::gpu_test_with(timing_cubins(), 4 << 30, |session| -> LabResult<()> {
+        check_poison_expansion(session)?;
         for g in GEOMETRIES {
             for tile in registration::TILE_FEATURES {
                 let bytes = std::fs::read(
@@ -245,24 +250,24 @@ fn gpu_prefill_bitwise_and_timings() {
                 .map_err(|e| e.to_string())?;
                 for old in registration::baseline_entries(g)? {
                     let q = old.query();
+                    let weights_start = Instant::now();
                     let (_, b) = random_operands(0, q.n, q.k, 711_359);
                     let baseline = fold_cubin_for_symbol(old.symbol())
                         .ok_or("missing baseline")?
                         .1;
                     let weights =
                         ComparisonWeights::prefill(session, &old, tile, &b, [baseline, &bytes])?;
+                    drop(b);
+                    println!(
+                        "F32_SETUP {} total_ms={}",
+                        label(&old, tile),
+                        weights_start.elapsed().as_secs_f64() * 1000.
+                    );
                     for rows in ROWS {
                         let Some(id) = shard.take() else { continue };
+                        let host_case = HostCase::new(format!("{} case={id}", label(&old, tile)));
                         let (a, _) = random_operands(rows, 0, q.k, 123_457 + rows);
-                        compare(
-                            session,
-                            &old,
-                            rows,
-                            &a,
-                            &weights,
-                            &format!("{} case={id}", label(&old, tile)),
-                            true,
-                        )?;
+                        compare(session, &old, rows, &a, &weights, &host_case, true)?;
                     }
                 }
             }
@@ -272,6 +277,7 @@ fn gpu_prefill_bitwise_and_timings() {
             for tile in registration::TILE_FEATURES {
                 if q.n == 65536 {
                     let Some(id) = shard.take() else { continue };
+                    let host_case = HostCase::new(format!("all_bf16_codes_tile{tile} case={id}"));
                     let b: Vec<_> = (0..=u16::MAX).map(bf16_to_f32).collect();
                     let weights =
                         ComparisonWeights::prefill(session, &old, tile, &b, [probe_bytes(); 2])?;
@@ -290,7 +296,7 @@ fn gpu_prefill_bitwise_and_timings() {
                             f32::NAN,
                         ],
                         &weights,
-                        &format!("all_bf16_codes_tile{tile} case={id}"),
+                        &host_case,
                         false,
                     )?;
                     continue;
@@ -298,6 +304,7 @@ fn gpu_prefill_bitwise_and_timings() {
                 for rows in EDGE_ROWS {
                     for witness in WITNESSES {
                         let Some(id) = shard.take() else { continue };
+                        let host_case = HostCase::new(format!("{witness:?}_tile{tile} case={id}"));
                         let (a, b) = cases::operands(&old, witness);
                         let weights = ComparisonWeights::prefill(
                             session,
@@ -312,12 +319,14 @@ fn gpu_prefill_bitwise_and_timings() {
                             rows,
                             &a[..rows as usize * q.k as usize],
                             &weights,
-                            &format!("{witness:?}_tile{tile} case={id}"),
+                            &host_case,
                             false,
                         )?;
                     }
                     for seed in 1..=4 {
                         let Some(id) = shard.take() else { continue };
+                        let host_case =
+                            HostCase::new(format!("late_fallback_tile{tile} case={id}"));
                         let (mut a, mut b) = random_operands(rows, q.n, q.k, seed * 123_457);
                         if q.weight == WeightFormat::F32 {
                             for (i, v) in b.iter_mut().enumerate() {
@@ -340,19 +349,13 @@ fn gpu_prefill_bitwise_and_timings() {
                             &b,
                             [probe_bytes(); 2],
                         )?;
-                        compare(
-                            session,
-                            &old,
-                            rows,
-                            &a,
-                            &weights,
-                            &format!("late_fallback_tile{tile} case={id}"),
-                            false,
-                        )?;
+                        compare(session, &old, rows, &a, &weights, &host_case, false)?;
                     }
                 }
                 if q.k == 129 {
                     let Some(id) = shard.take() else { continue };
+                    let host_case =
+                        HostCase::new(format!("exponent_boundaries_tile{tile} case={id}"));
                     let (mut a, b) = random_operands(32, q.n, q.k, 79);
                     let mut at = 0;
                     for sign in [0, 0x8000_0000] {
@@ -365,15 +368,7 @@ fn gpu_prefill_bitwise_and_timings() {
                     }
                     let weights =
                         ComparisonWeights::prefill(session, &old, tile, &b, [probe_bytes(); 2])?;
-                    compare(
-                        session,
-                        &old,
-                        32,
-                        &a,
-                        &weights,
-                        &format!("exponent_boundaries_tile{tile} case={id}"),
-                        false,
-                    )?;
+                    compare(session, &old, 32, &a, &weights, &host_case, false)?;
                 }
             }
         }

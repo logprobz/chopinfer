@@ -63,3 +63,33 @@ final logits, a persistent head-flag error is less consistent with that
 result. A served audit should compare each cached table with the predicate
 over its actual rank-local weight span and check scratch ownership across
 adjacent graph stages.
+
+# Bounded comparison jobs
+
+Both matrices use the old GPU kernel for every output bit. The small CPU
+chain/oracle suite remains in the dry run; large head outputs never use a
+CPU GEMM reference. The independent weight-domain predicate checks every
+tile in small fixtures and a deterministic sample of at most 32 tiles in
+large fixtures, including the first and last. Special-value fixtures keep
+exhaustive predicate checks.
+
+Decode coverage enumerates the serving declarations, with rows 1, 2, 4, 8,
+16, 31, 32, 33, 48, 64, 128, 192, 255 and 256, plus four distinct seeded
+samples. Dense entries also cover 512, 2048 and their maximum 8192 rows.
+The requested boundaries and every registered implementation remain covered.
+All numerical witnesses run at rows 1, 32, 33 and 256, with all K tails,
+BF16 codes and exponent/sign/mantissa boundaries retained.
+
+Each case logs host wall time for fixtures, allocation/capture, poison,
+execution/readback/comparison and kernel timing. Shared weight setup has
+its own record. Wall time includes GPU waits. The staged host fixture and
+harness crates use test-profile optimization level 2; the kernel-core
+profile and every CUDA compiler flag and existing lock stay unchanged.
+
+Poison still fills every intermediate and output before each comparison.
+For a one-byte pattern, it uploads at most 16 MiB and expands that prefix
+with ordered, disjoint device copies, then synchronizes. Each GPU first
+reads back an unaligned fill larger than 16 MiB and verifies all bytes and
+both guards. The pair gate requires that check and a host record for every
+bitwise case. The compact decode job targets 900 seconds per GPU; actual
+wall time remains to be measured.

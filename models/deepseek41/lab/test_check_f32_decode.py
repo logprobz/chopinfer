@@ -29,6 +29,9 @@ class TimingGate(unittest.TestCase):
         self.assertEqual(len(records(log())["TIMING"]), 1)
         check(log(), EXPECTED)
 
+    def test_marker_without_a_space_after_the_prefix_is_accepted(self):
+        check(log().replace("test projection_test ... ", "worker[0]:"), EXPECTED)
+
     def test_plain_records_are_also_accepted(self):
         check(log().replace("test projection_test ... ", ""), EXPECTED)
 
@@ -68,6 +71,37 @@ class TimingGate(unittest.TestCase):
     def test_unexecuted_test_fails(self):
         with self.assertRaisesRegex(ValueError, "did not execute"):
             check(log() + "skipping GPU test\n", EXPECTED)
+
+
+class HostTimingGate(unittest.TestCase):
+    def setUp(self):
+        self.expected = dict(EXPECTED, host_cases=1)
+        self.host = ("test prefix ... F32_HOST projection rows=48 fixture_ms=1 setup_ms=2 "
+                     "poison_ms=3 comparison_ms=4 timing_ms=5 total_ms=15.1\n")
+
+    def test_prefixed_host_time_passes(self):
+        check(log() + self.host, self.expected)
+
+    def test_poison_expansion_must_run(self):
+        expected = dict(self.expected, poison_checks=1)
+        with self.assertRaisesRegex(ValueError, "poison expansion"):
+            check(log() + self.host, expected)
+        check(log() + self.host + "F32_POISON device_expansion bytes=16777353 PASS\n", expected)
+
+    def test_missing_host_record_fails(self):
+        with self.assertRaisesRegex(ValueError, "HOST: expected"):
+            check(log(), self.expected)
+
+    def test_duplicate_or_wrong_case_fails(self):
+        with self.assertRaisesRegex(ValueError, "HOST: expected"):
+            check(log() + self.host * 2, self.expected)
+        with self.assertRaisesRegex(ValueError, "host record does not match"):
+            check(log() + self.host.replace("rows=48", "rows=64"), self.expected)
+
+    def test_invalid_or_inconsistent_host_time_fails(self):
+        for replacement in ["nan", "-1", "0"]:
+            with self.subTest(replacement=replacement), self.assertRaisesRegex(ValueError, "host time"):
+                check(log() + self.host.replace("total_ms=15.1", f"total_ms={replacement}"), self.expected)
 
 
 class ShardedGate(unittest.TestCase):

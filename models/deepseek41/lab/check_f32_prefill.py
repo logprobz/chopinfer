@@ -5,7 +5,7 @@ import json
 import math
 from pathlib import Path
 
-from check_f32_decode import records
+from check_f32_decode import check_host_times, records, write_host_times
 
 
 def check(texts, expected):
@@ -23,6 +23,7 @@ def check(texts, expected):
     for kind, key in (("BITWISE", "bitwise_cases"), ("TIMING", "timing_cases"), ("LAUNCH", "launch_timings")):
         if len(parsed[kind]) != expected[key]:
             raise ValueError(f"{kind}: expected {expected[key]}, found {len(parsed[kind])}")
+    check_host_times(parsed, expected)
     ids = [int(value["case"]) for _, value in parsed["BITWISE"]]
     if len(set(ids)) != len(ids) or set(ids) != set(range(expected["bitwise_cases"])):
         raise ValueError("case IDs are duplicated or incomplete")
@@ -73,6 +74,8 @@ def main():
     parser.add_argument("logs", nargs="+", type=Path)
     args = parser.parse_args()
     texts = [log.read_text() for log in args.logs]
+    for log, text in zip(args.logs, texts):
+        write_host_times(log, records(text))
     # Preserve every available timing even when correctness or completion fails.
     table = ["| Candidate | Rows | Old us | New us | Ratio | Weight floor us | New / floor |",
              "|---|---:|---:|---:|---:|---:|---:|"]

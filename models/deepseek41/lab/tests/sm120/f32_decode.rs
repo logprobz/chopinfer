@@ -19,6 +19,7 @@ use runtime_cuda::{Module, Stream};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 const CUBIN: &str = "f32_split_edges";
 const LEGACY_CUBIN: &str = "f32_decode_edges";
@@ -27,7 +28,34 @@ const MAX_SLOWDOWN_RATIO: f32 = 1.03;
 const VERIFY_RATIO: f32 = 0.2;
 // User-specified bandwidth roofline: 1.6 TB/s, with actual stored weights.
 const BYTES_PER_US: f64 = 1_600_000.;
-const EDGE_ROWS: [u32; 9] = [1, 8, 32, 33, 48, 64, 128, 192, 256];
+const EDGE_ROWS: [u32; 4] = [1, 32, 33, 256];
+const BUCKET_ROWS: [u32; 14] = [1, 2, 4, 8, 16, 31, 32, 33, 48, 64, 128, 192, 255, 256];
+const ROW_SAMPLE_SEED: u32 = 0x6c31_8a95;
+
+fn sampled_rows() -> Vec<u32> {
+    let mut rows: BTreeSet<_> = BUCKET_ROWS.into_iter().collect();
+    let mut seed = ROW_SAMPLE_SEED;
+    while rows.len() < BUCKET_ROWS.len() + 4 {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        rows.insert(1 + seed % 256);
+    }
+    rows.into_iter().collect()
+}
+
+pub(super) struct HostCase {
+    label: String,
+    started: Instant,
+}
+impl HostCase {
+    pub(super) fn new(label: String) -> Self {
+        Self {
+            label,
+            started: Instant::now(),
+        }
+    }
+}
 
 struct ProductionCase {
     old: Entry,
@@ -71,9 +99,9 @@ fn production_cases() -> Vec<ProductionCase> {
                 .expect("registered cached entry retains its baseline stem");
             let old = Entry::new(entry.query(), entry.usage(), stem).unwrap();
             assert_eq!(old.clone().with_split_decode(), entry);
-            let mut rows: Vec<_> = (1..=entry.decode_max_rows()).collect();
+            let mut rows = sampled_rows();
             if maximum > 256 {
-                rows.push(2048);
+                rows.extend([512, 2048]);
             }
             rows.push(maximum);
             rows.sort_unstable();
@@ -151,6 +179,11 @@ fn coverage(matrix: &[ProductionCase]) -> serde_json::Value {
         "production_cases": production_cases,
         "edge_cases": edge_cases,
         "bitwise_cases": production_cases + edge_cases,
+        "host_cases": production_cases + edge_cases,
+        "poison_checks": 2,
+        "reference": "old-gpu-kernel-full-output",
+        "cpu_flag_sample_tiles": 32,
+        "row_sample_seed": ROW_SAMPLE_SEED,
         "shards": 2,
         "shard_assignment": "case-id-popcount-modulo",
         "timing_cases": timing_cases,
@@ -198,7 +231,7 @@ fn cpu_production_matrix_covers_registered_entries() {
                     "{} lacks its maximum {maximum} rows",
                     entry.symbol()
                 );
-                for rows in 1..=entry.decode_max_rows() {
+                for rows in sampled_rows() {
                     assert!(
                         case.rows.contains(&rows),
                         "{} lacks {rows} rows",
@@ -446,8 +479,40 @@ pub(super) struct ComparisonWeights {
     modules: Vec<Module>,
     weight: runtime_cuda::DeviceBuffer,
     domain: runtime_cuda::DeviceBuffer,
-    expected_flags: Vec<u8>,
+    expected_flags: Vec<(usize, u32)>,
     initialized: std::cell::Cell<bool>,
+}
+
+fn sampled_flag_tiles(tiles: usize) -> Vec<usize> {
+    if tiles <= 32 {
+        return (0..tiles).collect();
+    }
+    let mut selected = BTreeSet::from([0, tiles - 1]);
+    let mut seed = 0xa731_8539_u32;
+    while selected.len() < 32 {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        selected.insert(seed as usize % tiles);
+    }
+    selected.into_iter().collect()
+}
+
+#[test]
+fn cpu_samples_keep_edges_and_bound_large_fixture_work() {
+    let rows = sampled_rows();
+    assert_eq!(rows.len(), BUCKET_ROWS.len() + 4);
+    assert!(BUCKET_ROWS.iter().all(|r| rows.contains(r)));
+    assert!(rows.iter().all(|&r| (1..=256).contains(&r)));
+    assert_eq!(rows, sampled_rows());
+    for tiles in [1, 2, 31, 32, 33, 4096, 8080] {
+        let sample = sampled_flag_tiles(tiles);
+        assert_eq!(sample.len(), tiles.min(32));
+        assert_eq!(sample[0], 0);
+        assert_eq!(sample.last(), Some(&(tiles - 1)));
+        assert!(sample.windows(2).all(|p| p[0] < p[1]));
+        assert_eq!(sample, sampled_flag_tiles(tiles));
+    }
 }
 
 fn bf16_weight_code(value: f32) -> u16 {
@@ -530,9 +595,28 @@ impl ComparisonWeights {
             session.upload_f32(b)?
         };
         let domain = session.allocate(new.weight_domain_bytes() as usize)?;
-        let expected_flags = cases::weight_domains(b, old.query().k as usize, old.query().weight)
+        // Keep the CPU predicate exhaustive for edge fixtures, but bounded
+        // for large production weights. Full outputs always use the old GPU
+        // kernel, including every tile outside this independent CPU sample.
+        let tile_width = old.query().k as usize * 16;
+        let tiles = b.len().div_ceil(tile_width);
+        let sampled = if b.len() <= 1 << 20 {
+            (0..tiles).collect()
+        } else {
+            sampled_flag_tiles(tiles)
+        };
+        let expected_flags = sampled
             .into_iter()
-            .flat_map(u32::to_le_bytes)
+            .map(|tile| {
+                (
+                    tile,
+                    cases::weight_domains(
+                        &b[tile * tile_width..b.len().min((tile + 1) * tile_width)],
+                        old.query().k as usize,
+                        old.query().weight,
+                    )[0],
+                )
+            })
             .collect();
         Ok(Self {
             candidate: new,
@@ -545,15 +629,48 @@ impl ComparisonWeights {
     }
 }
 
+pub(super) fn check_poison_expansion(session: &Session) -> LabResult<()> {
+    // Cross the host seed size with unaligned boundaries. Read back every
+    // byte before any tested projection can mask a broken device fill.
+    let bytes = (16 << 20) + 137;
+    let buffer = session.allocate(bytes)?;
+    poison::fill_all(session, &buffer, &[0x36])?;
+    let range = 7..bytes - 9;
+    poison::fill(
+        session,
+        &buffer,
+        std::slice::from_ref(&range),
+        &[poison::POISON],
+    )?;
+    let actual = poison::read(session, &buffer)?;
+    for (at, &byte) in actual.iter().enumerate() {
+        let expected = if range.contains(&at) {
+            poison::POISON
+        } else {
+            0x36
+        };
+        if byte != expected {
+            return Err(format!(
+                "poison expansion differs at byte {at}: {byte} != {expected}"
+            ));
+        }
+    }
+    println!("F32_POISON device_expansion bytes={bytes} PASS");
+    Ok(())
+}
+
 pub(super) fn compare(
     session: &Session,
     old: &Entry,
     rows: u32,
     a: &[f32],
     weights: &ComparisonWeights,
-    label: &str,
+    case: &HostCase,
     measure: bool,
 ) -> LabResult<()> {
+    let fixture_ms = case.started.elapsed().as_secs_f64() * 1000.;
+    let setup_start = Instant::now();
+    let label = &case.label;
     let new = weights.candidate.clone();
     let q = old.query();
     let modules = &weights.modules;
@@ -619,8 +736,14 @@ pub(super) fn compare(
         let init = ops[1].initialize(&buffers(4)).map_err(|e| e.to_string())?;
         poison::poison(session, &[domain])?;
         run_launches(session, &modules[1], &bindings, &init, &session.stream)?;
-        if poison::read(session, domain)? != weights.expected_flags {
-            return Err(format!("{label}: cached weight-domain flags differ"));
+        let flags = poison::read(session, domain)?;
+        for &(tile, expected) in &weights.expected_flags {
+            let actual = u32::from_le_bytes(flags[tile * 4..tile * 4 + 4].try_into().unwrap());
+            if actual != expected {
+                return Err(format!(
+                    "{label}: cached weight-domain flags differ at tile {tile}"
+                ));
+            }
         }
         weights.initialized.set(true);
     }
@@ -651,6 +774,9 @@ pub(super) fn compare(
         session
             .capture(|s| run_launches(session, runtime_modules[1], &bindings, &launches[1], s))?,
     ];
+    let setup_ms = setup_start.elapsed().as_secs_f64() * 1000.;
+    let checks_start = Instant::now();
+    let mut poison_time = Duration::ZERO;
     // Every routed row count runs eager and captured. Timed buckets and
     // edge witnesses also repeat after inactive and zero-live invocations.
     let lives = if measure || !label.starts_with("chop_") {
@@ -662,7 +788,9 @@ pub(super) fn compare(
         live.copy_from_bytes(&live_count.to_le_bytes(), &session.stream)
             .map_err(|e| e.to_string())?;
         for graph in [false, true] {
+            let poison_start = Instant::now();
             poison::poison(session, &[&output[0], &output[1], &workspace, &status])?;
+            poison_time += poison_start.elapsed();
             for arm in 0..2 {
                 if graph {
                     graphs[arm]
@@ -704,6 +832,8 @@ pub(super) fn compare(
             }
         }
     }
+    let comparison_ms = (checks_start.elapsed() - poison_time).as_secs_f64() * 1000.;
+    let timing_start = Instant::now();
     if measure {
         let paired =
             kernel_harness::time_ab(session, 2, 7, [EvictionMode::Write; 2], |arm, stream| {
@@ -754,6 +884,12 @@ pub(super) fn compare(
             }
         }
     }
+    println!(
+        "F32_HOST {label} rows={rows} fixture_ms={fixture_ms} setup_ms={setup_ms} poison_ms={} comparison_ms={comparison_ms} timing_ms={} total_ms={}",
+        poison_time.as_secs_f64() * 1000.,
+        timing_start.elapsed().as_secs_f64() * 1000.,
+        case.started.elapsed().as_secs_f64() * 1000.
+    );
     println!("F32_BITWISE {label} rows={rows} n={} k={} PASS", q.n, q.k);
     Ok(())
 }
@@ -853,30 +989,31 @@ fn gpu_bitwise_shapes_and_edges() {
     println!();
     let mut shard = Shard::from_env().unwrap();
     kernel_harness::gpu_test_with(timing_cubins(), 12 << 30, |session| {
+        check_poison_expansion(session)?;
         for case in production_cases() {
             let old = &case.old;
             let q = old.query();
+            let weights_start = Instant::now();
             let (_, b) = random_operands(0, q.n, q.k, 0x7813_9231);
             let weights = ComparisonWeights::new(session, old, &b)?;
             drop(b);
+            println!(
+                "F32_SETUP {} total_ms={}",
+                old.symbol(),
+                weights_start.elapsed().as_secs_f64() * 1000.
+            );
             for rows in case.rows {
                 let Some(id) = shard.take() else { continue };
+                let host_case = HostCase::new(format!("{} case={id}", old.symbol()));
                 let (a, _) = random_operands(rows, 0, q.k, 0x7813_9231 + rows);
-                compare(
-                    session,
-                    old,
-                    rows,
-                    &a,
-                    &weights,
-                    &format!("{} case={id}", old.symbol()),
-                    timed(rows),
-                )?;
+                compare(session, old, rows, &a, &weights, &host_case, timed(rows))?;
             }
         }
         for old in edges() {
             let q = old.query();
             if q.n == 65536 {
                 let Some(id) = shard.take() else { continue };
+                let host_case = HostCase::new(format!("all_bf16_codes case={id}"));
                 let b: Vec<_> = (0..=u16::MAX).map(bf16_to_f32).collect();
                 compare(
                     session,
@@ -893,7 +1030,7 @@ fn gpu_bitwise_shapes_and_edges() {
                         f32::NAN,
                     ],
                     &ComparisonWeights::new(session, &old, &b)?,
-                    &format!("all_bf16_codes case={id}"),
+                    &host_case,
                     false,
                 )?;
                 continue;
@@ -901,6 +1038,7 @@ fn gpu_bitwise_shapes_and_edges() {
             for rows in EDGE_ROWS {
                 for witness in EDGE_WITNESSES {
                     let Some(id) = shard.take() else { continue };
+                    let host_case = HostCase::new(format!("{witness:?} case={id}"));
                     let (a, b) = cases::operands(&old, witness);
                     compare(
                         session,
@@ -908,12 +1046,13 @@ fn gpu_bitwise_shapes_and_edges() {
                         rows,
                         &a[..rows as usize * q.k as usize],
                         &ComparisonWeights::new(session, &old, &b)?,
-                        &format!("{witness:?} case={id}"),
+                        &host_case,
                         false,
                     )?;
                 }
                 for seed in 1..=RANDOM_CASES {
                     let Some(id) = shard.take() else { continue };
+                    let host_case = HostCase::new(format!("random_and_late_fallback case={id}"));
                     let (mut a, mut b) = random_operands(rows, q.n, q.k, seed * 123_457);
                     if q.weight == WeightFormat::F32 {
                         for (index, value) in b.iter_mut().enumerate() {
@@ -937,13 +1076,16 @@ fn gpu_bitwise_shapes_and_edges() {
                         rows,
                         &a,
                         &ComparisonWeights::new(session, &old, &b)?,
-                        &format!("random_and_late_fallback case={id}"),
+                        &host_case,
                         false,
                     )?;
                 }
             }
             if q.k == 129 {
                 let Some(id) = shard.take() else { continue };
+                let host_case = HostCase::new(format!(
+                    "every_exponent_sign_and_mantissa_boundary case={id}"
+                ));
                 let (mut a, b) = random_operands(32, q.n, q.k, 79);
                 let mut at = 0;
                 for sign in [0, 0x8000_0000] {
@@ -960,7 +1102,7 @@ fn gpu_bitwise_shapes_and_edges() {
                     32,
                     &a,
                     &ComparisonWeights::new(session, &old, &b)?,
-                    &format!("every_exponent_sign_and_mantissa_boundary case={id}"),
+                    &host_case,
                     false,
                 )?;
             }

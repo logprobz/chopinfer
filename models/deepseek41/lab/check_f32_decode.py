@@ -10,12 +10,12 @@ import re
 
 MAX_RATIO = 1.03
 VERIFY_RATIO = 0.2
-RECORD = re.compile(r"(?:^|\s)(F32_(?:BITWISE|TIMING|LAUNCH) .*)$")
+RECORD = re.compile(r"(F32_(?:BITWISE|TIMING|LAUNCH|HOST|SETUP|POISON) .*)$")
 
 
 def records(text):
     """Libtest may put its test-name prefix before the first record."""
-    result = {kind: [] for kind in ("BITWISE", "TIMING", "LAUNCH")}
+    result = {kind: [] for kind in ("BITWISE", "TIMING", "LAUNCH", "HOST", "SETUP", "POISON")}
     for line in text.splitlines():
         match = RECORD.search(line)
         if not match:
@@ -34,6 +34,37 @@ def records(text):
     return result
 
 
+def check_host_times(parsed, expected):
+    if "poison_checks" in expected:
+        if len(parsed["POISON"]) != expected["poison_checks"] or not all(
+                v.get("passed") and int(v["bytes"]) > 16 << 20 for _, v in parsed["POISON"]):
+            raise ValueError("missing or failed poison expansion check")
+    if "host_cases" not in expected:
+        return
+    if len(parsed["HOST"]) != expected["host_cases"]:
+        raise ValueError(f"HOST: expected {expected['host_cases']}, found {len(parsed['HOST'])}")
+    key = lambda record: (record[0], record[1].get("case"), record[1]["rows"])
+    bitwise = {key(record) for record in parsed["BITWISE"]}
+    host = [key(record) for record in parsed["HOST"]]
+    if len(set(host)) != len(host) or set(host) != bitwise:
+        raise ValueError("host record does not match a bitwise case")
+    for _, value in parsed["HOST"]:
+        times = [float(value[k]) for k in
+                 ("fixture_ms", "setup_ms", "poison_ms", "comparison_ms", "timing_ms", "total_ms")]
+        if not all(math.isfinite(t) and t >= 0 for t in times) or times[-1] <= 0:
+            raise ValueError("invalid host time")
+        if times[-1] + 0.1 < sum(times[:-1]):
+            raise ValueError("inconsistent host time")
+
+
+def write_host_times(log, parsed):
+    """Keep wall-clock diagnostics even if a shard times out or the gate fails."""
+    log.with_suffix(".host.json").write_text(json.dumps({
+        "cases": parsed["HOST"], "weight_setup": parsed["SETUP"],
+        "note": "Host wall time includes GPU waits and device readback; it is not CPU utilization."
+    }, indent=2) + "\n")
+
+
 def check(text, expected):
     if "1 passed; 0 failed; 0 ignored" not in text:
         raise ValueError("GPU test did not pass")
@@ -44,6 +75,7 @@ def check(text, expected):
                       ("LAUNCH", "launch_timings")):
         if len(parsed[kind]) != expected[key]:
             raise ValueError(f"{kind}: expected {expected[key]}, found {len(parsed[kind])}")
+    check_host_times(parsed, expected)
     for _, value in parsed["BITWISE"]:
         if not value.get("passed"):
             raise ValueError("bitwise record did not pass")
@@ -114,6 +146,7 @@ def main():
     texts = [log.read_text() for log in args.logs]
     for log, text in zip(args.logs, texts):
         parsed = records(text)
+        write_host_times(log, parsed)
         table = ["| Entry | Rows | Old us | New us | New / old | Weight floor us | New / floor |",
                  "|---|---:|---:|---:|---:|---:|---:|"]
         for label, value in parsed["TIMING"]:

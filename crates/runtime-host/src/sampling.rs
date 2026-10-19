@@ -512,6 +512,8 @@ pub(crate) struct DeviceSamplingSession {
     reserved_vocabulary: Option<usize>,
     ordered_inputs: Option<PinnedUploadRing>,
     device_submissions: VecDeque<DeviceSubmission>,
+    next_device_submission: u64,
+    readback_submissions: BTreeMap<u64, u64>,
     device_failed: bool,
     readback: Option<crate::sampling_readback::SamplingReadback>,
 }
@@ -537,6 +539,7 @@ pub(crate) struct DeviceSampleTarget<'a> {
 }
 
 struct DeviceSubmission {
+    serial: u64,
     done: Option<Event>,
     _logits: DeviceBuffer,
     _output: DeviceBuffer,
@@ -798,6 +801,8 @@ impl DeviceSamplingSession {
             reserved_vocabulary: None,
             ordered_inputs: None,
             device_submissions: VecDeque::new(),
+            next_device_submission: 1,
+            readback_submissions: BTreeMap::new(),
             device_failed: false,
             readback: None,
         })
@@ -917,37 +922,53 @@ impl DeviceSamplingSession {
                 )?,
             );
         }
-        self.readback
+        let ticket = self
+            .readback
             .as_mut()
             .expect("readback exists")
-            .enqueue(source, offset, bytes, ready)
+            .enqueue(source, offset, bytes, ready)?;
+        let last = self
+            .device_submissions
+            .back()
+            .map_or(0, |submission| submission.serial);
+        self.readback_submissions.insert(ticket, last);
+        Ok(ticket)
     }
 
     pub(crate) fn discard_readback(&mut self, ticket: u64) -> SamplingResult<()> {
         self.readback
             .as_mut()
             .ok_or(BundleStatusV1::StaleHandle)?
-            .discard(ticket)
+            .discard(ticket)?;
+        // Discard fenced this private stream, including every earlier sampler.
+        self.device_submissions.clear();
+        self.readback_submissions.remove(&ticket);
+        Ok(())
     }
 
     pub(crate) fn collect_readback(&mut self, ticket: u64) -> SamplingResult<Vec<u8>> {
-        self.readback
+        let bytes = self
+            .readback
             .as_mut()
             .ok_or(BundleStatusV1::StaleHandle)?
-            .collect(ticket)
+            .collect(ticket)?;
+        // The readback event follows exactly this prefix on the private
+        // stream. Later submissions remain owned without an extra driver query.
+        let through = self
+            .readback_submissions
+            .remove(&ticket)
+            .ok_or(BundleStatusV1::StaleHandle)?;
+        while self
+            .device_submissions
+            .front()
+            .is_some_and(|submission| submission.serial <= through)
+        {
+            self.device_submissions.pop_front();
+        }
+        Ok(bytes)
     }
 
-    pub(crate) fn issue_to_device(
-        &mut self,
-        logits: &DeviceBuffer,
-        view: BundleLogitsViewV1,
-        items: &[&ModelBatchItem],
-        dispatch: SamplingDispatch,
-        target: DeviceSampleTarget<'_>,
-    ) -> SamplingResult<()> {
-        if self.device_failed || self.pending.is_some() {
-            return Err(BundleStatusV1::InvalidState);
-        }
+    pub(crate) fn retire_completed_device_submissions(&mut self) -> SamplingResult<()> {
         while let Some(submission) = self.device_submissions.front() {
             let ready = match &submission.done {
                 Some(done) => done.query().map_err(|_| {
@@ -961,11 +982,31 @@ impl DeviceSamplingSession {
             }
             self.device_submissions.pop_front();
         }
+        Ok(())
+    }
+
+    pub(crate) fn issue_to_device(
+        &mut self,
+        logits: &DeviceBuffer,
+        view: BundleLogitsViewV1,
+        items: &[&ModelBatchItem],
+        dispatch: SamplingDispatch,
+        target: DeviceSampleTarget<'_>,
+    ) -> SamplingResult<()> {
+        if self.device_failed || self.pending.is_some() {
+            return Err(BundleStatusV1::InvalidState);
+        }
+        self.retire_completed_device_submissions()?;
         if self.device_submissions.len() >= 64 {
             return Err(BundleStatusV1::ResourceExhausted);
         }
+        let serial = self.next_device_submission;
+        self.next_device_submission = serial
+            .checked_add(1)
+            .ok_or(BundleStatusV1::ResourceExhausted)?;
         // Retain before the first submission, including partial launch failures.
         self.device_submissions.push_back(DeviceSubmission {
+            serial,
             done: None,
             _logits: logits.clone(),
             _output: target.output.clone(),
@@ -2164,5 +2205,45 @@ mod device_metadata_tests {
                 encode_batch(&[&device], 8).unwrap().bytes
             );
         }
+    }
+}
+
+#[cfg(all(test, feature = "cuda-fake-driver-tests"))]
+mod device_submission_lifetime_tests {
+    use super::*;
+    use runtime_cuda::{Driver, fake_driver};
+
+    #[test]
+    fn successful_readback_retires_the_sampler_source_lease() {
+        fake_driver::reset();
+        let context = Driver::initialize()
+            .unwrap()
+            .retain_primary_context(0)
+            .unwrap();
+        let owner = context.stream().unwrap();
+        let pool = context.default_memory_pool().unwrap();
+        let logits = pool.allocate(&owner, 32).unwrap();
+        let output = pool.allocate(&owner, 256).unwrap();
+        owner.synchronize().unwrap();
+        let mut sampler = DeviceSamplingSession::new(context.clone()).unwrap();
+        let done = context.event().unwrap();
+        done.record(&sampler.stream).unwrap();
+        sampler.device_submissions.push_back(DeviceSubmission {
+            serial: 1,
+            done: Some(done),
+            _logits: logits.clone(),
+            _output: output.clone(),
+        });
+        let ready = context.event().unwrap();
+        ready.record(&sampler.stream).unwrap();
+        let ticket = sampler.enqueue_readback(&output, 0, 256, &ready).unwrap();
+        assert!(
+            logits.release().is_err(),
+            "the in-flight sampler owns logits"
+        );
+        sampler.collect_readback(ticket).unwrap();
+        assert!(sampler.device_submissions.is_empty());
+        logits.release().unwrap();
+        output.release().unwrap();
     }
 }

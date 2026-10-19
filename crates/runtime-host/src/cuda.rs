@@ -1221,6 +1221,11 @@ impl HostDeviceBackendV1 for CudaHostDeviceV1 {
     }
 
     fn release_device_buffer(&mut self, buffer: DeviceObjectV1) -> HostDeviceResultV1<()> {
+        // Result packets can finish on another rank. Retire only completed
+        // private-stream consumers before testing this allocation's ownership.
+        for sampler in self.samplers.values_mut() {
+            sampler.retire_completed_device_submissions()?;
+        }
         // An ordered upload into this buffer may still hold it.
         self.upload_rings
             .values_mut()

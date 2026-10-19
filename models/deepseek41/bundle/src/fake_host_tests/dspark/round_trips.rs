@@ -103,7 +103,11 @@ fn warm_cycle_host_boundary_inventory() {
                     .enumerate()
                     .filter_map(|(index, line)| line.starts_with("replay ").then_some(index))
                     .collect();
-                assert_eq!(before_hash.len(), 8, "one catch-up and one draft graph per rank");
+                assert_eq!(
+                    before_hash.len(),
+                    8,
+                    "one catch-up and one draft graph per rank"
+                );
                 let draft = before_hash[4];
                 let enqueue = execute
                     .iter()

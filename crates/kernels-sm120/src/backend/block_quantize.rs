@@ -270,6 +270,11 @@ mod tests {
         let query = base.query;
         let fields: Vec<Field<Entry>> = vec![
             (
+                "prefill_warps",
+                Class::Launch,
+                Box::new(|e| e.prefill_warps = 8),
+            ),
+            (
                 "parallel_groups",
                 Class::Launch,
                 Box::new(|e| e.parallel_groups = true),
@@ -293,7 +298,8 @@ mod tests {
                 query,
                 capacity,
                 symbol,
-                parallel_groups
+                parallel_groups,
+                prefill_warps
             }),
             fields,
             key,

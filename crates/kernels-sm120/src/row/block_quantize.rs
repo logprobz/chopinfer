@@ -20,6 +20,8 @@ pub struct Entry {
     pub symbol: String,
     /// Opt-in warp-parallel groups with a barrier before row output.
     pub parallel_groups: bool,
+    /// Prefill-only warp count, zero for the existing implementations.
+    pub prefill_warps: u32,
 }
 
 impl Entry {
@@ -33,6 +35,7 @@ impl Entry {
             capacity,
             symbol: symbol.into(),
             parallel_groups: false,
+            prefill_warps: 0,
         };
         entry.validate()?;
         Ok(entry)
@@ -45,8 +48,20 @@ impl Entry {
         Ok(self)
     }
 
+    /// Use a separately named prefill entry with bounded row parallelism.
+    pub fn prefill(mut self, warps: u32) -> Result<Self, Refusal> {
+        if ![4, 8, 16].contains(&warps) {
+            return Err(Refusal("prefill ceil requires 4, 8 or 16 warps"));
+        }
+        self.prefill_warps = warps;
+        self.validate()?;
+        Ok(self)
+    }
+
     pub fn threads(&self) -> u32 {
-        if self.parallel_groups {
+        if self.prefill_warps != 0 {
+            self.prefill_warps * 32
+        } else if self.parallel_groups {
             (self.query.width / 32).min(32) * 32
         } else {
             32
@@ -55,7 +70,14 @@ impl Entry {
 
     pub fn validate(&self) -> Result<(), Refusal> {
         self.query.validate()?;
-        if self.parallel_groups
+        if self.prefill_warps != 0
+            && (self.parallel_groups || ![4, 8, 16].contains(&self.prefill_warps))
+        {
+            return Err(Refusal(
+                "prefill ceil needs a separate 4, 8 or 16-warp entry",
+            ));
+        }
+        if (self.parallel_groups || self.prefill_warps != 0)
             && (!matches!(self.query.format, BlockQuantization::E4M3Ceil32 { .. })
                 || self.query.output != QuantizeOutput::Codes)
         {
@@ -125,10 +147,12 @@ impl Entry {
     }
 
     pub(crate) fn spec_with_shapes(&self, shapes: ShapeBinding) -> EntrySpec {
-        if self.parallel_groups {
+        if self.parallel_groups || self.prefill_warps != 0 {
             assert_eq!(shapes, ShapeBinding::Compiled);
         }
-        let engine = if self.parallel_groups {
+        let engine = if self.prefill_warps != 0 {
+            "block_quantize_prefill"
+        } else if self.parallel_groups {
             "block_quantize_parallel"
         } else {
             "block_quantize"
@@ -169,11 +193,16 @@ impl Entry {
         } else {
             (query.width, "")
         };
+        let prefill = if self.prefill_warps == 0 {
+            String::new()
+        } else {
+            format!(",{}", self.prefill_warps)
+        };
         EntrySpec::new(
             self.symbol.clone(),
             params,
             format!(
-                "chop::row::{engine}::run<{width},{format},{},{},{floor}u>(input,output,scales,live_rows,status,status_row_offset{extra});",
+                "chop::row::{engine}::run<{width},{format},{},{},{floor}u{prefill}>(input,output,scales,live_rows,status,status_row_offset{extra});",
                 query.input == DType::F32,
                 query.output == QuantizeOutput::Bf16
             ),
@@ -246,7 +275,9 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> Result<CubinSpec, Refusal> {
         include_dirs: vec![],
         headers: vec![format!(
             "#include \"{}\"",
-            if entries.iter().any(|e| e.parallel_groups) {
+            if entries.iter().any(|e| e.prefill_warps != 0) {
+                "row/ceil_prefill.cuh"
+            } else if entries.iter().any(|e| e.parallel_groups) {
                 "row/ceil_parallel.cuh"
             } else {
                 HEADER
@@ -290,4 +321,47 @@ pub fn lab_entries() -> Vec<Entry> {
         }
     }
     entries
+}
+
+#[cfg(test)]
+mod prefill_tests {
+    use super::*;
+    #[test]
+    fn prefill_warps_preserve_the_abi_and_validate_launch_bounds() {
+        let baseline = Entry::new(
+            BlockQuantizeQuery {
+                width: 32768,
+                input: DType::F32,
+                format: BlockQuantization::E4M3_CEIL32,
+                output: QuantizeOutput::Codes,
+            },
+            8192,
+            "chop_ceil_reference_v1",
+        )
+        .unwrap();
+        for warps in [4, 8, 16] {
+            let e = baseline.clone().prefill(warps).unwrap();
+            assert_eq!(e.spec().params, baseline.spec().params);
+            assert_eq!(e.invariance(), baseline.invariance());
+            for rows in [0, 1, 32, 1024, 2048, 8192] {
+                let p = e.plan(rows).unwrap();
+                assert_eq!(p.grid, [rows.max(1), 1, 1]);
+                assert_eq!(p.block, [warps * 32, 1, 1]);
+                assert_eq!(p.dynamic_shared_bytes, 0);
+                assert_eq!(p.cluster, [1, 1, 1]);
+                assert_eq!(p.workspace_bytes, 0);
+            }
+            assert!(e.plan(8193).is_err());
+            assert!(e.clone().parallel().is_err());
+        }
+        for warps in [0, 1, 2, 3, 32, 64] {
+            assert!(baseline.clone().prefill(warps).is_err());
+        }
+        let mut fake = baseline.clone();
+        fake.query.output = QuantizeOutput::Bf16;
+        assert!(fake.prefill(8).is_err());
+        let mut fp4 = baseline;
+        fp4.query.format = BlockQuantization::E2M1Ceil32;
+        assert!(fp4.prefill(8).is_err());
+    }
 }

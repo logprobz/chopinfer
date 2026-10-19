@@ -5,7 +5,8 @@ use bundle_runtime::fake_host::RecordingSink;
 use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
 
 pub(super) mod host;
-mod package;
+#[cfg(test)]
+mod native_package;
 pub(super) use host::MappedHost;
 type Sink = RecordingSink<super::conformance::Limits>;
 

@@ -29,10 +29,15 @@ pub(super) fn initialize(
         } else {
             Some(target)
         };
-        let selected = ops
+        let mut selected = ops
             .and_then(|ops| ops.dense.as_ref())
             .map(|dense| dense.stream_weight_ops(&name))
             .unwrap_or_default();
+        if name == "mtp.0.main_proj.weight"
+            && let Some(op) = drafter.and_then(|d| d.prepared.main_stream_initializer())
+        {
+            selected.push((false, op));
+        }
         for (paired, op) in selected {
             let second = if paired {
                 let prefix = name

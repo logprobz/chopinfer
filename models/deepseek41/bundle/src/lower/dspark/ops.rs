@@ -98,6 +98,7 @@ impl Window {
 }
 
 pub struct MainViews {
+    pub(crate) stream: Option<crate::ops::fold_stream::Storage>,
     pub workspace: Span,
     pub raw_features: Span,
     pub feature_codes: Span,
@@ -137,6 +138,7 @@ pub struct Prepared {
     main_quantize: Op<BlockQuantizeBuffers<View>>,
     main_project: Op<Mxfp8FoldGemmBuffers<View>>,
     main_project_small: Vec<Op<Mxfp8FoldGemmBuffers<View>>>,
+    main_stream: Vec<(u32, crate::ops::fold_stream::Op)>,
     main_norm: Op<RmsNormBuffers<View>>,
     hidden_quantize: Op<BlockQuantizeBuffers<View>>,
     ring_write: Op<LatentWindowWriteBuffers<View>>,
@@ -195,6 +197,12 @@ impl Prepared {
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let mut main_stream = Vec::new();
+        for rows in 1..=crate::Kernels::dense_decode_capacity() {
+            if let Some(op) = crate::ops::fold_stream::prepare(backend, g, query, rows, false)? {
+                main_stream.push((rows, op));
+            }
+        }
         let main_norm = backend.rmsnorm(&row_contract::final_norm(g), need)?;
         let hidden_quantize = backend.block_quantize(
             &BlockQuantizeQuery {
@@ -232,6 +240,7 @@ impl Prepared {
             main_quantize,
             main_project,
             main_project_small,
+            main_stream,
             main_norm,
             hidden_quantize,
             ring_write,
@@ -359,6 +368,7 @@ impl Prepared {
         ]
         .into_iter()
         .chain(self.main_project_small.iter().map(|op| op.info()))
+        .chain(self.main_stream.iter().map(|(_, op)| op.info()))
         .flat_map(|info| &info.symbols)
     }
 
@@ -374,6 +384,13 @@ impl Prepared {
         .chain(self.main_project_small.iter().map(|op| op.info().workspace))
         .max()
         .unwrap_or(0)
+    }
+
+    pub(crate) fn main_stream_initializer(&self) -> Option<&crate::ops::fold_stream::Op> {
+        self.main_stream
+            .iter()
+            .max_by_key(|(rows, _)| *rows)
+            .map(|(_, op)| op)
     }
 
     /// Raw committed features through main_proj and main_norm, then the
@@ -414,12 +431,18 @@ impl Prepared {
         } else {
             &self.main_project
         };
-        result.extend(bind.launch_within(
-            projection,
-            &buffers,
-            v.workspace,
-            Counts::rows(count),
-        )?);
+        if let Some((_, op)) = self.main_stream.iter().find(|(rows, _)| *rows == count) {
+            result.extend(crate::ops::fold_stream::launch(
+                op, bind, buffers, None, v.stream, count,
+            )?);
+        } else {
+            result.extend(bind.launch_within(
+                projection,
+                &buffers,
+                v.workspace,
+                Counts::rows(count),
+            )?);
+        }
         let mut bind = Bind::default();
         let buffers = RmsNormBuffers {
             x: bind.view(v.projected),

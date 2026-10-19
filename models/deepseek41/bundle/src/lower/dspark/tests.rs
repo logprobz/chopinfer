@@ -96,7 +96,7 @@ fn every_compiled_topology_prepares_the_drafter_primitives() {
 }
 
 #[test]
-fn main_projection_uses_ticket_folds_only_through_sixty_four_rows() {
+fn main_projection_binds_only_measured_packed_fold_rows() {
     use runtime_bundle_abi::{BundleDeviceBufferHandleV1, DeviceBufferSpanV1 as Span};
     let span = |id, bytes| Span::new(BundleDeviceBufferHandleV1::from_raw(id), 0, bytes);
     for shape in crate::shape::topologies() {
@@ -105,9 +105,21 @@ fn main_projection_uses_ticket_folds_only_through_sixty_four_rows() {
             Prepared::prepare(kernels.backend.as_ref(), shape, DraftMode::Greedy).unwrap();
         let n = u64::from(shape.geometry.shape.hidden);
         let k = n * shape.geometry.shape.dspark.targets.len() as u64;
-        for count in [1, 6, 16, 17, 21, 22, 23, 25, 26, 48, 64, 65, 8192] {
+        for count in [1, 2, 4, 6, 16, 17, 21, 22, 23, 25, 26, 48, 64, 65, 8192] {
             let rows = u64::from(count);
             let mut views = ops::MainViews {
+                stream: Some(crate::ops::fold_stream::Storage {
+                    packed: [
+                        span(14, n * k),
+                        Span::new(
+                            runtime_bundle_abi::BundleDeviceBufferHandleV1::from_raw(0),
+                            0,
+                            0,
+                        ),
+                    ],
+                    state: span(15, 1 << 20),
+                    workspace: span(16, 1 << 30),
+                }),
                 workspace: span(1, prepared.workspace()),
                 raw_features: span(2, rows * k * 2),
                 feature_codes: span(3, rows * k),
@@ -123,7 +135,10 @@ fn main_projection_uses_ticket_folds_only_through_sixty_four_rows() {
                 status: span(13, rows * 4),
             };
             let launches = prepared.main(count, &views).unwrap();
-            let selected = if matches!(count, 17..=21 | 23..=25) {
+            let packed = matches!(count, 1 | 2);
+            let selected = if packed {
+                "mxfp8_stream"
+            } else if matches!(count, 17..=21 | 23..=25) {
                 "mxfp8_prefetch"
             } else {
                 "mxfp8_ticket"
@@ -132,10 +147,35 @@ fn main_projection_uses_ticket_folds_only_through_sixty_four_rows() {
                 .iter()
                 .filter(|l| l.launch.symbol.contains(selected))
                 .count();
-            assert_eq!(ticket, if count <= 64 { 2 } else { 0 });
-            assert_eq!(launches.len(), if count <= 64 { 5 } else { 4 });
+            assert_eq!(
+                ticket,
+                if packed {
+                    1
+                } else if count <= 64 {
+                    2
+                } else {
+                    0
+                }
+            );
+            assert_eq!(
+                launches.len(),
+                if packed {
+                    4
+                } else if count <= 64 {
+                    5
+                } else {
+                    4
+                }
+            );
             views.workspace.length = 0;
-            assert_eq!(prepared.main(count, &views).is_err(), count <= 64);
+            assert_eq!(
+                prepared.main(count, &views).is_err(),
+                count <= 64 && !packed
+            );
+            if packed {
+                views.stream = None;
+                assert!(prepared.main(count, &views).is_err());
+            }
         }
     }
 }

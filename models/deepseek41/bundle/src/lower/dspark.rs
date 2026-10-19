@@ -286,6 +286,11 @@ pub fn catch_up(
             .main(
                 count,
                 &MainViews {
+                    stream: crate::ops::fold_stream::storage(
+                        &base.buffers.views,
+                        "mtp.0.main_proj.weight",
+                        false,
+                    ),
                     workspace: base.buffers.workspace,
                     raw_features: v.raw_features,
                     feature_codes: v.feature_codes,

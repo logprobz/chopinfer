@@ -661,6 +661,18 @@ pub trait Backend: Send + Sync {
         Err(Refused::Unsupported)
     }
 
+    /// Two equal-shaped MXFP8 projections sharing activation and status
+    /// views, with distinct weights and outputs. Reads `Counts::rows` and
+    /// the device live count. Each output keeps its own 128-K fold chain.
+    fn mxfp8_fold_gemm_pair(
+        &self,
+        op: &crate::mxfp8_gemm::Mxfp8FoldGemmQuery,
+        need: Need,
+    ) -> Result<Prepared<[crate::mxfp8_gemm::Mxfp8FoldGemmBuffers<View>; 2]>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
     /// Round inputs to BF16, then quantize each row independently. The
     /// fake-quant form stores the exact decoded values in BF16.
     fn block_quantize(
@@ -2238,6 +2250,14 @@ mod tests {
                 activation_row_stride: 320, activation_group_stride: 160,
                 output: DType::F32,
                 execution: crate::precision::execution::BlockScaledExecution::ExactDecodedBf16Mma,
+            }, Need::rows(4),
+        );
+        mxfp8_fold_gemm_pair: Empty.mxfp8_fold_gemm_pair(
+            &crate::mxfp8_gemm::Mxfp8FoldGemmQuery {
+                m_capacity: 4, n: 64, k: 160, groups: 1,
+                activation_row_stride: 160, activation_group_stride: 160,
+                output: DType::F32,
+                execution: crate::precision::execution::BlockScaledExecution::NativeBlockScaledMma,
             }, Need::rows(4),
         );
         block_quantize: Empty.block_quantize(

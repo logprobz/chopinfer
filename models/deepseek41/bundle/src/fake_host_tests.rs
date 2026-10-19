@@ -35,6 +35,8 @@ mod prefill_micro;
 mod prefill_overlap;
 mod prefill_reduce;
 mod prefill_skip;
+#[cfg(feature = "diagnostic-taps")]
+mod prefill_selected;
 mod prefill_tma;
 mod producer_epilogues;
 mod shared_overlap;

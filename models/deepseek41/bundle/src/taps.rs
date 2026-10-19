@@ -24,6 +24,8 @@
 //! them. A serving bundle refuses to create while a taps variable is set.
 
 #[cfg(feature = "diagnostic-taps")]
+mod prefill_selected;
+#[cfg(feature = "diagnostic-taps")]
 mod text;
 
 #[cfg(feature = "diagnostic-taps")]
@@ -53,7 +55,10 @@ mod serving {
     impl StepTaps {
         /// Refuses a create while a taps variable is set.
         pub fn from_env(_config: &Configuration) -> Result<Self, String> {
-            match runtime_bundle_sdk::taps::Taps::requested(None) {
+            match runtime_bundle_sdk::taps::Taps::requested(None).or_else(|| {
+                std::env::var_os("CHOPINFER_TAPS_PREFILL_SELECTED")
+                    .map(|_| "CHOPINFER_TAPS_PREFILL_SELECTED")
+            }) {
                 Some(variable) => Err(format!(
                     "{variable} is set, but this DeepSeek V4.1 bundle was built without the \
                      diagnostic-taps feature; unset it to serve"
@@ -126,6 +131,7 @@ mod enabled {
         taps: Option<Taps>,
         specs: Vec<TapSpec>,
         text: bool,
+        prefill_selected: bool,
         kinds: Vec<(u32, &'static str)>,
         side: u32,
         occurrences: Occurrences,
@@ -228,7 +234,12 @@ mod enabled {
         /// record's producer is the host's startup nonce each step's
         /// `capture.json` names.
         pub fn from_env(config: &Configuration) -> Result<Self, String> {
+            let prefill_selected =
+                super::prefill_selected::requested(std::env::var_os(super::prefill_selected::ENV))?;
             let Some(taps) = Taps::from_env(None)? else {
+                if prefill_selected {
+                    return Err("prefill selected capture requires CHOPINFER_TAPS_DIR".into());
+                }
                 return Ok(Self::default());
             };
             let taps = taps
@@ -247,7 +258,8 @@ mod enabled {
             Ok(Self {
                 taps: Some(taps),
                 specs,
-                text,
+                text: text || prefill_selected,
+                prefill_selected,
                 kinds: vec![(config.shape.geometry.shape.tokens.image, "image")],
                 side: crate::encoders::tap_shape()
                     .map_err(|error| error.0)?
@@ -425,11 +437,23 @@ mod enabled {
             streams: &[BundleStreamHandleV1],
             buffers: &[RankBuffers],
             shape: &Shape,
+            inputs: &PhaseInputs,
             stage: Stage,
         ) -> Result<(), TapError> {
             let (Some(taps), Some(capture)) = (&self.taps, &mut self.open) else {
                 return Ok(());
             };
+            if self.prefill_selected {
+                super::prefill_selected::capture(
+                    services,
+                    streams[0],
+                    &buffers[0],
+                    shape,
+                    inputs,
+                    stage,
+                    capture.dir(),
+                )?;
+            }
             for tap in super::text::taps(stage, shape) {
                 if !taps.selected(&tap.spec) {
                     continue;

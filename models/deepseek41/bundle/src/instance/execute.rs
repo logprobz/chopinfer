@@ -1326,9 +1326,14 @@ impl Instance {
                 |_| Ok(()),
             )
             .map_err(|error| refused(self, error))?;
-            let captured = self
-                .taps
-                .capture(&self.services, streams, &self.buffers, &shape, stage);
+            let captured = self.taps.capture(
+                &self.services,
+                streams,
+                &self.buffers,
+                &shape,
+                &run.inputs,
+                stage,
+            );
             if let Err(error) = captured {
                 // Work is queued on every rank, and nothing established
                 // that it finished.

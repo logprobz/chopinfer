@@ -213,8 +213,8 @@ and diagnostics; a complete GPU rerun remains required.
 
 Serving selects the paired schedule for native Flash TP4 prefill launches
 with an 8192-row host grid, including graph replays with fewer live rows.
-Window, mixed64 and mixed32 all use the measured schedule. Other host row
-counts, BF16 KV, other topologies, decode, verify and draft attention retain
+Window, mixed64 and mixed32 all use the measured schedule. Host row counts
+outside the measured admissions below, BF16 KV, other topologies, decode, verify and draft attention retain
 their existing route. The model adapter validates through the original
 prepared operation and changes only the attention symbol and launch plan.
 Its metadata retains reference symbols for fallback and adds the paired
@@ -326,7 +326,7 @@ The native Flash TP4 mixed64 prefill entry also admits the measured row
 counts 64, 192, ..., 2496. These are the upper-layer dependency cone's
 query intervals for an 8192-row chunk. The existing paired body uses the
 same arguments, partial workspace and merge, with half as many CTAs,
-256 threads and 85,504 dynamic shared bytes. Other smaller row counts,
+256 threads and 85,504 dynamic shared bytes. Other unqualified row counts,
 window/mixed32 entries, BF16 storage and other topologies retain their
 existing routes. Full 8192-row routing remains unchanged.
 
@@ -355,7 +355,66 @@ original. Serving keeps the already-loaded paired module at that point.
 This routing adds no scratch or cache producer. It leaves carried query
 metadata, selected/window row origins, main/side streams, events and peer
 transfers unchanged. Retained rows remain on native key storage. The
-decode-once cache still applies only to its full-width prefix, and the
-4096-row attention parts keep their existing route. The fake-host audit
+decode-once cache still applies only to its full-width prefix. The native
+part admission below extends the smaller row routes. The fake-host audit
 permits only the attention symbol, grid, block and dynamic shared-memory
 changes; the original merge and all other launch arguments remain exact.
+
+## Two-part row qualification
+
+Native Flash TP4 prefill also admits 4096 rows for window, mixed32 and
+mixed64, plus mixed64 counts 64, 128, ..., 1280. The latter are the aligned
+halves of the retained intervals. Existing 8192-row and retained-whole
+routes remain enabled. This changes only attention dispatch, and helps
+an independent 4096-row request without splitting it or enabling overlap.
+The original prepared operation still validates all buffers and retains
+the original merge. No allocation, argument, stream or event is added.
+
+The pair qualification on 2026-10-19 completed in 239 seconds on two
+SM120 GPUs at 250 W. All 554 bitwise/replay records passed before the 364
+timings. Each case compares F32 partials and BF16 output against its exact
+row slice of the full-chunk paired result. Gates include changed queries,
+odd live endpoints in either part, zero-live replay, distinct per-row RoPE,
+cache and inactive-row guards, exact selected-page marks and f64 controls.
+The exact timed A+B chain is checked in addition to the observed chain
+that preserves A's output. Selected/window lists are captured from
+serving; native Q/KV values are synthetic.
+
+Measured per-part times include cache construction when present,
+attention and merge, with one warmup and three interleaved samples:
+
+| Offset | Variant | Lab winner | Device A, part A/B | Device B, part A/B |
+| ---: | --- | --- | ---: | ---: |
+| 0 | window | cached | 0.514 / 0.514 ms | 0.504 / 0.506 ms |
+| 0 | mixed32 | native paired | 2.672 / 3.049 ms | 2.641 / 3.006 ms |
+| 0 | mixed64 | native paired | 2.868 / 3.075 ms | 2.814 / 3.031 ms |
+| 24576 | window | cached | 0.516 / 0.514 ms | 0.506 / 0.502 ms |
+| 24576 | mixed32 | cached | 2.704 / 2.687 ms | 2.660 / 2.650 ms |
+| 24576 | mixed64 | cached | 2.934 / 2.916 ms | 2.892 / 2.876 ms |
+
+At offset 24576, native mixed parts cost 3.043-3.106 ms. Sequential mixed
+A+B costs remain within 0.5% of their corresponding full-chunk route at
+both offsets. The old 4096-row fallback was not timed in this job; these
+are measured part costs, not a direct speedup measurement over that
+fallback or an integrated serving latency result.
+
+For upper layer L in 20..39, define k=39-L, N=64+128k and F=8192-N.
+The whole retained interval is (F,N); aligned parts are (F,64(k+1)) and
+(F+64(k+1),64k), omitting the empty second part. All origins refer to the
+original chunk. Native paired is bitwise qualified for all these shapes
+at offsets 0 and 24576; cached is qualified at 24576. Splitting the twenty
+retained intervals adds 1.60-1.66 ms per chunk, so sequential serving
+keeps them whole. Whole cached retained attention saves 0.970/1.004 ms
+at 24576 across the two devices. Its admission remains with the future
+part-cache binding instead of adding a separate cached-retained route.
+
+Cached parts are qualified in the lab but are not selected by this serving
+change. Their window decode interval for part (F,N) is
+[max(H+F-127,0),H+F+N), where H=min(chunk_offset,127). Cold part B needs
+[3969,8192); at offset 24576 it needs [4096,8319). Keep consumer key
+coordinates unchanged, local Q/workspace/output at zero, and carried
+metadata at the original row origin. Clear page marks and rebuild decoded
+pages after each part publishes its native sources. Cache storage and
+tables must remain disjoint from all concurrent reduction spans until
+join. The overlap binding, publication ordering and served-state evidence
+remain separate integration work.

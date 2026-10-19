@@ -492,3 +492,6 @@ fn compare_bytes(expected: &[u8], actual: &[u8], label: &str) -> LabResult<()> {
 
 #[path = "position_live/arithmetic.rs"]
 mod arithmetic;
+
+#[path = "position_live/failures.rs"]
+mod failures;

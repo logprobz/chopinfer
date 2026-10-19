@@ -11,7 +11,7 @@ use model_deepseek41_contract::geometry;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-struct ModelModules;
+pub(super) struct ModelModules;
 impl Modules for ModelModules {
     fn load<'s>(&'s self, session: &'s Session) -> LabResult<Functions<'s>> {
         let loaded = RefCell::new(BTreeMap::new());

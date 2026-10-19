@@ -108,6 +108,12 @@ pub trait FakePackage {
 
     fn device(&self) -> &FakeDevice<Self::Observer>;
 
+    /// Check launch policy, including model-declared ordered initializers.
+    /// The default retains the PDL requirement for every launch.
+    fn check_launch(&self, _symbol: &str, config: LaunchConfigV1) {
+        self.device().check_launch(config);
+    }
+
     /// The cubins the device names loaded modules by.
     fn cubins() -> impl IntoIterator<Item = (&'static str, &'static [u8])>;
 
@@ -754,7 +760,7 @@ impl<P: FakePackage> HostServicesBackendV1 for Backend<P> {
     ) -> HostServiceResultV1<()> {
         let device = self.0.device();
         let name = device.symbol_name(symbol, BundleStatusV1::NotFound)?;
-        device.check_launch(config);
+        self.0.check_launch(&name, config);
         let configured = device
             .symbol_dynamic_shared_bytes
             .borrow()

@@ -498,6 +498,16 @@ impl FakePackage for FakeHost {
     fn device(&self) -> &FakeDevice {
         &self.device
     }
+    fn check_launch(&self, symbol: &str, config: LaunchConfigV1) {
+        if symbol.starts_with("chop_deepseek41_mxfp8_stream_") && symbol.ends_with("_prepare_v1") {
+            assert_eq!(
+                config.flags, 0,
+                "packed fold preparation must serialize normally"
+            );
+        } else {
+            self.device.check_launch(config);
+        }
+    }
     fn cubins() -> impl IntoIterator<Item = (&'static str, &'static [u8])> {
         crate::CUBINS.iter().map(|cubin| (cubin.name, cubin.bytes))
     }

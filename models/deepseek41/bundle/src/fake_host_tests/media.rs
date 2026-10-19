@@ -80,6 +80,9 @@ impl FakePackage for MediaHost {
     fn device(&self) -> &FakeDevice {
         self.host.device()
     }
+    fn check_launch(&self, symbol: &str, config: LaunchConfigV1) {
+        self.host.check_launch(symbol, config);
+    }
     fn cubins() -> impl IntoIterator<Item = (&'static str, &'static [u8])> {
         FakeHost::cubins()
     }

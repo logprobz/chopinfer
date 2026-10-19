@@ -34,6 +34,7 @@ pub mod merge_columns;
 pub mod query_parallel;
 pub mod slices;
 pub mod sources;
+pub mod sources_prefill;
 
 use std::path::PathBuf;
 

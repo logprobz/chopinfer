@@ -325,7 +325,9 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// Qualified warp and input norm tiles add only their module handles; all
 /// other launch arguments, allocations and stream ordering remain exact.
 /// Cached norm and rounded chain producers add five resolves and seven
-/// releases per rank, preserving every argument and finisher launch.
+/// releases per rank. The finish/norm module adds two resolves and three
+/// releases per rank; C1 contracts 77 pairs per rank with exact arguments,
+/// unchanged allocation sizes and audited capture node reductions.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (20907, 0xd28729a73500a819)),
     (Ranks::TP4, (46079, 0x28012023832f4c28)),

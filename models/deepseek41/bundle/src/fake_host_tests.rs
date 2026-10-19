@@ -900,7 +900,9 @@ fn journal_steps(host: &Rc<Host>) {
 /// rank. Cached quantization replaces those C1/C8 norm tiles; rounded HC
 /// uses 160-CTA producers with the same finisher and scratch. The two
 /// additional modules add five resolves and seven releases per rank.
-/// Every launch retains its argument list and numerical contract.
+/// The qualified finish/norm module adds two resolves and three releases
+/// per rank. C1/C8 replaces 77 adjacent finish/norm pairs with one exact
+/// tail each, preserving all constituent arguments and capture dependencies.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",

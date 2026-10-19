@@ -31,6 +31,7 @@
 
 pub mod glue;
 pub mod merge_columns;
+pub mod query_parallel;
 pub mod slices;
 pub mod sources;
 

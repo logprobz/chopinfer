@@ -10,6 +10,7 @@ pub enum Kernel {
     WindowStore,
     WindowStoreBf16,
     WindowKeys,
+    QueryRopeParallel,
 }
 
 #[derive(Clone, Debug)]
@@ -33,6 +34,8 @@ impl Entry {
             block: [
                 if self.kernel == Kernel::WindowKeys {
                     128
+                } else if self.kernel == Kernel::QueryRopeParallel {
+                    super::query_parallel::THREADS
                 } else {
                     256
                 },
@@ -60,6 +63,9 @@ impl Entry {
         let u32_arg = |name: &str| P::U32 { name: name.into() };
         let u64_arg = |name: &str| P::U64 { name: name.into() };
         let (mut params, mut body) = match self.kernel {
+            Kernel::QueryRopeParallel => return super::query_parallel::Entry {
+                capacity: self.capacity, symbol: self.symbol.clone(),
+            }.spec(),
             Kernel::QueryRope => (vec![
                 ptr("values", "float"), ptr("native_q", "uint16_t"), ptr("cos_sin", "const float"),
                 ptr("live_rows", "const uint32_t"), u32_arg("heads"),
@@ -120,7 +126,14 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> CubinSpec {
         name: name.into(),
         sources_root: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("cuda"),
         include_dirs: vec![],
-        headers: vec!["#include \"latent/glue.cuh\"".into()],
+        headers: vec![if entries
+            .iter()
+            .any(|e| e.kernel == Kernel::QueryRopeParallel)
+        {
+            "#include \"latent/query_parallel.cuh\"".into()
+        } else {
+            "#include \"latent/glue.cuh\"".into()
+        }],
         defines: vec![],
         entries: entries.iter().map(Entry::spec).collect(),
     }

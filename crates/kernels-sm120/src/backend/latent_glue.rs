@@ -14,15 +14,21 @@ fn select(entries: &[Entry], kernel: Kernel, need: Need) -> Result<(Entry, OpInf
     }
     let chosen = choose(
         "latent glue",
-        entries.iter().filter(|e| e.kernel == kernel).map(|e| {
-            Candidate::new(
-                e.clone(),
-                &e.symbol,
-                format!("{:?}", e.spec()),
-                e.invariance(),
-            )
-            .capacity(e.capacity)
-        }),
+        entries
+            .iter()
+            .filter(|e| {
+                e.kernel == kernel
+                    || (kernel == Kernel::QueryRope && e.kernel == Kernel::QueryRopeParallel)
+            })
+            .map(|e| {
+                Candidate::new(
+                    e.clone(),
+                    &e.symbol,
+                    format!("{:?}", e.spec()),
+                    e.invariance(),
+                )
+                .capacity(e.capacity)
+            }),
         need,
     )?;
     let entry = chosen.entry;

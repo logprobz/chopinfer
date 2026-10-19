@@ -74,6 +74,7 @@ fn sink<'a>(
         defer,
         pending: Vec::new(),
         sampling_groups: BTreeMap::new(),
+        device: None,
     }
 }
 

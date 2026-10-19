@@ -55,6 +55,9 @@ mod reference_forcing;
 #[cfg(all(target_os = "linux", feature = "linux-cuda-host"))]
 mod sampling;
 mod sampling_dispatch;
+#[cfg(all(target_os = "linux", feature = "linux-cuda-host"))]
+mod sampling_readback;
+mod sampling_records;
 mod sampling_workspace;
 mod services;
 mod signals;

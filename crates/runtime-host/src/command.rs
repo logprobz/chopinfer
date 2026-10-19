@@ -5232,6 +5232,9 @@ impl ArgumentsV1 {
             .chain(std::iter::once(crate::executor::PROMPT_ROWS_CAPABILITY_V1))
             .chain(std::iter::once(crate::executor::SPECULATIVE_CAPABILITY_V1))
             .chain(std::iter::once(
+                runtime_bundle_abi::device_results::DEVICE_RESULTS_CAPABILITY_V1,
+            ))
+            .chain(std::iter::once(
                 runtime_bundle_abi::SPECULATIVE_NARROW_ROWS_CAPABILITY_V1,
             ))
             .chain(std::iter::once(crate::executor::MEDIA_INPUTS_CAPABILITY_V1))
@@ -7900,6 +7903,7 @@ mod tests {
                 .map(BundleOpaqueId::as_str)
                 .collect::<Vec<_>>(),
             vec![
+                runtime_bundle_abi::device_results::DEVICE_RESULTS_CAPABILITY_V1,
                 runtime_bundle_abi::frontend::FRONTEND_CAPABILITY_V1,
                 runtime_bundle_abi::HOST_MAPPED_GATHER_CAPABILITY_V1,
                 runtime_bundle_abi::HOST_RESIDENT_VIEWS_CAPABILITY_V1,
@@ -7937,6 +7941,10 @@ mod tests {
         assert_eq!(
             stated.capabilities().collect::<Vec<_>>(),
             vec![
+                &BundleOpaqueId::new(
+                    runtime_bundle_abi::device_results::DEVICE_RESULTS_CAPABILITY_V1
+                )
+                .unwrap(),
                 &BundleOpaqueId::new(runtime_bundle_abi::frontend::FRONTEND_CAPABILITY_V1).unwrap(),
                 &BundleOpaqueId::new(runtime_bundle_abi::HOST_MAPPED_GATHER_CAPABILITY_V1).unwrap(),
                 &BundleOpaqueId::new(runtime_bundle_abi::HOST_RESIDENT_VIEWS_CAPABILITY_V1)

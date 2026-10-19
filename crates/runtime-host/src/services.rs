@@ -1381,6 +1381,7 @@ struct EventRecordV1 {
     object: DeviceObjectV1,
     context: SlotKeyV1,
     order: u64,
+    recorded: bool,
 }
 
 struct GraphRecordV1 {
@@ -1889,6 +1890,219 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
 impl crate::executor::DeviceLogitsSamplerV1
     for HostServicesV1Backend<crate::cuda::CudaHostDeviceV1>
 {
+    fn supports_device_results(&self) -> bool {
+        true
+    }
+
+    fn retain_device_drafts(
+        &self,
+        drafts: runtime_bundle_abi::device_results::BundleDeviceDraftsV1,
+    ) -> HostServiceResultV1<Box<dyn std::any::Any>> {
+        drafts.validate()?;
+        let state = self.state.borrow();
+        if !state.captures.is_empty() {
+            return Err(BundleStatusV1::InvalidState);
+        }
+        let view = drafts.proposals;
+        let context_key = slot_key_v1(view.context.generation(), view.context.slot())?;
+        if state.contexts.get(context_key)?.rank != view.rank {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let ready = state
+            .events
+            .get(slot_key_v1(view.ready.generation(), view.ready.slot())?)?;
+        if ready.context != context_key || !ready.recorded {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let mut objects = Vec::new();
+        for buffer in [view.buffer, drafts.confidence] {
+            if buffer.buffer.raw == 0 {
+                continue;
+            }
+            let record = state.buffers.get(slot_key_v1(
+                buffer.buffer.generation(),
+                buffer.buffer.slot(),
+            )?)?;
+            if record.origin.map(|origin| origin.context) != Some(context_key) {
+                return Err(BundleStatusV1::InvalidArgument);
+            }
+            let range = state.resolve_range(DeviceBufferSpanV1::new(
+                buffer.buffer,
+                buffer.offset,
+                buffer.length,
+            ))?;
+            objects.push(range.object);
+        }
+        state.device.retain_result_buffers(&objects)
+    }
+
+    fn cancel_device_readback(
+        &self,
+        view: runtime_bundle_abi::device_results::BundleReadyDeviceViewV1,
+        ticket: u64,
+    ) -> HostServiceResultV1<()> {
+        let mut state = self.state.borrow_mut();
+        let context = state
+            .contexts
+            .get(slot_key_v1(view.context.generation(), view.context.slot())?)?;
+        if context.rank != view.rank {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let object = context.object;
+        state.device.cancel_device_readback(object, ticket)
+    }
+
+    fn issue_ready_logits(
+        &self,
+        view: runtime_bundle_abi::device_results::BundleReadyLogitsViewV1,
+        items: &[&runtime_engine::ModelBatchItem],
+        dispatch: crate::executor::SamplingDispatch,
+    ) -> HostServiceResultV1<u64> {
+        view.validate()
+            .map_err(|_| BundleStatusV1::InvalidArgument)?;
+        let mut state = self.state.borrow_mut();
+        if !state.captures.is_empty() {
+            return Err(BundleStatusV1::InvalidState);
+        }
+        let (context, range) = state.resolve_logits_view(view.logits)?;
+        let context_key =
+            slot_key_v1(view.logits.context.generation(), view.logits.context.slot())?;
+        let ready = state
+            .events
+            .get(slot_key_v1(view.ready.generation(), view.ready.slot())?)?;
+        if ready.context != context_key || !ready.recorded {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let ready_object = ready.object;
+        state.device.issue_ready_logits(
+            context,
+            range.object,
+            ready_object,
+            view.logits,
+            items,
+            dispatch,
+        )
+    }
+
+    fn sample_device_logits(
+        &self,
+        request: runtime_bundle_abi::device_results::BundleDeviceSamplingRequestV1,
+        items: &[&runtime_engine::ModelBatchItem],
+        dispatch: crate::executor::SamplingDispatch,
+    ) -> HostServiceResultV1<()> {
+        request
+            .validate()
+            .map_err(|_| BundleStatusV1::InvalidArgument)?;
+        let mut state = self.state.borrow_mut();
+        // Capture may have joined a stream through an event on another device.
+        // No new private-stream consumer may join any open service capture.
+        if !state.captures.is_empty() {
+            return Err(BundleStatusV1::InvalidState);
+        }
+        let raw = request.logits.logits;
+        let context_key = slot_key_v1(raw.context.generation(), raw.context.slot())?;
+        let (context, logits) = state.resolve_logits_view(raw)?;
+        let output = state.buffers.get(slot_key_v1(
+            request.output.buffer.generation(),
+            request.output.buffer.slot(),
+        )?)?;
+        let ready = state.events.get(slot_key_v1(
+            request.logits.ready.generation(),
+            request.logits.ready.slot(),
+        )?)?;
+        let done = state
+            .events
+            .get(slot_key_v1(request.done.generation(), request.done.slot())?)?;
+        if output.origin.map(|origin| origin.context) != Some(context_key)
+            || ready.context != context_key
+            || !ready.recorded
+            || done.context != context_key
+        {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let ready_object = ready.object;
+        let done_object = done.object;
+        let output = state.resolve_range(DeviceBufferSpanV1::new(
+            request.output.buffer,
+            request.output.offset,
+            request.output.length,
+        ))?;
+        if logits.object == output.object {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        state.device.sample_device_logits(
+            context,
+            [logits.object, output.object, ready_object, done_object],
+            request,
+            items,
+            dispatch,
+        )?;
+        state
+            .events
+            .get_mut(slot_key_v1(request.done.generation(), request.done.slot())?)?
+            .recorded = true;
+        Ok(())
+    }
+
+    fn enqueue_device_readback(
+        &self,
+        view: runtime_bundle_abi::device_results::BundleReadyDeviceViewV1,
+    ) -> HostServiceResultV1<u64> {
+        view.validate(1)?;
+        let mut state = self.state.borrow_mut();
+        if !state.captures.is_empty() {
+            return Err(BundleStatusV1::InvalidState);
+        }
+        let context_key = slot_key_v1(view.context.generation(), view.context.slot())?;
+        let context = state.contexts.get(context_key)?;
+        if context.rank != view.rank {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let context_object = context.object;
+        let buffer = state.buffers.get(slot_key_v1(
+            view.buffer.buffer.generation(),
+            view.buffer.buffer.slot(),
+        )?)?;
+        let ready = state
+            .events
+            .get(slot_key_v1(view.ready.generation(), view.ready.slot())?)?;
+        if buffer.origin.map(|origin| origin.context) != Some(context_key)
+            || ready.context != context_key
+            || !ready.recorded
+        {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let ready_object = ready.object;
+        let range = state.resolve_range(DeviceBufferSpanV1::new(
+            view.buffer.buffer,
+            view.buffer.offset,
+            view.buffer.length,
+        ))?;
+        state
+            .device
+            .enqueue_device_readback(context_object, range, ready_object)
+    }
+
+    fn collect_device_readback(
+        &self,
+        view: runtime_bundle_abi::device_results::BundleReadyDeviceViewV1,
+        ticket: u64,
+    ) -> HostServiceResultV1<Vec<u8>> {
+        crate::overlap::device_wait();
+        let _profile = runtime_engine::profile::PhaseTimer::new(
+            runtime_engine::profile::StepPhase::DeviceWait,
+        );
+        let mut state = self.state.borrow_mut();
+        let context = state
+            .contexts
+            .get(slot_key_v1(view.context.generation(), view.context.slot())?)?;
+        if context.rank != view.rank {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let context_object = context.object;
+        state.device.collect_device_readback(context_object, ticket)
+    }
+
     fn sample_view_with_dispatch(
         &self,
         view: runtime_bundle_abi::OwnedLogitsViewV1,
@@ -3954,6 +4168,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             }
         };
         match state.events.insert(EventRecordV1 {
+            recorded: false,
             object,
             context: key_of_v1!(context),
             order,
@@ -3977,6 +4192,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         let event_object = state.events.get(key_of_v1!(event))?.object;
         let stream_object = state.stream_object(stream)?;
         state.device.record_event(event_object, stream_object)?;
+        state.events.get_mut(key_of_v1!(event))?.recorded = true;
         // An event recorded inside a capture is that capture's; one recorded
         // outside no longer is.
         let context = state.streams.get(key_of_v1!(stream))?.context;
@@ -6092,5 +6308,150 @@ impl<D: HostDeviceBackendV1> crate::offload::KvOffloadExecutorV1 for HostService
             queue.drain(device)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(all(test, target_os = "linux", feature = "cuda-fake-driver-tests"))]
+mod device_result_service_tests {
+    use super::*;
+    use crate::executor::{DeviceLogitsSamplerV1, SamplingDispatch};
+    use runtime_bundle_abi::device_results::*;
+    use runtime_bundle_abi::{
+        BUNDLE_LOGITS_ELEMENT_V1_F32, BundleDeviceBufferViewV1, BundleLogitsViewV1,
+    };
+    use runtime_cuda::fake_driver;
+
+    #[test]
+    fn device_hooks_prevalidate_contexts_events_and_event_joined_capture() {
+        fake_driver::reset();
+        let backend = HostServicesV1Backend::new(
+            crate::cuda::CudaHostDeviceV1::new().unwrap(),
+            HostInstanceConfigV1::new(HostTopologyV1::new(vec![0, 1]).unwrap()),
+        );
+        let context = backend.select_context(0, 0).unwrap();
+        let foreign = backend.select_context(1, 1).unwrap();
+        let pool = backend.select_memory_pool(context).unwrap();
+        let stream = backend.create_stream(context, 0).unwrap();
+        let joined = backend.create_stream(context, 0).unwrap();
+        let logits = backend.allocate_device_buffer(pool, stream, 32, 8).unwrap();
+        let output = backend
+            .allocate_device_buffer(pool, stream, 256, 8)
+            .unwrap();
+        let ready = backend.create_event(context).unwrap();
+        let done = backend.create_event(context).unwrap();
+        let other = backend.create_event(foreign).unwrap();
+        let capture_event = backend.create_event(context).unwrap();
+        let view = |buffer, length| BundleDeviceBufferViewV1 {
+            buffer,
+            length,
+            ..BundleDeviceBufferViewV1::empty()
+        };
+        let request = BundleDeviceSamplingRequestV1 {
+            struct_size: std::mem::size_of::<BundleDeviceSamplingRequestV1>() as u32,
+            reserved: 0,
+            logits: BundleReadyLogitsViewV1 {
+                struct_size: std::mem::size_of::<BundleReadyLogitsViewV1>() as u32,
+                flags: 0,
+                cycle_epoch: 1,
+                ready,
+                logits: BundleLogitsViewV1 {
+                    struct_size: std::mem::size_of::<BundleLogitsViewV1>() as u32,
+                    reserved: 0,
+                    context,
+                    rank: 0,
+                    element_type: BUNDLE_LOGITS_ELEMENT_V1_F32,
+                    first_item_index: 0,
+                    row_count: 1,
+                    live_width: 8,
+                    row_stride_elements: 8,
+                    buffer: view(logits, 32),
+                    reserved_tail: 0,
+                },
+            },
+            output: view(output, 256),
+            done,
+        };
+        let dispatch = SamplingDispatch {
+            rows: 1,
+            simple: true,
+            top: false,
+            greedy: true,
+        };
+        let setup_waits = fake_driver::call_count(5);
+        assert_eq!(
+            backend.sample_device_logits(request, &[], dispatch),
+            Err(BundleStatusV1::InvalidArgument),
+            "unrecorded producer event"
+        );
+        backend.record_event(ready, stream).unwrap();
+        for invalid in [
+            BundleDeviceSamplingRequestV1 {
+                done: other,
+                ..request
+            },
+            BundleDeviceSamplingRequestV1 {
+                logits: BundleReadyLogitsViewV1 {
+                    ready: other,
+                    ..request.logits
+                },
+                ..request
+            },
+            BundleDeviceSamplingRequestV1 {
+                output: view(output, 255),
+                ..request
+            },
+        ] {
+            assert_eq!(
+                backend.sample_device_logits(invalid, &[], dispatch),
+                Err(BundleStatusV1::InvalidArgument)
+            );
+        }
+        let packet = BundleReadyDeviceViewV1 {
+            context,
+            rank: 0,
+            reserved: 0,
+            buffer: view(output, 256),
+            ready,
+        };
+        assert_eq!(
+            backend.enqueue_device_readback(BundleReadyDeviceViewV1 {
+                ready: other,
+                ..packet
+            }),
+            Err(BundleStatusV1::InvalidArgument)
+        );
+        backend.begin_graph_capture(stream).unwrap();
+        backend.record_event(capture_event, stream).unwrap();
+        backend.wait_event(joined, capture_event).unwrap();
+        assert_eq!(
+            backend.sample_device_logits(request, &[], dispatch),
+            Err(BundleStatusV1::InvalidState)
+        );
+        assert_eq!(
+            backend.enqueue_device_readback(packet),
+            Err(BundleStatusV1::InvalidState)
+        );
+        let graph = backend.end_graph_capture(stream).unwrap();
+        backend.release_graph(graph).unwrap();
+        assert_eq!(
+            fake_driver::call_count(11),
+            0,
+            "validation must not construct a sampler"
+        );
+        assert_eq!(
+            fake_driver::call_count(8),
+            0,
+            "validation must not upload metadata"
+        );
+        assert_eq!(
+            fake_driver::call_count(10),
+            0,
+            "validation must not copy output"
+        );
+        assert_eq!(
+            fake_driver::call_count(5),
+            setup_waits,
+            "validation must not synchronize a stream"
+        );
     }
 }

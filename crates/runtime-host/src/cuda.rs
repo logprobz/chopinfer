@@ -233,6 +233,126 @@ impl CudaHostDeviceV1 {
         Ok(function)
     }
 
+    pub(crate) fn sample_device_logits(
+        &mut self,
+        context_object: DeviceObjectV1,
+        objects: [DeviceObjectV1; 4],
+        request: runtime_bundle_abi::device_results::BundleDeviceSamplingRequestV1,
+        items: &[&ModelBatchItem],
+        dispatch: crate::executor::SamplingDispatch,
+    ) -> HostDeviceResultV1<()> {
+        let [logits_object, output_object, ready_object, done_object] = objects;
+        let logits = self.buffer(logits_object)?.clone();
+        let output = self.buffer(output_object)?.clone();
+        let context = self.context(context_object)?.clone();
+        if let std::collections::btree_map::Entry::Vacant(entry) =
+            self.samplers.entry(context_object.get())
+        {
+            entry.insert(DeviceSamplingSession::new(context)?);
+        }
+        let Some(CudaObjectV1::Event(ready)) = self.objects.get(&ready_object.get()) else {
+            return Err(BundleStatusV1::InvalidArgument);
+        };
+        let Some(CudaObjectV1::Event(done)) = self.objects.get(&done_object.get()) else {
+            return Err(BundleStatusV1::InvalidArgument);
+        };
+        self.samplers
+            .get_mut(&context_object.get())
+            .expect("sampler exists")
+            .issue_to_device(
+                &logits,
+                request.logits.logits,
+                items,
+                dispatch,
+                crate::sampling::DeviceSampleTarget {
+                    ready,
+                    output: &output,
+                    offset: request.output.offset as usize,
+                    done,
+                },
+            )
+    }
+
+    pub(crate) fn issue_ready_logits(
+        &mut self,
+        context_object: DeviceObjectV1,
+        logits_object: DeviceObjectV1,
+        ready_object: DeviceObjectV1,
+        view: BundleLogitsViewV1,
+        items: &[&ModelBatchItem],
+        dispatch: crate::executor::SamplingDispatch,
+    ) -> HostDeviceResultV1<u64> {
+        let logits = self.buffer(logits_object)?.clone();
+        let context = self.context(context_object)?.clone();
+        if let std::collections::btree_map::Entry::Vacant(entry) =
+            self.samplers.entry(context_object.get())
+        {
+            entry.insert(DeviceSamplingSession::new(context)?);
+        }
+        let Some(CudaObjectV1::Event(ready)) = self.objects.get(&ready_object.get()) else {
+            return Err(BundleStatusV1::InvalidArgument);
+        };
+        self.samplers
+            .get_mut(&context_object.get())
+            .expect("sampler exists")
+            .issue_ready(&logits, view, items, dispatch, ready)
+    }
+
+    pub(crate) fn enqueue_device_readback(
+        &mut self,
+        context_object: DeviceObjectV1,
+        range: DeviceRangeV1,
+        ready_object: DeviceObjectV1,
+    ) -> HostDeviceResultV1<u64> {
+        let source = self.buffer(range.object)?.clone();
+        let context = self.context(context_object)?.clone();
+        if let std::collections::btree_map::Entry::Vacant(entry) =
+            self.samplers.entry(context_object.get())
+        {
+            entry.insert(DeviceSamplingSession::new(context)?);
+        }
+        let Some(CudaObjectV1::Event(ready)) = self.objects.get(&ready_object.get()) else {
+            return Err(BundleStatusV1::InvalidArgument);
+        };
+        self.samplers
+            .get_mut(&context_object.get())
+            .expect("sampler exists")
+            .enqueue_readback(&source, range.offset as usize, range.length as usize, ready)
+    }
+
+    pub(crate) fn retain_result_buffers(
+        &self,
+        objects: &[DeviceObjectV1],
+    ) -> HostDeviceResultV1<Box<dyn std::any::Any>> {
+        let buffers = objects
+            .iter()
+            .map(|object| self.buffer(*object).cloned())
+            .collect::<HostDeviceResultV1<Vec<_>>>()?;
+        Ok(Box::new(buffers))
+    }
+
+    pub(crate) fn cancel_device_readback(
+        &mut self,
+        context: DeviceObjectV1,
+        ticket: u64,
+    ) -> HostDeviceResultV1<()> {
+        self.samplers
+            .get_mut(&context.get())
+            .ok_or(BundleStatusV1::StaleHandle)?
+            .discard_readback(ticket)
+    }
+
+    pub(crate) fn collect_device_readback(
+        &mut self,
+        context: DeviceObjectV1,
+        ticket: u64,
+    ) -> HostDeviceResultV1<Vec<u8>> {
+        self.samplers
+            .get_mut(&context.get())
+            .ok_or(BundleStatusV1::StaleHandle)?
+            .collect_readback(ticket)
+    }
+
     pub(crate) fn sample_logits_view(
         &mut self,
         context_object: DeviceObjectV1,

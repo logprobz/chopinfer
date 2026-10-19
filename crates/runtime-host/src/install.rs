@@ -646,7 +646,12 @@ impl InstalledBundleHostV1 {
         let configuration = config.encode_v1(topology_id.as_bytes());
         let backend = Rc::new(HostServicesV1Backend::new(device, config));
         let table = HostServicesTableV1::new(Rc::clone(&backend));
-        let instance = self.library.create(table, &configuration)?;
+        let instance = if crate::executor::device_results_selected(self.manifest()) {
+            self.library
+                .create_device_results_v1(table, &configuration)?
+        } else {
+            self.library.create(table, &configuration)?
+        };
         Ok((backend, instance))
     }
 }

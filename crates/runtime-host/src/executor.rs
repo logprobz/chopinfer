@@ -5,6 +5,13 @@
 //! bundle's `execute` callback, collects the rows the bundle emits, and maps the
 //! engine's commit and rollback onto the ABI's `commit` and `cancel`.
 
+mod device_results;
+use device_results::{DeviceResults, cycle_metadata};
+use runtime_bundle_abi::device_results::{
+    BundleDeviceCompletionV1, BundleDeviceDraftsV1, DeviceCycleMetadataV1,
+};
+use runtime_engine::AcceptedPrefix;
+
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
@@ -12,6 +19,9 @@ use std::rc::Rc;
 pub use crate::sampling_dispatch::SamplingDispatch;
 use crate::sampling_dispatch::gathered_ranges;
 use runtime_bundle::BundleManifestV1;
+use runtime_bundle_abi::device_results::{
+    BundleDeviceSamplingRequestV1, BundleReadyDeviceViewV1, BundleReadyLogitsViewV1,
+};
 use runtime_bundle_abi::{
     BundleAbiError, BundleKeptRowsV1, BundleStatusV1, HostServiceResultV1, LoadedBundleInstanceV1,
     LogitsRowSinkV1, OwnedDraftTokensV1, OwnedLogitsRowV1, OwnedLogitsViewV1, ResultSinkLimitsV1,
@@ -23,6 +33,21 @@ use runtime_engine::{
 };
 use runtime_kv::{BlockId, PreparedAppendBatch};
 use runtime_scheduler::BatchPhase;
+
+/// Explicit runtime selection of a bundle's declared device-result API.
+pub const DEVICE_RESULTS: &str = "CHOPINFER_DEVICE_RESULTS";
+
+pub(crate) fn device_results_selected(manifest: &BundleManifestV1) -> bool {
+    std::env::var_os(DEVICE_RESULTS).is_some_and(|value| value == "1")
+        && manifest
+            .resource_requirements()
+            .required_capabilities()
+            .iter()
+            .any(|capability| {
+                capability.as_str()
+                    == runtime_bundle_abi::device_results::DEVICE_RESULTS_CAPABILITY_V1
+            })
+}
 
 /// The fixed prefix of one encoded batch request.
 pub const BATCH_REQUEST_MAGIC_V1: &[u8; 12] = b"chopbatch-v1";
@@ -156,6 +181,7 @@ struct CollectingSinkV1<'a> {
     /// Issued views in emission order, with the rows each was issued for.
     pending: Vec<(OwnedLogitsViewV1, Vec<ModelBatchItem>)>,
     sampling_groups: BTreeMap<usize, SamplingGroup>,
+    device: Option<DeviceResults>,
 }
 
 struct SamplingGroup {
@@ -349,6 +375,54 @@ pub struct DevicePromptRowV1<'a> {
 
 /// Samples one borrowed device view while its bundle callback is live.
 pub trait DeviceLogitsSamplerV1 {
+    fn supports_device_results(&self) -> bool {
+        false
+    }
+    fn retain_device_drafts(
+        &self,
+        _drafts: BundleDeviceDraftsV1,
+    ) -> HostServiceResultV1<Box<dyn std::any::Any>> {
+        Err(BundleStatusV1::Unsupported)
+    }
+    fn cancel_device_readback(
+        &self,
+        _view: BundleReadyDeviceViewV1,
+        _ticket: u64,
+    ) -> HostServiceResultV1<()> {
+        Err(BundleStatusV1::Unsupported)
+    }
+    fn issue_ready_logits(
+        &self,
+        _view: BundleReadyLogitsViewV1,
+        _items: &[&ModelBatchItem],
+        _dispatch: SamplingDispatch,
+    ) -> HostServiceResultV1<u64> {
+        Err(BundleStatusV1::Unsupported)
+    }
+
+    /// Enqueue the ordinary sampler into a caller-owned result span. The
+    /// callback returns after submission and records the supplied done event.
+    fn sample_device_logits(
+        &self,
+        _request: BundleDeviceSamplingRequestV1,
+        _items: &[&ModelBatchItem],
+        _dispatch: SamplingDispatch,
+    ) -> HostServiceResultV1<()> {
+        Err(BundleStatusV1::Unsupported)
+    }
+
+    fn enqueue_device_readback(&self, _view: BundleReadyDeviceViewV1) -> HostServiceResultV1<u64> {
+        Err(BundleStatusV1::Unsupported)
+    }
+
+    fn collect_device_readback(
+        &self,
+        _view: BundleReadyDeviceViewV1,
+        _ticket: u64,
+    ) -> HostServiceResultV1<Vec<u8>> {
+        Err(BundleStatusV1::Unsupported)
+    }
+
     /// Classify a complete gathered group after any sampler wrapper transforms its rows.
     fn sampling_dispatch(
         &self,
@@ -428,6 +502,7 @@ pub struct BatchEmissionsV1 {
     sampled: Vec<SampledRow>,
     prompt_view_rows: Vec<(usize, LogitsRow)>,
     drafts: Vec<OwnedDraftTokensV1>,
+    accepted_prefixes: Vec<AcceptedPrefix>,
 }
 
 impl BatchEmissionsV1 {
@@ -440,6 +515,7 @@ impl BatchEmissionsV1 {
         Self {
             rows,
             drafts,
+            accepted_prefixes: Vec::new(),
             sampled: Vec::new(),
             prompt_view_rows: Vec::new(),
         }
@@ -468,6 +544,33 @@ fn view_outside(first: usize, rows: u32) -> BundleStatusV1 {
 }
 
 impl LogitsRowSinkV1 for CollectingSinkV1<'_> {
+    fn device_results_enabled(&self) -> bool {
+        self.device.is_some()
+    }
+    fn device_cycle_metadata(&self) -> HostServiceResultV1<DeviceCycleMetadataV1> {
+        self.device_metadata()
+    }
+    fn declare_input_dependency(&mut self, dependency: u32) -> HostServiceResultV1<()> {
+        self.device_dependency(dependency)
+    }
+    fn emit_device_drafts(&mut self, drafts: BundleDeviceDraftsV1) -> HostServiceResultV1<()> {
+        self.device_drafts(drafts)
+    }
+    fn sample_device_logits(
+        &mut self,
+        request: BundleDeviceSamplingRequestV1,
+    ) -> HostServiceResultV1<()> {
+        self.device_sample(request)
+    }
+    fn emit_ready_logits_view(&mut self, view: BundleReadyLogitsViewV1) -> HostServiceResultV1<()> {
+        self.device_ready(view)
+    }
+    fn emit_device_completion(
+        &mut self,
+        completion: BundleDeviceCompletionV1,
+    ) -> HostServiceResultV1<()> {
+        self.device_completion(completion)
+    }
     fn limits(&self) -> ResultSinkLimitsV1 {
         self.limits
     }
@@ -748,6 +851,19 @@ impl LogitsRowSinkV1 for CollectingSinkV1<'_> {
 /// them. Naming them here also lets a test drive every failure path between a
 /// successful `execute` and its finalizer without a device.
 pub trait BundleExecutionV1 {
+    fn supports_device_results(&self) -> bool {
+        false
+    }
+    fn execute_with_device_sampling(
+        &mut self,
+        request: &[u8],
+        limits: ResultSinkLimitsV1,
+        items: &[ModelBatchItem],
+        sampler: Option<Rc<dyn DeviceLogitsSamplerV1>>,
+        _metadata: Option<DeviceCycleMetadataV1>,
+    ) -> Result<BatchEmissionsV1, BundleAbiError> {
+        self.execute_with_sampling(request, limits, items, sampler)
+    }
     /// Evidence from the most recent failed execute: no host work or results,
     /// no pending transaction, and a usable instance. Unknown is not recoverable.
     fn last_execute_refusal(&self) -> Option<&str> {
@@ -827,6 +943,7 @@ pub trait BundleExecutionV1 {
     ) -> Result<BatchEmissionsV1, BundleAbiError> {
         self.execute_batch(request, limits)
             .map(|rows| BatchEmissionsV1 {
+                accepted_prefixes: Vec::new(),
                 rows,
                 sampled: Vec::new(),
                 prompt_view_rows: Vec::new(),
@@ -855,6 +972,9 @@ pub trait BundleExecutionV1 {
 }
 
 impl BundleExecutionV1 for LoadedBundleInstanceV1 {
+    fn supports_device_results(&self) -> bool {
+        Self::supports_device_results(self)
+    }
     fn last_execute_refusal(&self) -> Option<&str> {
         Self::last_execute_refusal(self)
     }
@@ -920,6 +1040,7 @@ impl BundleExecutionV1 for LoadedBundleInstanceV1 {
             defer: false,
             pending: Vec::new(),
             sampling_groups: BTreeMap::new(),
+            device: None,
         };
         Self::execute(self, request, &mut sink)?;
         Ok(sink.rows)
@@ -932,6 +1053,31 @@ impl BundleExecutionV1 for LoadedBundleInstanceV1 {
         items: &[ModelBatchItem],
         sampler: Option<Rc<dyn DeviceLogitsSamplerV1>>,
     ) -> Result<BatchEmissionsV1, BundleAbiError> {
+        self.execute_with_device_sampling(request, limits, items, sampler, None)
+    }
+
+    fn execute_with_device_sampling(
+        &mut self,
+        request: &[u8],
+        limits: ResultSinkLimitsV1,
+        items: &[ModelBatchItem],
+        sampler: Option<Rc<dyn DeviceLogitsSamplerV1>>,
+        metadata: Option<DeviceCycleMetadataV1>,
+    ) -> Result<BatchEmissionsV1, BundleAbiError> {
+        let device = metadata
+            .map(|metadata| {
+                DeviceResults::new(
+                    metadata,
+                    items,
+                    sampler
+                        .as_ref()
+                        .ok_or(BundleStatusV1::Unsupported)?
+                        .as_ref(),
+                    limits,
+                )
+            })
+            .transpose()
+            .map_err(BundleAbiError::Status)?;
         // Declare before the sink so its remaining buffers drop inside this scope.
         let _collect_phase;
         let mut sink = CollectingSinkV1 {
@@ -946,6 +1092,7 @@ impl BundleExecutionV1 for LoadedBundleInstanceV1 {
             defer: defer_views_from_environment(),
             pending: Vec::new(),
             sampling_groups: BTreeMap::new(),
+            device,
         };
         {
             let _phase = PhaseTimer::traced(StepPhase::BundleExecute);
@@ -956,7 +1103,15 @@ impl BundleExecutionV1 for LoadedBundleInstanceV1 {
             Self::cancel(self)?;
             return Err(BundleAbiError::Status(status));
         }
+        let accepted_prefixes = match sink.collect_device() {
+            Ok(prefixes) => prefixes,
+            Err(status) => {
+                Self::cancel(self)?;
+                return Err(BundleAbiError::Status(status));
+            }
+        };
         Ok(BatchEmissionsV1 {
+            accepted_prefixes,
             rows: sink.rows,
             sampled: sink.sampled,
             prompt_view_rows: sink.prompt_view_rows,
@@ -1344,6 +1499,14 @@ impl<E: BundleExecutionV1> ModelExecutor for BundleModelExecutorV1<E> {
             .unwrap_or(rows)
     }
 
+    fn device_results_v1(&self) -> bool {
+        self.instance.supports_device_results()
+            && self
+                .view_sampler
+                .as_ref()
+                .is_some_and(|sampler| sampler.supports_device_results())
+    }
+
     fn admit_request_v1(&mut self, id: RequestId) -> Result<(), ExecutorError> {
         if let Some(pool) = &mut self.state_slots {
             pool.allocate(id).map_err(executor_error_v1)?;
@@ -1460,9 +1623,19 @@ impl<E: BundleExecutionV1> ModelExecutor for BundleModelExecutorV1<E> {
             reason = "declare before emitted buffers so their destruction is timed"
         )]
         let _convert_phase;
+        let metadata = self
+            .device_results_v1()
+            .then(|| cycle_metadata(items, self.state_slots.as_ref()))
+            .flatten();
         let emitted = self
             .instance
-            .execute_with_sampling(&request, limits, items, self.view_sampler.clone())
+            .execute_with_device_sampling(
+                &request,
+                limits,
+                items,
+                self.view_sampler.clone(),
+                metadata,
+            )
             .map_err(|error| {
                 if error == BundleAbiError::Status(BundleStatusV1::InvalidArgument)
                     && !self.instance.is_poisoned()
@@ -1604,6 +1777,12 @@ impl<E: BundleExecutionV1> ModelExecutor for BundleModelExecutorV1<E> {
                         emitted_for_item[0].tokens.clone(),
                     ));
                 }
+                Some(DraftSource::Bundle)
+                    if emitted_for_item.is_empty()
+                        && emitted
+                            .accepted_prefixes
+                            .iter()
+                            .any(|prefix| prefix.request_id == item.request_id()) => {}
                 Some(DraftSource::Bundle) => {
                     return Err(self.cancel_refused_execution_v1(executor_error_v1(
                         "bundle omitted or mis-sized verify drafts".to_owned(),
@@ -1633,6 +1812,7 @@ impl<E: BundleExecutionV1> ModelExecutor for BundleModelExecutorV1<E> {
         )
         .with_prompt_rows(prompt_rows)
         .with_sampled(emitted.sampled)
+        .with_accepted_prefixes(emitted.accepted_prefixes)
         .with_drafts(drafts)
         .with_row_capacity(row_capacity))
     }
@@ -2257,6 +2437,7 @@ mod tests {
                 defer,
                 pending: Vec::new(),
                 sampling_groups: BTreeMap::new(),
+                device: None,
             };
             let mut raw = BundleLogitsViewV1::empty();
             raw.element_type = runtime_bundle_abi::BUNDLE_LOGITS_ELEMENT_V1_F32;
@@ -2401,6 +2582,7 @@ mod tests {
                 defer,
                 pending: Vec::new(),
                 sampling_groups: BTreeMap::new(),
+                device: None,
             };
             for view in views {
                 sink.emit_view(view).unwrap();
@@ -2564,6 +2746,7 @@ mod tests {
                     defer,
                     pending: Vec::new(),
                     sampling_groups: BTreeMap::new(),
+                    device: None,
                 };
                 for (index, drafts) in [2, 5, 1].into_iter().enumerate() {
                     sink.emit_draft_tokens(OwnedDraftTokensV1 {
@@ -2665,6 +2848,7 @@ mod tests {
                         defer,
                         pending: Vec::new(),
                         sampling_groups: BTreeMap::new(),
+                        device: None,
                     };
                     if drafts != 0 {
                         for row in 0..sequences {
@@ -2737,6 +2921,7 @@ mod tests {
             defer: false,
             pending: Vec::new(),
             sampling_groups: BTreeMap::new(),
+            device: None,
         };
         let mut raw = BundleLogitsViewV1::empty();
         raw.live_width = 16;
@@ -2847,6 +3032,7 @@ mod tests {
             defer: false,
             pending: Vec::new(),
             sampling_groups: BTreeMap::new(),
+            device: None,
         };
         let mut raw = BundleLogitsViewV1::empty();
         raw.live_width = 16;
@@ -2881,6 +3067,7 @@ mod tests {
             defer: false,
             pending: Vec::new(),
             sampling_groups: BTreeMap::new(),
+            device: None,
         };
         let mut raw = BundleLogitsViewV1::empty();
         raw.live_width = 3;
@@ -2929,6 +3116,7 @@ mod tests {
             defer: false,
             pending: Vec::new(),
             sampling_groups: BTreeMap::new(),
+            device: None,
         };
         let mut view = BundleLogitsViewV1::empty();
         view.live_width = 3;
@@ -2969,6 +3157,7 @@ mod tests {
             defer: false,
             pending: Vec::new(),
             sampling_groups: BTreeMap::new(),
+            device: None,
         };
         let mut raw = BundleLogitsViewV1::empty();
         raw.live_width = 2;
@@ -3154,6 +3343,7 @@ mod tests {
                     })
                     .collect();
                 return Ok(BatchEmissionsV1 {
+                    accepted_prefixes: Vec::new(),
                     rows: Vec::new(),
                     sampled,
                     prompt_view_rows: Vec::new(),
@@ -3168,6 +3358,7 @@ mod tests {
                     .collect();
             }
             Ok(BatchEmissionsV1 {
+                accepted_prefixes: Vec::new(),
                 rows,
                 sampled: Vec::new(),
                 prompt_view_rows: Vec::new(),

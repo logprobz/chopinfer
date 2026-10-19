@@ -53,17 +53,20 @@
 //! product into its subtraction and report `STATUS_MALFORMED`, which the
 //! served entries never write.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
+use crate::sampling_records::decode_output;
 use runtime_bundle_abi::{
     BUNDLE_LOGITS_ELEMENT_V1_BF16, BUNDLE_LOGITS_ELEMENT_V1_F32, BundleLogitsViewV1, BundleStatusV1,
 };
 use runtime_cuda::{
-    Context, CudaError, DeviceBuffer, Function, KernelArgument, LaunchConfig, MemoryPool, Module,
-    PinnedHostBuffer, Stream,
+    Context, CudaError, DeviceBuffer, Event, Function, KernelArgument, LaunchConfig, MemoryPool,
+    Module, PinnedHostBuffer, PinnedUploadRing, Stream,
 };
 use runtime_engine::{ModelBatchItem, RequestId, SampledRow, SamplingWork};
-use runtime_sampling::{SamplingParameters, SamplingState, TokenLogprob};
+#[cfg(test)]
+use runtime_sampling::TokenLogprob;
+use runtime_sampling::{SamplingParameters, SamplingState};
 
 use crate::sampling_dispatch::SamplingDispatch;
 
@@ -99,6 +102,7 @@ fn write_f64(out: &mut [u8], offset: usize, value: f64) {
     write_u64(out, offset, value.to_bits());
 }
 
+#[cfg(test)]
 fn read_u32(bytes: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes(
         bytes[offset..offset + 4]
@@ -107,6 +111,7 @@ fn read_u32(bytes: &[u8], offset: usize) -> u32 {
     )
 }
 
+#[cfg(test)]
 fn read_f64(bytes: &[u8], offset: usize) -> f64 {
     f64::from_bits(u64::from_le_bytes(
         bytes[offset..offset + 8]
@@ -168,11 +173,17 @@ fn encode_batch(items: &[&ModelBatchItem], live: u32) -> SamplingResult<EncodedB
     for (row, item) in items.iter().enumerate() {
         let work = item.sampling().ok_or(BundleStatusV1::InvalidArgument)?;
         let settings = &work.parameters;
-        let prompt_length = work
-            .history
-            .len()
-            .checked_sub(work.emitted_tokens)
-            .ok_or(BundleStatusV1::InvalidArgument)?;
+        let needs_counts = settings.repetition_penalty() != 1.0
+            || settings.frequency_penalty() != 0.0
+            || settings.presence_penalty() != 0.0;
+        let prompt_length = if needs_counts {
+            work.history
+                .len()
+                .checked_sub(work.emitted_tokens)
+                .ok_or(BundleStatusV1::InvalidArgument)?
+        } else {
+            0
+        };
         let count_start = counts.len() / COUNT_BYTES;
         let bias_start = biases.len() / BIAS_BYTES;
         let eos_start = eos.len() / 4;
@@ -499,6 +510,10 @@ pub(crate) struct DeviceSamplingSession {
     capture: Option<LogitsCapture>,
     pending: Option<PendingSample>,
     reserved_vocabulary: Option<usize>,
+    ordered_inputs: Option<PinnedUploadRing>,
+    device_submissions: VecDeque<DeviceSubmission>,
+    device_failed: bool,
+    readback: Option<crate::sampling_readback::SamplingReadback>,
 }
 
 /// A view whose kernels and output download `collect` still has to wait for.
@@ -510,6 +525,21 @@ struct PendingSample {
     waited: std::time::Duration,
     issue: std::time::Duration,
     issued: std::time::Instant,
+}
+
+/// Storage lent by an opted-in bundle. All contexts and capture membership
+/// are checked by the service before this private sampler stream is used.
+pub(crate) struct DeviceSampleTarget<'a> {
+    pub ready: &'a Event,
+    pub output: &'a DeviceBuffer,
+    pub offset: usize,
+    pub done: &'a Event,
+}
+
+struct DeviceSubmission {
+    done: Option<Event>,
+    _logits: DeviceBuffer,
+    _output: DeviceBuffer,
 }
 
 impl DeviceSamplingSession {
@@ -766,6 +796,10 @@ impl DeviceSamplingSession {
             capture: LogitsCapture::from_env(),
             pending: None,
             reserved_vocabulary: None,
+            ordered_inputs: None,
+            device_submissions: VecDeque::new(),
+            device_failed: false,
+            readback: None,
         })
     }
 
@@ -829,9 +863,133 @@ impl DeviceSamplingSession {
         items: &[&ModelBatchItem],
         dispatch: Option<SamplingDispatch>,
     ) -> SamplingResult<()> {
+        self.issue_inner(logits, view, items, dispatch, None)
+    }
+
+    pub(crate) fn issue_ready(
+        &mut self,
+        logits: &DeviceBuffer,
+        view: BundleLogitsViewV1,
+        items: &[&ModelBatchItem],
+        dispatch: SamplingDispatch,
+        ready: &Event,
+    ) -> SamplingResult<u64> {
+        let bytes = items
+            .len()
+            .checked_mul(OUTPUT_BYTES)
+            .ok_or(BundleStatusV1::InvalidArgument)?;
+        ensure_device(
+            &mut self.output_device,
+            &mut self.output_capacity,
+            bytes,
+            &self.pool,
+            &self.stream,
+        )?;
+        let output = self.output_device.as_ref().expect("output exists").clone();
+        let done = self.context.event().map_err(host_error)?;
+        self.issue_to_device(
+            logits,
+            view,
+            items,
+            dispatch,
+            DeviceSampleTarget {
+                ready,
+                output: &output,
+                offset: 0,
+                done: &done,
+            },
+        )?;
+        self.enqueue_readback(&output, 0, bytes, &done)
+    }
+
+    pub(crate) fn enqueue_readback(
+        &mut self,
+        source: &DeviceBuffer,
+        offset: usize,
+        bytes: usize,
+        ready: &Event,
+    ) -> SamplingResult<u64> {
+        if self.readback.is_none() {
+            self.readback = Some(
+                crate::sampling_readback::SamplingReadback::on_private_stream(
+                    &self.context,
+                    self.stream.clone(),
+                )?,
+            );
+        }
+        self.readback
+            .as_mut()
+            .expect("readback exists")
+            .enqueue(source, offset, bytes, ready)
+    }
+
+    pub(crate) fn discard_readback(&mut self, ticket: u64) -> SamplingResult<()> {
+        self.readback
+            .as_mut()
+            .ok_or(BundleStatusV1::StaleHandle)?
+            .discard(ticket)
+    }
+
+    pub(crate) fn collect_readback(&mut self, ticket: u64) -> SamplingResult<Vec<u8>> {
+        self.readback
+            .as_mut()
+            .ok_or(BundleStatusV1::StaleHandle)?
+            .collect(ticket)
+    }
+
+    pub(crate) fn issue_to_device(
+        &mut self,
+        logits: &DeviceBuffer,
+        view: BundleLogitsViewV1,
+        items: &[&ModelBatchItem],
+        dispatch: SamplingDispatch,
+        target: DeviceSampleTarget<'_>,
+    ) -> SamplingResult<()> {
+        if self.device_failed || self.pending.is_some() {
+            return Err(BundleStatusV1::InvalidState);
+        }
+        while let Some(submission) = self.device_submissions.front() {
+            let ready = match &submission.done {
+                Some(done) => done.query().map_err(|_| {
+                    self.device_failed = true;
+                    BundleStatusV1::HostError
+                })?,
+                None => false,
+            };
+            if !ready {
+                break;
+            }
+            self.device_submissions.pop_front();
+        }
+        if self.device_submissions.len() >= 64 {
+            return Err(BundleStatusV1::ResourceExhausted);
+        }
+        // Retain before the first submission, including partial launch failures.
+        self.device_submissions.push_back(DeviceSubmission {
+            done: None,
+            _logits: logits.clone(),
+            _output: target.output.clone(),
+        });
+        let result = self.issue_inner(logits, view, items, Some(dispatch), Some(target));
+        if result.is_err() {
+            self.device_failed = true;
+        }
+        result
+    }
+
+    fn issue_inner(
+        &mut self,
+        logits: &DeviceBuffer,
+        view: BundleLogitsViewV1,
+        items: &[&ModelBatchItem],
+        dispatch: Option<SamplingDispatch>,
+        target: Option<DeviceSampleTarget<'_>>,
+    ) -> SamplingResult<()> {
         let _profile =
             runtime_engine::profile::PhaseTimer::new(runtime_engine::profile::StepPhase::Sampling);
-        self.retire_pending()?;
+        if target.is_none() {
+            self.retire_pending()?;
+        }
         let rows = view.row_count as usize;
         let live = view.live_width as usize;
         if rows == 0
@@ -885,6 +1043,12 @@ impl DeviceSamplingSession {
         let output_bytes = rows
             .checked_mul(OUTPUT_BYTES)
             .ok_or(BundleStatusV1::ResourceExhausted)?;
+        if let Some(target) = &target {
+            target
+                .output
+                .device_address_at(target.offset, output_bytes)
+                .map_err(host_error)?;
+        }
         let workspace_items = if encoded.simple {
             1
         } else {
@@ -903,35 +1067,70 @@ impl DeviceSamplingSession {
             &self.pool,
             &self.stream,
         )?;
-        ensure_pinned(
-            &mut self.input_pinned,
-            &mut self.input_pinned_capacity,
-            encoded.bytes.len(),
-            &self.context,
-        )?;
-        let input_pinned = self.input_pinned.as_mut().expect("pinned input exists");
-        input_pinned.as_mut_slice()[..encoded.bytes.len()].copy_from_slice(&encoded.bytes);
-        // The upload overlaps the wait for the logits; the stream is idle
-        // once the context is.
-        let upload_timer =
-            runtime_engine::profile::PhaseTimer::new(runtime_engine::profile::StepPhase::Upload);
-        let upload = self
-            .input_device
-            .as_ref()
-            .expect("input allocation exists")
-            .copy_from_pinned_at_async(0, input_pinned, 0, encoded.bytes.len(), &self.stream)
-            .map_err(host_error)?;
-        drop(upload_timer);
-        crate::overlap::device_wait();
-        let waiting = std::time::Instant::now();
-        {
-            let _wait = runtime_engine::profile::PhaseTimer::new(
-                runtime_engine::profile::StepPhase::DeviceWait,
+        let waited = if target.is_some() || self.ordered_inputs.is_some() {
+            if self.ordered_inputs.is_none() {
+                ensure_pinned(
+                    &mut self.input_pinned,
+                    &mut self.input_pinned_capacity,
+                    encoded.bytes.len(),
+                    &self.context,
+                )?;
+                self.ordered_inputs = Some(PinnedUploadRing::new(
+                    self.input_pinned.take().expect("pinned input exists"),
+                ));
+            }
+            self.ordered_inputs
+                .as_mut()
+                .expect("ordered inputs exist")
+                .upload(
+                    self.input_device.as_ref().expect("input allocation exists"),
+                    0,
+                    &encoded.bytes,
+                    &self.stream,
+                )
+                .map_err(host_error)?;
+            if let Some(target) = &target {
+                self.stream.wait_event(target.ready).map_err(host_error)?;
+                std::time::Duration::ZERO
+            } else {
+                crate::overlap::device_wait();
+                let waiting = std::time::Instant::now();
+                self.context.synchronize().map_err(host_error)?;
+                waiting.elapsed()
+            }
+        } else {
+            ensure_pinned(
+                &mut self.input_pinned,
+                &mut self.input_pinned_capacity,
+                encoded.bytes.len(),
+                &self.context,
+            )?;
+            let input_pinned = self.input_pinned.as_mut().expect("pinned input exists");
+            input_pinned.as_mut_slice()[..encoded.bytes.len()].copy_from_slice(&encoded.bytes);
+            // The upload overlaps the wait for the logits; the stream is idle
+            // once the context is.
+            let upload_timer = runtime_engine::profile::PhaseTimer::new(
+                runtime_engine::profile::StepPhase::Upload,
             );
-            self.context.synchronize().map_err(host_error)?;
-        }
-        let waited = waiting.elapsed();
-        upload.finish();
+            let upload = self
+                .input_device
+                .as_ref()
+                .expect("input allocation exists")
+                .copy_from_pinned_at_async(0, input_pinned, 0, encoded.bytes.len(), &self.stream)
+                .map_err(host_error)?;
+            drop(upload_timer);
+            crate::overlap::device_wait();
+            let waiting = std::time::Instant::now();
+            {
+                let _wait = runtime_engine::profile::PhaseTimer::new(
+                    runtime_engine::profile::StepPhase::DeviceWait,
+                );
+                self.context.synchronize().map_err(host_error)?;
+            }
+            let waited = waiting.elapsed();
+            upload.finish();
+            waited
+        };
         if self.capture.is_some() {
             self.capture_rows(
                 logits,
@@ -989,6 +1188,14 @@ impl DeviceSamplingSession {
             .output_device
             .as_ref()
             .expect("output allocation exists");
+        let output_argument = match &target {
+            Some(target) => KernelArgument::Range {
+                buffer: target.output,
+                offset: target.offset,
+                byte_len: output_bytes,
+            },
+            None => KernelArgument::Buffer(output),
+        };
         let adjusted = self.adjusted.as_ref().expect("workspace allocation exists");
         let order = self.order.as_ref().expect("order allocation exists");
         let partials = self
@@ -1057,7 +1264,7 @@ impl DeviceSamplingSession {
                     byte_len: rows * META_BYTES,
                 },
                 KernelArgument::Buffer(partials),
-                KernelArgument::Buffer(output),
+                output_argument,
             ];
             finish_function
                 .launch(
@@ -1133,7 +1340,7 @@ impl DeviceSamplingSession {
                     byte_len: rows * META_BYTES,
                 },
                 KernelArgument::Buffer(partials),
-                KernelArgument::Buffer(output),
+                output_argument,
             ];
             let functions = if view.element_type == BUNDLE_LOGITS_ELEMENT_V1_F32 {
                 &self.filtered_f32
@@ -1166,6 +1373,16 @@ impl DeviceSamplingSession {
                     )
                     .map_err(host_error)?;
             }
+        }
+        if let Some(target) = target {
+            target.done.record(&self.stream).map_err(host_error)?;
+            let retained_done = self.context.event().map_err(host_error)?;
+            retained_done.record(&self.stream).map_err(host_error)?;
+            self.device_submissions
+                .back_mut()
+                .expect("submission retained")
+                .done = Some(retained_done);
+            return Ok(());
         }
         self.pending = Some(PendingSample {
             rows,
@@ -1245,8 +1462,12 @@ impl DeviceSamplingSession {
     /// Drops a view that was issued but never collected, once its kernels
     /// no longer use the session's buffers.
     fn retire_pending(&mut self) -> SamplingResult<()> {
-        if self.pending.take().is_some() {
+        if self.pending.is_some() || !self.device_submissions.is_empty() {
+            // This stream is private. Service validation excludes capture events,
+            // so neither explicit capture nor an event join can capture it.
             self.stream.synchronize().map_err(host_error)?;
+            self.pending = None;
+            self.device_submissions.clear();
         }
         Ok(())
     }
@@ -1254,70 +1475,11 @@ impl DeviceSamplingSession {
 
 impl Drop for DeviceSamplingSession {
     fn drop(&mut self) {
-        let _ = self.retire_pending();
+        if self.retire_pending().is_err() && self.retire_pending().is_err() {
+            // Dropping borrowed allocations without a successful fence is unsafe.
+            std::process::abort();
+        }
     }
-}
-
-/// The sampler's row status when no token survives the row's masks
-/// (`cuda/sampling/sampling.cuh`).
-const EMPTY_DISTRIBUTION: u32 = 2;
-
-fn decode_output(
-    bytes: &[u8],
-    items: &[&ModelBatchItem],
-    live: usize,
-) -> SamplingResult<Vec<SampledRow>> {
-    let mut sampled = Vec::with_capacity(items.len());
-    for (row, item) in items.iter().enumerate() {
-        let record = &bytes[row * OUTPUT_BYTES..(row + 1) * OUTPUT_BYTES];
-        match read_u32(record, 4) {
-            0 => {}
-            // No token survives the row's masks: the request's own failure,
-            // as host sampling reports it. The engine fails that request
-            // and commits the step's others.
-            EMPTY_DISTRIBUTION => {
-                sampled.push(SampledRow::failed(
-                    item.request_id(),
-                    runtime_sampling::SamplingError::AllTokensMasked,
-                ));
-                continue;
-            }
-            // A non-finite logit or malformed row parameters.
-            _ => return Err(BundleStatusV1::HostError),
-        }
-        let work = item.sampling().ok_or(BundleStatusV1::InvalidArgument)?;
-        // The kernel ranks admitted tokens; fill the masked tail on the host.
-        let admitted = row_mask(item).map_or(live, |mask| {
-            mask.iter().map(|word| word.count_ones() as usize).sum()
-        });
-        let top_count = work.parameters.top_logprobs().min(live).min(admitted);
-        if top_count > 20 {
-            return Err(BundleStatusV1::InvalidArgument);
-        }
-        let mut top = Vec::with_capacity(top_count);
-        for index in 0..top_count {
-            top.push(TokenLogprob::new(
-                read_u32(record, 16 + index * 4),
-                read_f64(record, 96 + index * 8),
-            ));
-        }
-        if let Some(mask) = row_mask(item) {
-            let remaining = work.parameters.top_logprobs().min(live) - top.len();
-            top.extend(
-                (0..live)
-                    .filter(|token| mask[token / 32] & (1 << (token % 32)) == 0)
-                    .take(remaining)
-                    .map(|token| TokenLogprob::new(token as u32, f64::NEG_INFINITY)),
-            );
-        }
-        sampled.push(SampledRow::new(
-            item.request_id(),
-            read_u32(record, 0),
-            read_f64(record, 8),
-            top,
-        ));
-    }
-    Ok(sampled)
 }
 
 #[cfg(test)]
@@ -1963,6 +2125,44 @@ mod tests {
                     assert!((got.logprob() - want.logprob()).abs() < 1e-4);
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod device_metadata_tests {
+    use super::*;
+    #[test]
+    fn device_verify_rows_encode_exactly_like_host_drafts_with_short_history() {
+        let work = SamplingWork {
+            parameters: SamplingParameters::new(1.0)
+                .unwrap()
+                .with_minimum_new_tokens(3)
+                .unwrap(),
+            state: SamplingState::new(17),
+            history: vec![1].into(),
+            emitted_tokens: 0,
+            stop_ids: vec![2, 3],
+            constraint: None,
+        };
+        let item = ModelBatchItem::new(
+            RequestId::new(1),
+            runtime_scheduler::BatchPhase::Verify { draft_tokens: 5 },
+            vec![1],
+            true,
+        );
+        let proposals = [2, 4, 6, 7, 5];
+        for row in 0..=5 {
+            let host = item
+                .clone()
+                .with_sampling(work.for_verify_row(&proposals, row));
+            let device = item
+                .clone()
+                .with_sampling(work.for_device_verify_row(row).unwrap());
+            assert_eq!(
+                encode_batch(&[&host], 8).unwrap().bytes,
+                encode_batch(&[&device], 8).unwrap().bytes
+            );
         }
     }
 }

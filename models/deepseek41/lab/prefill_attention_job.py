@@ -98,6 +98,7 @@ def parse_reuse(text, layers):
         key = (int(row['rank']),int(row['layer']),row['candidate'])
         assert key not in records and key[0] in (0,1) and 0 <= key[1] < 40 and key[2] in modes
         assert row['rows'] == '8192' and row['variant'] == variants[layers[key[1]]]
+        assert row['warmup'] == '1' and row['samples'] == '3'
         for field in fields:
             row[field] = float(row[field])
             assert math.isfinite(row[field]) and row[field] > 0, (field,row)
@@ -123,12 +124,12 @@ def reuse_controls():
     for rank,layer,mode in itertools.product(range(2),range(40),('vector','pair')):
         variant = ('window','mixed64','mixed32')[layers[layer]]
         gflop = 4*8192*16*512*(128 if layers[layer]==0 else 640)/1e9
-        lines.append(f'prefix TIMING prefill_attention rank={rank} layer={layer} variant={variant} rows=8192 old_attention_us=10 candidate_attention_us=5 old_merge_us=1 candidate_merge_us=1 old_total_us=11 candidate_total_us=6 gflop={gflop} paired_ratio=0.55 candidate={mode}')
+        lines.append(f'prefix TIMING prefill_attention rank={rank} layer={layer} variant={variant} rows=8192 old_attention_us=10 candidate_attention_us=5 old_merge_us=1 candidate_merge_us=1 old_total_us=11 candidate_total_us=6 gflop={gflop} paired_ratio=0.55 candidate={mode} warmup=1 samples=3')
     text = '\n'.join(lines)
     assert len(parse_reuse(text,layers)['timings']) == 160
     for bad in [text.replace(lines[-1],''),text+'\n'+lines[-1],text.replace('candidate_attention_us=5','candidate_attention_us=nan'),
                 text.replace('reuse_cases=true','reuse_cases=false'),text.replace('f64=true','f64=false'),
-                lines[12]+'\n'+text,text+'\nFAILED\n']:
+                lines[12]+'\n'+text,text+'\nFAILED\n',text.replace('samples=3','samples=7')]:
         try: parse_reuse(bad,layers)
         except (AssertionError,ValueError,KeyError): pass
         else: raise AssertionError('all-layer control accepted corrupt output')
@@ -225,14 +226,15 @@ def main():
             env.pop(key,None)
         for name in ('CUDA_MPS_PIPE_DIRECTORY','CUDA_MPS_ACTIVE_THREAD_PERCENTAGE','CUDA_MPS_ENABLE_PER_CTX_DEVICE_MULTIPROCESSOR_PARTITIONING'):
             assert not env.get(name), f'profile refuses {name}'
-        env.update(CHOPINFER_KERNEL_GPUS='0,1',CHOPINFER_KERNEL_REQUIRE='1',CHOPINFER_KERNEL_TIMEOUT_SECS='1050',
+        gpu_timeout = 700 if reuse else 1050
+        env.update(CHOPINFER_KERNEL_GPUS='0,1',CHOPINFER_KERNEL_REQUIRE='1',CHOPINFER_KERNEL_TIMEOUT_SECS=str(gpu_timeout),
                    CHOPINFER_KERNEL_RECEIPTS=str(out/'receipts'))
         resources = step('resources', [sys.executable,'-B',str(ROOT/'prefill_attention_resources.py')],90,env=env)
         (out/'resources.json').write_text(resources)
         data = json.loads(resources)
         assert [r['rank'] for r in data['ranks']] == [0,1] and all(len(r['functions']) == len(requests) for r in data['ranks'])
         if not resources_only:
-            log = step('gpu', [str(BINARY),'run-reuse' if reuse else 'ablation',str(CUBINS)],1050,env=env)
+            log = step('gpu', [str(BINARY),'run-reuse' if reuse else 'ablation',str(CUBINS)],gpu_timeout,env=env)
             log += '\n' + (out/'gpu.stderr.log').read_text()
             result.update(parse_reuse(log,manifest['layers']) if reuse else parse(log))
         result['exit_code'] = 0

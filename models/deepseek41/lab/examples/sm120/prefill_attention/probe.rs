@@ -419,7 +419,7 @@ fn timings(s: &Session, rank: usize, rig: &Rig) -> LabResult<()> {
         }
         rig.inputs
             .set_case(s, layer as u32 + rank as u32 * 40 + 100, false, ROWS)?;
-        let attention = [0, 1]
+        let attention_graphs = [0, 1]
             .map(|arm| s.capture(|stream| rig.attention(stream, arm)))
             .into_iter()
             .collect::<LabResult<Vec<_>>>()?;
@@ -429,28 +429,33 @@ fn timings(s: &Session, rank: usize, rig: &Rig) -> LabResult<()> {
             .collect::<LabResult<Vec<_>>>()?;
         let label = format!("prefill_attention.rank{rank}.layer{layer}");
         let measure = |graphs: &[runtime_cuda::GraphExec]| {
-            kernel_harness::time_ab(s, 2, 7, [EvictionMode::Write; 2], |arm, stream| {
+            kernel_harness::time_ab(s, 1, 3, [EvictionMode::Write; 2], |arm, stream| {
                 graphs[arm].launch(stream).map_err(|e| e.to_string())
             })
         };
         let attention = kernel_harness::with_timing_label(&format!("{label}.attention"), || {
-            measure(&attention)
+            measure(&attention_graphs)
         })?;
         let total =
             kernel_harness::with_timing_label(&format!("{label}.combined"), || measure(&combined))?;
-        let mut merge = Vec::new();
-        for arm in 0..2 {
-            merge.push(kernel_harness::with_timing_label(
-                &format!("{label}.merge.{arm}"),
-                || {
-                    kernel_harness::time_after(
-                        s,
-                        || rig.attention(&s.stream, arm),
-                        || rig.merge(&s.stream, arm),
-                    )
+        let merge_graphs = [0, 1]
+            .map(|arm| s.capture(|stream| rig.merge(stream, arm)))
+            .into_iter()
+            .collect::<LabResult<Vec<_>>>()?;
+        let merge = kernel_harness::with_timing_label(&format!("{label}.merge"), || {
+            kernel_harness::time_ab_prepared(
+                s,
+                1,
+                3,
+                [EvictionMode::Write; 2],
+                |arm, stream| {
+                    attention_graphs[arm]
+                        .launch(stream)
+                        .map_err(|e| e.to_string())
                 },
-            )?);
-        }
+                |arm, stream| merge_graphs[arm].launch(stream).map_err(|e| e.to_string()),
+            )
+        })?;
         let gflop = 4.0
             * f64::from(ROWS)
             * HEADS as f64
@@ -458,12 +463,12 @@ fn timings(s: &Session, rank: usize, rig: &Rig) -> LabResult<()> {
             * f64::from(WINDOW + rig.inputs.compressed_budget)
             / 1e9;
         println!(
-            "TIMING prefill_attention rank={rank} layer={layer} variant={} rows={ROWS} old_attention_us={} candidate_attention_us={} old_merge_us={} candidate_merge_us={} old_total_us={} candidate_total_us={} gflop={gflop} paired_ratio={} candidate={}",
+            "TIMING prefill_attention rank={rank} layer={layer} variant={} rows={ROWS} old_attention_us={} candidate_attention_us={} old_merge_us={} candidate_merge_us={} old_total_us={} candidate_total_us={} gflop={gflop} paired_ratio={} candidate={} warmup=1 samples=3",
             variant(&rig.entry),
             attention.arms[0].median_ms * 1000.0,
             attention.arms[1].median_ms * 1000.0,
-            merge[0],
-            merge[1],
+            merge.arms[0].median_ms * 1000.0,
+            merge.arms[1].median_ms * 1000.0,
             total.arms[0].median_ms * 1000.0,
             total.arms[1].median_ms * 1000.0,
             total.paired_ratio,

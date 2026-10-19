@@ -1015,7 +1015,9 @@ fn collect_pairs(
     }
     summarize_pairs(samples)
 }
-fn time_ab_prepared(
+/// Time alternating A/B arms with an untimed producer before each sample.
+/// Eviction precedes the producer; only `work` is enclosed by CUDA events.
+pub fn time_ab_prepared(
     session: &Session,
     warmup: usize,
     rounds: usize,

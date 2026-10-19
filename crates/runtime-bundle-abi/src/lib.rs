@@ -17,10 +17,11 @@ pub use host_services::{
     AuthenticatedComponentMetadataV1, CollectiveRequestV1, CompiledImageSpanV1,
     CustomAddressSpaceV1, CustomCompletionV1, CustomOperandV1, DeviceBufferSpanV1,
     HostServiceResultV1, HostServicesBackendV1, KernelArgumentV1, LaunchClusterV1, LaunchConfigV1,
-    LentLaunchV1, LentRangeV1, LentStreamV1, LogitsRowSinkV1, MappedRowGatherV1,
-    OwnedDraftTokensV1, OwnedLogitsRowV1, OwnedLogitsViewV1, PhysicalKvLayoutV1,
-    PhysicalKvRequestV1, RankArenaUploadV1, ResultSinkLimitsV1, StateRequestV1, TensorMapElementV1,
-    TensorMapSwizzleV1, TensorMapV1, UnsupportedHostServicesBackendV1,
+    LentLaunchV1, LentRangeV1, LentStreamV1, LogitsRowSinkV1, MappedGatherPlaneV1,
+    MappedGatherStatsV1, MappedRowGatherV1, OwnedDraftTokensV1, OwnedLogitsRowV1,
+    OwnedLogitsViewV1, PhysicalKvLayoutV1, PhysicalKvRequestV1, RankArenaUploadV1,
+    ResultSinkLimitsV1, StateRequestV1, TensorMapElementV1, TensorMapSwizzleV1, TensorMapV1,
+    UnsupportedHostServicesBackendV1,
 };
 pub use loader::{BundleLibraryV1, BundleLoaderError, LoadedBundleInstanceV1};
 pub use trampoline::{
@@ -228,6 +229,7 @@ opaque_handle_v1!(BundleKvRequestHandleV1);
 opaque_handle_v1!(BundleKvTransactionHandleV1);
 opaque_handle_v1!(BundleStateHandleV1);
 opaque_handle_v1!(BundleCollectiveHandleV1);
+opaque_handle_v1!(BundleMappedGatherHandleV1);
 
 pub(crate) const fn struct_size_v1<T>() -> u32 {
     size_of::<T>() as u32
@@ -1202,6 +1204,52 @@ pub type BundleGatherMappedRowsFnV1 = unsafe extern "C" fn(
     *const BundleMappedRowGatherV1,
 ) -> BundleStatusV1;
 
+/// Prepared device-indexed mapped gather plane (`chop.async-mapped-gather.v1`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BundleMappedGatherPlaneV1 {
+    pub struct_size: u32,
+    pub rank: u32,
+    pub image: BundleCompiledImageHandleV1,
+    pub view_id: BundleByteViewV1,
+    pub row_bytes: u64,
+    pub index_offset: u64,
+    pub stream: BundleStreamHandleV1,
+    pub destination: BundleDeviceBufferViewV1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BundleMappedGatherCompletionV1 {
+    pub struct_size: u32,
+    pub ready: u32,
+    pub host_nanoseconds: u64,
+    pub exposed_nanoseconds: u64,
+}
+
+pub type BundleCreateMappedGatherFnV1 = unsafe extern "C" fn(
+    *mut c_void,
+    BundleStreamHandleV1,
+    BundleDeviceBufferViewV1,
+    *const BundleMappedGatherPlaneV1,
+    u64,
+    *mut BundleMappedGatherHandleV1,
+) -> BundleStatusV1;
+pub type BundleEnqueueMappedGatherFnV1 =
+    unsafe extern "C" fn(*mut c_void, BundleMappedGatherHandleV1, u64) -> BundleStatusV1;
+pub type BundleWaitMappedGatherFnV1 = unsafe extern "C" fn(
+    *mut c_void,
+    BundleMappedGatherHandleV1,
+    BundleStreamHandleV1,
+) -> BundleStatusV1;
+pub type BundleCompleteMappedGatherFnV1 = unsafe extern "C" fn(
+    *mut c_void,
+    BundleMappedGatherHandleV1,
+    *mut BundleMappedGatherCompletionV1,
+) -> BundleStatusV1;
+pub type BundleReleaseMappedGatherFnV1 =
+    unsafe extern "C" fn(*mut c_void, BundleMappedGatherHandleV1) -> BundleStatusV1;
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct BundleHostServicesV1 {
@@ -1275,6 +1323,12 @@ pub struct BundleHostServicesV1 {
     pub query_cluster_residency_v1: Option<BundleQueryClusterResidencyFnV1>,
     /// Optional host-mapped gather tail (`chop.host-mapped-gather.v1`).
     pub gather_mapped_rows_v1: Option<BundleGatherMappedRowsFnV1>,
+    /// Optional event-ordered mapped gather tail (`chop.async-mapped-gather.v1`).
+    pub create_mapped_gather_v1: Option<BundleCreateMappedGatherFnV1>,
+    pub enqueue_mapped_gather_v1: Option<BundleEnqueueMappedGatherFnV1>,
+    pub wait_mapped_gather_v1: Option<BundleWaitMappedGatherFnV1>,
+    pub complete_mapped_gather_v1: Option<BundleCompleteMappedGatherFnV1>,
+    pub release_mapped_gather_v1: Option<BundleReleaseMappedGatherFnV1>,
 }
 
 impl BundleHostServicesV1 {
@@ -1350,6 +1404,11 @@ impl BundleHostServicesV1 {
             query_batch_limits_v1: None,
             query_cluster_residency_v1: None,
             gather_mapped_rows_v1: None,
+            create_mapped_gather_v1: None,
+            enqueue_mapped_gather_v1: None,
+            wait_mapped_gather_v1: None,
+            complete_mapped_gather_v1: None,
+            release_mapped_gather_v1: None,
         }
     }
 }
@@ -1782,6 +1841,9 @@ pub const HOST_RESIDENT_VIEWS_CAPABILITY_V1: &str = "chop.host-resident-views.v1
 /// stream. A package with mapped views must require this capability, so a
 /// host without it refuses the package.
 pub const HOST_MAPPED_GATHER_CAPABILITY_V1: &str = "chop.host-mapped-gather.v1";
+
+/// Optional prepared gathers with device IDs and event-ordered pinned staging.
+pub const ASYNC_MAPPED_GATHER_CAPABILITY_V1: &str = "chop.async-mapped-gather.v1";
 
 pub type BundleRetireRequestFnV1 = extern "C" fn(BundleHandleV1, u64) -> BundleStatusV1;
 

@@ -25,9 +25,9 @@ use crate::host_services::{
     AuthenticatedComponentMetadataV1, CollectiveRequestV1, CompiledImageSpanV1,
     CustomAddressSpaceV1, CustomCompletionV1, CustomOperandV1, DeviceBufferSpanV1,
     HostServiceResultV1, HostServicesBackendV1, KernelArgumentV1, LaunchConfigV1, LentLaunchV1,
-    LentRangeV1, LentStreamV1, LogitsRowSinkV1, MappedRowGatherV1, OwnedDraftTokensV1,
-    OwnedLogitsRowV1, OwnedLogitsViewV1, PhysicalKvLayoutV1, PhysicalKvRequestV1,
-    RankArenaUploadV1, ResultSinkLimitsV1, StateRequestV1, TensorMapV1,
+    LentRangeV1, LentStreamV1, LogitsRowSinkV1, MappedGatherPlaneV1, MappedGatherStatsV1,
+    MappedRowGatherV1, OwnedDraftTokensV1, OwnedLogitsRowV1, OwnedLogitsViewV1, PhysicalKvLayoutV1,
+    PhysicalKvRequestV1, RankArenaUploadV1, ResultSinkLimitsV1, StateRequestV1, TensorMapV1,
 };
 use crate::{
     BUNDLE_ABI_VERSION_V1, BUNDLE_CUSTOM_OPERATION_V1_CONTAINED_FAULT,
@@ -61,6 +61,9 @@ use crate::{
     validate_kernel_argument_struct_size_v1, validate_kernel_arguments_v1,
     validate_launch_config_v1, validate_mut_byte_view_v1, validate_physical_kv_request_v1,
     validate_speculation_v1, validate_state_request_v1, validate_tensor_map_v1,
+};
+use crate::{
+    BundleMappedGatherCompletionV1, BundleMappedGatherHandleV1, BundleMappedGatherPlaneV1,
 };
 
 /// Converts a Rust panic into the V1 status code before an ABI callback returns.
@@ -277,6 +280,11 @@ impl HostServicesTableV1 {
             query_batch_limits_v1: Some(query_batch_limits_trampoline_v1::<B>),
             query_cluster_residency_v1: Some(query_cluster_residency_trampoline_v1::<B>),
             gather_mapped_rows_v1: Some(gather_mapped_rows_trampoline_v1::<B>),
+            create_mapped_gather_v1: Some(create_mapped_gather_trampoline_v1::<B>),
+            enqueue_mapped_gather_v1: Some(enqueue_mapped_gather_trampoline_v1::<B>),
+            wait_mapped_gather_v1: Some(wait_mapped_gather_trampoline_v1::<B>),
+            complete_mapped_gather_v1: Some(complete_mapped_gather_trampoline_v1::<B>),
+            release_mapped_gather_v1: Some(release_mapped_gather_trampoline_v1::<B>),
         });
         // SAFETY-REVIEWED: this table builds every callback itself and owns the backend they read.
         let checked = unsafe { HostServicesV1::new(*raw) };
@@ -399,6 +407,8 @@ macro_rules! identity_abi_output_v1 {
 }
 
 identity_abi_output_v1!(
+    BundleMappedGatherHandleV1,
+    BundleMappedGatherCompletionV1,
     BundleCollectiveHandleV1,
     BundleAuthenticatedComponentHandleV1,
     BundleCompiledImageHandleV1,
@@ -904,6 +914,128 @@ unsafe extern "C" fn gather_mapped_rows_trampoline_v1<B: HostServicesBackendV1>(
                 })??;
             Ok(host_unit_status_v1(result))
         })
+    })
+}
+
+// SAFETY-REVIEWED: the caller owns every record and view for this callback.
+unsafe extern "C" fn create_mapped_gather_trampoline_v1<B: HostServicesBackendV1>(
+    user_data: *mut c_void,
+    producer: BundleStreamHandleV1,
+    indices: BundleDeviceBufferViewV1,
+    planes: *const BundleMappedGatherPlaneV1,
+    count: u64,
+    output: *mut BundleMappedGatherHandleV1,
+) -> BundleStatusV1 {
+    catch_panic_callback_status_v1(|| {
+        let backend = backend_from_user_data_v1::<B>(user_data)?;
+        validate_output_pointer_v1(output, "mapped gather handle")?;
+        producer.validate()?;
+        let indices = checked_device_buffer_span_v1(indices)?;
+        if count == 0 || count > 256 {
+            return Err(BundleAbiError::InvalidRange("mapped gather planes"));
+        }
+        let count =
+            checked_slice_count_v1::<BundleMappedGatherPlaneV1>("mapped gather planes", count)?;
+        validate_input_pointer_v1(planes, "mapped gather planes")?;
+        // SAFETY-REVIEWED: the caller supplies an aligned readable array for this call.
+        let planes = unsafe { slice::from_raw_parts(planes, count) };
+        let planes = planes
+            .iter()
+            .map(|plane| {
+                if plane.struct_size != struct_size_v1::<BundleMappedGatherPlaneV1>() {
+                    return Err(BundleAbiError::StructSizeExact {
+                        surface: "mapped gather plane",
+                        expected: struct_size_v1::<BundleMappedGatherPlaneV1>(),
+                        actual: plane.struct_size,
+                    });
+                }
+                plane.image.validate()?;
+                plane.stream.validate()?;
+                if plane.view_id.length == 0 || plane.view_id.length > 4096 {
+                    return Err(BundleAbiError::InvalidRange("mapped gather view id"));
+                }
+                Ok(MappedGatherPlaneV1 {
+                    image: plane.image,
+                    rank: plane.rank,
+                    view_id: copy_byte_view_v1(plane.view_id)?,
+                    row_bytes: plane.row_bytes,
+                    index_offset: plane.index_offset,
+                    stream: plane.stream,
+                    destination: checked_device_buffer_span_v1(plane.destination)?,
+                })
+            })
+            .collect::<Result<Vec<_>, BundleAbiError>>()?;
+        finish_output_v1(
+            output,
+            backend.create_mapped_gather(producer, indices, &planes),
+        )
+    })
+}
+
+// SAFETY-REVIEWED: user_data belongs to the live service table for this call.
+unsafe extern "C" fn enqueue_mapped_gather_trampoline_v1<B: HostServicesBackendV1>(
+    user_data: *mut c_void,
+    gather: BundleMappedGatherHandleV1,
+    rows: u64,
+) -> BundleStatusV1 {
+    catch_panic_callback_status_v1(|| {
+        let backend = backend_from_user_data_v1::<B>(user_data)?;
+        gather.validate()?;
+        Ok(host_unit_status_v1(
+            backend.enqueue_mapped_gather(gather, rows),
+        ))
+    })
+}
+
+// SAFETY-REVIEWED: user_data belongs to the live service table for this call.
+unsafe extern "C" fn wait_mapped_gather_trampoline_v1<B: HostServicesBackendV1>(
+    user_data: *mut c_void,
+    gather: BundleMappedGatherHandleV1,
+    consumer: BundleStreamHandleV1,
+) -> BundleStatusV1 {
+    catch_panic_callback_status_v1(|| {
+        let backend = backend_from_user_data_v1::<B>(user_data)?;
+        gather.validate()?;
+        consumer.validate()?;
+        Ok(host_unit_status_v1(
+            backend.wait_mapped_gather(gather, consumer),
+        ))
+    })
+}
+
+// SAFETY-REVIEWED: the caller owns output storage for this callback.
+unsafe extern "C" fn complete_mapped_gather_trampoline_v1<B: HostServicesBackendV1>(
+    user_data: *mut c_void,
+    gather: BundleMappedGatherHandleV1,
+    output: *mut BundleMappedGatherCompletionV1,
+) -> BundleStatusV1 {
+    catch_panic_callback_status_v1(|| {
+        let backend = backend_from_user_data_v1::<B>(user_data)?;
+        validate_output_pointer_v1(output, "mapped gather completion")?;
+        gather.validate()?;
+        let result = backend.complete_mapped_gather(gather).map(|stats| {
+            let ready = u32::from(stats.is_some());
+            let stats = stats.unwrap_or_default();
+            BundleMappedGatherCompletionV1 {
+                struct_size: struct_size_v1::<BundleMappedGatherCompletionV1>(),
+                ready,
+                host_nanoseconds: stats.host_nanoseconds,
+                exposed_nanoseconds: stats.exposed_nanoseconds,
+            }
+        });
+        finish_output_v1(output, result)
+    })
+}
+
+// SAFETY-REVIEWED: user_data belongs to the live service table for this call.
+unsafe extern "C" fn release_mapped_gather_trampoline_v1<B: HostServicesBackendV1>(
+    user_data: *mut c_void,
+    gather: BundleMappedGatherHandleV1,
+) -> BundleStatusV1 {
+    catch_panic_callback_status_v1(|| {
+        let backend = backend_from_user_data_v1::<B>(user_data)?;
+        gather.validate()?;
+        Ok(host_unit_status_v1(backend.release_mapped_gather(gather)))
     })
 }
 
@@ -2175,6 +2307,131 @@ impl HostServicesV1 {
         };
         // SAFETY-REVIEWED: the record borrows the caller's identifier and rows for the length of this call.
         status_result(unsafe { service(self.raw.user_data, stream, destination, &record) })
+    }
+
+    #[must_use]
+    pub fn has_async_mapped_gather(&self) -> bool {
+        let end = std::mem::offset_of!(BundleHostServicesV1, release_mapped_gather_v1)
+            + std::mem::size_of_val(&self.raw.release_mapped_gather_v1);
+        (self.raw.struct_size as usize) >= end
+            && self.raw.create_mapped_gather_v1.is_some()
+            && self.raw.enqueue_mapped_gather_v1.is_some()
+            && self.raw.wait_mapped_gather_v1.is_some()
+            && self.raw.complete_mapped_gather_v1.is_some()
+            && self.raw.release_mapped_gather_v1.is_some()
+    }
+
+    fn require_async_mapped_gather(&self) -> Result<(), BundleAbiError> {
+        if self.has_async_mapped_gather() {
+            Ok(())
+        } else {
+            Err(BundleAbiError::MissingHostService("async_mapped_gather_v1"))
+        }
+    }
+
+    pub fn create_mapped_gather(
+        &self,
+        producer: BundleStreamHandleV1,
+        indices: DeviceBufferSpanV1,
+        planes: &[MappedGatherPlaneV1],
+    ) -> Result<BundleMappedGatherHandleV1, BundleAbiError> {
+        self.require_async_mapped_gather()?;
+        let indices = checked_device_buffer_view_v1(indices)?;
+        if planes.is_empty() || planes.len() > 256 {
+            return Err(BundleAbiError::InvalidRange("mapped gather planes"));
+        }
+        let planes = planes
+            .iter()
+            .map(|plane| {
+                Ok(BundleMappedGatherPlaneV1 {
+                    struct_size: struct_size_v1::<BundleMappedGatherPlaneV1>(),
+                    rank: plane.rank,
+                    image: plane.image,
+                    view_id: BundleByteViewV1::from_bytes(&plane.view_id),
+                    row_bytes: plane.row_bytes,
+                    index_offset: plane.index_offset,
+                    stream: plane.stream,
+                    destination: checked_device_buffer_view_v1(plane.destination)?,
+                })
+            })
+            .collect::<Result<Vec<_>, BundleAbiError>>()?;
+        let mut result = BundleMappedGatherHandleV1::from_raw(0);
+        // SAFETY-REVIEWED: the record array, borrowed names and output live through this call.
+        status_result(unsafe {
+            self.raw.create_mapped_gather_v1.unwrap()(
+                self.raw.user_data,
+                producer,
+                indices,
+                planes.as_ptr(),
+                planes.len() as u64,
+                &mut result,
+            )
+        })?;
+        result.validate()?;
+        Ok(result)
+    }
+
+    pub fn enqueue_mapped_gather(
+        &self,
+        gather: BundleMappedGatherHandleV1,
+        rows: u64,
+    ) -> Result<(), BundleAbiError> {
+        self.require_async_mapped_gather()?;
+        // SAFETY-REVIEWED: the checked table owns user_data for this call.
+        status_result(unsafe {
+            self.raw.enqueue_mapped_gather_v1.unwrap()(self.raw.user_data, gather, rows)
+        })
+    }
+
+    pub fn wait_mapped_gather(
+        &self,
+        gather: BundleMappedGatherHandleV1,
+        consumer: BundleStreamHandleV1,
+    ) -> Result<(), BundleAbiError> {
+        self.require_async_mapped_gather()?;
+        // SAFETY-REVIEWED: the checked table owns user_data for this call.
+        status_result(unsafe {
+            self.raw.wait_mapped_gather_v1.unwrap()(self.raw.user_data, gather, consumer)
+        })
+    }
+
+    pub fn complete_mapped_gather(
+        &self,
+        gather: BundleMappedGatherHandleV1,
+    ) -> Result<Option<MappedGatherStatsV1>, BundleAbiError> {
+        self.require_async_mapped_gather()?;
+        let mut result = BundleMappedGatherCompletionV1 {
+            struct_size: 0,
+            ready: 0,
+            host_nanoseconds: 0,
+            exposed_nanoseconds: 0,
+        };
+        // SAFETY-REVIEWED: output is this frame's exclusive storage for the call.
+        status_result(unsafe {
+            self.raw.complete_mapped_gather_v1.unwrap()(self.raw.user_data, gather, &mut result)
+        })?;
+        if result.struct_size != struct_size_v1::<BundleMappedGatherCompletionV1>()
+            || result.ready > 1
+            || (result.ready == 0
+                && (result.host_nanoseconds != 0 || result.exposed_nanoseconds != 0))
+        {
+            return Err(BundleAbiError::InvalidRange("mapped gather completion"));
+        }
+        Ok((result.ready == 1).then_some(MappedGatherStatsV1 {
+            host_nanoseconds: result.host_nanoseconds,
+            exposed_nanoseconds: result.exposed_nanoseconds,
+        }))
+    }
+
+    pub fn release_mapped_gather(
+        &self,
+        gather: BundleMappedGatherHandleV1,
+    ) -> Result<(), BundleAbiError> {
+        self.require_async_mapped_gather()?;
+        // SAFETY-REVIEWED: the checked table owns user_data for this call.
+        status_result(unsafe {
+            self.raw.release_mapped_gather_v1.unwrap()(self.raw.user_data, gather)
+        })
     }
 
     pub fn prepare_kv(
@@ -3832,6 +4089,7 @@ macro_rules! export_custom_operation_v1 {
 
 #[cfg(test)]
 mod tests {
+    use crate::BundleMappedGatherHandleV1;
     use std::ffi::c_void;
     use std::ptr;
     use std::rc::Rc;
@@ -4693,6 +4951,41 @@ mod tests {
 
     /// A table without the host-mapped gather tail reports the service
     /// missing instead of calling it.
+    #[test]
+    fn async_mapped_gather_requires_the_complete_optional_tail() {
+        let table = HostServicesTableV1::new(Rc::new(UnsupportedHostServicesBackendV1));
+        assert!(table.caller().has_async_mapped_gather());
+        let mut old = *table.services();
+        old.struct_size =
+            std::mem::offset_of!(BundleHostServicesV1, create_mapped_gather_v1) as u32;
+        let mut variants = vec![old];
+        for missing in 0..5 {
+            let mut raw = *table.services();
+            match missing {
+                0 => raw.create_mapped_gather_v1 = None,
+                1 => raw.enqueue_mapped_gather_v1 = None,
+                2 => raw.wait_mapped_gather_v1 = None,
+                3 => raw.complete_mapped_gather_v1 = None,
+                _ => raw.release_mapped_gather_v1 = None,
+            }
+            variants.push(raw);
+        }
+        for raw in variants {
+            // SAFETY-REVIEWED: this table and backend outlive the copied prefix.
+            let caller = unsafe { HostServicesV1::new(raw) }.unwrap();
+            assert!(!caller.has_async_mapped_gather());
+            assert_eq!(
+                caller.complete_mapped_gather(BundleMappedGatherHandleV1::from_parts(1, 1)),
+                Err(BundleAbiError::MissingHostService("async_mapped_gather_v1"))
+            );
+        }
+        let caller = table.caller();
+        assert_eq!(
+            caller.enqueue_mapped_gather(BundleMappedGatherHandleV1::from_parts(1, 1), 1),
+            Err(BundleAbiError::Status(BundleStatusV1::Unsupported))
+        );
+    }
+
     #[test]
     fn older_host_service_tail_reports_no_host_mapped_gather() {
         let table = HostServicesTableV1::new(Rc::new(UnsupportedHostServicesBackendV1));

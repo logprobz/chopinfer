@@ -671,6 +671,44 @@ fn c_header_and_rust_layouts_match() {
         &[offset_of!(abi::BundleHostServicesV1, gather_mapped_rows_v1)],
     );
 
+    assert_layout(
+        &c_layouts,
+        "async-mapped-plane",
+        size_of::<abi::BundleMappedGatherPlaneV1>(),
+        &[
+            offset_of!(abi::BundleMappedGatherPlaneV1, struct_size),
+            offset_of!(abi::BundleMappedGatherPlaneV1, rank),
+            offset_of!(abi::BundleMappedGatherPlaneV1, image),
+            offset_of!(abi::BundleMappedGatherPlaneV1, view_id),
+            offset_of!(abi::BundleMappedGatherPlaneV1, row_bytes),
+            offset_of!(abi::BundleMappedGatherPlaneV1, index_offset),
+            offset_of!(abi::BundleMappedGatherPlaneV1, stream),
+            offset_of!(abi::BundleMappedGatherPlaneV1, destination),
+        ],
+    );
+    assert_layout(
+        &c_layouts,
+        "async-mapped-completion",
+        size_of::<abi::BundleMappedGatherCompletionV1>(),
+        &[
+            offset_of!(abi::BundleMappedGatherCompletionV1, struct_size),
+            offset_of!(abi::BundleMappedGatherCompletionV1, ready),
+            offset_of!(abi::BundleMappedGatherCompletionV1, host_nanoseconds),
+            offset_of!(abi::BundleMappedGatherCompletionV1, exposed_nanoseconds),
+        ],
+    );
+    assert_layout(
+        &c_layouts,
+        "async-mapped-services",
+        size_of::<abi::BundleHostServicesV1>(),
+        &[
+            offset_of!(abi::BundleHostServicesV1, create_mapped_gather_v1),
+            offset_of!(abi::BundleHostServicesV1, enqueue_mapped_gather_v1),
+            offset_of!(abi::BundleHostServicesV1, wait_mapped_gather_v1),
+            offset_of!(abi::BundleHostServicesV1, complete_mapped_gather_v1),
+            offset_of!(abi::BundleHostServicesV1, release_mapped_gather_v1),
+        ],
+    );
     // A launch flag is part of the ABI, not of one side's opinion of it, so the
     // header's value and this crate's constant have to be the same number.
     assert_layout(
@@ -1231,6 +1269,118 @@ fn a_second_collective_contract_crosses_v1_as_bytes_rather_than_as_a_change() {
         assert_eq!(collectives[index].rank_count, RANKS);
     }
     assert_eq!(backend.collectives.borrow().len(), 2);
+}
+
+#[test]
+// SAFETY-REVIEWED: malformed pointers and lengths below are refused before dereference.
+#[allow(unsafe_code)]
+fn async_mapped_gather_copies_planes_and_validates_before_backend() {
+    let backend = Rc::new(FixtureHostBackend::default());
+    let table = HostServicesTableV1::new(Rc::clone(&backend));
+    let service = table.caller();
+    assert!(service.has_async_mapped_gather());
+    let stream = abi::BundleStreamHandleV1::from_parts(1, 1);
+    let indices =
+        DeviceBufferSpanV1::new(abi::BundleDeviceBufferHandleV1::from_parts(1, 2), 16, 64);
+    let mut planes = vec![abi::MappedGatherPlaneV1 {
+        image: abi::BundleCompiledImageHandleV1::from_parts(1, 3),
+        rank: 0,
+        view_id: b"codes".to_vec(),
+        row_bytes: 8,
+        index_offset: 4,
+        stream,
+        destination: indices,
+    }];
+    let gather = service
+        .create_mapped_gather(stream, indices, &planes)
+        .unwrap();
+    planes[0].view_id.fill(b'x');
+    assert_eq!(backend.prepared_gathers.borrow()[0].view_id, b"codes");
+    service.enqueue_mapped_gather(gather, 3).unwrap();
+    service.wait_mapped_gather(gather, stream).unwrap();
+    assert_eq!(
+        service.complete_mapped_gather(gather).unwrap(),
+        Some(abi::MappedGatherStatsV1 {
+            host_nanoseconds: 37,
+            exposed_nanoseconds: 11,
+        })
+    );
+    service.release_mapped_gather(gather).unwrap();
+    assert_eq!(*backend.gather_calls.borrow(), [3, 100, 200, 300]);
+    let raw = table.services().create_mapped_gather_v1.unwrap();
+    let view = abi::BundleDeviceBufferViewV1 {
+        struct_size: size_of::<abi::BundleDeviceBufferViewV1>() as u32,
+        reserved: 0,
+        buffer: indices.buffer,
+        offset: indices.offset,
+        length: indices.length,
+    };
+    let good = abi::BundleMappedGatherPlaneV1 {
+        struct_size: size_of::<abi::BundleMappedGatherPlaneV1>() as u32,
+        rank: 0,
+        image: planes[0].image,
+        view_id: abi::BundleByteViewV1::from_bytes(b"codes"),
+        row_bytes: 8,
+        index_offset: 4,
+        stream,
+        destination: view,
+    };
+    let mut output = abi::BundleMappedGatherHandleV1::from_raw(0);
+    for count in [0, 1, 257, u64::MAX] {
+        // SAFETY-REVIEWED: null arrays are refused before reading any plane.
+        let status = unsafe {
+            raw(
+                table.services().user_data,
+                stream,
+                view,
+                std::ptr::null(),
+                count,
+                &mut output,
+            )
+        };
+        assert_eq!(status, abi::BundleStatusV1::InvalidArgument);
+    }
+    for plane in [
+        abi::BundleMappedGatherPlaneV1 {
+            struct_size: 0,
+            ..good
+        },
+        abi::BundleMappedGatherPlaneV1 {
+            view_id: abi::BundleByteViewV1 {
+                data: std::ptr::null(),
+                length: 5,
+            },
+            ..good
+        },
+        abi::BundleMappedGatherPlaneV1 {
+            view_id: abi::BundleByteViewV1 {
+                data: b"x".as_ptr(),
+                length: 4097,
+            },
+            ..good
+        },
+        abi::BundleMappedGatherPlaneV1 {
+            destination: abi::BundleDeviceBufferViewV1 {
+                reserved: 1,
+                ..view
+            },
+            ..good
+        },
+    ] {
+        // SAFETY-REVIEWED: local records live through the call; invalid views are refused before reading.
+        let status = unsafe {
+            raw(
+                table.services().user_data,
+                stream,
+                view,
+                &plane,
+                1,
+                &mut output,
+            )
+        };
+        assert_eq!(status, abi::BundleStatusV1::InvalidArgument);
+    }
+    assert_eq!(backend.prepared_gathers.borrow().len(), 1);
 }
 
 /// A gather crosses as the host's copy of the bundle's rows, view name and
@@ -2651,6 +2801,8 @@ struct FixtureHostBackend {
     /// Every gather of the one mapped view, `rows`, this host maps:
     /// destination, image, rank, view, row length and rows.
     gathers: RefCell<FixtureGathersV1>,
+    prepared_gathers: RefCell<Vec<abi::MappedGatherPlaneV1>>,
+    gather_calls: RefCell<Vec<u64>>,
 }
 
 type FixtureGathersV1 = Vec<(
@@ -2671,6 +2823,49 @@ macro_rules! unused_fixture_service {
 }
 
 impl HostServicesBackendV1 for FixtureHostBackend {
+    fn create_mapped_gather(
+        &self,
+        _producer: abi::BundleStreamHandleV1,
+        _indices: DeviceBufferSpanV1,
+        planes: &[abi::MappedGatherPlaneV1],
+    ) -> HostServiceResultV1<abi::BundleMappedGatherHandleV1> {
+        self.prepared_gathers.borrow_mut().extend_from_slice(planes);
+        Ok(abi::BundleMappedGatherHandleV1::from_parts(1, 4))
+    }
+    fn enqueue_mapped_gather(
+        &self,
+        _gather: abi::BundleMappedGatherHandleV1,
+        rows: u64,
+    ) -> HostServiceResultV1<()> {
+        self.gather_calls.borrow_mut().push(rows);
+        Ok(())
+    }
+    fn wait_mapped_gather(
+        &self,
+        _gather: abi::BundleMappedGatherHandleV1,
+        _consumer: abi::BundleStreamHandleV1,
+    ) -> HostServiceResultV1<()> {
+        self.gather_calls.borrow_mut().push(100);
+        Ok(())
+    }
+    fn complete_mapped_gather(
+        &self,
+        _gather: abi::BundleMappedGatherHandleV1,
+    ) -> HostServiceResultV1<Option<abi::MappedGatherStatsV1>> {
+        self.gather_calls.borrow_mut().push(200);
+        Ok(Some(abi::MappedGatherStatsV1 {
+            host_nanoseconds: 37,
+            exposed_nanoseconds: 11,
+        }))
+    }
+    fn release_mapped_gather(
+        &self,
+        _gather: abi::BundleMappedGatherHandleV1,
+    ) -> HostServiceResultV1<()> {
+        self.gather_calls.borrow_mut().push(300);
+        Ok(())
+    }
+
     fn gather_mapped_rows(
         &self,
         _stream: abi::BundleStreamHandleV1,
@@ -3616,6 +3811,9 @@ int main(void) {
   printf("cluster-residency %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_cluster_residency_v1), P(chop_bundle_cluster_residency_v1, struct_size), P(chop_bundle_cluster_residency_v1, multiprocessor_count), P(chop_bundle_cluster_residency_v1, usable_multiprocessors), P(chop_bundle_cluster_residency_v1, max_active_clusters), P(chop_bundle_cluster_residency_v1, flags));
   printf("cluster-residency-service-tail %zu %zu\n", sizeof(chop_bundle_host_services_v1), P(chop_bundle_host_services_v1, query_cluster_residency_v1));
   printf("mapped-row-gather %zu %zu %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_mapped_row_gather_v1), P(chop_bundle_mapped_row_gather_v1, struct_size), P(chop_bundle_mapped_row_gather_v1, rank), P(chop_bundle_mapped_row_gather_v1, image), P(chop_bundle_mapped_row_gather_v1, view_id), P(chop_bundle_mapped_row_gather_v1, row_bytes), P(chop_bundle_mapped_row_gather_v1, rows), P(chop_bundle_mapped_row_gather_v1, row_count));
+  printf("async-mapped-plane %zu %zu %zu %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_mapped_gather_plane_v1), P(chop_bundle_mapped_gather_plane_v1, struct_size), P(chop_bundle_mapped_gather_plane_v1, rank), P(chop_bundle_mapped_gather_plane_v1, image), P(chop_bundle_mapped_gather_plane_v1, view_id), P(chop_bundle_mapped_gather_plane_v1, row_bytes), P(chop_bundle_mapped_gather_plane_v1, index_offset), P(chop_bundle_mapped_gather_plane_v1, stream), P(chop_bundle_mapped_gather_plane_v1, destination));
+  printf("async-mapped-completion %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_mapped_gather_completion_v1), P(chop_bundle_mapped_gather_completion_v1, struct_size), P(chop_bundle_mapped_gather_completion_v1, ready), P(chop_bundle_mapped_gather_completion_v1, host_nanoseconds), P(chop_bundle_mapped_gather_completion_v1, exposed_nanoseconds));
+  printf("async-mapped-services %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_host_services_v1), P(chop_bundle_host_services_v1, create_mapped_gather_v1), P(chop_bundle_host_services_v1, enqueue_mapped_gather_v1), P(chop_bundle_host_services_v1, wait_mapped_gather_v1), P(chop_bundle_host_services_v1, complete_mapped_gather_v1), P(chop_bundle_host_services_v1, release_mapped_gather_v1));
   printf("host-mapped-gather-service-tail %zu %zu\n", sizeof(chop_bundle_host_services_v1), P(chop_bundle_host_services_v1, gather_mapped_rows_v1));
   printf("api-header %zu %zu %zu\n", sizeof(chop_bundle_api_header_v1), P(chop_bundle_api_header_v1, struct_size), P(chop_bundle_api_header_v1, abi_version));
   printf("api %zu %zu %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_api_v1), P(chop_bundle_api_v1, struct_size), P(chop_bundle_api_v1, abi_version), P(chop_bundle_api_v1, create), P(chop_bundle_api_v1, execute), P(chop_bundle_api_v1, commit), P(chop_bundle_api_v1, cancel), P(chop_bundle_api_v1, destroy));

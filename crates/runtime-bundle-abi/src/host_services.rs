@@ -73,6 +73,28 @@ pub struct MappedRowGatherV1<'a> {
     pub rows: &'a [u32],
 }
 
+/// One plane of a prepared gather. Device U32 indices begin at `index_offset`
+/// bytes of the shared input span. Every enqueue gathers the same row count
+/// from each plane into the beginning of its bounded destination.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MappedGatherPlaneV1 {
+    pub image: BundleCompiledImageHandleV1,
+    pub rank: u32,
+    pub view_id: Vec<u8>,
+    pub row_bytes: u64,
+    pub index_offset: u64,
+    pub stream: BundleStreamHandleV1,
+    pub destination: DeviceBufferSpanV1,
+}
+
+/// Timing of a completed gather. `exposed_nanoseconds` is the maximum
+/// consumer-stream wait, after work queued before the dependency.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MappedGatherStatsV1 {
+    pub host_nanoseconds: u64,
+    pub exposed_nanoseconds: u64,
+}
+
 /// A device-buffer range that carries no ABI pointer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DeviceBufferSpanV1 {
@@ -866,6 +888,49 @@ pub trait HostServicesBackendV1 {
         _stream: BundleStreamHandleV1,
         _destination: DeviceBufferSpanV1,
         _gather: MappedRowGatherV1<'_>,
+    ) -> HostServiceResultV1<()> {
+        Err(BundleStatusV1::Unsupported)
+    }
+
+    /// Allocate bounded reusable pinned staging for device-indexed mapped rows.
+    /// Preparation and enqueue are outside capture. Inputs, outputs and their
+    /// streams remain live until release. A failed completion must prevent
+    /// publication of any results consuming this gather.
+    fn create_mapped_gather(
+        &self,
+        _producer: BundleStreamHandleV1,
+        _indices: DeviceBufferSpanV1,
+        _planes: &[MappedGatherPlaneV1],
+    ) -> HostServiceResultV1<crate::BundleMappedGatherHandleV1> {
+        Err(BundleStatusV1::Unsupported)
+    }
+    /// Enqueue one ID D2H, host gather and event-ordered uploads without waiting.
+    fn enqueue_mapped_gather(
+        &self,
+        _gather: crate::BundleMappedGatherHandleV1,
+        _rows: u64,
+    ) -> HostServiceResultV1<()> {
+        Err(BundleStatusV1::Unsupported)
+    }
+    /// Insert the dependency on this consumer stream before its first use.
+    fn wait_mapped_gather(
+        &self,
+        _gather: crate::BundleMappedGatherHandleV1,
+        _consumer: BundleStreamHandleV1,
+    ) -> HostServiceResultV1<()> {
+        Err(BundleStatusV1::Unsupported)
+    }
+    /// Nonblocking completion, checked at the ordinary output boundary.
+    fn complete_mapped_gather(
+        &self,
+        _gather: crate::BundleMappedGatherHandleV1,
+    ) -> HostServiceResultV1<Option<MappedGatherStatsV1>> {
+        Err(BundleStatusV1::Unsupported)
+    }
+    /// Release staging, fencing outstanding transfers on failure or cancellation.
+    fn release_mapped_gather(
+        &self,
+        _gather: crate::BundleMappedGatherHandleV1,
     ) -> HostServiceResultV1<()> {
         Err(BundleStatusV1::Unsupported)
     }

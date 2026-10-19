@@ -1096,6 +1096,42 @@ typedef chop_bundle_status_v1 (*chop_bundle_gather_mapped_rows_fn_v1)(
     chop_bundle_device_buffer_view_v1 destination,
     const chop_bundle_mapped_row_gather_v1 *gather);
 
+/* Optional prepared gather: bounded pinned ID/output staging, one pending
+ * enqueue per handle. wait orders the first consumer; complete is nonblocking
+ * and must succeed before results are published. Release fences pending work.
+ * All five callbacks must be present under chop.async-mapped-gather.v1. */
+typedef struct chop_bundle_mapped_gather_handle_v1 {
+  uint64_t raw;
+} chop_bundle_mapped_gather_handle_v1;
+typedef struct chop_bundle_mapped_gather_plane_v1 {
+  uint32_t struct_size;
+  uint32_t rank;
+  chop_bundle_compiled_image_handle_v1 image;
+  chop_bundle_byte_view_v1 view_id;
+  uint64_t row_bytes;
+  uint64_t index_offset;
+  chop_bundle_stream_handle_v1 stream;
+  chop_bundle_device_buffer_view_v1 destination;
+} chop_bundle_mapped_gather_plane_v1;
+typedef struct chop_bundle_mapped_gather_completion_v1 {
+  uint32_t struct_size;
+  uint32_t ready;
+  uint64_t host_nanoseconds;
+  uint64_t exposed_nanoseconds;
+} chop_bundle_mapped_gather_completion_v1;
+typedef chop_bundle_status_v1 (*chop_bundle_create_mapped_gather_fn_v1)(
+    void *, chop_bundle_stream_handle_v1, chop_bundle_device_buffer_view_v1,
+    const chop_bundle_mapped_gather_plane_v1 *, uint64_t,
+    chop_bundle_mapped_gather_handle_v1 *);
+typedef chop_bundle_status_v1 (*chop_bundle_enqueue_mapped_gather_fn_v1)(
+    void *, chop_bundle_mapped_gather_handle_v1, uint64_t);
+typedef chop_bundle_status_v1 (*chop_bundle_wait_mapped_gather_fn_v1)(
+    void *, chop_bundle_mapped_gather_handle_v1, chop_bundle_stream_handle_v1);
+typedef chop_bundle_status_v1 (*chop_bundle_complete_mapped_gather_fn_v1)(
+    void *, chop_bundle_mapped_gather_handle_v1, chop_bundle_mapped_gather_completion_v1 *);
+typedef chop_bundle_status_v1 (*chop_bundle_release_mapped_gather_fn_v1)(
+    void *, chop_bundle_mapped_gather_handle_v1);
+
 typedef struct chop_bundle_host_services_v1 {
   uint32_t struct_size;
   uint32_t abi_version;
@@ -1172,6 +1208,11 @@ typedef struct chop_bundle_host_services_v1 {
   chop_bundle_query_cluster_residency_fn_v1 query_cluster_residency_v1;
   /* Optional host-mapped gather tail. Check struct_size before reading this. */
   chop_bundle_gather_mapped_rows_fn_v1 gather_mapped_rows_v1;
+  chop_bundle_create_mapped_gather_fn_v1 create_mapped_gather_v1;
+  chop_bundle_enqueue_mapped_gather_fn_v1 enqueue_mapped_gather_v1;
+  chop_bundle_wait_mapped_gather_fn_v1 wait_mapped_gather_v1;
+  chop_bundle_complete_mapped_gather_fn_v1 complete_mapped_gather_v1;
+  chop_bundle_release_mapped_gather_fn_v1 release_mapped_gather_v1;
 } chop_bundle_host_services_v1;
 
 typedef struct chop_bundle_create_result_v1 {

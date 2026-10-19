@@ -61,7 +61,33 @@ fell from about 6.12 to 5.62 ms. These are medians over the synthetic
 8192-row cases, at the 250 W cap. The mixed-layer improvement is about 4%,
 so the candidate remains outside serving.
 
-The next snapshot isolates the bottleneck before another serving design.
+The software ablation measured the bottleneck on 2026-10-19. Both devices
+passed every original and sampled-full bitwise/replay gate. The following
+milliseconds are the mean of each device's median at 8192 rows and 250 W:
+
+| Sources | Reference attention | Sampled body, stamps off | Gather/decode/stage only | Resident-data, one gather |
+| --- | ---: | ---: | ---: | ---: |
+| 128 window + 512 selected | 28.913 | 28.876 | 27.594 | 4.255 |
+| 128 window only | 6.117 | 6.097 | 5.531 | 3.382 |
+| 512 selected only | 23.255 | 23.237 | 22.147 | 4.109 |
+
+The full mixed probe's per-CTA stage medians were about 722,940 cycles for
+gather/decode/staging, 12,572 for QK, 9,711 for softmax and 6,943 for PV,
+against 761,976 total cycles. Gather/staging accounts for about 94.9% of
+that total; the three math stages together account for about 3.8%. Window
+and selected-only gather shares are about 90.3% and 94.6%. These ratios of
+stage medians describe the sampled CTA, not additive wall-time estimates.
+The earlier all-layer measurement put merge at about 0.256 ms per mixed
+layer. The round 3 serving trace attributes 572 + 506 ms per 8192-row chunk
+to the two mixed attention families, making them the largest prefill cost.
+
+The driver reports one resident 128-thread CTA per SM for the reference,
+full, loads-only and resident-data probes, or 8.33% theoretical warp
+occupancy. Half-tile staging permits two CTAs, or 16.67%. Merge permits
+12 CTAs, or 100%. None spills. Residency alone did not solve the bottleneck:
+the earlier half-tile candidate improved mixed attention by only about 4%.
+
+The snapshot isolates the bottleneck before another serving design.
 Its `ablation` command measures the unmodified reference and three software
 probes at the mixed-layer geometry, each with mixed, window-only and
 selected-only visibility. Loads-only gathers, decodes and stages all keys
@@ -127,6 +153,40 @@ union exceeds the shared budget, and the native union leaves insufficient
 compute scratch. Any neighboring-row reuse design needs a smaller run,
 another staging layout or a separate decode pass.
 
-The software profiling result is pending. The measured stage breakdown
-will determine the next exact candidate. Serving routing and its dynamic
-shared-memory binding remain contingent on bitwise and timing evidence.
+These byte floors are far below the measured 28.9 ms at ordinary device
+memory bandwidths. The fixture's 13.64 MB unique native payload also fits
+inside the measured 128 MiB L2 capacity. Neither observation establishes
+cache hit rates. The loads-only and resident-data measurements instead
+point to the repeated scalar gather/decode loop and low residency. Each
+reference thread performs 128 two-value gather iterations per full tile,
+with dependent address, code and scale reads before its shared store.
+
+The next candidate loads eight decoded dimensions per thread in packed
+transactions and writes one 16-byte shared sector. Two register packets
+place the next gather before the current decode/store. It retains the
+reference's F32 scale multiplication and BF16 rounding, with an unaligned
+load fallback. Each key is staged once for both QK and PV.
+
+A 256-thread CTA owns two consecutive query rows. It compares every source
+address, scale address and validity tag before sharing a 64-key tile. Equal
+lists share 64 decoded keys; lists shifted by one share their 65-key union.
+Different lists use two cooperative staging passes through the same tile.
+Only the corresponding row's warps execute math in each such pass. Thus
+each row still performs exactly one original 64-key QK, softmax and PV unit,
+in original unit order. QK chains, score folds, softmax, PV chains, workspace
+bits and the reference merge are unchanged. Inactive row partners join all
+barriers but do not read queries or write partials.
+
+The paired layout requests 85,504 dynamic shared bytes at width 512. Its
+256 threads provide eight loader warps per CTA, versus four in the original.
+A separate one-row packed-load control requests 75,008 bytes. Both retain
+the original argument and workspace ABI and have explicit lab shared-memory
+attributes. All temporary reuse stays inside one CTA; no new global scratch
+or cross-stream ownership is introduced. The pair job compares both
+candidates against the original, keeps the f64 and poisoned replay gates,
+adds identical/shifted selected-list cases, and times all 40 main layers.
+Compilation reports 218-222 registers per paired-row thread and 184-188 for
+the one-row control, with no local memory or stack in either. The reference
+cubin remains identical to the measured baseline. These resource audits
+are CPU evidence; candidate GPU bitwise checks and timings are pending.
+Serving routing remains contingent on bitwise and timing evidence.

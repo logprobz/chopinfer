@@ -49,6 +49,9 @@ __device__ __forceinline__ void tail(
     const uint8_t* activation_scales, const uint8_t* weight_scales,
     void* output, const uint32_t* status, uint64_t status_offset,
     uint32_t live, uint32_t token0, uint32_t column0, uint32_t group) {
+  static_assert(K > 0 && K % 32 == 0 && Groups > 0);
+  static_assert(GroupStride >= K && RowStride >= (Groups - 1) * GroupStride + K);
+  static_assert(RowStride % 32 == 0 && GroupStride % 32 == 0);
   const int warp = threadIdx.x / 32, lane = threadIdx.x % 32;
   if (warp >= math_warps) return;
   const int wm = warp / 4, wn = warp % 4, quad = lane / 4, lane4 = lane % 4;
@@ -112,6 +115,9 @@ __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight
     const uint8_t* activation_scales, const uint8_t* weight_scales,
     void* output, const uint32_t* live_rows, const uint32_t* status,
     uint64_t status_offset, uint32_t rows) {
+  static_assert(K > 0 && K % 32 == 0 && Groups > 0);
+  static_assert(GroupStride >= K && RowStride >= (Groups - 1) * GroupStride + K);
+  static_assert(RowStride % 32 == 0 && GroupStride % 32 == 0);
   __shared__ uint64_t full[stages], empty[stages];
   extern __shared__ uint8_t raw[];
   uint8_t* storage = prefill::align_swizzle_storage(raw);

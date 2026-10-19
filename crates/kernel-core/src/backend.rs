@@ -752,6 +752,20 @@ pub trait Backend: Send + Sync {
         Err(Refused::Unsupported)
     }
 
+    /// Exact MXFP8 folds with operation-owned persistent state and packed
+    /// immutable weights. Initialize once before capture, then keep those
+    /// regions exclusive to this op across graph replays. Backend workspace
+    /// remains disposable. Each row is admitted once inside the fold launch.
+    fn mxfp8_fold_gemm_stream(
+        &self,
+        op: &crate::mxfp8_gemm::Mxfp8FoldGemmQuery,
+        paired: bool,
+        need: Need,
+    ) -> Result<Prepared<crate::mxfp8_gemm::Mxfp8FoldStreamBuffers<View>>, Refused> {
+        let _ = (op, paired, need);
+        Err(Refused::Unsupported)
+    }
+
     /// Round inputs to BF16, then quantize each row independently. The
     /// fake-quant form stores the exact decoded values in BF16.
     fn block_quantize(

@@ -109,6 +109,7 @@ mod moe_route;
 mod multimodal;
 mod mxfp8_fold;
 mod mxfp8_fold_decode;
+mod mxfp8_fold_stream;
 mod mxfp8_fold_ticket;
 mod mxfp8_prefill;
 mod mxfp8_rows;
@@ -236,6 +237,7 @@ pub struct Sm120 {
     )>,
     mxfp8_fold_decodes: Vec<crate::gemm::mxfp8_fold_decode::Entry>,
     mxfp8_fold_tickets: Vec<crate::gemm::mxfp8_fold_ticket::Entry>,
+    mxfp8_fold_streams: Vec<crate::gemm::mxfp8_fold_stream::Entry>,
 }
 
 impl Sm120 {
@@ -260,6 +262,11 @@ impl Sm120 {
     /// Register staged prefill with the native fold's exact arithmetic.
     pub fn with_mxfp8_prefill(mut self, entry: crate::gemm::mxfp8_fold::Entry) -> Self {
         self.mxfp8_prefills.push(entry);
+        self
+    }
+
+    pub fn with_mxfp8_fold_stream(mut self, entry: crate::gemm::mxfp8_fold_stream::Entry) -> Self {
+        self.mxfp8_fold_streams.push(entry);
         self
     }
 
@@ -1210,6 +1217,15 @@ impl Backend for Sm120 {
             return mxfp8_fold_ticket::prepare_pair(&self.mxfp8_fold_tickets, op, need);
         }
         mxfp8_fold_decode::prepare_pair(&self.mxfp8_fold_decodes, op, need)
+    }
+
+    fn mxfp8_fold_gemm_stream(
+        &self,
+        op: &kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery,
+        paired: bool,
+        need: Need,
+    ) -> Result<Prepared<kernel_core::mxfp8_gemm::Mxfp8FoldStreamBuffers<View>>, Refused> {
+        mxfp8_fold_stream::prepare(&self.mxfp8_fold_streams, op, paired, need)
     }
 
     fn block_quantize(

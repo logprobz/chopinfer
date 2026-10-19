@@ -227,3 +227,20 @@ crate::scratch_record! {
         pub status_row_offset: scalar(u64),
     }
 }
+
+/// Buffers for a fold with persistent packed weights and self-resetting tickets.
+/// `first` and optional `second` retain the ordinary fold's admission, status
+/// and output contract. `packed_weights` are initialized from immutable weights
+/// once, before capture, and have 16-byte aligned addresses. They may be
+/// shared only after all initializers finish. `state` is U32-aligned,
+/// initialized at the same time, and belongs to
+/// this prepared operation until it is destroyed. Neither state nor workspace
+/// may overlap another operation between a stream fork and its join. A failed
+/// or interrupted launch requires reinitialization before the state is reused.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Mxfp8FoldStreamBuffers<B> {
+    pub first: Mxfp8FoldGemmBuffers<B>,
+    pub second: Option<Mxfp8FoldGemmBuffers<B>>,
+    pub packed_weights: [B; 2],
+    pub state: B,
+}

@@ -6,6 +6,13 @@ use model_deepseek41_contract::own_ops::ring_gather::{CONTRACT, RingGather, Ring
 
 pub fn prepare(op: RingGather, need: Need) -> Result<Prepared<RingGatherBuffers<View>>, Refused> {
     op.validate(need)?;
+    if need.capacity > model_deepseek41_contract::serving::DECODE_BATCH
+        || op.bytes > u32::MAX - THREADS
+    {
+        return Err(Refused::Rule(
+            "ring gather exceeds the served item or byte-loop extent".into(),
+        ));
+    }
     let info = OpInfo::new(
         CONTRACT,
         Invariance::any_rows(need.capacity),

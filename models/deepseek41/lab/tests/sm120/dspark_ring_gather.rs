@@ -14,6 +14,19 @@ fn ring_gather_preparation_checks_spans_and_aliases() {
         slots: 4,
     };
     let prepared = crate::ring_gather::prepare(op, Need::rows(3)).unwrap();
+    assert!(
+        crate::ring_gather::prepare(
+            RingGather {
+                bytes: u32::MAX,
+                source_stride: u32::MAX,
+                destination_stride: u32::MAX,
+                ..op
+            },
+            Need::rows(1)
+        )
+        .is_err()
+    );
+    assert!(crate::ring_gather::prepare(op, Need::rows(u32::MAX)).is_err());
     let buffers = RingGatherBuffers {
         source: view(1, 256),
         source_slots: view(2, 12),

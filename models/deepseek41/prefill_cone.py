@@ -1,0 +1,136 @@
+"""CPU dependency oracle for Flash prefill, independent of device lowering.
+
+Run with --chunk 2048 for configured chunks or --chunk 8192 for a lone
+request. JSON on stdout is an analysis artifact; save it outside the tree.
+Intervals are half-open absolute token positions. This counts dataflow,
+not GPU time. Sources and the snapshot-byte invariant are documented in
+prefill-dependencies.md.
+"""
+
+import argparse
+import json
+from pathlib import Path
+
+
+def union(*sets):
+    result = []
+    for start, end in sorted(interval for ranges in sets for interval in ranges):
+        if start >= end:
+            continue
+        if result and start <= result[-1][1]:
+            result[-1] = (result[-1][0], max(result[-1][1], end))
+        else:
+            result.append((start, end))
+    return result
+
+
+def count(intervals):
+    return sum(end - start for start, end in intervals)
+
+
+def positions(intervals):
+    return (position for start, end in intervals for position in range(start, end))
+
+
+def chunks(tokens, captures, limit):
+    if tokens <= 0 or limit <= 0:
+        raise ValueError("tokens and chunk limit must be positive")
+    if sorted(set(captures)) != captures or any(not 0 < n <= tokens for n in captures):
+        raise ValueError("captures must be increasing token counts within the prompt")
+    end = 0
+    result = []
+    for boundary in sorted(set(captures + [tokens])):
+        while end < boundary:
+            end = min(end + limit, boundary)
+            result.append(end)
+    return result
+
+
+def history_writers(ends, captures, window=128, headroom=6):
+    """The physical raw-feature cells, including stale cells, at each capture.
+
+    Mirrors the transfer *contract*, not its loop: a large commit retains
+    its final window; a short commit retains every row. Entries never
+    written by this request remain None and must keep their initial bytes.
+    """
+    history = [None] * (window + headroom)
+    result = {}
+    first = 0
+    for end in ends:
+        if end <= first:
+            raise ValueError("chunk ends must increase")
+        start = end - window if end - first > len(history) else first
+        for position in range(start, end):
+            history[position % len(history)] = position
+        if end in captures:
+            result[end] = tuple(history)
+        first = end
+    if set(result) != set(captures):
+        raise ValueError("every capture must end a chunk")
+    return result
+
+
+def cone(tokens, ends, captures, dspark, logits=None, geometry=None):
+    if geometry is None:
+        geometry = json.loads(Path(__file__).with_name("geometries").joinpath("flash.json").read_text())["text_config"]
+    if not ends or ends[-1] != tokens:
+        raise ValueError("chunks must cover the prompt")
+    logits = [tokens - 1] if logits is None else logits
+    if any(not 0 <= p < tokens for p in logits):
+        raise ValueError("logits rows must lie inside the prompt")
+    window = geometry["sliding_window"]
+    layers = geometry["num_hidden_layers"]
+    source = max(geometry["kv_source_layer_ids"])
+    if any(layer > source for layer in geometry["engram_layer_ids"]):
+        raise ValueError("upper Engram dependencies need a separate rule")
+    writers = history_writers(ends, captures, window)
+    captured_keys = [(max(0, end - window - 8), end) for end in captures]
+    # Future target queries and DSpark read the final window even without
+    # a prompt-end capture, for example after an unaligned final chunk.
+    keys = union(captured_keys, [(max(0, tokens - window), tokens)])
+    features = union(
+        [(p, p + 1) for cells in writers.values() for p in cells if p is not None],
+        [(max(0, tokens - window), tokens)],
+    ) if dspark else []
+    needed = union([(p, p + 1) for p in logits])
+    result = []
+    for layer in range(layers - 1, source - 1, -1):
+        queries = needed
+        kv = union([(max(0, start - window + 1), end) for start, end in queries], keys)
+        taps = features if layer in geometry["dspark_target_layer_ids"] else []
+        needed = union(kv, taps)
+        result.append({"layer": layer, "outputs": queries, "window_kv": kv,
+                       "features": taps, "inputs": needed})
+    result.reverse()
+    upper_rows = (layers - source) * tokens
+    output_rows = sum(count(row["outputs"]) for row in result)
+    kv_rows = sum(count(row["window_kv"]) for row in result)
+    return {"tokens": tokens, "chunk_ends": ends, "captures": captures, "dspark": dspark,
+            "last_source": source, "full_input_layers": list(range(source)),
+            "full_source_input_rows": tokens, "layers": result,
+            "feature_roots": features, "snapshot_writers": writers,
+            "upper_output_rows": output_rows, "upper_window_kv_rows": kv_rows,
+            "upper_output_skip_fraction": 1 - output_rows / upper_rows,
+            "upper_window_kv_skip_fraction": 1 - kv_rows / upper_rows,
+            "equal_layer_row_saving": (upper_rows - output_rows) / (layers * tokens)}
+
+
+def cold(tokens, chunk, dspark):
+    # Scheduler capture_points uses the configured 2048-row chunk even
+    # when a lone request expands its actual chunks to 8192.
+    repeat = (tokens - 1) // 2048 * 2048
+    captures = sorted({p for p in [repeat, tokens // 64 * 64] if p > 0})
+    return cone(tokens, chunks(tokens, captures, chunk), captures, dspark)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--chunk", type=int, choices=[2048, 8192], default=2048)
+    parser.add_argument("--tokens", type=int, nargs="+", default=[8192, 32768, 131072])
+    args = parser.parse_args()
+    print(json.dumps([cold(n, args.chunk, dspark) for n in args.tokens
+                      for dspark in [False, True]], indent=2))
+
+
+if __name__ == "__main__":
+    main()

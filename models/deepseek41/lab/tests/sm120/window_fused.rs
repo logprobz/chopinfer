@@ -1,21 +1,23 @@
 //! Exact three-launch versus one-launch window writes, including retained cells.
+use super::fusion_checks::{Failures, compare_roles, guards, live_counts, validate_replay};
 use super::norm_quantize::{PROBE_SYMBOLS, artifacts, download, upload, verify_modules};
 use bundle_deepseek41::sm120::{
     ceil_parallel, fold_cubin_for_symbol, window_fused as registration,
 };
-use kernel_core::contract::DType;
+use kernel_core::contract::{DType, LaunchPlan};
 use kernel_core::latent_attention::LatentKvFormat;
 use kernel_harness::{Cubins, LabResult, Session, eviction::EvictionMode, launch};
 use kernels_sm120::{latent::window_fused::Entry, row::block_quantize};
 use model_deepseek41_contract::{
     geometry::FLASH,
     own_ops::rope::{self, RopeTable},
+    serving::DECODE_BATCH,
 };
 use runtime_cuda::{DeviceBuffer, Function, Stream};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
-const ROWS: [u32; 6] = [1, 2, 4, 8, 16, 32];
+const ROWS: [u32; 6] = [1, 2, 4, 8, 16, DECODE_BATCH];
 const PATTERNS: [&str; 16] = [
     "finite",
     "zero",
@@ -59,6 +61,15 @@ impl Case {
             .into_iter()
             .find(|e| e.query.width == 512 && e.query.input == DType::F32)
             .unwrap()
+    }
+    fn plans(&self, rows: u32) -> LabResult<Vec<LaunchPlan>> {
+        let row = self.entry.plan(rows).map_err(|e| e.to_string())?;
+        Ok(vec![
+            row,
+            self.quant().plan(rows).map_err(|e| e.to_string())?,
+            row,
+            row,
+        ])
     }
     fn symbols(&self) -> [String; 4] {
         [
@@ -156,23 +167,24 @@ impl Output {
             .collect()
     }
 }
+const ROLES: [&str; 6] = [
+    "latent",
+    "quantized_codes",
+    "quantized_scales",
+    "window_codes",
+    "window_scales",
+    "status",
+];
 fn compare(a: &[Vec<u8>], b: &[Vec<u8>]) -> LabResult<()> {
-    for (role, (a, b)) in [
-        "latent",
-        "quantized_codes",
-        "quantized_scales",
-        "window_codes",
-        "window_scales",
-        "status",
-    ]
-    .into_iter()
-    .zip(a.iter().zip(b))
-    {
-        if a != b {
-            return Err(format!(
-                "{role} differs at {:?}",
-                a.iter().zip(b).position(|(a, b)| a != b)
-            ));
+    compare_roles(&ROLES, a, b)
+}
+fn validate_cases() -> LabResult<()> {
+    for case in cases() {
+        for rows in ROWS {
+            let plans = case.plans(rows)?;
+            for live in live_counts(rows) {
+                validate_replay(rows, live, DECODE_BATCH, &plans)?;
+            }
         }
     }
     Ok(())
@@ -359,6 +371,22 @@ fn set_inputs(s: &Session, c: &Case, rows: u32, pattern: &str, i: &Inputs) -> La
     Ok(())
 }
 #[test]
+fn case_parameters_match_allocations_and_reject_oversized_live_counts() {
+    validate_cases().unwrap();
+    for case in cases() {
+        for rows in ROWS {
+            let plans = case.plans(rows).unwrap();
+            assert!(validate_replay(rows, rows + 7, DECODE_BATCH, &plans).is_err());
+            assert!(validate_replay(0, 0, DECODE_BATCH, &plans).is_err());
+            assert!(validate_replay(DECODE_BATCH + 1, 1, DECODE_BATCH, &plans).is_err());
+            let mut oversized = plans.clone();
+            oversized[0].grid[0] = rows + 1;
+            assert!(validate_replay(rows, rows, DECODE_BATCH, &oversized).is_err());
+        }
+    }
+}
+
+#[test]
 fn window_fixture_inventory_and_negative_controls_are_complete() {
     assert_eq!(cases().len(), 4);
     for symbol in symbols() {
@@ -376,6 +404,7 @@ fn window_fixture_inventory_and_negative_controls_are_complete() {
 }
 #[test]
 fn window_bitwise_graph_live_rows_and_timing_on_gpu() {
+    validate_cases().unwrap();
     if kernel_harness::selected_ordinals().unwrap().is_none() {
         kernel_harness::skip("window fusion comparison needs an idle GPU").unwrap();
         return;
@@ -390,50 +419,230 @@ fn window_bitwise_graph_live_rows_and_timing_on_gpu() {
         Box::leak(Box::new([("probe_sm120", &probe[..])])),
         &[("probe_sm120", PROBE_SYMBOLS)],
     );
-    let result=kernel_harness::gpu_test_with(cubins,1<<30,|s| {
-        let mut bitwise=0;let mut negative=0;let mut timings=Vec::new();
-        for c in cases(){
-            let modules=c.symbols().iter().map(|symbol|{let(name,_)=fold_cubin_for_symbol(symbol).unwrap();s.load_cubin(&std::fs::read(artifacts().join(format!("{name}.cubin"))).map_err(|e|e.to_string())?)}).collect::<LabResult<Vec<_>>>()?;
-            let functions=modules.iter().zip(c.symbols()).map(|(m,s)|m.function(&s).map_err(|e|e.to_string())).collect::<LabResult<Vec<_>>>()?;
-            for rows in ROWS {
-                let r=rows as usize;
-                let input=Inputs{x:s.allocate(r*512*4)?,weight:s.allocate(512*2)?,table:s.allocate(r*64*4)?,live:s.allocate(4)?,positions:s.allocate(r*4)?,batches:s.allocate(r*4)?,first:s.allocate(r*4)?,last:s.allocate(r*4)?};
-                let outputs=[Output::new(s,&c,rows)?,Output::new(s,&c,rows)?];let eps=1e-20_f32.to_bits();
-                let graphs=(0..2).map(|arm|s.capture(|stream|run(&c,&functions,arm==1,rows,&input,&outputs[arm],stream,eps))).collect::<LabResult<Vec<_>>>()?;
-                for pattern in PATTERNS {
-                    set_inputs(s,&c,rows,pattern,&input)?;
-                    for live_rows in [rows,0,rows.saturating_sub(1),rows+7,rows] {
-                        upload(&input.live,&live_rows.to_ne_bytes(),&s.stream)?;
-                        let mut eager:Option<Vec<Vec<u8>>>=None;
-                        for graph in [false,true,true] {
-                            for o in &outputs{o.poison(s,rows,pattern=="sticky")?;}
-                            for arm in 0..2 {if graph{graphs[arm].launch(&s.stream).map_err(|e|e.to_string())?;}else{run(&c,&functions,arm==1,rows,&input,&outputs[arm],&s.stream,eps)?;}}
-                            s.stream.synchronize().map_err(|e|e.to_string())?;
-                            let old=outputs[0].read(s)?;let new=outputs[1].read(s)?;
-                            compare(&old,&new).map_err(|e|format!("{} rows={rows} live={live_rows} {pattern} graph={graph}: {e}",c.label()))?;
-                            if let Some(ref eager)=eager{compare(eager,&new)?;}else{eager=Some(old);}
-                            let active=live_rows.min(rows) as usize;
-                            for (role, bytes) in new.iter().enumerate().take(5) {let start=if role==4 && c.bf16(){0}else{outputs[1].lengths[role]/r*active};assert!(bytes[start..].iter().all(|b|*b==0xa5));}
-                            for index in (0..OFFSET).chain(OFFSET+r..OFFSET+r+2){assert_eq!(&new[5][index*4..index*4+4],&0x1357_2468u32.to_ne_bytes());}
-                            if pattern=="finite" && active>0{assert!(new[3][..c.code_stride()].iter().any(|b|*b!=0xa5));}
+    let result = kernel_harness::gpu_test_with(cubins, 1 << 30, compare_on_gpu).unwrap();
+    assert!(result.is_some());
+}
+
+fn compare_on_gpu(s: &Session) -> LabResult<()> {
+    let mut bitwise = 0;
+    let mut negative = 0;
+    let mut arithmetic_negative = 0;
+    let mut timings = Vec::new();
+    let mut failures = Failures::new("WINDOW");
+    for c in cases() {
+        let modules = c
+            .symbols()
+            .iter()
+            .map(|symbol| {
+                let (name, _) = fold_cubin_for_symbol(symbol).unwrap();
+                s.load_cubin(
+                    &std::fs::read(artifacts().join(format!("{name}.cubin")))
+                        .map_err(|e| e.to_string())?,
+                )
+            })
+            .collect::<LabResult<Vec<_>>>()?;
+        let functions = modules
+            .iter()
+            .zip(c.symbols())
+            .map(|(m, symbol)| m.function(&symbol).map_err(|e| e.to_string()))
+            .collect::<LabResult<Vec<_>>>()?;
+        for rows in ROWS {
+            let row_mark = failures.len();
+            let label = format!("{} rows={rows}", c.label());
+            let plans = c.plans(rows)?;
+            validate_replay(rows, rows, DECODE_BATCH, &plans)?;
+            let r = rows as usize;
+            let input = Inputs {
+                x: s.allocate(r * 512 * 4)?,
+                weight: s.allocate(512 * 2)?,
+                table: s.allocate(r * 64 * 4)?,
+                live: s.allocate(4)?,
+                positions: s.allocate(r * 4)?,
+                batches: s.allocate(r * 4)?,
+                first: s.allocate(r * 4)?,
+                last: s.allocate(r * 4)?,
+            };
+            let outputs = [Output::new(s, &c, rows)?, Output::new(s, &c, rows)?];
+            let eps = 1e-20_f32.to_bits();
+            let graphs = (0..2)
+                .map(|arm| {
+                    s.capture(|stream| {
+                        run(
+                            &c,
+                            &functions,
+                            arm == 1,
+                            rows,
+                            &input,
+                            &outputs[arm],
+                            stream,
+                            eps,
+                        )
+                    })
+                })
+                .collect::<LabResult<Vec<_>>>()?;
+            for pattern in PATTERNS {
+                let case_mark = failures.len();
+                set_inputs(s, &c, rows, pattern, &input)?;
+                for (live_step, live_rows) in live_counts(rows).into_iter().enumerate() {
+                    validate_replay(rows, live_rows, DECODE_BATCH, &plans)?;
+                    upload(&input.live, &live_rows.to_ne_bytes(), &s.stream)?;
+                    let mut eager: Option<Vec<Vec<u8>>> = None;
+                    for replay in 0..3 {
+                        let graph = replay != 0;
+                        let context = format!(
+                            "{label} pattern={pattern} live={live_rows} live_step={live_step} graph={graph} replay={replay}"
+                        );
+                        for output in &outputs {
+                            output.poison(s, rows, pattern == "sticky")?;
+                        }
+                        for arm in 0..2 {
+                            if graph {
+                                graphs[arm].launch(&s.stream).map_err(|e| e.to_string())?;
+                            } else {
+                                run(
+                                    &c,
+                                    &functions,
+                                    arm == 1,
+                                    rows,
+                                    &input,
+                                    &outputs[arm],
+                                    &s.stream,
+                                    eps,
+                                )?;
+                            }
+                        }
+                        s.stream.synchronize().map_err(|e| e.to_string())?;
+                        let old = outputs[0].read(s)?;
+                        let new = outputs[1].read(s)?;
+                        failures.record(&format!("{context} old-vs-fused"), compare(&old, &new));
+                        if let Some(previous) = &eager {
+                            failures.record(
+                                &format!("{context} eager-vs-replay"),
+                                compare(previous, &new),
+                            );
+                        }
+                        for (arm, output) in [("old", &old), ("fused", &new)] {
+                            let untouched: &[usize] = if c.bf16() { &[4] } else { &[] };
+                            failures.record(
+                                &format!("{context} arm={arm}"),
+                                guards(
+                                    &ROLES,
+                                    output,
+                                    rows,
+                                    live_rows,
+                                    untouched,
+                                    OFFSET,
+                                    pattern == "sticky",
+                                ),
+                            );
+                            if pattern == "finite" && live_rows > 0 {
+                                failures.require(
+                                    &format!("{context} arm={arm}"),
+                                    output[3][..c.code_stride()].iter().any(|b| *b != 0xa5),
+                                    "finite fixture left its first window unchanged",
+                                );
+                            }
+                        }
+                        if eager.is_none() {
+                            eager = Some(old);
                         }
                     }
-                    bitwise+=1;eprintln!("WINDOW_BITWISE {} rows={rows} pattern={pattern} PASS",c.label());
                 }
-                set_inputs(s,&c,rows,"finite",&input)?;upload(&input.live,&rows.to_ne_bytes(),&s.stream)?;
-                for o in &outputs{o.poison(s,rows,false)?;}for g in &graphs{g.launch(&s.stream).map_err(|e|e.to_string())?;}
-                s.stream.synchronize().map_err(|e|e.to_string())?;let expected=outputs[0].read(s)?;compare(&expected,&outputs[1].read(s)?)?;
-                for role in 0..6 {let mut bad=expected[role].clone();bad[if role==5{OFFSET*4}else{0}]^=1;upload(&outputs[1].buffers[role],&bad,&s.stream)?;assert!(compare(&expected,&outputs[1].read(s)?).is_err());upload(&outputs[1].buffers[role],&expected[role],&s.stream)?;negative+=1;}
-                run(&c,&functions,true,rows,&input,&outputs[1],&s.stream,1e6_f32.to_bits())?;s.stream.synchronize().map_err(|e|e.to_string())?;assert!(compare(&expected,&outputs[1].read(s)?).is_err());graphs[1].launch(&s.stream).map_err(|e|e.to_string())?;
-                let label=format!("window:{}:rows={rows}",c.label());
-                let timing=kernel_harness::with_timing_label(&label,||kernel_harness::time_ab(s,3,15,[EvictionMode::Read;2],|arm,stream|graphs[arm].launch(stream).map_err(|e|e.to_string())))?;
-                eprintln!("WINDOW_TIMING {} rows={rows} old_us={} new_us={} ratio={}",c.label(),timing.arms[0].median_ms*1000.,timing.arms[1].median_ms*1000.,timing.paired_ratio);
+                bitwise += 1;
+                let outcome = if failures.len() == case_mark {
+                    "PASS"
+                } else {
+                    "FAIL"
+                };
+                eprintln!("WINDOW_BITWISE {label} pattern={pattern} {outcome}");
+            }
+            set_inputs(s, &c, rows, "finite", &input)?;
+            upload(&input.live, &rows.to_ne_bytes(), &s.stream)?;
+            for output in &outputs {
+                output.poison(s, rows, false)?;
+            }
+            for graph in &graphs {
+                graph.launch(&s.stream).map_err(|e| e.to_string())?;
+            }
+            s.stream.synchronize().map_err(|e| e.to_string())?;
+            let expected = outputs[0].read(s)?;
+            let original = outputs[1].read(s)?;
+            failures.record(
+                &format!("{label} control-baseline"),
+                compare(&expected, &original),
+            );
+            for role in 0..6 {
+                let mut bad = original[role].clone();
+                bad[if role == 5 { OFFSET * 4 } else { 0 }] ^= 1;
+                upload(&outputs[1].buffers[role], &bad, &s.stream)?;
+                failures.require(
+                    &format!("{label} negative={}", ROLES[role]),
+                    compare(&original, &outputs[1].read(s)?).is_err(),
+                    "byte mutation escaped the equality gate",
+                );
+                upload(&outputs[1].buffers[role], &original[role], &s.stream)?;
+                negative += 1;
+            }
+            run(
+                &c,
+                &functions,
+                true,
+                rows,
+                &input,
+                &outputs[1],
+                &s.stream,
+                1e6_f32.to_bits(),
+            )?;
+            s.stream.synchronize().map_err(|e| e.to_string())?;
+            failures.require(
+                &format!("{label} negative=epsilon"),
+                compare(&original, &outputs[1].read(s)?).is_err(),
+                "changed epsilon escaped the equality gate",
+            );
+            arithmetic_negative += 1;
+            if failures.len() == row_mark {
+                for output in &outputs {
+                    output.poison(s, rows, false)?;
+                }
+                for graph in &graphs {
+                    graph.launch(&s.stream).map_err(|e| e.to_string())?;
+                }
+                s.stream.synchronize().map_err(|e| e.to_string())?;
+                let timing_label = format!("window:{label}");
+                let timing = kernel_harness::with_timing_label(&timing_label, || {
+                    kernel_harness::time_ab(s, 3, 15, [EvictionMode::Read; 2], |arm, stream| {
+                        graphs[arm].launch(stream).map_err(|e| e.to_string())
+                    })
+                })?;
+                eprintln!(
+                    "WINDOW_TIMING {label} old_us={} new_us={} ratio={}",
+                    timing.arms[0].median_ms * 1000.,
+                    timing.arms[1].median_ms * 1000.,
+                    timing.paired_ratio
+                );
                 timings.push(json!({"label":c.label(),"rows":rows,"old_us":timing.arms[0].median_ms*1000.,"new_us":timing.arms[1].median_ms*1000.,"ratio":timing.paired_ratio}));
+            } else {
+                eprintln!("WINDOW_TIMING_SKIPPED {label} reason=bitwise_failure");
             }
         }
-        assert_eq!(bitwise,cases().len()*ROWS.len()*PATTERNS.len());assert_eq!(negative,cases().len()*ROWS.len()*6);
-        s.receipt("window-fused",BTreeMap::from([("bitwise_cases".into(),json!(bitwise)),("negative_controls".into(),json!(negative)),("timings".into(),json!(timings))]))?;
-        eprintln!("WINDOW_COMPLETE bitwise={bitwise} negative={negative} arithmetic_negative={} timings={}",timings.len(),timings.len());Ok(())
-    }).unwrap();
-    assert!(result.is_some());
+    }
+    assert_eq!(bitwise, cases().len() * ROWS.len() * PATTERNS.len());
+    assert_eq!(negative, cases().len() * ROWS.len() * 6);
+    assert_eq!(arithmetic_negative, cases().len() * ROWS.len());
+    s.receipt(
+        "window-fused",
+        BTreeMap::from([
+            ("bitwise_cases".into(), json!(bitwise)),
+            ("negative_controls".into(), json!(negative)),
+            ("arithmetic_controls".into(), json!(arithmetic_negative)),
+            ("timings".into(), json!(timings)),
+            ("mismatches".into(), json!(failures.messages())),
+        ]),
+    )?;
+    eprintln!(
+        "WINDOW_COMPLETE bitwise={bitwise} negative={negative} arithmetic_negative={arithmetic_negative} timings={} mismatches={}",
+        timings.len(),
+        failures.len()
+    );
+    failures.finish()
 }

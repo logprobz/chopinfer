@@ -134,3 +134,20 @@ and records kernel Xids. Timing uses the original kernel-lab `probe_sm120`
 module authenticated against its lock. These tests have been compiled and
 staged; GPU bitwise equality, performance and serving qualification still
 require the idle-GPU run.
+
+The first pair run exposed an invalid comparison fixture. Its baseline
+RMSNorm used the prepared 32-row grid with a one-row allocation and an
+eight-row live count. Excess CTAs accessed beyond those buffers, invalidating
+the comparison. The fixture now narrows the baseline grid to its allocated
+row bucket, matching the production binding. CPU admission rejects zero or
+oversized buckets, live counts above the allocation, and mismatched grids
+before any GPU session starts. Replays exercise full, zero, partial and
+restored full live counts within the allocation. Unused widening and BF16
+scale outputs remain poisoned guards, checked on both arms.
+
+Parity checks record every mismatching role and case, including input
+pattern, live count and eager or graph replay. Both suites finish their
+case matrices before failing; driver errors still abort the affected suite.
+The pair worker attempts both suites even when the first fails. Timings are
+omitted for case/row combinations with a mismatch. The invalid first run
+provides no GPU correctness or performance qualification.

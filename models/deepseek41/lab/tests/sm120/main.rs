@@ -6,6 +6,7 @@ mod ceil_parallel;
 mod f32_decode;
 mod f32_head;
 mod f32_prefill;
+mod fusion_checks;
 mod head_artifacts;
 mod head_probes;
 mod latent;

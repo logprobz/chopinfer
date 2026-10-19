@@ -1,8 +1,9 @@
 //! Bitwise old-chain comparisons for the decode norm epilogues.
+use super::fusion_checks::{Failures, compare_roles, guards, live_counts, validate_replay};
 use bundle_deepseek41::sm120::{
     ceil_parallel, fold_cubin_for_symbol, norm_quantize as registration,
 };
-use kernel_core::contract::DType;
+use kernel_core::contract::{DType, LaunchPlan};
 use kernel_harness::{Cubins, LabResult, Session, eviction::EvictionMode, launch};
 use kernels_sm120::row::{
     block_quantize,
@@ -55,6 +56,30 @@ impl Case {
     }
     fn label(&self) -> String {
         format!("{}:widen={}", self.fused.symbol, self.widen.is_some())
+    }
+    fn norm_plan(&self, rows: u32) -> LabResult<LaunchPlan> {
+        let mut plan = self.norm.plan(rows).map_err(|e| e.to_string())?;
+        // Match the production RmsNormOp, which narrows the capacity grid
+        // to the launch bucket before binding row-sized views.
+        plan.grid[0] = rows;
+        Ok(plan)
+    }
+    fn plans(&self, rows: u32) -> LabResult<Vec<LaunchPlan>> {
+        if self.norm.requirement() != &self.fused.query.norm
+            || self.quant.query != self.fused.query.quantizer()
+            || (self.f32() && self.widen.is_some())
+        {
+            return Err("norm fusion case contracts differ".into());
+        }
+        let mut plans = vec![
+            self.norm_plan(rows)?,
+            self.quant.plan(rows).map_err(|e| e.to_string())?,
+            self.fused.plan(rows).map_err(|e| e.to_string())?,
+        ];
+        if self.widen.is_some() {
+            plans.push(rounding::plan(rows).map_err(|e| e.to_string())?);
+        }
+        Ok(plans)
     }
     fn symbols(&self) -> Vec<&str> {
         let mut out = vec![
@@ -195,16 +220,18 @@ impl Output {
             .collect()
     }
 }
+const ROLES: [&str; 5] = ["normed", "widened", "codes", "scales", "status"];
 fn compare(expected: &[Vec<u8>], actual: &[Vec<u8>]) -> LabResult<()> {
-    for (role, (a, b)) in ["normed", "widened", "codes", "scales", "status"]
-        .into_iter()
-        .zip(expected.iter().zip(actual))
-    {
-        if a != b {
-            return Err(format!(
-                "{role} mismatch at {:?}",
-                a.iter().zip(b).position(|(a, b)| a != b)
-            ));
+    compare_roles(&ROLES, expected, actual)
+}
+
+fn validate_cases() -> LabResult<()> {
+    for case in cases() {
+        for rows in ROWS {
+            let plans = case.plans(rows)?;
+            for live in live_counts(rows) {
+                validate_replay(rows, live, DECODE_BATCH, &plans)?;
+            }
         }
     }
     Ok(())
@@ -262,7 +289,7 @@ fn run(
             args.extend([A::Buffer(status), A::U64(OFFSET as u64)]);
         }
         functions[1]
-            .launch(stream, launch::config(c.norm.plan(rows).unwrap())?, &args)
+            .launch(stream, launch::config(c.norm_plan(rows)?)?, &args)
             .map_err(|e| e.to_string())?;
         if c.widen.is_some() {
             functions[3]
@@ -340,6 +367,26 @@ fn weights(c: &Case, pattern: &str) -> Vec<u8> {
 }
 
 #[test]
+fn case_parameters_match_allocations_and_reject_oversized_live_counts() {
+    for case in cases() {
+        for rows in ROWS {
+            let plans = case.plans(rows).unwrap();
+            for live in live_counts(rows) {
+                validate_replay(rows, live, DECODE_BATCH, &plans).unwrap();
+            }
+            assert!(validate_replay(rows, rows + 7, DECODE_BATCH, &plans).is_err());
+            assert!(validate_replay(0, 0, DECODE_BATCH, &plans).is_err());
+            assert!(validate_replay(DECODE_BATCH + 1, 1, DECODE_BATCH, &plans).is_err());
+            if rows < DECODE_BATCH {
+                // The builder's capacity grid was the source of the out-of-bounds replay.
+                let stale = case.norm.plan(rows).unwrap();
+                assert!(validate_replay(rows, rows, DECODE_BATCH, &[stale]).is_err());
+            }
+        }
+    }
+}
+
+#[test]
 fn fixture_inventory_and_output_gate_detect_negative_controls() {
     let cases = cases();
     assert_eq!(cases.len(), GEOMETRIES.len() * 3);
@@ -371,6 +418,7 @@ fn fixture_inventory_and_output_gate_detect_negative_controls() {
 
 #[test]
 fn bitwise_graph_live_rows_and_timing_on_gpu() {
+    validate_cases().unwrap();
     if kernel_harness::selected_ordinals().unwrap().is_none() {
         kernel_harness::skip("norm fusion comparison needs an idle GPU").unwrap();
         return;
@@ -385,78 +433,236 @@ fn bitwise_graph_live_rows_and_timing_on_gpu() {
         Box::leak(Box::new([("probe_sm120", &probe[..])])),
         &[("probe_sm120", PROBE_SYMBOLS)],
     );
-    let result=kernel_harness::gpu_test_with(cubins,1<<30,|s| {
-        let mut bitwise=0; let mut negative=0; let mut timings=Vec::new();
-        for c in cases() {
-            let modules=c.symbols().iter().map(|symbol| {
-                let (name,_)=fold_cubin_for_symbol(symbol).unwrap();
-                s.load_cubin(&std::fs::read(artifacts().join(format!("{name}.cubin"))).map_err(|e|e.to_string())?)
-            }).collect::<LabResult<Vec<_>>>()?;
-            let functions=modules.iter().zip(c.symbols()).map(|(m,s)|m.function(s).map_err(|e|e.to_string())).collect::<LabResult<Vec<_>>>()?;
-            let eps=c.fused.query.norm.epsilon_bits;
-            for rows in ROWS {
-                let input=Inputs {x:s.allocate(c.width()*rows as usize*if c.f32(){4}else{2})?,weight:s.allocate(c.width()*2)?,live:s.allocate(4)?};
-                let outputs=[Output::new(s,&c,rows)?,Output::new(s,&c,rows)?];
-                let graphs=(0..2).map(|arm|s.capture(|stream|run(&c,&functions,arm==1,rows,&input,&outputs[arm],stream,eps))).collect::<LabResult<Vec<_>>>()?;
-                for pattern in PATTERNS {
-                    upload(&input.x,&inputs(&c,rows,pattern,0x91a2_03c4),&s.stream)?;
-                    upload(&input.weight,&weights(&c,pattern),&s.stream)?;
-                    for live_rows in [rows,0,rows.saturating_sub(1),rows+7,rows] {
-                        let active=live_rows.min(rows) as usize;
-                        upload(&input.live,&live_rows.to_ne_bytes(),&s.stream)?;
-                        let mut eager: Option<Vec<Vec<u8>>> = None;
-                        for graph in [false,true,true] {
-                            for out in &outputs {out.poison(s,rows,pattern=="sticky")?;}
-                            for arm in 0..2 {
-                                if graph {graphs[arm].launch(&s.stream).map_err(|e|e.to_string())?;}
-                                else {run(&c,&functions,arm==1,rows,&input,&outputs[arm],&s.stream,eps)?;}
-                            }
-                            s.stream.synchronize().map_err(|e|e.to_string())?;
-                            let old=outputs[0].read(s)?;let new=outputs[1].read(s)?;
-                            compare(&old,&new).map_err(|e|format!("{} rows={rows} live={live_rows} {pattern} graph={graph}: {e}",c.label()))?;
-                            if let Some(ref previous)=eager {compare(previous,&new)?;} else {eager=Some(old);}
-                            for (role, bytes) in new.iter().enumerate().take(4) {
-                                let start=if role==1 && c.widen.is_none() {0} else {outputs[1].lengths[role]/rows as usize*active};
-                                assert!(bytes[start..].iter().all(|b|*b==0xa5),"inactive role {role}");
-                            }
-                            for index in (0..OFFSET).chain(OFFSET+rows as usize..OFFSET+rows as usize+2) {assert_eq!(&new[4][index*4..index*4+4],&0x1357_2468u32.to_ne_bytes());}
-                            if pattern=="finite" && active>0 {assert!(new[2][..c.width()].iter().any(|b|*b!=0));}
-                        }
-                    }
-                    bitwise+=1;eprintln!("NORM_BITWISE {} rows={rows} pattern={pattern} PASS",c.label());
-                }
-                upload(&input.x,&inputs(&c,rows,"finite",0x195a_dafe),&s.stream)?;
-                upload(&input.weight,&weights(&c,"finite"),&s.stream)?;
-                upload(&input.live,&rows.to_ne_bytes(),&s.stream)?;
-                for output in &outputs {output.poison(s,rows,false)?;}
-                for graph in &graphs {graph.launch(&s.stream).map_err(|e|e.to_string())?;}
-                s.stream.synchronize().map_err(|e|e.to_string())?;
-                let expected=outputs[0].read(s)?;compare(&expected,&outputs[1].read(s)?)?;
-                for role in 0..5 {
-                    let mut bad=expected[role].clone();bad[if role==4 {OFFSET*4} else {0}]^=1;
-                    upload(&outputs[1].buffers[role],&bad,&s.stream)?;
-                    assert!(compare(&expected,&outputs[1].read(s)?).is_err());
-                    upload(&outputs[1].buffers[role],&expected[role],&s.stream)?;negative+=1;
-                }
-                // Changing epsilon is an arithmetic negative control, not just a byte mutation.
-                run(&c,&functions,true,rows,&input,&outputs[1],&s.stream,1e6_f32.to_bits())?;
-                s.stream.synchronize().map_err(|e|e.to_string())?;
-                assert!(compare(&expected,&outputs[1].read(s)?).is_err());
-                graphs[1].launch(&s.stream).map_err(|e|e.to_string())?;
-                let label=format!("norm:{}:rows={rows}",c.label());
-                let timing=kernel_harness::with_timing_label(&label,||kernel_harness::time_ab(s,3,15,[EvictionMode::Read;2],|arm,stream|graphs[arm].launch(stream).map_err(|e|e.to_string())))?;
-                eprintln!("NORM_TIMING {} rows={rows} old_us={} new_us={} ratio={}",c.label(),timing.arms[0].median_ms*1000.,timing.arms[1].median_ms*1000.,timing.paired_ratio);
-                timings.push(json!({"label":c.label(),"rows":rows,"old_us":timing.arms[0].median_ms*1000.,"new_us":timing.arms[1].median_ms*1000.,"ratio":timing.paired_ratio}));
-            }
-        }
-        assert_eq!(bitwise,cases().len()*ROWS.len()*PATTERNS.len());
-        assert_eq!(negative,cases().len()*ROWS.len()*5);
-        s.receipt("norm-quantize",BTreeMap::from([("bitwise_cases".into(),json!(bitwise)),("negative_controls".into(),json!(negative)),("timings".into(),json!(timings))]))?;
-        eprintln!("NORM_COMPLETE bitwise={bitwise} negative={negative} arithmetic_negative={} timings={}",timings.len(),timings.len());
-        Ok(())
-    }).unwrap();
+    let result = kernel_harness::gpu_test_with(cubins, 1 << 30, compare_on_gpu).unwrap();
     assert!(result.is_some());
 }
+
+fn compare_on_gpu(s: &Session) -> LabResult<()> {
+    let mut bitwise = 0;
+    let mut negative = 0;
+    let mut arithmetic_negative = 0;
+    let mut timings = Vec::new();
+    let mut failures = Failures::new("NORM");
+    for c in cases() {
+        let modules = c
+            .symbols()
+            .iter()
+            .map(|symbol| {
+                let (name, _) = fold_cubin_for_symbol(symbol).unwrap();
+                s.load_cubin(
+                    &std::fs::read(artifacts().join(format!("{name}.cubin")))
+                        .map_err(|e| e.to_string())?,
+                )
+            })
+            .collect::<LabResult<Vec<_>>>()?;
+        let functions = modules
+            .iter()
+            .zip(c.symbols())
+            .map(|(m, symbol)| m.function(symbol).map_err(|e| e.to_string()))
+            .collect::<LabResult<Vec<_>>>()?;
+        let eps = c.fused.query.norm.epsilon_bits;
+        for rows in ROWS {
+            let row_mark = failures.len();
+            let label = format!("{} rows={rows}", c.label());
+            let plans = c.plans(rows)?;
+            validate_replay(rows, rows, DECODE_BATCH, &plans)?;
+            let input = Inputs {
+                x: s.allocate(c.width() * rows as usize * if c.f32() { 4 } else { 2 })?,
+                weight: s.allocate(c.width() * 2)?,
+                live: s.allocate(4)?,
+            };
+            let outputs = [Output::new(s, &c, rows)?, Output::new(s, &c, rows)?];
+            let graphs = (0..2)
+                .map(|arm| {
+                    s.capture(|stream| {
+                        run(
+                            &c,
+                            &functions,
+                            arm == 1,
+                            rows,
+                            &input,
+                            &outputs[arm],
+                            stream,
+                            eps,
+                        )
+                    })
+                })
+                .collect::<LabResult<Vec<_>>>()?;
+            for pattern in PATTERNS {
+                let case_mark = failures.len();
+                upload(&input.x, &inputs(&c, rows, pattern, 0x91a2_03c4), &s.stream)?;
+                upload(&input.weight, &weights(&c, pattern), &s.stream)?;
+                for (live_step, live_rows) in live_counts(rows).into_iter().enumerate() {
+                    validate_replay(rows, live_rows, DECODE_BATCH, &plans)?;
+                    upload(&input.live, &live_rows.to_ne_bytes(), &s.stream)?;
+                    let mut eager: Option<Vec<Vec<u8>>> = None;
+                    for replay in 0..3 {
+                        let graph = replay != 0;
+                        let context = format!(
+                            "{label} pattern={pattern} live={live_rows} live_step={live_step} graph={graph} replay={replay}"
+                        );
+                        for out in &outputs {
+                            out.poison(s, rows, pattern == "sticky")?;
+                        }
+                        for arm in 0..2 {
+                            if graph {
+                                graphs[arm].launch(&s.stream).map_err(|e| e.to_string())?;
+                            } else {
+                                run(
+                                    &c,
+                                    &functions,
+                                    arm == 1,
+                                    rows,
+                                    &input,
+                                    &outputs[arm],
+                                    &s.stream,
+                                    eps,
+                                )?;
+                            }
+                        }
+                        s.stream.synchronize().map_err(|e| e.to_string())?;
+                        let old = outputs[0].read(s)?;
+                        let new = outputs[1].read(s)?;
+                        failures.record(&format!("{context} old-vs-fused"), compare(&old, &new));
+                        if let Some(previous) = &eager {
+                            failures.record(
+                                &format!("{context} eager-vs-replay"),
+                                compare(previous, &new),
+                            );
+                        }
+                        for (arm, output) in [("old", &old), ("fused", &new)] {
+                            let untouched: &[usize] = if c.widen.is_none() { &[1] } else { &[] };
+                            failures.record(
+                                &format!("{context} arm={arm}"),
+                                guards(
+                                    &ROLES,
+                                    output,
+                                    rows,
+                                    live_rows,
+                                    untouched,
+                                    OFFSET,
+                                    pattern == "sticky",
+                                ),
+                            );
+                            if pattern == "finite" && live_rows > 0 {
+                                failures.require(
+                                    &format!("{context} arm={arm}"),
+                                    output[2][..c.width()].iter().any(|b| *b != 0),
+                                    "finite fixture produced only zero codes",
+                                );
+                            }
+                        }
+                        if eager.is_none() {
+                            eager = Some(old);
+                        }
+                    }
+                }
+                bitwise += 1;
+                let outcome = if failures.len() == case_mark {
+                    "PASS"
+                } else {
+                    "FAIL"
+                };
+                eprintln!("NORM_BITWISE {label} pattern={pattern} {outcome}");
+            }
+            upload(
+                &input.x,
+                &inputs(&c, rows, "finite", 0x195a_dafe),
+                &s.stream,
+            )?;
+            upload(&input.weight, &weights(&c, "finite"), &s.stream)?;
+            upload(&input.live, &rows.to_ne_bytes(), &s.stream)?;
+            for output in &outputs {
+                output.poison(s, rows, false)?;
+            }
+            for graph in &graphs {
+                graph.launch(&s.stream).map_err(|e| e.to_string())?;
+            }
+            s.stream.synchronize().map_err(|e| e.to_string())?;
+            let expected = outputs[0].read(s)?;
+            let original = outputs[1].read(s)?;
+            failures.record(
+                &format!("{label} control-baseline"),
+                compare(&expected, &original),
+            );
+            // Mutation controls compare against the fused arm's own untouched
+            // bytes, so a separate parity failure cannot make a control pass.
+            for role in 0..5 {
+                let mut bad = original[role].clone();
+                bad[if role == 4 { OFFSET * 4 } else { 0 }] ^= 1;
+                upload(&outputs[1].buffers[role], &bad, &s.stream)?;
+                failures.require(
+                    &format!("{label} negative={}", ROLES[role]),
+                    compare(&original, &outputs[1].read(s)?).is_err(),
+                    "byte mutation escaped the equality gate",
+                );
+                upload(&outputs[1].buffers[role], &original[role], &s.stream)?;
+                negative += 1;
+            }
+            run(
+                &c,
+                &functions,
+                true,
+                rows,
+                &input,
+                &outputs[1],
+                &s.stream,
+                1e6_f32.to_bits(),
+            )?;
+            s.stream.synchronize().map_err(|e| e.to_string())?;
+            failures.require(
+                &format!("{label} negative=epsilon"),
+                compare(&original, &outputs[1].read(s)?).is_err(),
+                "changed epsilon escaped the equality gate",
+            );
+            arithmetic_negative += 1;
+            if failures.len() == row_mark {
+                for output in &outputs {
+                    output.poison(s, rows, false)?;
+                }
+                for graph in &graphs {
+                    graph.launch(&s.stream).map_err(|e| e.to_string())?;
+                }
+                s.stream.synchronize().map_err(|e| e.to_string())?;
+                let timing_label = format!("norm:{label}");
+                let timing = kernel_harness::with_timing_label(&timing_label, || {
+                    kernel_harness::time_ab(s, 3, 15, [EvictionMode::Read; 2], |arm, stream| {
+                        graphs[arm].launch(stream).map_err(|e| e.to_string())
+                    })
+                })?;
+                eprintln!(
+                    "NORM_TIMING {label} old_us={} new_us={} ratio={}",
+                    timing.arms[0].median_ms * 1000.,
+                    timing.arms[1].median_ms * 1000.,
+                    timing.paired_ratio
+                );
+                timings.push(json!({"label":c.label(),"rows":rows,"old_us":timing.arms[0].median_ms*1000.,"new_us":timing.arms[1].median_ms*1000.,"ratio":timing.paired_ratio}));
+            } else {
+                eprintln!("NORM_TIMING_SKIPPED {label} reason=bitwise_failure");
+            }
+        }
+    }
+    assert_eq!(bitwise, cases().len() * ROWS.len() * PATTERNS.len());
+    assert_eq!(negative, cases().len() * ROWS.len() * 5);
+    assert_eq!(arithmetic_negative, cases().len() * ROWS.len());
+    s.receipt(
+        "norm-quantize",
+        BTreeMap::from([
+            ("bitwise_cases".into(), json!(bitwise)),
+            ("negative_controls".into(), json!(negative)),
+            ("arithmetic_controls".into(), json!(arithmetic_negative)),
+            ("timings".into(), json!(timings)),
+            ("mismatches".into(), json!(failures.messages())),
+        ]),
+    )?;
+    eprintln!(
+        "NORM_COMPLETE bitwise={bitwise} negative={negative} arithmetic_negative={arithmetic_negative} timings={} mismatches={}",
+        timings.len(),
+        failures.len()
+    );
+    failures.finish()
+}
+
 pub(super) fn verify_modules() -> LabResult<()> {
     let dir = artifacts();
     let manifest: serde_json::Value = serde_json::from_slice(

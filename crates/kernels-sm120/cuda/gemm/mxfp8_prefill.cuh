@@ -193,39 +193,80 @@ __device__ void run(const CUtensorMap& activation_map, const CUtensorMap& weight
 #pragma unroll
         for (int n = 0; n < 4; ++n) partial[m][n] = total[m][n];
     }
+    // Short complete K panels spill address temporaries when these four
+    // steps are unrolled. Both bodies keep the same four ordered MMAs;
+    // only the loop hint differs. Keep the full-unroll body in place to
+    // preserve existing locked instruction streams, including partial K.
+    if constexpr (K < 1024 && K % 128 == 0) {
+#pragma unroll 1
+      for (int step = 0; step < 4; ++step) {
+        const int k = f * 128 + step * 32;
+        ptx::A4 af[4]; ptx::B2 bf[4];
+        uint32_t sa[4], sb[4];
 #pragma unroll
-    for (int step = 0; step < 4; ++step) {
-      const int k = f * 128 + step * 32;
-      ptx::A4 af[4]; ptx::B2 bf[4];
-      uint32_t sa[4], sb[4];
+        for (int m = 0; m < 4; ++m) {
+          const int local = wm * 64 + m * 16 + quad;
 #pragma unroll
-      for (int m = 0; m < 4; ++m) {
-        const int local = wm * 64 + m * 16 + quad;
-#pragma unroll
-        for (int i = 0; i < 4; ++i) {
-          af[m].v[i] = ((active >> (2 * m + i % 2)) & 1) && k < K
-              ? word(a, local + (i % 2) * 8, step * 32 + (i / 2) * 16 + lane4 * 4) : 0;
+          for (int i = 0; i < 4; ++i) {
+            af[m].v[i] = ((active >> (2 * m + i % 2)) & 1) && k < K
+                ? word(a, local + (i % 2) * 8, step * 32 + (i / 2) * 16 + lane4 * 4) : 0;
+          }
+          const uint32_t row = token0 + local + (lane4 & 1) * 8;
+          sa[m] = ((active >> (2 * m + (lane4 & 1))) & 1) && k < K
+              ? activation_scales[(uint64_t(row) * RowStride + group * GroupStride + k) / 32] : 127;
         }
-        const uint32_t row = token0 + local + (lane4 & 1) * 8;
-        sa[m] = ((active >> (2 * m + (lane4 & 1))) & 1) && k < K
-            ? activation_scales[(uint64_t(row) * RowStride + group * GroupStride + k) / 32] : 127;
+#pragma unroll
+        for (int n = 0; n < 4; ++n) {
+          const int local = wn * 32 + n * 8 + quad;
+          const uint32_t col = column0 + local;
+#pragma unroll
+          for (int i = 0; i < 2; ++i)
+            bf[n].v[i] = col < N && k < K ? word(b, local, step * 32 + i * 16 + lane4 * 4) : 0;
+          sb[n] = col < N && k < K
+              ? weight_scales[(uint64_t(group) * N + col) * (K / 32) + k / 32] : 127;
+        }
+#pragma unroll
+        for (int m = 0; m < 4; ++m)
+#pragma unroll
+          for (int n = 0; n < 4; ++n)
+            ptx::mma_mxf8f6f4<ptx::Element::e4m3, ptx::Element::e4m3>(
+                partial[m][n], af[m], bf[n], sa[m], sb[n]);
       }
+    } else {
 #pragma unroll
-      for (int n = 0; n < 4; ++n) {
-        const int local = wn * 32 + n * 8 + quad;
-        const uint32_t col = column0 + local;
+      for (int step = 0; step < 4; ++step) {
+        const int k = f * 128 + step * 32;
+        ptx::A4 af[4]; ptx::B2 bf[4];
+        uint32_t sa[4], sb[4];
 #pragma unroll
-        for (int i = 0; i < 2; ++i)
-          bf[n].v[i] = col < N && k < K ? word(b, local, step * 32 + i * 16 + lane4 * 4) : 0;
-        sb[n] = col < N && k < K
-            ? weight_scales[(uint64_t(group) * N + col) * (K / 32) + k / 32] : 127;
+        for (int m = 0; m < 4; ++m) {
+          const int local = wm * 64 + m * 16 + quad;
+#pragma unroll
+          for (int i = 0; i < 4; ++i) {
+            af[m].v[i] = ((active >> (2 * m + i % 2)) & 1) && k < K
+                ? word(a, local + (i % 2) * 8, step * 32 + (i / 2) * 16 + lane4 * 4) : 0;
+          }
+          const uint32_t row = token0 + local + (lane4 & 1) * 8;
+          sa[m] = ((active >> (2 * m + (lane4 & 1))) & 1) && k < K
+              ? activation_scales[(uint64_t(row) * RowStride + group * GroupStride + k) / 32] : 127;
+        }
+#pragma unroll
+        for (int n = 0; n < 4; ++n) {
+          const int local = wn * 32 + n * 8 + quad;
+          const uint32_t col = column0 + local;
+#pragma unroll
+          for (int i = 0; i < 2; ++i)
+            bf[n].v[i] = col < N && k < K ? word(b, local, step * 32 + i * 16 + lane4 * 4) : 0;
+          sb[n] = col < N && k < K
+              ? weight_scales[(uint64_t(group) * N + col) * (K / 32) + k / 32] : 127;
+        }
+#pragma unroll
+        for (int m = 0; m < 4; ++m)
+#pragma unroll
+          for (int n = 0; n < 4; ++n)
+            ptx::mma_mxf8f6f4<ptx::Element::e4m3, ptx::Element::e4m3>(
+                partial[m][n], af[m], bf[n], sa[m], sb[n]);
       }
-#pragma unroll
-      for (int m = 0; m < 4; ++m)
-#pragma unroll
-        for (int n = 0; n < 4; ++n)
-          ptx::mma_mxf8f6f4<ptx::Element::e4m3, ptx::Element::e4m3>(
-              partial[m][n], af[m], bf[n], sa[m], sb[n]);
     }
     // All generic-proxy shared reads finish before the ring's next TMA write.
     asm volatile("fence.proxy.async.shared::cta;" ::: "memory");

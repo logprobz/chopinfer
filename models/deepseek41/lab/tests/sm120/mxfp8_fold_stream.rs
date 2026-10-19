@@ -1,6 +1,7 @@
 //! Qualification of one-launch folds against the accepted serving selection.
 mod ahead;
 mod sublayer;
+mod worker;
 use super::mxfp8_fold_decode::{self as previous, modules};
 use bundle_deepseek41::sm120::mxfp8_fold as registration;
 use bundle_deepseek41::sm120::mxfp8_fold_stream as catalog;
@@ -114,74 +115,63 @@ fn stream_fold_dry_run() {
 #[test]
 fn stream_fold_gpu() {
     let cubins = modules::timing_cubins().unwrap();
-    kernel_harness::gpu_test_multi_with(cubins, 3 << 30, |sessions| {
+    worker::run(worker::FOLD, cubins, |session| {
         let old = registration::decode_catalog(&FLASH)?;
         let candidates = catalog::catalog(&FLASH)?;
-        for session in sessions {
-            for candidate in &candidates {
-                let entry = old
-                    .iter()
-                    .find(|e| {
-                        e.paired == candidate.ticket.paired
-                            && registration::routed_query(e.query, 64) == candidate.ticket.query
-                    })
-                    .ok_or("missing fold baseline")?;
-                let weights = previous::Weights::new(session, entry)?;
-                for rows in ROWS {
-                    let mut record = previous::compare_stream(
-                        session,
-                        entry,
-                        rows,
-                        candidate,
-                        &weights,
-                        rows == 1,
-                    )?;
-                    record["device"] = json!(session.ordinal);
-                    record["phase"] = json!("stream-comparison");
-                    record["packed_weight_bytes"] =
-                        json!(candidate.packed_bytes() * if entry.paired { 2 } else { 1 });
-                    record["state_bytes"] =
-                        json!(candidate.state_bytes(rows).map_err(|e| e.to_string())?);
-                    record["trace_candidate_replays"] = json!(15);
-                    record["trace_baseline_replays"] = json!(7);
-                    println!("{record}");
-                }
-                if !entry.paired {
-                    let mut record = previous::compare_with(
-                        session,
-                        entry,
-                        128,
-                        None,
-                        Some(&weights),
-                        false,
-                        false,
-                    )?;
-                    record["phase"] = json!("preserved-prefill");
-                    record["device"] = json!(session.ordinal);
-                    println!("{record}");
-                }
-            }
-            let deferred = catalog::deferred_entry(&FLASH)?;
-            let baseline = old
+        for candidate in &candidates {
+            let entry = old
                 .iter()
                 .find(|e| {
-                    !e.paired && registration::routed_query(e.query, 64) == deferred.ticket.query
+                    e.paired == candidate.ticket.paired
+                        && registration::routed_query(e.query, 64) == candidate.ticket.query
                 })
-                .ok_or("missing deferred baseline")?;
-            let weights = previous::Weights::new(session, baseline)?;
-            for rows in [1, 32] {
-                let mut record = previous::compare_stream_deferred(
-                    session, baseline, rows, &deferred, &weights,
+                .ok_or("missing fold baseline")?;
+            let weights = previous::Weights::new(session, entry)?;
+            for rows in ROWS {
+                let mut record =
+                    previous::compare_stream(session, entry, rows, candidate, &weights, rows == 1)?;
+                record["device"] = json!(session.ordinal);
+                record["phase"] = json!("stream-comparison");
+                record["packed_weight_bytes"] =
+                    json!(candidate.packed_bytes() * if entry.paired { 2 } else { 1 });
+                record["state_bytes"] =
+                    json!(candidate.state_bytes(rows).map_err(|e| e.to_string())?);
+                record["trace_candidate_replays"] = json!(15);
+                record["trace_baseline_replays"] = json!(7);
+                println!("{record}");
+            }
+            if !entry.paired {
+                let mut record = previous::compare_with(
+                    session,
+                    entry,
+                    128,
+                    None,
+                    Some(&weights),
+                    false,
+                    false,
                 )?;
-                record["phase"] = json!("deferred-admission");
+                record["phase"] = json!("preserved-prefill");
                 record["device"] = json!(session.ordinal);
                 println!("{record}");
             }
-            session.receipt(
-                "mxfp8-fold-stream",
-                std::collections::BTreeMap::from([("matrix_cases".into(), json!(23 * ROWS.len()))]),
-            )?;
         }
+        let deferred = catalog::deferred_entry(&FLASH)?;
+        let baseline = old
+            .iter()
+            .find(|e| !e.paired && registration::routed_query(e.query, 64) == deferred.ticket.query)
+            .ok_or("missing deferred baseline")?;
+        let weights = previous::Weights::new(session, baseline)?;
+        for rows in [1, 32] {
+            let mut record =
+                previous::compare_stream_deferred(session, baseline, rows, &deferred, &weights)?;
+            record["phase"] = json!("deferred-admission");
+            record["device"] = json!(session.ordinal);
+            println!("{record}");
+        }
+        session.receipt(
+            "mxfp8-fold-stream",
+            std::collections::BTreeMap::from([("matrix_cases".into(), json!(23 * ROWS.len()))]),
+        )?;
         Ok(())
     })
     .unwrap();

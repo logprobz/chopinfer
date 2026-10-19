@@ -139,50 +139,48 @@ impl Case {
 #[test]
 fn stream_ahead_gpu() {
     let cubins = modules::timing_cubins().unwrap();
-    kernel_harness::gpu_test_multi_with(cubins,3<<30,|sessions| {
+    worker::run(worker::AHEAD,cubins,|session| {
         let entries=catalog::catalog(&FLASH)?;
         let lead_entry=entries.iter().find(|e|(e.ticket.query.n,e.ticket.query.k,e.ticket.query.groups,e.ticket.paired)==(1280,5120,1,false)).ok_or("missing ahead lead")?;
         let traffic_arm=std::env::var("CHOPINFER_FOLD_AHEAD_ARM").ok().map(|s|s.parse::<usize>().map_err(|e|e.to_string())).transpose()?;
         let target_filter=std::env::var("CHOPINFER_FOLD_AHEAD_N").ok().map(|s|s.parse::<u32>().map_err(|e|e.to_string())).transpose()?;
         if traffic_arm.is_some_and(|a|a>1) {return Err("ahead arm must be zero or one".into());}
-        for session in sessions {
-            for &(n,k,groups) in &[(512,5120,1),(1280,5120,1),(1024,4096,2),(5120,15360,1)] {
-                if target_filter.is_some_and(|filter|filter!=n){continue;}
-                let target_entry=entries.iter().find(|e|(e.ticket.query.n,e.ticket.query.k,e.ticket.query.groups,e.ticket.paired)==(n,k,groups,false)).ok_or("missing ahead target")?;
-                let lead=Case::new(session,lead_entry,1,11)?;
-                let target=Case::new(session,target_entry,1,17)?;
-                let prefetch=kernels_sm120::gemm::mxfp8_fold_stream::prefetch_launch([
-                    View{handle:9,bytes:target.buffers[8].byte_len() as u64},View{handle:4,bytes:target.buffers[3].byte_len() as u64},View::EMPTY,View::EMPTY]).map_err(|e|e.to_string())?;
-                let prefetch_calls=[prefetch];
-                let prefetch_functions=previous::functions(session,&prefetch_calls)?;
-                let baseline=session.capture(|stream|{lead.run(session,stream)?;target.run(session,stream)})?;
-                let ahead=session.capture(|stream|{
-                    previous::run(session,stream,&prefetch_calls,&prefetch_functions,&target.bindings())?;
-                    lead.run(session,stream)?;target.run(session,stream)
-                })?;
-                let graphs=[baseline,ahead];
-                if let Some(arm)=traffic_arm {
-                    // Nsight Compute profiles this complete graph, preserving
-                    // dependencies and cache contents between its nodes.
-                    let mode=kernel_harness::eviction::EvictionMode::selected()?;
-                    kernel_harness::time_prepared(session,1,3,mode,|_|Ok(()),|stream|graphs[arm].launch(stream).map_err(|e|e.to_string()))?;
-                    println!("{}",json!({"phase":"ahead-traffic","device":session.ordinal,"n":n,"k":k,"groups":groups,"arm":arm,"graph_replays":4}));
-                } else {
-                    graphs[0].launch(&session.stream).map_err(|e|e.to_string())?;
-                    let expected=target.read(session,4)?;
-                    graphs[1].launch(&session.stream).map_err(|e|e.to_string())?;
-                    assert_eq!(target.read(session,4)?,expected,"ahead target output");
-                    assert!(target.read(session,9)?.iter().all(|&v|v==0));
-                    assert!(lead.read(session,9)?.iter().all(|&v|v==0));
-                    let mode=kernel_harness::eviction::EvictionMode::selected()?;
-                    let timing=kernel_harness::time_ab(session,2,5,[mode,mode],|arm,stream|graphs[arm].launch(stream).map_err(|e|e.to_string()))?;
-                    println!("{}",json!({"phase":"ahead-comparison","sequence":"two-folds","device":session.ordinal,"n":n,"k":k,"groups":groups,"rows":1,
-                        "baseline_symbols":[lead.calls[0].symbol.clone(),target.calls[0].symbol.clone()],
-                        "candidate_symbols":[prefetch_calls[0].symbol.clone(),lead.calls[0].symbol.clone(),target.calls[0].symbol.clone()],
-                        "lead_n":1280,"lead_k":5120,"bitwise":true,"baseline_us":timing.arms[0].median_ms*1000.0,
-                        "ahead_us":timing.arms[1].median_ms*1000.0,"paired_ratio":timing.paired_ratio,"graph_replays":8,
-                        "weight_bytes":lead_entry.packed_bytes()+target_entry.packed_bytes()+lead.buffers[3].byte_len() as u64+target.buffers[3].byte_len() as u64}));
-                }
+        for &(n,k,groups) in &[(512,5120,1),(1280,5120,1),(1024,4096,2),(5120,15360,1)] {
+            if target_filter.is_some_and(|filter|filter!=n){continue;}
+            let target_entry=entries.iter().find(|e|(e.ticket.query.n,e.ticket.query.k,e.ticket.query.groups,e.ticket.paired)==(n,k,groups,false)).ok_or("missing ahead target")?;
+            let lead=Case::new(session,lead_entry,1,11)?;
+            let target=Case::new(session,target_entry,1,17)?;
+            let prefetch=kernels_sm120::gemm::mxfp8_fold_stream::prefetch_launch([
+                View{handle:9,bytes:target.buffers[8].byte_len() as u64},View{handle:4,bytes:target.buffers[3].byte_len() as u64},View::EMPTY,View::EMPTY]).map_err(|e|e.to_string())?;
+            let prefetch_calls=[prefetch];
+            let prefetch_functions=previous::functions(session,&prefetch_calls)?;
+            let baseline=session.capture(|stream|{lead.run(session,stream)?;target.run(session,stream)})?;
+            let ahead=session.capture(|stream|{
+                previous::run(session,stream,&prefetch_calls,&prefetch_functions,&target.bindings())?;
+                lead.run(session,stream)?;target.run(session,stream)
+            })?;
+            let graphs=[baseline,ahead];
+            if let Some(arm)=traffic_arm {
+                // Nsight Compute profiles this complete graph, preserving
+                // dependencies and cache contents between its nodes.
+                let mode=kernel_harness::eviction::EvictionMode::selected()?;
+                kernel_harness::time_prepared(session,1,3,mode,|_|Ok(()),|stream|graphs[arm].launch(stream).map_err(|e|e.to_string()))?;
+                println!("{}",json!({"phase":"ahead-traffic","device":session.ordinal,"n":n,"k":k,"groups":groups,"arm":arm,"graph_replays":4}));
+            } else {
+                graphs[0].launch(&session.stream).map_err(|e|e.to_string())?;
+                let expected=target.read(session,4)?;
+                graphs[1].launch(&session.stream).map_err(|e|e.to_string())?;
+                assert_eq!(target.read(session,4)?,expected,"ahead target output");
+                assert!(target.read(session,9)?.iter().all(|&v|v==0));
+                assert!(lead.read(session,9)?.iter().all(|&v|v==0));
+                let mode=kernel_harness::eviction::EvictionMode::selected()?;
+                let timing=kernel_harness::time_ab(session,2,5,[mode,mode],|arm,stream|graphs[arm].launch(stream).map_err(|e|e.to_string()))?;
+                println!("{}",json!({"phase":"ahead-comparison","sequence":"two-folds","device":session.ordinal,"n":n,"k":k,"groups":groups,"rows":1,
+                    "baseline_symbols":[lead.calls[0].symbol.clone(),target.calls[0].symbol.clone()],
+                    "candidate_symbols":[prefetch_calls[0].symbol.clone(),lead.calls[0].symbol.clone(),target.calls[0].symbol.clone()],
+                    "lead_n":1280,"lead_k":5120,"bitwise":true,"baseline_us":timing.arms[0].median_ms*1000.0,
+                    "ahead_us":timing.arms[1].median_ms*1000.0,"paired_ratio":timing.paired_ratio,"graph_replays":8,
+                    "weight_bytes":lead_entry.packed_bytes()+target_entry.packed_bytes()+lead.buffers[3].byte_len() as u64+target.buffers[3].byte_len() as u64}));
             }
         }
         Ok(())

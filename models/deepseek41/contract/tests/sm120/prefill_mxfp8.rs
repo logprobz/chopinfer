@@ -4,6 +4,8 @@ mod launch_checks;
 #[path = "../../../bundle/src/sm120/mxfp8_fold.rs"]
 #[allow(dead_code)]
 mod registration;
+#[path = "prefill_mxfp8_tail.rs"]
+mod tails;
 use kernel_core::backend::{Backend, Counts, Launch, Need, View};
 use kernel_core::contract::{Argument, DType};
 use kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers;
@@ -406,7 +408,7 @@ fn configured_function(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn case(
+fn case_strategies(
     session: &Session,
     modules: &BTreeMap<String, Module>,
     e: &Entry,
@@ -417,6 +419,7 @@ fn case(
     pattern: u32,
     timing: bool,
     negative: bool,
+    strategies: [u8; 2],
 ) -> LabResult<()> {
     let q = e.query;
     let sizes = e.bytes(rows);
@@ -505,15 +508,24 @@ fn case(
     }
     drop(images);
     let b = views(e, rows);
-    let old = Sm120::new()
-        .with_mxfp8_fold(e.clone())
-        .mxfp8_fold_gemm(&q, Need::rows(rows))
-        .map_err(|e| e.to_string())?;
-    let new = Sm120::new()
-        .with_mxfp8_prefill(e.clone())
-        .mxfp8_prefill_gemm(&q, Need::rows(rows))
-        .map_err(|e| e.to_string())?;
-    let ops = [old, new];
+    let ops = strategies
+        .into_iter()
+        .map(|strategy| {
+            match strategy {
+                0 => Sm120::new()
+                    .with_mxfp8_fold(e.clone())
+                    .mxfp8_fold_gemm(&q, Need::rows(rows)),
+                1 => Sm120::new()
+                    .with_mxfp8_prefill(e.clone())
+                    .mxfp8_prefill_gemm(&q, Need::rows(rows)),
+                2 => Sm120::new()
+                    .with_mxfp8_prefill_split(e.clone())
+                    .mxfp8_prefill_gemm(&q, Need::rows(rows)),
+                _ => unreachable!("known prefill strategy"),
+            }
+            .map_err(|e| e.to_string())
+        })
+        .collect::<LabResult<Vec<_>>>()?;
     let plans = ops
         .iter()
         .map(|op| {
@@ -633,7 +645,12 @@ fn case(
     if negative {
         restore()?;
         let mut ls = plans[1].clone();
-        ls[1].symbol = tiled::control_symbol(e);
+        if strategies[1] == 2 {
+            ls.last_mut().unwrap().symbol =
+                kernels_sm120::gemm::mxfp8_prefill_split::control_spec(e).symbol;
+        } else {
+            ls[1].symbol = tiled::control_symbol(e);
+        }
         for l in ls {
             let f = configured_function(
                 &modules[new_module],
@@ -663,7 +680,7 @@ fn case(
         println!("TMA_NEGATIVE {} PASS", e.symbol);
     }
     println!(
-        "TMA_BITWISE {} rows={rows} live={live} pattern={pattern} PASS",
+        "TMA_BITWISE {} rows={rows} live={live} pattern={pattern} arms={strategies:?} PASS",
         e.symbol
     );
     if timing {
@@ -678,7 +695,7 @@ fn case(
         ).map_err(|error| format!("timing old=[{}] new=[{}]; probe gate/flush dynamic_shared=0 cluster=[1,1,1]: {error}", arm_context(0), arm_context(1)))?;
         let flops = 2.0 * f64::from(rows) * f64::from(q.n) * f64::from(q.k) * f64::from(q.groups);
         println!(
-            "TMA_TIMING {} rows={rows} old_ms={} new_ms={} ratio={} tflops={} floor_ms={}",
+            "TMA_TIMING {} rows={rows} old_ms={} new_ms={} ratio={} tflops={} floor_ms={} arms={strategies:?}",
             e.symbol,
             pair.arms[0].median_ms,
             pair.arms[1].median_ms,
@@ -771,4 +788,32 @@ fn prefill_tma_matches_every_declared_shape_on_gpu() {
     })
     .unwrap();
     assert!(result.is_some(), "required prefill comparison skipped");
+}
+
+#[allow(clippy::too_many_arguments)]
+fn case(
+    session: &Session,
+    modules: &BTreeMap<String, Module>,
+    e: &Entry,
+    old_module: &str,
+    new_module: &str,
+    rows: u32,
+    live: u32,
+    pattern: u32,
+    timing: bool,
+    negative: bool,
+) -> LabResult<()> {
+    case_strategies(
+        session,
+        modules,
+        e,
+        old_module,
+        new_module,
+        rows,
+        live,
+        pattern,
+        timing,
+        negative,
+        [0, 1],
+    )
 }

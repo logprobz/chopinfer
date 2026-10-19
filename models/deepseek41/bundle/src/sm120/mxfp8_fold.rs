@@ -503,3 +503,26 @@ pub fn prefill_cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, Cubi
         })
         .collect()
 }
+
+/// Split-tail candidate, isolated from the original TMA cubins.
+pub const PREFILL_SPLIT_FAMILY: &str = "mxfp8_prefill_split";
+pub fn prefill_split_cubin_name(g: &Geometry) -> String {
+    format!("mxfp8_prefill_split_{}_sm120", g.kernel_tag)
+}
+pub fn prefill_split_cubins(
+    geometries: &[Geometry],
+) -> Result<Vec<(&'static str, CubinSpec)>, String> {
+    geometries
+        .iter()
+        .map(|g| {
+            Ok((
+                PREFILL_SPLIT_FAMILY,
+                kernels_sm120::gemm::mxfp8_prefill_split::cubin_spec(
+                    &prefill_split_cubin_name(g),
+                    &prefill_catalog(g)?,
+                )
+                .map_err(|e| e.to_string())?,
+            ))
+        })
+        .collect()
+}

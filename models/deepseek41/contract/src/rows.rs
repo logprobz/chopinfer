@@ -41,6 +41,17 @@ pub fn final_norm(g: &Geometry) -> RmsNormRequirement {
     }
 }
 
+/// Decode norm compositions: the sublayer BF16 input and the F32 query.
+/// Both retain the standalone norm output before ceil E4M3/32 quantization.
+pub fn norm_quantizers(g: &Geometry) -> [kernel_core::rmsnorm_quantize::RmsNormQuantizeQuery; 2] {
+    [norm(g, g.shape.hidden), crate::latent_glue::query_norm(g)].map(|norm| {
+        kernel_core::rmsnorm_quantize::RmsNormQuantizeQuery {
+            norm,
+            amax_floor_bits: 1e-4_f32.to_bits(),
+        }
+    })
+}
+
 /// The embedding gather of one rank's vocabulary shard at `ranks` ranks.
 pub const fn embedding(g: &Geometry, ranks: u32) -> RowQuery {
     RowQuery::EmbeddingGather {

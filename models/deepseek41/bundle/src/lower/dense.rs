@@ -56,6 +56,9 @@ impl Lowering<'_> {
                 rows_of(scratch.shared_codes),
                 rows_of(scratch.shared_scales),
             ),
+            Input::Query if id == "attention.q-b" && matches!(phase, Phase::Decode(_)) => {
+                (rows_of(scratch.query_codes), rows_of(scratch.query_scales))
+            }
             Input::Query => quantized(
                 scratch.query_normed,
                 scratch.query_codes,

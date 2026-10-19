@@ -15,6 +15,7 @@ mod indexer;
 mod latent;
 mod logits;
 mod moe;
+mod norm_quantize;
 
 pub use compressor::{TailUpload, tail_upload};
 
@@ -129,6 +130,10 @@ impl Lowering<'_> {
         match stage {
             Stage::Embedding | Stage::ExpandStreams => self.row_stage(phase, stage),
             Stage::FinalNorm => self.final_norm(phase),
+            Stage::InputNorm(layer, sublayer) if matches!(phase, Phase::Decode(_)) => {
+                self.fused_input_norm(phase, layer, sublayer)
+            }
+            Stage::QuantizeInput(..) if matches!(phase, Phase::Decode(_)) => Ok(Some(Vec::new())),
             // The norm, then its rows widened for the exact F32 projections.
             Stage::InputNorm(layer, sublayer) => {
                 let Some(mut launches) = self.row_stage(phase, stage)? else {

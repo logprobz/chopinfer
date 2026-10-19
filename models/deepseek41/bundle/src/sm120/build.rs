@@ -30,9 +30,13 @@ mod hc;
 mod latent;
 #[allow(dead_code)]
 mod latent_scheduled;
+#[allow(dead_code)]
+mod norm_quantize;
 mod own_cubin;
 mod ring_gather_cubin;
 mod ring_gather_entries;
+#[allow(dead_code)]
+mod window_fused;
 // The build compiles the entries; the bundle launches them.
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod compressor;
@@ -123,6 +127,7 @@ pub fn selection(
                 .into_iter()
                 .map(|(_, spec)| (spec.name, geometry.id)),
         );
+        owners.push((norm_quantize::cubin_name(geometry), geometry.id));
         owners.push((ceil_parallel::cubin_name(geometry), geometry.id));
         owners.push((rows::cubin_name(geometry), geometry.id));
         owners.push((rows::final_norm_cubin_name(geometry), geometry.id));
@@ -208,6 +213,11 @@ pub fn selection(
             ));
         }
     }
+    specs.extend(norm_quantize::cubins(geometries).expect("fused norm cubins"));
+    specs.push((
+        window_fused::FAMILY,
+        window_fused::cubin().expect("fused window cubin"),
+    ));
     specs.extend(ceil_parallel::cubins(geometries).expect("parallel ceil cubins"));
     specs.extend(rows::cubins(geometries).expect("deepseek41 row cubins"));
     specs.extend(reduce::cubins(geometries));

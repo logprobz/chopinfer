@@ -68,6 +68,7 @@ pub(crate) struct GlueOps {
     query_rope_small: Prepared<LatentQueryRopeBuffers<View>>,
     /// The circular write into the ring and the circular key lists.
     window_write: RowBuckets<LatentWindowWriteBuffers<View>>,
+    decode_window_write: Prepared<LatentWindowWriteBuffers<View>>,
     window_keys: Prepared<LatentWindowKeyBuffers<View>>,
     /// A prefill's gather of the retained ring prefix into its staged
     /// window, its write into the staged window and its staged key lists.
@@ -200,6 +201,11 @@ impl GlueOps {
         let window_write = RowBuckets::prepare(asks, "glue.window_write", every, |need| {
             backend.latent_window_write(&write, need)
         })?;
+        let decode_window_write = asks.ask(
+            "glue.decode_window_write",
+            exact::need(DECODE_BATCH, exact::every_phase(DECODE_BATCH)),
+            |need| backend.latent_window_write_fused(&write, need),
+        )?;
         let keys = latent_glue::window_keys(g, ring);
         let window_keys = asks.ask("glue.window_keys", every, |need| {
             backend.latent_window_keys(&keys, need)
@@ -246,6 +252,7 @@ impl GlueOps {
             query_rope,
             query_rope_small,
             window_write,
+            decode_window_write,
             window_keys,
             stage,
             staged_write,
@@ -326,10 +333,11 @@ impl GlueOps {
     /// item's last position).
     pub(crate) fn window_write(
         &self,
-        rows: u32,
+        phase: crate::program::Phase,
         views: &WindowWriteViews,
         first: Option<DeviceBufferSpanV1>,
     ) -> Result<Vec<Lowered>, Refusal> {
+        let rows = phase.rows();
         let mut bind = Bind::default();
         let window = ring_buffers(&mut bind, views.ring, None, None);
         let buffers = LatentWindowWriteBuffers {
@@ -349,6 +357,7 @@ impl GlueOps {
             status_row_offset: 0,
         };
         let op = match first {
+            None if matches!(phase, crate::program::Phase::Decode(_)) => &self.decode_window_write,
             None => self.window_write.at(rows),
             Some(_) => &self.staged_write,
         };

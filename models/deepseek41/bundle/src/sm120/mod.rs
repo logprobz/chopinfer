@@ -14,6 +14,8 @@ mod dspark_router;
 pub mod latent;
 pub mod latent_scheduled;
 pub mod mxfp8_fold;
+pub mod norm_quantize;
+pub mod window_fused;
 use kernels_sm120::backend::{F32ProjectionOffers, Sm120};
 
 /// The build's identity of the exact F32 projection cubins (`f32_head`,
@@ -208,6 +210,8 @@ impl crate::Kernels {
     /// and the model's own kernels.
     pub(crate) fn new(shape: &crate::shape::Shape) -> Result<Self, String> {
         let sm120 = rows::register(Sm120::new(), shape.geometry, shape.ranks());
+        let sm120 = norm_quantize::register(sm120, shape.geometry)?;
+        let sm120 = window_fused::register(sm120);
         let sm120 = reduce::register(sm120, shape.geometry);
         let sm120 = hc::register(sm120, shape.geometry);
         let sm120 = latent_scheduled::register_sources(sm120, shape.geometry, shape.ranks())?;

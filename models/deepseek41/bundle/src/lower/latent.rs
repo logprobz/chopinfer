@@ -131,6 +131,9 @@ impl Lowering<'_> {
         phase: Phase,
         layer: u32,
     ) -> Result<Option<Vec<Lowered>>, String> {
+        if matches!(phase, Phase::Decode(_)) {
+            return self.fused_query_norm(phase, layer);
+        }
         let Some(glue) = &self.ops.glue else {
             return Ok(None);
         };
@@ -247,7 +250,7 @@ impl Lowering<'_> {
             workspace: self.buffers.workspace,
             status: rows_of(scratch.row_status),
         };
-        glue.window_write(phase.rows(), &views, first)
+        glue.window_write(phase, &views, first)
             .map(Some)
             .map_err(|refusal| format!("window write of layer {layer}: {refusal}"))
     }

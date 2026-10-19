@@ -10,6 +10,8 @@ mod head_artifacts;
 mod head_probes;
 mod latent;
 mod latent_bf16;
+mod norm_quantize;
+mod window_fused;
 // The own ops: the bundle's entries, cubin specification and `OwnOps`
 // implementation, and their tests.
 mod compressor;

@@ -18,6 +18,7 @@ pub(crate) mod indexer;
 pub(crate) mod latent;
 pub(crate) mod logits;
 pub(crate) mod moe;
+pub(crate) mod norm_quantize;
 mod reduce;
 mod row_buckets;
 mod rows;
@@ -53,6 +54,7 @@ pub(crate) const NAME: &str = "DeepSeek V4.1";
 pub struct Ops {
     pub(crate) expert_set: model_deepseek41_contract::moe::Experts,
     pub(crate) rows: Option<rows::RowOps>,
+    pub(crate) norm_quantize: Option<norm_quantize::NormQuantizeOps>,
     pub(crate) reduce: Option<reduce::ReduceOps>,
     pub(crate) hc: Option<hc::HcOps>,
     pub(crate) moe: Option<moe::MoeOps>,
@@ -123,6 +125,12 @@ impl Ops {
             &names,
             "row",
             rows::RowOps::prepare(kernels.backend.as_ref(), shape, &asks),
+        );
+        let norm_quantize = family(
+            &mut missing,
+            &names,
+            "fused norm",
+            norm_quantize::NormQuantizeOps::prepare(kernels.backend.as_ref(), shape, &asks),
         );
         let reduce = family(
             &mut missing,
@@ -258,6 +266,7 @@ impl Ops {
         Ops {
             expert_set,
             rows,
+            norm_quantize,
             reduce,
             hc,
             moe,
@@ -395,6 +404,11 @@ mod tests {
         );
         assert!(
             ops.missing[1]
+                .starts_with("nothing and nothing own refuse DeepSeek V4.1's fused norm ops")
+        );
+        assert!(ops.norm_quantize.is_none());
+        assert!(
+            ops.missing[2]
                 .starts_with("nothing and nothing own refuse DeepSeek V4.1's all-reduce ops")
         );
     }

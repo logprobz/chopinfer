@@ -24,6 +24,7 @@ mod index_query;
 mod media;
 mod position_valid;
 mod prefill_tma;
+mod norm_quantize;
 mod shared_overlap;
 use crate::shape::Shape;
 use model_deepseek41_contract::state::KvStorage;

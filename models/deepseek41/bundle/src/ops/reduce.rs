@@ -310,7 +310,10 @@ impl ReduceOps {
             .ok_or(Refusal("no all-reduce for this rank"))?;
         // Decode keeps the original transport's state, ahead of any prefill
         // gather's range.
-        let state = 0..self.prefill.as_ref().map_or(self.state.len(), |p| p.first_state);
+        let state = 0..self
+            .prefill
+            .as_ref()
+            .map_or(self.state.len(), |p| p.first_state);
         let mut bind = Bind::default();
         let buffers = AllReduceBuffers {
             input: bind.view(views.input),

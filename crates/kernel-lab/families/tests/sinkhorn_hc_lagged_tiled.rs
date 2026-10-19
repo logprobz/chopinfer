@@ -314,6 +314,7 @@ impl Fixture {
 }
 
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_LAGGED_TILED_CUBINS"]
 fn prefill_tiled_bitwise_all_outputs_on_gpu() {
     let ran = gpu_test(|session| {
         let old = session.module(&lagged::probe_cubin())?;
@@ -359,6 +360,7 @@ fn prefill_tiled_bitwise_all_outputs_on_gpu() {
 }
 
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_LAGGED_TILED_CUBINS"]
 fn prefill_tiled_timing_on_gpu() {
     let ran = gpu_test(|session| {
         let old = session.module(&lagged::served_cubin())?;
@@ -390,6 +392,7 @@ fn prefill_tiled_timing_on_gpu() {
 }
 
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_LAGGED_TILED_CUBINS"]
 fn prefill_tiled_pdl_and_row_properties_on_gpu() {
     use kernel_core::backend::{Backend, Need};
     use kernel_core::properties::Invariance;

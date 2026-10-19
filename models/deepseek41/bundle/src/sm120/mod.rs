@@ -304,7 +304,8 @@ impl crate::Kernels {
             && (!cubin.starts_with("prefill_moe_")
                 || (cubin.ends_with("_compute_sm120")
                     && moe::streamed_qualified(shape.geometry, shape.ranks())))
-            && (!cubin.starts_with("position_mma_") || shape.runtime.indexer_mma)
+            && (!cubin.starts_with("position_mma_")
+                || (cubin.starts_with("position_mma_guard_") && shape.runtime.indexer_mma))
             && (!cubin.starts_with("streamed_moe_")
                 || moe::streamed_qualified(shape.geometry, shape.ranks()))
     }
@@ -351,7 +352,7 @@ impl crate::Kernels {
         let sm120 = latent_scheduled::register_sources(sm120, shape.geometry, shape.ranks())?;
         let sm120 = indexer::register(sm120, shape.geometry);
         let sm120 = if shape.runtime.indexer_mma {
-            sm120.with_native_position_scores()
+            sm120.with_guarded_position_scores()
         } else {
             sm120
         };

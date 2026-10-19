@@ -135,3 +135,11 @@ path = "examples/sm120/build_prefill_attention.rs"
 [[example]]
 name = "build_position_mma"
 path = "examples/sm120/build_position_mma.rs"
+
+[[example]]
+name = "build_position_mma_guard"
+path = "examples/sm120/build_position_mma_guard.rs"
+
+[[example]]
+name = "build_position_mma_guard_probe"
+path = "examples/sm120/build_position_mma_guard_probe.rs"

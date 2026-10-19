@@ -20,6 +20,8 @@ pub struct Projection {
     pub query: ChainedMlpProjectionQuery,
     pub row_tile: u32,
     pub tokens_capacity: u32,
+    /// Compact route tiles, four ordered K chains and async operand stages.
+    pub active: bool,
 }
 
 impl Projection {
@@ -75,6 +77,7 @@ impl Projection {
             query,
             row_tile,
             tokens_capacity,
+            active: false,
         };
         result.padded_rows(tokens_capacity)?;
         Ok(result)
@@ -82,6 +85,25 @@ impl Projection {
 
     pub fn gate_up(&self) -> bool {
         self.query.projection.projection == GatedMlpProjection::GateUp
+    }
+
+    pub fn with_active_experts(mut self) -> Result<Self, Refusal> {
+        let grouped = self.query.projection.gemm.grouped.expect("routed contract");
+        if u64::from(self.tokens_capacity)
+            * u64::from(grouped.top_k)
+            * u64::from(self.columns() / 16)
+            > i32::MAX as u64
+        {
+            return Err(Refusal("active chained item count overflows"));
+        }
+        if self.row_tile != 16 {
+            return Err(Refusal("active chained projections require 16-row tiles"));
+        }
+        if !self.active {
+            self.symbol = format!("{}_active_bw4_v1", self.symbol.trim_end_matches("_v1"));
+            self.active = true;
+        }
+        Ok(self)
     }
 
     pub fn columns(&self) -> u32 {
@@ -112,11 +134,23 @@ impl Projection {
             return Err(Refusal("quantized chained launch exceeds token capacity"));
         }
         let plan = LaunchPlan {
-            grid: [
-                self.padded_rows(tokens)? / self.row_tile,
-                self.columns() / TILE_N,
-                1,
-            ],
+            grid: if self.active {
+                // Every nonempty tile owns at least one route. The grid is
+                // fixed for a graph bucket and walks only live tile work.
+                let routes = u64::from(tokens)
+                    * u64::from(self.query.projection.gemm.grouped.unwrap().top_k);
+                [
+                    (routes * u64::from(self.columns() / 16)).min(376) as u32,
+                    1,
+                    1,
+                ]
+            } else {
+                [
+                    self.padded_rows(tokens)? / self.row_tile,
+                    self.columns() / TILE_N,
+                    1,
+                ]
+            },
             block: [THREADS, 1, 1],
             dynamic_shared_bytes: 0,
             workspace_bytes: 0,
@@ -129,8 +163,34 @@ impl Projection {
 
     /// Input codes, weight codes, weight scales, activation scales,
     /// offsets, sorted routes, padded count, live tokens, route weights,
-    /// output. Only down's unused route-weight pointer may be null.
+    /// output. Only down's unused route-weight pointer may be null. The
+    /// active schedule also requires its compact list (`active_arguments`).
     pub fn arguments(&self, handles: [u64; 10]) -> Result<ArgumentList, Refusal> {
+        if self.active {
+            return Err(Refusal(
+                "active chained arguments require the compact expert list",
+            ));
+        }
+        self.base_arguments(handles)
+    }
+
+    pub fn active_arguments(
+        &self,
+        handles: [u64; 10],
+        active_experts: u64,
+    ) -> Result<ArgumentList, Refusal> {
+        if !self.active || active_experts == 0 {
+            return Err(Refusal(
+                "active chained arguments require an active entry and expert list",
+            ));
+        }
+        let mut args = self.base_arguments(handles)?;
+        args.0.push(Argument::DeviceBuffer(active_experts));
+        args.validate()?;
+        Ok(args)
+    }
+
+    fn base_arguments(&self, handles: [u64; 10]) -> Result<ArgumentList, Refusal> {
         let required = [
             true,
             true,
@@ -171,16 +231,28 @@ impl Projection {
             None => "chop::moe::clamp::SwigluClamp<false,0u,0u>".into(),
         };
         let projection = if self.gate_up() { "gate_up" } else { "down" };
-        let body = format!(
-            "chop::moe::chained::run<chop::moe::chained::quantized::Config<chop::moe::chained::Projection::{projection},{},{},{},{},{},{},{clamp}>>(reinterpret_cast<const uint16_t*>(input),weight,nullptr,weight_scales,nullptr,offsets,sorted_rows,padded_rows,live_tokens,route_weights,output,activation_scales);",
-            grouped.experts,
-            grouped.top_k,
-            self.columns(),
-            g.k,
-            self.row_tile,
-            self.tokens_capacity
-        );
-        EntrySpec::new(
+        let body = if self.active {
+            format!(
+                "chop::moe::active_quantized::run<chop::moe::chained::quantized::Config<chop::moe::chained::Projection::{projection},{},{},{},{},{},{},{clamp}>>(input,weight,weight_scales,activation_scales,offsets,sorted_rows,padded_rows,live_tokens,route_weights,output,active_experts);",
+                grouped.experts,
+                grouped.top_k,
+                self.columns(),
+                g.k,
+                self.row_tile,
+                self.tokens_capacity
+            )
+        } else {
+            format!(
+                "chop::moe::chained::run<chop::moe::chained::quantized::Config<chop::moe::chained::Projection::{projection},{},{},{},{},{},{},{clamp}>>(reinterpret_cast<const uint16_t*>(input),weight,nullptr,weight_scales,nullptr,offsets,sorted_rows,padded_rows,live_tokens,route_weights,output,activation_scales);",
+                grouped.experts,
+                grouped.top_k,
+                self.columns(),
+                g.k,
+                self.row_tile,
+                self.tokens_capacity
+            )
+        };
+        let mut entry = EntrySpec::new(
             self.symbol.clone(),
             vec![
                 ptr("input", "const uint8_t"),
@@ -197,14 +269,28 @@ impl Projection {
             body,
             THREADS,
             1,
-        )
+        );
+        if self.active {
+            entry.params.push(ptr("active_experts", "const int32_t"));
+        }
+        entry
     }
 }
 
 pub fn cubin_spec(name: &str, projections: &[Projection]) -> CubinSpec {
+    assert!(projections.iter().all(|p| !p.active));
     super::spec(
         name.into(),
         "chained_quantized.cuh",
+        projections.iter().map(Projection::entry).collect(),
+    )
+}
+
+pub fn active_cubin_spec(name: &str, projections: &[Projection]) -> CubinSpec {
+    assert!(projections.iter().all(|p| p.active));
+    super::spec(
+        name.into(),
+        "chained_active_quantized.cuh",
         projections.iter().map(Projection::entry).collect(),
     )
 }

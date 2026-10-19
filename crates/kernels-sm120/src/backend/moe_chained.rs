@@ -65,15 +65,19 @@ pub(super) fn projection(
         entries
             .iter()
             .filter(|e| math(e.query) == math(*op))
+            .filter(|e| !e.active || preferred_tile == 16)
             .map(|e| {
                 Candidate::new(e.clone(), &e.symbol, format!("{e:?}"), e.invariance())
                     .capacity(e.tokens_capacity)
-                    .rank(u64::from(e.row_tile != preferred_tile))
+                    .rank(2 * u64::from(e.row_tile != preferred_tile) + u64::from(!e.active))
             }),
         need,
     )?;
     let entry = chosen.entry;
     quantized::Projection::new(entry.query, entry.row_tile, entry.tokens_capacity)?;
+    if entry.active {
+        entry.clone().with_active_experts()?;
+    }
     check_plan(&entry.plan(need.capacity)?)?;
     let g = op.projection.gemm;
     let k = u64::from(g.k);
@@ -193,6 +197,10 @@ pub(super) fn projection(
         None
     };
     info.weight_layouts = vec![("weights".into(), WeightLayout::row_major())];
+    if entry.active {
+        info.bytes
+            .push(("routing.routes.active_experts".into(), (e + 1) * 4));
+    }
     need.check(&info)?;
     Ok(Box::new(ProjectionOp {
         entry,
@@ -296,7 +304,7 @@ impl PreparedOp<GatedMlpBuffers<View>> for ProjectionOp {
                 })
             })
             .transpose()?;
-        let arguments = self.entry.arguments([
+        let handles = [
             views[0].handle,
             views[1].handle,
             views[2].handle,
@@ -311,7 +319,18 @@ impl PreparedOp<GatedMlpBuffers<View>> for ProjectionOp {
                 0
             },
             views[8].handle,
-        ])?;
+        ];
+        let arguments = if self.entry.active {
+            let active = required(routing.routes.active_experts)?;
+            active.covers(
+                self.info
+                    .bytes_of("routing.routes.active_experts")
+                    .expect("active list"),
+            )?;
+            self.entry.active_arguments(handles, active.handle)?
+        } else {
+            self.entry.arguments(handles)?
+        };
         let mut launches = vec![Launch {
             symbol: self.entry.symbol.clone(),
             rows,
@@ -1217,5 +1236,34 @@ mod tests {
             ..buffers
         };
         assert!(op.launches(&short, View::EMPTY, Counts::rows(1)).is_err());
+        let entry = quantized::Projection::new(query, 16, 32)
+            .unwrap()
+            .with_active_experts()
+            .unwrap();
+        let backend = Sm120::new().with_quantized_chained_projection(entry);
+        let active = backend
+            .chained_mlp_projection(&query, usage(32), Need::rows(32))
+            .unwrap();
+        let launch = &active
+            .launches(&buffers, View::EMPTY, Counts::rows(1))
+            .unwrap()[0];
+        assert_eq!(launch.plan.grid, [12, 1, 1]);
+        assert_eq!(launch.arguments.0.len(), 11);
+        assert_eq!(launch.arguments.0[8], Argument::NullDevicePointer);
+        for active_experts in [
+            None,
+            Some(View {
+                bytes: 128 * 4,
+                ..view()
+            }),
+        ] {
+            let mut missing = buffers;
+            missing.routing.as_mut().unwrap().routes.active_experts = active_experts;
+            assert!(
+                active
+                    .launches(&missing, View::EMPTY, Counts::rows(1))
+                    .is_err()
+            );
+        }
     }
 }

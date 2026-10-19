@@ -122,6 +122,35 @@ impl MappedRowsV1 {
         Ok(())
     }
 
+    /// Asks the kernel to read ahead (`MADV_WILLNEED`) the pages holding
+    /// `rows`, each `row_bytes` long from the start of [`Self::bytes`], so a
+    /// gather's faults on them overlap instead of waiting one at a time. A
+    /// hint only: the bytes later read are the same, and errors are ignored.
+    pub fn will_need_rows(&self, row_bytes: usize, rows: &[u32]) {
+        let page = page_bytes_v1();
+        let mut previous = None;
+        for &row in rows {
+            let Some(range) = row_pages_v1(self.lead, row_bytes, row as usize, page).filter(
+                |&(start, length)| start + length <= self.mapped_length.next_multiple_of(page),
+            ) else {
+                continue;
+            };
+            if previous == Some(range) {
+                continue;
+            }
+            previous = Some(range);
+            // SAFETY-REVIEWED: the page-aligned range lies within the pages of
+            // the mapping this value owns.
+            unsafe {
+                libc::madvise(
+                    self.base.cast::<u8>().add(range.0).cast(),
+                    range.1,
+                    libc::MADV_WILLNEED,
+                );
+            }
+        }
+    }
+
     /// The pages of one window of the mapping: its start within the mapping
     /// and length, page-aligned, the last window ending with the mapping.
     #[must_use]
@@ -208,6 +237,18 @@ pub fn page_bytes_v1() -> usize {
         .ok()
         .filter(|page| page.is_power_of_two())
         .unwrap_or(4096)
+}
+
+/// The page-aligned range of a mapping that holds row `row` of `row_bytes`
+/// bytes, counted from `lead` bytes into the mapping: its start and length
+/// from the mapping's base, covering every page the row touches.
+fn row_pages_v1(lead: usize, row_bytes: usize, row: usize, page: usize) -> Option<(usize, usize)> {
+    let first = row.checked_mul(row_bytes)?.checked_add(lead)?;
+    let end = first
+        .checked_add(row_bytes)?
+        .checked_next_multiple_of(page)?;
+    let start = first / page * page;
+    (row_bytes > 0).then_some((start, end - start))
 }
 
 /// Every mapping some image still holds, by the bytes it maps.
@@ -304,6 +345,34 @@ mod tests {
         std::fs::write(&path, bytes).unwrap();
         let file = File::open(&path).unwrap();
         (Temp(path), file)
+    }
+
+    #[test]
+    fn row_pages_cover_every_page_a_row_touches() {
+        let page = 4096;
+        // Rows inside one page, ending on a boundary, and crossing one.
+        assert_eq!(row_pages_v1(0, 256, 0, page), Some((0, 4096)));
+        assert_eq!(row_pages_v1(0, 256, 15, page), Some((0, 4096)));
+        assert_eq!(row_pages_v1(0, 256, 16, page), Some((4096, 4096)));
+        assert_eq!(row_pages_v1(100, 256, 15, page), Some((0, 8192)));
+        assert_eq!(row_pages_v1(100, 256, 16, page), Some((4096, 4096)));
+        // A row as long as a page, and one longer than two.
+        assert_eq!(row_pages_v1(0, 4096, 3, page), Some((12_288, 4096)));
+        assert_eq!(row_pages_v1(4095, 9000, 1, page), Some((12_288, 12_288)));
+        assert_eq!(row_pages_v1(0, 0, 3, page), None);
+        assert_eq!(row_pages_v1(0, usize::MAX, 2, page), None);
+    }
+
+    #[test]
+    fn read_ahead_leaves_the_mapped_bytes_unchanged() {
+        let bytes: Vec<u8> = (0..40_000_u32).map(|i| (i * 13 + 5) as u8).collect();
+        let (_temp, file) = file("ahead", &bytes);
+        let rows = map_rows_v1(&file, 300, 39_000).unwrap();
+        rows.will_need_rows(256, &[0, 15, 16, 151, 151, 3]);
+        // Rows past the end are skipped, not advised outside the mapping.
+        rows.will_need_rows(256, &[10_000]);
+        rows.will_need_rows(0, &[1]);
+        assert_eq!(rows.bytes(), &bytes[300..39_300]);
     }
 
     #[test]

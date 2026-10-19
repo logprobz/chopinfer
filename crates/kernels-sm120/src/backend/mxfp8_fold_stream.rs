@@ -155,7 +155,10 @@ impl PreparedOp<Mxfp8FoldStreamBuffers<View>> for Op {
                     Argument::NullDevicePointer
                 },
                 d(b.state),
-                Argument::U32((self.entry.state_bytes(self.capacity)? / 4) as u32),
+                Argument::U32(
+                    u32::try_from(b.state.bytes / 4)
+                        .map_err(|_| Refusal("packed fold state exceeds initializer bounds"))?,
+                ),
             ]),
             rows: 0,
             collective: false,

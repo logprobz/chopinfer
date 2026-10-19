@@ -65,6 +65,7 @@ pub(crate) fn rope_tables(shape: &Shape) -> Vec<RopeTable> {
 pub(crate) struct GlueOps {
     query_norm: Prepared<RmsNormBuffers<View>>,
     query_rope: Prepared<LatentQueryRopeBuffers<View>>,
+    query_rope_small: Prepared<LatentQueryRopeBuffers<View>>,
     /// The circular write into the ring and the circular key lists.
     window_write: RowBuckets<LatentWindowWriteBuffers<View>>,
     window_keys: Prepared<LatentWindowKeyBuffers<View>>,
@@ -188,6 +189,12 @@ impl GlueOps {
         let query_rope = asks.ask("glue.query_rope", every, |need| {
             backend.latent_query_rope(&query, need)
         })?;
+        let small = crate::Kernels::latent_query_small_rows();
+        let query_rope_small = asks.ask(
+            "glue.query_rope small rows",
+            exact::need(small, exact::every_phase(small)),
+            |need| backend.latent_query_rope(&query, need),
+        )?;
         let ring = latent_glue::ring(g);
         let write = latent_glue::window_write_for_storage(g, ring, storage);
         let window_write = RowBuckets::prepare(asks, "glue.window_write", every, |need| {
@@ -237,6 +244,7 @@ impl GlueOps {
         Ok(GlueOps {
             query_norm,
             query_rope,
+            query_rope_small,
             window_write,
             window_keys,
             stage,
@@ -304,7 +312,12 @@ impl GlueOps {
             status: bind.view(views.status),
             status_row_offset: 0,
         };
-        bind.launch(&self.query_rope, &buffers, Counts::rows(rows))
+        let op = if rows <= crate::Kernels::latent_query_small_rows() {
+            &self.query_rope_small
+        } else {
+            &self.query_rope
+        };
+        bind.launch(op, &buffers, Counts::rows(rows))
     }
 
     /// The window write of `rows` rows into the ring, or with `first`,

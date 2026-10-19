@@ -1,13 +1,21 @@
-The attention pair lab compares additive source and query schedules with the
-current TP4 Flash kernels. The serving registration keeps the reference
-entries. GPU bitwise comparisons and paired timings must pass before a
-candidate is adopted. CPU compilation does not establish either result.
+The attention pair lab compares source and query schedules with frozen
+reference TP4 Flash kernels. On 2026-10-19, GPU bitwise checks passed all 72
+matrix cases, 126 boundary cases and 432 query modes at 250 W. TP4 serving
+uses scheduled native decode/verify sources and parallel query RoPE through
+48 rows. Prefill sources, BF16 sources, draft-block sources, other topologies
+and larger query batches retain their reference paths.
+
+Median source time ratios across the four contexts were 0.353/0.313/0.320
+for window/ratio-1/ratio-2 at one sequence and 0.400/0.357/0.351 at eight
+sequences. Query RoPE was about 20 percent faster through 48 rows and tied
+at 192 rows. Applying these ratios to the exclusive served profile projects
+1.78 ms saved per C1 step and 1.74 ms per C8 step, including window sources
+and excluding merge savings. These are projections, not a new served run.
 
 The source candidate keeps the reference 64-key tiles, eight decode/verify
 splits, QK chains, online softmax updates, and ordered merge. At up to four
 rows it assigns one head to each CTA. Larger batches retain eight heads per
-CTA. This increases repeated KV reads at small batches, so its benefit must
-be measured. All-hole tiles avoid widening and matrix products but still
+CTA. This increases repeated KV reads at small batches, and the paired timings include that cost. All-hole tiles avoid widening and matrix products but still
 apply the reference FMA updates, including the transition from -0 to +0.
 Widening groups four independent pairs into a 16-byte shared-memory store
 and reuses their common scale. Unaligned source addresses retain byte

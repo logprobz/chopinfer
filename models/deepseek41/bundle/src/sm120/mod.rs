@@ -149,6 +149,11 @@ impl crate::Kernels {
             .unwrap_or(false)
     }
 
+    /// Upper row bound of the measured query preparation bucket.
+    pub(crate) fn latent_query_small_rows() -> u32 {
+        latent_scheduled::QUERY_ROWS
+    }
+
     /// The largest separately prepared dense decode bucket.
     pub(crate) fn dense_decode_capacity() -> u32 {
         mxfp8_fold::SMALL_CAPACITY
@@ -178,6 +183,8 @@ impl crate::Kernels {
     /// Streamed MoE modules load only for the qualified topology.
     pub fn loads(cubin: &str, shape: &crate::shape::Shape) -> bool {
         cubin != kernels_sm120::probes::CUBIN
+            && (!latent_scheduled::candidate_cubin(cubin)
+                || latent_scheduled::qualified(shape.geometry, shape.ranks()))
             && !encoder::is_cubin(cubin)
             && !cubin.starts_with("prefill_moe_")
             && (!cubin.starts_with("streamed_moe_")
@@ -203,7 +210,7 @@ impl crate::Kernels {
         let sm120 = rows::register(Sm120::new(), shape.geometry, shape.ranks());
         let sm120 = reduce::register(sm120, shape.geometry);
         let sm120 = hc::register(sm120, shape.geometry);
-        let sm120 = latent::register(sm120, shape.geometry, shape.ranks())?;
+        let sm120 = latent_scheduled::register_sources(sm120, shape.geometry, shape.ranks())?;
         let sm120 = indexer::register(sm120, shape.geometry);
         let sm120 = compressor::CompressorKernels::serving(shape.geometry)
             .map_err(|e| e.to_string())?
@@ -217,6 +224,7 @@ impl crate::Kernels {
         let sm120 = mxfp8_fold::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = indexer_query_parallel::register_parallel(sm120, shape.geometry);
         let sm120 = latent_glue::register(sm120, shape.geometry, shape.ranks())?;
+        let sm120 = latent_scheduled::register_query(sm120, shape.geometry, shape.ranks());
         let sm120 = ceil_parallel::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = latent_window_stage::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = dspark_aux::register(sm120, shape.geometry, shape.ranks())?;

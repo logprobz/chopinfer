@@ -28,6 +28,8 @@ mod encoder;
 mod hc;
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod latent;
+#[allow(dead_code)]
+mod latent_scheduled;
 mod own_cubin;
 mod ring_gather_cubin;
 mod ring_gather_entries;
@@ -130,6 +132,10 @@ pub fn selection(
                 .into_iter()
                 .map(|(_, spec)| (spec.name, geometry.id)),
         );
+        owners.push((
+            format!("latent_sources_scheduled_{}_sm120", geometry.kernel_tag),
+            geometry.id,
+        ));
         for cubin in ["sm120", "p32_sm120", "bf16_sm120"] {
             owners.push((
                 format!("latent_sources_{}_{cubin}", geometry.kernel_tag),
@@ -237,6 +243,16 @@ pub fn selection(
         indexer_query_parallel::parallel_cubins(geometries).expect("parallel query cubins"),
     );
     specs.extend(latent_glue::cubins(geometries).expect("deepseek41 latent glue cubins"));
+    specs.extend(
+        latent_scheduled::cubins(geometries)
+            .expect("scheduled latent source cubins")
+            .into_iter()
+            .map(|spec| (latent_scheduled::FAMILY, spec)),
+    );
+    specs.push((
+        latent_scheduled::QUERY_FAMILY,
+        latent_scheduled::query_cubin(),
+    ));
     specs.extend(latent_window_stage::cubins(geometries).expect("window stage cubins"));
     specs.extend(latent_window_bf16::cubins(geometries).expect("BF16 window cubins"));
     specs.extend(latent_window_stage::key_cubins(geometries).expect("staged window key cubins"));

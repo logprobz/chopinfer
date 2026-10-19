@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 
 mod compatibility;
+mod device_results;
+pub use device_results::{AcceptedPrefix, AsyncInputDependency, OutputCycle};
 pub mod logging;
 mod media;
 mod metrics;
@@ -518,6 +520,7 @@ impl Error for ExecutorError {}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ModelBatchItem {
+    output_cycle: Option<OutputCycle>,
     request_id: RequestId,
     phase: BatchPhase,
     input_tokens: Vec<u32>,
@@ -776,6 +779,12 @@ impl SamplingWork {
 }
 
 impl ModelBatchItem {
+    /// Present only when the executor opts into checked device results.
+    #[must_use]
+    pub fn output_cycle(&self) -> Option<&OutputCycle> {
+        self.output_cycle.as_ref()
+    }
+
     /// Describes one scheduled item of a batch an executor is about to run.
     ///
     /// The engine builds these from its own scheduler decisions. The
@@ -789,6 +798,7 @@ impl ModelBatchItem {
         expects_logits: bool,
     ) -> Self {
         Self {
+            output_cycle: None,
             request_id,
             phase,
             input_tokens,
@@ -1076,6 +1086,7 @@ pub struct ModelTransaction<S: ModelTransactionState> {
     prompt_rows: Vec<LogitsRow>,
     sampled: Vec<SampledRow>,
     drafts: Vec<DraftRow>,
+    accepted_prefixes: Vec<AcceptedPrefix>,
     state: Option<S>,
     /// Absent until an executor measures its own execution.
     ///
@@ -1096,6 +1107,7 @@ impl<S: ModelTransactionState> ModelTransaction<S> {
             prompt_rows: Vec::new(),
             sampled: Vec::new(),
             drafts: Vec::new(),
+            accepted_prefixes: Vec::new(),
             state: Some(state),
             observations: None,
             row_capacity: None,
@@ -1132,6 +1144,18 @@ impl<S: ModelTransactionState> ModelTransaction<S> {
     #[must_use]
     pub fn drafts(&self) -> &[DraftRow] {
         &self.drafts
+    }
+
+    #[must_use]
+    pub fn accepted_prefixes(&self) -> &[AcceptedPrefix] {
+        &self.accepted_prefixes
+    }
+
+    /// Attaches checked device decisions beside all computed sampler rows.
+    #[must_use]
+    pub fn with_accepted_prefixes(mut self, prefixes: Vec<AcceptedPrefix>) -> Self {
+        self.accepted_prefixes = prefixes;
+        self
     }
 
     /// Attaches the drafts of bundle-drafted verify items.
@@ -1259,6 +1283,15 @@ pub struct KvOffloadInfo {
 /// has no fallback executor and makes no model-execution claim. An executor
 /// error must leave no pending model state because no transaction is returned.
 pub trait ModelExecutor {
+    /// Explicit per-executor opt-in. Legacy executors receive no cycle metadata.
+    fn device_results_v1(&self) -> bool {
+        false
+    }
+
+    fn async_input_dependency_v1(&self) -> AsyncInputDependency {
+        AsyncInputDependency::HostValues
+    }
+
     /// Whether rollback restores every item's state for a later retry.
     /// In-place executors are never rolled back for one request's sampling
     /// failure: the step commits and only that request fails and retires.
@@ -2194,6 +2227,18 @@ impl<E: ModelExecutor> Engine<E> {
                 return Err(error);
             }
         };
+        if executor.device_results_v1() {
+            for item in &mut items {
+                let record = requests
+                    .get(&item.request_id)
+                    .expect("scheduled request exists");
+                item.output_cycle = Some(OutputCycle {
+                    epoch: batch.id().get(),
+                    remaining_tokens: record.maximum_new_tokens - record.emitted_tokens,
+                    termination_stop_ids: record.termination_stop_ids.clone(),
+                });
+            }
+        }
         drop(scheduling_timer);
         let execution_started_micros = self.clock.now_micros();
         if self.step_trace {
@@ -2237,6 +2282,7 @@ impl<E: ModelExecutor> Engine<E> {
             transaction.prompt_rows(),
             transaction.sampled(),
             transaction.drafts(),
+            transaction.accepted_prefixes(),
             self.model_vocabulary,
         ) {
             drop(transaction);
@@ -2267,6 +2313,7 @@ impl<E: ModelExecutor> Engine<E> {
                 transaction.logits(),
                 transaction.sampled(),
                 transaction.drafts(),
+                transaction.accepted_prefixes(),
                 self.model_vocabulary,
                 &skipped,
             ) {
@@ -3246,6 +3293,7 @@ fn outputs_match(
     prompt_rows: &[LogitsRow],
     sampled: &[SampledRow],
     drafts: &[DraftRow],
+    accepted_prefixes: &[AcceptedPrefix],
     model_vocabulary: ModelVocabulary,
 ) -> bool {
     let expected_prompt = items
@@ -3266,6 +3314,28 @@ fn outputs_match(
     };
     let items_by_request = by_request(items, ModelBatchItem::request_id);
     let drafts_by_request = by_request(drafts, DraftRow::request_id);
+    let accepted_by_request = by_request(accepted_prefixes, |prefix| prefix.request_id);
+    let sampled_by_request = by_request(sampled, SampledRow::request_id);
+    if accepted_by_request
+        .values()
+        .any(|prefixes| prefixes.len() != 1)
+        || accepted_prefixes.iter().any(|prefix| {
+            drafts_by_request.contains_key(&prefix.request_id)
+                || !items_by_request
+                    .get(&prefix.request_id)
+                    .is_some_and(|items| {
+                        items.len() == 1
+                            && prefix.matches(
+                                items[0],
+                                sampled_by_request
+                                    .get(&prefix.request_id)
+                                    .map_or(&[], Vec::as_slice),
+                            )
+                    })
+        })
+    {
+        return false;
+    }
     let drafts_match = drafts_by_request.values().all(|drafts| drafts.len() == 1)
         && drafts.iter().all(|draft| {
             items_by_request
@@ -3286,14 +3356,16 @@ fn outputs_match(
         && items
             .iter()
             .filter(|item| bundle_drafted(item))
-            .all(|item| drafts_by_request.contains_key(&item.request_id));
+            .all(|item| {
+                drafts_by_request.contains_key(&item.request_id)
+                    || accepted_by_request.contains_key(&item.request_id)
+            });
     if !drafts_match {
         return false;
     }
     let expected_total: usize = items.iter().map(expected_output_rows).sum();
     let mut expected = items.iter().filter(|item| item.expects_logits);
     let rows_by_request = by_request(rows, LogitsRow::request_id);
-    let sampled_by_request = by_request(sampled, SampledRow::request_id);
     expected_total == rows.len() + sampled.len()
         && expected.all(|item| {
             let expected_rows = expected_output_rows(item);
@@ -3565,6 +3637,7 @@ fn model_items_parts(
             Vec::new()
         };
         items.push(ModelBatchItem {
+            output_cycle: None,
             request_id: item.request_id(),
             phase: item.phase(),
             input_tokens,
@@ -3813,12 +3886,17 @@ enum SampleStageError {
 /// row 0, then row j + 1 only while row j's sample equals draft j, so every
 /// emitted token is the target's own sample given the tokens before it. A
 /// stop token or the request's length limit ends the run early.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps the independently validated result channels explicit"
+)]
 fn stage_samples(
     requests: &BTreeMap<RequestId, RequestRecord>,
     items: &[ModelBatchItem],
     rows: &[LogitsRow],
     sampled_rows: &[SampledRow],
     drafts: &[DraftRow],
+    accepted_prefixes: &[AcceptedPrefix],
     model_vocabulary: ModelVocabulary,
     skipped: &[RequestId],
 ) -> Result<Vec<Option<StagedRun>>, SampleStageError> {
@@ -3837,6 +3915,16 @@ fn stage_samples(
         let record = requests
             .get(&item.request_id)
             .expect("scheduled request has engine state");
+        if let Some(prefix) = accepted_prefixes
+            .iter()
+            .find(|prefix| prefix.request_id == item.request_id)
+        {
+            let samples = samples_by_request
+                .get(&item.request_id)
+                .map_or(&[][..], Vec::as_slice);
+            staged.push(Some(prefix.stage(record, samples)?));
+            continue;
+        }
         let draft_tokens: &[u32] = match item.draft {
             None => &[],
             Some(work) => match work.source {
@@ -4538,6 +4626,7 @@ mod transaction_tests {
                 &[],
                 &sampled,
                 &[],
+                &[],
                 vocabulary,
                 &[],
             )
@@ -5075,6 +5164,7 @@ mod transaction_tests {
             .unwrap();
         let batch = scheduler.next_batch().unwrap().unwrap();
         let items = vec![ModelBatchItem {
+            output_cycle: None,
             request_id,
             phase: BatchPhase::Prefill { tokens: 1 },
             input_tokens: vec![1],
@@ -5136,6 +5226,7 @@ mod transaction_tests {
             &rows,
             &[],
             &[],
+            &[],
             ModelVocabulary::new(8).unwrap(),
             &[],
         )
@@ -5178,6 +5269,7 @@ mod transaction_tests {
             &[],
             std::slice::from_ref(&sampled),
             &[],
+            &[],
             vocabulary
         ));
         assert!(!outputs_match(
@@ -5186,6 +5278,7 @@ mod transaction_tests {
             &[],
             std::slice::from_ref(&sampled),
             &[],
+            &[],
             vocabulary
         ));
         let staged = stage_samples(
@@ -5193,6 +5286,7 @@ mod transaction_tests {
             &[sampled_item],
             &[],
             &[sampled],
+            &[],
             &[],
             vocabulary,
             &[],

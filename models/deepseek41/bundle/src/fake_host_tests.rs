@@ -27,6 +27,7 @@ mod media;
 mod norm_quantize;
 mod position_valid;
 mod prefill_attention;
+mod prefill_micro;
 mod prefill_overlap;
 mod prefill_tma;
 mod producer_epilogues;
@@ -296,6 +297,7 @@ pub(crate) struct FakeHost {
     speculation: Cell<Option<(u32, u32)>>,
     /// The per-item state bytes create asked for.
     state_bytes: Cell<u64>,
+    kv_pages: Cell<u64>,
     drafter: Cell<bool>,
     /// Every upload's bytes by its destination, which a download of the
     /// same span reads back (a snapshot's header).
@@ -473,6 +475,7 @@ impl FakeHost {
             kv,
             speculation: Cell::new(None),
             state_bytes: Cell::new(0),
+            kv_pages: Cell::new(KV_PAGES),
             drafter: Cell::new(false),
             uploads: RefCell::new(std::collections::BTreeMap::new()),
             injected: RefCell::new(None),
@@ -649,11 +652,11 @@ impl FakePackage for FakeHost {
     fn acquire_serving_kv(&self, layout_id: &[u8]) -> HostServiceResultV1<u64> {
         assert_eq!(layout_id, self.kv.layout_id);
         self.note("serving kv".into());
-        Ok(KV_PAGES)
+        Ok(self.kv_pages.get())
     }
     fn resolve_serving_kv_pool(&self, rank: u32) -> HostServiceResultV1<DeviceBufferSpanV1> {
         let slot = KV_SLOT + rank;
-        let bytes = KV_PAGES * self.page_bytes();
+        let bytes = self.kv_pages.get() * self.page_bytes();
         self.device.extents.borrow_mut().insert(slot, bytes);
         Ok(DeviceBufferSpanV1::new(
             BundleDeviceBufferHandleV1::from_parts(1, slot),

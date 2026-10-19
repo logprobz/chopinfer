@@ -100,6 +100,7 @@ pub struct Instance {
     /// Steps planned so far: each row's index tag holds its step's.
     steps: std::cell::Cell<u64>,
     overlap: Vec<execute::overlap::Rank>,
+    layer_overlap: bool,
     /// Run the lowered stages alone (`PARTIAL`).
     partial: bool,
     /// Each rank's decode and verify graphs by bucket.
@@ -736,6 +737,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         },
         steps: std::cell::Cell::new(0),
         overlap: Vec::new(),
+        layer_overlap: execute::overlap::layers_enabled(),
         partial,
         taps,
         engram,

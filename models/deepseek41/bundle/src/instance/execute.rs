@@ -32,6 +32,7 @@ use crate::engram_rows::Hashed;
 use crate::lower::{KvExtent, Lowering, TailUpload, tail_upload};
 use crate::program::{Phase, Stage};
 
+mod micro;
 pub(crate) mod overlap;
 
 /// Phase-arena indexes (`Instance::arenas`).
@@ -42,6 +43,7 @@ const VERIFY: usize = 2;
 /// One phase of a step, planned before the step opens.
 struct Run {
     overlap: Option<overlap::Plan>,
+    micro: Option<micro::Plan>,
     inputs: PhaseInputs,
     arena: usize,
     layout: InputLayout,
@@ -428,6 +430,7 @@ impl Instance {
         self.steps.set(self.steps.get() + 1);
         let mut run = Run {
             overlap: None,
+            micro: None,
             index,
             engram,
             media,
@@ -443,10 +446,16 @@ impl Instance {
             tails,
             phase,
         };
-        run.overlap = overlap::Plan::prepare(self, &run).map_err(|error| {
+        run.micro = micro::Plan::prepare(self, &run).map_err(|error| {
             self.log(&error);
             BundleStatusV1::InternalError
         })?;
+        if run.micro.is_none() {
+            run.overlap = overlap::Plan::prepare(self, &run).map_err(|error| {
+                self.log(&error);
+                BundleStatusV1::InternalError
+            })?;
+        }
         Ok(run)
     }
 
@@ -602,6 +611,11 @@ impl Instance {
     /// the instance: its peers would wait forever at the collectives that
     /// rank queued.
     fn launch(&mut self, run: &mut Run) -> Result<(), BundleAbiError> {
+        if let Some(plan) = &run.micro {
+            return plan
+                .execute(self)
+                .map_err(|error| self.dispatch_failed(error));
+        }
         if let Some(plan) = &run.overlap {
             return plan
                 .execute(self, run)

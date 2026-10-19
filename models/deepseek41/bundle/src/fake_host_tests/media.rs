@@ -60,6 +60,7 @@ impl MediaHost {
             kv,
             speculation: Cell::new(None),
             state_bytes: Cell::new(0),
+            kv_pages: Cell::new(KV_PAGES),
             drafter: Cell::new(false),
             uploads: RefCell::new(std::collections::BTreeMap::new()),
             injected: RefCell::new(None),

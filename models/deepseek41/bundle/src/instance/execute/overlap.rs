@@ -15,34 +15,51 @@ use std::ops::Range;
 
 /// Keep the sequential default until the paired GPU measurements qualify it.
 pub(crate) fn enabled() -> bool {
+    mode() != 0
+}
+
+pub(crate) fn layers_enabled() -> bool {
+    mode() == 2
+}
+
+fn mode() -> u8 {
     #[cfg(test)]
     return IN_TESTS.get();
     #[cfg(not(test))]
     {
-        std::env::var("CHOPINFER_DEEPSEEK41_PREFILL_OVERLAP").as_deref() == Ok("1")
+        match std::env::var("CHOPINFER_DEEPSEEK41_PREFILL_OVERLAP").as_deref() {
+            Ok("1") => 1,
+            Ok("2") => 2,
+            _ => 0,
+        }
     }
 }
 
 #[cfg(test)]
 thread_local! {
-    static IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static IN_TESTS: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
 pub(crate) fn with_enabled<T>(enabled: bool, create: impl FnOnce() -> T) -> T {
-    struct Reset(bool);
+    with_mode(u8::from(enabled), create)
+}
+
+#[cfg(test)]
+pub(crate) fn with_mode<T>(mode: u8, create: impl FnOnce() -> T) -> T {
+    struct Reset(u8);
     impl Drop for Reset {
         fn drop(&mut self) {
             IN_TESTS.set(self.0);
         }
     }
-    let _reset = Reset(IN_TESTS.replace(enabled));
+    let _reset = Reset(IN_TESTS.replace(mode));
     create()
 }
 
 pub(crate) struct Rank {
-    lane: SideLane,
-    counts: DeviceBufferSpanV1,
+    pub(super) lane: SideLane,
+    pub(super) counts: DeviceBufferSpanV1,
 }
 
 pub(crate) fn acquire(

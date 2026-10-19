@@ -859,7 +859,7 @@ mod tests {
     /// them with the mode.
     #[test]
     fn table_profiles_pass_their_costs_unless_the_mode_changes() {
-        let costs = "1:15900:4400:0:780,8:22500:6000:0:780";
+        let costs = "1:13500:4400:700:760,8:22300:4400:700:780";
         let mut entry = fixture()["profiles"]["test"].clone();
         entry["speculation"]["mode"] = "table".into();
         entry["speculation"]["costs"] = costs.into();

@@ -145,7 +145,7 @@ serve --bundle DIR [--checkpoint DIR [--load-threads N]] [--profile NAME|FILE#NA
   [--context-parallel-size N]
   [--model-option NAME=VALUE]... [--list-model-options]
   [--speculative-tokens N] [--speculative-rows N] [--speculation fixed|adaptive|table]
-  [--speculation-costs ITEMS:BASE:DRAFTING:DRAFTING_SQ:ROW,...]
+  [--speculation-costs ITEMS:BASE:STEP:DRAFTING:ROW,...]
   [--draft-cost per-token|per-block] [--prefix-cache on|off] [--verify-warmup on|off]
   [--prefill-budget fixed|decode-aware|tbt] [--prefill-itl-target-ms N | --prefill-decode-steps N]
   [--decode-tbt-target-ms N] [--mixed-min-prefill-tokens N] [--mixed-decode-steps N]
@@ -6959,7 +6959,7 @@ mod tests {
                 .contains("must be fixed, adaptive or table")
         );
         // Table mode needs its costs, and only it takes them.
-        let costs = "1:15900:4400:0:780,8:22500:6000:0:780";
+        let costs = "1:13500:4400:700:760,8:22300:4400:700:780";
         for words in [
             &["--speculation", "table"][..],
             &["--speculation", "adaptive", "--speculation-costs", costs][..],

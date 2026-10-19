@@ -396,33 +396,43 @@ mod tests {
     use kernel_core::contract::Validate;
     use model_deepseek41_contract::geometry::FLASH;
 
+    fn expect_split(ranks: u32, projection: &str, rows: u32) -> bool {
+        match (ranks, projection) {
+            (2, "attention.q-b") => matches!(rows, 1..=4 | 7..=11),
+            (4, "attention.q-b") => matches!(rows, 1..=2 | 5..=12 | 16),
+            (2, "moe.shared-down") => matches!(rows, 1..=2 | 9..=16),
+            (4, "moe.shared-down") => matches!(rows, 1..=28),
+            _ => false,
+        }
+    }
+
     #[test]
-    fn tp2_query_projection_keeps_split_folds_for_one_and_two_rows() {
+    fn tied_dense_buckets_use_split_folds_at_each_topology() {
         for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
             let shape = Shape::new(&FLASH, ranks).unwrap();
             let kernels = crate::Kernels::new(&shape).unwrap();
             let ops =
                 DenseOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default()).unwrap();
-            for rows in [1, 2, 3, 4, 32, 64] {
-                let op = &ops
-                    .decode
-                    .iter()
-                    .find(|(id, capacity, _)| *id == "attention.q-b" && *capacity == rows)
-                    .unwrap()
-                    .2;
-                let split = ranks == Ranks::TP2 && rows <= 2;
-                assert_eq!(op.info().symbols.len(), if split { 3 } else { 2 });
+            for (id, rows, op) in &ops.decode {
+                let split = expect_split(shape.ranks(), id, *rows);
+                assert_eq!(
+                    op.info().symbols.len(),
+                    if split { 3 } else { 2 },
+                    "{} {id} rows={rows}",
+                    shape.topology()
+                );
                 assert!(op.info().symbols.iter().all(|(s, _)| s.contains(if split {
                     "mxfp8_decode_"
                 } else {
                     "mxfp8_ticket_"
                 })));
             }
+            assert_eq!(ops.decode.len(), projections(&shape).len() * 64);
         }
     }
 
     #[test]
-    fn small_rows_use_ticket_folds_and_prefill_keeps_the_original_entry() {
+    fn small_rows_use_selected_folds_and_prefill_keeps_the_original_entry() {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let kernels = crate::Kernels::new(&shape).unwrap();
         let ops = DenseOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default()).unwrap();
@@ -471,8 +481,17 @@ mod tests {
                 };
                 let calls = ops.project(dense.id, phase, &views, workspace).unwrap();
                 if !phase.prefill() && phase.rows() <= 64 {
-                    assert_eq!(calls.len(), 2);
-                    assert!(calls[1].launch.symbol.contains("mxfp8_ticket_"));
+                    let split = expect_split(shape.ranks(), dense.id, phase.rows());
+                    assert_eq!(calls.len(), if split { 3 } else { 2 });
+                    assert!(
+                        calls
+                            .iter()
+                            .all(|call| call.launch.symbol.contains(if split {
+                                "mxfp8_decode_"
+                            } else {
+                                "mxfp8_ticket_"
+                            }))
+                    );
                 } else {
                     assert_eq!(calls.len(), 1);
                     assert!(calls[0].launch.symbol.contains("mxfp8_fold_m8192"));

@@ -14,7 +14,7 @@ use model_deepseek41_contract::{admission, geometry::Geometry, projections};
 use projection_spec::ProjectionKind;
 use projection_spec::derive::{Topology, rank_selection};
 use std::collections::BTreeMap;
-use std::ops::Range;
+use std::ops::{Range, RangeInclusive};
 
 #[derive(Clone, Debug)]
 pub struct Registered {
@@ -143,10 +143,25 @@ pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, Strin
 pub const TICKET_FAMILY: &str = "mxfp8_fold_ticket";
 pub const SMALL_CAPACITY: u32 = 64;
 
-/// Keep the measured small-row split-fold winner for the TP2 query projection.
+// Flash SM120, 250 W, 2026-10-19: ticket timings were within 3% of the
+// split-fold baseline on both GPUs. Prefer the baseline for these ties.
+// Each row is (N, K, row-count ranges); all are single projections at G=1.
+const SPLIT_FOLD_TIES: &[(u32, u32, &[RangeInclusive<u32>])] = &[
+    (16384, 1280, &[3..=4, 7..=11]),
+    (5120, 1152, &[1..=2, 9..=16]),
+    (5120, 576, &[1..=28]),
+    (8192, 1280, &[1..=2, 5..=12, 16..=16]),
+];
+
+/// Keep split folds for the measured ties and the TP2 one/two-row regression.
 /// Capacity selects an existing family; it does not change the arithmetic.
 pub fn small_query(query: Mxfp8FoldGemmQuery, rows: u32) -> Mxfp8FoldGemmQuery {
-    let split = (1..=2).contains(&rows) && (query.n, query.k, query.groups) == (16384, 1280, 1);
+    let tied = query.groups == 1
+        && SPLIT_FOLD_TIES.iter().any(|(n, k, ranges)| {
+            (query.n, query.k) == (*n, *k) && ranges.iter().any(|range| range.contains(&rows))
+        });
+    let split =
+        tied || ((1..=2).contains(&rows) && (query.n, query.k, query.groups) == (16384, 1280, 1));
     Mxfp8FoldGemmQuery {
         m_capacity: if split { 32 } else { SMALL_CAPACITY },
         ..query

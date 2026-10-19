@@ -222,6 +222,7 @@ impl RankScratch {
     /// The scratch a launch binds.
     pub fn scratch(&self) -> Scratch {
         Scratch {
+            weight_domain: None,
             quantizer_status: None,
             quantizer_status_row_offset: 0,
             partial: self.workspace,

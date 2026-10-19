@@ -591,6 +591,7 @@ pub fn launch(
         },
         output,
         &shared::Scratch {
+            weight_domain: None,
             quantizer_status: None,
             quantizer_status_row_offset: 0,
             partial,

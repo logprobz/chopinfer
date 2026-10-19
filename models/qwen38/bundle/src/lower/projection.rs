@@ -5,6 +5,7 @@ use model_qwen38_contract::precision::DenseRole;
 
 pub(crate) fn scratch(s: &RankScratch) -> shared::Scratch {
     shared::Scratch {
+        weight_domain: None,
         quantizer_status: None,
         quantizer_status_row_offset: 0,
         partial: s.workspace,

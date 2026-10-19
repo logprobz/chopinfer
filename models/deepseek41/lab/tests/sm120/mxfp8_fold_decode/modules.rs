@@ -112,7 +112,7 @@ fn expected() -> LabResult<BTreeMap<String, Expected>> {
     Ok(result)
 }
 
-pub(super) fn directory() -> LabResult<PathBuf> {
+pub(crate) fn directory() -> LabResult<PathBuf> {
     std::env::var_os("CHOPINFER_DEEPSEEK41_FOLD_CUBINS")
         .map(PathBuf::from)
         .ok_or("set CHOPINFER_DEEPSEEK41_FOLD_CUBINS to the staged module directory".into())

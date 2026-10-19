@@ -183,15 +183,18 @@ fn decode_fold_dry_run() {
     );
 }
 
-fn functions(session: &Session, calls: &[Launch]) -> LabResult<Vec<Function>> {
+pub(super) fn functions(session: &Session, calls: &[Launch]) -> LabResult<Vec<Function>> {
     #[derive(Default)]
     struct Cached(std::cell::RefCell<BTreeMap<String, runtime_cuda::Module>>);
     let cached = session.state(|| Ok(Cached::default()))?;
     calls
         .iter()
         .map(|call| {
-            let (name, bytes) =
-                fold_cubin_for_symbol(&call.symbol).ok_or("missing serving fold cubin")?;
+            let (name, bytes) = if call.symbol.contains("_mxfp8_stream_") {
+                super::mxfp8_fold_stream::cubin()?
+            } else {
+                fold_cubin_for_symbol(&call.symbol).ok_or("missing serving fold cubin")?
+            };
             let mut modules = cached.0.borrow_mut();
             let module = match modules.entry(name.into()) {
                 std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
@@ -204,7 +207,7 @@ fn functions(session: &Session, calls: &[Launch]) -> LabResult<Vec<Function>> {
         .collect()
 }
 
-fn run(
+pub(super) fn run(
     session: &Session,
     stream: &Stream,
     calls: &[Launch],
@@ -231,7 +234,7 @@ fn compare(session: &Session, entry: &Entry, rows: u32) -> LabResult<serde_json:
 pub(super) struct Weights {
     buffers: Vec<runtime_cuda::DeviceBuffer>,
 }
-fn pattern(bytes: u64, seed: usize) -> Vec<u8> {
+pub(super) fn pattern(bytes: u64, seed: usize) -> Vec<u8> {
     (0..bytes as usize)
         .map(|i| {
             let x = i.wrapping_mul(1664525).wrapping_add(seed * 1013904223);
@@ -239,7 +242,7 @@ fn pattern(bytes: u64, seed: usize) -> Vec<u8> {
         })
         .collect()
 }
-fn scales(bytes: u64, seed: usize) -> Vec<u8> {
+pub(super) fn scales(bytes: u64, seed: usize) -> Vec<u8> {
     (0..bytes as usize)
         .map(|i| 117 + ((i * 7 + i / 11 + seed) % 17) as u8)
         .collect()
@@ -276,6 +279,59 @@ pub(super) fn compare_with(
     timed: bool,
     profile: bool,
 ) -> LabResult<serde_json::Value> {
+    compare_impl(session, entry, rows, ticket, weights, timed, profile, None)
+}
+
+pub(super) fn compare_stream(
+    session: &Session,
+    entry: &Entry,
+    rows: u32,
+    candidate: &kernels_sm120::gemm::mxfp8_fold_stream::Entry,
+    weights: &Weights,
+    profile: bool,
+) -> LabResult<serde_json::Value> {
+    compare_impl(
+        session,
+        entry,
+        rows,
+        Some(&candidate.ticket),
+        Some(weights),
+        true,
+        profile,
+        Some(candidate),
+    )
+}
+
+pub(super) fn compare_stream_deferred(
+    session: &Session,
+    entry: &Entry,
+    rows: u32,
+    candidate: &kernels_sm120::gemm::mxfp8_fold_stream::Entry,
+    weights: &Weights,
+) -> LabResult<serde_json::Value> {
+    compare_impl(
+        session,
+        entry,
+        rows,
+        Some(&candidate.ticket),
+        Some(weights),
+        false,
+        false,
+        Some(candidate),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compare_impl(
+    session: &Session,
+    entry: &Entry,
+    rows: u32,
+    ticket: Option<&kernels_sm120::gemm::mxfp8_fold_ticket::Entry>,
+    weights: Option<&Weights>,
+    timed: bool,
+    profile: bool,
+    stream_entry: Option<&kernels_sm120::gemm::mxfp8_fold_stream::Entry>,
+) -> LabResult<serde_json::Value> {
     let q = entry.query;
     let ranks = topologies(entry);
     let old = registration::entries(
@@ -303,7 +359,10 @@ pub(super) fn compare_with(
     }
     let prefetch = ticket.is_some_and(|entry| entry.prefetch_weights);
     let mut baseline_backend = Sm120::new().with_mxfp8_fold_decode(entry.clone());
-    let baseline_query = if prefetch {
+    let baseline_query = if stream_entry.is_some() {
+        baseline_backend = registration::register(Sm120::new(), &FLASH, ranks[0])?;
+        registration::routed_query(q, rows)
+    } else if prefetch {
         let previous = registration::ticket_catalog(&FLASH)?
             .into_iter()
             .find(|old| old.paired == entry.paired && old.query == ticket.unwrap().query)
@@ -314,7 +373,7 @@ pub(super) fn compare_with(
     } else {
         q
     };
-    let use_split_baseline = ticket.is_some() && (prefetch || rows <= 32);
+    let use_split_baseline = ticket.is_some() && (stream_entry.is_some() || prefetch || rows <= 32);
     let baseline_single = if use_split_baseline && !entry.paired {
         Some(
             baseline_backend
@@ -348,7 +407,15 @@ pub(super) fn compare_with(
             ..q
         }
     };
-    let single = if !entry.paired {
+    let stream_op = stream_entry
+        .map(|candidate| {
+            Sm120::new()
+                .with_mxfp8_fold_stream(candidate.clone())
+                .mxfp8_fold_gemm_stream(&candidate.ticket.query, entry.paired, Need::rows(rows))
+                .map_err(|e| e.to_string())
+        })
+        .transpose()?;
+    let single = if !entry.paired && stream_op.is_none() {
         Some(
             backend
                 .mxfp8_fold_gemm(&new_query, Need::rows(rows))
@@ -357,7 +424,7 @@ pub(super) fn compare_with(
     } else {
         None
     };
-    let pair = if entry.paired {
+    let pair = if entry.paired && stream_op.is_none() {
         Some(
             backend
                 .mxfp8_fold_gemm_pair(&new_query, Need::rows(rows))
@@ -366,10 +433,12 @@ pub(super) fn compare_with(
     } else {
         None
     };
-    let workspace = single.as_ref().map_or_else(
-        || pair.as_ref().unwrap().info().workspace,
-        |op| op.info().workspace,
-    );
+    let workspace = stream_op
+        .as_ref()
+        .map(|op| op.info().workspace)
+        .or_else(|| single.as_ref().map(|op| op.info().workspace))
+        .or_else(|| pair.as_ref().map(|op| op.info().workspace))
+        .unwrap();
     let sizes = entry.legacy().map_err(|e| e.to_string())?.bytes(rows);
     const OFFSET: usize = 3;
     let initial_status: Vec<u8> = (0..rows as usize + OFFSET + 2)
@@ -415,6 +484,20 @@ pub(super) fn compare_with(
         initial_status,
         vec![0xcd; baseline_workspace.max(4) as usize],
     ];
+    if let Some(candidate) = stream_entry {
+        images.extend([
+            vec![0xcd; candidate.packed_bytes() as usize],
+            vec![
+                0xcd;
+                if entry.paired {
+                    candidate.packed_bytes() as usize
+                } else {
+                    4
+                }
+            ],
+            vec![0xcd; candidate.state_bytes(rows).map_err(|e| e.to_string())? as usize],
+        ]);
+    }
     let buffers = images
         .iter()
         .map(|bytes| session.allocate(bytes.len()))
@@ -476,7 +559,21 @@ pub(super) fn compare_with(
             .launches(&[first, second], view(14), Counts::rows(rows))
             .map_err(|e| e.to_string())?;
     }
-    let new_calls = if let Some(op) = single {
+    let stateful = stream_entry.map(|_| kernel_core::mxfp8_gemm::Mxfp8FoldStreamBuffers {
+        first: new_first,
+        second: entry.paired.then_some(new_second),
+        packed_weights: [view(15), if entry.paired { view(16) } else { View::EMPTY }],
+        state: view(17),
+    });
+    let initialization = stream_op
+        .as_ref()
+        .map(|op| op.initialize(&stateful.unwrap()))
+        .transpose()
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
+    let new_calls = if let Some(op) = stream_op.as_ref() {
+        op.launches(&stateful.unwrap(), view(7), Counts::rows(rows))
+    } else if let Some(op) = single {
         op.launches(&new_first, view(7), Counts::rows(rows))
     } else {
         pair.unwrap()
@@ -485,6 +582,7 @@ pub(super) fn compare_with(
     .map_err(|e| e.to_string())?;
     let old_functions = functions(session, &old_calls)?;
     let new_functions = functions(session, &new_calls)?;
+    let initialize_functions = functions(session, &initialization)?;
     let mut bindings = Bindings {
         buffers: buffers
             .iter()
@@ -499,7 +597,9 @@ pub(super) fn compare_with(
     }
     let upload = |images: &[Vec<u8>]| -> LabResult<()> {
         for (index, (buffer, bytes)) in buffers.iter().zip(images).enumerate() {
-            if weights.is_some() && [2, 3, 8, 9].contains(&index) {
+            if (stream_entry.is_some() && index >= 15)
+                || (weights.is_some() && [2, 3, 8, 9].contains(&index))
+            {
                 continue;
             }
             buffer
@@ -518,6 +618,20 @@ pub(super) fn compare_with(
     // Capture the candidate chain once and replay it with changing live
     // counts and poisoned partials. The baseline runs eagerly here.
     upload(&images)?;
+    if stream_entry.is_some() {
+        for index in 15..18 {
+            buffers[index]
+                .copy_from_bytes(&images[index], &session.stream)
+                .map_err(|e| e.to_string())?;
+        }
+        run(
+            session,
+            &session.stream,
+            &initialization,
+            &initialize_functions,
+            &bindings,
+        )?;
+    }
     session.stream.synchronize().map_err(|e| e.to_string())?;
     session.stream.begin_capture().map_err(|e| e.to_string())?;
     run(
@@ -615,7 +729,7 @@ pub(super) fn compare_with(
         images[i][status_at..status_at + 4].fill(0);
     }
     upload(&images)?;
-    if prefetch && profile {
+    if (prefetch || stream_entry.is_some()) && profile {
         concurrent::check(
             session,
             concurrent::Case {
@@ -627,9 +741,17 @@ pub(super) fn compare_with(
                 baseline_calls: &old_calls,
                 baseline_functions: &old_functions,
                 paired: entry.paired,
+                persistent: stream_entry
+                    .map(|_| (&initialization[..], &initialize_functions[..], 17)),
             },
         )?;
         upload(&images)?;
+    }
+    if stream_entry.is_some() {
+        assert!(
+            read(17)?.iter().all(|&v| v == 0),
+            "persistent fold state did not self-reset"
+        );
     }
     println!(
         "{}",
@@ -637,8 +759,13 @@ pub(super) fn compare_with(
     );
     let mut record = json!({"n":q.n,"k":q.k,"groups":q.groups,"rows":rows,"paired":entry.paired,"ranks":ranks,
         "bitwise":true,"baseline_launches":old_calls.len(),"decode_launches":new_calls.len()});
-    if prefetch && profile {
+    if (prefetch || stream_entry.is_some()) && profile {
         record["concurrent_replays"] = json!(3);
+    }
+    if stream_entry.is_some() {
+        record["baseline_symbols"] = json!(old_calls.iter().map(|c| &c.symbol).collect::<Vec<_>>());
+        record["candidate_symbols"] =
+            json!(new_calls.iter().map(|c| &c.symbol).collect::<Vec<_>>());
     }
     if !timed {
         return Ok(record);
@@ -665,7 +792,7 @@ pub(super) fn compare_with(
         record["weight_bytes"] = json!(weight_bytes);
         record["floor_us"] = json!(floor_us);
         record["floor_ratio"] = json!(f64::from(paired.arms[1].median_ms) * 1000.0 / floor_us);
-        let unchanged = new_query.m_capacity == 32;
+        let unchanged = stream_entry.is_none() && new_query.m_capacity == 32;
         if unchanged {
             assert_eq!(old_calls.len(), new_calls.len());
             for (old, new) in old_calls.iter().zip(&new_calls) {
@@ -676,14 +803,22 @@ pub(super) fn compare_with(
         // An identical launch sequence is a retained baseline, not a new
         // implementation subject to a noisy self-comparison timing gate.
         record["same_implementation"] = json!(unchanged);
-        record["routing"] = json!(if unchanged {
+        record["routing"] = json!(if stream_entry.is_some() {
+            "stream"
+        } else if unchanged {
             "split-fold"
         } else if prefetch {
             "prefetch"
         } else {
             "ticket"
         });
-        record["baseline_routing"] = json!(if prefetch && !unchanged {
+        record["baseline_routing"] = json!(if stream_entry.is_some() {
+            match registration::decode_path(&FLASH, q, rows, entry.paired) {
+                registration::DecodePath::Split => "split-fold",
+                registration::DecodePath::Ticket => "ticket",
+                registration::DecodePath::Prefetch => "prefetch",
+            }
+        } else if prefetch && !unchanged {
             "ticket"
         } else if rows <= 32 {
             "split-fold"
@@ -700,7 +835,7 @@ pub(super) fn compare_with(
             ticket.folds_per_cta(rows)
         });
         record["workspace_bytes"] = json!(workspace);
-        if profile {
+        if stream_entry.is_none() && profile {
             let stage_times = |calls: &[Launch], functions: &[Function]| -> LabResult<Vec<f32>> {
                 (0..calls.len())
                     .map(|i| {

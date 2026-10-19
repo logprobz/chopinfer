@@ -11,6 +11,7 @@ pub(super) struct Case<'a> {
     pub baseline_calls: &'a [Launch],
     pub baseline_functions: &'a [Function],
     pub paired: bool,
+    pub persistent: Option<(&'a [Launch], &'a [Function], usize)>,
 }
 
 pub(super) fn check(session: &Session, case: Case<'_>) -> LabResult<()> {
@@ -64,6 +65,16 @@ pub(super) fn check(session: &Session, case: Case<'_>) -> LabResult<()> {
     for (handle, buffer) in [1, 12, 13, 14, 8].into_iter().zip(&other) {
         bindings_b.buffers.insert(handle, buffer);
     }
+    let other_state = case
+        .persistent
+        .map(|(_, _, index)| session.allocate(case.images[index].len()))
+        .transpose()?;
+    if let Some((calls, functions, index)) = case.persistent {
+        let state = other_state.as_ref().unwrap();
+        copy(state, &case.images[index])?;
+        bindings_b.buffers.insert(index as u64 + 1, state);
+        run(session, &session.stream, calls, functions, &bindings_b)?;
+    }
     let graph_a = session
         .capture(|stream| run(session, stream, case.calls, case.functions, case.bindings))?;
     let graph_b =
@@ -108,6 +119,10 @@ pub(super) fn check(session: &Session, case: Case<'_>) -> LabResult<()> {
         stream_b.synchronize().map_err(|e| e.to_string())?;
         session.stream.synchronize().map_err(|e| e.to_string())?;
         scheduled?;
+        if let Some((_, _, index)) = case.persistent {
+            assert!(read(&case.buffers[index])?.iter().all(|&v| v == 0));
+            assert!(read(other_state.as_ref().unwrap())?.iter().all(|&v| v == 0));
+        }
         assert_eq!(
             read(&case.buffers[11])?,
             expected_a[0],

@@ -1,6 +1,7 @@
 //! Own-op preparation for the model's Markov and confidence heads.
 
-use super::dspark_entries::{CONFIDENCE, MARKOV, THREADS};
+use super::confidence_parallel;
+use super::dspark_entries::{MARKOV, THREADS};
 use kernel_core::backend::{Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View};
 use kernel_core::contract::{Argument, ArgumentList, LaunchPlan, Refusal};
 use kernel_core::properties::Invariance;
@@ -43,7 +44,7 @@ pub fn confidence(
             "sm120 DSpark confidence shape is unsupported".into(),
         ));
     }
-    let info = info(CONFIDENCE, CONFIDENCE_CONTRACT, need)?;
+    let info = info(confidence_parallel::SYMBOL, CONFIDENCE_CONTRACT, need)?;
     Ok(Box::new(Confidence {
         op: *op,
         capacity: need.capacity,
@@ -171,9 +172,9 @@ impl PreparedOp<ConfidenceHeadBuffers<View>> for Confidence {
         b.live_rows.covers(4)?;
         distinct(b.scores, &[b.hidden, b.markov, b.weight, b.live_rows])?;
         Ok(launch(
-            CONFIDENCE,
+            confidence_parallel::SYMBOL,
             rows,
-            [rows.div_ceil(THREADS), 1, 1],
+            [rows, 1, 1],
             vec![
                 Argument::DeviceBuffer(b.hidden.handle),
                 Argument::DeviceBuffer(b.markov.handle),

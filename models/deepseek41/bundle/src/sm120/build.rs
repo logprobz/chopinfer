@@ -17,6 +17,7 @@ mod acceptance_entries;
 mod ceil_parallel;
 #[allow(dead_code)]
 mod ceil_prefill;
+mod confidence_parallel;
 #[allow(dead_code, reason = "the bundle registers the auxiliary entries")]
 mod dspark_aux;
 mod dspark_cubin;
@@ -149,6 +150,10 @@ pub fn selection(
 ) -> Selection {
     let mut specs = vec![(own_entries::FAMILY, own_cubin::rope_cubin_spec(manifest))];
     specs.push((dspark_entries::FAMILY, dspark_cubin::cubin_spec(manifest)));
+    specs.push((
+        confidence_parallel::FAMILY,
+        confidence_parallel::cubin_spec(manifest),
+    ));
     specs.push((
         ring_gather_entries::FAMILY,
         ring_gather_cubin::cubin_spec(manifest),

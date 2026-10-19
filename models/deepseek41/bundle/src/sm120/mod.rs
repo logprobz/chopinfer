@@ -6,6 +6,7 @@
 
 pub mod ceil_parallel;
 pub mod ceil_prefill;
+pub mod confidence_parallel;
 pub mod dspark;
 #[allow(dead_code, reason = "the build compiles the drafter auxiliary entries")]
 mod dspark_aux;
@@ -326,6 +327,7 @@ impl crate::Kernels {
             return false;
         }
         cubin == host_acceptance_entries::CUBIN
+            || cubin == confidence_parallel::CUBIN
             || cubin == engram_hash_entries::CUBIN
             || cubin == ring_gather_entries::CUBIN
             || cubin == dspark_router::cubin_name(g)

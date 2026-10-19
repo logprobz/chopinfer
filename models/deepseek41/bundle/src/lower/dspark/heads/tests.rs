@@ -196,8 +196,9 @@ fn every_topology_dispatches_all_five_head_positions_on_the_fake_host() {
                 let program = heads.position(rank, position, items, &v, &peers).unwrap();
                 let confidence = program
                     .iter()
-                    .find(|op| op.launch.symbol == "chop_deepseek41_dspark_confidence_v1")
+                    .find(|op| op.launch.symbol == "chop_deepseek41_dspark_confidence_parallel_v1")
                     .unwrap();
+                assert_eq!(confidence.launch.plan.grid, [items, 1, 1]);
                 let hidden = argument_span(confidence, 0);
                 assert_eq!(hidden.buffer, v.hidden_f32.buffer);
                 assert_eq!(
@@ -239,7 +240,7 @@ fn every_topology_dispatches_all_five_head_positions_on_the_fake_host() {
         let journal = host.journal.borrow();
         for symbol in [
             "chop_deepseek41_dspark_markov_v1",
-            "chop_deepseek41_dspark_confidence_v1",
+            "chop_deepseek41_dspark_confidence_parallel_v1",
             "chop_dspark_argmax_final_v1",
         ] {
             assert_eq!(

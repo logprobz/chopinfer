@@ -6,16 +6,17 @@ from check_f32_decode import check, records
 
 
 EXPECTED = {
+    "bytes_per_us": 873.8,
     "bitwise_cases": 1, "timing_cases": 1, "launch_timings": 2,
     "production": [{"baseline": "projection", "rows": [48], "timing_rows": [48],
-                    "n": 17, "k": 257}],
+                    "n": 17, "k": 257, "weight_bytes": 8738}],
 }
 
 
-def log(ratio="1.03", old="100", new="103"):
+def log(ratio="0.2", old="100", new="20", floor="10", floor_ratio="2"):
     return (
         "running 1 test\n"
-        f"test projection_test ... F32_TIMING projection rows=48 old_us={old} new_us={new} ratio={ratio}\n"
+        f"test projection_test ... F32_TIMING projection rows=48 old_us={old} new_us={new} ratio={ratio} floor_us={floor} floor_ratio={floor_ratio}\n"
         "F32_LAUNCH projection rows=48 arm=0 symbol=original_v1 us=100\n"
         "F32_LAUNCH projection rows=48 arm=1 symbol=original_v1 us=103\n"
         "F32_BITWISE projection rows=48 n=17 k=257 PASS\n"
@@ -33,7 +34,17 @@ class TimingGate(unittest.TestCase):
 
     def test_more_than_three_percent_fails(self):
         with self.assertRaisesRegex(ValueError, "exceeds 1.03"):
-            check(log(ratio="1.03001"), EXPECTED)
+            check(log(ratio="1.03001").replace("rows=48", "rows=32"), EXPECTED)
+
+    def test_verify_requires_at_least_five_times_faster(self):
+        with self.assertRaisesRegex(ValueError, "exceeds 0.2"):
+            check(log(ratio="0.20001"), EXPECTED)
+
+    def test_floor_uses_actual_stored_weight_bytes(self):
+        with self.assertRaisesRegex(ValueError, "stored weight bytes"):
+            check(log(floor="20", floor_ratio="1"), EXPECTED)
+        with self.assertRaisesRegex(ValueError, "inconsistent"):
+            check(log(floor_ratio="3"), EXPECTED)
 
     def test_nonfinite_or_nonpositive_timings_fail(self):
         for kwargs in ({"ratio": "nan"}, {"ratio": "inf"}, {"old": "0"}, {"new": "-1"}):

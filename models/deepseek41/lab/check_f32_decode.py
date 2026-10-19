@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check complete exact-F32 records and the fixed 3% paired timing gate."""
+"""Check complete exact-F32 records and the paired timing and 5x verify gates."""
 
 import argparse
 import json
@@ -9,6 +9,7 @@ import re
 
 
 MAX_RATIO = 1.03
+VERIFY_RATIO = 0.2
 RECORD = re.compile(r"(?:^|\s)(F32_(?:BITWISE|TIMING|LAUNCH) .*)$")
 
 
@@ -50,8 +51,14 @@ def check(text, expected):
         old, new, ratio = (float(value[key]) for key in ("old_us", "new_us", "ratio"))
         if not all(math.isfinite(x) and x > 0 for x in (old, new, ratio)):
             raise ValueError(f"{label}: invalid paired timing")
-        if ratio > MAX_RATIO:
-            raise ValueError(f"{label} rows={value['rows']}: ratio {ratio} exceeds {MAX_RATIO}")
+        limit = VERIFY_RATIO if 33 <= int(value["rows"]) <= 256 else MAX_RATIO
+        if ratio > limit:
+            raise ValueError(f"{label} rows={value['rows']}: ratio {ratio} exceeds {limit}")
+        floor, floor_ratio = float(value["floor_us"]), float(value["floor_ratio"])
+        if not all(math.isfinite(x) and x > 0 for x in (floor, floor_ratio)):
+            raise ValueError("invalid bandwidth floor")
+        if not math.isclose(new / floor, floor_ratio, rel_tol=1e-5):
+            raise ValueError("bandwidth floor ratio is inconsistent")
     for _, value in parsed["LAUNCH"]:
         micros = float(value["us"])
         if not math.isfinite(micros) or micros <= 0:
@@ -69,6 +76,9 @@ def check(text, expected):
                        if name == label and int(value["rows"]) == rows]
             if len(matches) != 1:
                 raise ValueError(f"{label} rows={rows}: missing or duplicate timing")
+            floor = case["weight_bytes"] / expected["bytes_per_us"]
+            if not math.isclose(float(matches[0]["floor_us"]), floor, rel_tol=1e-5):
+                raise ValueError(f"{label}: floor does not use stored weight bytes")
     return parsed
 
 
@@ -78,9 +88,25 @@ def main():
     parser.add_argument("logs", nargs="+", type=Path)
     args = parser.parse_args()
     expected = json.loads(args.coverage.read_text())
+    failures = []
     for log in args.logs:
-        check(log.read_text(), expected)
-    print(f"{len(args.logs)} GPU logs passed completeness and routed/baseline <= {MAX_RATIO}")
+        text = log.read_text()
+        parsed = records(text)
+        table = ["| Entry | Rows | Old us | New us | New / old | Weight floor us | New / floor |",
+                 "|---|---:|---:|---:|---:|---:|---:|"]
+        for label, value in parsed["TIMING"]:
+            table.append("| " + " | ".join([label] + [value[key] for key in
+                ("rows", "old_us", "new_us", "ratio", "floor_us", "floor_ratio")]) + " |")
+        log.with_suffix(".timings.md").write_text("\n".join(table) + "\n")
+        log.with_suffix(".timings.json").write_text(json.dumps(parsed["TIMING"], indent=2) + "\n")
+        try:
+            check(text, expected)
+        except ValueError as error:
+            failures.append(f"{log.name}: {error}")
+    if failures:
+        raise SystemExit("\n".join(failures))
+    print(f"{len(args.logs)} GPU logs passed: <= {MAX_RATIO}, rows 33-256 <= {VERIFY_RATIO}")
+
 
 
 if __name__ == "__main__":

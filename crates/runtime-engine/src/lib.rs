@@ -785,6 +785,12 @@ impl ModelBatchItem {
         self.output_cycle.as_ref()
     }
 
+    #[must_use]
+    pub fn with_output_cycle(mut self, cycle: OutputCycle) -> Self {
+        self.output_cycle = Some(cycle);
+        self
+    }
+
     /// Describes one scheduled item of a batch an executor is about to run.
     ///
     /// The engine builds these from its own scheduler decisions. The
@@ -1691,6 +1697,8 @@ pub struct Engine<E: ModelExecutor> {
     /// `CHOPINFER_STEP_TRACE=1`: host timings go into each step's trace line.
     step_trace: bool,
     pending_step_trace: Option<compatibility::StepTrace>,
+    /// Never restored by warmup or prefix state, so late outputs cannot alias.
+    next_output_cycle: u64,
     host_clock: compatibility::HostClock,
     batch_observer: BatchObserver,
 }
@@ -1862,6 +1870,7 @@ impl<E: ModelExecutor> Engine<E> {
                 .map(|_| config.kv_geometry.block_tokens()),
             step_trace,
             pending_step_trace: None,
+            next_output_cycle: 1,
             host_clock: compatibility::HostClock::default(),
             batch_observer: BatchObserver::default(),
         };
@@ -2228,12 +2237,16 @@ impl<E: ModelExecutor> Engine<E> {
             }
         };
         if executor.device_results_v1() {
+            let epoch = self.next_output_cycle;
+            self.next_output_cycle = epoch
+                .checked_add(1)
+                .ok_or(EngineError::InvariantViolation)?;
             for item in &mut items {
                 let record = requests
                     .get(&item.request_id)
                     .expect("scheduled request exists");
                 item.output_cycle = Some(OutputCycle {
-                    epoch: batch.id().get(),
+                    epoch,
                     remaining_tokens: record.maximum_new_tokens - record.emitted_tokens,
                     termination_stop_ids: record.termination_stop_ids.clone(),
                 });

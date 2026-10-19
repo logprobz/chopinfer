@@ -520,4 +520,132 @@ mod tests {
         assert!(!dependent.history_independent());
         assert!(dependent.for_device_verify_row(1).is_err());
     }
+    #[derive(Default)]
+    struct CycleExecutor {
+        token: u32,
+        cycles: Vec<(u64, Vec<BatchPhase>)>,
+    }
+    impl ModelExecutor for CycleExecutor {
+        type TransactionState<'a> = NoopModelTransactionState;
+        fn device_results_v1(&self) -> bool {
+            true
+        }
+        fn execute<'a>(
+            &'a mut self,
+            items: &[ModelBatchItem],
+            _: &PreparedAppendBatch,
+        ) -> Result<ModelTransaction<Self::TransactionState<'a>>, ExecutorError> {
+            self.cycles.push((
+                items[0].output_cycle().unwrap().epoch,
+                items.iter().map(ModelBatchItem::phase).collect(),
+            ));
+            let samples = items
+                .iter()
+                .filter(|item| item.expects_logits())
+                .map(|item| SampledRow::new(item.request_id(), self.token, -0.25, Vec::new()))
+                .collect();
+            Ok(ModelTransaction::no_op(Vec::new()).with_sampled(samples))
+        }
+    }
+    fn cycle_engine(token: u32) -> Engine<CycleExecutor> {
+        let config = EngineConfig::new(
+            SchedulerConfig::new(4, 8, 2, 2, 1).unwrap(),
+            KvGeometry::new(4, 64).unwrap(),
+            ModelVocabulary::new(8).unwrap(),
+            32,
+            4,
+        )
+        .unwrap();
+        Engine::new(
+            config,
+            CycleExecutor {
+                token,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    }
+    fn request(id: u64, prompt: usize, budget: usize, stops: Vec<u32>) -> EngineRequest {
+        EngineRequest::new(
+            RequestId::new(id),
+            vec![1; prompt],
+            budget,
+            SamplingParameters::new(0.0).unwrap(),
+            17,
+            stops,
+            ModelVocabulary::new(8).unwrap(),
+        )
+        .unwrap()
+    }
+    fn finish(engine: &mut Engine<CycleExecutor>) -> Vec<EngineEvent> {
+        for _ in 0..32 {
+            if engine.step().unwrap() == StepStatus::Idle {
+                return engine.drain_events();
+            }
+        }
+        panic!("test requests did not finish")
+    }
+    #[test]
+    fn device_cycles_do_not_emit_after_first_stop_or_token_budget_boundary() {
+        for (token, budget, stops, expected, reason) in [
+            (3, 8, vec![3], 1, FinishReason::Stop),
+            (4, 3, vec![], 3, FinishReason::Length),
+        ] {
+            let mut engine = cycle_engine(token);
+            engine.submit(request(1, 1, budget, stops)).unwrap();
+            let events = finish(&mut engine);
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|event| matches!(event.kind(), EngineEventKind::Token { .. }))
+                    .count(),
+                expected
+            );
+            assert_eq!(events.iter().filter(|event|matches!(event.kind(),EngineEventKind::Finished { reason:r } if *r==reason)).count(),1);
+            assert!(
+                engine
+                    .executor
+                    .cycles
+                    .windows(2)
+                    .all(|pair| pair[0].0 < pair[1].0)
+            );
+            assert_eq!(engine.step().unwrap(), StepStatus::Idle);
+            assert!(engine.drain_events().is_empty());
+        }
+    }
+    #[test]
+    fn device_cycle_epoch_is_not_reused_after_startup_checkpoint_restore() {
+        let mut engine = cycle_engine(4);
+        engine.begin_startup_warmup().unwrap();
+        engine.submit(request(1, 1, 1, vec![])).unwrap();
+        finish(&mut engine);
+        let warmup = engine.executor.cycles.last().unwrap().0;
+        engine.finish_startup_warmup().unwrap();
+        engine.submit(request(2, 1, 1, vec![])).unwrap();
+        finish(&mut engine);
+        assert!(engine.executor.cycles.last().unwrap().0 > warmup);
+    }
+    #[test]
+    fn mixed_prefill_decode_cycles_keep_each_requests_budget() {
+        let mut engine = cycle_engine(4);
+        engine.submit(request(1, 1, 3, vec![])).unwrap();
+        engine.submit(request(2, 3, 2, vec![])).unwrap();
+        let events = finish(&mut engine);
+        for (id, expected) in [(1, 3), (2, 2)] {
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|event| event.request_id() == RequestId::new(id)
+                        && matches!(event.kind(), EngineEventKind::Token { .. }))
+                    .count(),
+                expected
+            );
+        }
+        assert!(engine.executor.cycles.iter().any(|(_, phases)| {
+            phases
+                .iter()
+                .any(|phase| matches!(phase, BatchPhase::Prefill { .. }))
+                && phases.contains(&BatchPhase::Decode)
+        }));
+    }
 }

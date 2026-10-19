@@ -247,8 +247,7 @@ impl Fixture {
         }
     }
 
-    pub fn launches(&self, entry: &Entry) -> LabResult<Vec<kernel_core::backend::Launch>> {
-        let rows = self.case.rows() as u32;
+    pub fn views(&self) -> LatentSourcesBuffers<View> {
         let window = LatentWindowBuffers {
             codes: self.view("window_codes"),
             scales: self.view("window_scales"),
@@ -279,7 +278,7 @@ impl Fixture {
             key_stride: self.budget as u32,
             budget: self.budget as u32,
         });
-        let buffers = LatentSourcesBuffers {
+        LatentSourcesBuffers {
             q: self.view("q"),
             row_batch: self.view("row_batch"),
             live_rows: self.view("live_rows"),
@@ -290,12 +289,16 @@ impl Fixture {
             output: Some(self.view("out")),
             partial: None,
             workspace: self.view("workspace"),
-        };
+        }
+    }
+
+    pub fn launches(&self, entry: &Entry) -> LabResult<Vec<kernel_core::backend::Launch>> {
+        let rows = self.case.rows() as u32;
         kernels_sm120::backend::Sm120::new()
             .with_latent_sources(entry.clone())
             .latent_attention_sources(&entry.query, Need::rows(rows))
             .map_err(|e| e.to_string())?
-            .launches(&buffers, View::default(), Counts::rows(rows))
+            .launches(&self.views(), View::default(), Counts::rows(rows))
             .map_err(|e| e.to_string())
     }
 }

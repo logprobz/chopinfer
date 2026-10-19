@@ -47,6 +47,118 @@ fn shape(case: Case) -> Value {
 }
 
 #[test]
+fn cpu_decode_routes_preserve_fallback_merge_and_shared_opt_ins() {
+    use kernel_core::backend::{Backend, Counts, Need, View};
+    use kernels_sm120::backend::Sm120;
+
+    let need = Need::rows(32);
+    let mut checked = 0;
+    for entry in decode_candidate::entries(geometry())
+        .unwrap()
+        .into_iter()
+        .filter(|entry| !entry.profile)
+    {
+        let LatentAttentionQuery::Attention {
+            phase,
+            page_size,
+            second_fp4_keys,
+            ..
+        } = entry.source.query
+        else {
+            unreachable!()
+        };
+        let host = Fixture::new(
+            Case {
+                context: 65,
+                sequences: if phase == AttentionPhase::Verify {
+                    8
+                } else {
+                    32
+                },
+                verify: phase == AttentionPhase::Verify,
+                verify_width: 4,
+                ratio: if !second_fp4_keys {
+                    0
+                } else if page_size == 32 {
+                    2
+                } else {
+                    1
+                },
+                holes: true,
+                inactive: 1,
+            },
+            &entry.source,
+        );
+        let backend = Sm120::new().with_latent_sources(entry.source.clone());
+        let reference = || {
+            backend
+                .latent_attention_sources(&entry.source.query, need)
+                .unwrap()
+        };
+        let old = reference();
+        let routes = [1, 8, 32].map(|rows| (rows, entry.clone()));
+        let routed = sources_decode::prepare(reference(), need, &routes).unwrap();
+        assert_eq!(routed.info().bytes, old.info().bytes);
+        assert_eq!(routed.info().workspace, old.info().workspace);
+        assert_eq!(routed.info().state, old.info().state);
+        assert_eq!(routed.info().guarantees, old.info().guarantees);
+        assert_ne!(routed.info().implementation, old.info().implementation);
+        assert_eq!(routed.info().symbols.len(), 3);
+        let configured: BTreeMap<_, _> = routed.info().symbols.iter().cloned().collect();
+        for rows in 1..=32 {
+            let counts = Counts::rows(rows);
+            let expected = old
+                .launches(&host.views(), View::default(), counts)
+                .unwrap();
+            let actual = routed
+                .launches(&host.views(), View::default(), counts)
+                .unwrap();
+            assert_eq!(actual.len(), 2);
+            assert_eq!(actual[1], expected[1]);
+            if [1, 8, 32].contains(&rows) {
+                assert_eq!(actual[0], entry.launch(&expected[0], None).unwrap());
+            } else {
+                assert_eq!(actual, expected);
+            }
+            for call in actual {
+                launch::check(&call.symbol, call.plan, &configured).unwrap();
+            }
+            checked += 1;
+        }
+        let mut short = host.views();
+        short.q.bytes = 0;
+        assert!(
+            routed
+                .launches(&short, View::default(), Counts::rows(1))
+                .is_err()
+        );
+        for rows in [0, 33] {
+            assert!(
+                routed
+                    .launches(&host.views(), View::default(), Counts::rows(rows))
+                    .is_err()
+            );
+        }
+        let mut instrumented = entry.clone();
+        instrumented.profile = true;
+        let mut wrong_source = entry.clone();
+        wrong_source.source.schedule = Schedule::Grouped;
+        for invalid in [
+            vec![(0, entry.clone())],
+            vec![(33, entry.clone())],
+            vec![(1, entry.clone()), (1, entry.clone())],
+            vec![(1, instrumented)],
+            vec![(1, wrong_source)],
+        ] {
+            assert!(sources_decode::prepare(reference(), need, &invalid).is_err());
+        }
+        let unchanged = sources_decode::prepare(reference(), need, &[]).unwrap();
+        assert_eq!(unchanged.info(), old.info());
+    }
+    assert_eq!(checked, 6 * 9 * 32);
+}
+
+#[test]
 fn cpu_decode_staging_preserves_eight_splits_and_exact_verify_width() {
     let limits = launch::limits().unwrap();
     let configured = launch::configure(&limits, |_, _| Ok(())).unwrap();

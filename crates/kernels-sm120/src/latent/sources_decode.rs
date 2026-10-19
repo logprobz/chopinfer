@@ -5,6 +5,9 @@ use kernel_core::backend::{Launch, View};
 use kernel_core::contract::{Argument, AttentionPhase, LaunchPlan, Refusal};
 use kernel_core::latent_attention::LatentAttentionQuery;
 
+mod prepared;
+pub use prepared::prepare;
+
 #[derive(Clone, Debug)]
 pub struct Entry {
     pub source: Source,

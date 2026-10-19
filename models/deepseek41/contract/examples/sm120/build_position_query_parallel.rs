@@ -1,4 +1,7 @@
 //! Build the separately locked parallel position query producers.
+#[path = "../../../bundle/src/sm120/indexer_query.rs"]
+#[allow(dead_code)]
+mod indexer_query;
 #[path = "../../../bundle/src/sm120/indexer_query_parallel.rs"]
 #[allow(dead_code)]
 mod registration;

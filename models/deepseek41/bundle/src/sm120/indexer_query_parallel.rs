@@ -1,7 +1,5 @@
 //! Qualified small-row query registration; larger buckets keep the original path.
-#[path = "indexer_query.rs"]
-#[allow(dead_code)]
-mod baseline;
+use super::indexer_query as baseline;
 use kernel_build::CubinSpec;
 use kernels_sm120::{backend::Sm120, pooled_indexer::position_query_parallel};
 use model_deepseek41_contract::geometry::Geometry;

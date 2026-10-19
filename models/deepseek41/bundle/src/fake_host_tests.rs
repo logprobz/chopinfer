@@ -905,32 +905,32 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (16208, 0x51b2f41159e4e61a),
+        (16260, 0xdfa1ed3db03cd3e0),
     ),
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (16154, 0xdf0f35d783383abc),
+        (16205, 0x923512cd9c868ac3),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (32843, 0xc6477b788b9023cc),
+        (32947, 0x364579e8cf5ee736),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (32735, 0x882854e11a40dd08),
+        (32837, 0x47f778944d5fb31a),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
-        (69043, 0xc48f57793273726e),
+        (70247, 0x9f9e8078b4ae57ab),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (68787, 0x559a7df150196135),
+        (68991, 0xb30cfe7f85e4e8cd),
     ),
 ];
 

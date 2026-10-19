@@ -172,6 +172,15 @@ impl crate::Kernels {
         .map(Some)
     }
 
+    pub(crate) fn stream_fold_qualified(
+        g: &model_deepseek41_contract::geometry::Geometry,
+        query: kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery,
+        rows: u32,
+        paired: bool,
+    ) -> bool {
+        mxfp8_fold_stream::qualified(g, query, rows, paired)
+    }
+
     /// Whether the locked entry declares this pointer argument as const input.
     pub(crate) fn const_input_argument(symbol: &str, index: usize) -> bool {
         CONST_INPUT_ARGUMENTS
@@ -274,6 +283,7 @@ impl crate::Kernels {
         let sm120 = dense::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = shared::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = mxfp8_fold::register(sm120, shape.geometry, shape.ranks())?;
+        let sm120 = mxfp8_fold_stream::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = indexer_query_parallel::register_parallel(sm120, shape.geometry);
         let sm120 = latent_glue::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = latent_scheduled::register_query(sm120, shape.geometry, shape.ranks());

@@ -83,6 +83,8 @@ mod moe;
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod mxfp8_fold;
 #[allow(dead_code)]
+mod mxfp8_fold_stream;
+#[allow(dead_code)]
 mod own_entries;
 #[path = "reduce.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
@@ -210,6 +212,9 @@ pub fn selection(
         owners.push((mxfp8_fold::prefill_cubin_name(geometry), geometry.id));
         owners.push((mxfp8_fold::prefill_split_cubin_name(geometry), geometry.id));
         owners.push((mxfp8_fold::prefetch_cubin_name(geometry), geometry.id));
+        if geometry.id == model_deepseek41_contract::geometry::FLASH.id {
+            owners.push((mxfp8_fold_stream::cubin_name(geometry), geometry.id));
+        }
         owners.push((
             format!("latent_q_norm_{}_sm120", geometry.kernel_tag),
             geometry.id,
@@ -294,6 +299,7 @@ pub fn selection(
     specs.extend(mxfp8_fold::prefill_split_cubins(geometries).expect("MXFP8 split prefill cubins"));
     specs
         .extend(mxfp8_fold::prefetch_cubins(geometries).expect("deepseek41 MXFP8 prefetch cubins"));
+    specs.extend(mxfp8_fold_stream::cubins(geometries).expect("MXFP8 packed fold cubins"));
     specs.extend(encoder::cubins().expect("deepseek41 encoder cubins"));
     Selection { specs, owners }
 }

@@ -810,6 +810,15 @@ impl Sm120 {
         self
     }
 
+    /// Register row-tiled lagged mixers for the model's prefill buckets.
+    pub fn with_sinkhorn_lagged_tiled(
+        mut self,
+        entries: impl IntoIterator<Item = crate::sinkhorn_hc::lagged_tiled::Entry>,
+    ) -> Self {
+        self.sinkhorn.lagged_tiled.extend(entries);
+        self
+    }
+
     /// The model's comm epilogue over the F32 all-reduce's sums
     /// (`comm::sinkhorn_split::entry`).
     pub fn with_sinkhorn_epilogue(mut self, entry: crate::comm::sinkhorn_split::Entry) -> Self {

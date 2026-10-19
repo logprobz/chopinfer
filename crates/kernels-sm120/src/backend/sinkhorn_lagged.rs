@@ -20,7 +20,7 @@ use super::sinkhorn::{
     Candidate, Selection, buffer, check_mixer, check_need, chosen, dense, fitting, planned, plans,
     uncapped,
 };
-use crate::sinkhorn_hc::{self, lagged, lagged_split, split};
+use crate::sinkhorn_hc::{self, lagged, lagged_split, lagged_tiled, split};
 
 /// The lagged mix-collapse's numerics: the per-sublayer one-CTA entry's
 /// projection, rstd and Sinkhorn, with the given collapse weights and F32
@@ -50,6 +50,7 @@ struct LaggedOp<K> {
     plans: Vec<LaunchPlan>,
     info: OpInfo,
     split: Option<(lagged_split::Entry, Vec<LaunchPlan>)>,
+    tiled: Option<(lagged_tiled::Entry, Vec<LaunchPlan>)>,
     kind: std::marker::PhantomData<fn() -> K>,
 }
 
@@ -107,6 +108,7 @@ impl<K> LaggedOp<K> {
             plans,
             info,
             split: None,
+            tiled: None,
             kind: std::marker::PhantomData,
         })
     }
@@ -196,6 +198,38 @@ pub(super) fn mix_collapse(
         prepared.info.symbols.push((entry.symbol(), 0));
         prepared.split = Some((entry, split_plans));
     }
+    let candidates: Vec<_> = selection
+        .lagged_tiled
+        .iter()
+        .filter(|entry| {
+            entry.reference.op == lagged::Op::MixCollapse { probe: false }
+                && uncapped(entry.reference.query) == uncapped(*op)
+                && entry.from_rows <= need.capacity
+        })
+        .map(|entry| {
+            Candidate::new(
+                entry.clone(),
+                &entry.reference.symbol,
+                format!(
+                    "{} tiled rows={} from={}",
+                    launch_of(&entry.reference),
+                    entry.rows,
+                    entry.from_rows
+                ),
+                entry.capacity(),
+            )
+            .claims(entry.invariance())
+        })
+        .collect();
+    if !candidates.is_empty() {
+        let entry = chosen(fitting(candidates, need, "lagged tiled")?, "lagged tiled")?;
+        let tiled_plans = plans(need.capacity, |rows| entry.plan(rows, rows))?;
+        prepared
+            .info
+            .symbols
+            .push((entry.reference.symbol.clone(), 0));
+        prepared.tiled = Some((entry, tiled_plans));
+    }
     need.check(&prepared.info)?;
     Ok(Box::new(prepared))
 }
@@ -260,6 +294,20 @@ impl PreparedOp<LaggedMixCollapseBuffers<View>> for LaggedOp<LaggedMixCollapseBu
             }]);
         }
         values.push(buffers.live_rows);
+        if let Some((entry, plans)) = &self.tiled
+            && rows >= entry.from_rows
+        {
+            return Ok(vec![Launch {
+                symbol: entry.reference.symbol.clone(),
+                rows,
+                plan: planned(plans, counts)?,
+                arguments: entry
+                    .reference
+                    .pack_arguments(values.into_iter().map(buffer).collect())?,
+                collective: false,
+                persistent: false,
+            }]);
+        }
         self.launch(rows, plan, &values)
     }
 }

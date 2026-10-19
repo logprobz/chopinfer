@@ -68,6 +68,7 @@ pub(super) struct Selection {
     /// entries (`super::sinkhorn_lagged`).
     pub(super) lagged: Vec<sinkhorn_hc::lagged::Entry>,
     pub(super) lagged_split: Vec<sinkhorn_hc::lagged_split::Entry>,
+    pub(super) lagged_tiled: Vec<sinkhorn_hc::lagged_tiled::Entry>,
 }
 
 /// The mix-collapse's numerics, whichever entry runs it.

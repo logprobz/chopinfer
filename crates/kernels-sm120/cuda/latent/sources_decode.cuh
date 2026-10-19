@@ -21,26 +21,38 @@ __device__ __forceinline__ void mark(uint64_t* cycles, int stage, uint64_t& last
   }
 }
 
+struct Scale { float scalar; uint32_t packed; bool normal; };
+template<bool Fp4>
+__device__ __forceinline__ Scale decode_scale(uint8_t code) {
+  const uint32_t decoded = Fp4 ? convert::unpack_bf16x2_e4m3(code) : convert::unpack_bf16x2_ue8m0(code);
+  const uint32_t low = decoded & 65535;
+  return {convert::bf16_to_f32(uint16_t(low)), low | (low << 16),
+          Fp4 ? (code & 127) != 127 : code >= 10 && code <= 240};
+}
+
 template<bool Packed, bool Fp4>
-__device__ __forceinline__ uint32_t widen(uint16_t codes, uint8_t scale) {
+__device__ __forceinline__ uint32_t widen_scaled(uint16_t codes, Scale scale) {
   // Finite FP4 and E4M3 scales have an exact BF16 product. Restrict the FP8
   // power-of-two fast path to normal finite products; extremes and NaNs keep
   // the reference F32 multiplication and BF16 conversion.
   if constexpr (Packed) {
-    const bool safe = Fp4 ? (scale & 127) != 127 :
-        scale >= 10 && scale <= 240 && (codes & 127) != 127 && ((codes >> 8) & 127) != 127;
+    const bool safe = scale.normal && (Fp4 || ((codes & 127) != 127 && ((codes >> 8) & 127) != 127));
     if (safe) {
       const uint32_t v = Fp4 ? convert::unpack_bf16x2_e2m1(codes) : convert::unpack_bf16x2_e4m3(codes);
-      const uint16_t duplicated = uint16_t(scale) * 257;
-      const uint32_t s = Fp4 ? convert::unpack_bf16x2_e4m3(duplicated) : convert::unpack_bf16x2_ue8m0(duplicated);
       uint32_t out;
-      asm("mul.rn.bf16x2 %0, %1, %2;" : "=r"(out) : "r"(v), "r"(s));
+      asm("mul.rn.bf16x2 %0, %1, %2;" : "=r"(out) : "r"(v), "r"(scale.packed));
       return out;
     }
   }
   const auto v = Fp4 ? convert::unpack_f32_e2m1(codes) : convert::unpack_f32_e4m3(codes);
-  const float s = Fp4 ? convert::unpack_f32_e4m3(scale).lo : convert::unpack_f32_ue8m0(scale).lo;
-  return attention::bf16_pair(v.lo * s, v.hi * s);
+  return attention::bf16_pair(v.lo * scale.scalar, v.hi * scale.scalar);
+}
+
+// The probe checks one pair; tile staging shares one decoded scale across
+// the four pairs in each 16-byte output sector.
+template<bool Packed, bool Fp4>
+__device__ __forceinline__ uint32_t widen(uint16_t codes, uint8_t scale) {
+  return widen_scaled<Packed, Fp4>(codes, decode_scale<Fp4>(scale));
 }
 
 template<class T, int StageKeys, bool Packed, bool Profile, class Address = NativeAddress>
@@ -186,16 +198,16 @@ __device__ void task(
         uint32_t pairs[4] = {};
         if (valid[key] == 1) {
           const uint64_t codes = sources_scheduled::load_eight(code_rows[key] + d);
-          const uint8_t scale = scale_rows[key][d / 32];
+          const Scale scale = decode_scale<false>(scale_rows[key][d / 32]);
 #pragma unroll
           for (int pair = 0; pair < 4; ++pair)
-            pairs[pair] = widen<Packed, false>(uint16_t(codes >> (pair * 16)), scale);
+            pairs[pair] = widen_scaled<Packed, false>(uint16_t(codes >> (pair * 16)), scale);
         } else if (valid[key] == 2) {
           const uint32_t codes = sources_scheduled::load_four(code_rows[key] + d / 2);
-          const uint8_t scale = scale_rows[key][d / 16];
+          const Scale scale = decode_scale<true>(scale_rows[key][d / 16]);
 #pragma unroll
           for (int pair = 0; pair < 4; ++pair)
-            pairs[pair] = widen<Packed, true>(uint8_t(codes >> (pair * 8)), scale);
+            pairs[pair] = widen_scaled<Packed, true>(uint8_t(codes >> (pair * 8)), scale);
         }
         *reinterpret_cast<uint4*>(tile + tile_offset<stage_keys>(local_key, d, phase)) =
             make_uint4(pairs[0], pairs[1], pairs[2], pairs[3]);

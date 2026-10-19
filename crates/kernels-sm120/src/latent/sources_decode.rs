@@ -162,7 +162,7 @@ pub fn widen_spec(wrong: bool) -> EntrySpec {
         format!("chop_latent_decode_widen_control{}_v1", u32::from(wrong)),
         params,
         format!(
-            "const uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;\nif (i >= 65536) return;\nconst uint16_t codes = (i & 255) | (((i ^ 128) & 255) << 8);\nconst uint8_t scale = i >> 8;\nreference[i] = chop::latent::sources_decode::widen<false,false>(codes,scale);\ncandidate[i] = chop::latent::sources_decode::widen<true,false>(codes,scale);\nreference[i+65536] = chop::latent::sources_decode::widen<false,true>(codes,scale);\ncandidate[i+65536] = chop::latent::sources_decode::widen<true,true>(codes,scale);\nif ({} && i == 0) candidate[i] ^= 1;",
+            "const uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;\nif (i >= 65536) return;\nconst uint16_t codes = (i & 255) | (((i ^ 128) & 255) << 8);\nconst uint8_t scale = i >> 8;\nconst auto fp8 = chop::convert::unpack_f32_e4m3(codes);\nconst float s8 = chop::convert::unpack_f32_ue8m0(scale).lo;\nreference[i] = chop::attention::bf16_pair(fp8.lo * s8, fp8.hi * s8);\ncandidate[i] = chop::latent::sources_decode::widen<true,false>(codes,scale);\nconst auto fp4 = chop::convert::unpack_f32_e2m1(codes);\nconst float s4 = chop::convert::unpack_f32_e4m3(scale).lo;\nreference[i+65536] = chop::attention::bf16_pair(fp4.lo * s4, fp4.hi * s4);\ncandidate[i+65536] = chop::latent::sources_decode::widen<true,true>(codes,scale);\nif ({} && i == 0) candidate[i] ^= 1;",
             wrong
         ),
         256,

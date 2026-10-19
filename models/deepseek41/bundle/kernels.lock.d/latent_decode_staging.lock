@@ -12038,7 +12038,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "d1e09870a2163c5069ed7e3382d9163779d676a2075d52fb16b19f33fc1800a0",
+    "cubin_sha256": "64ad9ed574f5de35738937418010a0de8050995d055fea2a0597e385327ab793",
     "resources": [
       {
         "symbol": "chop_latent_sources_deepseek41_h16_d512_window_normalized_s1_r64_decode_stage64_h0_b0_profile0_v1",
@@ -13014,7 +13014,7 @@
       },
       {
         "symbol": "chop_latent_decode_widen_control0_v1",
-        "registers": 19,
+        "registers": 20,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -13023,7 +13023,7 @@
       },
       {
         "symbol": "chop_latent_decode_widen_control1_v1",
-        "registers": 19,
+        "registers": 18,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,

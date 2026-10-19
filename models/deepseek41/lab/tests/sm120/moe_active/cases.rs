@@ -16,6 +16,13 @@ pub struct Case {
     pub routing: Routing,
 }
 impl Case {
+    pub fn compact_selected(self) -> bool {
+        self.set.count == 128
+            && self.set.top_k == 3
+            && self.phase == ExecutionPhase::Decode
+            && self.rows == 1
+    }
+
     pub fn label(self) -> String {
         format!(
             "e{}k{}-{:?}-{}-{:?}",

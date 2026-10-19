@@ -21,7 +21,8 @@ def records():
         row.update(streamed_ms=0.8, streamed_old_ms=1.0, streamed_candidate=row["rows"]<=64 and row["phase"]!="Prefill",
                    active_experts=row["top_k"], bandwidth_tb_s=1.6,
                    kernel_order=["old", "selected", "compact", "block_warps", "streamed", "previous"])
-        row.update(selected_streamed=row["streamed_candidate"],streamed_bitwise=row["streamed_candidate"],
+        compact = row["experts"] == 128 and row["phase"] == "Decode" and row["rows"] == 1
+        row.update(selected_compact=compact, selected_streamed=row["streamed_candidate"] and not compact,streamed_bitwise=row["streamed_candidate"],
                    previous_ms=1.0, selected_paired_ms=1.0, compared_modes=row["kernel_order"],
                    compared_outputs=12, live_replays=[row["rows"],1,0,row["rows"]])
         row["kernel_ms"] = dict(gateup=[0.5]*6, down=[0.2]*6)
@@ -56,11 +57,21 @@ class TimingGate(unittest.TestCase):
         self.assertEqual(moe_job.check_records(rows),[])
 
     def test_claimed_streamed_parity_requires_selected_entries_and_all_replays(self):
-        for field,value in [("selected_streamed",False),("streamed_bitwise",False),
+        for field,value in [("selected_streamed",True),("selected_compact",False),("streamed_bitwise",False),
                             ("compared_outputs",11),("live_replays",[1,0,1]),("compared_modes",["old","selected"])]:
             rows = records()
             rows[0][field] = value
             self.assertTrue(moe_job.check_records(rows),field)
+
+    def test_reported_previous_regression_still_fails_without_a_serial_regression(self):
+        rows = records()
+        rows[0].update(old_ms=0.488192,active_ms=0.268,previous_ms=0.260064,
+                       selected_paired_ms=0.268224,speed_passed=False)
+        errors = moe_job.check_records(rows)
+        self.assertTrue(any("previous selection" in error for error in errors))
+        self.assertFalse(any("serial baseline" in error for error in errors))
+        rows[0].update(active_ms=0.257776,selected_paired_ms=0.257776,speed_passed=True)
+        self.assertEqual(moe_job.check_records(rows),[])
 
     def test_missing_boundary_or_join_control_fails(self):
         rows = records()

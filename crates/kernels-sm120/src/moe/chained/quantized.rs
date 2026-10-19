@@ -9,6 +9,7 @@ use kernel_core::contract::{
 };
 use kernel_core::gated_mlp::{GatedMlpProjection, SwigluClamp};
 use kernel_core::moe_chained::ChainedMlpProjectionQuery;
+use kernel_core::precision::ExecutionPhase;
 use kernel_core::properties::Invariance;
 
 use super::{ROW_TILES, THREADS, TILE_N};
@@ -28,6 +29,8 @@ pub struct Projection {
     pub streamed: bool,
     /// Model-owned selection limit, independent of the compiled capacity.
     pub max_rows: u32,
+    /// Optional model-owned phase restriction; entry code and ABI stay unchanged.
+    pub selection_phase: Option<ExecutionPhase>,
 }
 
 impl Projection {
@@ -87,6 +90,7 @@ impl Projection {
             compact_columns: false,
             streamed: false,
             max_rows: tokens_capacity,
+            selection_phase: None,
         };
         result.padded_rows(tokens_capacity)?;
         Ok(result)
@@ -102,6 +106,11 @@ impl Projection {
         }
         self.max_rows = rows;
         Ok(self)
+    }
+
+    pub fn with_phase(mut self, phase: ExecutionPhase) -> Self {
+        self.selection_phase = Some(phase);
+        self
     }
 
     /// Reuse the column kernel with a tighter graph-stable grid. Every

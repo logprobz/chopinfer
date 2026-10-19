@@ -150,7 +150,7 @@ impl crate::Kernels {
     ) -> &'static [(kernel_core::precision::ExecutionPhase, u32)] {
         use kernel_core::precision::ExecutionPhase::{Decode, Verify};
         if moe::streamed_qualified(shape.geometry, shape.ranks()) {
-            &[(Decode, 8), (Verify, 8), (Verify, 64)]
+            &[(Decode, 1), (Decode, 8), (Verify, 8), (Verify, 64)]
         } else {
             &[(Decode, 1)]
         }

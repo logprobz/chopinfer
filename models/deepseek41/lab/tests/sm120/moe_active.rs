@@ -81,6 +81,23 @@ struct Arm {
 }
 
 impl Arm {
+    fn uses_compact_decode_one(&self, case: Case) -> bool {
+        case.phase == ExecutionPhase::Decode
+            && case.rows == 1
+            && [("gateup", 9), ("down", 80)]
+                .into_iter()
+                .all(|(part, columns)| {
+                    let ops = self
+                        .launches
+                        .iter()
+                        .filter(|op| op.symbol.contains(&format!("before_{part}_")))
+                        .collect::<Vec<_>>();
+                    ops.len() == 1
+                        && ops[0].symbol.contains("_r16_t32_")
+                        && ops[0].plan.grid == [case.set.top_k, columns, 1]
+                })
+    }
+
     fn uses_streamed(&self) -> bool {
         ["gateup", "down"].into_iter().all(|part| {
             ["pack", "small", "merge"].into_iter().all(|stage| {
@@ -125,7 +142,7 @@ fn arm(
             .into_iter()
             .fold(Sm120::new(), Sm120::with_block_quantize)
     };
-    let streamed = matches!(mode, Mode::Streamed | Mode::Selected)
+    let streamed = (mode == Mode::Streamed || (mode == Mode::Selected && !case.compact_selected()))
         && rows <= 64
         && case.phase != ExecutionPhase::Prefill;
     if mode == Mode::Selected {
@@ -645,9 +662,16 @@ fn compare(
     })?;
     let expected_streamed = rows <= 64 && case.phase != ExecutionPhase::Prefill;
     let selected_streamed = arms[1].uses_streamed();
+    let selected_compact = arms[1].uses_compact_decode_one(case);
+    assert_eq!(
+        selected_compact,
+        case.compact_selected(),
+        "compact selection coverage"
+    );
     let streamed_compared = arms[4].uses_streamed();
     assert_eq!(
-        selected_streamed, expected_streamed,
+        selected_streamed,
+        expected_streamed && !case.compact_selected(),
         "selected entry coverage"
     );
     assert_eq!(
@@ -704,19 +728,23 @@ fn compare(
         kernel_times.insert(name, times);
     }
     let gate = cases::speed_gate(selected[0], selected[1])
-        .and_then(|()| cases::speed_gate(previous[0], previous[1]));
+        .map_err(|e| format!("serial baseline: {e}"))
+        .and_then(|()| {
+            cases::speed_gate(previous[0], previous[1])
+                .map_err(|e| format!("previous serving selection: {e}"))
+        });
     let record = serde_json::json!({"case":case.label(),"rows":rows,"experts":case.set.count,"top_k":case.set.top_k,
         "phase":format!("{:?}",case.phase),"routing":format!("{:?}",case.routing),"cache":"warm",
         "old_ms":selected[0],"active_ms":selected[1],"compact_ms":compact[1],"block_warps_ms":block_warps[1],"ratio":selected[1]/selected[0],
         "streamed_ms":streamed[1],"streamed_old_ms":streamed[0],
-        "streamed_candidate":streamed_compared,"selected_streamed":selected_streamed,
+        "streamed_candidate":streamed_compared,"selected_streamed":selected_streamed,"selected_compact":selected_compact,
         "streamed_bitwise":streamed_compared,"previous_ms":previous[0],"selected_paired_ms":previous[1],
         "compared_modes":["old","selected","compact","block_warps","streamed","previous"],
         "compared_outputs":12,"live_replays":[rows,1,0,rows],
         "active_experts":active_experts,"bandwidth_tb_s":1.6,"weight_floor_ms":floor_ms,"floor_ratio":floor_ratio,
         "kernel_order":["old","selected","compact","block_warps","streamed","previous"],
         "kernel_ms":kernel_times,"bitwise":true,"dropped_join_detected":dropped_join_detected,
-        "speed_passed":gate.is_ok(),"selection":if selected_streamed {"streamed gate/up and down"} else {"old routed kernels"}});
+        "speed_passed":gate.is_ok(),"selection":if selected_streamed {"streamed gate/up and down"} else if selected_compact {"compact column gate/up and down"} else {"old routed kernels"}});
     println!("MOE_RESULT {record}");
     session.receipt(
         "moe-active-bitwise",
@@ -835,8 +863,13 @@ fn active_moe_cpu_dry_run() {
                 if mode == Mode::Selected || mode == Mode::Streamed {
                     assert_eq!(
                         arm.uses_streamed(),
-                        case.rows <= 64 && case.phase != ExecutionPhase::Prefill
+                        case.rows <= 64
+                            && case.phase != ExecutionPhase::Prefill
+                            && (mode != Mode::Selected || !case.compact_selected())
                     );
+                }
+                if mode == Mode::Selected {
+                    assert_eq!(arm.uses_compact_decode_one(case), case.compact_selected());
                 }
                 assert_eq!(arm.side.len(), 4);
                 assert_eq!(arm.sum.len(), 1);

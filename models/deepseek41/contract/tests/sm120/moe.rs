@@ -142,7 +142,13 @@ fn measured_active_crossover_keeps_unmeasured_buckets_on_the_original_entries() 
                             let op = backend
                                 .chained_mlp_projection(&q, usage, Need::rows(tokens))
                                 .unwrap();
-                            let streamed = phase != ExecutionPhase::Prefill
+                            let compact = phase == ExecutionPhase::Decode
+                                && tokens == 1
+                                && set.count == 128
+                                && set.top_k == 3
+                                && registration::streamed_qualified(g, ranks);
+                            let streamed = !compact
+                                && phase != ExecutionPhase::Prefill
                                 && tokens <= 64
                                 && registration::streamed_qualified(g, ranks);
                             let active = !streamed
@@ -163,7 +169,7 @@ fn measured_active_crossover_keeps_unmeasured_buckets_on_the_original_entries() 
                             );
                             if streamed {
                                 assert_eq!(op.route_tile(), 64);
-                            } else if active {
+                            } else if active || compact {
                                 assert_eq!(op.route_tile(), 16);
                             }
                             let routes = MoeQuery::LocalRoutes {

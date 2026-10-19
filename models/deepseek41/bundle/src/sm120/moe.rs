@@ -39,9 +39,9 @@ pub fn streamed_projections(g: &Geometry) -> Result<Vec<quantized::Projection>, 
 /// graph bit parity. Combined gate/up and down beat the previous selection
 /// in both banks through 64 rows. Backbone decode 1/8: 121/245 -> 36/121 us;
 /// verify 6/48: 300/2166 -> 101/946 us. DSpark decode 1/32:
-/// 176/505 -> 26/290 us. Whole-graph differences at the small DSpark
-/// buckets stay within 3% noise (worst 2.72%); larger buckets win clearly.
-/// The shared ceil quantizers still dominate those small whole graphs.
+/// 176/505 -> 26/290 us. The DSpark Decode-1 whole graph loses despite
+/// those projection wins, so serving_compact_projections overrides it.
+/// The shared ceil quantizers still dominate the small whole graphs.
 /// Rows above 64, prefill, other geometries and other ranks keep the old
 /// entries. The backend excludes streamed entries from prefill selection.
 pub fn streamed_qualified(g: &Geometry, ranks: u32) -> bool {
@@ -57,6 +57,40 @@ pub fn serving_streamed_projections(
     } else {
         Ok(Vec::new())
     }
+}
+
+/// Warm SM120 TP4, 250 W, 2026-10-19, DSpark Decode-1 whole graphs:
+/// first run old/compact/streamed = 261.968/259.952/269.104 us;
+/// second run compact = 257.776 us and paired old/streamed =
+/// 260.064/268.224 us (+3.138%). Treat the repeatable 7-8 us loss as
+/// a regression and select the fastest measured compact column path.
+/// Restrict both projections to Decode-1; Verify-1 still uses streamed.
+/// This crossover uses the current ceil quantizers and needs remeasurement
+/// when their implementation changes.
+pub fn serving_compact_projections(
+    g: &Geometry,
+    ranks: u32,
+) -> Result<Vec<quantized::Projection>, String> {
+    if !streamed_qualified(g, ranks) {
+        return Ok(Vec::new());
+    }
+    projections(g, ranks)?
+        .into_iter()
+        .filter(|e| {
+            e.row_tile == 16
+                && e.query
+                    .projection
+                    .gemm
+                    .grouped
+                    .is_some_and(|g| g.experts == 128 && g.top_k == 3)
+        })
+        .map(|e| {
+            e.with_compact_columns()
+                .and_then(|e| e.with_max_rows(1))
+                .map(|e| e.with_phase(kernel_core::precision::ExecutionPhase::Decode))
+                .map_err(|e| e.to_string())
+        })
+        .collect()
 }
 
 pub fn streamed_routes(g: &Geometry) -> Vec<row_bias::Route> {
@@ -110,7 +144,8 @@ pub fn streamed_cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, Cub
 /// ones. Its 16-column tiles gather each input four times as often as the
 /// old 64-column tiles; the 376-CTA cap serializes the remaining tiles.
 /// The compact-column candidate removes those costs using the locked
-/// column kernel with a route-count grid bound. It stays in the lab until measured.
+/// column kernel with a route-count grid bound. Only its qualified DSpark
+/// Decode-1 bucket serves; the other compact buckets remain diagnostic.
 pub fn serving_active_projections(
     g: &Geometry,
     ranks: u32,
@@ -302,6 +337,9 @@ pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, S
         }
     }
     for entry in serving_streamed_projections(g, ranks)? {
+        backend = backend.with_quantized_chained_projection(entry);
+    }
+    for entry in serving_compact_projections(g, ranks)? {
         backend = backend.with_quantized_chained_projection(entry);
     }
     if streamed_qualified(g, ranks) {

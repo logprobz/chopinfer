@@ -52,7 +52,8 @@ def check_records(records):
         modes = ["old", "selected", "compact", "block_warps", "streamed", "previous"]
         if row["compared_modes"] != modes or row["compared_outputs"] != 12 or row["live_replays"] != [row["rows"],1,0,row["rows"]]:
             errors.append(f"{label}: incomplete bitwise comparison")
-        if row["selected_streamed"] != candidate or row["streamed_bitwise"] != candidate:
+        compact = row["experts"] == 128 and row["top_k"] == 3 and row["phase"] == "Decode" and row["rows"] == 1
+        if row["selected_compact"] != compact or row["selected_streamed"] != (candidate and not compact) or row["streamed_bitwise"] != candidate:
             errors.append(f"{label}: selected/streamed parity coverage differs")
         if row["kernel_order"] != modes:
             errors.append(f"{label}: wrong kernel timing order")
@@ -74,8 +75,10 @@ def check_records(records):
             errors.append(f"{label}: dropped join was not detected")
         if row["selected_paired_ms"] > row["previous_ms"] * 1.03:
             errors.append(f"{label}: selected policy exceeds previous selection by more than 3%")
-        if row["active_ms"] > row["old_ms"] * 1.03 or row["speed_passed"] is not True:
-            errors.append(f"{label}: selected policy exceeds old by more than 3%")
+        if row["active_ms"] > row["old_ms"] * 1.03:
+            errors.append(f"{label}: selected policy exceeds serial baseline by more than 3%")
+        if row["speed_passed"] is not True:
+            errors.append(f"{label}: timing gate failed")
     if seen != expected_cases():
         errors.append(f"case coverage differs: missing={sorted(expected_cases()-seen)}, extra={sorted(seen-expected_cases())}")
     return errors
@@ -83,16 +86,16 @@ def check_records(records):
 
 def speed_table(records):
     lines = ["Active means the serving policy, including measured fallbacks.",
-             "TP4 decode/verify through 64 rows selects streamed gate/up and down; prefill and larger rows keep the old path.",
+             "TP4 decode/verify through 64 rows selects streamed, except DSpark Decode-1 selects compact columns; prefill and larger rows keep the old path.",
              "Weight-only floor uses unique active expert MXFP4 codes and UE8M0 scales at 1.6 TB/s.",
              "Warm graph/event timings include all projection stages; floor excludes activation, scratch and output traffic.",
-             "case | experts active | old ms | active ms | active/old | compact ms | block-warps ms | streamed ms | streamed/paired-old | streamed selected | previous ms | selected paired ms | selected/previous | gate old/active/block-warps/streamed ms | down old/active/block-warps/streamed ms | gate/down floor us | gate old/active/block-warps/streamed /floor | down old/active/block-warps/streamed /floor"]
+             "case | experts active | old ms | active ms | active/old | compact ms | block-warps ms | streamed ms | streamed/paired-old | streamed selected | compact selected | previous ms | selected paired ms | selected/previous | gate old/active/block-warps/streamed ms | down old/active/block-warps/streamed ms | gate/down floor us | gate old/active/block-warps/streamed /floor | down old/active/block-warps/streamed /floor"]
     for row in sorted(records, key=lambda r: (r["experts"], r["phase"], r["rows"], r["routing"])):
         series = lambda values: "/".join(f"{values[i]:.5f}" for i in [0,1,3,4])
         eligible = row["selected_streamed"]
         lines.append(f'{row["case"]} | {row["active_experts"]} | {row["old_ms"]:.6f} | {row["active_ms"]:.6f} | '
                      f'{row["active_ms"]/row["old_ms"]:.4f} | {row["compact_ms"]:.6f} | {row["block_warps_ms"]:.6f} | '
-                     f'{row["streamed_ms"]:.6f} | {row["streamed_ms"]/row["streamed_old_ms"]:.4f} | {eligible} | '
+                     f'{row["streamed_ms"]:.6f} | {row["streamed_ms"]/row["streamed_old_ms"]:.4f} | {eligible} | {row["selected_compact"]} | '
                      f'{row["previous_ms"]:.6f} | {row["selected_paired_ms"]:.6f} | {row["selected_paired_ms"]/row["previous_ms"]:.4f} | '
                      f'{series(row["kernel_ms"]["gateup"])} | {series(row["kernel_ms"]["down"])} | '
                      f'{row["weight_floor_ms"]["gateup"]*1000:.3f}/{row["weight_floor_ms"]["down"]*1000:.3f} | '

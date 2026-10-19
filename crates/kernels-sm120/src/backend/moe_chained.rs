@@ -65,16 +65,26 @@ pub(super) fn projection(
         entries
             .iter()
             .filter(|e| math(e.query) == math(*op))
+            .filter(|e| e.selection_phase.is_none_or(|phase| phase == usage.phase))
             .filter(|e| !(e.active || e.streamed) || preferred_tile == 16)
             .map(|e| {
-                Candidate::new(e.clone(), &e.symbol, format!("{e:?}"), e.invariance())
-                    .capacity(e.max_rows)
-                    .rank(
-                        8 * u64::from(!e.streamed)
-                            + 4 * u64::from(e.row_tile != preferred_tile)
-                            + 2 * u64::from(!e.active)
-                            + u64::from(!e.compact_columns),
-                    )
+                // Phase restricts selection; it changes no launch. A scoped
+                // duplicate and its unrestricted entry remain one candidate.
+                let mut launched = e.clone();
+                launched.selection_phase = None;
+                Candidate::new(
+                    e.clone(),
+                    &e.symbol,
+                    format!("{launched:?}"),
+                    e.invariance(),
+                )
+                .capacity(e.max_rows)
+                .rank(
+                    8 * u64::from(!e.streamed)
+                        + 4 * u64::from(e.row_tile != preferred_tile)
+                        + 2 * u64::from(!e.active)
+                        + u64::from(!e.compact_columns),
+                )
             }),
         need,
     )?;
@@ -1156,6 +1166,68 @@ mod tests {
                     );
                     b.routing.as_mut().unwrap().routes.counts = None;
                     assert!(op.launches(&b, workspace, Counts::rows(capacity)).is_err());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn phase_scoped_compact_entry_does_not_shadow_verify_or_prefill() {
+        let query = gate_up(128, 3);
+        let fallback = quantized::Projection::new(query, 64, 32).unwrap();
+        let compact = quantized::Projection::new(query, 16, 32)
+            .unwrap()
+            .with_compact_columns()
+            .unwrap()
+            .with_max_rows(1)
+            .unwrap();
+        let decode = compact.clone().with_phase(ExecutionPhase::Decode);
+        assert_eq!(compact.entry().body, decode.entry().body);
+        assert_eq!(compact.plan(1).unwrap(), decode.plan(1).unwrap());
+        let backend = QuantizerProbe::default();
+        assert!(
+            projection(
+                &backend,
+                &[
+                    fallback.clone(),
+                    fallback.clone().with_phase(ExecutionPhase::Decode)
+                ],
+                &query,
+                usage(1),
+                Need::rows(1)
+            )
+            .is_ok()
+        );
+        for entries in [
+            [decode.clone(), fallback.clone()],
+            [fallback.clone(), decode.clone()],
+        ] {
+            for phase in [
+                ExecutionPhase::Decode,
+                ExecutionPhase::Verify,
+                ExecutionPhase::Prefill,
+            ] {
+                for rows in [1, 2] {
+                    let selected = projection(
+                        &backend,
+                        &entries,
+                        &query,
+                        OperationUse {
+                            phase,
+                            ..usage(rows)
+                        },
+                        Need::rows(rows),
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        selected.info().symbols[0].0,
+                        if phase == ExecutionPhase::Decode && rows == 1 {
+                            &decode.symbol
+                        } else {
+                            &fallback.symbol
+                        }
+                        .as_str()
+                    );
                 }
             }
         }

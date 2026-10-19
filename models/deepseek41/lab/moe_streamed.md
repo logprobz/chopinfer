@@ -16,9 +16,11 @@ their existing arithmetic and graph dependencies.
 
 The entries are compiled and locked under `routed_moe_streamed`. SM120
 Flash TP4 serves both expert banks with the streamed path for decode and
-verify through 64 rows. Separate preparation ranges select the 8-row entry
-through eight rows and the 64-row entry above that. Prefill, verify above
-64 rows, other ranks and other geometries retain the old path.
+verify through 64 rows, except DSpark Decode-1 uses compact columns.
+Separate preparation ranges retain that one-row crossover, select the
+8-row entry through eight rows and the 64-row entry above that. Verify-1
+still uses streamed. Prefill, verify above 64 rows, other ranks and other
+geometries retain the old path.
 
 On 2026-10-19 at 250 W, all 50 complete graph cases passed bitwise,
 including all 40 eligible streamed cases. Each compared 12 output views
@@ -35,11 +37,25 @@ no Xids. Combined gate/up and down improved in every eligible case.
 | DSpark decode 1 | 152.4 / 23.4 | 17.2 / 9.0 |
 | DSpark decode 32 | 418.2 / 86.4 | 201.2 / 88.4 |
 
-The small DSpark full graphs remain dominated by quantization; their
-largest observed slowdown was 2.724%, within the 3% noise allowance.
-The new job pairs the selected and previous overlapped policies directly,
-in addition to the serial baseline. Every selected bucket must stay within
-3% of both comparisons. No quantizer arithmetic changes here.
+Two runs at 250 W show a repeatable DSpark Decode-1 whole-graph loss,
+despite its isolated projection wins:
+
+| Run | Previous overlapped us | Compact columns us | Streamed us |
+| --- | ---: | ---: | ---: |
+| First | 261.968 | 259.952 | 269.104 |
+| Second | 260.064 | 257.776 | 268.224 |
+
+The second previous/streamed pair regresses 3.138%. The threshold crossing
+is small, but the 7-8 us loss repeats and compact columns are fastest in
+both runs. Serving therefore selects compact gate/up and down only for
+DSpark TP4 Decode-1. This is a whole-graph crossover with the current ceil
+quantizers; changes to those quantizers need new timing evidence.
+
+The job retains streamed as a diagnostic arm at that bucket and compares
+all six arms bitwise. It asserts the selected compact launch grids, while
+keeping both timing gates at 3%. A failure names whether it compares the
+serial baseline or previous overlapped serving selection. No threshold,
+sampling method or quantizer arithmetic changed for this fallback.
 
 ## CPU audit, 2026-10-19
 

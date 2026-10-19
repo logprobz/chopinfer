@@ -464,7 +464,12 @@ mod tests {
                     Phase::Prefill { rows: 128 },
                 ] {
                     let kind = ops.kind(phase);
-                    let streamed = shape.ranks() == 4
+                    let compact = shape.ranks() == 4
+                        && phase == Phase::Decode(1)
+                        && set.count == 128
+                        && set.top_k == 3;
+                    let streamed = !compact
+                        && shape.ranks() == 4
                         && phase.rows() <= 64
                         && !matches!(phase, Phase::Prefill { .. });
                     for op in [&kind.gate_up, &kind.down] {
@@ -488,6 +493,10 @@ mod tests {
                                     .iter()
                                     .any(|(s, _)| s.ends_with("_stream_merge_v1"))
                             );
+                        }
+                        if compact {
+                            assert!(op.info().symbols[0].0.contains("_r16_t32_"));
+                            assert_eq!(op.info().workspace, 0);
                         }
                         let tile = if streamed || !matches!(phase, Phase::Decode(_)) {
                             64

@@ -19,6 +19,13 @@ pub const HEADER: &str = "latent/sources.cuh";
 pub const KEYS: u32 = 64;
 pub const MERGE_THREADS: u32 = 128;
 
+/// Scheduling only. Both forms keep the same tiles, splits and ordered merge.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Schedule {
+    Grouped,
+    IndependentHeads,
+}
+
 #[derive(Clone, Debug)]
 pub struct Entry {
     pub profile: Profile,
@@ -26,6 +33,7 @@ pub struct Entry {
     pub query: LatentAttentionQuery,
     /// Fixed for every row count; decode and verify use the same count.
     pub splits: u32,
+    pub schedule: Schedule,
 }
 
 #[derive(Clone, Copy)]
@@ -105,10 +113,18 @@ fn u64p(name: &str) -> EntryParam {
 
 impl Entry {
     pub fn symbol(&self) -> String {
-        format!("chop_latent_sources_{}_v3", self.name)
+        match self.schedule {
+            Schedule::Grouped => format!("chop_latent_sources_{}_v3", self.name),
+            Schedule::IndependentHeads => format!("chop_latent_sources_{}_heads_v1", self.name),
+        }
     }
     pub fn merge_symbol(&self) -> String {
-        format!("chop_latent_sources_{}_merge_v1", self.name)
+        match self.schedule {
+            Schedule::Grouped => format!("chop_latent_sources_{}_merge_v1", self.name),
+            Schedule::IndependentHeads => {
+                format!("chop_latent_sources_{}_heads_merge_v1", self.name)
+            }
+        }
     }
 
     /// Lab-only negative control: add the sink once per split instead of
@@ -199,7 +215,15 @@ impl Entry {
             return Err(Refusal("native latent rows exceed entry capacity"));
         }
         let plan = LaunchPlan {
-            grid: [rows, s.heads.div_ceil(8), self.splits],
+            grid: [
+                rows,
+                if self.schedule == Schedule::IndependentHeads && rows <= 4 {
+                    s.heads
+                } else {
+                    s.heads.div_ceil(8)
+                },
+                self.splits,
+            ],
             block: [s.latent / 128 * 32, 1, 1],
             dynamic_shared_bytes: self.dynamic_shared_bytes(),
             workspace_bytes: self.workspace_bytes(rows),
@@ -296,6 +320,10 @@ impl Entry {
         } else {
             traits.clone()
         };
+        let engine = match self.schedule {
+            Schedule::Grouped => "chop::latent::sources",
+            Schedule::IndependentHeads => "chop::latent::sources_scheduled",
+        };
         let sources = if s.second {
             "compressed_pool,compressed_keys,block_tables"
         } else {
@@ -326,7 +354,7 @@ impl Entry {
                 self.symbol(),
                 self.params()?,
                 format!(
-                    "chop::latent::sources::attention<{attention_traits}>(q,row_batch,live_rows,window_codes,window_scales,window_item_slots,window_keys,{sources},workspace,window_code_stride,window_scale_stride,window_slots,window_sequences,window_items,window_key_stride,window_budget,{geometry},scale_bits);"
+                    "{engine}::attention<{attention_traits}>(q,row_batch,live_rows,window_codes,window_scales,window_item_slots,window_keys,{sources},workspace,window_code_stride,window_scale_stride,window_slots,window_sequences,window_items,window_key_stride,window_budget,{geometry},scale_bits);"
                 ),
                 s.latent / 128 * 32,
                 1,
@@ -374,6 +402,7 @@ pub fn entries(profile: Profile, query: LatentAttentionQuery) -> Result<Vec<Entr
             ),
             query,
             splits,
+            schedule: Schedule::Grouped,
         });
     }
     if s.bf16 {
@@ -431,7 +460,17 @@ pub fn cubin_spec(profile: Profile, entries: &[Entry]) -> Result<CubinSpec, Refu
         name: format!("latent_sources_{}_sm120", profile.tag()),
         sources_root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("cuda"),
         include_dirs: vec![PathBuf::from(".")],
-        headers: vec![format!("#include \"{HEADER}\"")],
+        headers: vec![format!(
+            "#include \"{}\"",
+            if entries
+                .iter()
+                .any(|e| e.schedule == Schedule::IndependentHeads)
+            {
+                "latent/sources_scheduled.cuh"
+            } else {
+                HEADER
+            }
+        )],
         defines: vec![],
         entries: specs,
     })
@@ -460,6 +499,46 @@ mod tests {
             tail_rope_dims: 64,
             second_fp4_keys: true,
             capacity: 16,
+        }
+    }
+
+    #[test]
+    fn independent_heads_keep_partitions_and_buffer_abi() {
+        for heads in [1, 3, 8, 16, 32, 64, 128] {
+            for reference in entries(PROFILE, query(heads, 512)).unwrap() {
+                let mut candidate = reference.clone();
+                candidate.schedule = Schedule::IndependentHeads;
+                assert_ne!(reference.symbol(), candidate.symbol());
+                assert_ne!(reference.merge_symbol(), candidate.merge_symbol());
+                assert_eq!(reference.params().unwrap(), candidate.params().unwrap());
+                assert_eq!(
+                    reference.merge_params().unwrap(),
+                    candidate.merge_params().unwrap()
+                );
+                assert_eq!(
+                    reference.entry_specs().unwrap()[1].body,
+                    candidate.entry_specs().unwrap()[1].body
+                );
+                for rows in [1, 2, 4, 5, 8, 16] {
+                    let plan = candidate.plan(rows).unwrap();
+                    assert_eq!(
+                        plan.grid,
+                        [
+                            rows,
+                            if rows <= 4 { heads } else { heads.div_ceil(8) },
+                            reference.splits
+                        ]
+                    );
+                    assert_eq!(
+                        candidate.merge_plan(rows).unwrap(),
+                        reference.merge_plan(rows).unwrap()
+                    );
+                    assert_eq!(
+                        candidate.workspace_bytes(rows),
+                        reference.workspace_bytes(rows)
+                    );
+                }
+            }
         }
     }
 

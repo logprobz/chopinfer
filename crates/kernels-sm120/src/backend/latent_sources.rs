@@ -348,6 +348,7 @@ mod tests {
             profile: PROFILE,
             name: "test".into(),
             splits: 8,
+            schedule: crate::latent::sources::Schedule::Grouped,
             query: LatentAttentionQuery::Attention {
                 heads: 4,
                 latent: 128,

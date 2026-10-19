@@ -11,8 +11,8 @@ The profile predates the split FP8 projections, paired shared gate/up,
 cached exact-F32 projections, active expert schedule, split HC mixer and
 parallel ceil entries. The first combined decode binding
 had 2,382 launches at one row per GPU. The later ticket projections and
-streamed experts reduce its unfused total to 2,332. Historical kernel durations cannot
-predict fusion savings: PDL overlaps launches, and their arithmetic and
+streamed experts reduce its unfused total to 2,332. Historical kernel
+durations cannot predict fusion savings: PDL overlaps launches, and their arithmetic and
 scheduling have since changed. No GPU speedup is claimed here.
 
 The chain below follows `bundle/src/program.rs`. Each arrow is a launch
@@ -91,19 +91,54 @@ Eight later indexer query quantizations remain. Other producers can flag
 status between the first query use and the indexer, so reusing earlier
 codes would change the quantizer's failure outputs.
 
+## Expansion and the next lagged mixer
+
+Decode now composes 77 uninterrupted expansion/mixer pairs. Its first
+kernel computes the original BF16 expanded values and the next projection's
+independent 128-element chain sums. It recomputes expanded values for the
+RMS statistic so each original lane retains its complete sequential FMA
+chain. Its second kernel folds projection chains in ascending order and
+runs the original RMS butterfly and Sinkhorn expressions in each of ten
+512-column CTAs. Each CTA writes its own collapsed columns; only CTA zero
+publishes the shared `pre`, `post` and `comb` outputs.
+
+The first attention, the two Engram boundaries and the final head retain
+the original standalone operations. Prefill and verify are unchanged.
+Every fused pair still takes two launches. The purpose is to distribute
+work from the original single finishing CTA; no measured latency gain is
+claimed. The current one-row TP4 count remains 2,084 launches per GPU,
+248 below the composed baseline.
+
+The new `sinkhorn_hc_expand_mix` lock family preserves every existing
+lock. It uses 16,384 bytes of temporary workspace per row, rewritten on
+every call, with no tickets or atomic protocol. The previous `post` and
+`comb` may share storage with the next values because only the first
+kernel reads them and only the second writes them. All other roles and
+workspace must be distinct. Both cross-stream workspace audits pass with
+the composed decode schedule.
+
+The staged GPU matrix compares all five outputs against the old expansion
+and split mixer over six row buckets, eleven input patterns, zero/partial
+live counts, eager calls and repeated graphs. It poisons outputs and
+workspace, checks inactive rows and the old ticket reset, and includes
+byte mutations and changed collapse weights. Production comparisons reuse
+the `post`/`comb` buffers. Timings use immutable previous weights and first
+check that this layout gives the same bytes, so timing contains only the
+two kernels. All mismatching cases are collected before the test fails.
+GPU equality and performance remain pending the staged pair run.
+
 ## Remaining boundaries
 
 | Candidate | Opportunity | Constraint |
 | --- | --- | --- |
 | Attention merge -> ceil | 40 launches | Preserve BF16 output boundary and whole-row status before publishing any group |
 | `wo_a` merge -> ceil | 40 launches | Current merge CTAs own slices; one bad slice must zero the complete quantized row |
-| Routed weighted SwiGLU -> ceil | 40 launches | Keep route multiplication before BF16 rounding; active tiles own 16 columns, quantization groups 32 |
-| Shared gate/up merge -> SwiGLU+ceil | 40 launches | SwiGLU already includes ceil; paired banks need common ownership and row-wide validation |
+| Routed weighted SwiGLU -> ceil (L5) | 40 launches | Streamed merge folds gate/up chains in order; quantizer failure covers every route of a token |
+| Shared gate/up merge -> SwiGLU+ceil (L5) | 40 launches | SwiGLU already includes ceil; paired banks need common ownership and row-wide validation |
 | Engram decode -> ceil | Two launches | Preserve decoded BF16 operands and row status |
 | All-gather -> BF16 round | 81 launches including embedding | Keep F32 rank-order sum and the final BF16 boundary, with peer completion before consumers |
 | BF16 round -> HC expand | 80 launches | Preserve rounded sublayer output before residual mixing |
-| HC expand -> next lagged mix | 77 uninterrupted boundaries | Keep expansion's BF16 output, previous `pre`, alternating buffers and fixed mixer/Sinkhorn orders |
-| Query projection merge -> RoPE | 40 launches | Row-wide validation spans all heads while merge CTAs own output slices |
+| Query projection merge -> RoPE (L12) | 40 launches | Row-wide validation spans all heads while merge CTAs own output slices |
 
 HC expansion already performs the residual addition. Its stream-order FMA
 sum, separately rounded `post*y` multiplication and addition, and final
@@ -115,8 +150,8 @@ publication fences and ticket reset semantics.
 ## Verification
 
 CPU tests check preparation, alias and extent refusals, exact argument
-composition, independent window planes, and zero workspace. CUDA compile
-audits require zero spill/local and stack bytes. Fake-host tests count the
+composition, independent window planes, zero norm/window workspace and
+separate HC partials. CUDA compile audits require zero spill/local and stack bytes. Fake-host tests count the
 removed launches and compare physical router/shared-expert workspace
 ranges at every captured MoE fork. That safety test is separate from the
 kernel comparisons and must pass before serving qualification.
@@ -157,6 +192,6 @@ The composed binding passes both workspace isolation audits: all 160 TP4
 router/shared-expert forks have disjoint scratch, and the complete branch
 span audit passes at TP2 and TP4. The tests recognize the paired ticket
 admission and the fused MLP input quantizer. Rebased text and media journals
-were audited by expanding only the norm/window fusions: every other launch
-retained its grid, scalar arguments and span extents under a consistent
-bijection of host-issued handles.
+were audited by expanding the norm/window and HC fusions: every other
+launch retained its grid, scalar arguments and span extents under a
+consistent bijection of host-issued handles.

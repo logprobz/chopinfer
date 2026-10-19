@@ -1,6 +1,6 @@
 //! Frozen vector-store entries shared by serving and the qualification lab.
 pub const FAMILY: &str = "exact_moe_prefill_vector";
-pub const CUBIN: &str = "exact_moe_prefill_vector_sm120";
+pub const CUBIN: &str = "exact_moe_prefill_vector_deepseek41_sm120";
 pub const VARIANTS: [&str; 3] = ["pipe64", "wide128", "decoded128"];
 pub fn symbol(name: &str) -> String {
     format!("{}_vector_v1", name.strip_suffix("_v1").unwrap())

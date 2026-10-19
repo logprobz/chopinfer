@@ -6,7 +6,7 @@ use kernel_core::gated_mlp::GatedMlpProjection;
 use kernels_sm120::moe::chained::quantized::Projection;
 use model_deepseek41_contract::{geometry::FLASH, moe};
 pub const FAMILY: &str = "exact_moe_prefill";
-pub const CUBIN: &str = "exact_moe_prefill_sm120";
+pub const CUBIN: &str = "exact_moe_prefill_deepseek41_sm120";
 pub const CTAS: u32 = 376;
 pub const STAMP_BYTES: u64 = 4 * CTAS as u64 * 8 * 8;
 #[derive(Clone, Copy, Debug)]

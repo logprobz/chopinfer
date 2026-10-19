@@ -3,7 +3,7 @@
 use kernel_build::CubinSpec;
 use kernel_core::gated_mlp::GatedMlpProjection;
 use kernels_sm120::backend::Sm120;
-use kernels_sm120::moe::chained::{LocalRoute, quantized, row_bias};
+use kernels_sm120::moe::chained::{LocalRoute, quantized, row_bias, streamed};
 use kernels_sm120::row::block_quantize::{self, Entry};
 use model_deepseek41_contract::admission::SUPPORTED_RANKS;
 use model_deepseek41_contract::geometry::Geometry;
@@ -12,6 +12,69 @@ use model_deepseek41_contract::serving::{DECODE_BATCH, MAX_VERIFY_ROWS, PREFILL_
 
 pub const FAMILY: &str = "routed_moe";
 pub const ACTIVE_FAMILY: &str = "routed_moe_active";
+pub const STREAMED_FAMILY: &str = "routed_moe_streamed";
+
+/// Unqualified TP4 candidates. Keep the serving crossover below unchanged
+/// until complete graph parity and paired timings qualify these buckets.
+pub fn streamed_projections(g: &Geometry) -> Result<Vec<quantized::Projection>, String> {
+    let mut entries = Vec::new();
+    for set in moe::expert_sets(g) {
+        for tokens in [8, 64] {
+            for kind in [GatedMlpProjection::GateUp, GatedMlpProjection::Down] {
+                let mut entry = quantized::Projection::new(
+                    moe::projection(g, 4, set, kind, tokens)?,
+                    64,
+                    tokens,
+                )
+                .and_then(quantized::Projection::with_streamed_chains)
+                .map_err(|e| e.to_string())?;
+                entry.symbol = format!("{}_{}", g.kernel_tag, entry.symbol);
+                entries.push(entry);
+            }
+        }
+    }
+    Ok(entries)
+}
+
+pub fn streamed_routes(g: &Geometry) -> Vec<row_bias::Route> {
+    moe::expert_sets(g)
+        .into_iter()
+        .flat_map(|set| {
+            [8, 64].map(|capacity| row_bias::Route {
+                local: LocalRoute {
+                    experts: set.count,
+                    local_experts: set.count,
+                    top_k: set.top_k,
+                    capacity,
+                    pad: 64,
+                },
+            })
+        })
+        .collect()
+}
+
+pub fn streamed_cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {
+    let mut specs = Vec::new();
+    for g in geometries {
+        specs.push((
+            STREAMED_FAMILY,
+            streamed::cubin_spec(
+                &format!("streamed_moe_{}_compute_sm120", g.kernel_tag),
+                &streamed_projections(g)?,
+            ),
+        ));
+        specs.push((
+            STREAMED_FAMILY,
+            row_bias::cubin_spec(
+                &format!("streamed_moe_{}_routes_sm120", g.kernel_tag),
+                &[],
+                &streamed_routes(g),
+            )
+            .map_err(|e| e.to_string())?,
+        ));
+    }
+    Ok(specs)
+}
 
 /// Warm SM120 TP4, 250 W, 2026-10-19: Flash gate/up wins only at the
 /// measured one-row bucket (0.162 -> 0.079 ms). At 8/32 rows it takes

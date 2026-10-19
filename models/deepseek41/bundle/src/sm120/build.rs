@@ -128,6 +128,12 @@ pub fn selection(
                 geometry.id,
             ));
         }
+        for part in ["compute", "routes"] {
+            owners.push((
+                format!("streamed_moe_{}_{part}_sm120", geometry.kernel_tag),
+                geometry.id,
+            ));
+        }
         for cubin in routed_sum::cubin_names(geometry) {
             owners.push((cubin, geometry.id));
         }
@@ -165,6 +171,7 @@ pub fn selection(
     specs.extend(compressor_bf16::cubins(geometries).expect("deepseek41 BF16 index-key cubins"));
     specs.extend(moe::cubins(geometries).expect("deepseek41 routed MoE cubins"));
     specs.extend(moe::active_cubins(geometries).expect("active routed MoE cubins"));
+    specs.extend(moe::streamed_cubins(geometries).expect("streamed routed MoE cubins"));
     specs.extend(routed_sum::cubins(geometries).expect("deepseek41 routed sum cubins"));
     specs.extend(dense::cubins(geometries).expect("deepseek41 dense quantizer cubins"));
     specs.extend(f32_head::cubins(geometries).expect("deepseek41 F32 head cubins"));

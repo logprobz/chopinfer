@@ -1,0 +1,10 @@
+[
+  {
+    "name": "streamed_moe_deepseek41_compute_sm120",
+    "source_closure_sha256": "fc80cdc626c3a71a3b4eea496bf2dd2415c9a68ced49be3a8338990d2bb13675"
+  },
+  {
+    "name": "streamed_moe_deepseek41_routes_sm120",
+    "source_closure_sha256": "de9105b3aa57eadb02c981e1374fd7077b2a6f45fa073c6bad6070ca38109275"
+  }
+]

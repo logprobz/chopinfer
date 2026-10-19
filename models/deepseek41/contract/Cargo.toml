@@ -64,3 +64,7 @@ path = "examples/sm120/build_fold_ticket.rs"
 [[example]]
 name = "build_moe_active"
 path = "examples/sm120/build_moe_active.rs"
+
+[[example]]
+name = "build_moe_streamed"
+path = "examples/sm120/build_moe_streamed.rs"

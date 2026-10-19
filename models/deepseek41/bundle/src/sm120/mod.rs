@@ -134,10 +134,12 @@ impl crate::Kernels {
 
     /// Whether an instance loads `cubin` with the program's cubins: every
     /// cubin but the dependency probes, which only the kernel lab launches,
-    /// and the vision encoder's, which only an instance serving the encoder
-    /// loads.
+    /// the unqualified streamed MoE candidates, and the vision encoder's,
+    /// which only an instance serving the encoder loads.
     pub fn loads(cubin: &str) -> bool {
-        cubin != kernels_sm120::probes::CUBIN && !encoder::is_cubin(cubin)
+        cubin != kernels_sm120::probes::CUBIN
+            && !encoder::is_cubin(cubin)
+            && !cubin.starts_with("streamed_moe_")
     }
 
     /// The SM120 backend over the entries the build compiles for `shape`,

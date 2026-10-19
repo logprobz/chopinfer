@@ -449,6 +449,14 @@ mod tests {
                     active
                 );
                 assert!(!kind.down.info().symbols[0].0.ends_with("_active_bw4_v1"));
+                for op in [&kind.gate_up, &kind.down] {
+                    assert!(
+                        op.info()
+                            .symbols
+                            .iter()
+                            .all(|(name, _)| !name.contains("_stream_"))
+                    );
+                }
                 let tile = if matches!(phase, Phase::Decode(_)) {
                     16
                 } else {

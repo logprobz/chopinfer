@@ -1,0 +1,1862 @@
+[
+  {
+    "name": "streamed_moe_deepseek41_compute_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t8_clamp4120000041200000_stream_pack_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t8_clamp4120000041200000_stream_small_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted_rows",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded_rows",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t8_clamp4120000041200000_stream_merge_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e384k6_n5120_k576_r64_t8_stream_pack_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e384k6_n5120_k576_r64_t8_stream_small_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted_rows",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded_rows",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e384k6_n5120_k576_r64_t8_stream_merge_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t64_clamp4120000041200000_stream_pack_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t64_clamp4120000041200000_stream_small_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted_rows",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded_rows",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t64_clamp4120000041200000_stream_wide_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted_rows",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded_rows",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t64_clamp4120000041200000_stream_merge_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e384k6_n5120_k576_r64_t64_stream_pack_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e384k6_n5120_k576_r64_t64_stream_small_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted_rows",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded_rows",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e384k6_n5120_k576_r64_t64_stream_wide_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted_rows",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded_rows",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e384k6_n5120_k576_r64_t64_stream_merge_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e128k3_n1152_k5120_r64_t8_clamp4120000041200000_stream_pack_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e128k3_n1152_k5120_r64_t8_clamp4120000041200000_stream_small_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted_rows",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded_rows",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e128k3_n1152_k5120_r64_t8_clamp4120000041200000_stream_merge_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e128k3_n5120_k576_r64_t8_stream_pack_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e128k3_n5120_k576_r64_t8_stream_small_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted_rows",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded_rows",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e128k3_n5120_k576_r64_t8_stream_merge_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e128k3_n1152_k5120_r64_t64_clamp4120000041200000_stream_pack_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e128k3_n1152_k5120_r64_t64_clamp4120000041200000_stream_small_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted_rows",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded_rows",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e128k3_n1152_k5120_r64_t64_clamp4120000041200000_stream_wide_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted_rows",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded_rows",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e128k3_n1152_k5120_r64_t64_clamp4120000041200000_stream_merge_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e128k3_n5120_k576_r64_t64_stream_pack_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 32,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e128k3_n5120_k576_r64_t64_stream_small_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted_rows",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded_rows",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e128k3_n5120_k576_r64_t64_stream_wide_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "input",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "activation_scales",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted_rows",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "padded_rows",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e128k3_n5120_k576_r64_t64_stream_merge_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "scratch",
+            "cxx_type": "const void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "route_weights",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "071b1793fe00aa69cbca9dfeaada9d602828a949250c3f962da3fc02e3f77203",
+    "resources": [
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t8_clamp4120000041200000_stream_pack_v1",
+        "registers": 36,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t8_clamp4120000041200000_stream_small_v1",
+        "registers": 80,
+        "shared_static_bytes": 3232,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t8_clamp4120000041200000_stream_merge_v1",
+        "registers": 22,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e384k6_n5120_k576_r64_t8_stream_pack_v1",
+        "registers": 36,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e384k6_n5120_k576_r64_t8_stream_small_v1",
+        "registers": 64,
+        "shared_static_bytes": 3232,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e384k6_n5120_k576_r64_t8_stream_merge_v1",
+        "registers": 18,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t64_clamp4120000041200000_stream_pack_v1",
+        "registers": 36,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t64_clamp4120000041200000_stream_small_v1",
+        "registers": 80,
+        "shared_static_bytes": 3232,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t64_clamp4120000041200000_stream_wide_v1",
+        "registers": 164,
+        "shared_static_bytes": 18688,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t64_clamp4120000041200000_stream_merge_v1",
+        "registers": 22,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e384k6_n5120_k576_r64_t64_stream_pack_v1",
+        "registers": 36,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e384k6_n5120_k576_r64_t64_stream_small_v1",
+        "registers": 64,
+        "shared_static_bytes": 3232,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e384k6_n5120_k576_r64_t64_stream_wide_v1",
+        "registers": 96,
+        "shared_static_bytes": 18688,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e384k6_n5120_k576_r64_t64_stream_merge_v1",
+        "registers": 18,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e128k3_n1152_k5120_r64_t8_clamp4120000041200000_stream_pack_v1",
+        "registers": 36,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e128k3_n1152_k5120_r64_t8_clamp4120000041200000_stream_small_v1",
+        "registers": 80,
+        "shared_static_bytes": 3232,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e128k3_n1152_k5120_r64_t8_clamp4120000041200000_stream_merge_v1",
+        "registers": 22,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e128k3_n5120_k576_r64_t8_stream_pack_v1",
+        "registers": 36,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e128k3_n5120_k576_r64_t8_stream_small_v1",
+        "registers": 64,
+        "shared_static_bytes": 3232,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e128k3_n5120_k576_r64_t8_stream_merge_v1",
+        "registers": 18,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e128k3_n1152_k5120_r64_t64_clamp4120000041200000_stream_pack_v1",
+        "registers": 36,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e128k3_n1152_k5120_r64_t64_clamp4120000041200000_stream_small_v1",
+        "registers": 80,
+        "shared_static_bytes": 3232,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e128k3_n1152_k5120_r64_t64_clamp4120000041200000_stream_wide_v1",
+        "registers": 164,
+        "shared_static_bytes": 18688,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e128k3_n1152_k5120_r64_t64_clamp4120000041200000_stream_merge_v1",
+        "registers": 22,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e128k3_n5120_k576_r64_t64_stream_pack_v1",
+        "registers": 36,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 32,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e128k3_n5120_k576_r64_t64_stream_small_v1",
+        "registers": 64,
+        "shared_static_bytes": 3232,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e128k3_n5120_k576_r64_t64_stream_wide_v1",
+        "registers": 96,
+        "shared_static_bytes": 18688,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e128k3_n5120_k576_r64_t64_stream_merge_v1",
+        "registers": 18,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  },
+  {
+    "name": "streamed_moe_deepseek41_routes_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_moe_sqrt_softplus_row_bias_route_decode_e384l384k6_t8_p64_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "alternate_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias_select",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted_rows",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "num_padded_rows",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_tokens",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active_experts",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "scale_bits"
+          }
+        ],
+        "max_threads": 384,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_moe_sqrt_softplus_row_bias_route_select_e384l384k6_t64_p64_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "alternate_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias_select",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_tokens",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "scale_bits"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_moe_sqrt_softplus_row_bias_route_count_e384l384k6_t64_p64_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_tokens",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_moe_sqrt_softplus_row_bias_route_scatter_e384l384k6_t64_p64_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted_rows",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "num_padded_rows",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_tokens",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active_experts",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_moe_sqrt_softplus_row_bias_route_decode_e128l128k3_t8_p64_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "alternate_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias_select",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted_rows",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "num_padded_rows",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_tokens",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active_experts",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          },
+          {
+            "kind": "U32",
+            "name": "scale_bits"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_moe_sqrt_softplus_row_bias_route_select_e128l128k3_t64_p64_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "logits",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "alternate_bias",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "bias_select",
+            "cxx_type": "const uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "scores",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weights",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_tokens",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "scale_bits"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_moe_sqrt_softplus_row_bias_route_count_e128l128k3_t64_p64_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_tokens",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_moe_sqrt_softplus_row_bias_route_scatter_e128l128k3_t64_p64_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "ids",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "counts",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "offsets",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "sorted_rows",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "num_padded_rows",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_tokens",
+            "cxx_type": "const int32_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "active_experts",
+            "cxx_type": "int32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rank"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "f8834464bc0f013e25bf16f0896c9e5b98bb82c367084200c5991072d059ab1b",
+    "resources": [
+      {
+        "symbol": "chop_moe_sqrt_softplus_row_bias_route_decode_e384l384k6_t8_p64_v1",
+        "registers": 64,
+        "shared_static_bytes": 5632,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 384,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_moe_sqrt_softplus_row_bias_route_select_e384l384k6_t64_p64_v1",
+        "registers": 63,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_moe_sqrt_softplus_row_bias_route_count_e384l384k6_t64_p64_v1",
+        "registers": 25,
+        "shared_static_bytes": 2048,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_moe_sqrt_softplus_row_bias_route_scatter_e384l384k6_t64_p64_v1",
+        "registers": 28,
+        "shared_static_bytes": 1060,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_moe_sqrt_softplus_row_bias_route_decode_e128l128k3_t8_p64_v1",
+        "registers": 40,
+        "shared_static_bytes": 2304,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_moe_sqrt_softplus_row_bias_route_select_e128l128k3_t64_p64_v1",
+        "registers": 30,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_moe_sqrt_softplus_row_bias_route_count_e128l128k3_t64_p64_v1",
+        "registers": 23,
+        "shared_static_bytes": 2048,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_moe_sqrt_softplus_row_bias_route_scatter_e128l128k3_t64_p64_v1",
+        "registers": 42,
+        "shared_static_bytes": 1060,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

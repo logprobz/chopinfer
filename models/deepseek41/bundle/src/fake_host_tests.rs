@@ -733,6 +733,10 @@ fn every_geometry_topology_runs_the_fake_host_journal_and_lifecycle() {
             // Each loaded cubin serves the topology's geometry.
             for cubin in host.device.module_cubins.borrow().values() {
                 assert!(
+                    !cubin.starts_with("streamed_moe_"),
+                    "unqualified candidate loaded {cubin}"
+                );
+                assert!(
                     !cubin.starts_with("position_candidates_runtime_"),
                     "default loaded {cubin}"
                 );

@@ -507,6 +507,8 @@ mod tests {
                 Phase::Prefill { rows: 128 },
                 Phase::Prefill { rows: 129 },
                 Phase::Prefill { rows: 1000 },
+                Phase::Prefill { rows: 4095 },
+                Phase::Prefill { rows: 8150 },
                 Phase::Prefill { rows: 8191 },
                 Phase::Verify { rows: 6, items: 1 },
             ] {
@@ -537,10 +539,20 @@ mod tests {
                             )))
                     );
                 } else if phase.prefill() && phase.rows() >= 128 {
-                    assert_eq!(calls.len(), 2);
+                    let split =
+                        crate::sm120::mxfp8_fold::prefill_tail_policy(q).splits(phase.rows());
+                    assert_eq!(calls.len(), if split { 3 } else { 2 });
                     assert!(calls[0].launch.symbol.ends_with("_admit_v1"));
-                    assert!(calls[1].launch.symbol.ends_with("_prefill_tma_v1"));
+                    assert!(calls[1].launch.symbol.ends_with(if split {
+                        "_split_full_v1"
+                    } else {
+                        "_prefill_tma_v1"
+                    }));
                     assert_eq!(calls[1].launch.plan.grid[0], q.n.div_ceil(128));
+                    if split {
+                        assert!(calls[2].launch.symbol.ends_with("_split_tail_v1"));
+                        assert_eq!(calls[2].launch.plan.grid[0], q.n.div_ceil(32));
+                    }
                 } else {
                     assert_eq!(calls.len(), 1);
                     assert!(calls[0].launch.symbol.contains("mxfp8_fold_m8192"));

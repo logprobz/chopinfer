@@ -141,7 +141,10 @@ pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, Strin
         .into_iter()
         .fold(backend, |backend, entry| {
             let backend = if prefill.contains(&entry.symbol) {
-                backend.with_mxfp8_prefill(entry.clone())
+                backend.with_mxfp8_prefill_split_policy(
+                    entry.clone(),
+                    prefill_tail_policy(entry.query),
+                )
             } else {
                 backend
             };
@@ -525,4 +528,30 @@ pub fn prefill_split_cubins(
             ))
         })
         .collect()
+}
+
+/// Paired 250 W measurements (2026-10-19) favor split tails except on
+/// wide q projections and larger grouped o projections. Retain TMA in
+/// their measured regressions and near ties. Between sampled row counts,
+/// use conservative bounds at 16-row fold-tile and chunk boundaries;
+/// these bounds are interpolation, not measured crossover points.
+pub fn prefill_tail_policy(
+    q: Mxfp8FoldGemmQuery,
+) -> kernels_sm120::gemm::mxfp8_prefill_split::TailPolicy {
+    use kernels_sm120::gemm::mxfp8_prefill_split::TailPolicy;
+    match (q.n, q.k, q.groups) {
+        (16384 | 32768, 1280, 1) | (1024, 4096, 8) => TailPolicy {
+            max_tail_rows: 16,
+            ..TailPolicy::ALL
+        },
+        (8192, 1280, 1) => TailPolicy {
+            max_tail_rows: 112,
+            ..TailPolicy::ALL
+        },
+        (1024, 4096, 4) => TailPolicy {
+            max_rows: 1024,
+            ..TailPolicy::ALL
+        },
+        _ => TailPolicy::ALL,
+    }
 }

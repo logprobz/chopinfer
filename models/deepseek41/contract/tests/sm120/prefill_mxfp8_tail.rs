@@ -325,3 +325,83 @@ fn partial_tile_strategies_match_bits_and_time_on_gpu() {
     .unwrap();
     assert!(result.is_some(), "required tail comparison skipped");
 }
+
+#[test]
+fn measured_policy_keeps_known_slow_tails() {
+    let shapes = models();
+    for (rows, expected_splits) in [
+        (128, 0),
+        (129, 20),
+        (1000, 17),
+        (4095, 15),
+        (8150, 16),
+        (8191, 15),
+        (8192, 0),
+    ] {
+        let mut count = 0;
+        for (e, _, _) in &shapes {
+            let policy = registration::prefill_tail_policy(e.query);
+            let op = Sm120::new()
+                .with_mxfp8_prefill_split_policy(e.clone(), policy)
+                .mxfp8_prefill_gemm(&e.query, Need::rows(8192))
+                .unwrap();
+            let calls = op
+                .launches(&views(e, rows), View::EMPTY, Counts::rows(rows))
+                .unwrap();
+            count += usize::from(calls.len() == 3);
+            assert_eq!(calls.len() == 3, policy.splits(rows));
+            assert_eq!(
+                calls[1].symbol,
+                if calls.len() == 3 {
+                    split::symbol(e)
+                } else {
+                    tiled::symbol(e)
+                }
+            );
+        }
+        assert_eq!(count, expected_splits, "rows={rows}");
+    }
+    let e = shapes[0].0.clone();
+    for invalid in [
+        split::TailPolicy {
+            max_rows: 127,
+            max_tail_rows: 127,
+        },
+        split::TailPolicy {
+            max_rows: 8192,
+            max_tail_rows: 0,
+        },
+        split::TailPolicy {
+            max_rows: 8192,
+            max_tail_rows: 128,
+        },
+    ] {
+        assert!(
+            Sm120::new()
+                .with_mxfp8_prefill_split_policy(e.clone(), invalid)
+                .mxfp8_prefill_gemm(&e.query, Need::rows(8192))
+                .is_err()
+        );
+    }
+    let one = split::TailPolicy {
+        max_tail_rows: 16,
+        ..split::TailPolicy::ALL
+    };
+    assert!(one.splits(144));
+    assert!(!one.splits(145));
+    let seven = split::TailPolicy {
+        max_tail_rows: 112,
+        ..split::TailPolicy::ALL
+    };
+    assert!(seven.splits(240));
+    assert!(!seven.splits(241));
+    for entries in [[split::TailPolicy::ALL, one], [one, split::TailPolicy::ALL]] {
+        assert!(
+            Sm120::new()
+                .with_mxfp8_prefill_split_policy(e.clone(), entries[0])
+                .with_mxfp8_prefill_split_policy(e.clone(), entries[1])
+                .mxfp8_prefill_gemm(&e.query, Need::rows(8192))
+                .is_err()
+        );
+    }
+}

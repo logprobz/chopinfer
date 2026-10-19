@@ -31,9 +31,8 @@ and diagnostic text taps use the sequential prefill path.
 
 `CHOPINFER_DEEPSEEK41_PREFILL_OVERLAP=1` enables this candidate;
 `CHOPINFER_DEEPSEEK41_PREFILL_OVERLAP=0` selects the sequential control.
-The default remains sequential pending GPU bitwise checks and paired
-per-chunk timings. CPU ordering and scratch checks are not GPU correctness
-or performance evidence. Mode 1 covers attention reductions only.
+The default remains sequential because the measured attention-only overlap
+gain is below 10 ms per chunk. Mode 1 covers attention reductions only.
 
 ## Two parts across sublayers
 
@@ -77,9 +76,9 @@ Prefix capture remains a committed-chunk operation; no internal part
 endpoint becomes a new capture point. All communication joins precede the
 existing status, commit and capture paths.
 
-This mode remains experimental until full-chunk GPU bitwise comparisons,
-prefix-hit comparisons and paired timings pass. Its CPU ordering checks
-do not establish numerical equality or a speedup.
+The original mode passed full-chunk GPU bitwise and prefix-hit comparisons.
+It remains experimental because its original wall time was slower. CPU
+ordering checks alone do not establish numerical equality or a speedup.
 
 ## BF16 gather after the rank sum
 
@@ -125,10 +124,11 @@ to the measured Flash geometry and retains the residency fallback.
 The attention-only overlap changed the GPU envelope by less than 10 ms
 per chunk. Its second half projection overlaps the first reduction, but
 only about 15 ms of independent projection work is available across all
-layers. The two-part schedule overlaps roughly 425 to 435 ms of compute
-and communication, but increases the envelope about 150 ms. Its 4095/4096
-row parts miss the exact F32 tiled routes, and HC mixing slows during
-concurrent communication. Both overlap modes remain explicit experiments.
+layers. The initial two-part schedule increased the envelope about 150 ms.
+Its 4095/4096-row parts missed the exact F32 tiled routes, and HC mixing
+slowed during concurrent communication. The exact row routes have since
+passed bitwise GPU checks and now select the measured existing tiled entries.
+Both overlap modes remain explicit experiments.
 
 ## Ordered DMA experiment
 
@@ -137,7 +137,8 @@ text-request Flash TP4 autoregressive prefills. It applies to sequential
 execution and the two-part schedule, with at least 512 rows per reduction.
 Shorter parts retain their previous transport. Attention-only overlap,
 media, packed requests, decode, verify and DSpark keep their existing path.
-DMA is off by default pending served qualification and timing.
+DMA is off by default while integration and host-planning changes are
+requalified. The original transport passed served and raw-state comparisons.
 
 Each rank owns a contiguous interval of complete rows. Three ordered rank
 permutations copy F32 partials into local slots indexed by source rank.
@@ -168,3 +169,23 @@ signed zero, subnormal and rounding-tie inputs. Its 8192-row median was
 3.947 ms per reduction, or an estimated 319.7 ms for 81 reductions. Nsight
 confirmed peer DMA traffic and owner-local sum kernels. This estimate
 excludes serving interactions; the served comparison remains required.
+
+The 2026-10-19 served comparison at 250 W passed exact tokens/logprobs,
+full-vocabulary F32 output, prefix snapshots, committed KV and restored
+continuations for all four BF16/DMA and sequential/two-part variants.
+At offset 0, BF16 sequential and DMA sequential GPU envelopes were
+3442.2 and 3251.4 ms; wall times were 3533.4 and 3371.1 ms. DMA two-part
+execution reduced the envelope to 3086.4 ms but took 3557.0 ms wall time.
+At offset 24576, sequential DMA reduced the envelope from 5637.5 to
+5427.5 ms and wall time from 5692.4 to 5500.8 ms. No Xids were recorded.
+
+The two-part host cost came mainly before the first GPU launch. Its strict
+scratch audits resolved and classified the same compute pointer arguments
+inside nested span comparisons. The audits now resolve each launch once
+and retain every intersection check, including peer arrays and tensor-map
+bases. They do not need const-input classification because even read-only
+aliasing is forbidden across these prefill branches. The decode shared-expert
+audit retains its const-input checks. A release CPU fixture reduced part
+construction and DMA auditing from 405.9 to 37.6 ms. This changes no launch,
+event, copy, arithmetic or mutation order; served wall-time confirmation is
+still required.

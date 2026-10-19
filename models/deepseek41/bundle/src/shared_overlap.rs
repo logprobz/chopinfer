@@ -181,18 +181,17 @@ pub(crate) fn bind_shared(
     Ok(())
 }
 
-fn spans(launch: &PreparedLaunch) -> Result<Vec<(DeviceBufferSpanV1, bool)>, String> {
-    let mut spans = Vec::new();
+fn visit_spans(
+    launch: &PreparedLaunch,
+    mut visit: impl FnMut(DeviceBufferSpanV1, usize),
+) -> Result<(), String> {
     let mut add = |id, index| -> Result<(), String> {
         let span = launch
             .bindings
             .get(id)
             .map_err(|e| format!("overlap binding: {e:?}"))?;
         end(span)?;
-        spans.push((
-            span,
-            crate::Kernels::const_input_argument(&launch.symbol, index),
-        ));
+        visit(span, index);
         Ok(())
     };
     for (index, argument) in launch.arguments.0.iter().enumerate() {
@@ -207,6 +206,25 @@ fn spans(launch: &PreparedLaunch) -> Result<Vec<(DeviceBufferSpanV1, bool)>, Str
             _ => {}
         }
     }
+    Ok(())
+}
+
+fn spans(launch: &PreparedLaunch) -> Result<Vec<(DeviceBufferSpanV1, bool)>, String> {
+    let mut spans = Vec::new();
+    visit_spans(launch, |span, index| {
+        spans.push((
+            span,
+            crate::Kernels::const_input_argument(&launch.symbol, index),
+        ));
+    })?;
+    Ok(spans)
+}
+
+fn strict_spans(launch: &PreparedLaunch) -> Result<Vec<DeviceBufferSpanV1>, String> {
+    let mut spans = Vec::new();
+    // Prefill branches may share no bytes, even through const arguments.
+    // Their audit needs resolved views but no argument-access classification.
+    visit_spans(launch, |span, _| spans.push(span))?;
     Ok(spans)
 }
 
@@ -216,15 +234,21 @@ pub(crate) fn disjoint_branches(
     side: &[PreparedLaunch],
     main: &[PreparedLaunch],
 ) -> Result<(), String> {
+    // Resolve each launch once. Repeating this inside the pairwise span
+    // comparison adds hundreds of milliseconds before the first GPU launch.
+    let main = main
+        .iter()
+        .map(|launch| Ok((&launch.symbol, strict_spans(launch)?)))
+        .collect::<Result<Vec<_>, String>>()?;
     for side in side {
-        let side_spans = spans(side)?;
-        for main in main {
-            for &(a, _) in &side_spans {
-                for (b, _) in spans(main)? {
+        let side_spans = strict_spans(side)?;
+        for (symbol, main_spans) in &main {
+            for &a in &side_spans {
+                for &b in main_spans {
                     if intersects(a, b)? {
                         return Err(format!(
                             "unordered scratch alias: {} {a:?} and {} {b:?}",
-                            side.symbol, main.symbol,
+                            side.symbol, symbol,
                         ));
                     }
                 }
@@ -242,8 +266,10 @@ pub(crate) fn disjoint_copy_spans(
 ) -> Result<(), String> {
     for &a in copies {
         end(a)?;
-        for launch in main {
-            for (b, _) in spans(launch)? {
+    }
+    for launch in main {
+        for b in strict_spans(launch)? {
+            for &a in copies {
                 if intersects(a, b)? {
                     return Err(format!(
                         "unordered DMA scratch alias: {a:?} and {} {b:?}",
@@ -407,6 +433,83 @@ mod tests {
     use kernel_core::contract::{ArgumentList, LaunchPlan};
     use model_deepseek41_contract::geometry::FLASH;
     use runtime_bundle_abi::BundleDeviceBufferHandleV1;
+
+    #[test]
+    fn strict_prefill_audits_cover_pointer_arrays_maps_and_invalid_views() {
+        use kernel_core::contract::{
+            TensorMap, TensorMapElement, TensorMapInterleave, TensorMapL2Promotion,
+            TensorMapOobFill, TensorMapSwizzle,
+        };
+        let span = |buffer, offset, length| {
+            DeviceBufferSpanV1::new(
+                BundleDeviceBufferHandleV1::from_parts(buffer, 1),
+                offset,
+                length,
+            )
+        };
+        let launch = |view, kind| {
+            let mut bindings = BufferBindings::default();
+            let id = bindings.bind(view);
+            // Unreferenced views are not accesses and must not enter the audit.
+            bindings.bind(span(7, 128, 128));
+            let pointer = match kind {
+                0 => Argument::DeviceBuffer(id),
+                1 => Argument::DevicePointerArray(vec![id, id]),
+                _ => Argument::TensorMap(TensorMap {
+                    base_buffer: id,
+                    dims: vec![128, 64],
+                    strides_bytes: vec![1, 128],
+                    box_dims: vec![128, 1],
+                    element_strides: vec![1, 1],
+                    swizzle: TensorMapSwizzle::B128,
+                    interleave: TensorMapInterleave::None,
+                    l2_promotion: TensorMapL2Promotion::B256,
+                    oob_fill: TensorMapOobFill::Zero,
+                    element: TensorMapElement::Fp8E4M3,
+                }),
+            };
+            PreparedLaunch {
+                // Even a const input may not alias in the strict prefill audit.
+                symbol: "chop_deepseek41_mxfp8_prefetch_n576_k5120_g1_pair_f32_v3".into(),
+                rows: 1,
+                plan: LaunchPlan {
+                    grid: [1; 3],
+                    block: [32, 1, 1],
+                    cluster: [1; 3],
+                    dynamic_shared_bytes: 0,
+                    workspace_bytes: 0,
+                    pdl: true,
+                },
+                arguments: ArgumentList(vec![pointer]),
+                bindings,
+            }
+        };
+        let side = [launch(span(7, 128, 128), 0)];
+        for kind in 0..3 {
+            for (view, safe) in [
+                (span(7, 256, 128), true),
+                (span(7, 0, 128), true),
+                (span(8, 128, 128), true),
+                (span(7, 128, 0), true),
+                (span(7, 255, 128), false),
+                (span(7, 0, 129), false),
+                (span(7, 128, 128), false),
+                (span(8, u64::MAX, 1), false),
+            ] {
+                let main = [launch(view, kind)];
+                assert_eq!(disjoint_branches(&side, &main).is_ok(), safe);
+                assert_eq!(
+                    disjoint_copy_spans(&[span(7, 128, 128)], &main).is_ok(),
+                    safe
+                );
+            }
+        }
+        let mut missing = launch(span(8, 0, 128), 0);
+        missing.arguments.0 = vec![Argument::DeviceBuffer(u64::MAX)];
+        assert!(disjoint_branches(&side, std::slice::from_ref(&missing)).is_err());
+        assert!(disjoint_copy_spans(&[span(7, 128, 128)], &[missing]).is_err());
+        assert!(disjoint_copy_spans(&[span(8, u64::MAX, 1)], &side).is_err());
+    }
 
     #[test]
     fn shared_overlap_checks_resolved_ranges_before_the_fork() {

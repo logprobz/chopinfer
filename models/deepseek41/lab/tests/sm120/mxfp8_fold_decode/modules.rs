@@ -48,6 +48,11 @@ fn expected() -> LabResult<BTreeMap<String, Expected>> {
             add(symbol)?;
         }
     }
+    for entry in mxfp8_fold::prefetch_catalog(&FLASH)? {
+        for symbol in entry.symbols() {
+            add(symbol)?;
+        }
+    }
     for entry in mxfp8_fold::catalog(&FLASH)?
         .into_iter()
         .filter(|e| e.query.m_capacity == PREFILL_TOKENS)

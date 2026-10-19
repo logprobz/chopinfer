@@ -57,6 +57,7 @@ mod latent_glue;
 
 mod mxfp8_fold;
 mod mxfp8_fold_decode;
+mod mxfp8_fold_prefetch;
 mod mxfp8_fold_ticket;
 mod window_stage;
 

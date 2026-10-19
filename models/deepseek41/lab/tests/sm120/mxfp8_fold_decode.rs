@@ -1,4 +1,5 @@
 //! Paired old/new measurements on every serving Flash dense shape.
+mod concurrent;
 pub(super) mod modules;
 use bundle_deepseek41::sm120::{fold_cubin_for_symbol, mxfp8_fold as registration};
 use kernel_core::backend::{Backend, Counts, Launch, Need, View};
@@ -183,15 +184,22 @@ fn decode_fold_dry_run() {
 }
 
 fn functions(session: &Session, calls: &[Launch]) -> LabResult<Vec<Function>> {
+    #[derive(Default)]
+    struct Cached(std::cell::RefCell<BTreeMap<String, runtime_cuda::Module>>);
+    let cached = session.state(|| Ok(Cached::default()))?;
     calls
         .iter()
         .map(|call| {
-            let (_, bytes) =
+            let (name, bytes) =
                 fold_cubin_for_symbol(&call.symbol).ok_or("missing serving fold cubin")?;
-            session
-                .load_cubin(bytes)?
-                .function(&call.symbol)
-                .map_err(|e| e.to_string())
+            let mut modules = cached.0.borrow_mut();
+            let module = match modules.entry(name.into()) {
+                std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(session.load_cubin(bytes)?)
+                }
+            };
+            module.function(&call.symbol).map_err(|e| e.to_string())
         })
         .collect()
 }
@@ -293,19 +301,33 @@ pub(super) fn compare_with(
     if let Some(ticket) = ticket {
         backend = backend.with_mxfp8_fold_ticket(ticket.clone());
     }
-    let baseline_single = if ticket.is_some() && rows <= 32 && !entry.paired {
+    let prefetch = ticket.is_some_and(|entry| entry.prefetch_weights);
+    let mut baseline_backend = Sm120::new().with_mxfp8_fold_decode(entry.clone());
+    let baseline_query = if prefetch {
+        let previous = registration::ticket_catalog(&FLASH)?
+            .into_iter()
+            .find(|old| old.paired == entry.paired && old.query == ticket.unwrap().query)
+            .ok_or("missing accepted ticket baseline")?;
+        let query = registration::small_query(previous.query, rows);
+        baseline_backend = baseline_backend.with_mxfp8_fold_ticket(previous);
+        query
+    } else {
+        q
+    };
+    let use_split_baseline = ticket.is_some() && (prefetch || rows <= 32);
+    let baseline_single = if use_split_baseline && !entry.paired {
         Some(
-            backend
-                .mxfp8_fold_gemm(&q, Need::rows(rows))
+            baseline_backend
+                .mxfp8_fold_gemm(&baseline_query, Need::rows(rows))
                 .map_err(|e| e.to_string())?,
         )
     } else {
         None
     };
-    let baseline_pair = if ticket.is_some() && rows <= 32 && entry.paired {
+    let baseline_pair = if use_split_baseline && entry.paired {
         Some(
-            backend
-                .mxfp8_fold_gemm_pair(&q, Need::rows(rows))
+            baseline_backend
+                .mxfp8_fold_gemm_pair(&baseline_query, Need::rows(rows))
                 .map_err(|e| e.to_string())?,
         )
     } else {
@@ -593,12 +615,31 @@ pub(super) fn compare_with(
         images[i][status_at..status_at + 4].fill(0);
     }
     upload(&images)?;
+    if prefetch && profile {
+        concurrent::check(
+            session,
+            concurrent::Case {
+                images: &images,
+                buffers: &buffers,
+                bindings: &bindings,
+                calls: &new_calls,
+                functions: &new_functions,
+                baseline_calls: &old_calls,
+                baseline_functions: &old_functions,
+                paired: entry.paired,
+            },
+        )?;
+        upload(&images)?;
+    }
     println!(
         "{}",
         json!({"phase":"bitwise-complete","n":q.n,"k":q.k,"groups":q.groups,"rows":rows,"paired":entry.paired,"ranks":ranks,"bitwise":true})
     );
     let mut record = json!({"n":q.n,"k":q.k,"groups":q.groups,"rows":rows,"paired":entry.paired,"ranks":ranks,
         "bitwise":true,"baseline_launches":old_calls.len(),"decode_launches":new_calls.len()});
+    if prefetch && profile {
+        record["concurrent_replays"] = json!(3);
+    }
     if !timed {
         return Ok(record);
     }
@@ -635,7 +676,20 @@ pub(super) fn compare_with(
         // An identical launch sequence is a retained baseline, not a new
         // implementation subject to a noisy self-comparison timing gate.
         record["same_implementation"] = json!(unchanged);
-        record["routing"] = json!(if unchanged { "split-fold" } else { "ticket" });
+        record["routing"] = json!(if unchanged {
+            "split-fold"
+        } else if prefetch {
+            "prefetch"
+        } else {
+            "ticket"
+        });
+        record["baseline_routing"] = json!(if prefetch && !unchanged {
+            "ticket"
+        } else if rows <= 32 {
+            "split-fold"
+        } else {
+            "prefill"
+        });
         record["no_regression"] = json!(accepts_paired_ratio(paired.paired_ratio, unchanged));
         record["regression_limit_ratio"] = json!(MAX_PAIRED_RATIO);
         record["timing_statistic"] = json!("median of interleaved candidate/baseline ratios");

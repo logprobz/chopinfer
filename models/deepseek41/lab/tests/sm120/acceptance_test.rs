@@ -11,10 +11,21 @@ fn views(op: Acceptance, items: u32) -> AcceptanceBuffers<View> {
         results: v(5, u64::from(items) * 32),
     }
 }
-fn gpu_functions() -> [(&'static str, &'static [u8], &'static str); 2] {
-    let symbol = crate::acceptance_entries::SYMBOL;
+fn gpu_functions(host: bool) -> [(&'static str, &'static [u8], &'static str); 2] {
+    let symbol = if host {
+        bundle_deepseek41::sm120::host_acceptance_entries::SYMBOL
+    } else {
+        crate::acceptance_entries::SYMBOL
+    };
     let (name, bytes) = bundle_deepseek41::sm120::fold_cubin_for_symbol(symbol).unwrap();
-    assert_eq!(name, crate::acceptance_entries::CUBIN);
+    assert_eq!(
+        name,
+        if host {
+            bundle_deepseek41::sm120::host_acceptance_entries::CUBIN
+        } else {
+            crate::acceptance_entries::CUBIN
+        }
+    );
     [
         (name, bytes, symbol),
         (
@@ -30,7 +41,7 @@ fn acceptance_gpu_functions_resolve_in_embedded_cubins() {
     let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
         .join(format!("acceptance-symbols-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
-    for (name, bytes, symbol) in gpu_functions() {
+    for (name, bytes, symbol) in gpu_functions(false).into_iter().chain(gpu_functions(true)) {
         let path = root.join(format!("{name}.cubin"));
         std::fs::write(&path, bytes).unwrap();
         let output = std::process::Command::new(toolchain.home.join("bin/cuobjdump"))
@@ -141,13 +152,54 @@ fn acceptance_preparation_checks_spans_aliases_capacity_and_binding() {
 }
 
 #[test]
+fn host_wire_preparation_keeps_counts_and_spans() {
+    let op = Acceptance {
+        vocab: 100,
+        sample_rows: 12,
+        draft_items: 2,
+        stop_ids: 2,
+    };
+    let mut raw = crate::acceptance::prepare(op, Need::rows(2))
+        .unwrap()
+        .launches(
+            &views(op, 2),
+            View {
+                handle: 0,
+                bytes: 0,
+            },
+            Counts::rows(2),
+        )
+        .unwrap();
+    let host = crate::acceptance::prepare_host(op, Need::rows(2))
+        .unwrap()
+        .launches(
+            &views(op, 2),
+            View {
+                handle: 0,
+                bytes: 0,
+            },
+            Counts::rows(2),
+        )
+        .unwrap();
+    raw[0].symbol = bundle_deepseek41::sm120::host_acceptance_entries::SYMBOL.into();
+    assert_eq!(format!("{raw:?}"), format!("{host:?}"));
+}
+
+#[test]
 fn acceptance_gpu_matches_host_walk_under_poison_graph_and_dependency_replay() {
+    gpu_acceptance(false);
+}
+#[test]
+fn host_acceptance_gpu_matches_host_walk_under_poison_graph_and_dependency_replay() {
+    gpu_acceptance(true);
+}
+fn gpu_acceptance(host: bool) {
     kernel_harness::gpu_test(64 << 20, |session| {
         use kernel_core::contract::DType;
         use kernel_harness::launch::{Bindings, launch};
         use kernel_harness::poison::{LiveProducer, Replay, Rewrites, WriteMap};
         use std::collections::BTreeMap;
-        let [(_, cubin, symbol), (_, probes, producer_symbol)] = gpu_functions();
+        let [(_, cubin, symbol), (_, probes, producer_symbol)] = gpu_functions(host);
         let module = session.load_cubin(cubin)?;
         let probes = session.load_cubin(probes)?;
         let function = module.function(symbol).map_err(|e| e.to_string())?;
@@ -238,7 +290,21 @@ fn acceptance_gpu_matches_host_walk_under_poison_graph_and_dependency_replay() {
                         },
                     )
                     .map_err(|e| e.to_string())?;
-                    let expected: Vec<_> = expected.into_iter().flat_map(|d| d.encode()).collect();
+                    let expected: Vec<_> = expected
+                        .into_iter()
+                        .zip(&descriptors)
+                        .flat_map(|(mut d, item)| {
+                            if host {
+                                if d.failure == BAD_SAMPLE {
+                                    d.failure = 3;
+                                } else if d.failure == EMPTY {
+                                    d.failure = 2;
+                                    d.failure_row -= item.first_sample;
+                                }
+                            }
+                            d.encode()
+                        })
+                        .collect();
                     let images = [
                         descriptors
                             .iter()
@@ -270,8 +336,12 @@ fn acceptance_gpu_matches_host_walk_under_poison_graph_and_dependency_replay() {
                         .collect::<Vec<_>>();
                     let rewrites = Rewrites::new(session, &pairs)?;
                     let output = session.allocate(expected.len() + 32)?;
-                    let prepared = crate::acceptance::prepare(op, Need::rows(count))
-                        .map_err(|e| format!("{e:?}"))?;
+                    let prepared = (if host {
+                        crate::acceptance::prepare_host
+                    } else {
+                        crate::acceptance::prepare
+                    })(op, Need::rows(count))
+                    .map_err(|e| format!("{e:?}"))?;
                     let call = prepared
                         .launches(
                             &views(op, count),

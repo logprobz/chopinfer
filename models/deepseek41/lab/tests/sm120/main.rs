@@ -25,6 +25,7 @@ mod acceptance;
 #[path = "../../../bundle/src/sm120/acceptance_entries.rs"]
 #[allow(dead_code)]
 mod acceptance_entries;
+use bundle_deepseek41::sm120::host_acceptance_entries;
 mod acceptance_test;
 mod compressor;
 #[path = "../../../bundle/src/sm120/dspark.rs"]

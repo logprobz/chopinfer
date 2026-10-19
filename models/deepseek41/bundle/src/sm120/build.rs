@@ -36,6 +36,8 @@ mod hc;
 mod hc_expand_mix;
 #[allow(dead_code)]
 mod hc_round_expand_mix;
+mod host_acceptance_cubin;
+mod host_acceptance_entries;
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod latent;
 #[allow(dead_code)]
@@ -137,6 +139,10 @@ pub fn selection(
     specs.push((
         acceptance_entries::FAMILY,
         acceptance_cubin::cubin_spec(manifest),
+    ));
+    specs.push((
+        host_acceptance_entries::FAMILY,
+        host_acceptance_cubin::cubin_spec(manifest),
     ));
     specs.extend(dspark_aux::cubins(geometries).expect("DSpark auxiliary cubins"));
     specs.extend(dspark_router::cubins(geometries).expect("DSpark router cubins"));

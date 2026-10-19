@@ -42,6 +42,16 @@ pub trait OwnOps: Send + Sync {
         Err(Refused::Unsupported)
     }
 
+    /// Reduce sampler rows into the optional host result wire encoding. Counts::rows is the live item count.
+    fn dspark_host_acceptance(
+        &self,
+        op: &acceptance::Acceptance,
+        need: Need,
+    ) -> Result<Prepared<acceptance::AcceptanceBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
     /// Hash every live target position. Counts::rows is the live row count.
     fn engram_hash(
         &self,
@@ -155,6 +165,15 @@ mod tests {
         let backend = Nothing;
         assert_eq!(backend.name(), "nothing");
         unsupported(backend.dspark_acceptance(
+            &acceptance::Acceptance {
+                vocab: 32,
+                sample_rows: 6,
+                draft_items: 1,
+                stop_ids: 1,
+            },
+            Need::rows(1),
+        ));
+        unsupported(backend.dspark_host_acceptance(
             &acceptance::Acceptance {
                 vocab: 32,
                 sample_rows: 6,

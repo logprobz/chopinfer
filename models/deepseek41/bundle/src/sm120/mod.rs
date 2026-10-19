@@ -65,6 +65,7 @@ pub mod f32_prefill;
 pub mod f32_split;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod hc;
+pub mod host_acceptance_entries;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod indexer;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
@@ -265,7 +266,8 @@ impl crate::Kernels {
         if cubin.starts_with("floor_moe_") || cubin.starts_with("bandwidth_moe_") {
             return false;
         }
-        cubin == engram_hash_entries::CUBIN
+        cubin == host_acceptance_entries::CUBIN
+            || cubin == engram_hash_entries::CUBIN
             || cubin == ring_gather_entries::CUBIN
             || cubin == dspark_router::cubin_name(g)
             || dspark_router::sum_cubins(g)

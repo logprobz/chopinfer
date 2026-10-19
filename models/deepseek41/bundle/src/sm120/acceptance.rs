@@ -8,22 +8,45 @@ use model_deepseek41_contract::own_ops::acceptance::{
 };
 
 pub fn prepare(op: Acceptance, need: Need) -> Result<Prepared<AcceptanceBuffers<View>>, Refused> {
+    prepare_entry(op, need, CONTRACT, SYMBOL)
+}
+
+pub fn prepare_host(
+    op: Acceptance,
+    need: Need,
+) -> Result<Prepared<AcceptanceBuffers<View>>, Refused> {
+    prepare_entry(
+        op,
+        need,
+        "deepseek41.dspark-host-acceptance.u32.v1",
+        super::host_acceptance_entries::SYMBOL,
+    )
+}
+
+fn prepare_entry(
+    op: Acceptance,
+    need: Need,
+    contract: &'static str,
+    symbol: &'static str,
+) -> Result<Prepared<AcceptanceBuffers<View>>, Refused> {
     op.validate(need)?;
     let info = OpInfo::new(
-        CONTRACT,
+        contract,
         Invariance::any_rows(need.capacity),
-        vec![(SYMBOL.into(), 0)],
+        vec![(symbol.into(), 0)],
     );
     need.check(&info)?;
     Ok(Box::new(Reduce {
         op,
         capacity: need.capacity,
+        symbol,
         info,
     }))
 }
 struct Reduce {
     op: Acceptance,
     capacity: u32,
+    symbol: &'static str,
     info: OpInfo,
 }
 impl PreparedOp<AcceptanceBuffers<View>> for Reduce {
@@ -69,7 +92,7 @@ impl PreparedOp<AcceptanceBuffers<View>> for Reduce {
             .map(Argument::U32),
         );
         Ok(vec![Launch {
-            symbol: SYMBOL.into(),
+            symbol: self.symbol.into(),
             rows: counts.rows,
             plan: LaunchPlan {
                 grid: [counts.rows.div_ceil(THREADS), 1, 1],

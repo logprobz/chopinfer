@@ -277,3 +277,18 @@ fn unfinished_peer_copies_apply_bounded_backpressure() {
     );
     f.finish();
 }
+
+#[test]
+fn peer_pool_access_is_retained_until_pending_copies_finish() {
+    let mut f = Fixture::new();
+    f.device
+        .set_memory_pool_peer_access(f.pools[1], f.contexts[0], true)
+        .unwrap();
+    f.copy().unwrap();
+    assert_eq!(f.device.peer_copies.len(), 1);
+    f.device
+        .set_memory_pool_peer_access(f.pools[1], f.contexts[0], false)
+        .unwrap();
+    assert!(f.device.peer_copies.is_empty());
+    f.finish();
+}

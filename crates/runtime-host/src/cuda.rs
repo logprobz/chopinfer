@@ -1221,6 +1221,9 @@ impl HostDeviceBackendV1 for CudaHostDeviceV1 {
         peer_context: DeviceObjectV1,
         enabled: bool,
     ) -> HostDeviceResultV1<()> {
+        if !enabled {
+            self.drain_peer_copies()?;
+        }
         let ordinal = self.context(peer_context)?.device_ordinal();
         self.pool(pool)?
             .set_peer_access(ordinal, enabled)

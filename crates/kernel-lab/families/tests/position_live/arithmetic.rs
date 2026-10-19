@@ -4,9 +4,10 @@ use super::*;
 pub(super) const SEED: u64 = 0x91e1_0da5_c79e_7b1d;
 const KEY_TILE: usize = 2048;
 
-struct Random(u64);
+struct Random(u64, u64);
 impl Random {
     fn next(&mut self) -> u32 {
+        self.1 += 1;
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
         self.0 ^= self.0 << 17;
@@ -29,11 +30,12 @@ pub(super) struct Operands {
     pub weights: Vec<f32>,
     pub codes: Vec<u8>,
     pub scales: Vec<u8>,
+    random_draws: u64,
 }
 impl Operands {
     pub fn new(rows: usize, width: usize, bf16: bool, seed: u64) -> Self {
         assert!(width > 0 && seed != 0);
-        let mut rng = Random(seed);
+        let mut rng = Random(seed, 0);
         let mut queries = vec![0; rows * 32 * 128];
         let mut weights = Vec::with_capacity(rows * 32);
         for row in 0..rows {
@@ -86,6 +88,7 @@ impl Operands {
             weights,
             codes,
             scales,
+            random_draws: rng.1,
         }
     }
     pub fn query_bytes(&self, reverse: bool) -> Vec<u8> {
@@ -317,4 +320,47 @@ fn gpu_arithmetic_reorder_control() {
     })
     .unwrap();
     assert!(result.is_some(), "required arithmetic control skipped");
+}
+
+// v1 evaluated and encoded every channel in a full-capacity BF16 pool for
+// every shape. Keep random work bounded to one tile and copy its bytes.
+#[test]
+fn cpu_full_capacity_fixtures_keep_random_work_bounded() {
+    std::thread::Builder::new()
+        .stack_size(64 * 1024)
+        .spawn(|| {
+            for bf16 in [false, true] {
+                let start = std::time::Instant::now();
+                let full = Operands::new(32, 1 << 20, bf16, SEED);
+                let elapsed = start.elapsed();
+                let tile = Operands::new(32, KEY_TILE, bf16, SEED);
+                assert_eq!(full.random_draws, tile.random_draws);
+                assert_eq!(full.queries, tile.queries);
+                assert_eq!(full.weights, tile.weights);
+                let stride = if bf16 { 256 } else { 64 };
+                assert_eq!(full.codes.len(), (1 << 20) * stride);
+                for position in [0, KEY_TILE - 1, KEY_TILE, 1 << 19, (1 << 20) - 1] {
+                    let original = position % KEY_TILE;
+                    assert_eq!(
+                        full.codes[position * stride..(position + 1) * stride],
+                        tile.codes[original * stride..(original + 1) * stride]
+                    );
+                    if !bf16 {
+                        assert_eq!(
+                            full.scales[position * 4..(position + 1) * 4],
+                            tile.scales[original * 4..(original + 1) * 4]
+                        );
+                    }
+                }
+                println!(
+                    "full-capacity fixture bf16={bf16} bytes={} random_draws={} host_ms={:.3}",
+                    full.codes.len() + full.scales.len(),
+                    full.random_draws,
+                    elapsed.as_secs_f64() * 1000.
+                );
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }

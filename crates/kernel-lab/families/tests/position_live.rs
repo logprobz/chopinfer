@@ -40,6 +40,62 @@ fn cases() -> Vec<(u32, u32)> {
     cases
 }
 
+fn shard(value: Option<&str>) -> LabResult<Option<usize>> {
+    match value {
+        None => Ok(None),
+        Some("0") => Ok(Some(0)),
+        Some("1") => Ok(Some(1)),
+        _ => Err("position matrix shard must be 0 or 1, or unset for all shapes".into()),
+    }
+}
+
+fn selected_cases(shard: Option<usize>) -> Vec<(u32, u32)> {
+    cases()
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, case)| shard.is_none_or(|part| index % 2 == part).then_some(case))
+        .collect()
+}
+
+#[test]
+fn cpu_matrix_shards_cover_every_shape_once() {
+    use std::collections::BTreeSet;
+    let all: BTreeSet<_> = cases().into_iter().collect();
+    let first: BTreeSet<_> = selected_cases(shard(Some("0")).unwrap())
+        .into_iter()
+        .collect();
+    let second: BTreeSet<_> = selected_cases(shard(Some("1")).unwrap())
+        .into_iter()
+        .collect();
+    assert_eq!((all.len(), first.len(), second.len()), (161, 81, 80));
+    assert!(first.is_disjoint(&second));
+    assert_eq!(first.union(&second).copied().collect::<BTreeSet<_>>(), all);
+    for visible in [1024, 8192, 32768, 131072, 1048576] {
+        assert_eq!(
+            first
+                .iter()
+                .filter(|(rows, context)| *rows <= 32 && *context == visible)
+                .count(),
+            16
+        );
+        assert_eq!(
+            second
+                .iter()
+                .filter(|(rows, context)| *rows <= 32 && *context == visible)
+                .count(),
+            16
+        );
+    }
+    assert!(first.contains(&(64, 8192)));
+    assert_eq!(selected_cases(shard(None).unwrap()).len(), 161);
+    for invalid in ["", "2", "-1", "0/2"] {
+        assert!(shard(Some(invalid)).is_err());
+    }
+    println!(
+        "matrix shards retain all 644 storage/shape/ratio cases: 162 and 160 paired shapes per format"
+    );
+}
+
 #[test]
 fn cpu_matrix_and_fixed_grid() {
     if let Some(root) = std::env::var_os("CHOPINFER_POSITION_LIVE_CUBINS") {
@@ -229,12 +285,14 @@ fn paired(
         session,
         buffers: Vec::new(),
     };
+    let host_start = std::time::Instant::now();
     let operands = arithmetic::Operands::new(
         n,
         width as usize,
         bf16,
         arithmetic::SEED ^ (u64::from(rows) << 32) ^ u64::from(context) ^ u64::from(ratio),
     );
+    let fixture_ms = host_start.elapsed().as_secs_f64() * 1000.;
     let queries = a.input(&operands.query_bytes(false))?;
     let weights = a.input(&operands.weight_bytes(false))?;
     let codes = a.input(&operands.codes)?;
@@ -389,6 +447,8 @@ fn paired(
         .iter()
         .map(|seq| session.capture(|_| fire(session, module, &a, seq)))
         .collect::<LabResult<Vec<_>>>()?;
+    let setup_ms = host_start.elapsed().as_secs_f64() * 1000. - fixture_ms;
+    let verify_start = std::time::Instant::now();
     // Reuse each capture while context and live row count shrink and grow.
     for (replay, length) in [context, context.saturating_sub(9), context]
         .into_iter()
@@ -436,6 +496,8 @@ fn paired(
             }
         }
     }
+    let verify_ms = verify_start.elapsed().as_secs_f64() * 1000.;
+    let timing_start = std::time::Instant::now();
     for (arm, seq) in calls.iter().enumerate() {
         // Timings are GPU events around each kernel after an untimed warmup.
         fire(session, module, &a, seq)?;
@@ -453,6 +515,15 @@ fn paired(
             );
         }
     }
+    println!(
+        "{}",
+        serde_json::json!({
+            "measurement":"position_live_host", "rows":rows, "context":context,
+            "bf16":bf16, "ratio":ratio, "fixture_ms":fixture_ms, "setup_ms":setup_ms,
+            "verify_ms":verify_ms, "timing_ms":timing_start.elapsed().as_secs_f64() * 1000.,
+            "wall_ms":host_start.elapsed().as_secs_f64() * 1000.
+        })
+    );
     Ok(())
 }
 
@@ -464,12 +535,15 @@ fn gpu_bitwise_matrix() {
         kernel_build::report::BuildReport::read(&root.join("kernel-build-report.json")).and_then(|r|r.verify_current()).map_err(|e|e.to_string())?;
         let module = session.load_cubin(&std::fs::read(root.join(format!("{}.cubin",family::CUBIN))).map_err(|e|e.to_string())?)?;
         let bf16 = std::env::var("CHOPINFER_POSITION_LIVE_STORAGE").map_err(|e|e.to_string())? == "bf16";
+        let selected = shard(std::env::var("CHOPINFER_POSITION_LIVE_SHARD").ok().as_deref())?;
+        let matrix = selected_cases(selected);
+        let expected = match selected {None => 322, Some(0) => 162, Some(1) => 160, _ => unreachable!()};
         let mut count = 0;
-        for (rows,context) in cases() {
+        for (rows,context) in matrix {
             for ratio in [1,2] { paired(session,&module,rows,context,bf16,ratio)?; count += 1; }
         }
-        assert_eq!(count,322);
-        println!("completed {count} paired shapes; three poisoned runs each, including captured context and row-count changes");
+        assert_eq!(count,expected);
+        println!("completed {count} paired shapes; shard={selected:?}; three poisoned runs each, including captured context and row-count changes");
         Ok(())
     }).unwrap();
     assert!(result.is_some(), "required GPU comparison skipped");

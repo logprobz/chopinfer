@@ -15,6 +15,9 @@ impl Entry {
             .iter()
             .find(|&&(bucket, _)| bucket == rows)
         {
+            if let Some(&(_, tile)) = self.wide_buckets.iter().find(|&&(r, _)| r == rows) {
+                return self.wide_variant(tile, features);
+            }
             if let Some(&(_, tile)) = self
                 .blocked_buckets
                 .iter()
@@ -31,6 +34,7 @@ impl Entry {
             entry.fused = false;
             entry.prefill_buckets.clear();
             entry.blocked_buckets.clear();
+            entry.wide_buckets.clear();
             entry.with_decode()
         } else {
             self.clone()

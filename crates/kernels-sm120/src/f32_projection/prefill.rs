@@ -25,6 +25,7 @@ impl Entry {
         if self
             .blocked_buckets
             .iter()
+            .chain(&self.wide_buckets)
             .any(|&(rows, _)| !self.prefill_buckets.iter().any(|&(r, _)| r == rows))
         {
             return Err(Refusal(
@@ -39,7 +40,9 @@ impl Entry {
     }
 
     pub fn prefill_features(&self) -> u32 {
-        if self.blocked_tile_m != 0 {
+        if self.wide_tile_n != 0 {
+            self.wide_tile_n
+        } else if self.blocked_tile_m != 0 {
             32
         } else {
             self.prefill_tile_n
@@ -86,6 +89,13 @@ impl Entry {
                     .dynamic_shared_bytes;
             }
         }
+        for &(_, tile) in &self.wide_buckets {
+            if super::wide::symbol(self, tile) == symbol {
+                return super::wide::plan(self, tile, 1)
+                    .expect("validated wide tile")
+                    .dynamic_shared_bytes;
+            }
+        }
         0
     }
 
@@ -110,6 +120,9 @@ impl Entry {
     }
 
     pub fn prefill_plan(&self, rows: u32) -> Result<LaunchPlan, Refusal> {
+        if self.wide_tile_n != 0 {
+            return super::wide::plan(self, self.wide_tile_n, rows);
+        }
         if self.blocked_tile_m != 0 {
             return super::blocked::plan(self, self.blocked_tile_m, rows);
         }
@@ -133,7 +146,7 @@ impl Entry {
     }
 
     pub(crate) fn prefill_specs(&self) -> Vec<EntrySpec> {
-        if self.blocked_tile_m != 0 {
+        if self.blocked_tile_m != 0 || self.wide_tile_n != 0 {
             let baseline = Entry::new(
                 self.query,
                 self.usage,
@@ -141,9 +154,12 @@ impl Entry {
             )
             .expect("same validated entry");
             let mut specs = self.prefill_variant(self.prefill_tile_n).prefill_specs();
-            *specs.last_mut().expect("prefill compute") =
+            *specs.last_mut().expect("prefill compute") = if self.wide_tile_n != 0 {
+                super::wide::entry_spec(&baseline, self.wide_tile_n).expect("validated wide tile")
+            } else {
                 super::blocked::entry_spec(&baseline, self.blocked_tile_m)
-                    .expect("validated blocked tile");
+                    .expect("validated blocked tile")
+            };
             return specs;
         }
         let q = self.query;

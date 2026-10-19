@@ -3,6 +3,43 @@ use super::Entry;
 use kernel_build::{CubinSpec, EntrySpec};
 use kernel_core::contract::{LaunchPlan, Refusal, WeightFormat};
 
+impl Entry {
+    /// Replace only measured prefill buckets, retaining their preparation.
+    /// A wide selection takes precedence over an earlier blocked selection.
+    pub fn with_wide_prefill_buckets(
+        mut self,
+        mut buckets: Vec<(u32, u32)>,
+    ) -> Result<Self, Refusal> {
+        buckets.sort_unstable();
+        if !self.fused
+            || self.uses_prefill_tiles()
+            || buckets.windows(2).any(|w| w[0].0 == w[1].0)
+            || buckets.iter().any(|&(rows, tile)| {
+                !self.prefill_buckets.iter().any(|&(r, _)| r == rows)
+                    || plan(&self, tile, rows).is_err()
+            })
+        {
+            return Err(Refusal(
+                "wide prefill requires distinct existing prefill buckets",
+            ));
+        }
+        self.wide_buckets = buckets;
+        Ok(self)
+    }
+    pub fn wide_prefill_features(&self) -> u32 {
+        self.wide_tile_n
+    }
+    pub fn wide_prefill_buckets(&self) -> &[(u32, u32)] {
+        &self.wide_buckets
+    }
+    pub(crate) fn wide_variant(&self, features: u32, preparation: u32) -> Self {
+        let mut entry = self.prefill_variant(preparation);
+        entry.symbol = symbol(self, features);
+        entry.wide_tile_n = features;
+        entry
+    }
+}
+
 pub fn symbol(entry: &Entry, features: u32) -> String {
     format!("{}_wide_m32_n{features}_v1", entry.baseline_symbol())
 }

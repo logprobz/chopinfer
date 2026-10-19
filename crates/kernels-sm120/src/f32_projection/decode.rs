@@ -19,6 +19,12 @@ impl Entry {
     }
 
     pub fn baseline_symbol(&self) -> &str {
+        if self.wide_tile_n != 0 {
+            return self
+                .symbol
+                .strip_suffix(&format!("_wide_m32_n{}_v1", self.wide_tile_n))
+                .expect("wide prefill suffix");
+        }
         if self.blocked_tile_m != 0 {
             return self
                 .symbol
@@ -72,6 +78,12 @@ impl Entry {
                     symbols.push(symbol);
                 }
             }
+            for &(_, tile) in &self.wide_buckets {
+                let symbol = super::wide::symbol(self, tile);
+                if !symbols.contains(&symbol) {
+                    symbols.push(symbol);
+                }
+            }
             return symbols;
         }
         if self.cached {
@@ -106,7 +118,7 @@ impl Entry {
     }
 
     pub fn stage_symbol(&self, suffix: &str) -> String {
-        if self.blocked_tile_m != 0 {
+        if self.blocked_tile_m != 0 || self.wide_tile_n != 0 {
             if suffix.is_empty() {
                 return self.symbol.clone();
             }

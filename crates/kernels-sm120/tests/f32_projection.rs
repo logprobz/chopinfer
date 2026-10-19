@@ -642,3 +642,100 @@ fn blocked_prefill_changes_only_the_measured_compute_launch() {
     }
     assert!(candidate.with_prefill_buckets(vec![(512, 64)]).is_err());
 }
+
+#[test]
+fn wide_prefill_keeps_preparation_and_unmeasured_dispatch() {
+    use kernels_sm120::f32_projection::wide;
+    let original = entry(WeightFormat::Bf16);
+    let q = GemmQuery {
+        m_capacity: 8192,
+        k: 512,
+        ..original.query()
+    };
+    let usage = OperationUse {
+        capacity: 8192,
+        ..original.usage()
+    };
+    let old = Entry::new(q, usage, "wide_route")
+        .unwrap()
+        .with_split_decode()
+        .with_prefill_buckets(vec![(512, 32), (2048, 64), (8192, 64)])
+        .unwrap()
+        .with_blocked_prefill_buckets(vec![(512, 32), (8192, 32)])
+        .unwrap();
+    let new = old
+        .clone()
+        .with_wide_prefill_buckets(vec![(512, 128), (8192, 64)])
+        .unwrap();
+    let source = |e: &Entry| {
+        kernel_build::generate(
+            &f32_projection::cubin_spec("same", std::slice::from_ref(e)).unwrap(),
+        )
+        .unwrap()
+        .translation_unit
+    };
+    assert_eq!(source(&old), source(&new));
+    let prepare = |e: &Entry| {
+        backend(vec![e.clone()])
+            .projection(&operation(e), usage, Need::rows(8192))
+            .unwrap()
+            .handle
+    };
+    let before = prepare(&old);
+    let after = prepare(&new);
+    assert_eq!(before.info().workspace, after.info().workspace);
+    assert_eq!(before.info().guarantees, after.info().guarantees);
+    let mut b = buffers(&new);
+    b.scratch.weight_domain = Some(View {
+        handle: 10,
+        bytes: new.weight_domain_bytes(),
+    });
+    let work = View {
+        handle: 9,
+        bytes: after.info().workspace,
+    };
+    assert_eq!(
+        before.initialize(&b).unwrap(),
+        after.initialize(&b).unwrap()
+    );
+    for rows in [1, 32, 33, 256, 257, 511, 512, 513, 2048, 8191, 8192] {
+        let a = before.launches(&b, work, Counts::rows(rows)).unwrap();
+        let z = after.launches(&b, work, Counts::rows(rows)).unwrap();
+        if let Some((_, features)) = new.wide_prefill_buckets().iter().find(|&&(r, _)| r == rows) {
+            assert_eq!(a.len(), 2);
+            assert_eq!(z.len(), 2);
+            assert_eq!(a[0], z[0]);
+            assert_eq!(a[1].arguments, z[1].arguments);
+            assert_eq!(z[1].symbol, wide::symbol(&old, *features));
+            assert_eq!(z[1].plan, wide::plan(&old, *features, rows).unwrap());
+            assert!(
+                after
+                    .info()
+                    .symbols
+                    .contains(&(z[1].symbol.clone(), z[1].plan.dynamic_shared_bytes))
+            );
+            let selected = new.entry_for_rows(rows);
+            assert_eq!(
+                format!("{:?}", selected.entry_spec()),
+                format!(
+                    "{:?}",
+                    wide::entry_spec(&Entry::new(q, usage, "wide_route").unwrap(), *features)
+                        .unwrap()
+                )
+            );
+            assert_eq!(selected.prefill_features(), *features);
+        } else {
+            assert_eq!(a, z, "rows={rows}");
+        }
+    }
+    for bad in [
+        vec![(256, 64)],
+        vec![(513, 64)],
+        vec![(8193, 64)],
+        vec![(8192, 32)],
+        vec![(8192, 64), (8192, 128)],
+    ] {
+        assert!(old.clone().with_wide_prefill_buckets(bad).is_err());
+    }
+    assert!(new.with_prefill_buckets(vec![(512, 32)]).is_err());
+}

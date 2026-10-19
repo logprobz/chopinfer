@@ -34,6 +34,8 @@ pub struct Entry {
     prefill_buckets: Vec<(u32, u32)>,
     blocked_tile_m: u32,
     blocked_buckets: Vec<(u32, u32)>,
+    wide_tile_n: u32,
+    wide_buckets: Vec<(u32, u32)>,
 }
 
 impl Entry {
@@ -70,6 +72,8 @@ impl Entry {
             prefill_buckets: Vec::new(),
             blocked_tile_m: 0,
             blocked_buckets: Vec::new(),
+            wide_tile_n: 0,
+            wide_buckets: Vec::new(),
         })
     }
     pub fn query(&self) -> GemmQuery {
@@ -217,6 +221,9 @@ pub fn cubin_spec(name: impl Into<String>, entries: &[Entry]) -> Result<CubinSpe
                 && entries.iter().any(Entry::uses_fused_split)
             {
                 headers.push("#include \"gemm/exact_f32_split.cuh\"".into());
+            }
+            if entries.iter().any(|entry| entry.wide_tile_n != 0) {
+                headers.push("#include \"gemm/exact_f32_wide.cuh\"".into());
             }
             if entries.iter().any(|entry| entry.blocked_tile_m != 0) {
                 headers.push("#include \"gemm/exact_f32_blocked.cuh\"".into());

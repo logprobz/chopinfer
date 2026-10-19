@@ -60,7 +60,11 @@ fn exact_f32_classifies_the_head_once_and_splits_decode_without_rescanning_weigh
     assert!(head.iter().any(|line| line.contains("_cached_reduce_v1")));
     // This lifecycle gathers only a few head rows; its longer prompt
     // projections exercise the fused path before gathering the head.
-    assert!(launches.iter().any(|line| line.contains("_split_prepare_v2")));
+    assert!(
+        launches
+            .iter()
+            .any(|line| line.contains("_split_prepare_v2"))
+    );
     for line in &head {
         if line.contains("_split_weights_v2") {
             continue;

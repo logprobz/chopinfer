@@ -2,11 +2,15 @@ The accepted serving profile guarantees a fixed chunk grid (2048 or 8192
 rows), every prompt end, and complete state after each chunk. It restricts
 public prefill captures to those boundaries and publishes complete terminal
 decode state for multi-turn reuse. The exact dependency cone is implemented
-behind the optional bundle declaration. Default profiles retain full execution.
+behind the `prefill_upper_skip` model option, which the default `tp4-ar` and
+`tp4-dspark` profiles set. Their `-full-prefill` profiles keep full execution.
 
 For the implemented 64-row outward alignment, the 32K equal-cost layer-row
 estimate is 20.07% at chunk size 2048 and 42.20% at 8192. These are CPU
-work-count estimates. GPU bitwise equality and measured TTFT remain pending.
+work-count estimates. On 2026-10-19 at TP4 with 8192-row chunks and 250 W, the
+served skip matched the full schedule bitwise in tokens, logprobs and captured
+state, and AR cold TTFT fell from 3.58, 18.97 and 117.4 s to 2.24, 10.84 and
+70.5 s at 8K, 32K and 128K prompts.
 The earlier fixed-schedule and all-choice analyses below remain derivations
 of their respective contracts; their 44.7% estimate does not describe the
 stronger policy that makes every actual chunk end complete.

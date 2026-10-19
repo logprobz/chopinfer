@@ -99,3 +99,7 @@ path = "examples/sm120/build_hc_round_chain.rs"
 [[example]]
 name = "build_confidence_parallel"
 path = "examples/sm120/build_confidence_parallel.rs"
+
+[[example]]
+name = "build_hc_finish_norm"
+path = "examples/sm120/build_hc_finish_norm.rs"

@@ -32,6 +32,7 @@ fn required() -> (Sm120, Vec<Required<'static>>) {
 }
 
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_DEEPSEEK41_FOLD_CUBINS"]
 fn prefetch_fold_dry_run() {
     let mut inventory = modules::check().unwrap();
     inventory["test"] = json!("mxfp8_fold_prefetch::prefetch_fold_gpu");
@@ -191,6 +192,7 @@ fn compare_device(session: &kernel_harness::Session) -> kernel_harness::LabResul
 
 /// The pair job runs one process per GPU so both full matrices fit its deadline.
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_DEEPSEEK41_FOLD_CUBINS"]
 fn prefetch_fold_gpu() {
     if let Some(ordinals) = kernel_harness::selected_ordinals().unwrap() {
         assert_eq!(ordinals.len(), 1, "select one GPU per comparison process");

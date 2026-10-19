@@ -31,7 +31,11 @@ fn op(
     entry.validate()?;
     let legacy = super::mxfp8_fold::prepare(&[entry.legacy()?], query, need)?;
     let mut info = legacy.info().clone();
-    info.implementation = format!("sm120.mxfp8-fold.ticket.v2:{entry:?}");
+    info.implementation = if entry.prefetch_weights {
+        format!("sm120.mxfp8-fold.prefetch.v3:{entry:?}")
+    } else {
+        format!("sm120.mxfp8-fold.ticket.v2:{entry:?}")
+    };
     info.symbols = entry.symbols().into_iter().map(|s| (s, 0)).collect();
     info.workspace = entry.workspace(need.capacity)?;
     if paired {
@@ -173,6 +177,61 @@ mod tests {
     use super::*;
     use crate::backend::Sm120;
     use kernel_core::backend::Backend;
+
+    #[test]
+    fn prefetch_uses_only_the_supplied_workspace_without_growing_it() {
+        for old in crate::gemm::mxfp8_fold::lab_entries() {
+            let q = Mxfp8FoldGemmQuery {
+                m_capacity: 64,
+                ..old.query
+            };
+            for paired in [false, true] {
+                let ticket = Entry::new(q, "ticket_test_v2", paired).unwrap();
+                let prefetch = Entry::new(q, "prefetch_test_v3", paired)
+                    .unwrap()
+                    .with_weight_prefetch();
+                for rows in 0..=64 {
+                    assert_eq!(prefetch.workspace(rows), ticket.workspace(rows));
+                    assert_eq!(prefetch.plans(rows), ticket.plans(rows));
+                }
+                if paired {
+                    continue;
+                }
+                let backend = Sm120::new().with_mxfp8_fold_ticket(prefetch);
+                let op = backend.mxfp8_fold_gemm(&q, Need::rows(64)).unwrap();
+                let bytes = old.bytes(64);
+                let view = |handle, bytes| View { handle, bytes };
+                let buffers = Mxfp8FoldGemmBuffers {
+                    activations: view(1, bytes.activations),
+                    activation_scales: view(2, bytes.activation_scales),
+                    weights: view(3, bytes.weights),
+                    weight_scales: view(4, bytes.weight_scales),
+                    output: view(5, bytes.output),
+                    live_rows: view(6, 4),
+                    status: view(7, bytes.status),
+                    status_row_offset: 0,
+                };
+                for workspace in [11, 31] {
+                    let calls = op
+                        .launches(
+                            &buffers,
+                            view(workspace, op.info().workspace),
+                            Counts::rows(64),
+                        )
+                        .unwrap();
+                    assert_eq!(calls[0].arguments.0[2], Argument::DeviceBuffer(workspace));
+                    assert_eq!(calls[1].arguments.0[8], Argument::DeviceBuffer(workspace));
+                    assert!(calls.iter().all(|call| !call.arguments.0.contains(
+                        &Argument::DeviceBuffer(if workspace == 11 { 31 } else { 11 })
+                    )));
+                }
+                assert!(
+                    op.launches(&buffers, view(5, op.info().workspace), Counts::rows(64))
+                        .is_err()
+                );
+            }
+        }
+    }
 
     #[test]
     fn tickets_cover_every_row_count_and_refuse_uninitialized_workspace() {

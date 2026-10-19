@@ -4,11 +4,26 @@ use kernel_build::{CubinSpec, EntryParam, EntrySpec};
 use kernel_core::contract::{DType, LaunchPlan, Refusal};
 use kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Entry {
     pub query: Mxfp8FoldGemmQuery,
     pub symbol: String,
     pub paired: bool,
+    pub prefetch_weights: bool,
+}
+
+impl std::fmt::Debug for Entry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut entry = f.debug_struct("Entry");
+        entry
+            .field("query", &self.query)
+            .field("symbol", &self.symbol)
+            .field("paired", &self.paired);
+        if self.prefetch_weights {
+            entry.field("prefetch_weights", &true);
+        }
+        entry.finish()
+    }
 }
 
 impl Entry {
@@ -21,9 +36,17 @@ impl Entry {
             query,
             symbol: symbol.into(),
             paired,
+            prefetch_weights: false,
         };
         entry.validate()?;
         Ok(entry)
+    }
+    /// Opt in for persistent weight codes and scales that are ready before
+    /// any PDL predecessor launches. Other inputs and workspace accesses
+    /// remain after the dependency wait.
+    pub fn with_weight_prefetch(mut self) -> Self {
+        self.prefetch_weights = true;
+        self
     }
     pub fn legacy(&self) -> Result<mxfp8_fold::Entry, Refusal> {
         mxfp8_fold::Entry::new(self.query, &self.symbol)
@@ -84,7 +107,11 @@ impl Entry {
     }
     pub fn symbols(&self) -> [String; 2] {
         [
-            format!("{}_initialize_v2", self.symbol),
+            format!(
+                "{}_initialize_v{}",
+                self.symbol,
+                if self.prefetch_weights { 3 } else { 2 }
+            ),
             self.symbol.clone(),
         ]
     }
@@ -121,6 +148,11 @@ impl Entry {
     }
     pub fn specs(&self) -> Vec<EntrySpec> {
         let q = self.query;
+        let namespace = if self.prefetch_weights {
+            "chop::gemm::mxfp8_fold_prefetch"
+        } else {
+            "chop::gemm::mxfp8_fold_ticket"
+        };
         let ptr = |name: &str, ty: &str| EntryParam::DevicePointer {
             name: name.into(),
             cxx_type: ty.into(),
@@ -144,7 +176,7 @@ impl Entry {
                     rows(),
                 ],
                 format!(
-                    "chop::gemm::mxfp8_fold_ticket::initialize<{},{},{},{},{},{},{}>(activations,activation_scales,workspace,live_rows,status,status_row_offset,rows);",
+                    "{namespace}::initialize<{},{},{},{},{},{},{}>(activations,activation_scales,workspace,live_rows,status,status_row_offset,rows);",
                     q.n,
                     q.k,
                     q.groups,
@@ -189,7 +221,7 @@ impl Entry {
                     },
                 ],
                 format!(
-                    "chop::gemm::mxfp8_fold_ticket::run<{},{},{},{},{},{},{},{}>(activations,activation_scales,weights,weight_scales,weights2,weight_scales2,output,output2,workspace,live_rows,rows,folds_per_cta);",
+                    "{namespace}::run<{},{},{},{},{},{},{},{}>(activations,activation_scales,weights,weight_scales,weights2,weight_scales2,output,output2,workspace,live_rows,rows,folds_per_cta);",
                     q.n,
                     q.k,
                     q.groups,
@@ -223,7 +255,11 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> Result<CubinSpec, Refusal> {
         name: name.into(),
         sources_root: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("cuda"),
         include_dirs: vec![],
-        headers: vec!["#include \"gemm/mxfp8_fold_ticket.cuh\"".into()],
+        headers: vec![if entries.iter().any(|entry| entry.prefetch_weights) {
+            "#include \"gemm/mxfp8_fold_prefetch.cuh\"".into()
+        } else {
+            "#include \"gemm/mxfp8_fold_ticket.cuh\"".into()
+        }],
         defines: vec![],
         entries: entries.iter().flat_map(Entry::specs).collect(),
     })

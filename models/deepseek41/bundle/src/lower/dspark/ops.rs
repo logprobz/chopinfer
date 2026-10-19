@@ -136,7 +136,7 @@ pub struct Prepared {
     feature_pack: Op<GatherByIndexBuffers<View>>,
     main_quantize: Op<BlockQuantizeBuffers<View>>,
     main_project: Op<Mxfp8FoldGemmBuffers<View>>,
-    main_project_small: Op<Mxfp8FoldGemmBuffers<View>>,
+    main_project_small: Vec<Op<Mxfp8FoldGemmBuffers<View>>>,
     main_norm: Op<RmsNormBuffers<View>>,
     hidden_quantize: Op<BlockQuantizeBuffers<View>>,
     ring_write: Op<LatentWindowWriteBuffers<View>>,
@@ -186,15 +186,15 @@ impl Prepared {
             execution: BlockScaledExecution::NativeBlockScaledMma,
         };
         let main_project = backend.mxfp8_fold_gemm(&query, need)?;
-        let capacity = crate::Kernels::dense_decode_capacity();
-        let main_project_small = backend.mxfp8_fold_gemm(
-            &Mxfp8FoldGemmQuery {
-                m_capacity: capacity,
-                ..query
-            },
-            Need::rows(capacity)
-                .with_exact(kernel_core::properties::Invariance::any_rows(capacity)),
-        )?;
+        let main_project_small = (1..=crate::Kernels::dense_decode_capacity())
+            .map(|rows| {
+                backend.mxfp8_fold_gemm(
+                    &crate::Kernels::dense_decode_query(query, rows),
+                    Need::rows(rows)
+                        .with_exact(kernel_core::properties::Invariance::any_rows(rows)),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let main_norm = backend.rmsnorm(&row_contract::final_norm(g), need)?;
         let hidden_quantize = backend.block_quantize(
             &BlockQuantizeQuery {
@@ -351,7 +351,6 @@ impl Prepared {
             self.feature_pack.info(),
             self.main_quantize.info(),
             self.main_project.info(),
-            self.main_project_small.info(),
             self.main_norm.info(),
             self.hidden_quantize.info(),
             self.ring_write.info(),
@@ -359,12 +358,12 @@ impl Prepared {
             self.attention.info(),
         ]
         .into_iter()
+        .chain(self.main_project_small.iter().map(|op| op.info()))
         .flat_map(|info| &info.symbols)
     }
 
     pub fn workspace(&self) -> u64 {
         [
-            self.main_project_small.info().workspace,
             self.ring_write.info().workspace,
             self.block_write.info().workspace,
             self.attention.info().workspace,
@@ -372,6 +371,7 @@ impl Prepared {
             self.attention.info().bytes_of("workspace").unwrap_or(0),
         ]
         .into_iter()
+        .chain(self.main_project_small.iter().map(|op| op.info().workspace))
         .max()
         .unwrap_or(0)
     }
@@ -410,7 +410,7 @@ impl Prepared {
             status_row_offset: 0,
         };
         let projection = if count <= crate::Kernels::dense_decode_capacity() {
-            &self.main_project_small
+            &self.main_project_small[count.saturating_sub(1) as usize]
         } else {
             &self.main_project
         };

@@ -423,6 +423,15 @@ mod tests {
         }
     }
 
+    fn expected_family(query: Mxfp8FoldGemmQuery, rows: u32, paired: bool) -> &'static str {
+        use crate::sm120::mxfp8_fold::{DecodePath, decode_path};
+        match decode_path(query, rows, paired) {
+            DecodePath::Split => "mxfp8_decode_",
+            DecodePath::Ticket => "mxfp8_ticket_",
+            DecodePath::Prefetch => "mxfp8_prefetch_",
+        }
+    }
+
     #[test]
     fn tied_dense_buckets_use_split_folds_at_each_topology() {
         for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
@@ -438,11 +447,17 @@ mod tests {
                     "{} {id} rows={rows}",
                     shape.topology()
                 );
-                assert!(op.info().symbols.iter().all(|(s, _)| s.contains(if split {
-                    "mxfp8_decode_"
-                } else {
-                    "mxfp8_prefetch_"
-                })));
+                let q = projections(&shape)
+                    .into_iter()
+                    .find(|d| d.id == *id)
+                    .unwrap()
+                    .query;
+                assert!(
+                    op.info()
+                        .symbols
+                        .iter()
+                        .all(|(s, _)| s.contains(expected_family(q, *rows, false)))
+                );
             }
             assert_eq!(ops.decode.len(), projections(&shape).len() * 64);
         }
@@ -503,11 +518,11 @@ mod tests {
                     assert!(
                         calls
                             .iter()
-                            .all(|call| call.launch.symbol.contains(if split {
-                                "mxfp8_decode_"
-                            } else {
-                                "mxfp8_prefetch_"
-                            }))
+                            .all(|call| call.launch.symbol.contains(expected_family(
+                                q,
+                                phase.rows(),
+                                false
+                            )))
                     );
                 } else if phase.prefill() {
                     assert_eq!(calls.len(), 2);
@@ -530,11 +545,12 @@ mod tests {
                         .project_pair(phase.rows(), &[views, second], workspace)
                         .unwrap();
                     assert_eq!(calls.len(), 2);
-                    assert!(
-                        calls
-                            .iter()
-                            .all(|c| c.launch.symbol.contains("_pair_f32_v3"))
-                    );
+                    assert!(calls.iter().all(|c| {
+                        c.launch.symbol.contains("_pair_f32_")
+                            && c.launch
+                                .symbol
+                                .contains(expected_family(q, phase.rows(), true))
+                    }));
                 }
             }
         }

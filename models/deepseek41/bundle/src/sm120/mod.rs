@@ -144,7 +144,7 @@ impl crate::Kernels {
         query: kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery,
         rows: u32,
     ) -> kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery {
-        mxfp8_fold::small_query(query, rows)
+        mxfp8_fold::routed_query(query, rows)
     }
 
     /// Entries used only by the drafter's smaller expert bank. An AR-only

@@ -105,7 +105,7 @@ fn main_projection_uses_ticket_folds_only_through_sixty_four_rows() {
             Prepared::prepare(kernels.backend.as_ref(), shape, DraftMode::Greedy).unwrap();
         let n = u64::from(shape.geometry.shape.hidden);
         let k = n * shape.geometry.shape.dspark.targets.len() as u64;
-        for count in [1, 6, 48, 64, 65, 8192] {
+        for count in [1, 6, 16, 17, 21, 22, 23, 25, 26, 48, 64, 65, 8192] {
             let rows = u64::from(count);
             let mut views = ops::MainViews {
                 workspace: span(1, prepared.workspace()),
@@ -123,9 +123,14 @@ fn main_projection_uses_ticket_folds_only_through_sixty_four_rows() {
                 status: span(13, rows * 4),
             };
             let launches = prepared.main(count, &views).unwrap();
+            let selected = if matches!(count, 17..=21 | 23..=25) {
+                "mxfp8_prefetch"
+            } else {
+                "mxfp8_ticket"
+            };
             let ticket = launches
                 .iter()
-                .filter(|l| l.launch.symbol.contains("mxfp8_prefetch"))
+                .filter(|l| l.launch.symbol.contains(selected))
                 .count();
             assert_eq!(ticket, if count <= 64 { 2 } else { 0 });
             assert_eq!(launches.len(), if count <= 64 { 5 } else { 4 });

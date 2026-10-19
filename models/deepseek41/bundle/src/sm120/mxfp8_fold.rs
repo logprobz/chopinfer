@@ -16,6 +16,10 @@ use projection_spec::derive::{Topology, rank_selection};
 use std::collections::BTreeMap;
 use std::ops::{Range, RangeInclusive};
 
+#[path = "mxfp8_fold_routing.rs"]
+mod routing;
+pub use routing::{DecodePath, decode_path};
+
 #[derive(Clone, Debug)]
 pub struct Registered {
     pub projection: String,
@@ -143,17 +147,48 @@ pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, Strin
             };
             backend.with_mxfp8_fold(entry)
         });
-    let backend = decode_entries(g, ranks)?
+    let mut backend = backend;
+    // Bind one existing implementation per exact row bucket, independently
+    // for single and paired projections. Capacity is a host bound; it is
+    // absent from these kernels' template parameters and launch arguments.
+    for ((split, ticket), prefetch) in decode_entries(g, ranks)?
         .into_iter()
-        .fold(backend, Sm120::with_mxfp8_fold_decode);
-    Ok(prefetch_entries(g, ranks)?
-        .into_iter()
-        .fold(backend, Sm120::with_mxfp8_fold_ticket))
+        .zip(ticket_entries(g, ranks)?)
+        .zip(prefetch_entries(g, ranks)?)
+    {
+        for rows in 1..=SMALL_CAPACITY {
+            match decode_path(ticket.query, rows, ticket.paired) {
+                DecodePath::Split => {
+                    let mut entry = split.clone();
+                    entry.query = routed_query(entry.query, rows);
+                    backend = backend.with_mxfp8_fold_decode(entry);
+                }
+                path => {
+                    let mut entry = if path == DecodePath::Prefetch {
+                        prefetch.clone()
+                    } else {
+                        ticket.clone()
+                    };
+                    entry.query = routed_query(entry.query, rows);
+                    backend = backend.with_mxfp8_fold_ticket(entry);
+                }
+            }
+        }
+    }
+    Ok(backend)
 }
 
 pub const TICKET_FAMILY: &str = "mxfp8_fold_ticket";
 pub const PREFETCH_FAMILY: &str = "mxfp8_fold_prefetch";
 pub const SMALL_CAPACITY: u32 = 64;
+
+/// Exact graph capacity selects the qualified single or paired registration.
+pub fn routed_query(query: Mxfp8FoldGemmQuery, rows: u32) -> Mxfp8FoldGemmQuery {
+    Mxfp8FoldGemmQuery {
+        m_capacity: rows,
+        ..query
+    }
+}
 
 // Flash SM120, 250 W, 2026-10-19: ticket timings were within 3% of the
 // split-fold baseline on both GPUs. Prefer the baseline for these ties.
@@ -165,8 +200,8 @@ const SPLIT_FOLD_TIES: &[(u32, u32, &[RangeInclusive<u32>])] = &[
     (8192, 1280, &[1..=2, 5..=12, 16..=16]),
 ];
 
-/// Keep split folds for the measured ties and the TP2 one/two-row regression.
-/// Capacity selects an existing family; it does not change the arithmetic.
+/// The accepted ticket baseline: split folds for measured ties and the
+/// TP2 one/two-row regression. The lab also uses this to compare candidates.
 pub fn small_query(query: Mxfp8FoldGemmQuery, rows: u32) -> Mxfp8FoldGemmQuery {
     let tied = query.groups == 1
         && SPLIT_FOLD_TIES.iter().any(|(n, k, ranges)| {

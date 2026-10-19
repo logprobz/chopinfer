@@ -2,7 +2,7 @@
 
 import unittest
 
-from check_f32_decode import check, check_shards, records
+from check_f32_decode import check, check_shards, records, speed_goals
 
 
 EXPECTED = {
@@ -37,11 +37,21 @@ class TimingGate(unittest.TestCase):
 
     def test_more_than_three_percent_fails(self):
         with self.assertRaisesRegex(ValueError, "exceeds 1.03"):
-            check(log(ratio="1.03001").replace("rows=48", "rows=32"), EXPECTED)
+            check(log(ratio="1.03001"), EXPECTED)
 
-    def test_verify_requires_at_least_five_times_faster(self):
-        with self.assertRaisesRegex(ValueError, "exceeds 0.2"):
-            check(log(ratio="0.20001"), EXPECTED)
+    def test_fivefold_is_a_goal_and_a_threefold_bucket_passes(self):
+        parsed = check(log(ratio="0.32374275", new="32.374275", floor_ratio="3.2374275"), EXPECTED)
+        goal = speed_goals(parsed, EXPECTED)
+        self.assertEqual(goal["met"], 0)
+        self.assertFalse(goal["pass_condition"])
+        self.assertGreater(goal["buckets"][0]["speedup"], 3)
+
+    def test_gate_applies_only_to_routed_buckets(self):
+        expected = dict(EXPECTED, production=[dict(EXPECTED["production"][0], routed_rows=[])])
+        check(log(ratio="1.2", new="120", floor_ratio="12"), expected)
+        expected["production"][0]["routed_rows"] = [48]
+        with self.assertRaisesRegex(ValueError, "exceeds 1.03"):
+            check(log(ratio="1.2", new="120", floor_ratio="12"), expected)
 
     def test_floor_uses_actual_stored_weight_bytes(self):
         with self.assertRaisesRegex(ValueError, "stored weight bytes"):

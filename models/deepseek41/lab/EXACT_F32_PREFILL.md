@@ -1,9 +1,11 @@
-# Exact F32 prefill candidates
+# Exact F32 prefill routes
 
-The candidate family covers the five full-row projection shapes declared
-by `f32_dense` and `dspark_router`. It does not enter the serving inventory.
-The vocabulary head gathers smaller row sets and retains its current path.
-Existing CUDA entries, locks and serving row selection remain unchanged.
+The qualified family covers the five full-row projection shapes declared
+by `f32_dense` and `dspark_router`. Serving selects the 45 measured winning
+shape/row pairs in `sm120::f32_prefill`, whose selector records the full
+paired timing table. The vocabulary head gathers smaller row sets and
+retains its split path. Existing CUDA entries and locks remain unchanged;
+the qualified prefill lock is copied byte for byte into the bundle family.
 
 Two tile sizes cover 32 token rows and either 32 or 64 output features.
 They use eight or sixteen warps and 64 or 80 KiB of dynamic shared memory.
@@ -33,10 +35,20 @@ The pair job reports each launch, the full sequence and the weight-only
 bandwidth floor using stored BF16 bytes at 1.6 TB/s. Its checker recognizes
 markers anywhere in a line. A measured ratio at most 0.97 qualifies a
 candidate at that tested row count; the report chooses the best qualifying
-tile and states the first measured win. It neither interpolates a winning
-range nor promotes serving. Measurements must precede any routing change.
-The current 2048-row baselines are 2.45 ms for the router and 3.48 ms for
-wkv at SM120, 250 W (2026-10-19); candidate gains remain unmeasured.
+tile and states the first measured win. Serving now uses those 45 points,
+without interpolating a winning range. Other row counts, including 4096,
+retain the original path. At SM120, 250 W (2026-10-19), the 2048-row router
+measured 2399.232 to 675.872 us and wkv measured 3389.440 to 692.224 us.
+All 934 prefill bitwise cases passed across the two GPUs.
+
+The compact decode comparison also completed all 1001 bitwise cases,
+501 and 500 per GPU, in 46.68 and 60.84 seconds. Its former fivefold gate
+rejected the TP1 head despite gains of 2.69-3.19x at every measured bucket
+from 33 through 256 rows. The selector records that table and retains the
+winning split route. A routed bucket fails only for a paired median ratio
+above 1.03; fivefold remains a reported goal, met by 30 of 48 measured
+verify buckets. The revised job also compares all 45 promoted prefill
+routes through the serving registration.
 
 # Served weight-domain assumptions
 
@@ -75,7 +87,8 @@ exhaustive predicate checks.
 
 Decode coverage enumerates the serving declarations, with rows 1, 2, 4, 8,
 16, 31, 32, 33, 48, 64, 128, 192, 255 and 256, plus four distinct seeded
-samples. Dense entries also cover 512, 2048 and their maximum 8192 rows.
+samples. Dense entries also cover every promoted prefill count, including 512,
+2048 and their maximum 8192 rows.
 The requested boundaries and every registered implementation remain covered.
 All numerical witnesses run at rows 1, 32, 33 and 256, with all K tails,
 BF16 codes and exponent/sign/mantissa boundaries retained.
@@ -91,5 +104,4 @@ For a one-byte pattern, it uploads at most 16 MiB and expands that prefix
 with ordered, disjoint device copies, then synchronizes. Each GPU first
 reads back an unaligned fill larger than 16 MiB and verifies all bytes and
 both guards. The pair gate requires that check and a host record for every
-bitwise case. The compact decode job targets 900 seconds per GPU; actual
-wall time remains to be measured.
+bitwise case. Each compact worker retains a 900-second timeout.

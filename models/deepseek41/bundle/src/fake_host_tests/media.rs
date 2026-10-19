@@ -312,8 +312,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// Parallel ceil bindings add 35 records per rank and select the new
 /// small-row symbols and thread blocks in the text decode after the image.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
-    (Ranks::TP2, (14093, 0x385049ea13f21378)),
-    (Ranks::TP4, (28143, 0x473ec84023fc7bf2)),
+    (Ranks::TP2, (17261, 0x574b5808296229e8)),
+    (Ranks::TP4, (35415, 0x31810c849b64778f)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native
@@ -397,15 +397,6 @@ fn an_image_prefill_journals_at_two_and_four_ranks() {
         assert_eq!(host.acquired.get(), host.released.get(), "{ranks:?}");
         let lines = host.device.journal.borrow().clone();
         let topology = shape.topology();
-        if let Some(dir) = std::env::var_os("CHOPINFER_DEEPSEEK41_GEOMETRY_JOURNAL_DIR") {
-            let dir = std::path::PathBuf::from(dir);
-            std::fs::create_dir_all(&dir).unwrap();
-            std::fs::write(
-                dir.join(format!("{topology}.media.journal")),
-                lines.join("\n"),
-            )
-            .unwrap();
-        }
         // The encoder's entries load with their planned dynamic shared
         // memory, as the program's do.
         assert_launches_fit_configured_shared(&lines, &topology);

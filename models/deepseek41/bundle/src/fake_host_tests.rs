@@ -739,38 +739,40 @@ fn journal_steps(host: &Rc<Host>) {
 
 /// The pinned journal digest of each Flash topology and KV layout. The
 /// workspace includes attention partials at the full token budget; its
-/// allocation and bound span lengths are part of these journals. The
-/// decode mixer adds its split module, partials and zeroed tickets.
+/// allocation and bound span lengths are part of these journals. Decode
+/// combines split mixing, measured projection and expert buckets, live
+/// position selection and parallel ceil operations. Shared expert scratch
+/// is independent of the routed branch throughout each fork/join region.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (12696, 0xaa8ae0ce44bbdb76),
+        (14484, 0x23052ed3dd618092),
     ),
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (12694, 0xc8f9895ddd5c8e53),
+        (14482, 0x09c161337094499e),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (25269, 0x071933a25cdfd58f),
+        (29005, 0x138ec8ad4b1644f2),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (25265, 0x0f0bb2503e8c9880),
+        (29001, 0xc742931cbc66b972),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
-        (50423, 0x5d931fb2dfa4f897),
+        (58831, 0x8efbefd55b8fd7e1),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (50415, 0x479f151d0cd77fab),
+        (58823, 0x5b35536cf88840c0),
     ),
 ];
 
@@ -1541,12 +1543,12 @@ fn an_invalid_quantized_input_refuses_its_step_alone() {
     let mut views = Views::default();
     step(&mut instance, &prompt(9, 1, 0, 3, true), &mut views);
     // Rank 1 flags row 3 in the next step's prefill: its read back follows
-    // the index sources' and rank 0's.
+    // the index sources' and both of rank 0's status planes.
     let mut status = vec![0_u8; 5 * 4];
     status[3 * 4] = 1;
     host.injected.replace(Some(status));
     host.injected_after
-        .set(FLASH.shape.csa.index_sources.len() + 1);
+        .set(FLASH.shape.csa.index_sources.len() + 2);
     let mut refused = Views::default();
     let error = instance
         .execute(&prompt(7, 0, 0, 5, true), &mut refused)

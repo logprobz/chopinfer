@@ -311,9 +311,10 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// The pinned journal digest of the image lifecycle at each rank count.
 /// Parallel ceil bindings add 35 records per rank and select the new
 /// small-row symbols and thread blocks in the text decode after the image.
+/// Image and text prefills below 128 rows use the qualified existing folds.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
-    (Ranks::TP2, (19135, 0xb5830ae7e9384309)),
-    (Ranks::TP4, (39163, 0xfd4952ed7da7176d)),
+    (Ranks::TP2, (18075, 0xe75151645bcfe8c1)),
+    (Ranks::TP4, (37043, 0x03a88d5a9fb30189)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

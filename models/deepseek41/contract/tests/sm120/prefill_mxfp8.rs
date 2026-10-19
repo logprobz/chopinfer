@@ -1,8 +1,10 @@
 //! Exact comparison of every declared prefill dense shape and generic tails.
+#[path = "prefill_mxfp8_launch.rs"]
+mod launch_checks;
 #[path = "../../../bundle/src/sm120/mxfp8_fold.rs"]
 #[allow(dead_code)]
 mod registration;
-use kernel_core::backend::{Backend, Counts, Need, View};
+use kernel_core::backend::{Backend, Counts, Launch, Need, View};
 use kernel_core::contract::{Argument, DType};
 use kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers;
 use kernel_harness::launch::{Bindings, launch};
@@ -10,7 +12,7 @@ use kernel_harness::{Cubins, LabResult, Session};
 use kernels_sm120::backend::Sm120;
 use kernels_sm120::gemm::{mxfp8_fold::Entry, mxfp8_prefill as tiled};
 use model_deepseek41_contract::geometry::GEOMETRIES;
-use runtime_cuda::{Module, Stream};
+use runtime_cuda::{Function, Module, Stream};
 use std::{collections::BTreeMap, path::PathBuf};
 
 fn models() -> Vec<(Entry, String, String)> {
@@ -250,6 +252,127 @@ fn prefill_tma_snapshot_has_every_module_and_symbol() {
         }
     }
 }
+#[test]
+fn prefill_tma_launch_configs_match_function_limits() {
+    if std::env::var_os("CHOPINFER_PREFILL_TMA_CUBINS").is_none() {
+        kernel_harness::skip("prefill launch audit: set CHOPINFER_PREFILL_TMA_CUBINS").unwrap();
+        return;
+    }
+    let mut resources = BTreeMap::new();
+    for file in ["old-model.lock", "new-model.lock", "lab.lock", "probe.lock"] {
+        let cubins: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(root().parent().unwrap().join("locks").join(file)).unwrap(),
+        )
+        .unwrap();
+        for cubin in cubins.as_array().unwrap() {
+            for entry in cubin["resources"].as_array().unwrap() {
+                resources.insert(
+                    (
+                        cubin["name"].as_str().unwrap().to_owned(),
+                        entry["symbol"].as_str().unwrap().to_owned(),
+                    ),
+                    (
+                        entry["max_threads"].as_u64().unwrap() as u32,
+                        entry["shared_static_bytes"].as_u64().unwrap() as u32,
+                    ),
+                );
+            }
+        }
+    }
+    let mut checked = BTreeMap::<String, Vec<String>>::new();
+    let mut check = |module: &str, launch: Launch, shared| {
+        let mut applied = None;
+        launch_checks::configure_shared(shared, |bytes| {
+            applied = Some(bytes);
+            Ok(())
+        })
+        .unwrap();
+        let (max_threads, static_shared) = resources[&(module.to_owned(), launch.symbol.clone())];
+        let at = launch_checks::context(module, &launch, shared);
+        launch_checks::audit(launch.plan, max_threads, static_shared, applied)
+            .unwrap_or_else(|error| panic!("{at}: {error}"));
+        println!(
+            "TMA_CONFIG {at} max_threads={max_threads} static_shared={static_shared} applied={applied:?} PASS"
+        );
+        checked
+            .entry(module.into())
+            .or_default()
+            .push(launch.symbol);
+    };
+    for (entry, old_module, new_module) in entries() {
+        let old = Sm120::new()
+            .with_mxfp8_fold(entry.clone())
+            .mxfp8_fold_gemm(&entry.query, Need::rows(entry.query.m_capacity))
+            .unwrap();
+        let new = Sm120::new()
+            .with_mxfp8_prefill(entry.clone())
+            .mxfp8_prefill_gemm(&entry.query, Need::rows(entry.query.m_capacity))
+            .unwrap();
+        let rows = if entry.query.m_capacity == 8192 {
+            vec![1024, 2048, 8192]
+        } else {
+            vec![1, 17, 128, 257]
+        };
+        for rows in rows {
+            for (op, module) in [(&old, &old_module), (&new, &new_module)] {
+                for launch in op
+                    .launches(&views(&entry, rows), View::EMPTY, Counts::rows(rows))
+                    .unwrap()
+                {
+                    let shared = op
+                        .info()
+                        .symbols
+                        .iter()
+                        .find(|(s, _)| s == &launch.symbol)
+                        .unwrap()
+                        .1;
+                    if entry.query.k == 65536 && launch.symbol == tiled::symbol(&entry) {
+                        let mut control = launch.clone();
+                        control.symbol = tiled::control_symbol(&entry);
+                        check(module, control, shared);
+                    }
+                    check(module, launch, shared);
+                }
+            }
+        }
+    }
+    // The write eviction and gate used by time_ab have no function attributes.
+    for (symbol, grid, block) in [
+        ("chop_probe_gate_v1", [1, 1, 1], [32, 1, 1]),
+        ("chop_probe_flush_v1", [1024, 1, 1], [256, 1, 1]),
+    ] {
+        check(
+            "probe_sm120",
+            Launch {
+                symbol: symbol.into(),
+                rows: 1,
+                plan: kernel_core::contract::LaunchPlan {
+                    grid,
+                    block,
+                    dynamic_shared_bytes: 0,
+                    workspace_bytes: 0,
+                    cluster: [1, 1, 1],
+                    pdl: false,
+                },
+                arguments: kernel_core::contract::ArgumentList(vec![]),
+                collective: false,
+                persistent: false,
+            },
+            0,
+        );
+    }
+    for symbols in checked.values_mut() {
+        symbols.sort();
+        symbols.dedup();
+    }
+    assert_eq!(checked, required_symbols());
+    println!(
+        "TMA_CONFIG_COMPLETE modules={} symbols={}",
+        checked.len(),
+        checked.values().map(Vec::len).sum::<usize>()
+    );
+}
+
 fn random(seed: &mut u32) -> u32 {
     *seed ^= *seed << 13;
     *seed ^= *seed >> 17;
@@ -261,6 +384,25 @@ fn equal(a: &[u8], b: &[u8], label: &str) {
     if let Some(i) = a.iter().zip(b).position(|(x, y)| x != y) {
         panic!("{label}: byte {i}, old {} new {}", a[i], b[i]);
     }
+}
+
+fn configured_function(
+    module: &Module,
+    name: &str,
+    launch: &Launch,
+    shared: u32,
+) -> LabResult<Function> {
+    let at = launch_checks::context(name, launch, shared);
+    let function = module
+        .function(&launch.symbol)
+        .map_err(|error| format!("{at}: resolve: {error}"))?;
+    launch_checks::configure_shared(shared, |bytes| {
+        function
+            .set_max_dynamic_shared_memory(bytes)
+            .map_err(|error| error.to_string())
+    })
+    .map_err(|error| format!("{at}: cuFuncSetAttribute: {error}"))?;
+    Ok(function)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -371,7 +513,8 @@ fn case(
         .with_mxfp8_prefill(e.clone())
         .mxfp8_prefill_gemm(&q, Need::rows(rows))
         .map_err(|e| e.to_string())?;
-    let plans = [old, new]
+    let ops = [old, new];
+    let plans = ops
         .iter()
         .map(|op| {
             op.launches(&b, View::EMPTY, Counts::rows(rows))
@@ -384,9 +527,14 @@ fn case(
             plans[arm]
                 .iter()
                 .map(|l| {
-                    modules[module]
-                        .function(&l.symbol)
-                        .map_err(|e| e.to_string())
+                    let shared = ops[arm]
+                        .info()
+                        .symbols
+                        .iter()
+                        .find(|(symbol, _)| symbol == &l.symbol)
+                        .ok_or_else(|| format!("undeclared function {}", l.symbol))?
+                        .1;
+                    configured_function(&modules[module], module, l, shared)
                 })
                 .collect::<LabResult<Vec<_>>>()?,
         );
@@ -398,9 +546,33 @@ fn case(
             .map(|(i, b)| (i as u64, b))
             .collect(),
     };
+    let arm_context = |arm: usize| {
+        plans[arm]
+            .iter()
+            .map(|l| {
+                launch_checks::context(
+                    [old_module, new_module][arm],
+                    l,
+                    l.plan.dynamic_shared_bytes,
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
+    };
     let fire = |arm: usize, stream: &Stream| {
         for (l, f) in plans[arm].iter().zip(&functions[arm]) {
-            launch(&session.context, f, stream, l.plan, &l.arguments, &bindings)?;
+            launch(&session.context, f, stream, l.plan, &l.arguments, &bindings).map_err(
+                |error| {
+                    format!(
+                        "{}: {error}",
+                        launch_checks::context(
+                            [old_module, new_module][arm],
+                            l,
+                            l.plan.dynamic_shared_bytes
+                        )
+                    )
+                },
+            )?;
         }
         Ok(())
     };
@@ -437,13 +609,17 @@ fn case(
         "eager status",
     );
     let graphs = [
-        session.capture(|s| fire(0, s))?,
-        session.capture(|s| fire(1, s))?,
+        session
+            .capture(|s| fire(0, s))
+            .map_err(|error| format!("capture {}: {error}", arm_context(0)))?,
+        session
+            .capture(|s| fire(1, s))
+            .map_err(|error| format!("capture {}: {error}", arm_context(1)))?,
     ];
     restore()?;
     graphs[1]
         .launch(&session.stream)
-        .map_err(|e| e.to_string())?;
+        .map_err(|error| format!("replay {}: {error}", arm_context(1)))?;
     equal(
         &expected,
         &kernel_harness::poison::read(session, &buffers[4])?,
@@ -459,9 +635,12 @@ fn case(
         let mut ls = plans[1].clone();
         ls[1].symbol = tiled::control_symbol(e);
         for l in ls {
-            let f = modules[new_module]
-                .function(&l.symbol)
-                .map_err(|e| e.to_string())?;
+            let f = configured_function(
+                &modules[new_module],
+                new_module,
+                &l,
+                l.plan.dynamic_shared_bytes,
+            )?;
             launch(
                 &session.context,
                 &f,
@@ -469,7 +648,13 @@ fn case(
                 l.plan,
                 &l.arguments,
                 &bindings,
-            )?;
+            )
+            .map_err(|error| {
+                format!(
+                    "{}: {error}",
+                    launch_checks::context(new_module, &l, l.plan.dynamic_shared_bytes)
+                )
+            })?;
         }
         assert!(
             expected != kernel_harness::poison::read(session, &buffers[4])?,
@@ -488,8 +673,9 @@ fn case(
             1,
             5,
             [kernel_harness::eviction::EvictionMode::Write; 2],
-            |arm, stream| graphs[arm].launch(stream).map_err(|e| e.to_string()),
-        )?;
+            |arm, stream| graphs[arm].launch(stream)
+                .map_err(|error| format!("timed replay {}: {error}", arm_context(arm))),
+        ).map_err(|error| format!("timing old=[{}] new=[{}]; probe gate/flush dynamic_shared=0 cluster=[1,1,1]: {error}", arm_context(0), arm_context(1)))?;
         let flops = 2.0 * f64::from(rows) * f64::from(q.n) * f64::from(q.k) * f64::from(q.groups);
         println!(
             "TMA_TIMING {} rows={rows} old_ms={} new_ms={} ratio={} tflops={} floor_ms={}",
@@ -537,13 +723,15 @@ fn prefill_tma_matches_every_declared_shape_on_gpu() {
             for rows in [1024, 2048, 8192] {
                 case(
                     session, &modules, &e, &old, &new, rows, rows, 0, true, false,
-                )?;
+                )
+                .map_err(|error| format!("shape={:?} rows={rows} live={rows}: {error}", e.query))?;
                 count += 1;
                 timings += 1;
             }
             case(
                 session, &modules, &e, &old, &new, 1024, 1023, 1, false, false,
-            )?;
+            )
+            .map_err(|error| format!("shape={:?} rows=1024 live=1023: {error}", e.query))?;
             count += 1;
         }
         for e in kernel_lab_families::mxfp8_prefill::entries() {
@@ -566,7 +754,8 @@ fn prefill_tma_matches_every_declared_shape_on_gpu() {
                     pattern,
                     false,
                     control,
-                )?;
+                )
+                .map_err(|error| format!("shape={:?} rows={rows} live={live}: {error}", e.query))?;
                 count += 1;
                 negative += usize::from(control);
             }

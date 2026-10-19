@@ -219,7 +219,8 @@ def run(args):
     output = Path(args.output).resolve()
     output.mkdir(parents=True, exist_ok=False)
     result = {"status": "running", "dry_run": args.dry_run, "stage": manifest,
-              "passes": [], "comparisons": {}, "draft_comparisons": {}, "errors": []}
+              "passes": [], "comparisons": {}, "draft_comparisons": {}, "draft_errors": [],
+              "errors": []}
     since = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, p.interrupted)
@@ -291,8 +292,11 @@ def run(args):
                     draft = {name: compare_blocks(drafts[0][name], parsed[name])
                              for name in parsed}
                     result["draft_comparisons"][f"pass-0-pass-{number}"] = draft
+                    # Keep measuring: the speed of a changed drafter is still
+                    # worth reporting, but the job fails at its end.
                     if any(row["differences"] for row in draft.values()):
-                        raise ValueError("drafter proposals or confidence bits differ")
+                        result["draft_errors"].append(f"pass {number}: drafter proposals or "
+                                                      "confidence bits differ")
                 for c in CONCURRENCIES:
                     record["decode"][str(c)] = measure(p, server, c)
                     p.write(output / "summary.json", result)
@@ -303,6 +307,8 @@ def run(args):
         result["drafts_conclusive"] = all(
             row["conclusive"] for compared in result["draft_comparisons"].values()
             for row in compared.values())
+        if result["draft_errors"]:
+            raise ValueError("; ".join(result["draft_errors"]))
         result["status"] = "passed"
     except BaseException as error:
         result["status"] = "failed"

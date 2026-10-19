@@ -45,6 +45,7 @@ fn buffers() -> (Input<'static>, Span, Scratch) {
         },
         span(8, 1 << 20),
         Scratch {
+            weight_domain: None,
             quantizer_status: None,
             quantizer_status_row_offset: 0,
             partial: span(9, 1 << 24),

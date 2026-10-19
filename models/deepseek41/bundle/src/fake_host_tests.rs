@@ -789,39 +789,40 @@ fn journal_steps(host: &Rc<Host>) {
 /// workspace includes attention partials at the full token budget; its
 /// allocation and bound span lengths are part of these journals. Decode
 /// combines split mixing, measured projection and expert buckets, live
-/// position selection and parallel ceil operations. Prefill uses valid
+/// position selection, measured weight prefetch and parallel ceil operations.
+/// Prefill uses valid
 /// candidate work, staged MXFP8 tiles and measured exact F32 row buckets.
 /// Shared expert scratch stays independent across every fork/join region.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (16318, 0xe89075aa6c1ac5f3),
+        (16411, 0x692cfc5dfeadce5b),
     ),
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (16316, 0x78fee6907ac7d037),
+        (16409, 0xb6bef498260f02c2),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (32673, 0x28d7bab1f4392a00),
+        (32859, 0x9784c2273adb1ba8),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (32669, 0x21ac2cfdaca5da0d),
+        (32855, 0x5fc8ec82de8fe1d2),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
-        (66167, 0xefbcf8ee0ba9dd7b),
+        (66539, 0x6c293ad0b71c49d7),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (66159, 0xf7dd963e6ef43eaf),
+        (66531, 0xba903303a18a81b2),
     ),
 ];
 

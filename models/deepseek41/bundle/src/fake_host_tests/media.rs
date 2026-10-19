@@ -312,8 +312,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// Parallel ceil bindings add 35 records per rank and select the new
 /// small-row symbols and thread blocks in the text decode after the image.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
-    (Ranks::TP2, (18949, 0x1419780bc63f5b14)),
-    (Ranks::TP4, (38791, 0x7fc8c0383e8a898a)),
+    (Ranks::TP2, (19135, 0xb5830ae7e9384309)),
+    (Ranks::TP4, (39163, 0xfd4952ed7da7176d)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

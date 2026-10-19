@@ -352,7 +352,12 @@ impl conformance::Startup for Served {
                 ]);
                 configurations.push(entry);
             }
-            configurations.push(serving(&format!("tp4-{mode}-full-prefill"), drafts));
+            let mut full = serving(&format!("tp4-{mode}-full-prefill"), drafts);
+            full.model_options = BTreeMap::from([
+                ("prefill_chunk_tokens".into(), "0".into()),
+                ("prefill_upper_skip".into(), "false".into()),
+            ]);
+            configurations.push(full);
         }
         configurations
     }

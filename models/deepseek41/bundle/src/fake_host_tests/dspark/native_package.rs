@@ -57,6 +57,15 @@ pub extern "C" fn chop_bundle_get_api_v1() -> *const core::ffi::c_void {
     }
 
     fn record(&self, shape: Shape, dtype: BundleKvDtypeV1) -> Vec<u8> {
+        self.record_with_options(shape, dtype, &Default::default())
+    }
+
+    fn record_with_options(
+        &self,
+        shape: Shape,
+        dtype: BundleKvDtypeV1,
+        overrides: &std::collections::BTreeMap<String, String>,
+    ) -> Vec<u8> {
         let manifest = self
             .emitted
             .manifest()
@@ -104,7 +113,7 @@ pub extern "C" fn chop_bundle_get_api_v1() -> *const core::ffi::c_void {
             Some(4),
         );
         record.extend_from_slice(&kv.maximum_sequence_tokens().to_le_bytes());
-        let options = manifest.resolve_model_options(&Default::default()).unwrap();
+        let options = manifest.resolve_model_options(overrides).unwrap();
         let options = serde_json::to_vec(&options).unwrap();
         record.extend_from_slice(runtime_bundle_abi::MODEL_OPTIONS_TAG_V1);
         record.extend_from_slice(&(options.len() as u32).to_le_bytes());
@@ -185,10 +194,38 @@ fn emitted_package_with_speculation_off_keeps_the_full_ar_journal() {
     let legacy_record = crate::config::tests::record(&shape, layout, 4, false);
     let expected = ar_journal(&legacy, &legacy_record);
     let installed = package_host(shape, layout);
-    let record = package.record(shape, BundleKvDtypeV1::MixedPlanes);
+    let record = package.record_with_options(
+        shape,
+        BundleKvDtypeV1::MixedPlanes,
+        &std::collections::BTreeMap::from([
+            ("prefill_chunk_tokens".into(), "0".into()),
+            ("prefill_upper_skip".into(), "false".into()),
+        ]),
+    );
     let actual = ar_journal(&installed, &record);
     assert_eq!(installed.state_bytes.get(), legacy.state_bytes.get());
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn emitted_package_defaults_keep_the_default_profile_ar_journal() {
+    let package = Package::new();
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    let layout = KV_LAYOUTS[0];
+    let profiles: serde_json::Value =
+        serde_json::from_str(model_deepseek41::package::PROFILES).unwrap();
+    let overrides =
+        serde_json::from_value(profiles["profiles"]["tp4-ar"]["model_options"].clone()).unwrap();
+    let explicit = package.record_with_options(shape, BundleKvDtypeV1::MixedPlanes, &overrides);
+    let defaults = package.record(shape, BundleKvDtypeV1::MixedPlanes);
+    assert_eq!(defaults, explicit);
+    let profiled = package_host(shape, layout);
+    let installed = package_host(shape, layout);
+    assert_eq!(
+        ar_journal(&installed, &defaults),
+        ar_journal(&profiled, &explicit)
+    );
+    assert_eq!(installed.state_bytes.get(), profiled.state_bytes.get());
 }
 
 #[test]

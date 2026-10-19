@@ -1,4 +1,5 @@
-//! Opt-in exact prefill scheduling. Missing options preserve legacy execution.
+//! Exact prefill scheduling with the served profiles as package defaults.
+//! Missing options preserve legacy execution for older create records.
 
 use runtime_bundle::model_options::{ModelOptionV1, OptionDefinitionV1};
 use std::collections::BTreeMap;
@@ -17,7 +18,7 @@ pub fn declarations() -> [ModelOptionV1; 2] {
         ModelOptionV1 {
             name: CHUNK.into(),
             definition: OptionDefinitionV1::Integer {
-                default: 0,
+                default: 8192,
                 minimum: 0,
                 maximum: 8192,
             },
@@ -25,7 +26,7 @@ pub fn declarations() -> [ModelOptionV1; 2] {
         },
         ModelOptionV1 {
             name: SKIP.into(),
-            definition: OptionDefinitionV1::Boolean { default: false },
+            definition: OptionDefinitionV1::Boolean { default: true },
             default_is_qualified: true,
         },
     ]
@@ -57,6 +58,67 @@ impl Profile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn declared_options() -> runtime_bundle::model_options::ModelOptionsV1 {
+        runtime_bundle::model_options::ModelOptionsV1 {
+            schema: runtime_bundle::model_options::CAPABILITY.into(),
+            options: declarations().into(),
+        }
+    }
+
+    fn profile_overrides(name: &str) -> BTreeMap<String, String> {
+        let profiles: serde_json::Value =
+            serde_json::from_str(include_str!("../../profiles.json")).unwrap();
+        serde_json::from_value(
+            profiles["profiles"][name]
+                .get("model_options")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({})),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn package_defaults_qualify_the_default_profiles() {
+        let declaration = declared_options();
+        let defaults = declaration.resolve(&BTreeMap::new()).unwrap();
+        assert_eq!(
+            Profile::read(&defaults).unwrap(),
+            Profile {
+                chunk: 8192,
+                skip: true
+            }
+        );
+        for name in ["tp4-ar", "tp4-dspark"] {
+            let resolved = declaration.resolve(&profile_overrides(name)).unwrap();
+            // The profiles already selected these values before they became
+            // package defaults. Their encoded execution options stay equal.
+            assert_eq!(resolved, defaults, "{name}");
+            assert!(declaration.is_qualified(&resolved), "{name}");
+        }
+    }
+
+    #[test]
+    fn diagnostic_profiles_keep_explicit_unqualified_overrides() {
+        let declaration = declared_options();
+        for mode in ["ar", "dspark"] {
+            for (suffix, chunk, skip) in
+                [("full-prefill", 0, false), ("upper-skip-2048", 2048, true)]
+            {
+                let name = format!("tp4-{mode}-{suffix}");
+                let overrides = profile_overrides(&name);
+                assert_eq!(overrides.get(CHUNK), Some(&chunk.to_string()), "{name}");
+                assert_eq!(overrides.get(SKIP), Some(&skip.to_string()), "{name}");
+                let resolved = declaration.resolve(&overrides).unwrap();
+                assert_eq!(
+                    Profile::read(&resolved).unwrap(),
+                    Profile { chunk, skip },
+                    "{name}"
+                );
+                assert!(!declaration.is_qualified(&resolved), "{name}");
+            }
+        }
+    }
+
     #[test]
     fn absent_options_preserve_legacy_and_skip_requires_a_grid() {
         assert_eq!(Profile::read(&BTreeMap::new()).unwrap(), Profile::default());

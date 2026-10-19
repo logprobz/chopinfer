@@ -282,9 +282,9 @@ fn serve_lists_flash_checkpoint_options_without_loading_weights() {
             serde_json::json!({
                 "schema": "chop.model-options.v1",
                 "options": [{"name": "prefill_chunk_tokens", "default_is_qualified": true,
-                         "definition": {"type": "integer", "default": 0, "minimum": 0, "maximum": 8192}},
+                         "definition": {"type": "integer", "default": 8192, "minimum": 0, "maximum": 8192}},
                         {"name": "prefill_upper_skip", "default_is_qualified": true,
-                         "definition": {"type": "boolean", "default": false}},
+                         "definition": {"type": "boolean", "default": true}},
                         {"name": "text_config.candidate_topk_blocks", "default_is_qualified": blocks == 2048,
                          "definition": {"type": "integer", "default": blocks, "minimum": 1, "maximum": 2048}},
                         {"name": "text_config.index_topk", "default_is_qualified": top_k == 512,
@@ -305,8 +305,8 @@ fn serve_lists_flash_checkpoint_options_without_loading_weights() {
                 .resolve_model_options(&overrides)
                 .unwrap();
             let expected = serde_json::json!({
-                "prefill_chunk_tokens": 0,
-                "prefill_upper_skip": false,
+                "prefill_chunk_tokens": 8192,
+                "prefill_upper_skip": true,
                 "text_config.index_topk": override_top_k.unwrap_or(top_k),
                 "text_config.candidate_topk_blocks": blocks,
                 "text_config.indexer_mma": true,

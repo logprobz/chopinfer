@@ -67,7 +67,11 @@
       "status": "experimental",
       "evidence": [
         "models/deepseek41/README.md#qualification"
-      ]
+      ],
+      "model_options": {
+        "prefill_chunk_tokens": "0",
+        "prefill_upper_skip": "false"
+      }
     },
     "tp4-dspark": {
       "bundle_id": "deepseek41.v1",
@@ -133,7 +137,11 @@
       "status": "experimental",
       "evidence": [
         "models/deepseek41/README.md#qualification"
-      ]
+      ],
+      "model_options": {
+        "prefill_chunk_tokens": "0",
+        "prefill_upper_skip": "false"
+      }
     },
     "tp4-ar-upper-skip-2048": {
       "bundle_id": "deepseek41.v1",

@@ -109,6 +109,7 @@ mod moe_route;
 mod multimodal;
 mod mxfp8_fold;
 mod mxfp8_fold_decode;
+mod mxfp8_fold_ticket;
 mod mxfp8_rows;
 pub mod own;
 mod pooled_indexer;
@@ -215,9 +216,14 @@ pub struct Sm120 {
     silu_mul_quantizers: Vec<crate::row::silu_mul_quantize::Entry>,
     mxfp8_folds: Vec<crate::gemm::mxfp8_fold::Entry>,
     mxfp8_fold_decodes: Vec<crate::gemm::mxfp8_fold_decode::Entry>,
+    mxfp8_fold_tickets: Vec<crate::gemm::mxfp8_fold_ticket::Entry>,
 }
 
 impl Sm120 {
+    pub fn with_mxfp8_fold_ticket(mut self, entry: crate::gemm::mxfp8_fold_ticket::Entry) -> Self {
+        self.mxfp8_fold_tickets.push(entry);
+        self
+    }
     pub fn with_mxfp8_fold_decode(mut self, entry: crate::gemm::mxfp8_fold_decode::Entry) -> Self {
         self.mxfp8_fold_decodes.push(entry);
         self
@@ -1053,6 +1059,13 @@ impl Backend for Sm120 {
         need: Need,
     ) -> Result<Prepared<kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers<View>>, Refused> {
         if self
+            .mxfp8_fold_tickets
+            .iter()
+            .any(|e| e.query == *op && !e.paired)
+        {
+            return mxfp8_fold_ticket::prepare(&self.mxfp8_fold_tickets, op, need);
+        }
+        if self
             .mxfp8_fold_decodes
             .iter()
             .any(|e| e.query == *op && !e.paired)
@@ -1067,6 +1080,13 @@ impl Backend for Sm120 {
         op: &kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery,
         need: Need,
     ) -> Result<Prepared<[kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers<View>; 2]>, Refused> {
+        if self
+            .mxfp8_fold_tickets
+            .iter()
+            .any(|e| e.query == *op && e.paired)
+        {
+            return mxfp8_fold_ticket::prepare_pair(&self.mxfp8_fold_tickets, op, need);
+        }
         mxfp8_fold_decode::prepare_pair(&self.mxfp8_fold_decodes, op, need)
     }
 

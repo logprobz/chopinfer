@@ -86,6 +86,58 @@ struct Op {
     info: OpInfo,
 }
 
+pub(super) fn validate_launch(
+    legacy: &Prepared<Mxfp8FoldGemmBuffers<View>>,
+    workspace_bytes: u64,
+    b: &Mxfp8FoldGemmBuffers<View>,
+    second: Option<&Mxfp8FoldGemmBuffers<View>>,
+    workspace: View,
+    counts: Counts,
+) -> Result<(), Refusal> {
+    // Reuse the original op's complete buffer, alias, count and status
+    // offset checks without launching its device entry.
+    legacy.launches(b, View::EMPTY, counts)?;
+    workspace.covers(workspace_bytes)?;
+    let handles = |b: &Mxfp8FoldGemmBuffers<View>| {
+        [
+            b.activations.handle,
+            b.activation_scales.handle,
+            b.weights.handle,
+            b.weight_scales.handle,
+            b.output.handle,
+            b.live_rows.handle,
+            b.status.handle,
+        ]
+    };
+    if handles(b).contains(&workspace.handle) {
+        return Err(Refusal("split MXFP8 workspace aliases a role"));
+    }
+    if let Some(other) = second {
+        legacy.launches(other, View::EMPTY, counts)?;
+        if b.activations != other.activations
+            || b.activation_scales != other.activation_scales
+            || b.live_rows != other.live_rows
+            || b.status != other.status
+            || b.status_row_offset != other.status_row_offset
+        {
+            return Err(Refusal(
+                "paired MXFP8 folds require the same activations and status",
+            ));
+        }
+        if handles(other).contains(&workspace.handle)
+            || handles(other).contains(&b.output.handle)
+            || handles(b).contains(&other.output.handle)
+            || other.weights.handle == b.status.handle
+            || other.weight_scales.handle == b.status.handle
+        {
+            return Err(Refusal(
+                "paired MXFP8 outputs, workspace or status alias another role",
+            ));
+        }
+    }
+    Ok(())
+}
+
 impl Op {
     fn lower(
         &self,
@@ -94,47 +146,14 @@ impl Op {
         workspace: View,
         counts: Counts,
     ) -> Result<Vec<Launch>, Refusal> {
-        // Reuse the original op's complete buffer, alias, count and status
-        // offset checks without launching its device entry.
-        self.legacy.launches(b, View::EMPTY, counts)?;
-        workspace.covers(self.info.workspace)?;
-        let handles = |b: &Mxfp8FoldGemmBuffers<View>| {
-            [
-                b.activations.handle,
-                b.activation_scales.handle,
-                b.weights.handle,
-                b.weight_scales.handle,
-                b.output.handle,
-                b.live_rows.handle,
-                b.status.handle,
-            ]
-        };
-        if handles(b).contains(&workspace.handle) {
-            return Err(Refusal("split MXFP8 workspace aliases a role"));
-        }
-        if let Some(other) = second {
-            self.legacy.launches(other, View::EMPTY, counts)?;
-            if b.activations != other.activations
-                || b.activation_scales != other.activation_scales
-                || b.live_rows != other.live_rows
-                || b.status != other.status
-                || b.status_row_offset != other.status_row_offset
-            {
-                return Err(Refusal(
-                    "paired MXFP8 folds require the same activations and status",
-                ));
-            }
-            if handles(other).contains(&workspace.handle)
-                || handles(other).contains(&b.output.handle)
-                || handles(b).contains(&other.output.handle)
-                || other.weights.handle == b.status.handle
-                || other.weight_scales.handle == b.status.handle
-            {
-                return Err(Refusal(
-                    "paired MXFP8 outputs, workspace or status alias another role",
-                ));
-            }
-        }
+        validate_launch(
+            &self.legacy,
+            self.info.workspace,
+            b,
+            second,
+            workspace,
+            counts,
+        )?;
         let d = |view: View| Argument::DeviceBuffer(view.handle);
         let tail = || {
             vec![

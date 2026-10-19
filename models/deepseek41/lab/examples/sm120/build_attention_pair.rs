@@ -3,6 +3,9 @@
 #[path = "../../../bundle/src/sm120/latent_scheduled.rs"]
 #[allow(dead_code)]
 mod candidate;
+#[path = "../../../bundle/src/sm120/latent_decode.rs"]
+#[allow(dead_code)]
+mod decode_candidate;
 #[path = "../../../bundle/src/sm120/latent_glue.rs"]
 #[allow(dead_code)]
 mod glue;
@@ -63,6 +66,7 @@ fn build_family(
                 "sha256": kernel_build::digest(&bytes),
                 "symbols": spec.entries.iter().map(|e| &e.symbol).collect::<Vec<_>>(),
                 "family": family,
+                "resources": entries,
             }))
         })
         .collect()
@@ -146,6 +150,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         initialize
             && !probe_locks
                 .join(format!("{}.lock", state_probe::FAMILY))
+                .exists(),
+    )?);
+    let g = GEOMETRIES
+        .iter()
+        .find(|g| g.kernel_tag == "deepseek41")
+        .unwrap();
+    modules.extend(build_family(
+        &toolchain,
+        &directory,
+        &locks,
+        decode_candidate::FAMILY,
+        &[decode_candidate::cubin(g)?],
+        initialize
+            && !locks
+                .join(format!("{}.lock", decode_candidate::FAMILY))
                 .exists(),
     )?);
     modules.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));

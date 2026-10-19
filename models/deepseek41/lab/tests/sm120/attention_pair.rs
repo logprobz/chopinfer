@@ -3,6 +3,11 @@
 #[path = "../../../bundle/src/sm120/latent_scheduled.rs"]
 #[allow(dead_code)]
 mod candidate;
+#[path = "attention_pair/decode.rs"]
+mod decode;
+#[path = "../../../bundle/src/sm120/latent_decode.rs"]
+#[allow(dead_code)]
+mod decode_candidate;
 #[path = "attention_pair/fixture.rs"]
 mod fixture;
 #[path = "../../../bundle/src/sm120/latent_glue.rs"]
@@ -53,6 +58,7 @@ fn matrix() -> Vec<Case> {
             [1, 8, 32].into_iter().flat_map(move |sequences| {
                 [false, true].into_iter().flat_map(move |verify| {
                     [0, 1, 2].into_iter().map(move |ratio| Case {
+                        verify_width: 6,
                         context,
                         sequences,
                         verify,
@@ -261,6 +267,7 @@ fn cpu_visibility_and_bandwidth_floor_use_selected_cells() {
     for context in [1, 31, 32, 33, 63, 64, 65, 127, 128, 129, 2047, 2048, 2049] {
         for ratio in [0, 1, 2] {
             let case = Case {
+                verify_width: 6,
                 context,
                 sequences: 1,
                 verify: false,
@@ -321,6 +328,7 @@ fn frozen_modules() {
     specs.extend(candidate::cubins(GEOMETRIES).unwrap());
     specs.push(candidate::query_cubin());
     specs.push(state_probe::cubin().unwrap());
+    specs.push(decode_candidate::cubin(geometry()).unwrap());
     specs.push(kernels_sm120::probes::cubin_spec());
     let records = manifest().unwrap();
     assert_eq!(records.len(), specs.len() + 1);
@@ -477,6 +485,7 @@ fn compare(
 
 fn signed_zero(session: &Session, modules: &Modules) -> LabResult<()> {
     let case = Case {
+        verify_width: 6,
         context: 128,
         sequences: 1,
         verify: false,
@@ -567,6 +576,7 @@ fn gpu_boundaries_and_poison() {
                         session,
                         &modules,
                         Case {
+                            verify_width: 6,
                             context,
                             sequences: 2,
                             verify: true,

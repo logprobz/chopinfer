@@ -36,6 +36,15 @@ pub fn limits() -> LabResult<BTreeMap<String, u32>> {
             *limit = (*limit).max(bytes);
         }
     }
+    for entry in decode_candidate::entries(geometry())? {
+        limits.insert(
+            entry.symbol(),
+            entry
+                .plan(1)
+                .map_err(|e| e.to_string())?
+                .dynamic_shared_bytes,
+        );
+    }
     Ok(limits)
 }
 
@@ -53,7 +62,11 @@ pub fn configure(
     Ok(configured)
 }
 
-fn check(symbol: &str, plan: LaunchPlan, configured: &BTreeMap<String, u32>) -> LabResult<()> {
+pub(super) fn check(
+    symbol: &str,
+    plan: LaunchPlan,
+    configured: &BTreeMap<String, u32>,
+) -> LabResult<()> {
     let limit = configured.get(symbol).copied().unwrap_or(DEFAULT_SHARED);
     if plan.dynamic_shared_bytes > limit {
         return Err(format!(

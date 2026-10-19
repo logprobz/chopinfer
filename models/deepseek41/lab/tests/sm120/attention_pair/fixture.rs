@@ -36,6 +36,7 @@ pub struct Case {
     pub context: usize,
     pub sequences: usize,
     pub verify: bool,
+    pub verify_width: usize,
     /// Zero is window-only, otherwise the compression ratio.
     pub ratio: usize,
     pub holes: bool,
@@ -43,7 +44,7 @@ pub struct Case {
 }
 impl Case {
     pub fn per_sequence(self) -> usize {
-        if self.verify { 6 } else { 1 }
+        if self.verify { self.verify_width } else { 1 }
     }
     pub fn rows(self) -> usize {
         self.sequences * self.per_sequence()

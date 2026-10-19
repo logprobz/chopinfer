@@ -36,7 +36,21 @@ pub(super) fn prepare(
     if entry.mixer.capacity < need.capacity {
         return Err(Refusal("HC finish norm capacity is too small").into());
     }
-    let hc = backend.sinkhorn_round_expand_mix(&query.mixer, need)?;
+    let chains = if backend
+        .finish_norm_chains
+        .iter()
+        .any(|(e, _)| e.reference.query == query.mixer)
+    {
+        &backend.finish_norm_chains
+    } else {
+        &backend.round_chains
+    };
+    let hc = super::sinkhorn_round_expand_mix::prepare(
+        &backend.round_expand_mix,
+        chains,
+        &query.mixer,
+        need,
+    )?;
     let norm = backend.rmsnorm_quantize(&query.norm, need)?;
     let guarantees = Invariance::any_rows(need.capacity);
     if !hc.info().guarantees.provides(guarantees)
@@ -130,10 +144,14 @@ impl PreparedOp<Buffers<View>> for Op {
         if hc.len() != 2
             || norm.len() != 1
             || hc[1].symbol != self.entry.mixer.symbols()[1]
-            || norm[0].symbol != self.entry.norm.symbols()[2]
+            || (norm[0].symbol != self.entry.norm.symbols()[2]
+                && norm[0].symbol != self.entry.norm.reference.symbol)
         {
             return Err(Refusal("qualified HC finish norm launch chain differs"));
         }
+        // Cached and original norm entries share this ABI and exact contract.
+        // The composite validates either before replacing it with the tail;
+        // standalone norm selection need not change for the fused row bucket.
         let finish = hc.pop().unwrap();
         let norm = norm.pop().unwrap();
         if finish.arguments.0.len() != 10 || norm.arguments.0.len() != 10 {

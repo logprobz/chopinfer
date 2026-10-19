@@ -236,6 +236,7 @@ pub struct Sm120 {
     round_expand_mix: Vec<crate::sinkhorn_hc::round_expand_mix::Entry>,
     round_chains: Vec<sinkhorn_round_expand_mix::Chains>,
     finish_norm: Vec<(crate::sinkhorn_hc::finish_norm::Entry, Vec<u32>)>,
+    finish_norm_chains: Vec<sinkhorn_round_expand_mix::Chains>,
     replicated_embeddings: Vec<crate::row::replicated_embedding::Entry>,
     fused_windows: Vec<crate::latent::window_fused::Entry>,
     silu_mul_quantizers: Vec<crate::row::silu_mul_quantize::Entry>,
@@ -315,7 +316,6 @@ impl Sm120 {
         self
     }
 
-    /// Use measured (row bucket, warp count) pairs for the rounded producer.
     /// Select the measured 1024-thread fused tail for explicit row buckets.
     pub fn with_sinkhorn_finish_norm(
         mut self,
@@ -326,6 +326,18 @@ impl Sm120 {
         self
     }
 
+    /// Select producers only inside the fused finish/norm composition.
+    /// Qualification of that pair need not qualify a standalone producer.
+    pub fn with_sinkhorn_finish_norm_chain(
+        mut self,
+        entry: crate::sinkhorn_hc::round_chain_partials::Entry,
+        buckets: Vec<(u32, u32)>,
+    ) -> Self {
+        self.finish_norm_chains.push((entry, buckets));
+        self
+    }
+
+    /// Use measured (row bucket, warp count) pairs for the rounded producer.
     pub fn with_sinkhorn_round_chain(
         mut self,
         entry: crate::sinkhorn_hc::round_chain_partials::Entry,

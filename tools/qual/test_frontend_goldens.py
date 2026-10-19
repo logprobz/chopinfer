@@ -4,6 +4,7 @@ import contextlib
 import copy
 import http.server
 import io
+import hashlib
 import json
 import os
 import threading
@@ -30,7 +31,8 @@ class FakeServer(http.server.ThreadingHTTPServer):
     character codes; `refuse` names prompts answered with HTTP 400."""
 
     def __init__(self, refuse=()):
-        self.refuse, self.requests = set(refuse), []
+        self.refuse = refuse if isinstance(refuse, dict) else dict.fromkeys(refuse, 'refused')
+        self.requests = []
         super().__init__(('127.0.0.1', 0), FakeHandler)
 
     @staticmethod
@@ -58,7 +60,7 @@ class FakeHandler(http.server.BaseHTTPRequestHandler):
         self.server.requests.append(body)
         if 'prompt' in body:
             if body['prompt'] in self.server.refuse:
-                return self.reply(400, {'error': {'message': 'refused'}})
+                return self.reply(400, {'error': {'message': self.server.refuse[body['prompt']]}})
             return self.reply(200, {'tokens': [ord(ch) for ch in body['prompt']]})
         self.reply(200, {'tokens': FakeServer.chat_ids(body['messages'], body.get('tools'),
                                                        body.get('chat_template_kwargs'))})
@@ -67,8 +69,11 @@ class FakeHandler(http.server.BaseHTTPRequestHandler):
 class ServedCapture(unittest.TestCase):
     """--url captures the served frontend for the declared rows and compares it."""
 
-    def run_served(self, served, rows, texts, *, extra=()):
+    def run_served(self, served, rows, texts, *, extra=(), refusals=()):
         config = declared()
+        if refusals:
+            next(check for check in config['checks'] if check['module'] == 'frontend_goldens')[
+                'tokenizer_refusals'] = list(refusals)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             reference = root / 'reference'
@@ -140,6 +145,21 @@ class ServedCapture(unittest.TestCase):
         self.assertEqual((code, report['status']), (1, 'diverged'))
         self.assertEqual(captured['tokenizer-golden.json'][0],
                          {'text': 'ab', 'status': 400, 'error': {'error': {'message': 'refused'}}})
+
+    def test_declared_refusal_is_captured_and_reported_separately(self):
+        text = '<special>'
+        refusal = {'sha256': hashlib.sha256(text.encode()).hexdigest(), 'special_token': text,
+                   'reason': 'Outside the served prompt format.'}
+        message = frontend_goldens.REFUSED_PROMPT_SPECIAL + text
+        code, report, captured = self.run_served(
+            FakeServer(refuse={text: message}), self.reference_rows(),
+            [{'text': 'ab', 'token_ids': [97, 98]}, {'text': text, 'token_ids': [123]}], refusals=[refusal])
+        self.assertEqual((code, report['status']), (0, 'match'))
+        tokens = report['tokenizer-golden.json']
+        self.assertEqual(tokens['matched_rows'], 1)
+        self.assertEqual(tokens['expected_refusals'], [dict(refusal, row=1, status=400,
+                                                         message=message, agrees=True)])
+        self.assertEqual(captured['tokenizer-golden.json'][1]['status'], 400)
 
     def test_a_capture_directory_and_url_are_exclusive(self):
         config = declared()

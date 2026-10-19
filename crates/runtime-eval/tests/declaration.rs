@@ -22,6 +22,41 @@ fn modules() -> Modules {
     Modules::read(&root()).unwrap()
 }
 
+#[test]
+fn tokenizer_refusals_are_scoped_and_identified_by_text_digest() {
+    let mut value = vectors()["base"].clone();
+    value["checks"]["frontend"] = json!({"module": "frontend_goldens", "args": [],
+        "timeout_seconds": 60, "stdout_json": true,
+        "rules": [{"path": ["tokenizer-golden.json", "agrees"], "op": "eq", "value": true, "source": "test"}],
+        "tokenizer_refusals": [{"sha256": "a".repeat(64), "special_token": "<special>", "reason": "Unserved task."}]});
+    declaration::validate(&value, &modules()).unwrap();
+    for (pointer, replacement) in [
+        ("/module", json!("api")),
+        ("/tokenizer_refusals", json!([])),
+        ("/tokenizer_refusals/0/sha256", json!("not-a-digest")),
+        ("/tokenizer_refusals/0/reason", json!("")),
+        ("/tokenizer_refusals/0/reason", json!("two\nlines")),
+        ("/tokenizer_refusals/0/special_token", json!("")),
+        (
+            "/tokenizer_refusals",
+            json!([
+                value["checks"]["frontend"]["tokenizer_refusals"][0],
+                value["checks"]["frontend"]["tokenizer_refusals"][0]
+            ]),
+        ),
+    ] {
+        let mut changed = value.clone();
+        *changed["checks"]["frontend"].pointer_mut(pointer).unwrap() = replacement;
+        let error = declaration::validate(&changed, &modules())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.starts_with("checks.frontend.tokenizer_refusals"),
+            "{error}"
+        );
+    }
+}
+
 /// The vector's base with its values set at JSON pointers, then its
 /// pointers removed.
 fn mutated(base: &Value, case: &Value) -> Value {

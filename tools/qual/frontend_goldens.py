@@ -258,19 +258,51 @@ def api(ours, theirs):
 
 
 REFUSED_MEDIA = "this bundle does not support media inputs"
+REFUSED_PROMPT_SPECIAL = "prompt contains a special token the model does not admit in prompts: "
+
+
+def refusal_message(row):
+    error = row.get("error")
+    error = error.get("error") if isinstance(error, dict) else None
+    return error.get("message") if isinstance(error, dict) else None
 
 
 def media_refused(row):
-    error = (row.get("error") or {}).get("error") or {}
-    return row.get("status") == 400 and error.get("message") == REFUSED_MEDIA
+    return row.get("status") == 400 and refusal_message(row) == REFUSED_MEDIA
 
 
-def identical_ids(ours, theirs, key):
-    mismatches = [index for index, (a, b) in enumerate(zip(ours, theirs))
-                  if a.get("token_ids") != b.get("token_ids")]
+def identical_ids(ours, theirs, key, expected_refusals=()):
+    declared = {}
+    if expected_refusals and key != "tokenizer-golden.json":
+        raise ValueError("expected tokenizer refusals apply only to tokenizer-golden.json")
+    for refusal in expected_refusals:
+        sha = refusal["sha256"]
+        if sha in declared:
+            raise ValueError("duplicate expected tokenizer refusal")
+        matches = [row for row in theirs if hashlib.sha256(row["text"].encode()).hexdigest() == sha]
+        if len(matches) != 1 or refusal["special_token"] not in matches[0]["text"]:
+            raise ValueError("expected tokenizer refusal must name one golden text containing its special token")
+        declared[sha] = refusal
+    mismatches, expected, matched = [], [], 0
+    for index, (a, b) in enumerate(zip(ours, theirs)):
+        sha = hashlib.sha256(b["text"].encode()).hexdigest() if declared else None
+        if sha in declared:
+            refusal = declared[sha]
+            message = refusal_message(a)
+            agrees = (a.get("text") == b["text"] and a.get("status") == 400
+                      and message == REFUSED_PROMPT_SPECIAL + refusal["special_token"])
+            expected.append({**refusal, "row": index, "status": a.get("status"),
+                             "message": message, "agrees": agrees})
+        else:
+            agrees = a.get("status", 200) == 200 and a.get("token_ids") == b.get("token_ids")
+            matched += int(agrees)
+        if not agrees:
+            mismatches.append(index)
     refused = [index for index in mismatches if media_refused(ours[index])]
     return {"rows": len(ours), "mismatches": mismatches[:20], "media_refused": refused,
-            "agrees": not mismatches and len(ours) == len(theirs), "key": key, "reference_rows": len(theirs)}
+            "matched_rows": matched, "expected_refusals": expected,
+            "agrees": not mismatches and len(ours) == len(theirs) and len(expected) == len(declared),
+            "key": key, "reference_rows": len(theirs)}
 
 
 def compare():
@@ -344,7 +376,8 @@ def compare():
         data = reference_bytes(config, key, path) if path.exists() else None
         theirs = json.loads(data) if data is not None else None
         if ours and theirs:
-            report[name] = identical_ids(ours, theirs, name)
+            report[name] = identical_ids(ours, theirs, name, check.get("tokenizer_refusals", [])
+                                         if name == "tokenizer-golden.json" else [])
             bindings[name] = {"input": "frontend_capture" if name == "chat-renders.json" else "tokenizer_goldens",
                               "file": name if name == "chat-renders.json" else "",
                               "sha256": hashlib.sha256(data).hexdigest(), "rows": len(theirs)}

@@ -131,7 +131,12 @@ native KV layout, which `/health` reports as `mixed` (what
   `template_source` and `model_reference` render and tokenize them on CPU
   through `frontend_cases.py` and the pinned checkpoint encoder. API reads
   the same `tools-00` conversation; the frontend gate requires equality
-  for both the tokenizer and chat files.
+  for both the tokenizer and chat files, except for the two text digests in
+  the check's `tokenizer_refusals`: FIM and the encoder's action task are
+  outside the served prompt format. Those rows require the specific HTTP
+  400 prompt-special-token refusal. The chat generator uses the same
+  request builder as the check, so disabled thinking reaches the vendor
+  encoder through the frontend's declared thinking object.
   From the repository root, with the configured checkpoint and reference
   Python, regenerate and verify the chat fixture on CPU:
 

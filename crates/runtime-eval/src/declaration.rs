@@ -28,7 +28,7 @@ pub const CHECKPOINT_KEYS: [&str; 5] = [
     "source_lock_sha256",
     "checkpoint_identity",
 ];
-const CHECK_FIELDS: [&str; 15] = [
+const CHECK_FIELDS: [&str; 16] = [
     "module",
     "args",
     "timeout_seconds",
@@ -44,6 +44,7 @@ const CHECK_FIELDS: [&str; 15] = [
     "cohort_args",
     "informational_reason",
     "waivers",
+    "tokenizer_refusals",
 ];
 /// The metrics a category waiver may name: a teacher category's spread.
 pub const WAIVER_METRICS: [&str; 4] = [
@@ -471,6 +472,30 @@ fn check(
     };
     if let Some(value) = map.get("waivers") {
         waivers(value, &format!("{field}.waivers"), module, &predicates)?;
+    }
+    if let Some(value) = map.get("tokenizer_refusals") {
+        let at = format!("{field}.tokenizer_refusals");
+        if module != "frontend_goldens" {
+            return fail(&at, "belongs only to frontend_goldens");
+        }
+        let Some(items) = value.as_array().filter(|items| !items.is_empty()) else {
+            return fail(&at, "must be a nonempty list of expected refusals");
+        };
+        let mut seen = std::collections::BTreeSet::new();
+        for (index, item) in items.iter().enumerate() {
+            let at = format!("{at}.{index}");
+            let entry = fields(item, &at, &["sha256", "special_token", "reason"], &[])?;
+            let sha = digest(&entry["sha256"], &format!("{at}.sha256"))?;
+            if !seen.insert(sha) {
+                return fail(&at, "duplicate tokenizer text digest");
+            }
+            for key in ["special_token", "reason"] {
+                let value = text(&entry[key], &format!("{at}.{key}"))?;
+                if value.contains(['\n', '\r']) {
+                    return fail(&format!("{at}.{key}"), "must be one line");
+                }
+            }
+        }
     }
     Ok(Check {
         id: id.into(),

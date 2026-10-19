@@ -703,6 +703,16 @@ declared `tokenizer_goldens` is the tokenizer reference. Each served file
 compares `token_ids` by row index, with exact IDs and equal row counts. Row
 identifiers are not matching keys.
 
+A check may declare `tokenizer_refusals`, a list of `{sha256, special_token,
+reason}` records. The digest identifies one reference row's UTF-8 text, and
+the one-line reason explains why that token is outside the served prompt
+format. Each listed row must return HTTP 400 with exactly `prompt contains
+a special token the model does not admit in prompts: <token>`, where
+`<token>` is its declared `special_token`. A success, another status, or any
+other error fails. Unlisted rows still require exact IDs. The report keeps
+`matched_rows` and the `expected_refusals` observations separately; rescore
+requires every declared refusal's identity, status and message.
+
 The served capture is either a directory a capture script wrote (the
 positional argument) or one the check captures itself: with `--url` and
 `--capture-out`, each reference chat row (its `messages`, with tool-call

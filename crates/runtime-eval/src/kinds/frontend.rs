@@ -93,11 +93,111 @@ impl Kind for FrontendGoldens {
                 report["agrees"] != Value::Bool(true) || mismatches.is_empty(),
                 || format!("{name}: agrees with mismatched IDs"),
             )?;
+            if name == "tokenizer-golden.json" {
+                verify_refusals(report, &check.declared)?;
+            }
         }
         Ok(vec![
             "chat-renders.json".into(),
             "tokenizer-golden.json".into(),
             "coverage".into(),
         ])
+    }
+}
+
+fn verify_refusals(report: &Value, check: &Value) -> Result<(), KindError> {
+    let empty = Vec::new();
+    let declared = check["tokenizer_refusals"].as_array().unwrap_or(&empty);
+    let observed = report.get("expected_refusals");
+    require(observed.is_none_or(Value::is_array), || {
+        "tokenizer-golden.json: invalid refusal evidence".into()
+    })?;
+    let observed = observed.and_then(Value::as_array).unwrap_or(&empty);
+    let agrees = report["agrees"] == true;
+    let mut digests = std::collections::BTreeSet::new();
+    let mut rows = std::collections::BTreeSet::new();
+    for refusal in observed {
+        let declaration = declared
+            .iter()
+            .find(|item| item["sha256"] == refusal["sha256"]);
+        require(declaration.is_some(), || {
+            "tokenizer-golden.json: undeclared refusal".into()
+        })?;
+        let declaration = declaration.expect("checked");
+        require(
+            ["sha256", "special_token", "reason"]
+                .iter()
+                .all(|key| refusal[*key] == declaration[*key])
+                && refusal["sha256"]
+                    .as_str()
+                    .is_some_and(|sha| digests.insert(sha))
+                && refusal["row"]
+                    .as_u64()
+                    .is_some_and(|row| Some(row) < report["rows"].as_u64() && rows.insert(row)),
+            || "tokenizer-golden.json: refusal identity differs".into(),
+        )?;
+        let message = format!(
+            "prompt contains a special token the model does not admit in prompts: {}",
+            declaration["special_token"].as_str().unwrap_or_default()
+        );
+        require(
+            refusal["agrees"].is_boolean()
+                && (!agrees || refusal["agrees"] == true)
+                && (refusal["agrees"] != true
+                    || (refusal["status"] == 400 && refusal["message"] == message)),
+            || "tokenizer-golden.json: expected prompt-special-token refusal differs".into(),
+        )?;
+    }
+    if !declared.is_empty() && agrees {
+        require(
+            observed.len() == declared.len()
+                && report["matched_rows"]
+                    .as_u64()
+                    .and_then(|count| count.checked_add(observed.len() as u64))
+                    == report["rows"].as_u64(),
+            || "tokenizer-golden.json: missing declared refusal evidence".into(),
+        )?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn declared_refusals_require_complete_specific_evidence() {
+        let declaration = json!({"sha256": "a".repeat(64), "special_token": "<special>", "reason": "Unserved task."});
+        let check = json!({"tokenizer_refusals": [declaration.clone()]});
+        let mut refusal = declaration;
+        refusal["row"] = json!(1);
+        refusal["status"] = json!(400);
+        refusal["agrees"] = json!(true);
+        refusal["message"] =
+            json!("prompt contains a special token the model does not admit in prompts: <special>");
+        let report = json!({"rows": 2, "matched_rows": 1, "agrees": true, "expected_refusals": [refusal.clone()]});
+        verify_refusals(&report, &check).unwrap();
+        for (pointer, value) in [
+            ("/expected_refusals", json!([])),
+            ("/expected_refusals", json!([refusal.clone(), refusal])),
+            ("/expected_refusals/0/status", json!(200)),
+            ("/expected_refusals/0/status", json!(500)),
+            (
+                "/expected_refusals/0/message",
+                json!("prompt tokenization failed"),
+            ),
+            ("/expected_refusals/0/sha256", json!("b".repeat(64))),
+            ("/expected_refusals/0/reason", json!("Other reason.")),
+            ("/expected_refusals/0/row", json!(2)),
+            ("/expected_refusals/0/agrees", json!(false)),
+            ("/matched_rows", json!(2)),
+        ] {
+            let mut changed = report.clone();
+            *changed.pointer_mut(pointer).unwrap() = value;
+            assert!(verify_refusals(&changed, &check).is_err(), "{changed}");
+        }
+        assert!(verify_refusals(&report, &json!({})).is_err());
+        verify_refusals(&json!({"agrees": true, "rows": 2}), &json!({})).unwrap();
     }
 }

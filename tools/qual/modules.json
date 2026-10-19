@@ -172,6 +172,7 @@
    "CAPTURE_SCHEMA": "str",
    "FILES": "list",
    "REFUSED_MEDIA": "str",
+   "REFUSED_PROMPT_SPECIAL": "str",
    "RUNNER_DIRECTORY_INPUTS": "list",
    "RUNNER_RECORDS": "dict"
   },

@@ -925,6 +925,18 @@
           "value": true,
           "source": "docs/check-kinds.md#frontend_goldens-frontend_goldensv1"
         }
+      ],
+      "tokenizer_refusals": [
+        {
+          "sha256": "f1803c85be70b40656facaf0ab85651ccb7668555492ebd926e61420d33ca50c",
+          "special_token": "<｜fim▁hole｜>",
+          "reason": "FIM is outside the served chat format and its prompt special-token policy."
+        },
+        {
+          "sha256": "94433b68370dcc69fa61efc5011b5d0e28685e4716fee1ee77fbbfc0c9935b54",
+          "special_token": "<｜action｜>",
+          "reason": "The action task belongs to the unserved roles and tasks in frontend-divergences.json."
+        }
       ]
     },
     "evals_gsm8k": {

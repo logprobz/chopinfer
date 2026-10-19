@@ -53,6 +53,61 @@ alternate old/new timing order with equal cache eviction. Merge timing
 excludes its attention predecessor. These measurements isolate kernels;
 they do not measure end-to-end prefill or actual checkpoint activations.
 
-CPU preparation, resource audits and planner tests are complete. GPU
-bitwise and timing results are pending. There is no prefill attention
-speedup claim or serving change until those results are available.
+The 2026-10-19 pair measurement passed every workspace and output comparison
+on both devices. Across the 40 main layers, mixed attention itself took
+about 28.91 ms per layer, with another 0.256 ms for merge. Half-tile staging
+reduced attention to about 27.72 ms, with merge unchanged. Window attention
+fell from about 6.12 to 5.62 ms. These are medians over the synthetic
+8192-row cases, at the 250 W cap. The mixed-layer improvement is about 4%,
+so the candidate remains outside serving.
+
+The next snapshot isolates the bottleneck before another serving design.
+Its `ablation` command measures the unmodified reference and three software
+probes at the mixed-layer geometry, each with mixed, window-only and
+selected-only visibility. Loads-only gathers, decodes and stages all keys
+without MMA or softmax. Volatile shared stores retain that work without
+adding a checksum. Resident-data loads the first 64-key tile once, then
+runs the original number of QK, softmax and PV iterations on that tile.
+Resident-data includes its initial gather and is a diagnostic workload
+with different outputs. Neither diagnostic is an attention candidate.
+
+Event timings pass a null stamp pointer. Separate launches record warp
+zero's `clock64` intervals for query setup, gather/decode/staging, QK,
+softmax, PV and the epilogue in each CTA. A stage includes any barrier at
+its boundary; these intervals are elapsed cycles, not hardware stall
+counters. Per-SM clocks are not combined into a wall time. Every record
+must partition its own start-to-end interval. The sampled full probe must
+pass the original F32 workspace, BF16 output and replay comparisons before
+any timing. The unmodified reference timing controls for the probes'
+extra registers: compilation reports 196-198 for full, 56-61 for loads and
+198-202 for resident-data, with no local memory or stack allocation.
+
+The job queries function attributes and theoretical occupancy after
+setting each entry's dynamic shared-memory limit. Its offline SASS audit
+checks that loads-only contains no MMA instructions. Static instruction
+counts are not executed instruction counts. Hardware counters are not
+available to the job, so it does not claim measured DRAM/L2 bytes or
+hardware stall reasons.
+
+The `traffic` command counts unique encoded payload in the exact dense
+fixture, excluding metadata, transaction granularity and repeated scale
+loads. Without reuse across query rows or the two head groups, gathers
+request 3.523 GB per mixed layer. Reuse within runs of 64 query rows lowers
+that payload to 1.815 GB; complete reuse across the chunk and both head
+groups lowers it to 13.64 MB. These are traffic models, not cache misses.
+For any assumed payload bandwidth B in TB/s, the corresponding byte floors
+are 3.523/B ms, 1.815/B ms and 0.01364/B ms. Query reads and partial writes
+add 0.404 GB in all three models.
+
+The original tile alone requires at least 10.737 GB of shared stores and
+21.475 GB of QK/PV shared reads per mixed layer; half-tile staging doubles
+the stores. These counts exclude query staging, score exchange, addresses,
+validity and bank conflicts. A 64-row window union contains 191 keys,
+occupying 195,584 decoded BF16 bytes or 100,848 native bytes. The decoded
+union exceeds the shared budget, and the native union leaves insufficient
+compute scratch. Any neighboring-row reuse design needs a smaller run,
+another staging layout or a separate decode pass.
+
+The software profiling result is pending. The measured stage breakdown
+will determine the next exact candidate. Serving routing and its dynamic
+shared-memory binding remain contingent on bitwise and timing evidence.

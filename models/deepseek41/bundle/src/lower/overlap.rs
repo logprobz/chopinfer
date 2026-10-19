@@ -23,6 +23,8 @@ impl Lowering<'_> {
                 "attention.o-b",
                 rows,
                 &GemmViews {
+                    // Packed fold storage serves decode only.
+                    stream: None,
                     activations: range(scratch.output_a_codes)?,
                     activation_scales: range(scratch.output_a_scales)?,
                     weights: self.buffers.view(&layer_view(layer, "attn.wo_b.weight"))?,

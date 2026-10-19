@@ -8,47 +8,79 @@ pub(super) const MODULE: &str = "position_hierarchical_deepseek41_sm120";
 #[test]
 fn cpu_group_union_preserves_exact_keys_and_order() {
     fn retain(input: &[u64], k: usize) -> Vec<u64> {
-        let mut ranked: Vec<_> = input.iter().copied().filter(|&v|v!=0).collect();
-        ranked.sort_unstable_by(|a,b|b.cmp(a));
-        let cutoff=ranked.get(k-1).copied().unwrap_or(0);
-        input.iter().copied().filter(|&v|v!=0 && v>=cutoff).collect()
+        let mut ranked: Vec<_> = input.iter().copied().filter(|&v| v != 0).collect();
+        ranked.sort_unstable_by(|a, b| b.cmp(a));
+        let cutoff = ranked.get(k - 1).copied().unwrap_or(0);
+        input
+            .iter()
+            .copied()
+            .filter(|&v| v != 0 && v >= cutoff)
+            .collect()
     }
-    let mut seed=0xa72683_u32;
-    for count in [0_usize,1,31,32,64,2048,2049,8192,32768,131072] {
-        for k in [1,128,511,512] {
-            for ties in [false,true] {
-                let keys:Vec<_>=(0..count).map(|i| {
-                    seed^=seed<<13;seed^=seed>>17;seed^=seed<<5;
-                    (u64::from(if ties {1}else{seed})<<32)|u64::from(!(i as u32))
-                }).collect();
-                let span=count.div_ceil(32).max(1);
-                let locals:Vec<_>=keys.chunks(span).map(|s|retain(s,k)).collect();
-                let groups:Vec<_>=locals.chunks(8).flat_map(|g|retain(&g.concat(),k)).collect();
-                assert_eq!(retain(&keys,k),retain(&groups,k));
+    let mut seed = 0xa72683_u32;
+    for count in [0_usize, 1, 31, 32, 64, 2048, 2049, 8192, 32768, 131072] {
+        for k in [1, 128, 511, 512] {
+            for ties in [false, true] {
+                let keys: Vec<_> = (0..count)
+                    .map(|i| {
+                        seed ^= seed << 13;
+                        seed ^= seed >> 17;
+                        seed ^= seed << 5;
+                        (u64::from(if ties { 1 } else { seed }) << 32) | u64::from(!(i as u32))
+                    })
+                    .collect();
+                let span = count.div_ceil(32).max(1);
+                let locals: Vec<_> = keys.chunks(span).map(|s| retain(s, k)).collect();
+                let groups: Vec<_> = locals
+                    .chunks(8)
+                    .flat_map(|g| retain(&g.concat(), k))
+                    .collect();
+                assert_eq!(retain(&keys, k), retain(&groups, k));
             }
         }
     }
-    let keys:Vec<_>=(0_u32..16384).map(|i|(1_u64<<32)|u64::from(!i)).collect();
-    let wrong:Vec<_>=keys.chunks(4096).flat_map(|group|retain(group,128)).collect();
-    assert_ne!(retain(&keys,512),retain(&wrong,512),"under-retaining groups must fail");
+    let keys: Vec<_> = (0_u32..16384)
+        .map(|i| (1_u64 << 32) | u64::from(!i))
+        .collect();
+    let wrong: Vec<_> = keys
+        .chunks(4096)
+        .flat_map(|group| retain(group, 128))
+        .collect();
+    assert_ne!(
+        retain(&keys, 512),
+        retain(&wrong, 512),
+        "under-retaining groups must fail"
+    );
 }
 
 #[test]
 fn cpu_edge_scores_keep_signed_zero_and_poisoned_tails() {
-    for layer in [2,20,24] {
-        let width=131136/FLASH.compress_ratio(layer);
-        let extent=if layer==24 {16384}else{width};
-        for case in [21,28,30,31] {
-            let label=serde_json::json!({"rows":2,"layer":layer,"offset":131072,"case":case});
-            let bytes=edge_scores(&label,u64::from(extent)*8);
-            let words:Vec<_>=bytes.chunks_exact(4).map(|b|u32::from_le_bytes(b.try_into().unwrap())).collect();
-            if case==21 {assert_eq!(&words[..2],&[0,0x80000000]);}
-            if case==30 {assert!(words.iter().all(|&v|v==0x7fc12345));}
-            if case==31 {
-                let visible=1/FLASH.compress_ratio(layer);
-                assert_eq!(words.iter().filter(|&&v|v==1_f32.to_bits()).count(),visible as usize*2);
+    for layer in [2, 20, 24] {
+        let width = 131136 / FLASH.compress_ratio(layer);
+        let extent = if layer == 24 { 16384 } else { width };
+        for case in [21, 28, 30, 31] {
+            let label = serde_json::json!({"rows":2,"layer":layer,"offset":131072,"case":case});
+            let bytes = edge_scores(&label, u64::from(extent) * 8);
+            let words: Vec<_> = bytes
+                .chunks_exact(4)
+                .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+                .collect();
+            if case == 21 {
+                assert_eq!(&words[..2], &[0, 0x80000000]);
             }
-            if case==28 {assert!(words.contains(&0x7fc12345));}
+            if case == 30 {
+                assert!(words.iter().all(|&v| v == 0x7fc12345));
+            }
+            if case == 31 {
+                let visible = 1 / FLASH.compress_ratio(layer);
+                assert_eq!(
+                    words.iter().filter(|&&v| v == 1_f32.to_bits()).count(),
+                    visible as usize * 2
+                );
+            }
+            if case == 28 {
+                assert!(words.contains(&0x7fc12345));
+            }
         }
     }
 }

@@ -318,6 +318,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// Parallel index queries and native FP4 scores include per-row query packing.
 /// Image and text prefills below 128 rows use the qualified existing folds.
 /// Prefill HC and ceil entries add module handles to this lifecycle.
+/// Blocked F32 prefill adds five compute handles and one module per rank;
+/// its measured rows retain the existing preparation and operand spans.
 /// TP4 text decode uses the direct-load MoE buckets, and the paired shared
 /// gate/up keeps no single packed folds.
 /// Qualified warp and input norm tiles add only their module handles; all

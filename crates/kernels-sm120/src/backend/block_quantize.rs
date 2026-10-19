@@ -270,6 +270,11 @@ mod tests {
         let query = base.query;
         let fields: Vec<Field<Entry>> = vec![
             (
+                "parallel_groups",
+                Class::Launch,
+                Box::new(|e| e.parallel_groups = true),
+            ),
+            (
                 "query",
                 Class::Selects,
                 Box::new(|e| e.query.input = DType::Bf16),
@@ -287,7 +292,8 @@ mod tests {
             field_names!(Entry {
                 query,
                 capacity,
-                symbol
+                symbol,
+                parallel_groups
             }),
             fields,
             key,

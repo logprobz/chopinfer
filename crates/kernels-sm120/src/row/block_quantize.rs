@@ -18,6 +18,8 @@ pub struct Entry {
     pub query: BlockQuantizeQuery,
     pub capacity: u32,
     pub symbol: String,
+    /// Opt-in warp-parallel groups with a barrier before row output.
+    pub parallel_groups: bool,
 }
 
 impl Entry {
@@ -30,13 +32,35 @@ impl Entry {
             query,
             capacity,
             symbol: symbol.into(),
+            parallel_groups: false,
         };
         entry.validate()?;
         Ok(entry)
     }
 
+    /// Select the parallel implementation for a separately named entry.
+    pub fn parallel(mut self) -> Result<Self, Refusal> {
+        self.parallel_groups = true;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn threads(&self) -> u32 {
+        if self.parallel_groups {
+            (self.query.width / 32).min(32) * 32
+        } else {
+            32
+        }
+    }
+
     pub fn validate(&self) -> Result<(), Refusal> {
         self.query.validate()?;
+        if self.parallel_groups
+            && (!matches!(self.query.format, BlockQuantization::E4M3Ceil32 { .. })
+                || self.query.output != QuantizeOutput::Codes)
+        {
+            return Err(Refusal("parallel groups require ceil E4M3 code output"));
+        }
         if self.capacity == 0 || self.capacity > crate::backend::MAX_CAPACITY {
             return Err(Refusal("block quantization capacity exceeds SM120 bounds"));
         }
@@ -59,7 +83,7 @@ impl Entry {
         }
         let plan = LaunchPlan {
             grid: [rows.max(1), 1, 1],
-            block: [32, 1, 1],
+            block: [self.threads(), 1, 1],
             dynamic_shared_bytes: 0,
             workspace_bytes: 0,
             cluster: [1, 1, 1],
@@ -101,6 +125,14 @@ impl Entry {
     }
 
     pub(crate) fn spec_with_shapes(&self, shapes: ShapeBinding) -> EntrySpec {
+        if self.parallel_groups {
+            assert_eq!(shapes, ShapeBinding::Compiled);
+        }
+        let engine = if self.parallel_groups {
+            "block_quantize_parallel"
+        } else {
+            "block_quantize"
+        };
         let query = self.query;
         let (format, floor) = match query.format {
             BlockQuantization::E4M3Ceil32 { amax_floor_bits } => (0, amax_floor_bits),
@@ -141,11 +173,11 @@ impl Entry {
             self.symbol.clone(),
             params,
             format!(
-                "chop::row::block_quantize::run<{width},{format},{},{},{floor}u>(input,output,scales,live_rows,status,status_row_offset{extra});",
+                "chop::row::{engine}::run<{width},{format},{},{},{floor}u>(input,output,scales,live_rows,status,status_row_offset{extra});",
                 query.input == DType::F32,
                 query.output == QuantizeOutput::Bf16
             ),
-            32,
+            self.threads(),
             1,
         )
     }
@@ -212,7 +244,14 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> Result<CubinSpec, Refusal> {
         name: name.into(),
         sources_root: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("cuda"),
         include_dirs: vec![],
-        headers: vec![format!("#include \"{HEADER}\"")],
+        headers: vec![format!(
+            "#include \"{}\"",
+            if entries.iter().any(|e| e.parallel_groups) {
+                "row/ceil_parallel.cuh"
+            } else {
+                HEADER
+            }
+        )],
         defines: vec![],
         entries: entries.iter().map(Entry::spec).collect(),
     })

@@ -43,6 +43,8 @@ pub struct Entry {
     pub query: SiluMulQuantizeQuery,
     pub capacity: u32,
     pub symbol: String,
+    /// Opt-in warp-parallel groups with a barrier before row output.
+    pub parallel_groups: bool,
 }
 
 impl Entry {
@@ -55,9 +57,25 @@ impl Entry {
             query,
             capacity,
             symbol: symbol.into(),
+            parallel_groups: false,
         };
         entry.validate()?;
         Ok(entry)
+    }
+
+    /// Select the parallel implementation for a separately named entry.
+    pub fn parallel(mut self) -> Result<Self, Refusal> {
+        self.parallel_groups = true;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn threads(&self) -> u32 {
+        if self.parallel_groups {
+            (self.query.width / 32).min(32) * 32
+        } else {
+            32
+        }
     }
 
     pub fn validate(&self) -> Result<(), Refusal> {
@@ -93,7 +111,7 @@ impl Entry {
         }
         let plan = LaunchPlan {
             grid: [rows.max(1), 1, 1],
-            block: [32, 1, 1],
+            block: [self.threads(), 1, 1],
             dynamic_shared_bytes: 0,
             workspace_bytes: 0,
             cluster: [1, 1, 1],
@@ -123,6 +141,11 @@ impl Entry {
     }
 
     pub fn spec(&self) -> EntrySpec {
+        let engine = if self.parallel_groups {
+            "silu_mul_quantize_parallel"
+        } else {
+            "silu_mul_quantize"
+        };
         let SiluMulQuantizeQuery {
             width,
             clamp:
@@ -146,9 +169,9 @@ impl Entry {
                 },
             ],
             format!(
-                "chop::row::silu_mul_quantize::run<{width},{gate_max_bits:#x}u,{up_limit_bits:#x}u,{amax_floor_bits:#x}u>(gate,up,codes,scales,live_rows,status,status_row_offset);"
+                "chop::row::{engine}::run<{width},{gate_max_bits:#x}u,{up_limit_bits:#x}u,{amax_floor_bits:#x}u>(gate,up,codes,scales,live_rows,status,status_row_offset);"
             ),
-            32,
+            self.threads(),
             1,
         )
     }
@@ -190,7 +213,14 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> Result<CubinSpec, Refusal> {
         name: name.into(),
         sources_root: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("cuda"),
         include_dirs: vec![],
-        headers: vec![format!("#include \"{HEADER}\"")],
+        headers: vec![format!(
+            "#include \"{}\"",
+            if entries.iter().any(|e| e.parallel_groups) {
+                "row/ceil_parallel.cuh"
+            } else {
+                HEADER
+            }
+        )],
         defines: vec![],
         entries: entries.iter().map(Entry::spec).collect(),
     })

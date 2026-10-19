@@ -927,12 +927,10 @@ impl Instance {
     /// Every logits row of the step as device views in the original item
     /// order: a prefill's rows on rank 0, decode and verify rows on the
     /// rank that owns their block, each emitted once its owner completed.
-    fn emit_logits(
+    fn logits_views(
         &self,
         runs: &[Run],
-        sink: &mut ExecuteResultSinkV1,
-        ready_epoch: Option<u64>,
-    ) -> Result<(), BundleAbiError> {
+    ) -> Result<Vec<runtime_bundle_abi::BundleLogitsViewV1>, BundleAbiError> {
         let empty = PhaseInputs::default();
         let prefill = runs.iter().find(|run| run.arena == PREFILL);
         let decode = runs.iter().find(|run| run.arena != PREFILL);
@@ -963,6 +961,16 @@ impl Instance {
                 ranks: &owners,
             }),
         )?;
+        Ok(views)
+    }
+
+    fn emit_logits(
+        &self,
+        runs: &[Run],
+        sink: &mut ExecuteResultSinkV1,
+        ready_epoch: Option<u64>,
+    ) -> Result<(), BundleAbiError> {
+        let views = self.logits_views(runs)?;
         if let Some(cycle_epoch) = ready_epoch {
             use runtime_bundle_abi::device_results::BundleReadyLogitsViewV1;
             for (rank, &(_, _, stream)) in self.ranks.iter().enumerate() {
@@ -1154,6 +1162,17 @@ impl Instance {
                 self.check_row_status(run)?;
             }
         }
+        let device_results = self
+            .dspark
+            .as_ref()
+            .is_some_and(|device| device.results.metadata.is_some());
+        if device_results {
+            let views = self.logits_views(runs)?;
+            self.submit_dspark_results(sink, &views).map_err(|error| {
+                self.log(&error);
+                BundleAbiError::Status(BundleStatusV1::BundleError)
+            })?;
+        }
         self.check_dspark_status().map_err(|error| {
             self.log(&error);
             BundleAbiError::Status(BundleStatusV1::BundleError)
@@ -1162,16 +1181,20 @@ impl Instance {
             self.log(&error);
             BundleAbiError::Status(BundleStatusV1::BundleError)
         })?;
-        self.emit_logits(runs, sink, ready_epoch)?;
-        if ready_epoch.is_some() {
-            // Sampler work runs while the host validates this phase. A bad
-            // status fails execute, so its queued sample packet is discarded.
-            for run in runs.iter() {
-                self.check_index_status(run)?;
-                self.check_row_status(run)?;
+        if device_results {
+            Ok(())
+        } else {
+            self.emit_logits(runs, sink, ready_epoch)?;
+            if ready_epoch.is_some() {
+                // The AR sampler runs during validation. Failed status still
+                // refuses execute, so none of its queued samples is published.
+                for run in runs.iter() {
+                    self.check_index_status(run)?;
+                    self.check_row_status(run)?;
+                }
             }
+            Ok(())
         }
-        Ok(())
     }
 }
 

@@ -729,6 +729,8 @@ impl FakePackage for FakeHost {
 pub(crate) fn api() -> BundleApiV1 {
     BundleApiV1::new_with_prefix_state_slot(crate::api::BUNDLE_DEEPSEEK41_EXTENDED_API_V1)
         .expect("bundle API")
+        .with_device_results_api(crate::api::BUNDLE_DEEPSEEK41_DEVICE_RESULTS_API_V1)
+        .expect("device result API")
 }
 
 /// Creates an instance serving `items` with only its lowered stages

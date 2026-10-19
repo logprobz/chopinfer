@@ -78,6 +78,19 @@ impl Instance {
         self.held.push(Held::Event(joined));
         device.cycle.draft_joined = Some(joined);
         device.cycle.tail = Some(GraphCache::sharing(&self.graphs));
+        for &(context, _, _) in &self.ranks {
+            for events in [
+                &mut device.results.target_ready,
+                &mut device.results.sampled,
+            ] {
+                let event = self.services.create_event(context)?;
+                self.held.push(Held::Event(event));
+                events.push(event);
+            }
+        }
+        let ready = self.services.create_event(self.ranks[0].0)?;
+        self.held.push(Held::Event(ready));
+        device.results.ready = Some(ready);
         device.cycle.gather = Some(self.services.create_mapped_gather(
             self.ranks[0].2,
             memory.ids,
@@ -142,6 +155,7 @@ impl Instance {
             text: text.to_vec(),
             result: None,
         });
+        self.emit_dspark_device_drafts(sink)?;
         let status = self.execute_packed(request, sink, step);
         let pending = self
             .dspark
@@ -338,7 +352,12 @@ impl Instance {
         {
             return Err("DSpark device draft ID is outside vocabulary".into());
         }
-        for (draft, tokens) in pending.drafts.iter().zip(&ids) {
+        for (draft, tokens) in pending
+            .drafts
+            .iter()
+            .zip(&ids)
+            .filter(|_| device.results.metadata.is_none())
+        {
             sink.emit_draft_tokens(
                 draft.block.request,
                 &tokens[..draft.block.emit_rows as usize],

@@ -126,9 +126,9 @@ pub fn profiles(geometry: &Geometry, ranks: &[u32]) -> Result<String, BundleErro
 /// rows it gathers from the views it maps (the Engram tables), and the chat
 /// frontend.
 pub const CAPABILITIES: [&str; 16] = [
-    runtime_bundle_abi::device_results::DEVICE_RESULTS_CAPABILITY_V1,
     runtime_bundle_abi::SERVING_KV_CAPABILITY_V1,
     runtime_bundle_abi::SPECULATIVE_CAPABILITY_V1,
+    runtime_bundle_abi::device_results::DEVICE_RESULTS_CAPABILITY_V1,
     runtime_bundle_abi::RECURRENT_STATE_CAPABILITY_V1,
     runtime_bundle_abi::RECURRENT_STATE_PREALLOCATED_CAPABILITY_V1,
     runtime_bundle_abi::RECURRENT_STATE_IN_PLACE_CAPABILITY_V1,

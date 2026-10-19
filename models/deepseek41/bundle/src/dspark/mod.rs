@@ -11,6 +11,7 @@ pub(crate) mod cycle;
 pub(crate) mod device;
 pub mod execution;
 pub mod features;
+pub(crate) mod results;
 pub mod staging;
 pub mod state;
 pub mod transfers;

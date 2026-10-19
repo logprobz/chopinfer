@@ -4,6 +4,7 @@ mod cycle;
 mod features;
 mod graphs;
 mod launch;
+mod results;
 #[cfg(feature = "diagnostic-taps")]
 mod state_capture;
 
@@ -257,6 +258,10 @@ impl Instance {
                 return BundleStatusV1::InvalidArgument;
             }
         };
+        if let Err(error) = self.begin_dspark_results(sink, &inputs, &step) {
+            self.log(&error);
+            return BundleStatusV1::InvalidArgument;
+        }
         #[cfg(feature = "diagnostic-taps")]
         if self.active_dspark_state_capture().is_some() {
             for phase in [&step.prefill, &step.decode] {
@@ -289,6 +294,11 @@ impl Instance {
             Some(sink),
             text,
         );
+        self.dspark
+            .as_mut()
+            .expect("drafter retained")
+            .results
+            .metadata = None;
         match result {
             Ok(()) => BundleStatusV1::Success,
             Err(error) => {

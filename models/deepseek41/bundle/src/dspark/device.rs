@@ -42,6 +42,7 @@ pub(crate) struct Device {
     pub shape: Shape,
     pub config: Config,
     pub cycle: super::cycle::Cycle,
+    pub results: super::results::Results,
     pub features: Layout,
     pub ops: Ops,
     pub prepared: Prepared,
@@ -171,6 +172,7 @@ impl Device {
             shape,
             config,
             cycle,
+            results: super::results::Results::new(kernels.own.as_ref(), g.shape.vocab)?,
             features,
             ops,
             prepared,
@@ -288,6 +290,7 @@ impl Device {
                 held,
             )?);
         }
+        self.results.allocate(services, pool, stream, held)?;
         let items = u64::from(DECODE_BATCH);
         let rows = u64::from(DRAFT_ROWS);
         let hidden = u64::from(g.shape.hidden);

@@ -61,7 +61,27 @@ impl HostServicesBackendV1 for MappedHost {
     forward!(copy_host_to_device(stream: BundleStreamHandleV1, destination: DeviceBufferSpanV1, source: &[u8]) -> ());
     forward!(copy_device_to_host(stream: BundleStreamHandleV1, destination: &mut [u8], source: DeviceBufferSpanV1) -> ());
     forward!(copy_device_to_device(stream: BundleStreamHandleV1, destination: DeviceBufferSpanV1, source: DeviceBufferSpanV1) -> ());
-    forward!(copy_peer_to_peer(stream: BundleStreamHandleV1, destination_context: BundleContextHandleV1, destination: DeviceBufferSpanV1, source_context: BundleContextHandleV1, source: DeviceBufferSpanV1) -> ());
+    fn copy_peer_to_peer(
+        &self,
+        stream: BundleStreamHandleV1,
+        destination_context: BundleContextHandleV1,
+        destination: DeviceBufferSpanV1,
+        source_context: BundleContextHandleV1,
+        source: DeviceBufferSpanV1,
+    ) -> HostServiceResultV1<()> {
+        assert_eq!(
+            self.host.stream_ranks.borrow()[&stream.slot()] + 1,
+            destination_context.slot()
+        );
+        assert_ne!(destination_context, source_context);
+        assert!(!self.host.capturing_on_device_of(stream.slot()));
+        self.host.note(format!(
+            "peer results {} {}",
+            source_context.slot(),
+            destination_context.slot()
+        ));
+        self.host.copy_device_to_device(stream, destination, source)
+    }
     forward!(zero_device_buffer(stream: BundleStreamHandleV1, destination: DeviceBufferSpanV1) -> ());
     forward!(write_device_pointer_table(stream: BundleStreamHandleV1, destination: DeviceBufferSpanV1, slots: &[Option<DeviceBufferSpanV1>]) -> ());
     forward!(load_cuda_module(context: BundleContextHandleV1, module_bytes: &[u8]) -> BundleCudaModuleHandleV1);

@@ -65,10 +65,11 @@ fn shared_overlap_captures_identical_launches_and_reuses_the_graph() {
         let count = if ranks == Ranks::TP2 { 2 } else { 4 };
         assert_eq!(streams(&serial).len(), count);
         assert_eq!(streams(&parallel).len(), count * 2);
+        // TP4 decode runs the direct-load MoE buckets under both settings.
         assert_eq!(
             serial
                 .iter()
-                .any(|s| s.starts_with("launch ") && s.contains("_stream_merge_v1")),
+                .any(|s| s.starts_with("launch ") && s.contains("_moe_bandwidth_direct_")),
             ranks == Ranks::TP4
         );
     }

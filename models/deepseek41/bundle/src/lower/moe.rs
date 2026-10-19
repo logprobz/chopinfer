@@ -152,6 +152,11 @@ impl Lowering<'_> {
             let scratch = &self.buffers.scratch;
             let views = |tensor: &str, output| -> Result<crate::ops::GemmViews, String> {
                 Ok(crate::ops::GemmViews {
+                    stream: crate::ops::fold_stream::storage(
+                        &self.buffers.views,
+                        &layer_view(layer, "ffn.shared_experts.w1.weight"),
+                        true,
+                    ),
                     activations: rows(scratch.normed_codes, count),
                     activation_scales: rows(scratch.normed_scales, count),
                     weights: self.buffers.view(&layer_view(

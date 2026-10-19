@@ -12,6 +12,7 @@ pub(crate) mod dense;
 pub(crate) mod engram;
 pub(crate) mod exact;
 pub(crate) mod exact_f32;
+pub(crate) mod fold_stream;
 mod hc;
 pub(crate) mod head;
 pub(crate) mod indexer;

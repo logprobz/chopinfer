@@ -19,6 +19,7 @@
 mod dspark;
 mod engram;
 mod execute;
+mod fold_stream;
 mod media;
 mod prefix;
 
@@ -511,6 +512,16 @@ impl Instance {
                 }
                 views[rank].insert(crate::ops::exact_f32::domain_name(&name), flags);
             }
+            fold_stream::initialize(
+                &self.ops,
+                self.dspark.as_ref(),
+                services,
+                pool,
+                stream,
+                &resolved,
+                &mut views[rank],
+                held,
+            )?;
             self.symbols.push(resolved);
         }
         // The vision encoder's cubins, image and working memory, before the

@@ -102,6 +102,11 @@ impl Lowering<'_> {
                 .view(&layer_view(layer, &format!("{}.{part}", dense.tensor)))
         };
         let views = GemmViews {
+            stream: crate::ops::fold_stream::storage(
+                &self.buffers.views,
+                &layer_view(layer, &format!("{}.weight", dense.tensor)),
+                false,
+            ),
             activations,
             activation_scales,
             weights: weight("weight")?,

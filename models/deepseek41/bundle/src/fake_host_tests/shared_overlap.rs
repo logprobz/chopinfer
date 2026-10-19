@@ -165,7 +165,7 @@ fn shared_overlap_refuses_invalid_quantized_decode_rows() {
 
 type Span = (u64, u64, u64);
 
-fn journal_spans(line: &str) -> Vec<Span> {
+pub(super) fn journal_spans(line: &str) -> Vec<Span> {
     line.split("DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: ")
         .skip(1)
         .map(|part| {
@@ -251,7 +251,7 @@ fn audit_scratch(lines: &[String]) -> (usize, usize) {
 
 #[test]
 fn shared_overlap_journal_has_no_unordered_scratch_bindings() {
-    for ranks in [Ranks::TP2, Ranks::TP4] {
+    for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
         let shape = Shape::new(&FLASH, ranks).unwrap();
         let host = FakeHost::new(shape, KV_LAYOUTS[0]);
         let mut instance = with_settings_in_tests(Settings::ALL, || create(&host, 4));
@@ -270,10 +270,7 @@ fn shared_overlap_journal_has_no_unordered_scratch_bindings() {
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
         let (regions, collisions) = audit_scratch(&lines);
-        assert_eq!(
-            regions,
-            FLASH.layers() as usize * if ranks == Ranks::TP2 { 2 } else { 4 }
-        );
+        assert_eq!(regions, FLASH.layers() as usize * shape.ranks() as usize);
         assert_eq!(collisions, 0, "shared and routed scratch must be disjoint");
     }
     // An external frozen failing journal can additionally prove that this

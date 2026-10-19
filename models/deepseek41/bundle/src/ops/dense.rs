@@ -23,7 +23,7 @@ use runtime_bundle_abi::DeviceBufferSpanV1;
 
 use super::moe::QuantizeViews;
 use super::row_buckets::RowBuckets;
-use super::{Asks, Bind, Lowered, exact};
+use super::{Asks, Bind, Lowered, exact, fold_stream};
 use crate::program::Phase;
 use crate::shape::Shape;
 
@@ -203,6 +203,9 @@ pub(crate) fn quantized_inputs(shape: &Shape) -> Vec<(u32, DType)> {
 type QuantizedInput = (u32, DType);
 
 pub(crate) struct DenseOps {
+    stream: Vec<(&'static str, u32, fold_stream::Op)>,
+    stream_pair: Vec<(u32, fold_stream::Op)>,
+    tensors: Vec<(&'static str, &'static str)>,
     prefill_gemms: Vec<(&'static str, Prepared<Mxfp8FoldGemmBuffers<View>>)>,
     /// Each quantized input's quantizer, by width and type.
     quantizers: Vec<(QuantizedInput, RowBuckets<BlockQuantizeBuffers<View>>)>,
@@ -215,6 +218,7 @@ pub(crate) struct DenseOps {
 /// A step's spans of a dense projection: the activation codes and scales,
 /// the weight codes and scales, the output rows and their status.
 pub(crate) struct GemmViews {
+    pub stream: Option<fold_stream::Storage>,
     pub activations: DeviceBufferSpanV1,
     pub activation_scales: DeviceBufferSpanV1,
     pub weights: DeviceBufferSpanV1,
@@ -264,6 +268,12 @@ impl DenseOps {
                 Ok(((width, input), op))
             })
             .collect::<Result<_, Refused>>()?;
+        let mut stream = Vec::new();
+        let mut stream_pair = Vec::new();
+        let tensors = projections(shape)
+            .iter()
+            .map(|d| (d.id, d.tensor))
+            .collect();
         let mut decode = Vec::new();
         let mut paired = Vec::new();
         for dense in projections(shape) {
@@ -276,6 +286,16 @@ impl DenseOps {
                     |need| backend.mxfp8_fold_gemm(&query, need),
                 )?;
                 decode.push((dense.id, capacity, op));
+                if let Some(op) =
+                    fold_stream::prepare(backend, shape.geometry, query, capacity, false)?
+                {
+                    asks.record(
+                        format!("dense.{} stream {capacity}", dense.id),
+                        need,
+                        op.info(),
+                    );
+                    stream.push((dense.id, capacity, op));
+                }
                 if dense.id == "moe.shared-gate" {
                     let op = asks.ask(
                         format!("dense.shared-pair decode {capacity}"),
@@ -283,16 +303,55 @@ impl DenseOps {
                         |need| backend.mxfp8_fold_gemm_pair(&query, need),
                     )?;
                     paired.push((capacity, op));
+                    if let Some(op) =
+                        fold_stream::prepare(backend, shape.geometry, query, capacity, true)?
+                    {
+                        asks.record(
+                            format!("dense.shared-pair stream {capacity}"),
+                            need,
+                            op.info(),
+                        );
+                        stream_pair.push((capacity, op));
+                    }
                 }
             }
         }
         Ok(DenseOps {
+            stream,
+            stream_pair,
+            tensors,
             quantizers,
             gemms,
             decode,
             paired,
             prefill_gemms,
         })
+    }
+
+    /// Largest selected bucket initializes one persistent operation per weight.
+    pub(crate) fn stream_weight_ops(&self, weight: &str) -> Vec<(bool, &fold_stream::Op)> {
+        let Some((id, _)) = self
+            .tensors
+            .iter()
+            .find(|(_, tensor)| weight.ends_with(&format!(".{tensor}.weight")))
+        else {
+            return Vec::new();
+        };
+        let mut result = Vec::new();
+        if let Some((_, _, op)) = self
+            .stream
+            .iter()
+            .filter(|(of, _, _)| of == id)
+            .max_by_key(|(_, rows, _)| *rows)
+        {
+            result.push((false, op));
+        }
+        if *id == "moe.shared-gate"
+            && let Some((_, op)) = self.stream_pair.iter().max_by_key(|(rows, _)| *rows)
+        {
+            result.push((true, op));
+        }
+        result
     }
 
     /// The quantization of `rows` rows of `width` columns of `input`.
@@ -366,6 +425,14 @@ impl DenseOps {
             status: bind.view(views.status),
             status_row_offset: 0,
         };
+        if !phase.prefill()
+            && let Some((_, _, op)) = self
+                .stream
+                .iter()
+                .find(|(of, capacity, _)| *of == id && *capacity == rows)
+        {
+            return fold_stream::launch(op, bind, buffers, None, views.stream, rows);
+        }
         bind.launch_within(op, &buffers, workspace, Counts::rows(rows))
     }
 
@@ -382,6 +449,7 @@ impl DenseOps {
             .ok_or(Refusal("DeepSeek V4.1 has no paired dense decode bucket"))?
             .1;
         let [first, second] = views;
+        let stream = first.stream;
         if first.activations != second.activations
             || first.activation_scales != second.activation_scales
             || first.live_rows != second.live_rows
@@ -408,6 +476,13 @@ impl DenseOps {
             output: bind.view(second.output),
             ..first
         };
+        if let Some((_, op)) = self
+            .stream_pair
+            .iter()
+            .find(|(capacity, _)| *capacity == rows)
+        {
+            return fold_stream::launch(op, bind, first, Some(second), stream, rows);
+        }
         bind.launch_within(op, &[first, second], workspace, Counts::rows(rows))
     }
 }
@@ -514,6 +589,11 @@ mod tests {
             ] {
                 let rows = u64::from(phase.rows());
                 let views = GemmViews {
+                    stream: Some(fold_stream::Storage {
+                        packed: [span(100, 1 << 30), span(101, 1 << 30)],
+                        state: span(102, 1 << 20),
+                        workspace: span(103, 1 << 30),
+                    }),
                     activations: span(1, rows * u64::from(q.activation_row_stride)),
                     activation_scales: span(2, rows * u64::from(q.activation_row_stride) / 32),
                     weights: span(3, u64::from(q.groups) * u64::from(q.n) * u64::from(q.k)),
@@ -528,15 +608,26 @@ mod tests {
                 let calls = ops.project(dense.id, phase, &views, workspace).unwrap();
                 if !phase.prefill() && phase.rows() <= 64 {
                     let split = expect_split(shape.ranks(), dense.id, phase.rows());
-                    assert_eq!(calls.len(), if split { 3 } else { 2 });
+                    let packed =
+                        crate::Kernels::stream_fold_qualified(&FLASH, q, phase.rows(), false);
+                    assert_eq!(
+                        calls.len(),
+                        if packed {
+                            1
+                        } else if split {
+                            3
+                        } else {
+                            2
+                        }
+                    );
                     assert!(
                         calls
                             .iter()
-                            .all(|call| call.launch.symbol.contains(expected_family(
-                                q,
-                                phase.rows(),
-                                false
-                            )))
+                            .all(|call| call.launch.symbol.contains(if packed {
+                                "mxfp8_stream_"
+                            } else {
+                                expected_family(q, phase.rows(), false)
+                            }))
                     );
                 } else if phase.prefill() && phase.rows() >= 128 {
                     let split =

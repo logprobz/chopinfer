@@ -140,7 +140,10 @@ fn exact_f32_prefill_routes_measured_rows_and_preserves_unmeasured_rows() {
     for (rows, tile) in [
         (512, Some(64)),
         (2048, Some(32)),
-        (4096, None),
+        (4094, None),
+        (4095, Some(64)),
+        (4096, Some(64)),
+        (4097, None),
         (8192, Some(64)),
     ] {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();

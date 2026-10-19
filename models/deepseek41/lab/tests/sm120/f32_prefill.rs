@@ -25,7 +25,7 @@ use std::{
 };
 
 const EDGE_CUBIN: &str = "f32_prefill_edges";
-const ROWS: [u32; 9] = [257, 511, 512, 513, 2047, 2048, 2049, 8191, 8192];
+const ROWS: [u32; 11] = [257, 511, 512, 513, 2047, 2048, 2049, 4095, 4096, 8191, 8192];
 const EDGE_ROWS: [u32; 2] = [33, 65];
 const WITNESSES: [Witness; 11] = [
     Witness::General,
@@ -207,19 +207,19 @@ fn cpu_prefill_matrix_covers_candidates_and_serving_buckets() {
                         tiled.prefill_plan(rows).unwrap().dynamic_shared_bytes
                     )));
                 }
-                for rows in [258, 510, 514, 2046, 2050, 4096, 8190] {
+                for rows in [258, 510, 514, 2046, 2050, 4094, 4097, 8190] {
                     assert!(!selected.entry_for_rows(rows).uses_prefill_tiles());
                 }
             }
         }
     }
     assert_eq!(covered, compiled);
-    assert_eq!(registration::BUCKETS.len(), 45);
+    assert_eq!(registration::BUCKETS.len(), 55);
     let unique: BTreeSet<_> = registration::BUCKETS
         .iter()
         .map(|b| (b.n, b.k, b.rows))
         .collect();
-    assert_eq!(unique.len(), 45);
+    assert_eq!(unique.len(), 55);
     let total = coverage()["bitwise_cases"].as_u64().unwrap() as usize;
     let mut seen = BTreeSet::new();
     for ordinal in 0..2 {

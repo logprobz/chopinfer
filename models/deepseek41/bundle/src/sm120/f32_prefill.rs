@@ -1,7 +1,7 @@
 //! Exact prefill routes qualified at SM120, 250 W, 2026-10-19.
 //! Each row below passed eager and captured full-output bitwise comparison
 //! with the old kernel. Admit only these measured row counts, with a fixed
-//! 3 percent winning margin. No interval or 4096-row crossover is inferred.
+//! 3 percent winning margin. Only the measured row counts are admitted; no crossover is inferred.
 //! Heads gather smaller row sets and retain their split decode routes.
 //!
 //! | N | K | Rows | Tile N | Old us | New us | Paired new/old |
@@ -51,6 +51,16 @@
 //! | 128 | 5120 | 2049 | 64 | 1251.328 | 307.200 | 0.245499 |
 //! | 128 | 5120 | 8191 | 64 | 3495.936 | 931.840 | 0.266276 |
 //! | 128 | 5120 | 8192 | 64 | 3504.128 | 931.840 | 0.266315 |
+//! | 384 | 5120 | 4095 | 64 | 4635.648 | 1191.936 | 0.256682 |
+//! | 384 | 5120 | 4096 | 64 | 4553.728 | 1171.424 | 0.256353 |
+//! | 512 | 5120 | 4095 | 64 | 5770.208 | 1396.704 | 0.242054 |
+//! | 512 | 5120 | 4096 | 64 | 5686.272 | 1374.208 | 0.242066 |
+//! | 128 | 512 | 4095 | 32 | 309.248 | 61.440 | 0.198779 |
+//! | 128 | 512 | 4096 | 32 | 313.344 | 63.488 | 0.202614 |
+//! | 32 | 5120 | 4095 | 64 | 1234.944 | 284.672 | 0.230514 |
+//! | 32 | 5120 | 4096 | 64 | 1251.328 | 288.768 | 0.231122 |
+//! | 128 | 5120 | 4095 | 32 | 2372.608 | 528.384 | 0.222604 |
+//! | 128 | 5120 | 4096 | 32 | 2402.304 | 536.544 | 0.223155 |
 use kernel_build::CubinSpec;
 use kernels_sm120::f32_projection::{Entry, cubin_spec};
 use model_deepseek41_contract::geometry::Geometry;
@@ -144,6 +154,18 @@ pub const BUCKETS: &[Bucket] = &[
     Bucket {
         n: 384,
         k: 5120,
+        rows: 4095,
+        features: 64,
+    },
+    Bucket {
+        n: 384,
+        k: 5120,
+        rows: 4096,
+        features: 64,
+    },
+    Bucket {
+        n: 384,
+        k: 5120,
         rows: 8191,
         features: 64,
     },
@@ -198,6 +220,18 @@ pub const BUCKETS: &[Bucket] = &[
     Bucket {
         n: 512,
         k: 5120,
+        rows: 4095,
+        features: 64,
+    },
+    Bucket {
+        n: 512,
+        k: 5120,
+        rows: 4096,
+        features: 64,
+    },
+    Bucket {
+        n: 512,
+        k: 5120,
         rows: 8191,
         features: 64,
     },
@@ -252,6 +286,18 @@ pub const BUCKETS: &[Bucket] = &[
     Bucket {
         n: 128,
         k: 512,
+        rows: 4095,
+        features: 32,
+    },
+    Bucket {
+        n: 128,
+        k: 512,
+        rows: 4096,
+        features: 32,
+    },
+    Bucket {
+        n: 128,
+        k: 512,
         rows: 8191,
         features: 64,
     },
@@ -306,6 +352,18 @@ pub const BUCKETS: &[Bucket] = &[
     Bucket {
         n: 32,
         k: 5120,
+        rows: 4095,
+        features: 64,
+    },
+    Bucket {
+        n: 32,
+        k: 5120,
+        rows: 4096,
+        features: 64,
+    },
+    Bucket {
+        n: 32,
+        k: 5120,
         rows: 8191,
         features: 64,
     },
@@ -356,6 +414,18 @@ pub const BUCKETS: &[Bucket] = &[
         k: 5120,
         rows: 2049,
         features: 64,
+    },
+    Bucket {
+        n: 128,
+        k: 5120,
+        rows: 4095,
+        features: 32,
+    },
+    Bucket {
+        n: 128,
+        k: 5120,
+        rows: 4096,
+        features: 32,
     },
     Bucket {
         n: 128,

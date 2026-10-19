@@ -1,0 +1,170 @@
+use kernel_core::backend::{Backend, Counts, Need, View};
+use kernel_core::contract::{Argument, DType, RmsNormKind};
+use kernel_core::rmsnorm::{RmsNormNumerics, RmsNormRequirement};
+use kernel_core::rmsnorm_quantize::{RmsNormQuantizeBuffers, RmsNormQuantizeQuery};
+use kernels_sm120::{
+    backend::Sm120,
+    row::rmsnorm_quantize::{self, Entry},
+};
+
+fn query(input: DType) -> RmsNormQuantizeQuery {
+    RmsNormQuantizeQuery {
+        norm: RmsNormRequirement {
+            input,
+            output: input,
+            ..RmsNormRequirement::bf16(
+                1280,
+                1e-20,
+                RmsNormKind::Plain,
+                false,
+                RmsNormNumerics::TREE_256,
+            )
+        },
+        amax_floor_bits: 1e-4_f32.to_bits(),
+    }
+}
+fn buffers() -> RmsNormQuantizeBuffers<View> {
+    let v = |handle| View {
+        handle,
+        bytes: 32 * 1280 * 4,
+    };
+    RmsNormQuantizeBuffers {
+        input: v(1),
+        weight: v(2),
+        normed: v(3),
+        widened: Some(v(4)),
+        codes: v(5),
+        scales: v(6),
+        live_rows: v(7),
+        status: v(8),
+        status_row_offset: 2,
+    }
+}
+
+#[test]
+fn fused_norm_preserves_the_contract_and_refuses_aliases_and_short_roles() {
+    for dtype in [DType::Bf16, DType::F32] {
+        let query = query(dtype);
+        let entry = Entry::new(query, 32, "fused_norm").unwrap();
+        let op = Sm120::new()
+            .with_rmsnorm_quantize(entry)
+            .rmsnorm_quantize(&query, Need::rows(32))
+            .unwrap();
+        assert_eq!(op.info().workspace, 0);
+        let mut b = buffers();
+        if dtype == DType::F32 {
+            b.widened = None;
+        }
+        let launch = |b: &RmsNormQuantizeBuffers<View>, rows| {
+            op.launches(b, View::EMPTY, Counts::rows(rows))
+        };
+        for rows in [1, 2, 4, 8, 16, 32] {
+            let calls = launch(&b, rows).unwrap();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].plan.block, [256, 1, 1]);
+            assert!(!calls[0].plan.pdl);
+            assert_eq!(calls[0].plan.workspace_bytes, 0);
+            assert_eq!(calls[0].arguments.0[8], Argument::U64(2));
+        }
+        assert!(launch(&b, 0).is_err());
+        assert!(launch(&b, 33).is_err());
+        for index in 0..8 {
+            let mut short = b;
+            let role = match index {
+                0 => &mut short.input,
+                1 => &mut short.weight,
+                2 => &mut short.normed,
+                3 if dtype == DType::Bf16 => short.widened.as_mut().unwrap(),
+                3 => continue,
+                4 => &mut short.codes,
+                5 => &mut short.scales,
+                6 => &mut short.live_rows,
+                _ => &mut short.status,
+            };
+            role.bytes = 1;
+            assert!(launch(&short, 32).is_err(), "role {index}");
+        }
+        for handle in 1..=7 {
+            let mut aliased = b;
+            aliased.status.handle = handle;
+            if handle == 4 && dtype == DType::F32 {
+                continue;
+            }
+            assert!(launch(&aliased, 1).is_err(), "alias {handle}");
+        }
+        let mut overflow = b;
+        overflow.status_row_offset = u64::MAX;
+        assert!(launch(&overflow, 1).is_err());
+    }
+}
+
+#[test]
+fn fusion_selection_is_order_independent_and_rejects_changed_rounding() {
+    let q = query(DType::Bf16);
+    let small = Entry::new(q, 8, "small").unwrap();
+    let large = Entry::new(q, 32, "large").unwrap();
+    for entries in [
+        [small.clone(), large.clone()],
+        [large.clone(), small.clone()],
+    ] {
+        let backend = entries
+            .into_iter()
+            .fold(Sm120::new(), Sm120::with_rmsnorm_quantize);
+        assert_eq!(
+            backend
+                .rmsnorm_quantize(&q, Need::rows(8))
+                .unwrap()
+                .info()
+                .symbols[0]
+                .0,
+            "small"
+        );
+        let mut wrong = q;
+        wrong.norm.numerics = Some(RmsNormNumerics::HF_ORDERED);
+        assert!(backend.rmsnorm_quantize(&wrong, Need::rows(8)).is_err());
+        wrong = q;
+        wrong.amax_floor_bits = 2e-4_f32.to_bits();
+        assert!(backend.rmsnorm_quantize(&wrong, Need::rows(8)).is_err());
+    }
+    let tied = Sm120::new()
+        .with_rmsnorm_quantize(small)
+        .with_rmsnorm_quantize(Entry::new(q, 8, "other").unwrap());
+    assert!(tied.rmsnorm_quantize(&q, Need::rows(8)).is_err());
+}
+
+#[test]
+fn fused_norm_compiles_without_spills_or_stack_and_keeps_legacy_sources() {
+    let root = std::env::temp_dir().join(format!("norm-quantize-build-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let specs = rmsnorm_quantize::cubin_spec(
+        "norm_quantize",
+        &[
+            Entry::new(query(DType::Bf16), 32, "chop_bf16_norm_quantize_v1").unwrap(),
+            Entry::new(query(DType::F32), 32, "chop_f32_norm_quantize_v1").unwrap(),
+        ],
+    )
+    .unwrap();
+    let toolchain = kernel_build::Toolchain::detect().unwrap();
+    assert!(!toolchain.skipped);
+    let built = kernel_build::build(
+        &toolchain,
+        &[specs],
+        &root.join("out"),
+        &root.join("lock"),
+        kernel_build::BuildOptions {
+            lock_update: true,
+            emit_cargo_directives: false,
+            profile_line_info: false,
+        },
+    )
+    .unwrap();
+    assert_eq!(built[0].entries.len(), 2);
+    for entry in &built[0].entries {
+        assert_eq!((entry.local_bytes, entry.stack_bytes), (0, 0));
+    }
+    let source = include_str!("../cuda/row/rmsnorm_quantize.cuh");
+    assert!(source.contains("rmsnorm<Width,0,0,false>"));
+    assert!(source.contains("rmsnorm_f32<Width>"));
+    assert!(source.contains("block_quantize_parallel::quantize_group<0,F32,false,FloorBits>"));
+    std::fs::remove_dir_all(root).unwrap();
+}

@@ -12,6 +12,7 @@ pub mod ngram_hash;
 pub mod ordered_sum;
 pub mod precision;
 pub mod rmsnorm;
+pub mod rmsnorm_quantize;
 pub mod rmsnorm_tree;
 pub mod rounding;
 pub mod silu_mul_quantize;

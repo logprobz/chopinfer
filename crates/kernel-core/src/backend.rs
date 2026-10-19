@@ -701,6 +701,18 @@ pub trait Backend: Send + Sync {
         Err(Refused::Unsupported)
     }
 
+    /// Normalize rows, optionally widen a BF16 output, then quantize it.
+    /// Reads `Counts::rows`, `Counts::padded_rows` and the device live count.
+    /// Preserves the standalone norm output and both stages' status semantics.
+    fn rmsnorm_quantize(
+        &self,
+        op: &crate::rmsnorm_quantize::RmsNormQuantizeQuery,
+        need: Need,
+    ) -> Result<Prepared<crate::rmsnorm_quantize::RmsNormQuantizeBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
+
     /// Clamp and evaluate SwiGLU in F32, round once to BF16, then quantize
     /// E4M3/32 with a ceil UE8M0 scale. Each live row is independent.
     fn silu_mul_quantize(
@@ -2290,6 +2302,11 @@ mod tests {
                 width: 64, input: DType::Bf16,
                 format: crate::precision::quantizer::BlockQuantization::E4M3_CEIL32,
                 output: crate::precision::quantizer::QuantizeOutput::Codes,
+            }, Need::rows(4),
+        );
+        rmsnorm_quantize: Empty.rmsnorm_quantize(
+            &crate::rmsnorm_quantize::RmsNormQuantizeQuery {
+                norm: norm(), amax_floor_bits: 1e-4_f32.to_bits(),
             }, Need::rows(4),
         );
         silu_mul_quantize: Empty.silu_mul_quantize(

@@ -121,6 +121,7 @@ mod position_query;
 mod projection;
 mod recurrent;
 mod rmsnorm;
+mod rmsnorm_quantize;
 mod rope_kv;
 mod rounded_all_reduce;
 mod row_copies;
@@ -218,6 +219,7 @@ pub struct Sm120 {
     mxfp8_row_decoders: Vec<String>,
     row_rmsnorms: Vec<crate::row::RowInstantiation>,
     block_quantizers: Vec<crate::row::block_quantize::Entry>,
+    norm_quantizers: Vec<crate::row::rmsnorm_quantize::Entry>,
     silu_mul_quantizers: Vec<crate::row::silu_mul_quantize::Entry>,
     mxfp8_folds: Vec<crate::gemm::mxfp8_fold::Entry>,
     mxfp8_prefills: Vec<crate::gemm::mxfp8_fold::Entry>,
@@ -276,6 +278,11 @@ impl Sm120 {
 
     /// Register a compiled block quantizer. The backend matches its complete
     /// input rounding, scale rule, output form and width at preparation.
+    pub fn with_rmsnorm_quantize(mut self, entry: crate::row::rmsnorm_quantize::Entry) -> Self {
+        self.norm_quantizers.push(entry);
+        self
+    }
+
     pub fn with_block_quantize(mut self, entry: crate::row::block_quantize::Entry) -> Self {
         self.block_quantizers.push(entry);
         self
@@ -1176,6 +1183,15 @@ impl Backend for Sm120 {
     ) -> Result<Prepared<kernel_core::precision::quantizer::BlockQuantizeBuffers<View>>, Refused>
     {
         block_quantize::prepare(&self.block_quantizers, op, need)
+    }
+
+    fn rmsnorm_quantize(
+        &self,
+        op: &kernel_core::rmsnorm_quantize::RmsNormQuantizeQuery,
+        need: Need,
+    ) -> Result<Prepared<kernel_core::rmsnorm_quantize::RmsNormQuantizeBuffers<View>>, Refused>
+    {
+        rmsnorm_quantize::prepare(&self.norm_quantizers, op, need)
     }
 
     fn silu_mul_quantize(

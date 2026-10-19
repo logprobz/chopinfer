@@ -201,7 +201,13 @@ fn audit_scratch(lines: &[String]) -> (usize, usize) {
         }
         let (codes, scales, live) = if lines[at - 1].contains("moe_ceil_w5120_") {
             (1, 2, 3)
-        } else if lines[at - 1].contains("chop_norm_quantize_deepseek41_input_v1") {
+        } else if [
+            "chop_norm_quantize_deepseek41_input_v1",
+            "chop_norm_quantize_deepseek41_input_tiles_v1",
+        ]
+        .iter()
+        .any(|symbol| lines[at - 1].contains(symbol))
+        {
             // The MLP norm includes the widening output before codes/scales.
             (4, 5, 6)
         } else {
@@ -285,5 +291,35 @@ fn shared_overlap_journal_has_no_unordered_scratch_bindings() {
             collisions, regions,
             "negative journal did not reproduce the race"
         );
+    }
+}
+
+#[test]
+fn scratch_audit_recognizes_norm_tiles_and_rejects_overlapping_writes() {
+    let span = |handle, offset, length| {
+        format!(
+            "DeviceBufferSpanV1 {{ buffer: BundleDeviceBufferHandleV1 {{ raw: {handle} }}, offset: {offset}, length: {length} }}"
+        )
+    };
+    for symbol in [
+        "chop_norm_quantize_deepseek41_input_v1",
+        "chop_norm_quantize_deepseek41_input_tiles_v1",
+    ] {
+        let arguments = (1..=8)
+            .map(|handle| span(handle, 0, 5120))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut lines = vec![
+            format!("launch 1 {symbol} [{arguments}]"),
+            "record 1 7".into(),
+            "wait 2 7".into(),
+            format!("launch 1 compute [{}]", span(9, 0, 64)),
+            format!("launch 2 shared [{}]", span(10, 0, 64)),
+            "record 2 8".into(),
+            "wait 1 8".into(),
+        ];
+        assert_eq!(audit_scratch(&lines), (1, 0));
+        lines[4] = format!("launch 2 shared [{}]", span(9, 32, 64));
+        assert_eq!(audit_scratch(&lines), (1, 1));
     }
 }

@@ -655,8 +655,20 @@ impl Instance {
             return self.launch_tapped(&streams, run, &programs, &collectives);
         }
         if self.dspark.is_some() && run.arena != PREFILL {
+            let live_tokens = (0..streams.len())
+                .map(|rank| {
+                    DeviceInputs::within(self.arenas[run.arena][rank], &run.layout).live_tokens
+                })
+                .collect::<Vec<_>>();
             return self
-                .launch_dspark_target(&streams, run.graph, &run.stages, programs, collectives)
+                .launch_dspark_target(
+                    &streams,
+                    run.graph,
+                    &run.stages,
+                    &live_tokens,
+                    programs,
+                    collectives,
+                )
                 .map_err(|error| self.dispatch_failed(error));
         }
         if run.graph.is_none() {

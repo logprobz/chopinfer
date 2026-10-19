@@ -115,7 +115,12 @@ fn rejected_suffix_still_validates_top_logprob_payload() {
 #[test]
 fn unsupported_history_sampling_and_corrupt_result_refuse_before_commit() {
     assert!(!crate::Kernels::loads(
-        crate::sm120::acceptance_entries::CUBIN
+        crate::sm120::acceptance_entries::CUBIN,
+        &crate::shape::Shape::new(
+            &model_deepseek41_contract::geometry::FLASH,
+            bundle_runtime::geometry::Ranks::TP4
+        )
+        .unwrap()
     ));
     for constrained in [false, true] {
         let mut req = request();

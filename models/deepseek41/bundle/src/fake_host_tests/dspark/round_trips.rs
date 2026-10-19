@@ -215,8 +215,8 @@ fn saved_catch_up_and_index_failures_refuse_target_logits() {
             &super::super::prompt(7, 0, 0, 3, true),
         );
         instance.commit().unwrap();
-        let prior_rows = 3 * FLASH.dspark_stages() as usize + 5;
-        let total_rows = prior_rows + 6 * (FLASH.shape.csa.index_sources.len() + 1);
+        let prior_rows = 2 * (3 * FLASH.dspark_stages() as usize + 5);
+        let total_rows = prior_rows + 6 * (FLASH.shape.csa.index_sources.len() + 2);
         let mut status = vec![0; total_rows * 4];
         status[if index_failure { prior_rows * 4 } else { 0 }] = 1;
         host.injected.replace(Some(status));
@@ -257,7 +257,7 @@ fn failed_snapshot_catch_up_poisoned_cursors_cannot_resume() {
     let pages = (0..instance.describe_prefix_state().unwrap())
         .map(|page| 40 + page)
         .collect::<Vec<_>>();
-    let mut status = vec![0; 3 * FLASH.dspark_stages() as usize * 4];
+    let mut status = vec![0; 3 * FLASH.dspark_stages() as usize * 8];
     status[0] = 1;
     host.injected.replace(Some(status));
     assert!(instance.capture_prefix_state(7, 3, &pages).is_err());

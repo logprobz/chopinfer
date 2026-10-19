@@ -7,6 +7,7 @@ use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVe
 pub(super) mod host;
 #[cfg(test)]
 mod native_package;
+mod round_trips;
 pub(super) use host::MappedHost;
 type Sink = RecordingSink<super::conformance::Limits>;
 

@@ -1,5 +1,6 @@
 //! Full chunks use the decoded cache only at qualified offsets.
 use super::*;
+use bundle_runtime::fake_host::conformance::ObservedHost;
 
 #[test]
 fn decoded_prefill_cache_allocation_failures_release_prior_resources() {
@@ -30,16 +31,22 @@ fn decoded_prefill_cache_allocation_failures_release_prior_resources() {
     assert_eq!(host.acquired.get(), host.released.get());
     for failed_at in [first, first + 1] {
         let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+        let observed = Rc::new(ObservedHost::new(Rc::clone(&host)));
         host.device
             .fail_allocate
             .set(Some(failed_at.try_into().unwrap()));
         assert!(
             api()
-                .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
+                .create(HostServicesTableV1::new(Rc::clone(&observed)), &record)
                 .is_err()
         );
         assert_eq!(host.device.allocation_failures.get(), 1);
-        assert_eq!(host.acquired.get(), host.released.get());
+        assert_eq!(host.device.fail_allocate.get(), None);
+        assert_eq!(host.device.buffer_order.borrow().len(), failed_at);
+        observed.accounting.assert_released();
+        for id in host.device.buffer_order.borrow().iter() {
+            assert!(!host.device.extents.borrow().contains_key(id));
+        }
     }
 }
 

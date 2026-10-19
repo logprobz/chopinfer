@@ -57,7 +57,8 @@ fn prefill_dense_launches_use_staged_tiles() {
             .iter()
             .filter(|line| {
                 let symbol = line.split_whitespace().nth(2).unwrap();
-                (symbol.contains("mxfp8_ticket_") && !symbol.ends_with("_initialize_v2"))
+                ((symbol.contains("mxfp8_ticket_") || symbol.contains("mxfp8_prefetch_"))
+                    && !symbol.contains("_initialize_"))
                     || (symbol.contains("mxfp8_decode_")
                         && !symbol.ends_with("_admit_v1")
                         && !symbol.ends_with("_partials_v1"))

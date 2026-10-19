@@ -129,6 +129,15 @@ def select(rows, ahead=False):
     return rows
 
 
+def check_serving(rows, enabled):
+    selected = [r for r in rows if key(r) in enabled]
+    assert {key(r) for r in selected} == enabled
+    assert len(selected) == 2 * len(enabled)
+    assert all(r['bitwise'] and 0 < r['paired_ratio'] <= LIMIT
+               and 0 < r['exclusive_paired_ratio'] <= LIMIT for r in selected)
+    return len(selected)
+
+
 def summarize(root):
     root=Path(root)
     inventory=json.loads((root/'inventory.json').read_text())
@@ -158,6 +167,8 @@ def summarize(root):
                      dram_ratio=None,look_ahead_qualified=False)
         ahead_rows.extend(with_trace(ahead,graphs(root/f'ahead{device}.sqlite'),ahead=True))
         ahead_rows.extend(with_trace(sequence,graphs(root/f'sublayer{device}.sqlite'),ahead=True))
+    serving={tuple(r) for r in inventory.get('serving_matrix',[])}
+    serving_cases=check_serving(all_rows,serving)
     select(all_rows);select(ahead_rows,ahead=True)
     (root/'routed-matrix.json').write_text(json.dumps(all_rows,indent=2)+'\n')
     (root/'ahead-matrix.json').write_text(json.dumps(ahead_rows,indent=2)+'\n')
@@ -168,7 +179,7 @@ def summarize(root):
     verdict=dict(passed=True,bitwise=True,timed_cases=len(all_rows),qualified_buckets=sum(r['selected']=='stream' for r in all_rows)//2,
                  ahead_qualified_buckets=sum(r['selected']=='ahead' for r in ahead_rows)//2,
                  routed_regressions=0,regression_limit=LIMIT,win_limit=WIN,
-                 serving_routing_changed=False,requires_integration=True,
+                 serving_routing_changed=bool(serving),serving_routed_cases=serving_cases,requires_integration=True,
                  sublayer_comparisons=sum(r.get('sequence')=='shared-expert' for r in ahead_rows),
                  look_ahead_dram_traffic_proven=False,look_ahead_qualified=False)
     (root/'routing-verdict.json').write_text(json.dumps(verdict,indent=2)+'\n')

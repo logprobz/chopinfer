@@ -24,6 +24,7 @@ pub(super) fn check_module() -> LabResult<serde_json::Value> {
 }
 
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_DEEPSEEK41_FOLD_CUBINS"]
 fn stream_sublayer_gpu() {
     check_module().unwrap();
     worker::run(worker::SUBLAYER,modules::timing_cubins().unwrap(), |session| {

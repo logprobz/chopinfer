@@ -1,4 +1,4 @@
-//! Qualification of one-launch folds against the accepted serving selection.
+//! Qualification of one-launch folds against the round 3 selection.
 mod ahead;
 mod sublayer;
 mod worker;
@@ -60,6 +60,7 @@ pub(super) fn cubin() -> LabResult<(&'static str, &'static [u8])> {
 }
 
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_DEEPSEEK41_FOLD_CUBINS"]
 fn stream_fold_dry_run() {
     println!("{}", modules::check().unwrap());
     let (name, bytes) = cubin().unwrap();
@@ -106,13 +107,33 @@ fn stream_fold_dry_run() {
         }
     }
     assert_eq!(covered.len(), 23 * ROWS.len());
+    let serving: Vec<_> = covered
+        .iter()
+        .filter(|&&(n, k, groups, paired, rows)| {
+            let entry = entries
+                .iter()
+                .find(|e| {
+                    (
+                        e.ticket.query.n,
+                        e.ticket.query.k,
+                        e.ticket.query.groups,
+                        e.ticket.paired,
+                    ) == (n, k, groups, paired)
+                })
+                .unwrap();
+            catalog::qualified(&FLASH, entry.ticket.query, rows, paired)
+        })
+        .copied()
+        .collect();
+    assert_eq!(serving.len(), 49);
     println!(
         "{}",
-        json!({"matrix_cases":covered.len(),"matrix":covered,"rows":ROWS,"topologies":SUPPORTED_RANKS,"serving_candidate_buckets":0})
+        json!({"matrix_cases":covered.len(),"matrix":covered,"rows":ROWS,"topologies":SUPPORTED_RANKS,"serving_candidate_buckets":serving.len(),"serving_matrix":serving})
     );
 }
 
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_DEEPSEEK41_FOLD_CUBINS"]
 fn stream_fold_gpu() {
     let cubins = modules::timing_cubins().unwrap();
     worker::run(worker::FOLD, cubins, |session| {

@@ -28,6 +28,7 @@ pub(super) fn run(
 }
 
 #[test]
+#[ignore = "requires the selected ordinal supplied by a job worker"]
 fn worker_ordinal_dry_run() {
     // The job invokes this through the same worker script and environment
     // setup as its GPU tests. Parsing ordinals never opens a CUDA session.

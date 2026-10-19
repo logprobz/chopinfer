@@ -15,6 +15,13 @@ class ReportTests(unittest.TestCase):
         rows=self.pair();rows[1]['exclusive_paired_ratio']=1.01
         self.assertTrue(all(r['selected']=='ticket' for r in select(rows)))
         self.assertTrue(all(r['selected']=='stream' for r in select(self.pair())))
+    def test_served_selection_enforces_the_three_percent_gate(self):
+        from fold_stream_report import check_serving,key
+        rows=self.pair(1.02,1.02);enabled={key(rows[0])}
+        self.assertEqual(check_serving(rows,enabled),2)
+        rows[1]['paired_ratio']=1.031
+        with self.assertRaises(AssertionError):check_serving(rows,enabled)
+        with self.assertRaises(AssertionError):check_serving([],enabled)
     def test_missing_dram_evidence_keeps_look_ahead_unqualified(self):
         rows=self.pair()
         self.assertTrue(all(r['selected']=='ticket' for r in select(rows,ahead=True)))

@@ -137,6 +137,7 @@ impl Case {
 }
 
 #[test]
+#[ignore = "requires a staged directory named by CHOPINFER_DEEPSEEK41_FOLD_CUBINS"]
 fn stream_ahead_gpu() {
     let cubins = modules::timing_cubins().unwrap();
     worker::run(worker::AHEAD,cubins,|session| {

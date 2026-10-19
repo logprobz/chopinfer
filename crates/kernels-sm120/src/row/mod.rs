@@ -13,6 +13,7 @@ pub mod ordered_sum;
 pub mod precision;
 pub mod replicated_embedding;
 pub mod rmsnorm;
+pub mod rmsnorm_prefill;
 pub mod rmsnorm_quantize;
 pub mod rmsnorm_quantize_cached;
 pub mod rmsnorm_quantize_tiles;

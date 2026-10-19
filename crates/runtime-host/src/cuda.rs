@@ -21,8 +21,9 @@ use runtime_bundle_abi::{
 };
 use runtime_cuda::{
     Context, CudaError, DeviceBuffer, Driver, Event, Function, GraphExec, KernelArgument,
-    LaunchConfig, MemoryPool, Module, PeerAccessOwnership, PinnedHostBuffer, PinnedTransfer,
-    PinnedUploadRing, Stream, TensorMap, TensorMapDataType, TensorMapDescriptor, TensorMapSwizzle,
+    LaunchConfig, MemoryPool, Module, PeerAccessOwnership, PeerTransfer, PinnedHostBuffer,
+    PinnedTransfer, PinnedUploadRing, Stream, TensorMap, TensorMapDataType, TensorMapDescriptor,
+    TensorMapSwizzle,
 };
 use runtime_engine::{ModelBatchItem, SampledRow};
 
@@ -96,6 +97,8 @@ pub struct CudaHostDeviceV1 {
     upload_rings: BTreeMap<u64, PinnedUploadRing>,
     /// The rings filled uploads (gathered rows) stage through, by stream.
     fill_rings: BTreeMap<u64, PinnedUploadRing>,
+    /// Peer copies retain both allocations until their completion event.
+    peer_copies: VecDeque<PeerTransfer>,
 }
 
 const TENSOR_MAP_CACHE_CAPACITY: usize = 64;
@@ -115,6 +118,7 @@ const PINNED_UPLOAD_RING_BYTES: usize = 4 * 1024 * 1024;
 /// ring; a larger one waits for its own earlier copies and whatever the
 /// stream queued ahead of them.
 const FILL_RING_BYTES: usize = 64 * 1024 * 1024;
+const MAX_PENDING_PEER_COPIES: usize = 256;
 
 fn record_diagnostic_v1(entries: &mut Vec<Vec<u8>>, value: &[u8]) {
     if entries.len() == DIAGNOSTIC_ENTRY_CAPACITY {
@@ -141,7 +145,26 @@ impl CudaHostDeviceV1 {
             pinned_transfers: BTreeMap::new(),
             upload_rings: BTreeMap::new(),
             fill_rings: BTreeMap::new(),
+            peer_copies: VecDeque::new(),
         })
+    }
+
+    fn retire_peer_copies(&mut self) -> HostDeviceResultV1<()> {
+        while let Some(copy) = self.peer_copies.front_mut() {
+            if !copy.poll().map_err(driver_status)? {
+                break;
+            }
+            self.peer_copies.pop_front();
+        }
+        Ok(())
+    }
+
+    fn drain_peer_copies(&mut self) -> HostDeviceResultV1<()> {
+        self.retire_peer_copies()?;
+        for copy in self.peer_copies.drain(..) {
+            copy.finish();
+        }
+        Ok(())
     }
 
     /// Returns every diagnostic line the bundle emitted, oldest first.
@@ -1278,6 +1301,7 @@ impl HostDeviceBackendV1 for CudaHostDeviceV1 {
     }
 
     fn release_device_buffer(&mut self, buffer: DeviceObjectV1) -> HostDeviceResultV1<()> {
+        self.drain_peer_copies()?;
         // Result packets can finish on another rank. Retire only completed
         // private-stream consumers before testing this allocation's ownership.
         for sampler in self.samplers.values_mut() {
@@ -1344,6 +1368,7 @@ impl HostDeviceBackendV1 for CudaHostDeviceV1 {
         peer_access: DeviceObjectV1,
         disable: bool,
     ) -> HostDeviceResultV1<()> {
+        self.drain_peer_copies()?;
         self.release(peer_access, |object| match object {
             CudaObjectV1::PeerAccess { owner, peer } => {
                 if disable {
@@ -1372,6 +1397,7 @@ impl HostDeviceBackendV1 for CudaHostDeviceV1 {
     }
 
     fn release_stream(&mut self, stream: DeviceObjectV1) -> HostDeviceResultV1<()> {
+        self.drain_peer_copies()?;
         // Dropping a ring waits for its copies and lets go of the stream.
         self.upload_rings.remove(&stream.get());
         self.fill_rings.remove(&stream.get());
@@ -1639,11 +1665,39 @@ impl HostDeviceBackendV1 for CudaHostDeviceV1 {
         source_context: DeviceObjectV1,
         source: DeviceRangeV1,
     ) -> HostDeviceResultV1<()> {
-        // Both contexts are checked so a peer copy names the pair it crosses,
-        // and peer access must already be enabled between them.
-        self.context(destination_context)?;
-        self.context(source_context)?;
-        self.copy_device_to_device(stream, destination, source)
+        let (destination_buffer, destination_offset, destination_length) =
+            self.range(destination)?;
+        let (source_buffer, source_offset, source_length) = self.range(source)?;
+        if destination_length != source_length
+            || self.context(destination_context)? != &destination_buffer.context()
+            || self.context(source_context)? != &source_buffer.context()
+            || self.stream(stream)?.context() != destination_buffer.context()
+        {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let destination_buffer = destination_buffer.clone();
+        let source_buffer = source_buffer.clone();
+        let stream = self.stream(stream)?.clone();
+        self.retire_peer_copies()?;
+        // Backpressure is bounded. Normal collection has completed earlier
+        // copies before the next cycle and retires them without a host wait.
+        if self.peer_copies.len() == MAX_PENDING_PEER_COPIES {
+            self.peer_copies
+                .pop_front()
+                .expect("full peer queue")
+                .finish();
+        }
+        let copy = destination_buffer
+            .copy_peer_range_from_async(
+                destination_offset,
+                &source_buffer,
+                source_offset,
+                source_length,
+                &stream,
+            )
+            .map_err(driver_status)?;
+        self.peer_copies.push_back(copy);
+        Ok(())
     }
 
     fn zero_device_buffer(
@@ -2784,3 +2838,7 @@ mod real_driver_ordering_tests {
         device.release_device_buffer(busy).unwrap();
     }
 }
+
+#[cfg(all(test, feature = "cuda-fake-driver-tests"))]
+#[path = "cuda_peer_tests.rs"]
+mod peer_copy_tests;

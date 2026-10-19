@@ -15,6 +15,13 @@ impl Entry {
             .iter()
             .find(|&&(bucket, _)| bucket == rows)
         {
+            if let Some(&(_, tile)) = self
+                .blocked_buckets
+                .iter()
+                .find(|&&(bucket, _)| bucket == rows)
+            {
+                return self.blocked_variant(tile, features);
+            }
             return self.prefill_variant(features);
         }
         if self.fused && rows <= super::decode::MAX_ROWS {
@@ -23,6 +30,7 @@ impl Entry {
             entry.cached = false;
             entry.fused = false;
             entry.prefill_buckets.clear();
+            entry.blocked_buckets.clear();
             entry.with_decode()
         } else {
             self.clone()

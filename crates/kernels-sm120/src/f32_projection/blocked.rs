@@ -4,6 +4,46 @@ use super::Entry;
 use kernel_build::{CubinSpec, EntrySpec};
 use kernel_core::contract::{LaunchPlan, Refusal, WeightFormat};
 
+impl Entry {
+    /// Replace only already admitted prefill buckets. Preparation, weight
+    /// classification and workspace remain those of the previous route.
+    pub fn with_blocked_prefill_buckets(
+        mut self,
+        mut buckets: Vec<(u32, u32)>,
+    ) -> Result<Self, Refusal> {
+        buckets.sort_unstable();
+        if !self.fused
+            || self.uses_prefill_tiles()
+            || buckets.windows(2).any(|w| w[0].0 == w[1].0)
+            || buckets.iter().any(|&(rows, tile)| {
+                !self.prefill_buckets.iter().any(|&(r, _)| r == rows)
+                    || plan(&self, tile, rows).is_err()
+            })
+        {
+            return Err(Refusal(
+                "blocked prefill requires distinct existing prefill buckets",
+            ));
+        }
+        self.blocked_buckets = buckets;
+        Ok(self)
+    }
+
+    pub fn blocked_prefill_buckets(&self) -> &[(u32, u32)] {
+        &self.blocked_buckets
+    }
+
+    pub fn blocked_prefill_rows(&self) -> u32 {
+        self.blocked_tile_m
+    }
+
+    pub(crate) fn blocked_variant(&self, tile_rows: u32, features: u32) -> Self {
+        let mut entry = self.prefill_variant(features);
+        entry.symbol = symbol(self, tile_rows);
+        entry.blocked_tile_m = tile_rows;
+        entry
+    }
+}
+
 pub fn symbol(entry: &Entry, tile_rows: u32) -> String {
     format!("{}_blocked_m{tile_rows}_v1", entry.baseline_symbol())
 }

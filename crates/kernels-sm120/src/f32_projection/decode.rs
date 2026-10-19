@@ -19,6 +19,12 @@ impl Entry {
     }
 
     pub fn baseline_symbol(&self) -> &str {
+        if self.blocked_tile_m != 0 {
+            return self
+                .symbol
+                .strip_suffix(&format!("_blocked_m{}_v1", self.blocked_tile_m))
+                .expect("blocked prefill suffix");
+        }
         if self.uses_prefill_tiles() {
             return self
                 .symbol
@@ -60,6 +66,12 @@ impl Entry {
                     symbols.extend([tiled.stage_symbol("_prepare"), tiled.symbol().to_owned()]);
                 }
             }
+            for &(_, tile) in &self.blocked_buckets {
+                let symbol = super::blocked::symbol(self, tile);
+                if !symbols.contains(&symbol) {
+                    symbols.push(symbol);
+                }
+            }
             return symbols;
         }
         if self.cached {
@@ -94,6 +106,14 @@ impl Entry {
     }
 
     pub fn stage_symbol(&self, suffix: &str) -> String {
+        if self.blocked_tile_m != 0 {
+            if suffix.is_empty() {
+                return self.symbol.clone();
+            }
+            return self
+                .prefill_variant(self.prefill_tile_n)
+                .stage_symbol(suffix);
+        }
         if self.fused {
             return format!("{}{suffix}_v2", self.symbol.trim_end_matches("_v2"));
         }

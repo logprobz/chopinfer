@@ -22,6 +22,15 @@ impl Entry {
             ));
         }
         self.prefill_buckets = buckets;
+        if self
+            .blocked_buckets
+            .iter()
+            .any(|&(rows, _)| !self.prefill_buckets.iter().any(|&(r, _)| r == rows))
+        {
+            return Err(Refusal(
+                "prefill buckets cannot remove a blocked prefill bucket",
+            ));
+        }
         Ok(self)
     }
 
@@ -30,7 +39,11 @@ impl Entry {
     }
 
     pub fn prefill_features(&self) -> u32 {
-        self.prefill_tile_n
+        if self.blocked_tile_m != 0 {
+            32
+        } else {
+            self.prefill_tile_n
+        }
     }
 
     pub(crate) fn prefill_variant(&self, features: u32) -> Self {
@@ -66,6 +79,13 @@ impl Entry {
                 }
             }
         }
+        for &(_, tile) in &self.blocked_buckets {
+            if super::blocked::symbol(self, tile) == symbol {
+                return super::blocked::plan(self, tile, 1)
+                    .expect("validated blocked tile")
+                    .dynamic_shared_bytes;
+            }
+        }
         0
     }
 
@@ -90,6 +110,9 @@ impl Entry {
     }
 
     pub fn prefill_plan(&self, rows: u32) -> Result<LaunchPlan, Refusal> {
+        if self.blocked_tile_m != 0 {
+            return super::blocked::plan(self, self.blocked_tile_m, rows);
+        }
         if !self.uses_prefill_tiles() || rows == 0 || rows > self.query.m_capacity {
             return Err(Refusal("exact prefill rows exceed the declared capacity"));
         }
@@ -110,6 +133,19 @@ impl Entry {
     }
 
     pub(crate) fn prefill_specs(&self) -> Vec<EntrySpec> {
+        if self.blocked_tile_m != 0 {
+            let baseline = Entry::new(
+                self.query,
+                self.usage,
+                self.baseline_symbol().trim_end_matches("_v1"),
+            )
+            .expect("same validated entry");
+            let mut specs = self.prefill_variant(self.prefill_tile_n).prefill_specs();
+            *specs.last_mut().expect("prefill compute") =
+                super::blocked::entry_spec(&baseline, self.blocked_tile_m)
+                    .expect("validated blocked tile");
+            return specs;
+        }
         let q = self.query;
         let raw = q.weight == WeightFormat::F32;
         let weight = pointer("weight", if raw { "const float" } else { "const uint16_t" });

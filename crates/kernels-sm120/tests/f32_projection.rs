@@ -551,3 +551,94 @@ fn dimensions_cannot_overflow_cuda_fold_indices() {
     query.n = u32::MAX;
     assert!(Entry::new(query, e.usage(), "overflow").is_err());
 }
+
+#[test]
+fn blocked_prefill_changes_only_the_measured_compute_launch() {
+    let seed = entry(WeightFormat::Bf16);
+    let q = GemmQuery {
+        m_capacity: 8192,
+        n: 384,
+        k: 5120,
+        ..seed.query()
+    };
+    let usage = OperationUse {
+        capacity: 8192,
+        ..seed.usage()
+    };
+    let baseline = Entry::new(q, usage, "blocked_route")
+        .unwrap()
+        .with_split_decode()
+        .with_prefill_buckets(vec![(512, 64), (2048, 32), (8191, 64), (8192, 64)])
+        .unwrap();
+    let candidate = baseline
+        .clone()
+        .with_blocked_prefill_buckets(vec![(512, 32), (2048, 32), (8191, 32), (8192, 32)])
+        .unwrap();
+    let source = |entry: &Entry| {
+        kernel_build::generate(
+            &f32_projection::cubin_spec("unchanged", std::slice::from_ref(entry)).unwrap(),
+        )
+        .unwrap()
+        .translation_unit
+    };
+    assert_eq!(source(&baseline), source(&candidate));
+    let prepare = |e: &Entry| {
+        backend(vec![e.clone()])
+            .projection(&operation(e), usage, Need::rows(8192))
+            .unwrap()
+            .handle
+    };
+    let old = prepare(&baseline);
+    let new = prepare(&candidate);
+    assert_eq!(old.info().workspace, new.info().workspace);
+    assert_eq!(old.info().bytes, new.info().bytes);
+    assert_eq!(old.info().guarantees, new.info().guarantees);
+    let mut b = buffers(&candidate);
+    b.scratch.weight_domain = Some(View {
+        handle: 10,
+        bytes: candidate.weight_domain_bytes(),
+    });
+    let work = View {
+        handle: 9,
+        bytes: new.info().workspace,
+    };
+    assert_eq!(old.initialize(&b).unwrap(), new.initialize(&b).unwrap());
+    for rows in [
+        1, 17, 32, 33, 64, 127, 129, 256, 257, 511, 512, 513, 1024, 2047, 2048, 2049, 4096, 8190,
+        8191, 8192,
+    ] {
+        let before = old.launches(&b, work, Counts::rows(rows)).unwrap();
+        let after = new.launches(&b, work, Counts::rows(rows)).unwrap();
+        if [512, 2048, 8191, 8192].contains(&rows) {
+            assert_eq!(before.len(), 2);
+            assert_eq!(after.len(), 2);
+            assert_eq!(before[0], after[0]);
+            assert_eq!(before[1].arguments, after[1].arguments);
+            assert_eq!(
+                after[1].symbol,
+                kernels_sm120::f32_projection::blocked::symbol(&baseline, 32)
+            );
+            assert_eq!(
+                after[1].plan,
+                kernels_sm120::f32_projection::blocked::plan(&baseline, 32, rows).unwrap()
+            );
+            assert!(
+                new.info()
+                    .symbols
+                    .contains(&(after[1].symbol.clone(), 32768))
+            );
+        } else {
+            assert_eq!(before, after, "rows={rows}");
+        }
+    }
+    for bad in [
+        vec![(32, 32)],
+        vec![(1024, 32)],
+        vec![(8193, 32)],
+        vec![(512, 16)],
+        vec![(512, 32), (512, 64)],
+    ] {
+        assert!(baseline.clone().with_blocked_prefill_buckets(bad).is_err());
+    }
+    assert!(candidate.with_prefill_buckets(vec![(512, 64)]).is_err());
+}

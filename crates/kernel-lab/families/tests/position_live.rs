@@ -229,41 +229,21 @@ fn paired(
         session,
         buffers: Vec::new(),
     };
-    // Exact binary inputs, repeated keys create ties across shard boundaries.
-    let queries = a.input(
-        &(0..n * 32 * 128)
-            .flat_map(|i| {
-                let value = ((i * 17 % 31) as f32 - 15.) / 16.;
-                ((value.to_bits() >> 16) as u16).to_le_bytes()
-            })
-            .collect::<Vec<_>>(),
-    )?;
-    let weights = a.input(
-        &(0..n * 32)
-            .flat_map(|i| (((i % 7) as f32 - 3.) / 8.).to_le_bytes())
-            .collect::<Vec<_>>(),
-    )?;
-    let codes = if bf16 {
-        a.input(
-            &(0..width as usize * 128)
-                .flat_map(|i| {
-                    let value = ((i * 13 % 17) as f32 - 8.) / 8.;
-                    ((value.to_bits() >> 16) as u16).to_le_bytes()
-                })
-                .collect::<Vec<_>>(),
-        )?
-    } else {
-        a.input(
-            &(0..width as usize * 64)
-                .map(|i| (i * 37 % 256) as u8)
-                .collect::<Vec<_>>(),
-        )?
-    };
+    let operands = arithmetic::Operands::new(
+        n,
+        width as usize,
+        bf16,
+        arithmetic::SEED ^ (u64::from(rows) << 32) ^ u64::from(context) ^ u64::from(ratio),
+    );
+    let queries = a.input(&operands.query_bytes(false))?;
+    let weights = a.input(&operands.weight_bytes(false))?;
+    let codes = a.input(&operands.codes)?;
     let scales = if bf16 {
         View::EMPTY
     } else {
-        a.input(&vec![126; width as usize * 4])?
+        a.input(&operands.scales)?
     };
+    drop(operands);
     let pages = width / q.page_size;
     let tables = a.input(&i32s(
         (0..pages).map(|i| if i == 2 { -1 } else { (pages - 1 - i) as i32 }),
@@ -445,12 +425,13 @@ fn paired(
             } else {
                 for (i, &v) in planes.iter().enumerate() {
                     let actual = a.read(v)?;
-                    if actual != expected[i] {
-                        return Err(format!(
-                            "bit mismatch rows={rows} context={length} bf16={bf16} ratio={ratio} replay={replay} plane={i} byte={:?}",
-                            actual.iter().zip(&expected[i]).position(|(x, y)| x != y)
-                        ));
-                    }
+                    compare_bytes(
+                        &expected[i],
+                        &actual,
+                        &format!(
+                            "rows={rows} context={length} bf16={bf16} ratio={ratio} replay={replay} plane={i}"
+                        ),
+                    )?;
                 }
             }
         }
@@ -496,3 +477,18 @@ fn gpu_bitwise_matrix() {
 
 #[path = "position_live/edges.rs"]
 mod edges;
+
+fn compare_bytes(expected: &[u8], actual: &[u8], label: &str) -> LabResult<()> {
+    if actual != expected {
+        return Err(format!(
+            "bit mismatch {label}: lengths {}/{}, byte {:?}",
+            expected.len(),
+            actual.len(),
+            actual.iter().zip(expected).position(|(x, y)| x != y)
+        ));
+    }
+    Ok(())
+}
+
+#[path = "position_live/arithmetic.rs"]
+mod arithmetic;

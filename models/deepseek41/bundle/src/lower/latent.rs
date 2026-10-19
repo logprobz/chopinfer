@@ -414,6 +414,7 @@ impl Lowering<'_> {
         let decoded_cache = self.buffers.prefill_cache.filter(|_| {
             phase.prefill()
                 && phase.rows() == 8192
+                && self.prefill_row_origin.is_none()
                 && offset.is_some_and(|r| {
                     matches!(r.offset, 0 | 8192 | 16384 | 24576)
                         && (ratio == 0 || (r.offset > 0 && r.pages > 0))

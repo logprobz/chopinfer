@@ -432,7 +432,15 @@ impl Instance {
         let (programs, collectives, stages) = if skipping {
             (Vec::new(), Vec::new(), Vec::new())
         } else {
-            self.program(phase, arena, &layout, &lower, head_rows, media.is_some(), cache)?
+            self.program(
+                phase,
+                arena,
+                &layout,
+                &lower,
+                head_rows,
+                media.is_some(),
+                cache,
+            )?
         };
         let mut tails = Vec::new();
         for buffers in &self.buffers {
@@ -494,6 +502,11 @@ impl Instance {
                 self.log(&error);
                 BundleStatusV1::InternalError
             })?;
+            if run.micro.is_some() {
+                // The micro plan rebuilds attention with smaller row parts.
+                // Its prefix and tail contain no cache consumers or producers.
+                run.cache = None;
+            }
             if run.micro.is_none() {
                 run.dma = dma::Plan::prepare(self, &run).map_err(|error| {
                     self.log(&error);

@@ -22,8 +22,8 @@ pub(crate) mod execute;
 mod fold_stream;
 mod media;
 pub(crate) mod prefill;
-mod prefill_reduce;
 mod prefill_cache;
+mod prefill_reduce;
 mod prefix;
 
 use std::cell::RefCell;
@@ -1111,6 +1111,29 @@ pub(crate) fn dspark_state_capture_requests_for_test(
             .state_capture_pages
             .keys()
             .copied()
+            .collect()
+    })
+}
+
+/// Keep allocation identities fixed while comparing the two attention routes.
+#[cfg(test)]
+pub(crate) fn prefill_cache_for_test(
+    handle: runtime_bundle_abi::BundleHandleV1,
+    enabled: bool,
+) -> Vec<runtime_bundle_abi::DeviceBufferSpanV1> {
+    INSTANCES.with(|table| {
+        let mut table = table.borrow_mut();
+        let instance = table.get_mut(handle).expect("a live instance");
+        instance
+            .buffers
+            .iter_mut()
+            .filter_map(|buffers| {
+                let cache = buffers.prefill_cache?;
+                if !enabled {
+                    buffers.prefill_cache = None;
+                }
+                Some(cache.data)
+            })
             .collect()
     })
 }

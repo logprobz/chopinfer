@@ -239,3 +239,209 @@ fn decoded_prefill_routes_winning_offsets_and_preserves_merge() {
         mismatches.first()
     );
 }
+
+fn composed_trace(mode: u8, dma: bool, skip: bool, cached: bool) -> Vec<String> {
+    use crate::instance::execute::overlap::with_mode;
+    use crate::ops::{with_bf16_gather, with_dma};
+    use runtime_bundle_sdk::prefill::{Boundary, encode};
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+    host.kv_pages.set(1024);
+    host.device.residency.set(Some(BundleRawClusterResidencyV1 {
+        multiprocessor_count: 188,
+        usable_multiprocessors: 188,
+        max_active_clusters: 188,
+        flags: BUNDLE_CLUSTER_RESIDENCY_V1_CLUSTERS_REPORTED
+            | BUNDLE_CLUSTER_RESIDENCY_V1_COOPERATIVE_LAUNCH,
+        ..BundleRawClusterResidencyV1::unreported()
+    }));
+    host.device
+        .ordinary_symbols
+        .borrow_mut()
+        .insert("chop_comm_owned_sum_round_f32_v1".into());
+    let mut record = crate::config::tests::record(&shape, KV_LAYOUTS[0], 1, false);
+    if skip {
+        let at = record
+            .windows(MODEL_OPTIONS_TAG_V1.len())
+            .position(|s| s == MODEL_OPTIONS_TAG_V1)
+            .unwrap();
+        let options = serde_json::to_vec(&serde_json::json!({
+            "text_config.index_topk": shape.runtime.index_topk,
+            "text_config.candidate_topk_blocks": shape.runtime.candidate_topk_blocks,
+            "prefill_chunk_tokens": 8192, "prefill_upper_skip": true,
+        }))
+        .unwrap();
+        record.truncate(at + MODEL_OPTIONS_TAG_V1.len());
+        record.extend_from_slice(&(options.len() as u32).to_le_bytes());
+        record.extend_from_slice(&options);
+    }
+    let mut instance = with_dma(dma, || {
+        with_bf16_gather(true, || {
+            with_mode(mode, || {
+                api()
+                    .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
+                    .unwrap()
+                    .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
+                    .unwrap()
+            })
+        })
+    });
+    let cache = crate::instance::prefill_cache_for_test(instance.handle(), cached);
+    assert_eq!(cache.len(), 4);
+    let mut submitted = Vec::new();
+    for offset in [0, 8192] {
+        let from = host.device.journal.borrow().len();
+        let original = prompt(7, 0, offset, 8192, true);
+        if skip {
+            let request = encode(
+                &original,
+                &[Boundary {
+                    request_id: 7,
+                    prompt_tokens: offset + 8192,
+                    chunk_end: offset + 8192,
+                    chunk_tokens: 8192,
+                }],
+            )
+            .unwrap();
+            instance
+                .execute_prefill(&request, &mut Views::default())
+                .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
+        } else {
+            instance
+                .execute(&original, &mut Views::default())
+                .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
+        }
+        instance.commit().unwrap();
+        let journal = host.device.journal.borrow();
+        let lines = &journal[from..];
+        let attention = lines
+            .iter()
+            .filter(|s| {
+                s.starts_with("launch ")
+                    && s.contains("chop_latent_sources_")
+                    && !s.contains("_merge_")
+            })
+            .collect::<Vec<_>>();
+        let decoded = attention.iter().filter(|s| s.contains("_decoded_")).count();
+        let full = if skip {
+            20
+        } else if mode == 2 {
+            0
+        } else {
+            40
+        };
+        assert_eq!(
+            decoded,
+            if cached && full > 0 {
+                4 * if offset == 0 { 2 } else { full }
+            } else {
+                0
+            },
+            "mode={mode} dma={dma} skip={skip} offset={offset}"
+        );
+        if skip || mode == 2 {
+            assert!(
+                attention
+                    .iter()
+                    .any(|s| !s.contains("_decoded_") && !s.contains("_reuse2_"))
+            );
+        }
+        assert!(lines.iter().any(|s| s.starts_with("launch ")
+            && s.contains(if dma && !skip {
+                "chop_comm_owned_sum_round_f32_v1"
+            } else {
+                "chop_comm_allreduce_phased_round_f32_v1"
+            })));
+        let cache_ids = cache
+            .iter()
+            .map(|s| s.buffer.raw)
+            .collect::<std::collections::BTreeSet<_>>();
+        let mains = host.device.rank_streams.borrow();
+        for line in lines
+            .iter()
+            .filter(|s| s.starts_with("launch ") || s.starts_with("peer-copy "))
+        {
+            let has_cache = super::shared_overlap::journal_spans(line)
+                .iter()
+                .any(|s| cache_ids.contains(&s.0));
+            if has_cache {
+                let stream: u32 = line.split_whitespace().nth(1).unwrap().parse().unwrap();
+                assert!(
+                    cached && mains.values().any(|&main| main == stream),
+                    "cache on a side stream: {line}"
+                );
+                assert!(line.contains("chop_latent_prefill_") || line.contains("_decoded_"));
+            }
+        }
+        if let Some(root) = std::env::var_os("CHOPINFER_DEEPSEEK41_CACHE_COMPOSITION_JOURNAL_DIR") {
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::write(
+                std::path::Path::new(&root).join(format!(
+                    "mode-{mode}-dma-{dma}-skip-{skip}-cache-{cached}-offset-{offset}.journal"
+                )),
+                lines.join("\n"),
+            )
+            .unwrap();
+        }
+        submitted.extend_from_slice(lines);
+    }
+    instance.retire_request(7).unwrap();
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+    submitted
+}
+
+fn compare_composed(mode: u8, dma: bool, skip: bool) {
+    let old = composed_trace(mode, dma, skip, false);
+    let new = composed_trace(mode, dma, skip, true);
+    let unchanged = |lines: Vec<String>| {
+        lines
+            .into_iter()
+            .filter(|s| {
+                (s.starts_with("launch ")
+                    || s.starts_with("peer-copy ")
+                    || s.starts_with("record ")
+                    || s.starts_with("wait "))
+                    && !s.contains("chop_latent_prefill_")
+                    && (!s.contains("chop_latent_sources_") || s.contains("_merge_"))
+            })
+            .collect::<Vec<_>>()
+    };
+    let attention = |lines: &[String]| {
+        lines
+            .iter()
+            .filter(|s| {
+                s.starts_with("launch ")
+                    && s.contains("chop_latent_sources_")
+                    && !s.contains("_merge_")
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let (a, b) = (attention(&old), attention(&new));
+    assert_eq!(a.len(), b.len());
+    for (a, b) in a.iter().zip(&b) {
+        if !b.contains("_decoded_") {
+            assert_eq!(a, b);
+        }
+    }
+    assert_eq!(
+        unchanged(old),
+        unchanged(new),
+        "all other launches, merge arguments, events and peer transfers"
+    );
+}
+
+#[test]
+fn decoded_prefill_composes_with_overlap_bf16_and_dma() {
+    for (mode, dma) in [(0, false), (1, false), (2, false), (0, true), (2, true)] {
+        compare_composed(mode, dma, false);
+    }
+}
+
+#[test]
+fn decoded_prefill_keeps_skipped_row_parts_on_native_attention() {
+    for mode in [0, 2] {
+        compare_composed(mode, false, true);
+    }
+}

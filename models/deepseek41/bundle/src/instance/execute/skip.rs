@@ -164,7 +164,9 @@ impl Plan {
                     Stage::DsparkFeature(id) if instance.dspark.is_some() => {
                         Some(instance.dspark_feature(&base, run.phase, id)?)
                     }
-                    _ => base.stage(run.phase, stage)?,
+                    // Only this full-width prefix has qualified cached attention.
+                    // Retained key/output parts below keep their native row origins.
+                    _ => base.stage_with_prefill_cache(run.phase, stage, run.cache)?,
                 };
                 push(&mut program, stage, required(ops, stage)?);
             }

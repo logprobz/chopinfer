@@ -29,15 +29,15 @@ mod moe_pipeline;
 mod norm_quantize;
 mod position_valid;
 mod prefill_attention;
+mod prefill_cache;
 mod prefill_dma;
 mod prefill_gate_journal;
 mod prefill_micro;
 mod prefill_overlap;
 mod prefill_reduce;
-mod prefill_skip;
-mod prefill_cache;
 #[cfg(feature = "diagnostic-taps")]
 mod prefill_selected;
+mod prefill_skip;
 mod prefill_tma;
 mod producer_epilogues;
 mod shared_overlap;

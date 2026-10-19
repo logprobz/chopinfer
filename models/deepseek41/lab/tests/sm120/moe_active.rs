@@ -29,6 +29,7 @@ enum Mode {
     Compact,
     BlockWarps,
     Streamed,
+    Previous,
 }
 
 struct Arena<'a> {
@@ -79,6 +80,19 @@ struct Arm {
     status: View,
 }
 
+impl Arm {
+    fn uses_streamed(&self) -> bool {
+        ["gateup", "down"].into_iter().all(|part| {
+            ["pack", "small", "merge"].into_iter().all(|stage| {
+                self.launches.iter().any(|op| {
+                    op.symbol.contains(&format!("before_{part}_"))
+                        && op.symbol.ends_with(&format!("_stream_{stage}_v1"))
+                })
+            })
+        })
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Inputs {
     input: View,
@@ -104,10 +118,19 @@ fn arm(
         weights: [gate_weights, down_weights],
     } = inputs;
     let set = case.set;
-    let mut backend = registration::quantizers(&FLASH, 4)?
-        .into_iter()
-        .fold(Sm120::new(), Sm120::with_block_quantize);
-    let streamed = mode == Mode::Streamed && rows <= 64 && case.phase != ExecutionPhase::Prefill;
+    let mut backend = if mode == Mode::Selected {
+        Sm120::new()
+    } else {
+        registration::quantizers(&FLASH, 4)?
+            .into_iter()
+            .fold(Sm120::new(), Sm120::with_block_quantize)
+    };
+    let streamed = matches!(mode, Mode::Streamed | Mode::Selected)
+        && rows <= 64
+        && case.phase != ExecutionPhase::Prefill;
+    if mode == Mode::Selected {
+        backend = registration::register(backend, &FLASH, 4)?;
+    }
     let tile = if streamed {
         64
     } else if mode == Mode::BlockWarps || case.phase == ExecutionPhase::Decode {
@@ -115,7 +138,9 @@ fn arm(
     } else {
         64
     };
-    let entries = if streamed {
+    let entries = if mode == Mode::Selected {
+        Vec::new()
+    } else if streamed {
         registration::streamed_projections(&FLASH)?
             .into_iter()
             .filter(|e| e.tokens_capacity == if rows <= 8 { 8 } else { 64 })
@@ -136,7 +161,7 @@ fn arm(
         };
         backend = backend.with_quantized_chained_projection(entry);
     }
-    if matches!(mode, Mode::Selected | Mode::Compact)
+    if matches!(mode, Mode::Previous | Mode::Compact)
         && case.phase == ExecutionPhase::Decode
         && rows == 1
     {
@@ -144,15 +169,19 @@ fn arm(
             backend = backend.with_quantized_chained_projection(entry);
         }
     }
-    for entry in registration::routes(&FLASH)
-        .into_iter()
-        .chain(registration::active_routes(&FLASH))
-        .chain(if streamed {
-            registration::streamed_routes(&FLASH)
-        } else {
-            Vec::new()
-        })
-    {
+    for entry in if mode == Mode::Selected {
+        Vec::new()
+    } else {
+        registration::routes(&FLASH)
+            .into_iter()
+            .chain(registration::active_routes(&FLASH))
+            .chain(if streamed {
+                registration::streamed_routes(&FLASH)
+            } else {
+                Vec::new()
+            })
+            .collect()
+    } {
         backend = backend.with_row_bias_route(entry);
     }
     let usage = OperationUse {
@@ -381,6 +410,7 @@ fn compare(
         Mode::Compact,
         Mode::BlockWarps,
         Mode::Streamed,
+        Mode::Previous,
     ]
     .map(|mode| arm(a, case, mode, inputs, shared_weights))
     .into_iter()
@@ -608,6 +638,22 @@ fn compare(
             .launch(s)
             .map_err(|e| e.to_string())
     })?;
+    let previous = timed_pair(session, |i, s| {
+        graphs[if i == 0 { 5 } else { 1 }]
+            .launch(s)
+            .map_err(|e| e.to_string())
+    })?;
+    let expected_streamed = rows <= 64 && case.phase != ExecutionPhase::Prefill;
+    let selected_streamed = arms[1].uses_streamed();
+    let streamed_compared = arms[4].uses_streamed();
+    assert_eq!(
+        selected_streamed, expected_streamed,
+        "selected entry coverage"
+    );
+    assert_eq!(
+        streamed_compared, expected_streamed,
+        "streamed parity coverage"
+    );
     let mut kernel_times = BTreeMap::new();
     let mut floor_ms = BTreeMap::new();
     let mut floor_ratio = BTreeMap::new();
@@ -657,16 +703,20 @@ fn compare(
         );
         kernel_times.insert(name, times);
     }
-    let gate = cases::speed_gate(selected[0], selected[1]);
+    let gate = cases::speed_gate(selected[0], selected[1])
+        .and_then(|()| cases::speed_gate(previous[0], previous[1]));
     let record = serde_json::json!({"case":case.label(),"rows":rows,"experts":case.set.count,"top_k":case.set.top_k,
         "phase":format!("{:?}",case.phase),"routing":format!("{:?}",case.routing),"cache":"warm",
         "old_ms":selected[0],"active_ms":selected[1],"compact_ms":compact[1],"block_warps_ms":block_warps[1],"ratio":selected[1]/selected[0],
         "streamed_ms":streamed[1],"streamed_old_ms":streamed[0],
-        "streamed_candidate":rows<=64 && case.phase!=ExecutionPhase::Prefill,
+        "streamed_candidate":streamed_compared,"selected_streamed":selected_streamed,
+        "streamed_bitwise":streamed_compared,"previous_ms":previous[0],"selected_paired_ms":previous[1],
+        "compared_modes":["old","selected","compact","block_warps","streamed","previous"],
+        "compared_outputs":12,"live_replays":[rows,1,0,rows],
         "active_experts":active_experts,"bandwidth_tb_s":1.6,"weight_floor_ms":floor_ms,"floor_ratio":floor_ratio,
-        "kernel_order":["old","selected","compact","block_warps","streamed"],
+        "kernel_order":["old","selected","compact","block_warps","streamed","previous"],
         "kernel_ms":kernel_times,"bitwise":true,"dropped_join_detected":dropped_join_detected,
-        "speed_passed":gate.is_ok(),"selection":if case.phase==ExecutionPhase::Decode && rows==1 && case.set.count==384 {"active gate/up, old down"} else {"old routed kernels"}});
+        "speed_passed":gate.is_ok(),"selection":if selected_streamed {"streamed gate/up and down"} else {"old routed kernels"}});
     println!("MOE_RESULT {record}");
     session.receipt(
         "moe-active-bitwise",
@@ -766,6 +816,7 @@ fn active_moe_cpu_dry_run() {
                 Mode::Compact,
                 Mode::BlockWarps,
                 Mode::Streamed,
+                Mode::Previous,
             ] {
                 let arm = arm(
                     &mut a,
@@ -781,6 +832,12 @@ fn active_moe_cpu_dry_run() {
                     shared,
                 )
                 .unwrap();
+                if mode == Mode::Selected || mode == Mode::Streamed {
+                    assert_eq!(
+                        arm.uses_streamed(),
+                        case.rows <= 64 && case.phase != ExecutionPhase::Prefill
+                    );
+                }
                 assert_eq!(arm.side.len(), 4);
                 assert_eq!(arm.sum.len(), 1);
                 assert_eq!(arm.outputs.len(), 12);

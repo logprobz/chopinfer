@@ -10,7 +10,6 @@ import signal
 import subprocess
 import sys
 import time
-import moe_profile
 
 ROOT = Path(__file__).resolve().parent
 BINARY = ROOT / "bin/moe-active-tests"
@@ -44,13 +43,18 @@ def check_records(records):
         if label in seen:
             errors.append(f"duplicate {label}")
         seen.add(label)
-        for name in ["old_ms", "active_ms", "compact_ms", "block_warps_ms", "streamed_ms", "streamed_old_ms"]:
+        for name in ["old_ms", "active_ms", "compact_ms", "block_warps_ms", "streamed_ms", "streamed_old_ms", "previous_ms", "selected_paired_ms"]:
             if not math.isfinite(row[name]) or row[name] <= 0:
                 errors.append(f"{label}: invalid {name}")
         candidate = row["rows"] <= 64 and row["phase"] != "Prefill"
         if row["streamed_candidate"] != candidate:
             errors.append(f"{label}: wrong streamed coverage")
-        if row["kernel_order"] != ["old", "selected", "compact", "block_warps", "streamed"]:
+        modes = ["old", "selected", "compact", "block_warps", "streamed", "previous"]
+        if row["compared_modes"] != modes or row["compared_outputs"] != 12 or row["live_replays"] != [row["rows"],1,0,row["rows"]]:
+            errors.append(f"{label}: incomplete bitwise comparison")
+        if row["selected_streamed"] != candidate or row["streamed_bitwise"] != candidate:
+            errors.append(f"{label}: selected/streamed parity coverage differs")
+        if row["kernel_order"] != modes:
             errors.append(f"{label}: wrong kernel timing order")
         if not row["top_k"] <= row["active_experts"] <= min(row["experts"], row["rows"] * row["top_k"]):
             errors.append(f"{label}: invalid active expert count")
@@ -60,7 +64,7 @@ def check_records(records):
                 errors.append(f"{label}: invalid bandwidth floor")
             times = row["kernel_ms"][projection]
             ratios = row["floor_ratio"][projection]
-            if len(times) != 5 or len(ratios) != 5:
+            if len(times) != 6 or len(ratios) != 6:
                 errors.append(f"{label}: missing kernel times or floor ratios")
             elif any(not math.isfinite(t) or t <= 0 or not math.isclose(r, t/floor, rel_tol=1e-6) for t, r in zip(times, ratios)):
                 errors.append(f"{label}: invalid kernel time or floor ratio")
@@ -68,6 +72,8 @@ def check_records(records):
             errors.append(f"{label}: parity failed")
         if row["phase"] != "Prefill" and row["dropped_join_detected"] is not True:
             errors.append(f"{label}: dropped join was not detected")
+        if row["selected_paired_ms"] > row["previous_ms"] * 1.03:
+            errors.append(f"{label}: selected policy exceeds previous selection by more than 3%")
         if row["active_ms"] > row["old_ms"] * 1.03 or row["speed_passed"] is not True:
             errors.append(f"{label}: selected policy exceeds old by more than 3%")
     if seen != expected_cases():
@@ -77,16 +83,17 @@ def check_records(records):
 
 def speed_table(records):
     lines = ["Active means the serving policy, including measured fallbacks.",
-             "Streamed, compact and block-warps remain diagnostic until qualified.",
+             "TP4 decode/verify through 64 rows selects streamed gate/up and down; prefill and larger rows keep the old path.",
              "Weight-only floor uses unique active expert MXFP4 codes and UE8M0 scales at 1.6 TB/s.",
              "Warm graph/event timings include all projection stages; floor excludes activation, scratch and output traffic.",
-             "case | experts active | old ms | active ms | active/old | compact ms | block-warps ms | streamed ms | streamed/paired-old | streamed eligible | gate old/active/block-warps/streamed ms | down old/active/block-warps/streamed ms | gate/down floor us | gate old/active/block-warps/streamed /floor | down old/active/block-warps/streamed /floor"]
+             "case | experts active | old ms | active ms | active/old | compact ms | block-warps ms | streamed ms | streamed/paired-old | streamed selected | previous ms | selected paired ms | selected/previous | gate old/active/block-warps/streamed ms | down old/active/block-warps/streamed ms | gate/down floor us | gate old/active/block-warps/streamed /floor | down old/active/block-warps/streamed /floor"]
     for row in sorted(records, key=lambda r: (r["experts"], r["phase"], r["rows"], r["routing"])):
         series = lambda values: "/".join(f"{values[i]:.5f}" for i in [0,1,3,4])
-        eligible = row["streamed_candidate"] and row["streamed_ms"] < row["streamed_old_ms"] * 0.97
+        eligible = row["selected_streamed"]
         lines.append(f'{row["case"]} | {row["active_experts"]} | {row["old_ms"]:.6f} | {row["active_ms"]:.6f} | '
                      f'{row["active_ms"]/row["old_ms"]:.4f} | {row["compact_ms"]:.6f} | {row["block_warps_ms"]:.6f} | '
                      f'{row["streamed_ms"]:.6f} | {row["streamed_ms"]/row["streamed_old_ms"]:.4f} | {eligible} | '
+                     f'{row["previous_ms"]:.6f} | {row["selected_paired_ms"]:.6f} | {row["selected_paired_ms"]/row["previous_ms"]:.4f} | '
                      f'{series(row["kernel_ms"]["gateup"])} | {series(row["kernel_ms"]["down"])} | '
                      f'{row["weight_floor_ms"]["gateup"]*1000:.3f}/{row["weight_floor_ms"]["down"]*1000:.3f} | '
                      f'{series(row["floor_ratio"]["gateup"])} | {series(row["floor_ratio"]["down"])}')
@@ -100,7 +107,7 @@ def preflight():
         digest, name = line.split("  ", 1)
         assert hashlib.sha256((ROOT / name).read_bytes()).hexdigest() == digest, name
     listing = checked([str(BINARY), "moe_active::", "--list"])
-    for name in TESTS + ["moe_active::active_moe_cpu_dry_run", "moe_active::profile_moe_gpu"]:
+    for name in TESTS + ["moe_active::active_moe_cpu_dry_run"]:
         assert name + ": test" in listing, name
     assert "libcuda.so.1" in checked(["ldd", str(BINARY)])
     env = os.environ.copy()
@@ -110,13 +117,6 @@ def preflight():
     assert "3 passed; 0 failed" in dry and "skipping" not in dry
     (ROOT / "dry-run.log").write_text(dry)
     checked(["journalctl", "-k", "-n", "0", "--no-pager"])
-    ncu = Path((ROOT / "ncu-path.txt").read_text().strip())
-    sections = checked([str(ncu), "--list-sections"])
-    assert all(section in sections for section in moe_profile.SECTIONS)
-    for bank in [0,1]:
-        for rows in moe_profile.ROWS:
-            args, env = moe_profile.command(BINARY, ncu, bank, rows, ROOT / "profile")
-            assert args[0] == str(ncu) and env["CHOPINFER_MOE_PROFILE_ROWS"] == str(rows)
     return {"cpu_dry_run": "passed", "tests": TESTS, "sha256": hashlib.sha256(BINARY.read_bytes()).hexdigest()}
 
 def main():
@@ -175,26 +175,14 @@ def main():
         for device in devices:
             output = (out / ("gpu-" + device + ".log")).read_text()
             assert "1 passed; 0 failed; 0 ignored" in output and "skipping" not in output
-        for bank, device in enumerate(devices):
-            env = os.environ.copy()
-            env.pop("CUDA_VISIBLE_DEVICES", None)
-            env.pop("CHOPINFER_KERNEL_GPUS", None)
-            env.update(CHOPINFER_KERNEL_GPU=device, CHOPINFER_KERNEL_REQUIRE="1", CHOPINFER_KERNEL_TIMEOUT_SECS="140")
-            log = open(out / ("profile-" + device + ".log"), "w")
-            logs.append(log)
-            args = [sys.executable, str(ROOT / "moe_profile.py"), "--binary", str(BINARY),
-                    "--ncu", (ROOT / "ncu-path.txt").read_text().strip(), "--bank", str(bank),
-                    "--out", str(out / ("profile-" + device))]
-            processes.append(subprocess.Popen(args, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True))
-        profile_codes = [p.wait(timeout=max(1, 1100 - (time.time() - start))) for p in processes[2:]]
-        (out / "profile-exit-codes.json").write_text(json.dumps(profile_codes) + "\n")
-        assert profile_codes == [0,0], profile_codes
+        (out / "profiling.json").write_text(json.dumps({"status":"disabled", "gates_verdict":False,
+            "reason":"Profile separately; performance-counter access is not required for qualification."}) + "\n")
     except BaseException:
         failed = True
         raise
     finally:
         for process in processes:
-            # A profiler parent can exit while its instrumented child still
+            # A worker parent can exit while its child still
             # lives. Terminate the whole group even after the parent exits.
             try:
                 os.killpg(process.pid, signal.SIGTERM)

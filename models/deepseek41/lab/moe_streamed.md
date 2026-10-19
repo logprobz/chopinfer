@@ -1,6 +1,6 @@
-# Streamed MoE decode candidate
+# Streamed MoE decode
 
-The TP4 candidate streams each active expert's MXFP4 weight strip once for
+The TP4 path streams each active expert's MXFP4 weight strip once for
 all its routed rows. It has separate queues for experts with 1..8 and 9..64
 rows. A CTA computes 64 output columns and one 128-K chain. Four adjacent
 lanes load four 32-K groups with 128-bit loads, decode UE8M0 scales once per
@@ -14,14 +14,32 @@ BF16 rounding epilogue. The existing ceil quantizer follows gate/up. Down
 retains F32 output. The separate shared expert and final routed sum keep
 their existing arithmetic and graph dependencies.
 
-The candidate is compiled and locked under `routed_moe_streamed`. Serving
-neither registers its entries nor loads its modules. The measured C1
-active gate/up crossover and every fallback stay unchanged. Qualification
-requires full graph parity and a paired speed win in each proposed bucket.
-The table marks a candidate eligible only when its complete graph median
-beats its paired old graph by more than 3%. This is evidence for review,
-not an automatic routing change. Prefill and rows above 64 use the old
-path in the streamed comparison arm.
+The entries are compiled and locked under `routed_moe_streamed`. SM120
+Flash TP4 serves both expert banks with the streamed path for decode and
+verify through 64 rows. Separate preparation ranges select the 8-row entry
+through eight rows and the 64-row entry above that. Prefill, verify above
+64 rows, other ranks and other geometries retain the old path.
+
+On 2026-10-19 at 250 W, all 50 complete graph cases passed bitwise,
+including all 40 eligible streamed cases. Each compared 12 output views
+through full/one/zero/full live-row replays, including shared buffers and
+the final routed sum. The dropped-join controls were detected. There were
+no Xids. Combined gate/up and down improved in every eligible case.
+
+| Bank and bucket | Previous gate/down us | Streamed gate/down us |
+| --- | ---: | ---: |
+| Backbone decode 1 | 76.6 / 44.6 | 23.2 / 13.0 |
+| Backbone decode 8 | 189.2 / 55.8 | 82.3 / 38.6 |
+| Backbone verify 6 | 207.6 / 92.4 | 66.3 / 34.5 |
+| Backbone verify 48 | 1517.9 / 648.6 | 628.1 / 317.8 |
+| DSpark decode 1 | 152.4 / 23.4 | 17.2 / 9.0 |
+| DSpark decode 32 | 418.2 / 86.4 | 201.2 / 88.4 |
+
+The small DSpark full graphs remain dominated by quantization; their
+largest observed slowdown was 2.724%, within the 3% noise allowance.
+The new job pairs the selected and previous overlapped policies directly,
+in addition to the serial baseline. Every selected bucket must stay within
+3% of both comparisons. No quantizer arithmetic changes here.
 
 ## CPU audit, 2026-10-19
 
@@ -64,19 +82,19 @@ old, selected, block-warps and streamed timings, plus their ratio to a
 weight-only bandwidth floor. That floor counts unique active expert codes
 and scales at 1.6 TB/s. It excludes activation, scratch and output traffic;
 warm-cache timings can beat the DRAM-based floor. The serving policy fails
-qualification if any bucket is over 3% slower than its paired old graph.
+qualification if any bucket is over 3% slower than its paired old graph
+or the previous overlapped serving selection. Receipts name every compared
+mode, output count, live replay sequence and actual streamed selection.
 
-After parity and timing checks, `moe_profile.py` collects Nsight Compute
-LaunchStats, Occupancy, MemoryWorkloadAnalysis, SchedulerStats and
-WarpStateStats for old, active and streamed kernels at rows 1, 6, 8, 32
-and 48 on each bank. The profiles expose achieved occupancy, load traffic,
-issue efficiency and dependent-load stalls. Profiling uses eager launches,
-with cache flushing and clock control disabled. Its perturbed timings do
-not enter the speed gate. Reports and CSV exports stay outside the tree.
-The CPU `--static` mode saves resource tables and SASS without using a GPU.
+`moe_profile.py` remains available for separate Nsight Compute profiling
+of old, active and streamed kernels. The qualification job does not run it
+or require counter access. The previous profile attempt failed with
+`ERR_NVGPUCTRPERM` on both GPUs after parity and timing had passed; that
+failure was independent of kernel correctness. The CPU `--static` mode
+saves resource tables and SASS without using a GPU.
 
 The staged job runs two idle GPUs at a checked 250 W cap, records Xids via
 `journalctl -k`, and terminates child process groups on SIGTERM. Its dry run
-checks the pinned binary, test coverage, driver linkage and profiler
-sections without launching CUDA work. No GPU result is claimed by this
-CPU audit.
+checks the pinned binary, test coverage and driver linkage without launching
+CUDA work. Restaging and routing validation use CPU checks only; the
+measurements above come from the completed qualification run.

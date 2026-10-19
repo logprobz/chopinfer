@@ -20,8 +20,11 @@ def records():
     for row in values:
         row.update(streamed_ms=0.8, streamed_old_ms=1.0, streamed_candidate=row["rows"]<=64 and row["phase"]!="Prefill",
                    active_experts=row["top_k"], bandwidth_tb_s=1.6,
-                   kernel_order=["old", "selected", "compact", "block_warps", "streamed"])
-        row["kernel_ms"] = dict(gateup=[0.5]*5, down=[0.2]*5)
+                   kernel_order=["old", "selected", "compact", "block_warps", "streamed", "previous"])
+        row.update(selected_streamed=row["streamed_candidate"],streamed_bitwise=row["streamed_candidate"],
+                   previous_ms=1.0, selected_paired_ms=1.0, compared_modes=row["kernel_order"],
+                   compared_outputs=12, live_replays=[row["rows"],1,0,row["rows"]])
+        row["kernel_ms"] = dict(gateup=[0.5]*6, down=[0.2]*6)
         row["weight_floor_ms"] = dict(gateup=row["top_k"]*1152*5120*(0.5+1/32)/1.6e9,
                                      down=row["top_k"]*5120*576*(0.5+1/32)/1.6e9)
         row["floor_ratio"] = {name:[t/row["weight_floor_ms"][name] for t in times] for name,times in row["kernel_ms"].items()}
@@ -44,6 +47,20 @@ class TimingGate(unittest.TestCase):
         self.assertTrue(moe_job.check_records(rows))
         rows[0]["active_ms"] = float("nan")
         self.assertTrue(moe_job.check_records(rows))
+
+    def test_previous_selection_is_a_separate_speed_gate(self):
+        rows = records()
+        rows[0].update(old_ms=2.0,active_ms=1.1,previous_ms=1.0,selected_paired_ms=1.031)
+        self.assertTrue(moe_job.check_records(rows))
+        rows[0]["selected_paired_ms"] = 1.03
+        self.assertEqual(moe_job.check_records(rows),[])
+
+    def test_claimed_streamed_parity_requires_selected_entries_and_all_replays(self):
+        for field,value in [("selected_streamed",False),("streamed_bitwise",False),
+                            ("compared_outputs",11),("live_replays",[1,0,1]),("compared_modes",["old","selected"])]:
+            rows = records()
+            rows[0][field] = value
+            self.assertTrue(moe_job.check_records(rows),field)
 
     def test_missing_boundary_or_join_control_fails(self):
         rows = records()

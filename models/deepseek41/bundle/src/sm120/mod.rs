@@ -55,6 +55,8 @@ mod indexer;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod indexer_query;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
+mod indexer_query_parallel;
+#[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod latent_glue;
 #[allow(dead_code)]
 mod latent_window_bf16;
@@ -212,7 +214,7 @@ impl crate::Kernels {
         let sm120 = dense::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = shared::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = mxfp8_fold::register(sm120, shape.geometry, shape.ranks())?;
-        let sm120 = indexer_query::register(sm120, shape.geometry);
+        let sm120 = indexer_query_parallel::register_parallel(sm120, shape.geometry);
         let sm120 = latent_glue::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = ceil_parallel::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = latent_window_stage::register(sm120, shape.geometry, shape.ranks())?;

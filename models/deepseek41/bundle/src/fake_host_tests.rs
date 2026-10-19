@@ -20,6 +20,7 @@ use crate::config::{KV_LAYOUTS, KvLayout};
 mod batch_limits;
 mod conformance;
 mod dspark;
+mod index_query;
 mod media;
 mod position_valid;
 mod prefill_tma;
@@ -862,6 +863,7 @@ fn every_geometry_topology_runs_the_fake_host_journal_and_lifecycle() {
             let lines = host.device.journal.borrow().clone();
             assert_launches_fit_configured_shared(&lines, &topology);
             assert_small_row_ceil_bindings(&lines);
+            index_query::assert_query_bindings(&lines);
             let layout = format!("{:?}", kv.storage).to_lowercase();
             if let Some(dir) = &export {
                 std::fs::create_dir_all(dir).unwrap();

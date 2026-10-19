@@ -57,6 +57,8 @@ mod indexer;
 #[path = "indexer_query.rs"]
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod indexer_query;
+#[allow(dead_code)]
+mod indexer_query_parallel;
 #[allow(dead_code, reason = "the bundle registers the entries")]
 mod latent_glue;
 #[allow(dead_code)]
@@ -188,6 +190,10 @@ pub fn selection(
             format!("position_query_{}_sm120", geometry.kernel_tag),
             geometry.id,
         ));
+        owners.push((
+            indexer_query_parallel::parallel_cubin_name(geometry),
+            geometry.id,
+        ));
         owners.push((compressor_bf16::cubin_name(geometry), geometry.id));
         for part in ["pooling", "keys", "ratio_one"] {
             owners.push((
@@ -227,6 +233,9 @@ pub fn selection(
     specs.extend(shared::cubins(geometries).expect("deepseek41 shared expert cubins"));
     specs.push(("dependencies", kernels_sm120::probes::cubin_spec()));
     specs.extend(indexer_query::cubins(geometries).expect("deepseek41 query preparation cubins"));
+    specs.extend(
+        indexer_query_parallel::parallel_cubins(geometries).expect("parallel query cubins"),
+    );
     specs.extend(latent_glue::cubins(geometries).expect("deepseek41 latent glue cubins"));
     specs.extend(latent_window_stage::cubins(geometries).expect("window stage cubins"));
     specs.extend(latent_window_bf16::cubins(geometries).expect("BF16 window cubins"));

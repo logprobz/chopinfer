@@ -1,4 +1,4 @@
-//! Candidate query registration for standalone qualification before serving.
+//! Qualified small-row query registration; larger buckets keep the original path.
 #[path = "indexer_query.rs"]
 #[allow(dead_code)]
 mod baseline;

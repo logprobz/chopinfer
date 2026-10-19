@@ -331,6 +331,7 @@ fn compare_case(
                 poison::fill_all(s, out, &[0xa5])?;
             }
             for (arm, executable) in graphs.iter().enumerate() {
+                poison::fill_all(s, &b.work, &[0xa5])?;
                 if graph {
                     executable.launch(&s.stream).map_err(|e| e.to_string())?;
                 } else {
@@ -347,6 +348,15 @@ fn compare_case(
                     .unwrap();
                 return Err(format!(
                     "{label} live={live} graph={graph} mismatch byte={at}"
+                ));
+            }
+            if live > 0
+                && output[0][..live as usize * q.n as usize * 4]
+                    .iter()
+                    .all(|&v| v == 0xa5)
+            {
+                return Err(format!(
+                    "{label}: reference left every live output poisoned"
                 ));
             }
             if output[1][live as usize * q.n as usize * 4..]

@@ -4492,6 +4492,25 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         let stream_object = state.stream_object(stream)?;
         let destination_object = state.context_object(destination_context)?;
         let source_object = state.context_object(source_context)?;
+        let destination_key = key_of_v1!(destination_context);
+        let source_key = key_of_v1!(source_context);
+        if state.streams.get(key_of_v1!(stream))?.context != destination_key
+            || state
+                .buffers
+                .get(key_of_v1!(destination.buffer))?
+                .origin
+                .map(|origin| origin.context)
+                != Some(destination_key)
+            || state
+                .buffers
+                .get(key_of_v1!(source.buffer))?
+                .origin
+                .map(|origin| origin.context)
+                != Some(source_key)
+        {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        state.consumer_may_reach(destination_key, key_of_v1!(source.buffer))?;
         let destination = state.resolve_range(destination)?;
         let source = state.resolve_range(source)?;
         if destination.length != source.length {

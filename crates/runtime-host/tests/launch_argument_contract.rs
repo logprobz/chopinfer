@@ -600,6 +600,70 @@ fn a_cross_context_address_needs_both_the_lease_and_the_grant() {
 }
 
 #[test]
+fn peer_dma_requires_the_directed_lease_and_pool_grant() {
+    let h = cross_harness();
+    let copy = || {
+        h.services().copy_peer_to_peer(
+            h.consumer_stream,
+            h.consumer,
+            h.span(h.consumer_buffer),
+            h.owner,
+            h.span(h.owner_buffer),
+        )
+    };
+    assert_eq!(
+        copy(),
+        Err(BundleAbiError::Status(BundleStatusV1::InvalidState))
+    );
+    let lease = h
+        .services()
+        .acquire_peer_access(h.consumer, h.owner)
+        .unwrap();
+    assert_eq!(
+        copy(),
+        Err(BundleAbiError::Status(BundleStatusV1::InvalidState))
+    );
+    h.services()
+        .set_memory_pool_peer_access(h.owner_pool, h.consumer, true)
+        .unwrap();
+    copy().unwrap();
+    h.services().release_peer_access(lease).unwrap();
+    assert_eq!(
+        copy(),
+        Err(BundleAbiError::Status(BundleStatusV1::InvalidState))
+    );
+}
+
+#[test]
+fn peer_dma_contexts_must_own_their_spans_and_destination_stream() {
+    let h = cross_harness();
+    let lease = h
+        .services()
+        .acquire_peer_access(h.consumer, h.owner)
+        .unwrap();
+    h.services()
+        .set_memory_pool_peer_access(h.owner_pool, h.consumer, true)
+        .unwrap();
+    for (stream, destination, source) in [
+        (h.owner_stream, h.consumer, h.owner),
+        (h.consumer_stream, h.owner, h.owner),
+        (h.consumer_stream, h.consumer, h.consumer),
+    ] {
+        assert_eq!(
+            h.services().copy_peer_to_peer(
+                stream,
+                destination,
+                h.span(h.consumer_buffer),
+                source,
+                h.span(h.owner_buffer),
+            ),
+            Err(BundleAbiError::Status(BundleStatusV1::InvalidArgument))
+        );
+    }
+    h.services().release_peer_access(lease).unwrap();
+}
+
+#[test]
 fn a_lease_or_grant_pointing_the_wrong_way_is_not_the_one_needed() {
     let harness = cross_harness();
     // The lease from the owner to the consumer is a different edge from the one

@@ -3,6 +3,30 @@ use super::{mxfp8_fold::Entry, mxfp8_prefill as tiled};
 use kernel_build::{CubinSpec, EntrySpec};
 use kernel_core::contract::{LaunchPlan, Refusal, Validate};
 
+/// A model's measured bounds for choosing the split tail. Bounds are on
+/// launch rows and remainder rows, not device data or arithmetic.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TailPolicy {
+    pub max_rows: u32,
+    pub max_tail_rows: u32,
+}
+impl TailPolicy {
+    pub const ALL: Self = Self {
+        max_rows: u32::MAX,
+        max_tail_rows: 127,
+    };
+    pub fn validate(self) -> Result<(), Refusal> {
+        if self.max_rows < 128 || !(1..128).contains(&self.max_tail_rows) {
+            return Err(Refusal("invalid split-tail row bounds"));
+        }
+        Ok(())
+    }
+    pub fn splits(self, rows: u32) -> bool {
+        let tail = rows % tiled::TILE;
+        rows >= tiled::TILE && rows <= self.max_rows && tail != 0 && tail <= self.max_tail_rows
+    }
+}
+
 pub fn symbol(e: &Entry) -> String {
     format!("{}_split_full_v1", tiled::symbol(e))
 }

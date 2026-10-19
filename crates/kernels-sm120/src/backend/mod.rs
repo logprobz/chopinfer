@@ -220,19 +220,34 @@ pub struct Sm120 {
     silu_mul_quantizers: Vec<crate::row::silu_mul_quantize::Entry>,
     mxfp8_folds: Vec<crate::gemm::mxfp8_fold::Entry>,
     mxfp8_prefills: Vec<crate::gemm::mxfp8_fold::Entry>,
-    mxfp8_prefill_splits: Vec<crate::gemm::mxfp8_fold::Entry>,
+    mxfp8_prefill_splits: Vec<(
+        crate::gemm::mxfp8_fold::Entry,
+        crate::gemm::mxfp8_prefill_split::TailPolicy,
+    )>,
     mxfp8_fold_decodes: Vec<crate::gemm::mxfp8_fold_decode::Entry>,
     mxfp8_fold_tickets: Vec<crate::gemm::mxfp8_fold_ticket::Entry>,
 }
 
 impl Sm120 {
-    /// Register staged prefill with the native fold's exact arithmetic.
     /// Register a prefill candidate with a separate fold launch for partial tiles.
-    pub fn with_mxfp8_prefill_split(mut self, entry: crate::gemm::mxfp8_fold::Entry) -> Self {
-        self.mxfp8_prefill_splits.push(entry);
+    pub fn with_mxfp8_prefill_split(self, entry: crate::gemm::mxfp8_fold::Entry) -> Self {
+        self.with_mxfp8_prefill_split_policy(
+            entry,
+            crate::gemm::mxfp8_prefill_split::TailPolicy::ALL,
+        )
+    }
+
+    /// Register the model's measured split-tail bounds.
+    pub fn with_mxfp8_prefill_split_policy(
+        mut self,
+        entry: crate::gemm::mxfp8_fold::Entry,
+        policy: crate::gemm::mxfp8_prefill_split::TailPolicy,
+    ) -> Self {
+        self.mxfp8_prefill_splits.push((entry, policy));
         self
     }
 
+    /// Register staged prefill with the native fold's exact arithmetic.
     pub fn with_mxfp8_prefill(mut self, entry: crate::gemm::mxfp8_fold::Entry) -> Self {
         self.mxfp8_prefills.push(entry);
         self
@@ -1113,13 +1128,21 @@ impl Backend for Sm120 {
         op: &kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery,
         need: Need,
     ) -> Result<Prepared<kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers<View>>, Refused> {
-        if self.mxfp8_prefill_splits.iter().any(|e| e.query == *op) {
-            if self.mxfp8_prefills.iter().any(|e| e.query == *op) {
+        let candidates: Vec<_> = self
+            .mxfp8_prefill_splits
+            .iter()
+            .filter(|(e, _)| e.query == *op)
+            .collect();
+        if let Some((_, policy)) = candidates.first() {
+            if self.mxfp8_prefills.iter().any(|e| e.query == *op)
+                || candidates.iter().any(|(_, other)| other != policy)
+            {
                 return Err(
                     kernel_core::contract::Refusal("ambiguous prefill tail strategy").into(),
                 );
             }
-            return mxfp8_prefill::prepare_with_tail(&self.mxfp8_prefill_splits, op, need, true);
+            let entries: Vec<_> = candidates.iter().map(|(e, _)| e.clone()).collect();
+            return mxfp8_prefill::prepare_with_tail(&entries, op, need, Some(*policy));
         }
         mxfp8_prefill::prepare(&self.mxfp8_prefills, op, need)
     }

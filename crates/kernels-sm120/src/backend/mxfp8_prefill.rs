@@ -10,14 +10,14 @@ pub(super) fn prepare(
     query: &Mxfp8FoldGemmQuery,
     need: Need,
 ) -> Result<Prepared<Mxfp8FoldGemmBuffers<View>>, Refused> {
-    prepare_with_tail(entries, query, need, false)
+    prepare_with_tail(entries, query, need, None)
 }
 
 pub(super) fn prepare_with_tail(
     entries: &[Entry],
     query: &Mxfp8FoldGemmQuery,
     need: Need,
-    split_tail: bool,
+    split_tail: Option<split::TailPolicy>,
 ) -> Result<Prepared<Mxfp8FoldGemmBuffers<View>>, Refused> {
     let inner = mxfp8_fold::prepare(entries, query, need)?;
     let entry = entries
@@ -32,7 +32,8 @@ pub(super) fn prepare_with_tail(
         (tiled::validation_symbol(&entry), 0),
         (tiled::symbol(&entry), tiled::SHARED),
     ];
-    if split_tail {
+    if let Some(policy) = split_tail {
+        policy.validate()?;
         split::specs(&entry)?;
         info.symbols.extend([
             (split::validation_symbol(&entry), 0),
@@ -52,7 +53,7 @@ struct Op {
     inner: Prepared<Mxfp8FoldGemmBuffers<View>>,
     entry: Entry,
     info: OpInfo,
-    split_tail: bool,
+    split_tail: Option<split::TailPolicy>,
 }
 impl PreparedOp<Mxfp8FoldGemmBuffers<View>> for Op {
     fn info(&self) -> &OpInfo {
@@ -79,8 +80,9 @@ impl PreparedOp<Mxfp8FoldGemmBuffers<View>> for Op {
             status: b.status.handle,
             status_row_offset: b.status_row_offset,
         };
-        let split_tail =
-            self.split_tail && counts.rows >= tiled::TILE && counts.rows % tiled::TILE != 0;
+        let split_tail = self
+            .split_tail
+            .is_some_and(|policy| policy.splits(counts.rows));
         let tail_handles = handles;
         let mut launches = vec![
             Launch {

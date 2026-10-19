@@ -15,6 +15,7 @@ pub mod hc_expand_mix;
 pub mod hc_round_expand_mix;
 pub mod latent;
 pub mod latent_scheduled;
+pub(crate) mod moe_floor;
 pub mod mxfp8_fold;
 pub mod norm_quantize;
 pub mod replicated_embedding;
@@ -161,7 +162,7 @@ impl crate::Kernels {
             .into_iter()
             .find(|e| e.experts() == set.count)
             .expect("declared expert bank");
-        crate::ops::moe::floor::Prepared::new(
+        moe_floor::prepare(
             entry,
             model_deepseek41_contract::moe::router(shape.geometry, set)
                 .scaling_factor

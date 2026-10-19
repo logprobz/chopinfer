@@ -493,7 +493,10 @@ mod tests {
                     Phase::Prefill { rows: 4096 },
                     Phase::Prefill { rows: 8192 },
                 ] {
-                    assert_eq!(ops.floor(phase).is_some(),shape.ranks()==4 && set.count==128 && matches!(phase,Phase::Decode(1)));
+                    assert_eq!(
+                        ops.floor(phase).is_some(),
+                        shape.ranks() == 4 && set.count == 128 && matches!(phase, Phase::Decode(1))
+                    );
                     let kind = ops.kind(phase);
                     let compact = shape.ranks() == 4
                         && phase == Phase::Decode(1)

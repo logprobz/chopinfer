@@ -311,6 +311,13 @@ impl Instance {
                 .max(1)
                 .next_multiple_of(256);
             let workspace = allocate_span(services, pool, stream, workspace, held)?;
+            let shared_workspace = self
+                .ops
+                .shared_workspace()
+                .max(self.dspark.as_ref().map_or(0, |d| d.ops.shared_workspace()))
+                .max(1)
+                .next_multiple_of(256);
+            let shared_workspace = allocate_span(services, pool, stream, shared_workspace, held)?;
             if let Some(drafter) = &mut self.dspark {
                 drafter.allocate(services, pool, stream, held)?;
             }
@@ -325,7 +332,7 @@ impl Instance {
                 .as_ref()
                 .map_or(4, |ops| ops.table_bytes());
             let table = allocate_span(services, pool, stream, table, held)?;
-            op_spans.push((sorted, workspace, table));
+            op_spans.push((sorted, workspace, table, shared_workspace));
             // The all-reduce's comm state, which the peers write: zeroed
             // before any step, after peer access.
             let regions = self.ops.reduce.as_ref().map_or(&[][..], |ops| ops.state());
@@ -473,7 +480,7 @@ impl Instance {
         self.kv_pages = pages;
         for (
             ((((scratch, views), (kv_pool, state)), (comm, logits)), (mix_partials, mix_tickets)),
-            (sorted_rows, workspace, rope_compressed),
+            (sorted_rows, workspace, rope_compressed, shared_workspace),
         ) in scratch
             .into_iter()
             .zip(views)
@@ -491,6 +498,7 @@ impl Instance {
                 logits,
                 sorted_rows,
                 workspace,
+                shared_workspace,
                 mix_partials,
                 mix_tickets,
                 rope_compressed,

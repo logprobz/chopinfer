@@ -110,6 +110,22 @@ const fn mixer(sublayer: Sublayer) -> &'static str {
 impl Lowering<'_> {
     /// `stage`'s launches in `phase`, or `None` while it is not lowered.
     pub fn stage(&self, phase: Phase, stage: Stage) -> Result<Option<Vec<Lowered>>, String> {
+        let mut lowered = self.stage_inner(phase, stage)?;
+        if matches!(
+            stage,
+            Stage::SharedGateUp(_) | Stage::SharedActivation(_) | Stage::SharedDown(_)
+        ) && let Some(launches) = &mut lowered
+        {
+            // Relocate at the stage boundary so split, paired and future
+            // shared kernels all receive the same independent workspace.
+            for lowered in launches {
+                crate::shared_overlap::bind_shared(&mut lowered.launch, self.buffers)?;
+            }
+        }
+        Ok(lowered)
+    }
+
+    fn stage_inner(&self, phase: Phase, stage: Stage) -> Result<Option<Vec<Lowered>>, String> {
         match stage {
             Stage::Embedding | Stage::ExpandStreams => self.row_stage(phase, stage),
             Stage::FinalNorm => self.final_norm(phase),
@@ -504,6 +520,7 @@ mod tests {
             logits: None,
             sorted_rows: span(64),
             workspace: span(64),
+            shared_workspace: span(64),
             mix_partials: None,
             mix_tickets: None,
             rope_compressed: span(64),

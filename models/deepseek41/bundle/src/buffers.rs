@@ -232,10 +232,13 @@ kernel_core::scratch_record! {
         /// The phase's U32 status per row: every activation quantizer
         /// (on its own or inside a write, a query preparation or an expert
         /// chain) and every fold GEMM ORs a flag into a row whose input is
-        /// invalid and writes that row zeros. Every op of a phase shares
-        /// the plane, so a flagged row stays zero; zeroed before each
-        /// phase, read back after it.
+        /// invalid and writes that row zeros. The main stream's ops share
+        /// the plane; the shared expert has its own plane below. Both are
+        /// zeroed before each phase and read back after it.
         pub row_status: value,
+        /// The shared expert's independent flags, cleared and checked with
+        /// row_status. Neither overlapped branch writes the other's flags.
+        pub shared_row_status: value,
         /// Each Engram layer's table rows the host gathered for the step's
         /// rows, `[engram layers, rows, engram_k]` E4M3 codes and
         /// `[engram layers, rows, engram_k / 32]` UE8M0 scales: a row's
@@ -385,6 +388,7 @@ impl Scratch<Allocation> {
             normed_wide: row(hidden * F32),
             index_status: Allocation::bytes(rows * sources * I32),
             row_status: row(U32),
+            shared_row_status: row(U32),
             engram_codes: Allocation::bytes(engram_layers * rows * engram_k),
             engram_scales: Allocation::bytes(engram_layers * rows * engram_k / 32),
             engram_rows: row(engram_k * BF16),
@@ -514,6 +518,8 @@ pub struct RankBuffers {
     pub sorted_rows: DeviceBufferSpanV1,
     /// The backend workspace the ops take, the most any op states.
     pub workspace: DeviceBufferSpanV1,
+    /// Backend scratch reserved for the shared expert on the side stream.
+    pub shared_workspace: DeviceBufferSpanV1,
     /// The mixer scratch the mix-collapse lists (`ops::MixScratchBytes`):
     /// its partials and its tickets, zeroed at create.
     pub mix_partials: Option<DeviceBufferSpanV1>,

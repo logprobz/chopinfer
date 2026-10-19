@@ -1,6 +1,7 @@
 //! Run the shared expert beside the routed experts inside decode and verify
 //! graphs. The input quantization precedes the fork, and the routed sum
-//! follows the join. Each stream retains its original arithmetic and buffers.
+//! follows the join. Each stream retains its arithmetic and stage order.
+//! The shared expert owns separate backend workspace and row status.
 //! Capture pieces contain whole fork/join regions. Eager runs remain serial.
 
 use std::collections::BTreeMap;
@@ -8,8 +9,10 @@ use std::ops::Range;
 
 use bundle_runtime::dispatch::DispatchError;
 use bundle_runtime::pipeline::PreparedLaunch;
+use kernel_core::contract::Argument;
 use runtime_bundle_abi::{
-    BundleCudaSymbolHandleV1, BundleEventHandleV1, BundleStreamHandleV1, HostServicesV1,
+    BundleCudaSymbolHandleV1, BundleEventHandleV1, BundleStreamHandleV1, DeviceBufferSpanV1,
+    HostServicesV1,
 };
 
 use crate::program::Stage;
@@ -102,6 +105,152 @@ pub enum Op {
     Side(Range<usize>),
     /// The compute stream waits for the side stream's work so far.
     Join,
+}
+
+fn end(span: DeviceBufferSpanV1) -> Result<u64, String> {
+    span.offset
+        .checked_add(span.length)
+        .ok_or_else(|| "overlap span overflows".into())
+}
+
+fn contains(outer: DeviceBufferSpanV1, inner: DeviceBufferSpanV1) -> Result<bool, String> {
+    Ok(outer.buffer == inner.buffer && outer.offset <= inner.offset && end(inner)? <= end(outer)?)
+}
+
+fn intersects(a: DeviceBufferSpanV1, b: DeviceBufferSpanV1) -> Result<bool, String> {
+    Ok(a.length != 0
+        && b.length != 0
+        && a.buffer == b.buffer
+        && a.offset < end(b)?
+        && b.offset < end(a)?)
+}
+
+/// Bind the shared stage's workspace and status to their independent rank
+/// regions. Bind narrows workspace views to OpInfo::workspace first, so an
+/// undersized destination is rejected rather than silently truncated.
+pub(crate) fn bind_shared(
+    launch: &mut PreparedLaunch,
+    buffers: &crate::buffers::RankBuffers,
+) -> Result<(), String> {
+    let mut relocate = |id: &mut u64| -> Result<(), String> {
+        let view = launch
+            .bindings
+            .get(*id)
+            .map_err(|e| format!("shared binding: {e:?}"))?;
+        for (source, target) in [
+            (buffers.workspace, buffers.shared_workspace),
+            (
+                buffers.scratch.row_status,
+                buffers.scratch.shared_row_status,
+            ),
+        ] {
+            if !intersects(source, view)? {
+                continue;
+            }
+            if !contains(source, view)? {
+                return Err("shared scratch straddles its source region".into());
+            }
+            let offset = target
+                .offset
+                .checked_add(view.offset - source.offset)
+                .ok_or("shared scratch offset overflows")?;
+            let relocated = DeviceBufferSpanV1::new(target.buffer, offset, view.length);
+            if !contains(target, relocated)? {
+                return Err(format!(
+                    "shared scratch exceeds its prepared workspace: {} bytes",
+                    view.length
+                ));
+            }
+            *id = launch.bindings.bind(relocated);
+            break;
+        }
+        Ok(())
+    };
+    for argument in &mut launch.arguments.0 {
+        match argument {
+            Argument::DeviceBuffer(id) => relocate(id)?,
+            Argument::TensorMap(map) => relocate(&mut map.base_buffer)?,
+            Argument::DevicePointerArray(ids) => {
+                for id in ids {
+                    relocate(id)?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn spans(launch: &PreparedLaunch) -> Result<Vec<DeviceBufferSpanV1>, String> {
+    let mut spans = Vec::new();
+    let mut add = |id| -> Result<(), String> {
+        let span = launch
+            .bindings
+            .get(id)
+            .map_err(|e| format!("overlap binding: {e:?}"))?;
+        end(span)?;
+        spans.push(span);
+        Ok(())
+    };
+    for argument in &launch.arguments.0 {
+        match argument {
+            Argument::DeviceBuffer(id) => add(*id)?,
+            Argument::TensorMap(map) => add(map.base_buffer)?,
+            Argument::DevicePointerArray(ids) => {
+                for id in ids {
+                    add(*id)?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(spans)
+}
+
+/// Check actual pointer arguments before capture. Only the input codes,
+/// input scales and live-row count may be shared across the two branches;
+/// their producers finish before the fork. Every other intersecting range
+/// is rejected, including scratch introduced by a newly selected backend.
+pub fn checked_units(
+    stages: &[Stage],
+    program: &[PreparedLaunch],
+    immutable: &[DeviceBufferSpanV1],
+) -> Result<Vec<Vec<Op>>, String> {
+    if stages.len() != program.len() {
+        return Err("overlap stage and launch counts differ".into());
+    }
+    let units = units(stages)?;
+    for unit in &units {
+        let [Op::Fork, Op::Side(side), Op::Compute(main), Op::Join] = &unit[..] else {
+            continue;
+        };
+        let bound = |range: Range<usize>| -> Result<Vec<_>, String> {
+            range.map(|i| Ok((i, spans(&program[i])?))).collect()
+        };
+        let main = bound(main.clone())?;
+        for (side_index, side_spans) in bound(side.clone())? {
+            for (main_index, main_spans) in &main {
+                for &a in &side_spans {
+                    for &b in main_spans {
+                        if !intersects(a, b)? {
+                            continue;
+                        }
+                        let mut read_only = false;
+                        for &input in immutable {
+                            read_only |= contains(input, a)? && contains(input, b)?;
+                        }
+                        if !read_only {
+                            return Err(format!(
+                                "unordered scratch alias: {} {a:?} and {} {b:?}",
+                                program[side_index].symbol, program[*main_index].symbol,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(units)
 }
 
 /// A program's submissions in units the capture's graph pieces never split:
@@ -203,7 +352,71 @@ impl Lanes {
 mod tests {
     use super::*;
     use crate::program::{Phase, Sublayer, stages};
+    use bundle_runtime::dispatch::BufferBindings;
+    use kernel_core::contract::{ArgumentList, LaunchPlan};
     use model_deepseek41_contract::geometry::FLASH;
+    use runtime_bundle_abi::BundleDeviceBufferHandleV1;
+
+    #[test]
+    fn shared_overlap_checks_resolved_ranges_before_the_fork() {
+        let span = |handle, offset, length| {
+            DeviceBufferSpanV1::new(
+                BundleDeviceBufferHandleV1::from_parts(handle, 1),
+                offset,
+                length,
+            )
+        };
+        let stages = crate::program::moe(0);
+        let mut program = stages
+            .iter()
+            .enumerate()
+            .map(|(i, stage)| PreparedLaunch {
+                symbol: format!("{stage:?}"),
+                rows: 1,
+                plan: LaunchPlan {
+                    grid: [1; 3],
+                    block: [32, 1, 1],
+                    cluster: [1; 3],
+                    dynamic_shared_bytes: 0,
+                    workspace_bytes: 0,
+                    pdl: true,
+                },
+                arguments: ArgumentList(vec![Argument::U32(i as u32)]),
+                bindings: BufferBindings::default(),
+            })
+            .collect::<Vec<_>>();
+        let shared = stages
+            .iter()
+            .position(|&s| s == Stage::SharedGateUp(0))
+            .unwrap();
+        let bind = |launch: &mut PreparedLaunch, view| {
+            let id = launch.bindings.bind(view);
+            launch.arguments = ArgumentList(vec![Argument::DevicePointerArray(vec![id])]);
+        };
+        // The router and shared pair's flags and partial sums have different
+        // planner IDs but intersect in the same physical allocation.
+        bind(&mut program[0], span(7, 128, 61_440));
+        bind(&mut program[shared], span(7, 256, 184_320));
+        assert!(
+            checked_units(&stages, &program, &[])
+                .unwrap_err()
+                .contains("unordered scratch alias")
+        );
+        bind(&mut program[shared], span(8, 256, 184_320));
+        assert!(checked_units(&stages, &program, &[]).is_ok());
+        // Disjoint suballocations in one arena are safe, including adjacency.
+        bind(&mut program[shared], span(7, 61_568, 4));
+        assert!(checked_units(&stages, &program, &[]).is_ok());
+        bind(&mut program[shared], span(7, 61_567, 4));
+        assert!(checked_units(&stages, &program, &[]).is_err());
+        let input = span(9, 512, 1024);
+        bind(&mut program[0], input);
+        bind(&mut program[shared], span(9, 640, 128));
+        assert!(checked_units(&stages, &program, &[input]).is_ok());
+        assert!(checked_units(&stages, &program, &[span(9, 640, 128)]).is_err());
+        bind(&mut program[shared], span(9, u64::MAX, 4));
+        assert!(checked_units(&stages, &program, &[input]).is_err());
+    }
 
     #[test]
     fn shared_overlap_keeps_each_launch_and_the_input_and_sum_dependencies() {

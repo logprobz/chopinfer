@@ -46,14 +46,19 @@ impl Instance {
             self.services
                 .synchronize_stream(stream)
                 .map_err(|e| format!("DSpark synchronize: {e:?}"))?;
-            self.services
-                .copy_device_to_host(stream, &mut status, rows(buffers.scratch.row_status, live))
-                .map_err(|e| format!("DSpark status: {e:?}"))?;
-            self.services
-                .synchronize_stream(stream)
-                .map_err(|e| format!("DSpark synchronize: {e:?}"))?;
-            if status.iter().any(|&byte| byte != 0) {
-                return Err(format!("DSpark quantized input on rank {rank} is invalid"));
+            for plane in [
+                buffers.scratch.row_status,
+                buffers.scratch.shared_row_status,
+            ] {
+                self.services
+                    .copy_device_to_host(stream, &mut status, rows(plane, live))
+                    .map_err(|e| format!("DSpark status: {e:?}"))?;
+                self.services
+                    .synchronize_stream(stream)
+                    .map_err(|e| format!("DSpark synchronize: {e:?}"))?;
+                if status.iter().any(|&byte| byte != 0) {
+                    return Err(format!("DSpark quantized input on rank {rank} is invalid"));
+                }
             }
         }
         Ok(())
@@ -87,6 +92,9 @@ impl Instance {
             self.services
                 .zero_device_buffer(stream, rows(buffers.scratch.row_status, pass.rows))
                 .map_err(|e| format!("DSpark status clear: {e:?}"))?;
+            self.services
+                .zero_device_buffer(stream, rows(buffers.scratch.shared_row_status, pass.rows))
+                .map_err(|e| format!("DSpark shared status clear: {e:?}"))?;
             let features = device.features.bind(
                 buffers
                     .state
@@ -251,6 +259,12 @@ impl Instance {
             self.services
                 .zero_device_buffer(stream, rows(self.buffers[rank].scratch.row_status, live))
                 .map_err(|e| format!("DSpark status clear: {e:?}"))?;
+            self.services
+                .zero_device_buffer(
+                    stream,
+                    rows(self.buffers[rank].scratch.shared_row_status, live),
+                )
+                .map_err(|e| format!("DSpark shared status clear: {e:?}"))?;
         }
         for stage in 0..device.config.stages {
             let bound = &device.stages[stage as usize];

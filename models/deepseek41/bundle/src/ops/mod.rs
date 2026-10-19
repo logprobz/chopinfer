@@ -77,6 +77,21 @@ pub struct Ops {
 }
 
 impl Ops {
+    /// The largest prepared shared projection or activation workspace,
+    /// including paired gate/up and every decode bucket the backend offers.
+    pub(crate) fn shared_workspace(&self) -> u64 {
+        self.asked
+            .iter()
+            .filter(|asked| {
+                asked.what.starts_with("dense.moe.shared-")
+                    || asked.what.starts_with("dense.shared-pair")
+                    || asked.what.starts_with("shared.")
+            })
+            .map(|asked| asked.workspace)
+            .max()
+            .unwrap_or(0)
+    }
+
     /// Prepares every op of an instance of `shape` on `kernels` over KV
     /// pages in `storage`, recording each family they refuse.
     pub(crate) fn prepare(kernels: &Kernels, shape: &Shape, storage: KvStorage) -> Ops {
@@ -505,7 +520,9 @@ impl Bind {
         let bytes = op.info().workspace;
         let workspace = match (bytes, workspace) {
             (0, _) => View::EMPTY,
-            (_, Some(span)) if span.length >= bytes => self.view(span),
+            (_, Some(span)) if span.length >= bytes => {
+                self.view(DeviceBufferSpanV1::new(span.buffer, span.offset, bytes))
+            }
             _ => return Err(Refusal("DeepSeek V4.1 binds no workspace this large")),
         };
         let launches = op.launches(buffers, workspace, counts)?;

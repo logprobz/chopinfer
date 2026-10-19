@@ -502,6 +502,8 @@ impl Instance {
                 // per phase, before any of them launches.
                 self.services
                     .zero_device_buffer(stream, scratch.row_status)?;
+                self.services
+                    .zero_device_buffer(stream, scratch.shared_row_status)?;
                 let index = &run.index;
                 // Only a prefill stages its window.
                 let staging = |values: &[i32]| match run.arena {
@@ -614,7 +616,7 @@ impl Instance {
             .filter(|&(rows, _)| self.shared_overlap.serves(rows))
         {
             return self
-                .launch_overlapped(bucket, &programs, &run.stages)
+                .launch_overlapped(bucket, &programs, run)
                 .map_err(|error| self.dispatch_failed(error));
         }
         pipeline::run_ranks(
@@ -646,22 +648,27 @@ impl Instance {
         }
         let mut status = vec![0_u8; rows as usize * 4];
         for (rank, (&(_, _, stream), buffers)) in self.ranks.iter().zip(&self.buffers).enumerate() {
-            let span = crate::buffers::rows(buffers.scratch.row_status, rows);
             self.services.synchronize_stream(stream)?;
-            self.services
-                .copy_device_to_host(stream, &mut status, span)?;
-            self.services.synchronize_stream(stream)?;
-            let failed = status.chunks_exact(4).position(|word| word != [0; 4]);
-            if let Some(row) = failed {
-                let item = run.inputs.token_batch.get(row).copied().unwrap_or(-1);
-                let request = usize::try_from(item)
-                    .ok()
-                    .and_then(|item| run.inputs.request_ids.get(item));
-                self.log(&format!(
-                    "a quantized input on rank {rank} was invalid in row {row} \
-                     (request {request:?}); the step is refused"
-                ));
-                return Err(BundleAbiError::Status(BundleStatusV1::BundleError));
+            for plane in [
+                buffers.scratch.row_status,
+                buffers.scratch.shared_row_status,
+            ] {
+                let span = crate::buffers::rows(plane, rows);
+                self.services
+                    .copy_device_to_host(stream, &mut status, span)?;
+                self.services.synchronize_stream(stream)?;
+                let failed = status.chunks_exact(4).position(|word| word != [0; 4]);
+                if let Some(row) = failed {
+                    let item = run.inputs.token_batch.get(row).copied().unwrap_or(-1);
+                    let request = usize::try_from(item)
+                        .ok()
+                        .and_then(|item| run.inputs.request_ids.get(item));
+                    self.log(&format!(
+                        "a quantized input on rank {rank} was invalid in row {row} \
+                         (request {request:?}); the step is refused"
+                    ));
+                    return Err(BundleAbiError::Status(BundleStatusV1::BundleError));
+                }
             }
         }
         Ok(())
@@ -756,8 +763,9 @@ impl Instance {
         &mut self,
         (bucket, items): (u32, u32),
         programs: &[Vec<PreparedLaunch>],
-        stages: &[Vec<Stage>],
+        run: &Run,
     ) -> Result<(), DispatchError> {
+        let stages = &run.stages;
         if self.collectives.is_poisoned() {
             return Err(BundleAbiError::Status(BundleStatusV1::InvalidState).into());
         }
@@ -782,7 +790,18 @@ impl Instance {
             if program.is_empty() || program.len() != stages.len() {
                 return Err(DispatchError::InvalidPlan);
             }
-            let units = crate::shared_overlap::units(stages).map_err(|error| {
+            let inputs = DeviceInputs::within(self.arenas[run.arena][rank], &run.layout);
+            let scratch = &self.buffers[rank].scratch;
+            let units = crate::shared_overlap::checked_units(
+                stages,
+                program,
+                &[
+                    inputs.live_tokens,
+                    scratch.normed_codes,
+                    scratch.normed_scales,
+                ],
+            )
+            .map_err(|error| {
                 self.log(&format!("shared expert overlap: {error}"));
                 DispatchError::InvalidPlan
             })?;

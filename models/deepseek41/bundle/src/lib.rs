@@ -9,6 +9,7 @@ mod api;
 pub mod buffers;
 pub mod compressor;
 pub mod config;
+mod device_results;
 pub mod dspark;
 pub mod encoders;
 pub mod engram_rows;

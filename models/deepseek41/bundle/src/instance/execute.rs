@@ -879,6 +879,7 @@ impl Instance {
         &self,
         runs: &[Run],
         sink: &mut ExecuteResultSinkV1,
+        ready_epoch: Option<u64>,
     ) -> Result<(), BundleAbiError> {
         let empty = PhaseInputs::default();
         let prefill = runs.iter().find(|run| run.arena == PREFILL);
@@ -910,6 +911,26 @@ impl Instance {
                 ranks: &owners,
             }),
         )?;
+        if let Some(cycle_epoch) = ready_epoch {
+            use runtime_bundle_abi::device_results::BundleReadyLogitsViewV1;
+            for (rank, &(_, _, stream)) in self.ranks.iter().enumerate() {
+                let event = *self
+                    .result_ready
+                    .get(rank)
+                    .ok_or(BundleAbiError::InvalidRange("AR logits ready event"))?;
+                self.services.record_event(event, stream)?;
+            }
+            for logits in views {
+                sink.emit_ready_logits_view(BundleReadyLogitsViewV1 {
+                    struct_size: std::mem::size_of::<BundleReadyLogitsViewV1>() as u32,
+                    flags: 0,
+                    cycle_epoch,
+                    ready: self.result_ready[logits.rank as usize],
+                    logits,
+                })?;
+            }
+            return Ok(());
+        }
         // The host reads a view as soon as it arrives: every rank that owns
         // one completes its queued work first.
         let owners = views
@@ -1041,6 +1062,24 @@ impl Instance {
         runs: &mut [Run],
         sink: &mut ExecuteResultSinkV1,
     ) -> Result<(), BundleAbiError> {
+        // A single AR phase owns distinct logits storage through collection.
+        // Mixed phases retain per-phase status checks because the next phase
+        // resets the same status planes. DSpark's adapter owns its own hooks.
+        let ready_epoch = if sink.device_results_enabled()
+            && self.dspark.is_none()
+            && runs.len() == 1
+            && runs[0].media.is_none()
+            && self.result_ready.len() == self.ranks.len()
+            && !cfg!(feature = "diagnostic-taps")
+        {
+            let metadata = sink.device_cycle_metadata()?;
+            sink.declare_input_dependency(
+                runtime_bundle_abi::device_results::DEVICE_RESULTS_HOST_VALUES_V1,
+            )?;
+            Some(metadata.cycle_epoch)
+        } else {
+            None
+        };
         for run in runs.iter_mut() {
             self.upload(run)?;
             self.dspark_pack_counts(run.phase, run.inputs.live_tokens())?;
@@ -1048,10 +1087,21 @@ impl Instance {
             if run.media.is_some() {
                 self.clear_flags()?;
             }
-            self.check_index_status(run)?;
-            self.check_row_status(run)?;
+            if ready_epoch.is_none() {
+                self.check_index_status(run)?;
+                self.check_row_status(run)?;
+            }
         }
-        self.emit_logits(runs, sink)
+        self.emit_logits(runs, sink, ready_epoch)?;
+        if ready_epoch.is_some() {
+            // Sampler work runs while the host validates this phase. A bad
+            // status fails execute, so its queued sample packet is discarded.
+            for run in runs.iter() {
+                self.check_index_status(run)?;
+                self.check_row_status(run)?;
+            }
+        }
+        Ok(())
     }
 }
 

@@ -24,3 +24,10 @@ runtime_bundle_abi::export_bundle_api_v1!(
     entry::restore_prefix_state::<Instance>,
     entry::restore_prefix_state_in_slot::<Instance>,
 );
+
+// The host selects this export only for the declared capability and explicit
+// device-result opt-in. The ordinary execute entry remains unchanged.
+runtime_bundle_abi::export_bundle_device_results_v1!(
+    BUNDLE_DEEPSEEK41_DEVICE_RESULTS_API_V1,
+    entry::execute::<Instance>
+);

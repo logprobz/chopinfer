@@ -82,6 +82,8 @@ pub struct Instance {
     collectives: Collectives,
     config: Configuration,
     ranks: Vec<RankHandles>,
+    /// AR logits readiness, acquired before scratch and graph captures.
+    result_ready: Vec<runtime_bundle_abi::BundleEventHandleV1>,
     /// Per rank, every loaded entry's symbol.
     symbols: Vec<BTreeMap<String, BundleCudaSymbolHandleV1>>,
     /// Per phase (prefill, decode, verify) and rank, the input arena and
@@ -217,6 +219,13 @@ impl Instance {
         let (image, indexes) =
             acquire::rank_images(log, images, shape.ranks(), admit, acquire::identity, held)?;
         let ranks = acquire::open_ranks(log, &create.ordinals, held)?;
+        if self.dspark.is_none() && crate::device_results::enabled() {
+            for &(context, _, _) in &ranks {
+                let event = services.create_event(context)?;
+                held.push(Held::Event(event));
+                self.result_ready.push(event);
+            }
+        }
         let rank_arenas = acquire::upload_arenas(log, image, &ranks, held)?;
         self.image = Some(image);
         let mut views = Vec::new();
@@ -735,6 +744,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         state_capture_root: std::env::var_os("CHOPINFER_DSPARK_STATE_DIR").map(Into::into),
         config,
         ranks: Vec::new(),
+        result_ready: Vec::new(),
         symbols: Vec::new(),
         arenas: Default::default(),
         buffers: Vec::new(),

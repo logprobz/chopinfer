@@ -19,6 +19,7 @@ use crate::config::{KV_LAYOUTS, KvLayout};
 
 mod batch_limits;
 mod conformance;
+mod device_results;
 mod dspark;
 mod fold_stream;
 mod index_mma;

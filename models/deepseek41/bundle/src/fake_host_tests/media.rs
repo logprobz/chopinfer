@@ -395,6 +395,15 @@ fn an_image_prefill_journals_at_two_and_four_ranks() {
         assert_eq!(host.acquired.get(), host.released.get(), "{ranks:?}");
         let lines = host.device.journal.borrow().clone();
         let topology = shape.topology();
+        if let Some(dir) = std::env::var_os("CHOPINFER_DEEPSEEK41_GEOMETRY_JOURNAL_DIR") {
+            let dir = std::path::PathBuf::from(dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join(format!("{topology}.media.journal")),
+                lines.join("\n"),
+            )
+            .unwrap();
+        }
         // The encoder's entries load with their planned dynamic shared
         // memory, as the program's do.
         assert_launches_fit_configured_shared(&lines, &topology);

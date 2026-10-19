@@ -286,6 +286,7 @@ pub fn catch_up(
             .main(
                 count,
                 &MainViews {
+                    workspace: base.buffers.workspace,
                     raw_features: v.raw_features,
                     feature_codes: v.feature_codes,
                     feature_scales: v.feature_scales,

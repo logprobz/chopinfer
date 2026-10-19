@@ -98,6 +98,7 @@ impl Window {
 }
 
 pub struct MainViews {
+    pub workspace: Span,
     pub raw_features: Span,
     pub feature_codes: Span,
     pub feature_scales: Span,
@@ -135,6 +136,7 @@ pub struct Prepared {
     feature_pack: Op<GatherByIndexBuffers<View>>,
     main_quantize: Op<BlockQuantizeBuffers<View>>,
     main_project: Op<Mxfp8FoldGemmBuffers<View>>,
+    main_project_small: Op<Mxfp8FoldGemmBuffers<View>>,
     main_norm: Op<RmsNormBuffers<View>>,
     hidden_quantize: Op<BlockQuantizeBuffers<View>>,
     ring_write: Op<LatentWindowWriteBuffers<View>>,
@@ -184,6 +186,15 @@ impl Prepared {
             execution: BlockScaledExecution::NativeBlockScaledMma,
         };
         let main_project = backend.mxfp8_fold_gemm(&query, need)?;
+        let capacity = crate::sm120::mxfp8_fold::SMALL_CAPACITY;
+        let main_project_small = backend.mxfp8_fold_gemm(
+            &Mxfp8FoldGemmQuery {
+                m_capacity: capacity,
+                ..query
+            },
+            Need::rows(capacity)
+                .with_exact(kernel_core::properties::Invariance::any_rows(capacity)),
+        )?;
         let main_norm = backend.rmsnorm(&row_contract::final_norm(g), need)?;
         let hidden_quantize = backend.block_quantize(
             &BlockQuantizeQuery {
@@ -220,6 +231,7 @@ impl Prepared {
             feature_pack,
             main_quantize,
             main_project,
+            main_project_small,
             main_norm,
             hidden_quantize,
             ring_write,
@@ -339,6 +351,7 @@ impl Prepared {
             self.feature_pack.info(),
             self.main_quantize.info(),
             self.main_project.info(),
+            self.main_project_small.info(),
             self.main_norm.info(),
             self.hidden_quantize.info(),
             self.ring_write.info(),
@@ -351,6 +364,7 @@ impl Prepared {
 
     pub fn workspace(&self) -> u64 {
         [
+            self.main_project_small.info().workspace,
             self.ring_write.info().workspace,
             self.block_write.info().workspace,
             self.attention.info().workspace,
@@ -395,7 +409,17 @@ impl Prepared {
             status: bind.view(v.status),
             status_row_offset: 0,
         };
-        result.extend(bind.launch(&self.main_project, &buffers, Counts::rows(count))?);
+        let projection = if count <= crate::sm120::mxfp8_fold::SMALL_CAPACITY {
+            &self.main_project_small
+        } else {
+            &self.main_project
+        };
+        result.extend(bind.launch_within(
+            projection,
+            &buffers,
+            v.workspace,
+            Counts::rows(count),
+        )?);
         let mut bind = Bind::default();
         let buffers = RmsNormBuffers {
             x: bind.view(v.projected),

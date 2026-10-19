@@ -56,3 +56,7 @@ path = "tests/sm120/kernel_hc_split.rs"
 [[example]]
 name = "build_fold_decode"
 path = "examples/sm120/build_fold_decode.rs"
+
+[[example]]
+name = "build_fold_ticket"
+path = "examples/sm120/build_fold_ticket.rs"

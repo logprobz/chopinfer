@@ -96,6 +96,46 @@ fn every_compiled_topology_prepares_the_drafter_primitives() {
 }
 
 #[test]
+fn main_projection_uses_ticket_folds_only_through_sixty_four_rows() {
+    use runtime_bundle_abi::{BundleDeviceBufferHandleV1, DeviceBufferSpanV1 as Span};
+    let span = |id, bytes| Span::new(BundleDeviceBufferHandleV1::from_raw(id), 0, bytes);
+    for shape in crate::shape::topologies() {
+        let kernels = crate::Kernels::new(&shape).unwrap();
+        let prepared =
+            Prepared::prepare(kernels.backend.as_ref(), shape, DraftMode::Greedy).unwrap();
+        let n = u64::from(shape.geometry.shape.hidden);
+        let k = n * shape.geometry.shape.dspark.targets.len() as u64;
+        for count in [1, 6, 48, 64, 65, 8192] {
+            let rows = u64::from(count);
+            let mut views = ops::MainViews {
+                workspace: span(1, prepared.workspace()),
+                raw_features: span(2, rows * k * 2),
+                feature_codes: span(3, rows * k),
+                feature_scales: span(4, rows * k / 32),
+                weight: span(5, n * k),
+                weight_scales: span(6, n * k / 32),
+                projected: span(7, rows * n * 4),
+                norm_weight: span(8, n * 2),
+                normalized: span(9, rows * n * 4),
+                normalized_codes: span(10, rows * n),
+                normalized_scales: span(11, rows * n / 32),
+                live_rows: span(12, 4),
+                status: span(13, rows * 4),
+            };
+            let launches = prepared.main(count, &views).unwrap();
+            let ticket = launches
+                .iter()
+                .filter(|l| l.launch.symbol.contains("mxfp8_ticket"))
+                .count();
+            assert_eq!(ticket, if count <= 64 { 2 } else { 0 });
+            assert_eq!(launches.len(), if count <= 64 { 5 } else { 4 });
+            views.workspace.length = 0;
+            assert_eq!(prepared.main(count, &views).is_err(), count <= 64);
+        }
+    }
+}
+
+#[test]
 fn feature_packing_preserves_full_prefill_capacity_and_row_order() {
     use model_deepseek41_contract::serving::PREFILL_TOKENS;
     use runtime_bundle_abi::{BundleDeviceBufferHandleV1, DeviceBufferSpanV1 as Span};

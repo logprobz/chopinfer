@@ -255,12 +255,11 @@ impl DenseOps {
         let mut paired = Vec::new();
         for dense in projections(shape) {
             let query = Mxfp8FoldGemmQuery {
-                m_capacity: 32,
+                m_capacity: crate::sm120::mxfp8_fold::SMALL_CAPACITY,
                 ..dense.query
             };
-            for capacity in crate::sm120::mxfp8_fold::DECODE_BUCKETS {
-                let need =
-                    exact::need(capacity, exact::of_phase(Phase::Decode(capacity), capacity));
+            for capacity in 1..=crate::sm120::mxfp8_fold::SMALL_CAPACITY {
+                let need = exact::need(capacity, exact::verify(capacity));
                 let op = asks.ask(
                     format!("dense.{} decode {capacity}", dense.id),
                     need,
@@ -321,7 +320,7 @@ impl DenseOps {
         workspace: DeviceBufferSpanV1,
     ) -> Result<Vec<Lowered>, Refusal> {
         let rows = phase.rows();
-        let op = if matches!(phase, Phase::Decode(_)) {
+        let op = if !phase.prefill() && rows <= crate::sm120::mxfp8_fold::SMALL_CAPACITY {
             &self
                 .decode
                 .iter()
@@ -401,7 +400,7 @@ mod tests {
     use model_deepseek41_contract::geometry::FLASH;
 
     #[test]
-    fn decode_buckets_use_split_folds_and_prefill_keeps_the_original_entry() {
+    fn small_rows_use_ticket_folds_and_prefill_keeps_the_original_entry() {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let kernels = crate::Kernels::new(&shape).unwrap();
         let ops = DenseOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default()).unwrap();
@@ -422,6 +421,15 @@ mod tests {
                 Phase::Decode(8),
                 Phase::Decode(16),
                 Phase::Decode(32),
+                Phase::Verify { rows: 48, items: 8 },
+                Phase::Verify {
+                    rows: 64,
+                    items: 16,
+                },
+                Phase::Verify {
+                    rows: 96,
+                    items: 16,
+                },
                 Phase::Prefill { rows: 1 },
                 Phase::Prefill { rows: 64 },
                 Phase::Verify { rows: 6, items: 1 },
@@ -440,15 +448,15 @@ mod tests {
                     status: span(7, rows * 4),
                 };
                 let calls = ops.project(dense.id, phase, &views, workspace).unwrap();
-                if matches!(phase, Phase::Decode(_)) {
-                    assert_eq!(calls.len(), 3);
-                    assert!(calls[1].launch.symbol.contains("_partials_v1"));
+                if !phase.prefill() && phase.rows() <= 64 {
+                    assert_eq!(calls.len(), 2);
+                    assert!(calls[1].launch.symbol.contains("mxfp8_ticket_"));
                 } else {
                     assert_eq!(calls.len(), 1);
                     assert!(calls[0].launch.symbol.contains("mxfp8_fold_m8192"));
                     assert_eq!(calls[0].launch.plan.grid[0], q.n.div_ceil(32));
                 }
-                if dense.id == "moe.shared-gate" && matches!(phase, Phase::Decode(_)) {
+                if dense.id == "moe.shared-gate" && !phase.prefill() && phase.rows() <= 64 {
                     let second = GemmViews {
                         weights: span(8, views.weights.length),
                         weight_scales: span(9, views.weight_scales.length),
@@ -458,8 +466,12 @@ mod tests {
                     let calls = ops
                         .project_pair(phase.rows(), &[views, second], workspace)
                         .unwrap();
-                    assert_eq!(calls.len(), 3);
-                    assert!(calls.iter().all(|c| c.launch.symbol.contains("_pair_v1")));
+                    assert_eq!(calls.len(), 2);
+                    assert!(
+                        calls
+                            .iter()
+                            .all(|c| c.launch.symbol.contains("_pair_f32_v2"))
+                    );
                 }
             }
         }

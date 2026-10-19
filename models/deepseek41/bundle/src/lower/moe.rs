@@ -144,7 +144,8 @@ impl Lowering<'_> {
         phase: Phase,
         layer: u32,
     ) -> Result<Option<Vec<Lowered>>, String> {
-        if let Phase::Decode(count) = phase {
+        if !phase.prefill() && phase.rows() <= crate::sm120::mxfp8_fold::SMALL_CAPACITY {
+            let count = phase.rows();
             let Some(ops) = &self.ops.dense else {
                 return Ok(None);
             };

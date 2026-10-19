@@ -9,6 +9,52 @@ use model_deepseek41_contract::{admission, geometry, projections};
 use std::collections::BTreeSet;
 
 #[test]
+fn ticket_entries_bind_all_topologies_through_sixty_four_rows() {
+    let specs = registration::ticket_cubins(geometry::GEOMETRIES).unwrap();
+    assert!(
+        specs
+            .iter()
+            .all(|(family, _)| *family == registration::TICKET_FAMILY)
+    );
+    for g in geometry::GEOMETRIES {
+        let catalog = registration::ticket_catalog(g).unwrap();
+        let spec = &specs
+            .iter()
+            .find(|(_, s)| s.name == registration::ticket_cubin_name(g))
+            .unwrap()
+            .1;
+        assert_eq!(spec.entries.len(), catalog.len() * 2);
+        for &ranks in admission::SUPPORTED_RANKS {
+            let backend = registration::register(Sm120::new(), g, ranks).unwrap();
+            for entry in registration::ticket_entries(g, ranks).unwrap() {
+                for rows in 1..=64 {
+                    let info = if entry.paired {
+                        backend
+                            .mxfp8_fold_gemm_pair(&entry.query, Need::rows(rows))
+                            .unwrap()
+                            .info()
+                            .clone()
+                    } else {
+                        backend
+                            .mxfp8_fold_gemm(&entry.query, Need::rows(rows))
+                            .unwrap()
+                            .info()
+                            .clone()
+                    };
+                    assert_eq!(info.symbols.len(), 2);
+                    assert_eq!(info.workspace, entry.workspace(rows).unwrap());
+                    assert!(
+                        info.symbols
+                            .iter()
+                            .all(|(symbol, _)| spec.entries.iter().any(|s| s.symbol == *symbol))
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn decode_uses_bind_every_bucket_and_pair_only_the_shared_operands() {
     use kernel_core::precision::ExecutionPhase;
     let specs = registration::decode_cubins(geometry::GEOMETRIES).unwrap();

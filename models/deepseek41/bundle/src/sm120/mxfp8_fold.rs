@@ -132,9 +132,71 @@ pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, Strin
     let backend = entries(g, ranks)?
         .into_iter()
         .fold(backend, Sm120::with_mxfp8_fold);
-    Ok(decode_entries(g, ranks)?
+    let backend = decode_entries(g, ranks)?
         .into_iter()
-        .fold(backend, Sm120::with_mxfp8_fold_decode))
+        .fold(backend, Sm120::with_mxfp8_fold_decode);
+    Ok(ticket_entries(g, ranks)?
+        .into_iter()
+        .fold(backend, Sm120::with_mxfp8_fold_ticket))
+}
+
+pub const TICKET_FAMILY: &str = "mxfp8_fold_ticket";
+pub const SMALL_CAPACITY: u32 = 64;
+
+pub fn ticket_entries(
+    g: &Geometry,
+    ranks: u32,
+) -> Result<Vec<kernels_sm120::gemm::mxfp8_fold_ticket::Entry>, String> {
+    decode_entries(g, ranks)?
+        .into_iter()
+        .map(|old| {
+            let query = Mxfp8FoldGemmQuery {
+                m_capacity: SMALL_CAPACITY,
+                ..old.query
+            };
+            kernels_sm120::gemm::mxfp8_fold_ticket::Entry::new(
+                query,
+                format!(
+                    "chop_deepseek41_mxfp8_ticket_n{}_k{}_g{}_{}_v2",
+                    query.n,
+                    query.k,
+                    query.groups,
+                    if old.paired { "pair_f32" } else { "f32" }
+                ),
+                old.paired,
+            )
+            .map_err(|e| e.to_string())
+        })
+        .collect()
+}
+pub fn ticket_catalog(
+    g: &Geometry,
+) -> Result<Vec<kernels_sm120::gemm::mxfp8_fold_ticket::Entry>, String> {
+    let mut all = BTreeMap::new();
+    for &ranks in admission::SUPPORTED_RANKS {
+        for entry in ticket_entries(g, ranks)? {
+            all.insert(entry.symbol.clone(), entry);
+        }
+    }
+    Ok(all.into_values().collect())
+}
+pub fn ticket_cubin_name(g: &Geometry) -> String {
+    format!("mxfp8_fold_ticket_{}_sm120_v2", g.kernel_tag)
+}
+pub fn ticket_cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {
+    geometries
+        .iter()
+        .map(|g| {
+            Ok((
+                TICKET_FAMILY,
+                kernels_sm120::gemm::mxfp8_fold_ticket::cubin_spec(
+                    &ticket_cubin_name(g),
+                    &ticket_catalog(g)?,
+                )
+                .map_err(|e| e.to_string())?,
+            ))
+        })
+        .collect()
 }
 
 pub const DECODE_BUCKETS: [u32; 6] = [1, 2, 4, 8, 16, 32];

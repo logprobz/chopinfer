@@ -32,6 +32,12 @@ thread_local! {
     static WAITS: Cell<(Option<Instant>, Option<Instant>)> = const { Cell::new((None, None)) };
 }
 
+/// Whether the current engine step requested routine trace diagnostics.
+#[must_use]
+pub fn is_tracing() -> bool {
+    TRACING.get()
+}
+
 /// Starts accumulating phase totals for one step unless a sampled profile
 /// already does; returns whether this call started them.
 fn begin_totals() -> bool {
@@ -261,9 +267,12 @@ mod tests {
         let profiles = Arc::new(StepProfiles::new(1, 1));
         let sample = profiles.begin();
         assert!(PhaseTimer::traced(StepPhase::BundleExecute).is_none());
+        assert!(!is_tracing());
         let totals = TraceTotals::begin();
+        assert!(is_tracing());
         assert!(PhaseTimer::traced(StepPhase::BundleExecute).is_some());
         drop(totals);
+        assert!(!is_tracing());
         assert!(PhaseTimer::traced(StepPhase::BundleExecute).is_none());
         assert!(ACTIVE.get());
         drop(sample);
@@ -277,7 +286,9 @@ mod tests {
             WAITS.get().0.is_none(),
             "nothing is recorded outside a step"
         );
+        assert!(!is_tracing());
         let totals = TraceTotals::begin();
+        assert!(is_tracing());
         let deferred = Instant::now();
         device_wait_started(deferred);
         drop(PhaseTimer::new(StepPhase::DeviceWait));
@@ -289,6 +300,7 @@ mod tests {
                 .is_some_and(|ended| ended >= deferred)
         );
         drop(totals);
+        assert!(!is_tracing());
         assert!(!ACTIVE.get());
     }
 

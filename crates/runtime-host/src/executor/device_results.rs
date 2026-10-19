@@ -1,6 +1,8 @@
 //! Opt-in device output collection. Device counts are validated against the
 //! engine's metadata, and all sample suffix rows still reach engine validation.
+mod activation;
 use super::*;
+use activation::ActivationReceipt;
 use runtime_bundle_abi::device_results::*;
 use runtime_engine::{AcceptedPrefix, AsyncInputDependency};
 
@@ -427,9 +429,28 @@ impl CollectingSinkV1<'_> {
     }
 
     pub(super) fn collect_device(&mut self) -> HostServiceResultV1<Vec<AcceptedPrefix>> {
+        let (accepted, receipt) = self.collect_device_observed()?;
+        if runtime_engine::profile::is_tracing()
+            && let Some(receipt) = receipt
+        {
+            runtime_engine::diagnostic!("{}", receipt.record());
+        }
+        Ok(accepted)
+    }
+
+    fn collect_device_observed(
+        &mut self,
+    ) -> HostServiceResultV1<(Vec<AcceptedPrefix>, Option<ActivationReceipt>)> {
         let Some(device) = &mut self.device else {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), None));
         };
+        let receipt = ActivationReceipt::new(
+            device,
+            self.expected
+                .iter()
+                .filter(|item| matches!(item.phase(), BatchPhase::Prefill { .. }))
+                .count(),
+        );
         let mut accepted = Vec::new();
         for (mut pending, items) in std::mem::take(&mut device.ready) {
             let bytes = pending.collect()?;
@@ -491,7 +512,7 @@ impl CollectingSinkV1<'_> {
         } else if !device.external_rows.is_empty() {
             return Err(BundleStatusV1::InvalidState);
         }
-        Ok(accepted)
+        Ok((accepted, receipt))
     }
 }
 
@@ -791,7 +812,14 @@ mod tests {
             sink.device_completion(completion(concurrency as u32, total))
                 .unwrap();
             assert_eq!(sampler.collects.get(), 0);
-            let prefixes = sink.collect_device().unwrap();
+            let (prefixes, activation) = sink.collect_device_observed().unwrap();
+            let activation = activation.unwrap().record();
+            assert_eq!(activation["kind"], "acceptance_packet");
+            assert_eq!(activation["items"], concurrency);
+            assert_eq!(activation["sample_rows"], total);
+            assert_eq!(activation["verify_items"], concurrency);
+            assert_eq!(activation["prefill_items"], 0);
+            assert_eq!(activation["readback_packets"], 1);
             assert_eq!(prefixes.len(), concurrency as usize);
             assert!(
                 prefixes
@@ -1095,5 +1123,47 @@ mod tests {
         assert_eq!(*sampler.trace.borrow(), ["execute"]);
         pending.cancel().unwrap();
         assert_eq!(*sampler.trace.borrow(), ["execute", "cancel"]);
+    }
+    #[test]
+    fn activation_requires_collected_device_work_and_never_marks_fallback_or_failure() {
+        let items = vec![item(1, 0)];
+        for fail in [false, true] {
+            let sampler = Rc::new(Sampler::default());
+            let mut sink = sink(&items, sampler.clone());
+            assert!(
+                sink.collect_device_observed().unwrap().1.is_none(),
+                "capability alone is not activation"
+            );
+            sink.device_dependency(0).unwrap();
+            assert!(
+                sink.collect_device_observed().unwrap().1.is_none(),
+                "a dependency declaration is not activation"
+            );
+            sink.device_ready(logits(0, 1)).unwrap();
+            sampler.packet.replace(sample_record(4, 0));
+            sampler.fail_collection.set(fail);
+            let result = sink.collect_device_observed();
+            if fail {
+                assert!(
+                    result.is_err(),
+                    "failed collection has no activation receipt"
+                );
+            } else {
+                let (rows, activation) = result.unwrap();
+                assert!(rows.is_empty());
+                let record = activation.unwrap().record();
+                assert_eq!(record["schema"], "chopinfer.device-results.v1");
+                assert_eq!(record["kind"], "ready_logits");
+                assert_eq!(record["cycle_epoch"], 9);
+                assert_eq!(record["items"], 1);
+                assert_eq!(record["sample_rows"], 1);
+                assert_eq!(record["verify_items"], 0);
+                assert_eq!(record["readback_packets"], 1);
+                assert!(
+                    sink.collect_device_observed().unwrap().1.is_none(),
+                    "a receipt cannot be repeated"
+                );
+            }
+        }
     }
 }
